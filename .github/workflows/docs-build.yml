@@ -23,6 +23,16 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements/docs.txt
+
+      # Cheap, stdlib-only, and BEFORE the heavy install so it fails fast. The docs render
+      # docs/notebook_artifacts/ in preference to the publish lane (see conf.py), so editing a
+      # notebook without rebuilding its artifact leaves the site showing the OLD text with a
+      # perfectly green build and no error anywhere. This is the only thing that catches that.
+      - name: Check notebook artifacts are not stale
+        run: |
+          python scripts/render_notebook_docs_artifacts.py --check-stale \
+            || { echo "::error::A docs notebook artifact has drifted from its publish source. \
+          Rebuild it with: python scripts/render_notebook_docs_artifacts.py --notebook <name>"; exit 1; }
       - name: Install docs requirements
         run: |
           pip install -r requirements/docs.txt
