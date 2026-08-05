@@ -33,78 +33,53 @@ source sets** and can coexist in one database.
 > **They occupy the same source sets local generation would.** The monology corpus lands in
 > `gemmascope-2-transcoder-16k` — the set the [quickstart](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu)
 > generates — and RTE lands in `gemmascope-2-transcoder-16k-rte`. Downloading and generating are two
-> ways to populate the *same* set, not two sets. Importing on top of an existing one is a **silent
-> no-op** (`ON CONFLICT DO NOTHING`): it reports success and writes nothing. To switch a set from one
-> source to the other, purge it first:
->
-> ```sql
-> -- Count first. Scoped to ONE (set, model); other sets are untouched.
-> SELECT count(*) FROM "Neuron"
->  WHERE "modelId" = 'gemma-3-1b-it'
->    AND layer IN (SELECT id FROM "Source"
->                   WHERE "setName" = 'gemmascope-2-transcoder-16k'
->                     AND "modelId" = 'gemma-3-1b-it');
->
-> -- Then swap SELECT count(*) for DELETE once the number is what you expect (425,984 for a full set).
-> ```
->
-> `Activation` **and `Explanation` cascade from `Neuron`**, so purge a set only if you are willing to
-> lose any explanations generated against it — those are the only rows here that cannot be
-> regenerated from a corpus.
+> ways to populate the *same* set, not two sets, and importing on top of an occupied one is a
+> **silent no-op** (`ON CONFLICT DO NOTHING`) that reports success and writes nothing. The command
+> below detects that and refuses; [the flags](#choosing-what-happens-on-a-collision) say what to do
+> instead. No manual SQL is needed.
 
-### 1. Download
+### One command
 
-Name the destination's **leaf directory** exactly as below and vary the parent if needed. The
-pipeline computes the run directory it expects from the *config* (`<run-root>/<run_name>`), so a
-differently-named leaf simply is not found. Nothing is parsed out of the name — identity comes from
-the corpus's own `source_ids.json`.
-
-| corpus | bucket id | leaf directory |
-| --- | --- | --- |
-| RTE | `speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards` | `gemma-3-1b-it_gemmascope-2-transcoder-16k-rte` |
-| monology | `speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards` | `gemma-3-1b-it_gemmascope-2-transcoder-16k` |
-
-```python
-from pathlib import Path
-from interpretune.utils import download_dashboard_run
-
-# RTE, 5.84 GiB. For monology, swap both the bucket id and the leaf directory per the table above.
-download_dashboard_run(
-    "speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards",
-    Path("~/np_corpora/gemma-3-1b-it_gemmascope-2-transcoder-16k-rte").expanduser(),
-)
+```bash
+python scripts/fetch_dashboards_from_hub.py \
+  --bucket speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards \
+  --local-db-url postgres://postgres:postgres@127.0.0.1:5433/postgres \
+  --rename-existing
 ```
 
-### 2. Import into a local Neuronpedia DB
+Swap the bucket id for `…__monology__dashboards` to fetch the other corpus. That is the whole
+procedure: it reads the corpus's own `dashboards.json`, picks the matching committed config,
+creates the destination, downloads, imports, and prints a count summary. Add `--dry-run` to see the
+plan without moving anything, and `--dest <dir>` to choose where the corpus lands (default:
+`$IT_NP_CACHE/hub_downloads`, else `$HF_HOME/interpretune/neuronpedia/hub_downloads`).
 
 Needs a running local Neuronpedia Postgres — see the
-[pipeline guide](neuronpedia_dashboard_pipeline.md). Point `--run-root` at the **parent** of the
-directory you downloaded into:
+[pipeline guide](neuronpedia_dashboard_pipeline.md). Expect **425,984 `Neuron` rows** per corpus
+(26 layers × 16,384 features) plus activations (~16.2M monology, ~10.4M RTE), 40–60 minutes.
 
-```bash
-# RTE
-python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-16k-rte-production.yaml \
-  --import-only-local-db \
-  --run-root ~/np_corpora \
-  --local-db-url postgres://postgres:postgres@127.0.0.1:5433/postgres
-```
+<a id="choosing-what-happens-on-a-collision"></a>
 
-```bash
-# monology -- same shape, different config
-python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-16k-monology-24576.yaml \
-  --import-only-local-db \
-  --run-root ~/np_corpora \
-  --local-db-url postgres://postgres:postgres@127.0.0.1:5433/postgres
-```
+#### Choosing what happens on a collision
 
-Add `--print-command --dry-run` to either to see the resolved command without executing it.
+`--rename-existing` above is the safe default to *suggest*: it never touches what you already have.
+Without one of these flags the command **refuses** and prints what occupies the set, which is the
+right behaviour when you did not expect a collision at all.
 
-Each import writes 26 layers × 16,384 features = **425,984 `Neuron` rows** plus activations
-(~16.2M for monology, ~10.4M for RTE), taking roughly 40–60 minutes.
+| flag | effect |
+| --- | --- |
+| *(none)* | Refuse, and report what is already there. |
+| `--rename-existing` | Keep the existing set; import this corpus as `<set>__hub`. Change the suffix with `--rename-suffix`. |
+| `--overwrite-existing` | Delete the resident rows for that set, then import. |
 
-### 3. Confirm it landed
+`--overwrite-existing` additionally refuses when explanations hang off the rows it would delete —
+they cascade, and unlike activations no corpus can regenerate them. `--allow-explanation-loss` says
+you accept that. The same three flags work on local generation
+(`interpretune.utils.neuronpedia_dashboard_pipeline`), with identical meanings.
+
+### Confirming it landed
+
+The command prints a count summary of its own when it finishes, so this is a cross-check rather than
+a required step:
 
 ```sql
 -- scoped to gemma-3-1b-it: other models may carry their own rows in these set names
@@ -146,10 +121,18 @@ Expect 26 sources per (set, model) pair — `gemmascope-2-transcoder-16k` for mo
 - **Parquet page indexes are present**, so the files are range-readable. Via the bucket's
   S3-compatible gateway (`https://s3.hf.co/speediedan`) you can query them in place — e.g. DuckDB
   `read_parquet('s3://…')` — without downloading anything.
-- **The `hf` CLI (`hf buckets sync …`) may be simpler where it works.** It is deliberately not
-  documented here: in our environment a `click`/`typer` incompatibility breaks the `hf` entry point
-  entirely, not just the buckets subcommand, so we have not verified those commands and will not
-  publish untested ones.
+- **The `hf` CLI works too**, if you would rather browse the corpus than script against it:
+
+  ```bash
+  hf buckets ls speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards
+  ```
+
+  This previously failed for everyone with `TypeError: Secondary flag is not valid for non-boolean
+  flag`, which breaks the `hf` entry point **entirely** rather than just the buckets subcommand. The
+  cause was a `typer < 0.13` ceiling declared by `sae-dashboard` and `neuronpedia-utils`, which is
+  incompatible with `click >= 8.2`; both have since been widened. If you hit that error, upgrade
+  typer (`pip install -U 'typer>=0.13'`) and check nothing else in your environment still pins it
+  below 0.13.
 
 ---
 

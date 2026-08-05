@@ -2731,8 +2731,8 @@ def test_run_dashboard_pipeline_skips_conversion_for_columnar_generation_only(
     assert results[0].export_root is None
     assert not results[0].skipped
     assert launched_commands
-    assert "--dashboard-output-format=columnar" in launched_commands[0]
-    assert "--correlation-accumulation-device=auto" in launched_commands[0]
+    assert "--dashboard-output-format=columnar" in _runner_command(launched_commands)
+    assert "--correlation-accumulation-device=auto" in _runner_command(launched_commands)
     assert "Skipping legacy Neuronpedia conversion for columnar dashboard output" in caplog.text
 
 
@@ -2801,8 +2801,8 @@ def test_run_dashboard_pipeline_skips_conversion_for_legacy_generation_only(
     assert results[0].export_root is None
     assert not results[0].skipped
     assert launched_commands
-    assert "--sequence-selection-backend=legacy" in launched_commands[0]
-    assert "--dashboard-output-format=legacy_json" in launched_commands[0]
+    assert "--sequence-selection-backend=legacy" in _runner_command(launched_commands)
+    assert "--dashboard-output-format=legacy_json" in _runner_command(launched_commands)
     assert "Skipping Neuronpedia conversion for legacy generation-only" in caplog.text
 
 
@@ -3078,6 +3078,16 @@ def test_import_requested_but_db_unavailable_hard_errors_by_default(
         dashboard_pipeline.run_dashboard_pipeline(config)
 
 
+def _runner_command(launched_commands: list[list[str]]) -> list[str]:
+    """The dashboard-runner invocation, ignoring incidental subprocesses.
+
+    The pipeline now probes the local DB for an occupied source set before generating, and psycopg's
+    library loader shells out to `ldconfig` on the way. That is unrelated to what these tests assert,
+    so select the runner command by its shape rather than assuming it is the first subprocess.
+    """
+    return next(c for c in launched_commands if any(str(part).startswith("--output-dir=") for part in c))
+
+
 def test_run_dashboard_pipeline_imports_columnar_output_directly(
     tmp_path: Path,
     monkeypatch,
@@ -3167,7 +3177,7 @@ def test_run_dashboard_pipeline_imports_columnar_output_directly(
     assert results[0].import_summary.imported_row_counts == {"Source": 1, "Neuron": 2, "Activation": 3}
     assert imported_layers == [(0, expected_output_dir)]
     assert launched_commands
-    assert "--dashboard-output-format=columnar" in launched_commands[0]
+    assert "--dashboard-output-format=columnar" in _runner_command(launched_commands)
     assert "Imported columnar layer=0 into local DB" in caplog.text
 
 

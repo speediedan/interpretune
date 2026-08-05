@@ -47,6 +47,14 @@ from interpretune.utils.neuronpedia_explanations import (
     DEFAULT_EXPLANATION_AUTHOR_ID,
     DEFAULT_IT_NP_CACHE,
 )
+from interpretune.utils.neuronpedia_source_conflicts import (
+    DEFAULT_RENAME_SUFFIX,
+    ConflictPolicy,
+    ExplanationLossRefused,
+    SourceSetConflictError,
+    describe_source_set,
+    resolve_source_set_conflict,
+)
 
 DONE_LAYER_RE = re.compile(r"\bDONE layer=(\d+)\b")
 OOM_LOG_RE = re.compile(r"(CUDA out of memory|out of memory|torch\.OutOfMemoryError)", re.IGNORECASE)
@@ -264,6 +272,17 @@ class NeuronpediaDashboardPipelineConfig:
     # Default off because a run that silently skips DB import is easy to mistake for a full run.
     allow_missing_local_db: bool = False
     local_db_url: str | None = None
+    # What to do when the target Neuronpedia source set is ALREADY populated. Default "error":
+    # importing over an occupied set is a silent no-op (ON CONFLICT DO NOTHING), so the alternatives
+    # are to destroy data or to change identity, and neither should happen without being asked for.
+    # See interpretune.utils.neuronpedia_source_conflicts.
+    on_existing_source_set: str = "error"
+    source_set_rename_suffix: str = DEFAULT_RENAME_SUFFIX
+    allow_explanation_loss: bool = False
+    # Set by conflict resolution under the "rename" policy; overrides the source set used at IMPORT
+    # time only. Deliberately separate from neuronpedia_source_set_id, which also names the run
+    # DIRECTORY -- renaming that would relocate the corpus out from under an --import-only run.
+    neuronpedia_import_source_set_id: str | None = None
     local_db_import_chunk_size: int = 65000
     overlap_local_db_import: bool = False
     webapp_url: str = DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL
@@ -346,6 +365,15 @@ class NeuronpediaDashboardPipelineConfig:
             worker_segment = f".{self.worker_id}" if self.worker_id else ""
             log_name = f"run{worker_segment}.resume-{self.start_layer}-{self.end_layer}.log"
             self.pipeline_log_path = self.run_directory / log_name
+
+    @property
+    def import_source_set_id(self) -> str:
+        """The source set rows land in.
+
+        Differs from :attr:`neuronpedia_source_set_id` only after a
+        ``rename`` conflict resolution, which must not move the run directory.
+        """
+        return self.neuronpedia_import_source_set_id or self.neuronpedia_source_set_id
 
     @property
     def run_name(self) -> str:
@@ -582,6 +610,12 @@ def _normalize_pipeline_overrides(values: Mapping[str, Any]) -> dict[str, Any]:
     if "skip_local_db_import" in normalized:
         skip_local_db_import = bool(normalized.pop("skip_local_db_import"))
         normalized.setdefault("import_to_local_db", not skip_local_db_import)
+    elif normalized.get("import_only_local_db"):
+        # `--import-only-local-db` means "do only the import", so it implies wanting one. Requiring
+        # the config to ALSO say import_to_local_db=true made the flag unusable against every
+        # generation-only config -- and the resulting error blamed --skip-local-db-import, which the
+        # caller had not passed. Only inferred when the caller did not state the opposite above.
+        normalized.setdefault("import_to_local_db", True)
     if "no_archive_partials" in normalized:
         no_archive_partials = bool(normalized.pop("no_archive_partials"))
         normalized.setdefault("archive_partial_dirs", not no_archive_partials)
@@ -1967,6 +2001,7 @@ def _resolve_source_id(
     *,
     source_id_template: str | None = None,
     run_name_suffix: str | None = None,
+    ignore_declared_source_ids: bool = False,
 ) -> str:
     """Resolve a layer's Neuronpedia source id, most explicit source first.
 
@@ -1992,8 +2027,11 @@ def _resolve_source_id(
     if run_name_suffix:
         return f"{layer_num}-{neuronpedia_source_set_id}__{run_name_suffix}"
 
+    # `ignore_declared_source_ids` is set when the caller has deliberately re-keyed this import (a
+    # rename conflict resolution). The sidecar states the corpus's ORIGINAL identity, which is exactly
+    # what must not win in that case.
     run_root = _run_root_for(output_dir, layer_num)
-    if run_root is not None:
+    if run_root is not None and not ignore_declared_source_ids:
         declared = read_source_ids_sidecar(run_root).get(str(layer_num))
         if declared:
             return declared
@@ -2090,15 +2128,19 @@ def import_columnar_dashboard_output(
     source_id = source_id_override or _resolve_source_id(
         output_dir,
         layer_num,
-        config.neuronpedia_source_set_id,
+        config.import_source_set_id,
         source_id_template=config.neuronpedia_source_id_template,
+        # A renamed import must not fall back to the corpus's own source_ids.json: that sidecar
+        # declares the ORIGINAL ids, so honoring it would re-key straight back into the set the
+        # rename exists to avoid.
+        ignore_declared_source_ids=config.neuronpedia_import_source_set_id is not None,
     )
     decode_token_ids, pad_token_id = _build_columnar_token_decoder(config)
     return import_saedashboard_columnar_bundle_local_db(
         output_dir,
         local_db_url=config.local_db_url or "",
         model_id=config.model_name,
-        source_set_name=config.neuronpedia_source_set_id,
+        source_set_name=config.import_source_set_id,
         source_id=source_id,
         creator_id=DEFAULT_EXPLANATION_AUTHOR_ID,
         creator_name=config.creator_name,
@@ -2232,8 +2274,9 @@ def convert_dashboard_output(
     source_id = _resolve_source_id(
         dashboard_leaf_dir,
         layer_num,
-        config.neuronpedia_source_set_id,
+        config.import_source_set_id,
         source_id_template=config.neuronpedia_source_id_template,
+        ignore_declared_source_ids=config.neuronpedia_import_source_set_id is not None,
     )
     export_root = _resolve_export_root(config.export_root / config.model_name, source_id)
     return export_root
@@ -2381,6 +2424,59 @@ def ensure_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> Pat
     return path
 
 
+def _apply_source_set_conflict_policy(config: NeuronpediaDashboardPipelineConfig) -> None:
+    """Detect an occupied target source set and apply the configured policy.
+
+    No-op when this run will not import. Failure to REACH the database is also a no-op rather than an
+    error: an unreachable DB is already handled by ``allow_missing_local_db``, and turning it into a
+    second, differently-worded failure here would obscure that.
+    """
+    if not config.import_to_local_db or not config.local_db_url:
+        return
+
+    policy = ConflictPolicy(config.on_existing_source_set)
+    try:
+        resolution = resolve_source_set_conflict(
+            config.local_db_url,
+            model_id=config.model_name,
+            source_set_id=config.neuronpedia_source_set_id,
+            policy=policy,
+            rename_suffix=config.source_set_rename_suffix,
+            allow_explanation_loss=config.allow_explanation_loss,
+        )
+    except (SourceSetConflictError, ExplanationLossRefused):
+        raise
+    except Exception as exc:  # unreachable DB, missing table on a fresh install, etc.
+        logging.getLogger(__name__).warning("could not check for an existing source set (%s); continuing", exc)
+        return
+
+    if resolution.renamed:
+        config.neuronpedia_import_source_set_id = resolution.effective_source_set_id
+    for note in resolution.notes:
+        logging.getLogger(__name__).info("source set conflict: %s", note)
+
+
+def summarize_imported_source_set(config: NeuronpediaDashboardPipelineConfig) -> str:
+    """Post-import counts, emitted by default.
+
+    Exists because ``ON CONFLICT DO NOTHING`` makes "imported everything" and "imported nothing"
+    both exit 0. A count is the cheapest thing that distinguishes them.
+    """
+    if not config.local_db_url:
+        return "no local_db_url configured; skipping import summary"
+    try:
+        occupancy = describe_source_set(
+            config.local_db_url, model_id=config.model_name, source_set_id=config.import_source_set_id
+        )
+    except Exception as exc:  # a summary must never be the thing that fails a completed import
+        return f"import summary unavailable ({exc})"
+    return (
+        f"IMPORT SUMMARY model={occupancy.model_id} source_set={occupancy.source_set_id} "
+        f"sources={occupancy.source_count} neurons={occupancy.neuron_count} "
+        f"explanations={occupancy.explanation_count}"
+    )
+
+
 def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[NeuronpediaDashboardLayerResult]:
     """Run dashboard generation, conversion, and optional local import for a layer range."""
 
@@ -2391,6 +2487,9 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
     # Declare identity up front so the corpus is self-describing even if the run is interrupted.
     ensure_source_ids_sidecar(config)
     ensure_dashboard_manifest(config)
+    # Resolve source-set collisions BEFORE generating anything: the check costs one query, and the
+    # alternative is discovering after hours of GPU work that the import will be a silent no-op.
+    _apply_source_set_conflict_policy(config)
     pipeline_log_path = cast(Path, config.pipeline_log_path)
     existing_log_path = cast(Path, config.existing_log_path)
     logger = _configure_logger(pipeline_log_path)
@@ -2812,6 +2911,8 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
     # Refresh now that the layers actually exist: the manifest written at start could only record an
     # empty `layers.generated`, which would misdescribe the very corpus about to be published.
     ensure_dashboard_manifest(config)
+    if config.import_to_local_db:
+        logger.info(summarize_imported_source_set(config))
     return results
 
 
@@ -2947,6 +3048,32 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--runner-columnar-artifact-format",
         choices=("arrow", "parquet"),
+    )
+    parser.add_argument(
+        "--overwrite-existing",
+        dest="on_existing_source_set",
+        action="store_const",
+        const="overwrite",
+        help="If the target source set is already populated, DELETE its rows and import over it. "
+        "Refused when explanations would cascade away unless --allow-explanation-loss is also given.",
+    )
+    parser.add_argument(
+        "--rename-existing",
+        dest="on_existing_source_set",
+        action="store_const",
+        const="rename",
+        help="If the target source set is already populated, leave it alone and import under "
+        "<set>__<suffix> so both coexist. Renames the INCOMING import, not the resident rows.",
+    )
+    parser.add_argument(
+        "--source-set-rename-suffix",
+        help=f"Suffix used by --rename-existing (default: {DEFAULT_RENAME_SUFFIX}).",
+    )
+    parser.add_argument(
+        "--allow-explanation-loss",
+        action="store_true",
+        help="Permit --overwrite-existing to cascade away explanations. They are the only rows here "
+        "that no corpus can regenerate, so this is never implied.",
     )
     parser.add_argument(
         "--write-source-ids",
