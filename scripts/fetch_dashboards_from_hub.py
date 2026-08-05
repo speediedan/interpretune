@@ -248,6 +248,18 @@ def main(argv: list[str] | None = None) -> int:
             if policy is ConflictPolicy.RENAME:
                 effective_set_id = suffix_source_set_id(source_set_id, args.rename_suffix)
                 log.info("conflict     : existing %r kept; importing as %r", source_set_id, effective_set_id)
+            elif occupancy.explanation_count and not args.allow_explanation_loss:
+                # The pipeline would refuse for this reason anyway; catching it here is the whole
+                # point of a pre-flight, since otherwise the refusal lands after a multi-GiB download.
+                print(
+                    f"\nREFUSING TO IMPORT:\n--overwrite-existing would delete "
+                    f"{occupancy.neuron_count} neurons from {source_set_id!r}, cascading away "
+                    f"{occupancy.explanation_count} explanations. Activations can be regenerated "
+                    "from a corpus; explanations cannot. Pass --allow-explanation-loss to proceed, "
+                    "or --rename-existing to keep both.",
+                    file=sys.stderr,
+                )
+                return 3
             else:
                 log.info("conflict     : %r will be REPLACED (%s neurons)", source_set_id, occupancy.neuron_count)
     elif policy is ConflictPolicy.RENAME:
