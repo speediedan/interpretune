@@ -107,9 +107,11 @@ Each import writes 26 layers × 16,384 features = **425,984 `Neuron` rows** plus
 ### 3. Confirm it landed
 
 ```sql
+-- scoped to gemma-3-1b-it: other models may carry their own rows in these set names
 SELECT s."setName", s."modelId", count(DISTINCT s.id) AS sources
 FROM "Source" s
 WHERE s."setName" LIKE 'gemmascope-2-transcoder-16k%'
+  AND s."modelId" = 'gemma-3-1b-it'
 GROUP BY s."setName", s."modelId";
 ```
 

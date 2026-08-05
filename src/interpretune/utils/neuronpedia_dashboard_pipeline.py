@@ -5,7 +5,6 @@ from collections import deque
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
-from functools import lru_cache
 import hashlib
 import importlib.util
 import inspect
@@ -1426,26 +1425,6 @@ def _log_runtime_diagnostics(logger: logging.Logger, *, pid: int, output_dir: Pa
     )
 
 
-@lru_cache(maxsize=1)
-def _saedashboard_supports_write_page_index() -> bool:
-    """Does the INSTALLED SAEDashboard accept ``--columnar-write-page-index``?
-
-    The pin now guarantees it (SD ``6f86560``), so this is no longer a capability *gate* deciding
-    which arguments to emit — it is a PRE-FLIGHT. The flag is always passed; this exists only to
-    turn the one remaining way to lack the field into a clear failure.
-
-    That way is an editable SAEDashboard checkout sitting on an older branch, which follows the
-    working tree rather than the pin. It has bitten this pipeline before, and the unguarded symptom
-    is an "unrecognized arguments" subprocess abort raised once per layer, mid-run. The dataclass
-    field is the probe rather than the CLI flag because the flag is registered inside a function body.
-    """
-    try:
-        from sae_dashboard.neuronpedia.neuronpedia_runner_config import NeuronpediaRunnerConfig
-    except ImportError:  # pragma: no cover - sae_dashboard is a hard dependency of this module
-        return False
-    return "columnar_write_page_index" in getattr(NeuronpediaRunnerConfig, "__dataclass_fields__", {})
-
-
 def _resolve_runner_dashboard_output_format(config: NeuronpediaDashboardPipelineConfig) -> str:
     if config.runner_implementation == "legacy":
         return "legacy_json"
@@ -1679,15 +1658,10 @@ def _layer_runner_command(
     command.append(f"--dashboard-output-format={dashboard_output_format}")
     if dashboard_output_format == "columnar":
         command.append(f"--columnar-artifact-format={config.runner_columnar_artifact_format}")
-        if not _saedashboard_supports_write_page_index():
-            raise RuntimeError(
-                "The installed SAEDashboard has no --columnar-write-page-index option, but the "
-                "pinned version (SD 6f86560) provides it. This almost always means an EDITABLE "
-                "SAEDashboard checkout is on an older branch -- an editable install follows the "
-                "working tree, not the pin. Refusing to start: continuing would produce Parquet "
-                "artifacts with no page index, which cannot be range-read and cannot be fixed "
-                "without regenerating the entire corpus."
-            )
+        # No capability probe: the SAEDashboard floor (SD 6f86560) defines this option, so it is a
+        # REQUIREMENT rather than something to detect. An install that predates it fails loudly on
+        # its own with "unrecognized arguments", which is the correct outcome for an unsupported
+        # dependency version -- and cheaper to carry than a gate that has to be kept in sync.
         command.append(
             "--columnar-write-page-index"
             if config.runner_columnar_write_page_index

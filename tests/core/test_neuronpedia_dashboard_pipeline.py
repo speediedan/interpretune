@@ -3848,12 +3848,9 @@ def test_layer_runner_command_forwards_write_page_index(tmp_path: Path, monkeypa
     a config field that never becomes a flag silently produces a corpus with no page index, which cannot be repaired
     without regenerating it.
 
-    The capability gate is pinned on: this covers emission, not detection (which
-    test_write_page_index_flag_is_capability_gated covers). Without pinning, the outcome depends on which SAEDashboard
-    the environment pins -- CI's predates the option -- so the assertion would flip on an unrelated dependency bump
-    rather than on a real regression.
+    Covers emission only. There is no detection to cover: the option is required by the SAEDashboard floor rather than
+    probed, so nothing here depends on which SAEDashboard is installed.
     """
-    monkeypatch.setattr(dashboard_pipeline, "_saedashboard_supports_write_page_index", lambda: True)
     base_kwargs = dict(
         model_name="gemma-3-1b-it",
         model_layers=26,
@@ -3919,10 +3916,8 @@ def test_config_file_defaults_survive_cli_parsing(tmp_path: Path, monkeypatch: p
 
     Asserted through _parse_args -> _build_dashboard_pipeline_config -> _layer_runner_command, the
     path the launcher actually takes; constructing the config directly bypasses the bug. The
-    capability gate is pinned on so this measures config-default survival rather than which
-    SAEDashboard the environment pins.
+    This measures config-default survival; the flag itself is emitted unconditionally.
     """
-    monkeypatch.setattr(dashboard_pipeline, "_saedashboard_supports_write_page_index", lambda: True)
     config_path = tmp_path / "pipeline.yaml"
     config_path.write_text(
         yaml.safe_dump(
@@ -3968,19 +3963,12 @@ def test_config_file_defaults_survive_cli_parsing(tmp_path: Path, monkeypatch: p
     assert opted_out.runner_columnar_write_page_index is False
 
 
-def test_write_page_index_flag_requires_a_supporting_saedashboard(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The flag is now always emitted; a SAEDashboard lacking it is a pre-flight FAILURE.
+def test_write_page_index_flag_is_always_emitted(tmp_path: Path) -> None:
+    """Both polarities reach the runner command unconditionally.
 
-    The pin guarantees the field (SD ``6f86560``), so this stopped being a capability gate choosing
-    which arguments to emit. The one remaining way to lack it is an editable SAEDashboard checkout on
-    an older branch, which follows the working tree rather than the pin -- something that has already
-    happened once on this pipeline.
-
-    Refusing beats the previous warn-and-continue: that produced a corpus with no page index, and a
-    page index cannot be added afterwards, so the only repair is regenerating everything. Failing
-    before the first layer costs seconds; discovering it after a multi-hour run costs the run.
+    There is no capability probe: the SAEDashboard floor defines this option, so it is a requirement
+    rather than something to detect. An install predating it fails loudly on its own with
+    "unrecognized arguments", which is the right outcome for an unsupported dependency version.
     """
     base_kwargs = dict(
         model_name="gemma-3-1b-it",
@@ -4005,21 +3993,14 @@ def test_write_page_index_flag_requires_a_supporting_saedashboard(
     )
     config = NeuronpediaDashboardPipelineConfig(**base_kwargs)
 
-    dashboard_pipeline._saedashboard_supports_write_page_index.cache_clear()
-    monkeypatch.setattr(dashboard_pipeline, "_saedashboard_supports_write_page_index", lambda: True)
-    supported = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "l0")
-    assert "--columnar-write-page-index" in supported
+    assert "--columnar-write-page-index" in dashboard_pipeline._layer_runner_command(
+        config, layer_num=0, output_dir=tmp_path / "l0"
+    )
 
-    # Opting out must still be expressible -- the refusal is about the option being ABSENT, not about
-    # the value chosen.
     opted_out = NeuronpediaDashboardPipelineConfig(**{**base_kwargs, "runner_columnar_write_page_index": False})
     assert "--no-columnar-write-page-index" in dashboard_pipeline._layer_runner_command(
         opted_out, layer_num=0, output_dir=tmp_path / "l0"
     )
-
-    monkeypatch.setattr(dashboard_pipeline, "_saedashboard_supports_write_page_index", lambda: False)
-    with pytest.raises(RuntimeError, match="EDITABLE"):
-        dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "l0")
 
 
 def test_no_cli_option_declares_a_default_that_defeats_suppress() -> None:
