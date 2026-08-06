@@ -1066,14 +1066,19 @@ Notes:
 
 ### Source-set collisions: what happens when the target is already populated
 
-Importing over an occupied Neuronpedia source set is a **silent no-op**: the importer uses
-`ON CONFLICT DO NOTHING`, so it reports success and writes nothing. Downloading a published corpus
-and generating one locally are two ways to populate the *same* set, not two sets, so this is easy to
-hit — and it is the failure mode that looks exactly like success.
+Importing over an occupied Neuronpedia source set **writes nothing**: the importer uses
+`ON CONFLICT DO NOTHING`, so every row is declined and the run still reports success. Downloading a
+published corpus and generating one locally are two ways to populate the *same* set, not two sets, so
+this is easy to hit — and it otherwise looks exactly like success.
 
-Every path that imports (local generation, `--import-only-local-db`, and
-`scripts/fetch_dashboards_from_hub.py`) shares one policy, resolved **before** generation starts so a
-collision costs a query rather than hours of GPU time:
+Two things now make it visible rather than silent. The importer logs a warning naming the layer and
+the declined row counts (`neuronpedia_utils.local_db_import`, counted on `Neuron`/`Activation` —
+metadata rows are re-offered per layer by design, so their conflicts are routine and stay quiet).
+And every interpretune path that imports resolves a collision policy up front, before anything is
+downloaded or generated:
+
+Local generation, `--import-only-local-db`, and `scripts/fetch_dashboards_from_hub.py` share that one
+policy, so a collision costs a query rather than hours of GPU time or a 10 GiB download:
 
 | flag | effect |
 | --- | --- |
