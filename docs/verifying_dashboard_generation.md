@@ -1,20 +1,56 @@
 # Locally verifying dashboard generation and example(s)
 
-Local command guide for:
-- **[Pre-generated dashboards: download and import without generating anything](#pre-generated-dashboards)** — no GPU, no token, no account
-- **[Reproducing the benchmark](#reproducing-the-benchmark)** — generating the latest lineage scalable-dashboard benchmark
-- **[Example notebooks](#example-notebooks)** — running an example notebook that consumes local dashboards
+Local command guide, in order:
 
-Start with the pre-generated corpora if you only want to *see* the result; they populate the same
-source sets local generation would. Generate locally when the generation path itself is what you are
-verifying — one command against a committed config
-([quickstart in the dashboard pipeline guide](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu)).
+- **[(a) Development environment setup](#a-environment-setup)** — one script, run before any of the below
+- **[(b) Pre-generated dashboards](#b-pre-generated-dashboards)** — download and import, no GPU and no account
+- **[(c) Dashboard regeneration](#c-dashboard-regeneration)** — regenerate the latest lineage scalable-dashboard benchmark
+- **[(d) Example notebooks](#d-example-notebooks)** — run a notebook that consumes local dashboards
+
+Start with **(b)** if you only want to *see* the result. Go to **(c)** when the generation path itself
+is what you are checking.
 
 ---
 
-<a id="pre-generated-dashboards"></a>
+<a id="a-environment-setup"></a>
 
-## Pre-generated dashboards: download and import without generating anything
+## (a) Development environment setup
+
+A non-destructive setup script prepares everything the rest of this guide needs — it locates or
+clones the four repos, builds the venv, checks the local Postgres, and offers to build any missing
+prompt datasets. It never modifies an existing checkout and doesn't need root. There are a lot of
+flexible options if you're interested, but the defaults here should work.
+
+```bash
+mkdir -p /tmp/it_eval_repos && cd /tmp/it_eval_repos
+git clone https://github.com/speediedan/interpretune.git && cd interpretune
+
+# See the whole plan first, without running anything:
+# python scripts/setup_dashboard_benchmark_env.py --dry-run
+
+# Clone/build everything. With no arguments it clones the sibling repos beside this one and puts the
+# preserved-baseline worktrees in a dated temp dir (/tmp/it_baseline_trees_YYYYMMDD).
+python scripts/setup_dashboard_benchmark_env.py
+
+# To reuse checkouts you already have, point at them instead of cloning:
+# python scripts/setup_dashboard_benchmark_env.py --repos-root /tmp/it_eval_repos \
+#   --neuronpedia ~/repos/neuronpedia
+```
+
+The completion summary prints the exact `source ...` lines to activate the environment:
+
+```bash
+source /tmp/it_baseline_trees_YYYYMMDD/benchmark_env.sh && source <venv>/bin/activate
+```
+
+Prerequisites the script checks itself: `git` and `uv` on PATH, `docker` if the local Neuronpedia DB
+needs bringing up, bash >= 4.3, and HuggingFace access to the **gated** `google/gemma-3-1b-it`.
+
+---
+
+<a id="b-pre-generated-dashboards"></a>
+
+## (b) Pre-generated dashboards: download and import without generating anything
 
 Two corpora are published as public Hugging Face **Storage Buckets**, so a local Neuronpedia can be
 populated without spending GPU hours. **No token or account is required** — every command below was
@@ -27,16 +63,13 @@ run with no credential present.
 
 Both are `gemma-3-1b-it` with the `gemma-scope-2-1b-it-transcoders-all` 16k transcoders, all 26
 layers. RTE uses the prompts the example notebooks run, so its dashboards line up with what those
-notebooks show; monology is the generic-text counterpart. The two corpora import into **different
-source sets** and can coexist in one database.
+notebooks show; monology is the generic-text counterpart. The two corpora import into different
+source sets and can coexist in one database.
 
-> **They occupy the same source sets local generation would.** The monology corpus lands in
-> `gemmascope-2-transcoder-16k` — the set the [quickstart](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu)
-> generates — and RTE lands in `gemmascope-2-transcoder-16k-rte`. Downloading and generating are two
-> ways to populate the *same* set, not two sets, and importing on top of an occupied one is a
-> **silent no-op** (`ON CONFLICT DO NOTHING`) that reports success and writes nothing. The command
-> below detects that and refuses; [the flags](#choosing-what-happens-on-a-collision) say what to do
-> instead. No manual SQL is needed.
+> These land in the same source sets **(c)** would generate into, and importing over an occupied set
+> is a silent no-op. `--autosuffix-on-exists` below keeps both by importing under a timestamped
+> variant; without a collision flag the command refuses and tells you what is there. See
+> [source-set collisions](neuronpedia_dashboard_pipeline.md#source-set-collisions) for the other options.
 
 ### One command
 
@@ -57,66 +90,15 @@ Needs a running local Neuronpedia Postgres — see the
 [pipeline guide](neuronpedia_dashboard_pipeline.md). Expect **425,984 `Neuron` rows** per corpus
 (26 layers × 16,384 features) plus activations (~16.2M monology, ~10.4M RTE), 40–60 minutes.
 
-<a id="choosing-what-happens-on-a-collision"></a>
-
-#### Choosing what happens on a collision
-
-`--autosuffix-on-exists` above is the safe default to *suggest*: it never touches what you already
-have, and it never fails over a naming collision. Without one of these flags the command **refuses**
-and prints what occupies the set, which is the right behaviour when you did not expect a collision at
-all.
-
-| flag | effect |
-| --- | --- |
-| *(none)* | Refuse, and report what is already there. |
-| `--autosuffix-on-exists` | Keep the existing set; import as `<set>__<UTC timestamp>`, e.g. `…-rte__20260805T174530Z`. Repeatable — each run gets its own stamp. |
-| `--rename-suffix <name>` | Keep the existing set; import under a name you choose. A collision on *that* name is an error, since you picked it. |
-| `--overwrite-existing` | Delete the resident rows for that set, then import. |
-
-`--overwrite-existing` additionally refuses when explanations hang off the rows it would delete —
-they cascade, and unlike activations no corpus can regenerate them. `--allow-explanation-loss` says
-you accept that. The same three flags work on local generation
-(`interpretune.utils.neuronpedia_dashboard_pipeline`), with identical meanings.
-
-### Confirming it landed
-
-The command prints a count summary of its own when it finishes, so this is a cross-check rather than
-a required step:
-
-```sql
--- scoped to gemma-3-1b-it: other models may carry their own rows in these set names
-SELECT s."setName", s."modelId", count(DISTINCT s.id) AS sources
-FROM "Source" s
-WHERE s."setName" LIKE 'gemmascope-2-transcoder-16k%'
-  AND s."modelId" = 'gemma-3-1b-it'
-GROUP BY s."setName", s."modelId";
-```
-
-Expect 26 sources per (set, model) pair — `gemmascope-2-transcoder-16k` for monology and
-`gemmascope-2-transcoder-16k-rte` for RTE.
-
 ### Notes worth knowing first
 
 - **Source ids travel with the corpus.** Each bucket carries a `source_ids.json` recording the
-  Neuronpedia source id per layer, so the import yields the same ids no matter where you unpacked
-  it. Earlier corpora inferred ids from the directory name, which meant a renamed download imported
-  *successfully* under different ids — a failure that looked like success. This removes that.
-- **Each bucket describes itself in `dashboards.json`.** ~3 KB at the bucket root, so you can check
-  what a corpus is before committing to a multi-GiB download:
-
-  ```python
-  from huggingface_hub import HfApi
-  HfApi().download_bucket_files(
-      "speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards",
-      [("dashboards.json", "dashboards.json")],
-  )
-  ```
-
-  It records the model, source set, prompt corpus (`24576 prompts × 128 tokens` for monology,
-  `2490 × 319` for RTE), the layers actually generated, whether page indexes are present, and the
-  `sae-dashboard` / `pyarrow` versions that wrote the files. Nothing imports from it — it is
-  descriptive only, so a stale copy cannot misroute an import the way a stale `source_ids.json`
-  could.
+  Neuronpedia source id per layer, so the import yields the same ids no matter where you unpacked it.
+- **Each bucket describes itself in
+  [`dashboards.json`](https://huggingface.co/buckets/speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards/tree/dashboards.json)**
+  — ~3 KB at the bucket root recording the model, source set, prompt corpus, layers generated, page
+  index presence, and the tool versions that wrote the files. Worth a look before committing to a
+  multi-GiB download.
 - **`activation_copy_rows` are included deliberately** (~45% of the payload). The per-batch
   manifests declare that table and the importer raises if it is missing, so a slimmed-down copy is
   not importable at all. It is also the faster of the two import paths.
@@ -138,51 +120,33 @@ Expect 26 sources per (set, model) pair — `gemmascope-2-transcoder-16k` for mo
 
 ---
 
-<a id="reproducing-the-benchmark"></a>
+<a id="c-dashboard-regeneration"></a>
 
-## Reproducing the benchmark
+## (c) Dashboard regeneration
 
-We have a non-destructive setup script prepares everything the benchmark suite needs — it locates or clones
-the four repos, builds the venv, checks the local Postgres, and offers to build any missing prompt
-datasets etc. It never modifies an existing checkout and doesn't need root. There are a lot of flexible options if you're interested but the defaults here should work
+With the environment from **(a)** activated, the benchmark suite runs in one command:
 
 ```bash
-mkdir -p /tmp/it_eval_repos && cd /tmp/it_eval_repos
-git clone https://github.com/speediedan/interpretune.git && cd interpretune
-
-# See the whole plan first, without running anything:
-# python scripts/setup_dashboard_benchmark_env.py --dry-run
-
-# Clone/build everything. With no arguments it clones the sibling repos beside this one and puts the
-# preserved-baseline worktrees in a dated temp dir (/tmp/it_baseline_trees_YYYYMMDD).
-python scripts/setup_dashboard_benchmark_env.py
-
-# To reuse checkouts you already have, point at them instead of cloning:
-# python scripts/setup_dashboard_benchmark_env.py --repos-root /tmp/it_eval_repos \
-#   --neuronpedia ~/repos/neuronpedia
-```
-
-The completion summary prints the exact `source ...` lines and both suite commands, ready to paste:
-
-```bash
-source /tmp/it_baseline_trees_YYYYMMDD/benchmark_env.sh && source <venv>/bin/activate
 python scripts/run_dashboard_benchmark_suite.py --mode threeway   # ~25 min
 python scripts/run_dashboard_benchmark_suite.py --mode full       # ~2 h, 17 legs
 ```
-
-Prerequisites the script checks itself: `git` and `uv` on PATH, `docker` if the local Neuronpedia DB
-needs bringing up, bash >= 4.3, and HuggingFace access to the **gated** `google/gemma-3-1b-it`.
 
 To repackage existing artifacts without re-running anything:
 `--from-existing <artifact_root> --package-root <dir>`.
 
 Full usage: `scripts/dashboard_benchmark_suite_usage.md` (in the repository).
 
+For a single end-to-end generation rather than the benchmark wave, see the
+[quickstart](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu) —
+one command against a committed config, about an hour on a single 24 GiB card. It generates into the
+same source set the monology corpus in **(b)** imports into, so the same
+[collision flags](neuronpedia_dashboard_pipeline.md#source-set-collisions) apply.
+
 ---
 
-<a id="example-notebooks"></a>
+<a id="d-example-notebooks"></a>
 
-## Example notebooks
+## (d) Example notebooks
 
 The quick concept-direction steering demo comes in two variants, so you can start wherever your setup is:
 
@@ -191,7 +155,7 @@ The quick concept-direction steering demo comes in two variants, so you can star
 | `ct_concept_steering_demo` | public gemma-2-2b + [neuronpedia.org](https://www.neuronpedia.org) | GPU + model weights only |
 | `ct_concept_steering_demo_local_np` | gemma-3-1b-it + your local Neuronpedia stack | the sections below |
 
-You can start with the public one if you want since it needs no local services and exercises the same analysis path but the local variant is the end-to-end demonstration that uses local dashboards/explanations (and optionally generates any missing explanations per-feature as needed in the notebook!) feeding feature selection and steering. You'll be guided below to run the quick local dashboard generation for `gemma-3-1b-it` ([quickstart in the dashboard pipeline guide](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu)) before running that local notebook though since it depends on non-public dashboards (shareable dashboards prioritized IT feature forthcoming).
+You can start with the public one if you want since it needs no local services and exercises the same analysis path but the local variant is the end-to-end demonstration that uses local dashboards/explanations (and optionally generates any missing explanations per-feature as needed in the notebook!) feeding feature selection and steering. The local variant needs `gemma-3-1b-it` dashboards in your database first — **[(b)](#b-pre-generated-dashboards) is the quickest way to get them**, with no GPU required.
 
 ### 1. Bring up the local Neuronpedia stack
 
@@ -213,17 +177,20 @@ The webapp serves on `http://localhost:3000`; Postgres on `127.0.0.1:5433`. Feat
 `http://localhost:3000/<modelId>/<layer>-<sourceSetId>/<featureIndex>`, e.g.
 `http://localhost:3000/gemma-3-1b-it/0-gemmascope-2-transcoder-262k/17`.
 
-### 2. Generate and import dashboards
-
-See the
-[quickstart](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu)
-in the dashboard pipeline guide for the end-to-end generation walkthrough — one command against a
-committed config, about an hour on a single 24 GiB card — and
-[importing existing bundles](neuronpedia_dashboard_pipeline.md#import-existing-export-bundles-into-the-local-db)
-for the backfill case.
+### 2. Get dashboards into the database
 
 The local notebook's defaults expect `gemma-3-1b-it` dashboards for the
-`gemmascope-2-transcoder-16k` source set; dashboard and runtime width must match.
+`gemmascope-2-transcoder-16k` source set; dashboard and runtime width must match. Either route
+produces exactly that set:
+
+- **[(b) download the monology corpus](#b-pre-generated-dashboards)** — no GPU, one command.
+- **[(c) generate it](#c-dashboard-regeneration)**, or the single-run
+  [quickstart](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu)
+  — about an hour on a single 24 GiB card. For backfilling an existing generation, see
+  [importing existing bundles](neuronpedia_dashboard_pipeline.md#import-existing-export-bundles-into-the-local-db).
+
+Note the notebook reads whichever rows occupy that set, so if you imported under a collision suffix
+(`…__<timestamp>`), point the notebook at that source set rather than the bare one.
 
 If you have a GPU with more VRAM than the reference 4090 (24 GiB), you can push the generation
 configuration further — larger `n_features_per_batch` / `n_prompts_in_forward_pass`, or more prompts.

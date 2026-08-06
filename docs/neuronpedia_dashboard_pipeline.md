@@ -1057,9 +1057,41 @@ python -m interpretune.utils.neuronpedia_dashboard_pipeline \
 
 Notes:
 
-1. `--import-only-local-db` is the complement to `--skip-local-db-import`; do not combine them.
+1. `--import-only-local-db` is the complement to `--skip-local-db-import`; do not combine them. It
+   implies wanting an import, so it works against generation-only configs without editing them.
 2. In this mode the pipeline skips generation and conversion entirely, finds an existing export bundle under `export_root/<model_name>/<layer>-<source_set>*`, and imports it directly.
 3. The mode does not rely on completed-layer log markers, so it is safe for backfilling local DB rows after a generation-only run.
+
+<a id="source-set-collisions"></a>
+
+### Source-set collisions: what happens when the target is already populated
+
+Importing over an occupied Neuronpedia source set is a **silent no-op**: the importer uses
+`ON CONFLICT DO NOTHING`, so it reports success and writes nothing. Downloading a published corpus
+and generating one locally are two ways to populate the *same* set, not two sets, so this is easy to
+hit — and it is the failure mode that looks exactly like success.
+
+Every path that imports (local generation, `--import-only-local-db`, and
+`scripts/fetch_dashboards_from_hub.py`) shares one policy, resolved **before** generation starts so a
+collision costs a query rather than hours of GPU time:
+
+| flag | effect |
+| --- | --- |
+| *(none)* | **Refuse**, reporting what already occupies the set. The default, because the alternatives either destroy data or change identity. |
+| `--autosuffix-on-exists` | Keep the existing set; import as `<set>__<UTC timestamp>`, e.g. `…-rte__20260806T005715Z`. Repeatable — each run gets its own stamp, and a stamp collision regenerates rather than failing. |
+| `--rename-suffix <name>` | Keep the existing set; import under a name you choose. Implies the rename policy. A collision on *that* name is an error, since you picked it. |
+| `--overwrite-existing` | Delete the resident rows for that set, then import. |
+
+`--overwrite-existing` refuses when explanations hang off the rows it would delete: `Activation` and
+`Explanation` both cascade from `Neuron`, and while activations can be regenerated from a corpus,
+explanations cannot. `--allow-explanation-loss` accepts that consequence explicitly.
+
+**Rename renames the INCOMING import, not the resident rows.** Renaming what is already stored would
+mean rewriting `Source.id` and every dependent key — and `Activation`'s primary key embeds the source
+id, so a 26-layer set is ~425k neurons and ~10–16M activation keys to rewrite in one transaction.
+Renaming the incoming corpus reaches the same end state (both resident, under distinct ids) while
+touching nothing already in the database. The run *directory* is unaffected either way, so an
+`--import-only` run still finds its corpus where it was unpacked.
 
 ### Historical conversion CUDA debug finding
 
