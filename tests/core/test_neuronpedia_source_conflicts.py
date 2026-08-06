@@ -117,7 +117,22 @@ class TestDescribe:
 
 class TestSuffix:
     def test_double_underscore_separator(self) -> None:
-        assert suffix_source_set_id("gemmascope-2-transcoder-16k", "hub") == "gemmascope-2-transcoder-16k__hub"
+        assert (
+            suffix_source_set_id("gemmascope-2-transcoder-16k", "myvariant") == "gemmascope-2-transcoder-16k__myvariant"
+        )
+
+    def test_there_is_no_default_rename_suffix(self) -> None:
+        """Regression: a fixed ``DEFAULT_RENAME_SUFFIX = "hub"`` used to supply this.
+
+        It produced ids like ``…-rte__hub``, which say nothing about when an import happened or
+        which of two variants is newer, and collided with themselves on the second run. The rename
+        policy now has no default at all: the caller either names a suffix or gets a timestamp.
+        """
+        import interpretune.utils.neuronpedia_source_conflicts as conflicts
+
+        assert not hasattr(conflicts, "DEFAULT_RENAME_SUFFIX")
+        with pytest.raises(TypeError):
+            suffix_source_set_id("s")  # type: ignore[call-arg]
 
     @pytest.mark.parametrize("bad", ["", "has space", "/slash", "-leading-dash"])
     def test_unusable_suffixes_fail_loudly(self, bad: str) -> None:
@@ -251,14 +266,14 @@ class TestPipelineIntegration:
             model_name="gemma-3-1b-it",
             neuronpedia_source_set_id="s",
             on_existing_source_set="rename",
-            source_set_rename_suffix="hub",
+            source_set_rename_suffix="myvariant",
             allow_explanation_loss=False,
             neuronpedia_import_source_set_id=None,
         )
         with _patched_connect([26, 425984, 0, 0, 0, 0], []):
             pipeline._apply_source_set_conflict_policy(config)
 
-        assert config.neuronpedia_import_source_set_id == "s__hub"
+        assert config.neuronpedia_import_source_set_id == "s__myvariant"
         # run_directory is derived from neuronpedia_source_set_id, which must be untouched: renaming
         # it would relocate the corpus out from under an --import-only run.
         assert config.neuronpedia_source_set_id == "s"
@@ -272,7 +287,7 @@ class TestPipelineIntegration:
             model_name="m",
             neuronpedia_source_set_id="s",
             on_existing_source_set="error",
-            source_set_rename_suffix="hub",
+            source_set_rename_suffix="myvariant",
             allow_explanation_loss=False,
             neuronpedia_import_source_set_id=None,
         )
@@ -295,7 +310,10 @@ class TestPipelineIntegration:
         pipeline.write_source_ids_sidecar(run_root, {0: "0-s"}, source_set_id="s")
 
         assert pipeline._resolve_source_id(layer_dir, 0, "s") == "0-s"
-        assert pipeline._resolve_source_id(layer_dir, 0, "s__hub", ignore_declared_source_ids=True) == "0-s__hub"
+        assert (
+            pipeline._resolve_source_id(layer_dir, 0, "s__myvariant", ignore_declared_source_ids=True)
+            == "0-s__myvariant"
+        )
 
 
 class TestAutosuffixGeneration:

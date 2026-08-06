@@ -9,7 +9,7 @@
   "notebooks/dev/circuit_tracer_examples/ct_analysis_backend_demo.ipynb": "c3f56313f4f3aee17adb42053a7b1855ed3b0b0a26e4c81bc6877e74d9992638",
   "notebooks/dev/circuit_tracer_examples/ct_analysis_backend_demo_gemma2_ref.ipynb": "39989b9b096e4d71e41c6f5c0bb7ce699bbb730975a3cc20e32602b79d7424c7",
   "notebooks/dev/circuit_tracer_examples/ct_concept_steering_demo.ipynb": "7037b741bcf9386ec9011d6019d5cf4fa37c7866fb12831b4d2e61b7904ce208",
-  "notebooks/dev/circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb": "92fa198509cefa86087122aa984f64d2792325d038b49831bb3d323aa1aece4a",
+  "notebooks/dev/circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb": "8ce9e9b4204c685caf5554acf4aeb4f799633c1edb9c055197c19e700dcf1468",
   "notebooks/dev/circuit_tracer_examples/ct_cross_backend_demo.ipynb": "73e71eb9a991f98d7704c00064998680d6ac2f41e8a1551680ec1cc355b4038a",
   "notebooks/dev/circuit_tracer_examples/ct_cross_backend_demo_gemma2_ref.ipynb": "66f43497da48180357c2d87cc5e8fbd2f34137bd9cb460a6c4d9316599693f14",
   "notebooks/dev/circuit_tracer_examples/gradient_flow_analysis.ipynb": "21818d3fa9765b29b84d38d977a744c185d89fced8913893147d61600c124b45",

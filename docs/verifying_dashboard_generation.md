@@ -164,8 +164,6 @@ layers. The monology dataset is a typical dense, generic dataset used for many e
 > and tells you what is there. See
 > [source-set collisions](neuronpedia_dashboard_pipeline.md#source-set-collisions) for the other options.
 
-### One command
-
 ```bash
 python scripts/fetch_dashboards_from_hub.py \
   --bucket speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards \
