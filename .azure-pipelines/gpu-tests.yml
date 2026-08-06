@@ -1,3 +1,16 @@
+# PATH FILTERS AND PULL REQUESTS -- read before assuming a docs push will be skipped.
+#
+# For a `pr:` trigger these filters are evaluated against the PULL REQUEST's cumulative diff, not
+# against the delta of the push that fired it. A pipeline validates the merge commit, so once a PR
+# touches anything under `src/**` every subsequent push re-triggers it -- including a docs-only one.
+# Verified 2026-08-05: a commit touching only `docs/**` queued build 709 on PR #240.
+#
+# `[skip ci]` does NOT rescue this either. Microsoft documents that PR-triggered pipelines run on the
+# merge commit "regardless if there exist pushed commits whose messages or descriptions contain
+# [skip ci]"; the skip tokens only suppress CI (branch) triggers.
+#
+# What the filters DO buy is skipping a PR whose whole diff is docs, so the exclusions below are
+# still worth stating explicitly rather than relying on the include list not matching.
 trigger:
   branches:
     include:
@@ -16,6 +29,8 @@ trigger:
       - .azure-pipelines/**
     exclude:
       - scripts/**
+      - docs/**
+      - "*.md"
 
 pr:
   branches:
@@ -35,6 +50,10 @@ pr:
       - .azure-pipelines/**
     exclude:
       - scripts/**
+      # Skips a PR whose ENTIRE diff is documentation. It does not skip a docs push to a PR that also
+      # touches src -- see the note above the `trigger:` block for why that is not achievable here.
+      - docs/**
+      - "*.md"
   drafts: false  # Only run for PRs that are "ready for review"
 
 parameters:

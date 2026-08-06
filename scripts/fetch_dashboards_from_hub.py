@@ -33,13 +33,15 @@ corpus rather than the resident one.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import os
 import subprocess
 import sys
 from pathlib import Path
 
+from interpretune.utils.neuronpedia_hub_fetch import (
+    build_import_command,
+    plan_fetch,
+)
 from interpretune.utils.neuronpedia_dashboard_hub import download_dashboard_run
 from interpretune.utils.neuronpedia_source_conflicts import (
     ConflictPolicy,
@@ -49,112 +51,7 @@ from interpretune.utils.neuronpedia_source_conflicts import (
     suffix_source_set_id,
 )
 
-CORPUS_MANIFEST = "dashboards.json"
-CONFIG_DIR = Path(__file__).resolve().parent.parent / "src/it_examples/config/neuronpedia_dashboard"
 log = logging.getLogger("fetch_dashboards")
-
-
-def _default_dest() -> Path:
-    """Where corpora land when the caller does not say.
-
-    Mirrors the pipeline's own artifact-root resolution so a downloaded corpus sits beside locally generated ones
-    instead of in a second place nobody remembers.
-    """
-    if root := os.environ.get("IT_NP_CACHE"):
-        return Path(root) / "hub_downloads"
-    hf_home = os.environ.get("HF_HOME") or str(Path.home() / ".cache/huggingface")
-    return Path(hf_home) / "interpretune/neuronpedia/hub_downloads"
-
-
-def _read_remote_manifest(bucket: str, token: str | None) -> dict:
-    """Fetch just ``dashboards.json`` (~3 KB) so the plan is known before any GiB moves."""
-    import tempfile
-
-    from huggingface_hub import HfApi
-
-    with tempfile.TemporaryDirectory() as tmp:
-        target = Path(tmp) / CORPUS_MANIFEST
-        HfApi(token=token).download_bucket_files(bucket, [(CORPUS_MANIFEST, target)], token=token)
-        return json.loads(target.read_text(encoding="utf-8"))
-
-
-def _resolve_config(manifest: dict, explicit: Path | None) -> Path:
-    """Pick the committed config whose model + source set match the corpus.
-
-    Matching on what the corpus says about itself, rather than on the bucket name, is deliberate: bucket names are free
-    text and a renamed bucket would silently select the wrong import settings.
-    """
-    if explicit:
-        if not explicit.is_file():
-            raise SystemExit(f"--config {explicit} does not exist")
-        return explicit
-
-    # Resolve through the pipeline's own loader, not yaml.safe_load: these configs use EXTENDS, and
-    # the inherited keys are exactly the ones being matched on (the RTE config declares its source set
-    # but inherits model_name from its base, so a raw read matches nothing).
-    from interpretune.utils.neuronpedia_dashboard_pipeline import load_dashboard_pipeline_config_payload
-
-    want_model = (manifest.get("model") or {}).get("name")
-    want_set = (manifest.get("source_set") or {}).get("id")
-    want_prompts = (manifest.get("prompt_corpus") or {}).get("n_prompts")
-
-    resolved: dict[Path, dict] = {}
-    for candidate in sorted(CONFIG_DIR.glob("*.yaml")):
-        try:
-            payload = load_dashboard_pipeline_config_payload(candidate) or {}
-        except Exception as exc:  # a malformed sibling must not block a valid match
-            log.debug("skipping %s: %s", candidate, exc)
-            continue
-        resolved[candidate] = payload.get("pipeline") or {}
-
-    matches = [
-        c
-        for c, p in resolved.items()
-        if p.get("model_name") == want_model and p.get("neuronpedia_source_set_id") == want_set
-    ]
-
-    if not matches:
-        raise SystemExit(
-            f"no committed config matches model={want_model!r} source_set={want_set!r}.\n"
-            f"Looked in {CONFIG_DIR}. Pass --config explicitly."
-        )
-    if len(matches) > 1:
-        # Several configs can share a source set (different prompt counts); the corpus knows which.
-        narrowed = [c for c in matches if resolved[c].get("n_prompts_total") == want_prompts]
-        matches = narrowed or matches
-    if len(matches) > 1:
-        listed = "\n  ".join(str(m) for m in matches)
-        raise SystemExit(f"several configs match this corpus; pass --config to choose:\n  {listed}")
-    return matches[0]
-
-
-def _import_command(*, config: Path, run_root: Path, args: argparse.Namespace) -> list[str]:
-    """Build the import invocation, passing the conflict policy THROUGH to the pipeline.
-
-    The pipeline owns conflict resolution (it needs the same behaviour for locally generated corpora), so this does not
-    decide anything the pipeline would decide differently. The pre-flight below is only an early, read-only warning so a
-    refusal does not arrive after a multi-GiB download.
-    """
-    command = [
-        sys.executable,
-        "-m",
-        "interpretune.utils.neuronpedia_dashboard_pipeline",
-        f"--config={config}",
-        "--import-only-local-db",
-        f"--run-root={run_root}",
-    ]
-    if args.rename_suffix:
-        # An explicit suffix implies the rename policy downstream, so it is passed on its own.
-        command.append(f"--rename-suffix={args.rename_suffix}")
-    elif args.autosuffix_on_exists:
-        command.append("--autosuffix-on-exists")
-    elif args.overwrite_existing:
-        command.append("--overwrite-existing")
-    if args.allow_explanation_loss:
-        command.append("--allow-explanation-loss")
-    if args.local_db_url:
-        command.append(f"--local-db-url={args.local_db_url}")
-    return command
 
 
 def _summarize(db_url: str, *, model_id: str, source_set_id: str) -> str:
@@ -217,19 +114,12 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    manifest = _read_remote_manifest(args.bucket, args.token)
-    model_id = (manifest.get("model") or {}).get("name") or "?"
-    source_set_id = (manifest.get("source_set") or {}).get("id") or "?"
-    corpus = manifest.get("prompt_corpus") or {}
-    layers = (manifest.get("layers") or {}).get("generated") or []
-
-    log.info("corpus       : %s / %s", model_id, source_set_id)
-    log.info("prompts      : %s x %s tokens", corpus.get("n_prompts", "?"), corpus.get("n_tokens_in_prompt", "?"))
-    log.info("layers       : %s", len(layers))
-    log.info("page index   : %s", (manifest.get("artifacts") or {}).get("page_index"))
-
-    config = _resolve_config(manifest, args.config)
-    log.info("config       : %s", config)
+    plan = plan_fetch(args.bucket, dest=args.dest, config=args.config, token=args.token)
+    log.info("corpus       : %s / %s", plan.model_id, plan.source_set_id)
+    log.info("prompts      : %s x %s tokens", plan.n_prompts, plan.n_tokens)
+    log.info("layers       : %s", plan.layers)
+    log.info("page index   : %s", plan.page_index)
+    log.info("config       : %s", plan.config)
 
     policy = ConflictPolicy.ERROR
     # An explicit --rename-suffix selects the rename policy on its own, matching the pipeline.
@@ -240,12 +130,12 @@ def main(argv: list[str] | None = None) -> int:
         policy = ConflictPolicy.OVERWRITE
 
     db_url = args.local_db_url
-    effective_set_id = source_set_id
+    effective_set_id = plan.source_set_id
     if db_url:
         # PRE-FLIGHT ONLY, and read-only: refuse before spending a multi-GiB download on an import
         # that would be rejected. The pipeline repeats this check authoritatively at import time.
         try:
-            occupancy = describe_source_set(db_url, model_id=model_id, source_set_id=source_set_id)
+            occupancy = describe_source_set(db_url, model_id=plan.model_id, source_set_id=plan.source_set_id)
         except Exception as exc:  # an unreachable DB is the import's problem to report, not this one
             log.warning("could not pre-check the target source set (%s); continuing", exc)
             occupancy = None
@@ -254,10 +144,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"\nREFUSING TO IMPORT:\n{render_conflict_report(occupancy)}", file=sys.stderr)
                 return 3
             if policy is ConflictPolicy.RENAME:
-                effective_set_id = suffix_source_set_id(source_set_id, args.rename_suffix or generate_autosuffix())
+                effective_set_id = suffix_source_set_id(plan.source_set_id, args.rename_suffix or generate_autosuffix())
                 log.info(
                     "conflict     : existing %r kept; importing as %r%s",
-                    source_set_id,
+                    plan.source_set_id,
                     effective_set_id,
                     "" if args.rename_suffix else " (the pipeline regenerates its own stamp)",
                 )
@@ -266,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
                 # point of a pre-flight, since otherwise the refusal lands after a multi-GiB download.
                 print(
                     f"\nREFUSING TO IMPORT:\n--overwrite-existing would delete "
-                    f"{occupancy.neuron_count} neurons from {source_set_id!r}, cascading away "
+                    f"{occupancy.neuron_count} neurons from {plan.source_set_id!r}, cascading away "
                     f"{occupancy.explanation_count} explanations. Activations can be regenerated "
                     "from a corpus; explanations cannot. Pass --allow-explanation-loss to proceed, "
                     "or --autosuffix-on-exists to keep both.",
@@ -274,18 +164,18 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 3
             else:
-                log.info("conflict     : %r will be REPLACED (%s neurons)", source_set_id, occupancy.neuron_count)
+                log.info("conflict     : %r will be REPLACED (%s neurons)", plan.source_set_id, occupancy.neuron_count)
     elif policy is ConflictPolicy.RENAME:
-        effective_set_id = suffix_source_set_id(source_set_id, args.rename_suffix or generate_autosuffix())
+        effective_set_id = suffix_source_set_id(plan.source_set_id, args.rename_suffix or generate_autosuffix())
 
-    # The corpus lands under its OWN identity regardless of policy: a rename changes where rows go in
-    # the database, not what the corpus is, and making the download path depend on database contents
-    # would put the same corpus in different directories on different machines.
-    dest_parent = (args.dest or _default_dest()).expanduser()
-    run_dir = dest_parent / f"{model_id}_{source_set_id}"
-    log.info("destination  : %s", run_dir)
-
-    command = _import_command(config=config, run_root=dest_parent, args=args)
+    log.info("destination  : %s", plan.run_dir)
+    command = build_import_command(
+        plan,
+        db_url=db_url,
+        policy=policy,
+        rename_suffix=args.rename_suffix,
+        allow_explanation_loss=args.allow_explanation_loss,
+    )
 
     if args.dry_run:
         log.info("\nDRY RUN -- nothing downloaded, nothing imported.")
@@ -293,10 +183,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not args.skip_download:
-        dest_parent.mkdir(parents=True, exist_ok=True)
+        plan.run_dir.parent.mkdir(parents=True, exist_ok=True)
         log.info("\ndownloading %s ...", args.bucket)
-        download_dashboard_run(args.bucket, run_dir, store="bucket", token=args.token)
-        log.info("downloaded to %s", run_dir)
+        download_dashboard_run(args.bucket, plan.run_dir, store="bucket", token=args.token)
+        log.info("downloaded to %s", plan.run_dir)
 
     if args.download_only:
         log.info("\n--download-only: skipping import.")
@@ -311,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     # Verification is part of the command, not a follow-up the caller has to remember: an import that
     # wrote nothing and an import that wrote everything both exit 0 under ON CONFLICT DO NOTHING.
     if db_url:
-        log.info("\n%s", _summarize(db_url, model_id=model_id, source_set_id=effective_set_id))
+        log.info("\n%s", _summarize(db_url, model_id=plan.model_id, source_set_id=effective_set_id))
     else:
         log.info("\n(no --local-db-url given; skipping the post-import summary)")
     return 0

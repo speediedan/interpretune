@@ -381,7 +381,14 @@ CT_CONCEPT_STEERING_PARAMS = [
 # the notebook defaults it off, and asserting it would add an explanation-CLI + API-key dependency.
 CT_CONCEPT_STEERING_LOCAL_PARAMS = [
     pytest.param(
-        {"LOCAL_WEBAPP_URL": LOCAL_NP_WEBAPP_URL},
+        {
+            "LOCAL_WEBAPP_URL": LOCAL_NP_WEBAPP_URL,
+            # The notebook downloads and imports the published corpus when the dashboards are absent
+            # (~40-60 min, multi-GiB). That is right for a human running it and wrong for a test: it
+            # would exceed the papermill timeout and pull gigabytes onto a CI host. Off here means
+            # the notebook fails fast, naming the fetch command, when the DB is not already populated.
+            "AUTO_FETCH_DASHBOARDS": False,
+        },
         id="ct_concept_steering_local_gemma3_16k",
     ),
 ]

@@ -177,20 +177,28 @@ The webapp serves on `http://localhost:3000`; Postgres on `127.0.0.1:5433`. Feat
 `http://localhost:3000/<modelId>/<layer>-<sourceSetId>/<featureIndex>`, e.g.
 `http://localhost:3000/gemma-3-1b-it/0-gemmascope-2-transcoder-262k/17`.
 
-### 2. Get dashboards into the database
+### 2. Dashboards — nothing to do
 
-The local notebook's defaults expect `gemma-3-1b-it` dashboards for the
-`gemmascope-2-transcoder-16k` source set; dashboard and runtime width must match. Either route
-produces exactly that set:
+**The notebook fetches them itself.** Its section 0 checks whether `gemma-3-1b-it` /
+`gemmascope-2-transcoder-16k` is populated and, if not, downloads the published corpus and imports it
+(~40–60 min, no GPU, no HuggingFace account). When the dashboards are already there it costs one
+count query. The probe requires a *complete* 26-layer set, so a half-finished import does not read as
+present.
 
-- **[(b) download the monology corpus](#b-pre-generated-dashboards)** — no GPU, one command.
+Set `AUTO_FETCH_DASHBOARDS = False` in the parameters cell to make that an assertion instead — it
+then fails with the fetch command rather than downloading unattended.
+
+If you would rather populate the set yourself first, either route produces exactly what the notebook
+wants (dashboard and runtime width must match):
+
+- **[(b) download the monology corpus](#b-pre-generated-dashboards)** — the same thing section 0 does.
 - **[(c) generate it](#c-dashboard-regeneration)**, or the single-run
   [quickstart](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu)
   — about an hour on a single 24 GiB card. For backfilling an existing generation, see
   [importing existing bundles](neuronpedia_dashboard_pipeline.md#import-existing-export-bundles-into-the-local-db).
 
 Note the notebook reads whichever rows occupy that set, so if you imported under a collision suffix
-(`…__<timestamp>`), point the notebook at that source set rather than the bare one.
+(`…__<timestamp>`), point `NEURONPEDIA_SOURCE_SET` at that set rather than the bare one.
 
 If you have a GPU with more VRAM than the reference 4090 (24 GiB), you can push the generation
 configuration further — larger `n_features_per_batch` / `n_prompts_in_forward_pass`, or more prompts.

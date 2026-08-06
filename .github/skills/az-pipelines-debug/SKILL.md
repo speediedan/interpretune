@@ -66,6 +66,20 @@ released anyway.
 - The pipeline is `.azure-pipelines/gpu-tests.yml`
 - The GPU runner uses the self-hosted `Default` pool, but a queued build may still show `queue.name = Azure Pipelines` at the build level
 - PR-triggered GPU runs require explicit Azure approval before the job is dispatched to the self-hosted runner
+- **Path filters do not stop a docs-only PUSH from queueing a build.** For a `pr:` trigger the filters
+  are evaluated against the pull request's **cumulative diff**, not the delta of the push that fired
+  it — a pipeline validates the merge commit. So once a PR touches `src/**`, every later push
+  re-triggers it, including one that only edits `docs/`. Verified 2026-08-05: a docs-only commit
+  queued build 709 on PR #240 even though `docs/**` is absent from the include list.
+  - `[skip ci]` does **not** rescue this. Microsoft documents that PR pipelines run on the merge
+    commit "regardless if there exist pushed commits whose messages or descriptions contain
+    `[skip ci]`" — the skip tokens (`[skip ci]`, `[azurepipelines skip]`, `***NO_CI***`, …) suppress
+    only CI/branch triggers.
+  - What path filters DO buy is skipping a PR whose *entire* diff is documentation, so keep
+    `docs/**` and `*.md` in the exclude lists.
+  - Practical consequence when managing the queue: batch documentation pushes with the code they
+    describe, or expect to dispose of a gate per docs push. Approving a gate and then pushing again
+    is worse — Azure cancels the superseded run, so the approval buys nothing.
 - `AZURE_DEVOPS_EXT_PAT` is the preferred non-interactive authentication path for `az devops` and Azure DevOps REST calls
 - Runner constraints (**host-specific — see the note below; values here are illustrative**):
   - RAM on the order of tens of GiB, with **swap much smaller than RAM** (the current host is an example:
