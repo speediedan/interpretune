@@ -31,6 +31,9 @@ from urllib.parse import urlparse
 
 import certifi
 import yaml  # type: ignore[import-untyped]
+from sae_dashboard.neuronpedia.neuronpedia_runner_config import (
+    DEFAULT_PARQUET_ROW_GROUP_SIZE as SD_DEFAULT_PARQUET_ROW_GROUP_SIZE,
+)
 from sae_dashboard.neuronpedia.prompt_bucketing import derive_prompt_bucket_ceilings
 
 from interpretune.utils.neuronpedia_db_utils import (
@@ -235,6 +238,13 @@ class NeuronpediaDashboardPipelineConfig:
     # files, so a corpus generated without it can only be fixed by regenerating. Without it a reader
     # streaming one row group must fetch the whole group rather than range-reading pages.
     runner_columnar_write_page_index: bool = True
+    # Rows per Parquet row group. Defaults to SAEDashboard's DEFAULT_PARQUET_ROW_GROUP_SIZE and is
+    # passed EXPLICITLY rather than left to the runner's argparse default, so the value that shaped a
+    # corpus is recorded in the manifest instead of being whatever SD happened to default to.
+    # Matters more than the page index: readers prune per ROW GROUP, so a single-row-group file
+    # costs a reader the whole file to fetch one feature. Fixed at write time, like the page index.
+    # None keeps the pyarrow default (one row group), which is what the pre-2026-08-06 corpora have.
+    runner_columnar_parquet_row_group_size: int | None = SD_DEFAULT_PARQUET_ROW_GROUP_SIZE
     runner_emit_activation_copy_rows: bool | None = None
     runner_overlap_batch_packaging: bool = False
     # Opt-in SAEDashboard selection/logits hygiene (columnar backend only; defaults off to
@@ -1710,6 +1720,8 @@ def _layer_runner_command(
             if config.runner_columnar_write_page_index
             else "--no-columnar-write-page-index"
         )
+        if config.runner_columnar_parquet_row_group_size is not None:
+            command.append(f"--columnar-parquet-row-group-size={int(config.runner_columnar_parquet_row_group_size)}")
         command.append("--columnar-emit-activation-rows")
         if config.runner_overlap_batch_packaging:
             command.append("--overlap-batch-packaging")
@@ -2411,6 +2423,7 @@ def build_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> dict
         "artifacts": {
             "format": _resolve_runner_dashboard_output_format(config),
             "page_index": bool(config.runner_columnar_write_page_index),
+            "parquet_row_group_size": config.runner_columnar_parquet_row_group_size,
             "includes_copy_rows": _resolve_runner_emit_activation_copy_rows(config),
             "n_features_per_batch": config.n_features_per_batch,
         },
@@ -3100,6 +3113,17 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         "--neuronpedia-source-id-template",
         help="Explicit source-id template, e.g. '{layer}-{source_set_id}'. Overrides whatever the "
         "corpus declares; use to re-key an import deliberately.",
+    )
+    parser.add_argument(
+        "--runner-columnar-parquet-row-group-size",
+        type=int,
+        # No `default=`: argument_default=argparse.SUPPRESS keeps an unpassed flag out of the
+        # namespace so the dataclass default wins. Same reasoning as the page-index flag below --
+        # and the same consequence if ignored, since row-group boundaries are fixed at write time.
+        help="Rows per Parquet row group (default: SAEDashboard's, currently "
+        f"{SD_DEFAULT_PARQUET_ROW_GROUP_SIZE}). Readers prune per ROW GROUP, so one row group per "
+        "file makes streaming a single feature cost the whole file. Cannot be changed without "
+        "regenerating the corpus.",
     )
     parser.add_argument(
         "--runner-columnar-write-page-index",

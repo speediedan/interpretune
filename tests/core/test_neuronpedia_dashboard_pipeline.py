@@ -18,6 +18,10 @@ import torch
 import yaml
 from datasets import Dataset
 
+from sae_dashboard.neuronpedia.neuronpedia_runner_config import (
+    DEFAULT_PARQUET_ROW_GROUP_SIZE as SD_DEFAULT_PARQUET_ROW_GROUP_SIZE,
+)
+
 import interpretune.utils.neuronpedia_dashboard_pipeline as dashboard_pipeline
 from interpretune.utils.import_utils import _NEURONPEDIA_UTILS_AVAILABLE
 from interpretune.utils.neuronpedia_dashboard_pipeline import (
@@ -4190,3 +4194,113 @@ class TestSourceIdResolution:
         (run / "layer_0").mkdir(parents=True)
         dashboard_pipeline.write_source_ids_sidecar(run, {0: f"0-{self.SET}__original"}, source_set_id=self.SET)
         assert dashboard_pipeline.read_source_ids_sidecar(run)["0"] == f"0-{self.SET}__original"
+
+
+def test_layer_runner_command_forwards_parquet_row_group_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Row group size must default on and reach the command line.
+
+    Passed EXPLICITLY rather than left to SAEDashboard's argparse default, so the value that shaped a
+    corpus is recorded here and in the manifest instead of being whatever SD happened to default to.
+
+    This matters more than the page index: readers prune per ROW GROUP, so a single-row-group file
+    costs a reader the whole file to fetch one feature and a page index does not change that. Like
+    the page index, it is fixed at write time -- a corpus written without it can only be repaired by
+    regenerating.
+    """
+    base_kwargs = dict(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-16k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-16k",
+        neuronpedia_source_set_description="Transcoder - 16k",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+        hook_point="hook_mlp_in",
+        prompts_huggingface_dataset_path="monology/pile-uncopyrighted",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+    )
+
+    default_command = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(**base_kwargs, runner_dashboard_output_format="columnar"),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert f"--columnar-parquet-row-group-size={SD_DEFAULT_PARQUET_ROW_GROUP_SIZE}" in default_command
+
+    overridden = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(
+            **base_kwargs,
+            runner_dashboard_output_format="columnar",
+            runner_columnar_parquet_row_group_size=1024,
+        ),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert "--columnar-parquet-row-group-size=1024" in overridden
+
+    # None means "leave the writer alone", i.e. the pre-2026-08-06 single-row-group behaviour.
+    opted_out = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(
+            **base_kwargs,
+            runner_dashboard_output_format="columnar",
+            runner_columnar_parquet_row_group_size=None,
+        ),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert not any("row-group-size" in arg for arg in opted_out)
+
+    # legacy_json writes no parquet, so the flag would be meaningless there.
+    legacy_command = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(**base_kwargs, runner_dashboard_output_format="legacy_json"),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert not any("row-group-size" in arg for arg in legacy_command)
+
+
+def test_dashboard_manifest_records_the_row_group_size(tmp_path: Path) -> None:
+    """A published corpus has to say how it was laid out.
+
+    A consumer deciding whether streaming is viable needs this without downloading anything, and it is the only way to
+    tell a pre-2026-08-06 corpus (one row group) from a current one.
+    """
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-16k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-16k",
+        neuronpedia_source_set_description="Transcoder - 16k",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+        hook_point="hook_mlp_in",
+        prompts_huggingface_dataset_path="monology/pile-uncopyrighted",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+        runner_dashboard_output_format="columnar",
+    )
+    manifest = dashboard_pipeline.build_dashboard_manifest(config)
+    assert manifest["artifacts"]["parquet_row_group_size"] == SD_DEFAULT_PARQUET_ROW_GROUP_SIZE
