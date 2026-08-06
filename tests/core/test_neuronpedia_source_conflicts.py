@@ -7,18 +7,20 @@ behaviour worth pinning is which SQL scope is used and what is done with the cou
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from interpretune.utils.neuronpedia_source_conflicts import (
-    DEFAULT_RENAME_SUFFIX,
+    AUTOSUFFIX_MAX_ATTEMPTS,
     ConflictPolicy,
     ExplanationLossRefused,
     SourceSetConflictError,
     SourceSetOccupancy,
     describe_source_set,
+    generate_autosuffix,
     render_conflict_report,
     resolve_source_set_conflict,
     suffix_source_set_id,
@@ -136,23 +138,52 @@ class TestResolve:
                 resolve_source_set_conflict(DB, model_id="m", source_set_id="s", policy=ConflictPolicy.ERROR)
         message = str(excinfo.value)
         assert "SILENT NO-OP" in message
-        assert "--rename-existing" in message and "--overwrite-existing" in message
+        assert "--autosuffix-on-exists" in message and "--overwrite-existing" in message
 
-    def test_rename_leaves_the_resident_set_alone(self) -> None:
+    def test_autosuffix_leaves_the_resident_set_alone(self) -> None:
         statements: list = []
         # first describe: occupied; second describe (rename target): empty
         with _patched_connect([26, 425984, 0, 0, 0, 0], statements):
             resolution = resolve_source_set_conflict(DB, model_id="m", source_set_id="s", policy=ConflictPolicy.RENAME)
 
-        assert resolution.effective_source_set_id == f"s__{DEFAULT_RENAME_SUFFIX}"
         assert resolution.renamed
+        assert resolution.effective_source_set_id.startswith("s__")
+        # A UTC timestamp, e.g. s__20260805T174530Z -- readable and sortable, not epoch seconds.
+        stamp = resolution.effective_source_set_id.removeprefix("s__")
+        assert re.fullmatch(r"\d{8}T\d{6}Z", stamp), stamp
         assert not any(sql.startswith("DELETE") for sql, _ in statements), "rename must not delete anything"
 
-    def test_rename_refuses_when_the_target_is_also_occupied(self) -> None:
-        """Suffixing again would make the database's contents depend on how often a command was run."""
-        with _patched_connect([26, 425984, 0, 26, 425984, 0], []):
-            with pytest.raises(SourceSetConflictError, match="is ALSO populated"):
+    def test_autosuffix_regenerates_rather_than_refusing_on_collision(self) -> None:
+        """A generated name the caller never chose is not worth failing a run over.
+
+        First stamp collides; the retry adds microseconds and lands.
+        """
+        with _patched_connect([26, 425984, 0, 26, 425984, 0, 0, 0, 0], []):
+            resolution = resolve_source_set_conflict(DB, model_id="m", source_set_id="s", policy=ConflictPolicy.RENAME)
+
+        stamp = resolution.effective_source_set_id.removeprefix("s__")
+        assert re.fullmatch(r"\d{8}T\d{6}\d+Z", stamp), stamp
+
+    def test_autosuffix_gives_up_after_a_bounded_number_of_attempts(self) -> None:
+        """Bounded so a stuck clock cannot spin forever; reaching it means something is wrong."""
+        with _patched_connect([26, 425984, 0] + [26, 425984, 0] * AUTOSUFFIX_MAX_ATTEMPTS, []):
+            with pytest.raises(SourceSetConflictError, match="should be impossible"):
                 resolve_source_set_conflict(DB, model_id="m", source_set_id="s", policy=ConflictPolicy.RENAME)
+
+    def test_explicit_suffix_is_used_verbatim(self) -> None:
+        with _patched_connect([26, 425984, 0, 0, 0, 0], []):
+            resolution = resolve_source_set_conflict(
+                DB, model_id="m", source_set_id="s", policy=ConflictPolicy.RENAME, rename_suffix="mine"
+            )
+        assert resolution.effective_source_set_id == "s__mine"
+
+    def test_explicit_suffix_collision_is_an_error_not_a_regeneration(self) -> None:
+        """The caller named this set, so routing around it would ignore what they asked for."""
+        with _patched_connect([26, 425984, 0, 26, 425984, 0], []):
+            with pytest.raises(SourceSetConflictError, match="named explicitly"):
+                resolve_source_set_conflict(
+                    DB, model_id="m", source_set_id="s", policy=ConflictPolicy.RENAME, rename_suffix="mine"
+                )
 
     def test_overwrite_refuses_when_explanations_would_cascade(self) -> None:
         """Activations regenerate from a corpus; explanations do not.
@@ -265,3 +296,19 @@ class TestPipelineIntegration:
 
         assert pipeline._resolve_source_id(layer_dir, 0, "s") == "0-s"
         assert pipeline._resolve_source_id(layer_dir, 0, "s__hub", ignore_declared_source_ids=True) == "0-s__hub"
+
+
+class TestAutosuffixGeneration:
+    def test_shape_is_readable_and_sortable(self) -> None:
+        """Chosen over epoch seconds because these ids appear in URLs and in every DB row."""
+        stamp = generate_autosuffix()
+        assert re.fullmatch(r"\d{8}T\d{6}Z", stamp), stamp
+        assert generate_autosuffix() >= stamp  # lexicographic order == chronological order
+
+    def test_retry_adds_finer_granularity(self) -> None:
+        assert len(generate_autosuffix(1)) > len(generate_autosuffix(0))
+
+    def test_generated_suffixes_are_valid_source_set_components(self) -> None:
+        """The generator must not be able to produce an id the validator would reject."""
+        for attempt in (0, 1):
+            assert suffix_source_set_id("s", generate_autosuffix(attempt)).startswith("s__")

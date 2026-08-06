@@ -20,6 +20,9 @@ THE THREE POLICIES
 
 ``rename``
     Leave the existing set untouched and import under a suffixed source-set id, so both coexist.
+    The suffix is either **explicit** (the caller named it, and a collision is then a real error worth
+    reporting) or **auto-generated** from a UTC timestamp, in which case a collision is resolved by
+    generating a finer-grained one rather than refusing.
 
 WHAT ``rename`` RENAMES, AND WHY IT IS THE INCOMING CORPUS
 ----------------------------------------------------------
@@ -45,8 +48,9 @@ __all__ = [
     "ConflictResolution",
     "ExplanationLossRefused",
     "SourceSetConflictError",
-    "DEFAULT_RENAME_SUFFIX",
+    "AUTOSUFFIX_MAX_ATTEMPTS",
     "describe_source_set",
+    "generate_autosuffix",
     "resolve_source_set_conflict",
     "render_conflict_report",
     "suffix_source_set_id",
@@ -54,9 +58,10 @@ __all__ = [
 
 log = logging.getLogger(__name__)
 
-#: Appended to a source-set id under the ``rename`` policy. Double underscore matches the separator
-#: the pipeline already uses for run-name variants, so a renamed set sorts beside its sibling.
-DEFAULT_RENAME_SUFFIX = "hub"
+#: How many times to generate a fresh auto-suffix before giving up. A second-resolution stamp
+#: collides only when the same set is imported twice within one second; the microsecond retry after
+#: that is already beyond plausible. The bound exists so a genuinely stuck generator cannot spin.
+AUTOSUFFIX_MAX_ATTEMPTS = 5
 
 _SUFFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -111,13 +116,30 @@ class ConflictResolution:
 
 
 def suffix_source_set_id(source_set_id: str, suffix: str) -> str:
-    """``foo`` + ``hub`` -> ``foo__hub``, validated so it cannot produce an unusable id."""
+    """``foo`` + ``bar`` -> ``foo__bar``, validated so it cannot produce an unusable id."""
     if not _SUFFIX_RE.match(suffix or ""):
         raise ValueError(
             f"rename suffix {suffix!r} is not usable in a Neuronpedia source id; "
             "use letters, digits, dot, dash or underscore, starting alphanumeric."
         )
     return f"{source_set_id}__{suffix}"
+
+
+def generate_autosuffix(attempt: int = 0) -> str:
+    """A UTC timestamp suffix, e.g. ``20260805T174530Z``.
+
+    Readable and lexicographically sortable rather than epoch seconds: these ids surface in
+    Neuronpedia URLs and in every row of the DB, and ``__1754435191`` tells a reader nothing about
+    when the import happened or which of two variants is newer.
+
+    ``attempt`` > 0 adds microseconds, which is how a same-second collision is resolved without
+    refusing. Compact form (no separators) keeps the id short and within the character set source ids
+    allow.
+    """
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y%m%dT%H%M%S%fZ" if attempt else "%Y%m%dT%H%M%SZ")
 
 
 def _connect(db_url: str, timeout_seconds: int = 10) -> Any:
@@ -166,9 +188,9 @@ def describe_source_set(db_url: str, *, model_id: str, source_set_id: str) -> So
     )
 
 
-def render_conflict_report(occupancy: SourceSetOccupancy, *, rename_suffix: str = DEFAULT_RENAME_SUFFIX) -> str:
+def render_conflict_report(occupancy: SourceSetOccupancy) -> str:
     """The operator-facing explanation of a refusal, including both ways forward."""
-    renamed = suffix_source_set_id(occupancy.source_set_id, rename_suffix)
+    example = f"{occupancy.source_set_id}__{generate_autosuffix()}"
     lines = [
         f"source set {occupancy.source_set_id!r} for model {occupancy.model_id!r} is already populated:",
         f"  {occupancy.source_count} sources, {occupancy.neuron_count} neurons, "
@@ -176,8 +198,9 @@ def render_conflict_report(occupancy: SourceSetOccupancy, *, rename_suffix: str 
         "",
         "Importing on top of it would be a SILENT NO-OP: the importer uses ON CONFLICT DO NOTHING,",
         "so it would report success and write nothing. Choose explicitly:",
-        f"  --rename-existing     keep both; import this corpus as {renamed!r}",
-        "  --overwrite-existing  delete the rows above, then import",
+        f"  --autosuffix-on-exists  keep both; import this corpus as e.g. {example!r}",
+        "  --rename-suffix <name>  keep both, under a name you choose",
+        "  --overwrite-existing    delete the rows above, then import",
     ]
     if occupancy.explanation_count:
         lines += [
@@ -195,7 +218,7 @@ def resolve_source_set_conflict(
     model_id: str,
     source_set_id: str,
     policy: ConflictPolicy = ConflictPolicy.ERROR,
-    rename_suffix: str = DEFAULT_RENAME_SUFFIX,
+    rename_suffix: str | None = None,
     allow_explanation_loss: bool = False,
     dry_run: bool = False,
 ) -> ConflictResolution:
@@ -215,25 +238,44 @@ def resolve_source_set_conflict(
         )
 
     if policy is ConflictPolicy.ERROR:
-        raise SourceSetConflictError(render_conflict_report(occupancy, rename_suffix=rename_suffix))
+        raise SourceSetConflictError(render_conflict_report(occupancy))
 
     if policy is ConflictPolicy.RENAME:
-        renamed = suffix_source_set_id(source_set_id, rename_suffix)
-        # The rename target can itself be occupied -- e.g. re-running the same rename twice. Left as a
-        # hard error rather than suffixing again: silently landing in a third set would make the
-        # database's contents depend on how many times a command had been run.
-        collision = describe_source_set(db_url, model_id=model_id, source_set_id=renamed)
-        if collision.occupied:
-            raise SourceSetConflictError(
-                f"rename target {renamed!r} is ALSO populated "
-                f"({collision.neuron_count} neurons); choose another --rename-suffix, or "
-                f"--overwrite-existing to replace it."
+        if rename_suffix is not None:
+            # EXPLICIT suffix: the caller named this set, so a collision is a real error rather than
+            # something to route around. Auto-suffixing here would ignore what they asked for.
+            renamed = suffix_source_set_id(source_set_id, rename_suffix)
+            collision = describe_source_set(db_url, model_id=model_id, source_set_id=renamed)
+            if collision.occupied:
+                raise SourceSetConflictError(
+                    f"rename target {renamed!r} is ALSO populated ({collision.neuron_count} neurons). "
+                    "It was named explicitly with --rename-suffix, so this is not routed around: pass "
+                    "a different suffix, drop --rename-suffix to get a timestamped one, or "
+                    "--overwrite-existing to replace it."
+                )
+            return ConflictResolution(
+                policy=policy,
+                occupancy=occupancy,
+                effective_source_set_id=renamed,
+                notes=[f"existing {source_set_id!r} left untouched; importing as {renamed!r}"],
             )
-        return ConflictResolution(
-            policy=policy,
-            occupancy=occupancy,
-            effective_source_set_id=renamed,
-            notes=[f"existing {source_set_id!r} left untouched; importing as {renamed!r}"],
+
+        # AUTO suffix: a timestamp, retried at finer granularity if it somehow collides. Refusing
+        # here would be refusing over a name the caller never chose and does not care about.
+        for attempt in range(AUTOSUFFIX_MAX_ATTEMPTS):
+            renamed = suffix_source_set_id(source_set_id, generate_autosuffix(attempt))
+            if not describe_source_set(db_url, model_id=model_id, source_set_id=renamed).occupied:
+                return ConflictResolution(
+                    policy=policy,
+                    occupancy=occupancy,
+                    effective_source_set_id=renamed,
+                    notes=[f"existing {source_set_id!r} left untouched; importing as {renamed!r}"],
+                )
+            log.debug("auto-suffix %r is already occupied; regenerating", renamed)
+        raise SourceSetConflictError(
+            f"could not find a free timestamped variant of {source_set_id!r} in "
+            f"{AUTOSUFFIX_MAX_ATTEMPTS} attempts, which should be impossible -- check the clock, or "
+            "pass an explicit --rename-suffix."
         )
 
     # OVERWRITE
@@ -242,7 +284,7 @@ def resolve_source_set_conflict(
             f"--overwrite-existing would delete {occupancy.neuron_count} neurons from "
             f"{source_set_id!r}, cascading away {occupancy.explanation_count} explanations. "
             "Activations can be regenerated from a corpus; explanations cannot. Pass "
-            "--allow-explanation-loss to proceed, or --rename-existing to keep both."
+            "--allow-explanation-loss to proceed, or --autosuffix-on-exists to keep both."
         )
 
     if dry_run:

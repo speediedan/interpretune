@@ -48,7 +48,6 @@ from interpretune.utils.neuronpedia_explanations import (
     DEFAULT_IT_NP_CACHE,
 )
 from interpretune.utils.neuronpedia_source_conflicts import (
-    DEFAULT_RENAME_SUFFIX,
     ConflictPolicy,
     ExplanationLossRefused,
     SourceSetConflictError,
@@ -277,7 +276,10 @@ class NeuronpediaDashboardPipelineConfig:
     # are to destroy data or to change identity, and neither should happen without being asked for.
     # See interpretune.utils.neuronpedia_source_conflicts.
     on_existing_source_set: str = "error"
-    source_set_rename_suffix: str = DEFAULT_RENAME_SUFFIX
+    # None under --autosuffix-on-exists: the suffix is a UTC timestamp generated at resolution time.
+    # A caller-supplied value is treated as deliberate, so a collision on it is an error rather than
+    # something to route around.
+    source_set_rename_suffix: str | None = None
     allow_explanation_loss: bool = False
     # Set by conflict resolution under the "rename" policy; overrides the source set used at IMPORT
     # time only. Deliberately separate from neuronpedia_source_set_id, which also names the run
@@ -607,15 +609,22 @@ def _normalize_pipeline_overrides(values: Mapping[str, Any]) -> dict[str, Any]:
         bridge_kwargs = normalized.pop("bridge_compatibility_mode_kwargs_json")
         normalized.setdefault("bridge_compatibility_mode_kwargs", bridge_kwargs)
 
-    if "skip_local_db_import" in normalized:
+    skip_stated = "skip_local_db_import" in normalized
+    if skip_stated:
         skip_local_db_import = bool(normalized.pop("skip_local_db_import"))
         normalized.setdefault("import_to_local_db", not skip_local_db_import)
     elif normalized.get("import_only_local_db"):
         # `--import-only-local-db` means "do only the import", so it implies wanting one. Requiring
         # the config to ALSO say import_to_local_db=true made the flag unusable against every
         # generation-only config -- and the resulting error blamed --skip-local-db-import, which the
-        # caller had not passed. Only inferred when the caller did not state the opposite above.
+        # caller had not passed. Checked against `skip_stated` because the branch above POPS the key,
+        # so testing membership again here would always pass.
         normalized.setdefault("import_to_local_db", True)
+
+    if normalized.get("source_set_rename_suffix") and "on_existing_source_set" not in normalized:
+        # Naming a suffix is only meaningful under the rename policy, so asking for one selects it.
+        # Requiring both flags would make `--rename-suffix foo` silently do nothing on a collision.
+        normalized["on_existing_source_set"] = "rename"
     if "no_archive_partials" in normalized:
         no_archive_partials = bool(normalized.pop("no_archive_partials"))
         normalized.setdefault("archive_partial_dirs", not no_archive_partials)
@@ -2487,12 +2496,14 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
     # Declare identity up front so the corpus is self-describing even if the run is interrupted.
     ensure_source_ids_sidecar(config)
     ensure_dashboard_manifest(config)
-    # Resolve source-set collisions BEFORE generating anything: the check costs one query, and the
-    # alternative is discovering after hours of GPU work that the import will be a silent no-op.
-    _apply_source_set_conflict_policy(config)
     pipeline_log_path = cast(Path, config.pipeline_log_path)
     existing_log_path = cast(Path, config.existing_log_path)
     logger = _configure_logger(pipeline_log_path)
+    # Resolve source-set collisions BEFORE generating anything: the check costs one query, and the
+    # alternative is discovering after hours of GPU work that the import will be a silent no-op.
+    # Placed AFTER the logger so the chosen set is recorded in the run log -- resolving it earlier
+    # sent the decision to a logger with no handlers, leaving no record of which set was imported.
+    _apply_source_set_conflict_policy(config)
     env = _build_generation_env(config)
 
     service_status: LocalNeuronpediaServiceStatus | None = None
@@ -3058,16 +3069,20 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         "Refused when explanations would cascade away unless --allow-explanation-loss is also given.",
     )
     parser.add_argument(
-        "--rename-existing",
+        "--autosuffix-on-exists",
         dest="on_existing_source_set",
         action="store_const",
         const="rename",
         help="If the target source set is already populated, leave it alone and import under "
-        "<set>__<suffix> so both coexist. Renames the INCOMING import, not the resident rows.",
+        "<set>__<UTC timestamp> so both coexist. Renames the INCOMING import, not the resident rows. "
+        "Never refuses over the generated name -- a collision just regenerates a finer-grained one.",
     )
     parser.add_argument(
-        "--source-set-rename-suffix",
-        help=f"Suffix used by --rename-existing (default: {DEFAULT_RENAME_SUFFIX}).",
+        "--rename-suffix",
+        dest="source_set_rename_suffix",
+        help="Import under <set>__<this> instead of a generated timestamp, for explicit "
+        "deconfliction. Implies the rename policy. A collision on a name you chose is an ERROR "
+        "rather than something routed around.",
     )
     parser.add_argument(
         "--allow-explanation-loss",
@@ -3249,7 +3264,13 @@ def main() -> int:
             return 0
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
-    run_dashboard_pipeline(config)
+    try:
+        run_dashboard_pipeline(config)
+    except (SourceSetConflictError, ExplanationLossRefused) as exc:
+        # These are decisions for the operator, not defects: a traceback would bury the explanation
+        # and the two flags that resolve it under a stack the reader cannot act on.
+        print(f"\nREFUSING TO IMPORT:\n{exc}", file=sys.stderr)
+        return 3
     return 0
 
 

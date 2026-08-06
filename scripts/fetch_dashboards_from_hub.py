@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Download a published dashboard corpus and import it into a local Neuronpedia, in one command.
 
-    python scripts/fetch_dashboards_from_hub.py --bucket <ns>/<bucket> --rename-existing
+    python scripts/fetch_dashboards_from_hub.py --bucket <ns>/<bucket> --autosuffix-on-exists
 
 Everything else is derived. The corpus carries ``dashboards.json`` (model, source set, prompt corpus,
 layers) and ``source_ids.json`` (identity), so the bucket id is enough to pick the matching committed
@@ -21,9 +21,10 @@ Downloading and generating locally populate the SAME source set. The importer us
 ``ON CONFLICT DO NOTHING``, so a second import reports success and writes nothing. This refuses up
 front and offers both ways forward:
 
-    --rename-existing     keep both; import under ``<set>__hub``
-    --overwrite-existing  delete the resident rows first (refuses if explanations would cascade,
-                          unless --allow-explanation-loss)
+    --autosuffix-on-exists  keep both; import under ``<set>__<UTC timestamp>``
+    --rename-suffix <name>  keep both, under a name you choose
+    --overwrite-existing    delete the resident rows first (refuses if explanations would cascade,
+                            unless --allow-explanation-loss)
 
 See :mod:`interpretune.utils.neuronpedia_source_conflicts` for why ``rename`` renames the incoming
 corpus rather than the resident one.
@@ -41,9 +42,9 @@ from pathlib import Path
 
 from interpretune.utils.neuronpedia_dashboard_hub import download_dashboard_run
 from interpretune.utils.neuronpedia_source_conflicts import (
-    DEFAULT_RENAME_SUFFIX,
     ConflictPolicy,
     describe_source_set,
+    generate_autosuffix,
     render_conflict_report,
     suffix_source_set_id,
 )
@@ -142,9 +143,11 @@ def _import_command(*, config: Path, run_root: Path, args: argparse.Namespace) -
         "--import-only-local-db",
         f"--run-root={run_root}",
     ]
-    if args.rename_existing:
-        command.append("--rename-existing")
-        command.append(f"--source-set-rename-suffix={args.rename_suffix}")
+    if args.rename_suffix:
+        # An explicit suffix implies the rename policy downstream, so it is passed on its own.
+        command.append(f"--rename-suffix={args.rename_suffix}")
+    elif args.autosuffix_on_exists:
+        command.append("--autosuffix-on-exists")
     elif args.overwrite_existing:
         command.append("--overwrite-existing")
     if args.allow_explanation_loss:
@@ -182,16 +185,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     conflict = parser.add_mutually_exclusive_group()
     conflict.add_argument(
-        "--rename-existing",
+        "--autosuffix-on-exists",
         action="store_true",
-        help="On conflict, keep the existing set and import this corpus under <set>__<suffix>.",
+        help="On conflict, keep the existing set and import this corpus under <set>__<UTC timestamp>. "
+        "Never refuses over the generated name.",
     )
     conflict.add_argument(
         "--overwrite-existing",
         action="store_true",
         help="On conflict, delete the resident rows for this set, then import.",
     )
-    parser.add_argument("--rename-suffix", default=DEFAULT_RENAME_SUFFIX, help=f"Default: {DEFAULT_RENAME_SUFFIX}.")
+    parser.add_argument(
+        "--rename-suffix",
+        default=None,
+        help="Import under <set>__<this> instead of a generated timestamp. Implies the rename "
+        "policy. A collision on a name you chose is an error rather than something routed around.",
+    )
     parser.add_argument(
         "--allow-explanation-loss",
         action="store_true",
@@ -223,7 +232,9 @@ def main(argv: list[str] | None = None) -> int:
     log.info("config       : %s", config)
 
     policy = ConflictPolicy.ERROR
-    if args.rename_existing:
+    # An explicit --rename-suffix selects the rename policy on its own, matching the pipeline.
+    # Requiring both flags would let `--rename-suffix foo` silently refuse on a collision instead.
+    if args.autosuffix_on_exists or args.rename_suffix:
         policy = ConflictPolicy.RENAME
     elif args.overwrite_existing:
         policy = ConflictPolicy.OVERWRITE
@@ -240,14 +251,16 @@ def main(argv: list[str] | None = None) -> int:
             occupancy = None
         if occupancy is not None and occupancy.occupied:
             if policy is ConflictPolicy.ERROR:
-                print(
-                    f"\nREFUSING TO IMPORT:\n{render_conflict_report(occupancy, rename_suffix=args.rename_suffix)}",
-                    file=sys.stderr,
-                )
+                print(f"\nREFUSING TO IMPORT:\n{render_conflict_report(occupancy)}", file=sys.stderr)
                 return 3
             if policy is ConflictPolicy.RENAME:
-                effective_set_id = suffix_source_set_id(source_set_id, args.rename_suffix)
-                log.info("conflict     : existing %r kept; importing as %r", source_set_id, effective_set_id)
+                effective_set_id = suffix_source_set_id(source_set_id, args.rename_suffix or generate_autosuffix())
+                log.info(
+                    "conflict     : existing %r kept; importing as %r%s",
+                    source_set_id,
+                    effective_set_id,
+                    "" if args.rename_suffix else " (the pipeline regenerates its own stamp)",
+                )
             elif occupancy.explanation_count and not args.allow_explanation_loss:
                 # The pipeline would refuse for this reason anyway; catching it here is the whole
                 # point of a pre-flight, since otherwise the refusal lands after a multi-GiB download.
@@ -256,14 +269,14 @@ def main(argv: list[str] | None = None) -> int:
                     f"{occupancy.neuron_count} neurons from {source_set_id!r}, cascading away "
                     f"{occupancy.explanation_count} explanations. Activations can be regenerated "
                     "from a corpus; explanations cannot. Pass --allow-explanation-loss to proceed, "
-                    "or --rename-existing to keep both.",
+                    "or --autosuffix-on-exists to keep both.",
                     file=sys.stderr,
                 )
                 return 3
             else:
                 log.info("conflict     : %r will be REPLACED (%s neurons)", source_set_id, occupancy.neuron_count)
     elif policy is ConflictPolicy.RENAME:
-        effective_set_id = suffix_source_set_id(source_set_id, args.rename_suffix)
+        effective_set_id = suffix_source_set_id(source_set_id, args.rename_suffix or generate_autosuffix())
 
     # The corpus lands under its OWN identity regardless of policy: a rename changes where rows go in
     # the database, not what the corpus is, and making the download path depend on database contents

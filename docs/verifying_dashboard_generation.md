@@ -44,7 +44,7 @@ source sets** and can coexist in one database.
 python scripts/fetch_dashboards_from_hub.py \
   --bucket speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards \
   --local-db-url postgres://postgres:postgres@127.0.0.1:5433/postgres \
-  --rename-existing
+  --autosuffix-on-exists
 ```
 
 Swap the bucket id for `…__monology__dashboards` to fetch the other corpus. That is the whole
@@ -61,14 +61,16 @@ Needs a running local Neuronpedia Postgres — see the
 
 #### Choosing what happens on a collision
 
-`--rename-existing` above is the safe default to *suggest*: it never touches what you already have.
-Without one of these flags the command **refuses** and prints what occupies the set, which is the
-right behaviour when you did not expect a collision at all.
+`--autosuffix-on-exists` above is the safe default to *suggest*: it never touches what you already
+have, and it never fails over a naming collision. Without one of these flags the command **refuses**
+and prints what occupies the set, which is the right behaviour when you did not expect a collision at
+all.
 
 | flag | effect |
 | --- | --- |
 | *(none)* | Refuse, and report what is already there. |
-| `--rename-existing` | Keep the existing set; import this corpus as `<set>__hub`. Change the suffix with `--rename-suffix`. |
+| `--autosuffix-on-exists` | Keep the existing set; import as `<set>__<UTC timestamp>`, e.g. `…-rte__20260805T174530Z`. Repeatable — each run gets its own stamp. |
+| `--rename-suffix <name>` | Keep the existing set; import under a name you choose. A collision on *that* name is an error, since you picked it. |
 | `--overwrite-existing` | Delete the resident rows for that set, then import. |
 
 `--overwrite-existing` additionally refuses when explanations hang off the rows it would delete —
