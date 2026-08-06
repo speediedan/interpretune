@@ -1552,10 +1552,25 @@ probabilistic one and gains nothing.
 ### Two guards that refuse to publish, and why
 
 **Missing Parquet page index.** Without one a reader cannot range-read individual pages, so HTTP
-streaming degrades to whole row groups — which removes the reason to serve these over the network at
-all. It cannot be added after the fact; the corpus must be regenerated. Generate with
-`runner_columnar_write_page_index: true` (the default). Override with `--allow-missing-page-index`
-only if the corpus is not intended for streaming.
+streaming degrades to whole row groups. It cannot be added after the fact; the corpus must be
+regenerated. Generate with `runner_columnar_write_page_index: true` (the default). Override with
+`--allow-missing-page-index` only if the corpus is not intended for streaming.
+
+> **The page index alone does not make a corpus streamable — row group size does.** Readers prune at
+> **row group** granularity, so a file written as a single row group costs a reader the whole file to
+> fetch one feature no matter how its pages are indexed. Measured on a published 4,096-feature
+> artifact (35.6 MiB): every dashboard column for one feature cost **35.6 MiB (100%)** at one row
+> group, and **1.30 MiB (3.4%)** at `row_group_size = 4096`, for 6% more file. Shrinking
+> `data_page_size` to 64 KiB while keeping one row group changed it by 0.3%.
+>
+> `runner_columnar_parquet_row_group_size` defaults to SAEDashboard's
+> `DEFAULT_PARQUET_ROW_GROUP_SIZE` (4096) and is recorded in `dashboards.json` under
+> `artifacts.parquet_row_group_size`, so a published corpus says how it is laid out. The optimum
+> moves only as √(features per file), so the default holds across batch sizes; set it explicitly
+> only if you have measured a reason to. Like the page index, it is **fixed at write time**.
+>
+> Corpora generated before 2026-08-06 carry a single row group per file and have to be regenerated
+> to benefit.
 
 **Manifests referencing an excluded table.** Each `feature_batch_*/manifest.json` declares the tables
 in that batch, and the importer resolves the activation table from it and **raises** when the
