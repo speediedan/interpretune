@@ -115,13 +115,19 @@ git-deps = [
     # fork-only surface, e.g. sae_dashboard.neuronpedia.prompt_bucketing); flip back to released
     # version floors at wave-merge time.
     "sae-lens @ git+https://github.com/speediedan/SAELens.git@86f90b3d3dccd3f6ac729577b979f76f88a525f1",
-    # Bumped 2026-08-05 to the SD#74 head carrying `columnar_write_page_index`. This is a hard FLOOR,
-    # not a capability probed at runtime: interpretune emits --columnar-write-page-index
-    # unconditionally, so an older SAEDashboard fails with "unrecognized arguments" rather than
-    # silently producing an unindexed corpus. A page index cannot be added after generation, so that
+    # Bumped 2026-08-06 to the SD#74 head carrying `columnar_parquet_row_group_size` (was
+    # 6f86560, `columnar_write_page_index`). Both are hard FLOORS rather than runtime-probed
+    # capabilities: interpretune emits --columnar-write-page-index unconditionally, so an older
+    # SAEDashboard fails with "unrecognized arguments" rather than silently producing an unindexed
+    # corpus. Neither a page index nor row-group boundaries can be added after generation, so that
     # trade -- loud failure over silent degradation -- is the only safe one. Pre-MVP, so requiring a
     # floor is cheaper than carrying a compatibility gate.
-    "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@6f865606184bd54c38392fdcb747e06bccb028cf",
+    #
+    # The row-group default is what actually makes an artifact streamable: readers prune per ROW
+    # GROUP, so the previous one-row-group files cost a reader the WHOLE file to fetch one feature
+    # and the page index did not change that. Generation commands are unchanged (the default is on),
+    # but corpora generated before this pin have to be regenerated to benefit.
+    "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@823ae3b61c0c33d7cf40e68d043a4dfe3375342d",
 ]
 
 dev = [
