@@ -33,11 +33,11 @@
 # are the extra information, which is the reason to scan more prompts. Budget ~11-12 GB for 26
 # layers rather than the ~6.4 GB the 4,096-prompt corpus occupies.
 #
-# import_to_local_db is OFF deliberately (the importer uses ON CONFLICT DO NOTHING, so importing on
-# top of an existing corpus for this (model, source set) is a silent no-op. Purge the rows for
-# modelId=gemma-3-1b-it (scoped -- gemma-3-4b-it shares this setName with identical source-id
-# strings) and re-run with --import-only-local-db. Back up Explanation rows first: they CASCADE from
-# Neuron.
+# import_to_local_db is OFF deliberately: the importer uses ON CONFLICT DO NOTHING, so importing on
+# top of an occupied source set writes nothing (it now warns rather than passing silently, but it
+# still writes nothing). To replace an existing corpus, purge the rows for modelId=gemma-3-1b-it
+# (scoped -- gemma-3-4b-it shares this setName with identical source-id strings) and re-run with
+# --import-only-local-db. Back up Explanation rows first: they CASCADE from Neuron.
 pipeline:
   model_name: gemma-3-1b-it
   model_layers: 26
@@ -49,9 +49,6 @@ pipeline:
   sae_set: gemma-scope-2-1b-it-transcoders-all
   neuronpedia_source_set_id: gemmascope-2-transcoder-16k
   neuronpedia_source_set_description: Transcoder - 16k
-  # google/, NOT mwhanna/ — the mwhanna mirror has no per-layer directories
-  # (`transcoder_all/width_16k_l0_big/...`), so the layer-templated path below resolves to nothing
-  # there. Verified 2026-07-31: google/ has 3 files under transcoder_all/layer_9_width_16k_l0_small_affine/.
   hf_weights_repo_id: google/gemma-scope-2-1b-it
   hf_weights_path_template: transcoder_all/layer_{layer}_width_16k_l0_small_affine
   sae_path_template: layer_{layer}_width_16k_l0_small_affine
@@ -96,8 +93,8 @@ pipeline:
   archive_partial_dirs: false
   heartbeat_seconds: 60
   stall_timeout_seconds: 1800
-  # No run_name_suffix: keeps the run dir canonical so _resolve_source_id derives canonical source ids
-  # ({layer}-{set_id}) for inline imports.
+  # No run_name_suffix: source ids stay canonical ({layer}-{set_id}). Setting one makes this a
+  # variant run, and the suffix is written into the corpus's own source_ids.json.
 launcher:
   background: true
   monitor: true

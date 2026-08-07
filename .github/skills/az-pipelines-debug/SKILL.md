@@ -224,7 +224,7 @@ bash ./tests/special_tests.sh --mark_type=standalone
 bash ./tests/special_tests.sh --mark_type=profile_ci
 ```
 
-Fast-iteration guidance (validated Sessions 29-31, 2026-07; local runs are for DEBUG ONLY — the
+Fast-iteration guidance (validated 2026-07; local runs are for DEBUG ONLY — the
 gated pipeline must still pass on push/merge so coverage stays updated):
 
 - **Run the failing phase, not the pipeline.** A single phase locally gives minutes-scale signal vs
@@ -233,7 +233,7 @@ gated pipeline must still pass on push/merge so coverage stays updated):
   phases.
 - **Cuda-marked tests hide inside the "skipped" count** without `IT_RUN_CUDA_TESTS=1` — a locally
   "green" standard run does NOT imply the `standard gpu cuda-marked` phase is green (this exact gap
-  let the Session-31 CT merge land red). The phase also needs `HF_GATED_PUBLIC_REPO_AUTH_KEY`/
+  let the 2026-07-20 circuit-tracer merge land red). The phase also needs `HF_GATED_PUBLIC_REPO_AUTH_KEY`/
   `HF_TOKEN` in the environment (gated-model + notebook tests).
 - **Debug another branch without disturbing your working tree**: detached `git worktree` + an
   overlay venv — `python -m venv <env>`, `pip install -e <worktree> --no-deps`, then an executable

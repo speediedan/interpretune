@@ -3,7 +3,6 @@
 # For a `pr:` trigger these filters are evaluated against the PULL REQUEST's cumulative diff, not
 # against the delta of the push that fired it. A pipeline validates the merge commit, so once a PR
 # touches anything under `src/**` every subsequent push re-triggers it -- including a docs-only one.
-# Verified 2026-08-05: a commit touching only `docs/**` queued build 709 on PR #240.
 #
 # `[skip ci]` does NOT rescue this either. Microsoft documents that PR-triggered pipelines run on the
 # merge commit "regardless if there exist pushed commits whose messages or descriptions contain

@@ -1,10 +1,7 @@
 """Detect and resolve collisions between an incoming dashboard corpus and what is already imported.
 
 Downloading a published corpus and generating one locally are two ways to populate the SAME
-Neuronpedia source set, not two sets. The importer is idempotent by way of ``ON CONFLICT DO NOTHING``,
-which means a second import over an occupied set **reports success and writes nothing** -- the
-failure that looks exactly like success, and the reason this module exists rather than a note in the
-docs.
+Neuronpedia source set, not two sets.
 
 THE THREE POLICIES
 ------------------

@@ -1071,7 +1071,7 @@ Importing over an occupied Neuronpedia source set **writes nothing**: the import
 published corpus and generating one locally are two ways to populate the *same* set, not two sets, so
 this is easy to hit — and it otherwise looks exactly like success.
 
-Two things now make it visible rather than silent. The importer logs a warning naming the layer and
+Two things make it visible rather than silent. The importer logs a warning naming the layer and
 the declined row counts (`neuronpedia_utils.local_db_import`, counted on `Neuron`/`Activation` —
 metadata rows are re-offered per layer by design, so their conflicts are routine and stay quiet).
 And every interpretune path that imports resolves a collision policy up front, before anything is
@@ -1475,7 +1475,7 @@ The pipeline currently runs from the shared interpretune development environment
 
 ## Publishing generated dashboards to the Hub
 
-A generated corpus can be published to a Hugging Face **Storage Bucket** or a **dataset repo**, and
+A generated corpus can be published to a Hugging Face Storage Bucket or a dataset repo, and
 downloaded back to populate a local Neuronpedia elsewhere. Both go through
 `interpretune.utils.neuronpedia_dashboard_hub`; `scripts/publish_dashboards_to_hub.py` is a thin CLI
 over it.
@@ -1502,10 +1502,6 @@ publish_dashboard_run(Path(run_dir), "ns/name", store="bucket", revision=BUCKET_
 download_dashboard_run("ns/name", Path(dest), store="bucket")
 ```
 
-`dest` may be named anything. This was not always true — source ids were once derived from the run
-directory name, so unpacking under a different name imported cleanly into a *separate* set of ids.
-Identity now travels inside the corpus; see [What a corpus says about itself](#what-a-corpus-says-about-itself).
-
 ### Choosing a backend
 
 | | `bucket` | `dataset` |
@@ -1517,7 +1513,7 @@ Identity now travels inside the corpus; see [What a corpus says about itself](#w
 | Collections / dataset card | no | yes |
 
 **Prefer `bucket`** when the consumer's tooling is S3-shaped — which is the common case for
-Neuronpedia-adjacent work — and because Parquet page indexes make range reads over the S3 gateway
+Neuronpedia-adjacent work — and because Parquet page indexes (with appropriate row_group_size granularity) make range reads over the S3 gateway
 actually pay off. **Prefer `dataset`** when you need to *pin* a corpus, e.g. so a PR or paper can
 reference exactly the artifacts a claim was measured on.
 
@@ -1569,8 +1565,6 @@ regenerated. Generate with `runner_columnar_write_page_index: true` (the default
 > moves only as √(features per file), so the default holds across batch sizes; set it explicitly
 > only if you have measured a reason to. Like the page index, it is **fixed at write time**.
 >
-> Corpora generated before 2026-08-06 carry a single row group per file and have to be regenerated
-> to benefit.
 
 **Manifests referencing an excluded table.** Each `feature_batch_*/manifest.json` declares the tables
 in that batch, and the importer resolves the activation table from it and **raises** when the
@@ -1623,15 +1617,3 @@ falls back to the ambient `huggingface-cli` credential. Keeping a separate varia
 is deliberate: a repo-scoped dashboards token should not silently widen or narrow every other Hub
 operation in the process. The token needs **write** on the target — for a bucket that is a `bucket:`
 scope entry, which is distinct from the `dataset:` one.
-
-### Downloading, and one trap worth knowing
-
-The corpus contains no `batch-*.json`, so the pipeline derives Neuronpedia source ids from the
-**run directory name**. Download into a directory whose leaf is named `<model>_<source_set_id>` —
-vary anything else in the parent. A differently-named target imports *successfully* into a separate
-set of source ids, which looks like success and is not.
-
-```bash
-# then import the downloaded corpus
-python scripts/launch_neuronpedia_dashboard_pipeline.py --config <cfg> --import-only-local-db
-```

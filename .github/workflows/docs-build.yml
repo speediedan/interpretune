@@ -29,8 +29,7 @@ jobs:
           PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu pip install .
       # conf.py stages docs/notebook_artifacts/ IN PREFERENCE TO the publish lane, so editing a
       # notebook without rebuilding its executed artifact leaves the site rendering the old text with
-      # no build error anywhere -- the drift is invisible by construction. Observed on #240: the
-      # local_np notebook gained its hub-fetch section while the docs kept showing the July artifact.
+      # no build error anywhere -- the drift is invisible by construction.
       # Compares cell sources only (outputs ignored), so it needs no GPU and no execution.
       - name: Check executed notebook artifacts are not stale
         run: |

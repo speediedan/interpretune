@@ -8,13 +8,6 @@ layers) and ``source_ids.json`` (identity), so the bucket id is enough to pick t
 config, choose a destination, and import under the right source ids. Directories are created as
 needed; ``--dest`` overrides where they go.
 
-WHY THIS EXISTS RATHER THAN A LIST OF STEPS IN THE DOCS
--------------------------------------------------------
-The manual sequence was download, then work out which config matches, then remember that
-``--run-root`` points at the PARENT of the download, then know that importing over an occupied source
-set is a silent no-op. Four chances to get it wrong, and the last one fails by *appearing to
-succeed*. Here the failure modes are checked before any bytes move.
-
 CONFLICTS ARE REFUSED BY DEFAULT
 --------------------------------
 Downloading and generating locally populate the SAME source set. The importer uses
