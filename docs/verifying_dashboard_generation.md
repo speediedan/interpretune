@@ -153,11 +153,16 @@ populated without spending GPU hours.
 
 | Corpus | Bucket | Files | Size | Prompts |
 | --- | --- | --- | --- | --- |
-| **Monology** (generic web text) | [`…__monology__dashboards`](https://huggingface.co/buckets/speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards) | 1014 | 10.07 GiB | 24,576 × 128 tok |
-| **RTE** (example-aligned) | [`…__rte__dashboards`](https://huggingface.co/buckets/speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards) | 1067 | 5.84 GiB | 2,490 × 319 tok |
+| **Monology** (generic web text) | [`…__monology__dashboards`](https://huggingface.co/buckets/speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards) | 1016 | 10.15 GiB | 24,576 × 128 tok |
+| **RTE** (example-aligned) | [`…__rte__dashboards`](https://huggingface.co/buckets/speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards) | 1068 | 6.06 GiB | 2,490 × 319 tok |
 
 Both are `gemma-3-1b-it` with the `gemma-scope-2-1b-it-transcoders-all` 16k transcoders, all 26
 layers. The monology dataset is a typical dense, generic dataset used for many existing Neuronpedia dashboards. The RTE dashboards demo example-aligned dashboards where each sequence is a dataset example.
+
+Both were regenerated 2026-08-07 with multiple Parquet row groups (`row_group_size=4096`), which is
+what makes them range-readable: fetching one feature's dashboard over the S3 gateway costs 1.4 MiB of
+a 38.5 MiB file rather than all of it. Each corpus records its own layout in `dashboards.json` under
+`artifacts.parquet_row_group_size`.
 
 > These land in the same source sets **(d)** would generate into. `--autosuffix-on-exists` below
 > keeps both by importing under a timestamped variant; without a collision flag the command refuses
