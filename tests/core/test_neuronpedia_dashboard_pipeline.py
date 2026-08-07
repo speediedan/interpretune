@@ -24,6 +24,7 @@ from sae_dashboard.neuronpedia.neuronpedia_runner_config import (
 
 import interpretune.utils.neuronpedia_dashboard_pipeline as dashboard_pipeline
 from interpretune.utils.import_utils import _NEURONPEDIA_UTILS_AVAILABLE
+from interpretune.utils.neuronpedia_source_conflicts import ConflictResolution, SourceSetOccupancy
 from interpretune.utils.neuronpedia_dashboard_pipeline import (
     NeuronpediaDashboardPipelineConfig,
     completed_layers_from_logs,
@@ -3092,6 +3093,22 @@ def _runner_command(launched_commands: list[list[str]]) -> list[str]:
     return next(c for c in launched_commands if any(str(part).startswith("--output-dir=") for part in c))
 
 
+def _unoccupied_occupancy(_db_url, *, model_id, source_set_id, **_kwargs):
+    """An empty target source set, without consulting any database."""
+    return SourceSetOccupancy(
+        model_id=model_id, source_set_id=source_set_id, source_count=0, neuron_count=0, explanation_count=0
+    )
+
+
+def _unoccupied_resolution(db_url, *, model_id, source_set_id, policy, **_kwargs):
+    """The no-conflict outcome: nothing occupied, so nothing renamed and nothing deleted."""
+    return ConflictResolution(
+        policy=policy,
+        occupancy=_unoccupied_occupancy(db_url, model_id=model_id, source_set_id=source_set_id),
+        effective_source_set_id=source_set_id,
+    )
+
+
 def test_run_dashboard_pipeline_imports_columnar_output_directly(
     tmp_path: Path,
     monkeypatch,
@@ -3138,6 +3155,15 @@ def test_run_dashboard_pipeline_imports_columnar_output_directly(
     monkeypatch.setattr(dashboard_pipeline.subprocess, "Popen", _fake_popen)
     monkeypatch.setattr(dashboard_pipeline, "convert_dashboard_output", _unexpected_convert)
     monkeypatch.setattr(dashboard_pipeline, "import_columnar_dashboard_output", _fake_import_columnar)
+    # The config below carries a REAL local Neuronpedia URL, and import_to_local_db defaults True, so
+    # the pipeline would otherwise probe whatever database is listening on 5433 and refuse when it
+    # finds the source set already populated. That made the outcome depend on the developer's DB
+    # contents AND on test ordering: in isolation psycopg cannot load libpq under pytest, the probe
+    # silently no-ops, and the test passes; later in a full run the probe works and it fails. Both
+    # collaborators here are exercised by tests/core/test_neuronpedia_source_conflicts.py -- this
+    # test is about the columnar import route, so it stubs them and stays hermetic.
+    monkeypatch.setattr(dashboard_pipeline, "resolve_source_set_conflict", _unoccupied_resolution)
+    monkeypatch.setattr(dashboard_pipeline, "describe_source_set", _unoccupied_occupancy)
 
     config = NeuronpediaDashboardPipelineConfig(
         model_name="gemma-3-1b-it",
