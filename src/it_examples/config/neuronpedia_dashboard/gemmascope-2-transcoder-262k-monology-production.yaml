@@ -1,11 +1,15 @@
 # All-layer Monology 262k dashboard generation for gemma-3-1b-it.
 #
-# HISTORICAL REFERENCE. This was the widest configuration exercised while validating the
-# scalable-dashboards work, and it is retained as the 262k memory-settings baseline. No documentation
-# or example points at it; the published corpora and every current guide use the 16k transcoders
-# (`gemmascope-2-transcoder-16k-*.yaml`). The one live dependant is
-# `gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml`, which EXTENDS this file. Anything
-# recorded here is a measurement, not a recommendation.
+# REFERENCE BASELINE, NOT A RECOMMENDED STARTING POINT. This was the widest configuration exercised
+# while validating the scalable-dashboards work, and it is retained for its 262k memory settings. The
+# published corpora and every current guide use the 16k transcoders
+# (`gemmascope-2-transcoder-16k-*.yaml`); nothing points a reader here to run it.
+#
+# It is still LIVE, indirectly: `gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml`
+# EXTENDS this file, and the "Basic multi-GPU generation" section of
+# docs/neuronpedia_dashboard_pipeline.md documents running that one. So every setting below is
+# inherited by a documented command, and changing one changes that recipe. Treat the figures recorded
+# here as measurements taken on this host, not as recommendations.
 #
 # Prompt sourcing intentionally uses the standard streaming load_dataset path over
 # monology/pile-uncopyrighted (SAEDashboard tokenizes/concatenates to 128-token contexts) rather
