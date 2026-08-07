@@ -1241,6 +1241,28 @@ inventories, patched-run records) once J-lens support lands — scoped and track
 [interpretune#225](https://github.com/speediedan/interpretune/issues/225), co-designed with
 AnalysisStore hub upload/download ([interpretune#124](https://github.com/speediedan/interpretune/issues/124)).
 
+<a id="hub-dashboard-discovery"></a>
+### Wave 2 requirement: standardized hub-based dashboard discovery
+
+Reading one feature cheaply from a published corpus is a solved problem — that is what the row-group
+layout described under
+[what makes a corpus streamable](#publishing-generated-dashboards-to-the-hub) buys. *Finding* the
+corpus is not. There is no way to ask the Hub which published corpus serves a given
+`(model_id, source_set_id)`: buckets are not indexed by content and bucket names are free text, so
+guessing one from a naming convention would download a corpus that imports **successfully** into the
+requested source set while containing something else entirely.
+
+So `resolve_bucket_for()` is currently backed by `KNOWN_DASHBOARD_BUCKETS`, a hardcoded map in
+`interpretune.utils.neuronpedia_hub_fetch` covering the two published corpora the example notebooks
+need. That is a deliberate stub, not an extension point: a client-side registry cannot see a corpus
+published after the release that shipped it, makes this package a gatekeeper for other people's
+artifacts, and duplicates `dashboards.json` metadata with nothing keeping the two honest. Anything
+not in it must pass `bucket=` explicitly.
+
+The requirements a replacement has to meet, and the candidate mechanisms, are recorded in the
+[roadmap](../roadmap.md#standardized-hub-based-dashboard-discovery). A Wave 2 issue will be opened to
+track the work formally; until then the roadmap section is the tracking record.
+
 ## Model metadata guardrail
 
 The local import path does more than features and explanations. `import_neuronpedia_export_bundle_local_db(...)` also imports

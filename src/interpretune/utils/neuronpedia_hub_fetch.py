@@ -62,8 +62,15 @@ CONFIG_DIR = Path(__file__).resolve().parents[2] / "it_examples/config/neuronped
 #
 # Standardized hub-based discovery replaces this wholesale -- corpora self-register (a dataset-repo
 # collection, a tag convention, or an index artifact) and ``resolve_bucket_for`` becomes a query.
-# Tracked under "Following: hub-resident, streamable dashboards" in the roadmap
-# (``docs/source/roadmap.md``). Treat any addition here as a stopgap, not as the extension point.
+#
+# TRACKED IN: docs/source/roadmap.md, "Standardized hub-based dashboard discovery" (under
+# "Following: hub-resident, streamable dashboards"), which records the requirements a replacement
+# must meet and the candidate mechanisms; docs/neuronpedia_dashboard_pipeline.md carries the same
+# under "Wave 2 requirement: standardized hub-based dashboard discovery". A Wave 2 issue will be
+# opened to track the work formally -- until then those sections ARE the tracking record, so update
+# them alongside any change here.
+#
+# Treat any addition here as a stopgap, not as the extension point.
 KNOWN_DASHBOARD_BUCKETS: dict[tuple[str, str], str] = {
     ("gemma-3-1b-it", "gemmascope-2-transcoder-16k"): (
         "speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards"
