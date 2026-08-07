@@ -46,10 +46,24 @@ CORPUS_MANIFEST = "dashboards.json"
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "it_examples/config/neuronpedia_dashboard"
 
-#: Published corpora, keyed by what a caller actually knows: the model and source set it needs.
-#: Deliberately explicit rather than derived from a naming convention -- bucket names are free text,
-#: and guessing one wrong would download a corpus that imports into the requested set while
-#: containing something else entirely.
+# TEMPORARY STUB -- a hardcoded stand-in for a dashboard repository that does not exist yet.
+#
+# A client-side registry of published corpora is an anti-pattern and is not what this should be. It
+# cannot see a corpus published after the release that shipped it, every publisher would need a patch
+# merged here to be discoverable, and the mapping duplicates -- with no mechanism keeping it honest --
+# metadata each corpus already carries about itself in ``dashboards.json``.
+#
+# It exists because there is currently no way to ASK the Hub "which published corpus serves
+# (model, source set)?". Buckets are not indexed by content, bucket names are free text, and guessing
+# one from a naming convention would download a corpus that imports into the requested source set
+# while containing something else entirely -- a wrong answer that looks exactly like a right one. So
+# the mapping is stated explicitly and the two entries below are the two corpora the example notebooks
+# need; anything else must pass ``bucket=``.
+#
+# Standardized hub-based discovery replaces this wholesale -- corpora self-register (a dataset-repo
+# collection, a tag convention, or an index artifact) and ``resolve_bucket_for`` becomes a query.
+# Tracked under "Following: hub-resident, streamable dashboards" in the roadmap
+# (``docs/source/roadmap.md``). Treat any addition here as a stopgap, not as the extension point.
 KNOWN_DASHBOARD_BUCKETS: dict[tuple[str, str], str] = {
     ("gemma-3-1b-it", "gemmascope-2-transcoder-16k"): (
         "speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards"
@@ -113,7 +127,12 @@ def dashboards_present(
 
 
 def resolve_bucket_for(model_id: str, source_set_id: str) -> str:
-    """The published bucket serving a (model, source set), or a loud failure."""
+    """The published bucket serving a (model, source set), or a loud failure.
+
+    Backed by :data:`KNOWN_DASHBOARD_BUCKETS`, a temporary hardcoded stub; see the note there. This
+    becomes a Hub query once standardized dashboard discovery exists, so callers should treat the
+    lookup as authoritative and the table behind it as not.
+    """
     try:
         return KNOWN_DASHBOARD_BUCKETS[(model_id, source_set_id)]
     except KeyError:
