@@ -56,7 +56,7 @@ Everything is in a committed config, so the command is one line:
 
 ```bash
 python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-16k-monology-production.yaml
+  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-16k-monology-production.yaml
 ```
 
 Prompt sourcing streams `monology/pile-uncopyrighted` and SAEDashboard tokenizes/concatenates to
@@ -153,7 +153,7 @@ Notes:
 5. When you need a fresh generation lineage for the same `model_name` plus `neuronpedia_source_set_id`, set `run_name_suffix` or override `--run-name-suffix`. That changes the run directory and default logs without forcing a fake source-set id or a different export target.
 6. If you accidentally point a resumed launch at a fully completed lineage, the pipeline now warns that the requested layer range is already complete and tells you to use `--run-name-suffix`, `--run-root`, or `--no-resume`.
 
-The vendored example configs for the current RTE flows live under `scripts/configs/neuronpedia_dashboard/`
+The vendored example configs for the current RTE flows live under `src/it_examples/config/neuronpedia_dashboard/`
 (a shared `gemmascope-2-rte-base.yaml` plus `EXTENDS` variants). Config values may reference environment variables
 with `${VAR}` syntax, which the pipeline expands at load time — the vendored configs use `${IT_NP_CACHE}` for the
 pretokenized prompt cache paths.
@@ -162,7 +162,7 @@ Current single-worker fallback pattern for the context-`319` full-prompt transco
 
 ```bash
 python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
+  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
   --run-name-suffix context319-full-prompts
 ```
 
@@ -170,7 +170,7 @@ Current two-worker launch pattern for the same run namespace:
 
 ```bash
 python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
+  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
   --run-name-suffix context319-full-prompts
 ```
 
@@ -185,7 +185,7 @@ You can still override individual values at launch time:
 
 ```bash
 python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
+  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
   --start-layer 3 \
   --start-batch 10
 ```
@@ -328,7 +328,7 @@ Supported behaviors (all exercised on the example pair below):
 
 The commands below are exactly what was validated on an RTX 4090 (24 GiB, `cuda:0`) + RTX 2070
 (8 GiB, `cuda:1`) pair with `gemma-3-1b-it` × the 262k transcoders on the columnar path, using
-`scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml`
+`src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml`
 (Monology 2,490 prompts; layer 0 on the 4090 at `2048×256`, layer 1 on the 2070 at `512×64 / acts16`,
 batches 0-2, no DB import). Adapt the worker shapes/layers to your own hardware.
 
@@ -336,7 +336,7 @@ batches 0-2, no DB import). Adapt the worker shapes/layers to your own hardware.
 
    ```bash
    python scripts/launch_neuronpedia_dashboard_pipeline.py \
-     --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml \
+     --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml \
      --dry-run
    ```
 
@@ -353,7 +353,7 @@ batches 0-2, no DB import). Adapt the worker shapes/layers to your own hardware.
 
    ```bash
    python scripts/launch_neuronpedia_dashboard_pipeline.py \
-     --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml
+     --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml
    ```
 
    Expected: the workers generate their layers concurrently on their pinned GPUs (validated: layer 0
@@ -444,7 +444,7 @@ rm -f <run_directory>/layer_locks/*.lock
 
 ```bash
 nohup python -m interpretune.utils.neuronpedia_dashboard_pipeline \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
+  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu01.yaml \
   --run-name-suffix context319-full-prompts \
   --worker-id gpu1 \
   --enable-layer-locks \
@@ -938,7 +938,7 @@ Keep the knobs distinct when reasoning about this path: `n_features_per_batch` c
 cd ~/repos/interpretune && \
 source <your-venv>/bin/activate && \
 python scripts/launch_neuronpedia_dashboard_pipeline.py \
-  --config scripts/configs/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
+  --config src/it_examples/config/neuronpedia_dashboard/gemmascope-2-transcoder-262k-rte-gpu1.yaml \
   --run-name-suffix context319-full-prompts
 ```
 
@@ -1057,9 +1057,46 @@ python -m interpretune.utils.neuronpedia_dashboard_pipeline \
 
 Notes:
 
-1. `--import-only-local-db` is the complement to `--skip-local-db-import`; do not combine them.
+1. `--import-only-local-db` is the complement to `--skip-local-db-import`; do not combine them. It
+   implies wanting an import, so it works against generation-only configs without editing them.
 2. In this mode the pipeline skips generation and conversion entirely, finds an existing export bundle under `export_root/<model_name>/<layer>-<source_set>*`, and imports it directly.
 3. The mode does not rely on completed-layer log markers, so it is safe for backfilling local DB rows after a generation-only run.
+
+<a id="source-set-collisions"></a>
+
+### Source-set collisions: what happens when the target is already populated
+
+Importing over an occupied Neuronpedia source set **writes nothing**: the importer uses
+`ON CONFLICT DO NOTHING`, so every row is declined and the run still reports success. Downloading a
+published corpus and generating one locally are two ways to populate the *same* set, not two sets, so
+this is easy to hit — and it otherwise looks exactly like success.
+
+Two things make it visible rather than silent. The importer logs a warning naming the layer and
+the declined row counts (`neuronpedia_utils.local_db_import`, counted on `Neuron`/`Activation` —
+metadata rows are re-offered per layer by design, so their conflicts are routine and stay quiet).
+And every interpretune path that imports resolves a collision policy up front, before anything is
+downloaded or generated:
+
+Local generation, `--import-only-local-db`, and `scripts/fetch_dashboards_from_hub.py` share that one
+policy, so a collision costs a query rather than hours of GPU time or a 10 GiB download:
+
+| flag | effect |
+| --- | --- |
+| *(none)* | **Refuse**, reporting what already occupies the set. The default, because the alternatives either destroy data or change identity. |
+| `--autosuffix-on-exists` | Keep the existing set; import as `<set>__<UTC timestamp>`, e.g. `…-rte__20260806T005715Z`. Repeatable — each run gets its own stamp, and a stamp collision regenerates rather than failing. |
+| `--rename-suffix <name>` | Keep the existing set; import under a name you choose. Implies the rename policy. A collision on *that* name is an error, since you picked it. |
+| `--overwrite-existing` | Delete the resident rows for that set, then import. |
+
+`--overwrite-existing` refuses when explanations hang off the rows it would delete: `Activation` and
+`Explanation` both cascade from `Neuron`, and while activations can be regenerated from a corpus,
+explanations cannot. `--allow-explanation-loss` accepts that consequence explicitly.
+
+**Rename renames the INCOMING import, not the resident rows.** Renaming what is already stored would
+mean rewriting `Source.id` and every dependent key — and `Activation`'s primary key embeds the source
+id, so a 26-layer set is ~425k neurons and ~10–16M activation keys to rewrite in one transaction.
+Renaming the incoming corpus reaches the same end state (both resident, under distinct ids) while
+touching nothing already in the database. The run *directory* is unaffected either way, so an
+`--import-only` run still finds its corpus where it was unpacked.
 
 ### Historical conversion CUDA debug finding
 
@@ -1203,6 +1240,28 @@ direction is planned to carry **Jacobian-space (J-lens) artifacts** (readouts, s
 inventories, patched-run records) once J-lens support lands — scoped and tracked in
 [interpretune#225](https://github.com/speediedan/interpretune/issues/225), co-designed with
 AnalysisStore hub upload/download ([interpretune#124](https://github.com/speediedan/interpretune/issues/124)).
+
+<a id="hub-dashboard-discovery"></a>
+### Wave 2 requirement: standardized hub-based dashboard discovery
+
+Reading one feature cheaply from a published corpus is a solved problem — that is what the row-group
+layout described under
+[what makes a corpus streamable](#publishing-generated-dashboards-to-the-hub) buys. *Finding* the
+corpus is not. There is no way to ask the Hub which published corpus serves a given
+`(model_id, source_set_id)`: buckets are not indexed by content and bucket names are free text, so
+guessing one from a naming convention would download a corpus that imports **successfully** into the
+requested source set while containing something else entirely.
+
+So `resolve_bucket_for()` is currently backed by `KNOWN_DASHBOARD_BUCKETS`, a hardcoded map in
+`interpretune.utils.neuronpedia_hub_fetch` covering the two published corpora the example notebooks
+need. That is a deliberate stub, not an extension point: a client-side registry cannot see a corpus
+published after the release that shipped it, makes this package a gatekeeper for other people's
+artifacts, and duplicates `dashboards.json` metadata with nothing keeping the two honest. Anything
+not in it must pass `bucket=` explicitly.
+
+The requirements a replacement has to meet, and the candidate mechanisms, are recorded in the
+[roadmap](../roadmap.md#standardized-hub-based-dashboard-discovery). A Wave 2 issue will be opened to
+track the work formally; until then the roadmap section is the tracking record.
 
 ## Model metadata guardrail
 
@@ -1435,3 +1494,148 @@ WHERE "modelId" = 'gemma-3-1b-it'
 ## Current operational caution
 
 The pipeline currently runs from the shared interpretune development environment rather than a dedicated Neuronpedia-specific environment. That is acceptable for active recovery, but long-running dashboard jobs should eventually move into a dedicated environment with the Neuronpedia and SAEDashboard dependencies pinned independently from the main Interpretune dev environment.
+
+## Publishing generated dashboards to the Hub
+
+A generated corpus can be published to a Hugging Face Storage Bucket or a dataset repo, and
+downloaded back to populate a local Neuronpedia elsewhere. Both go through
+`interpretune.utils.neuronpedia_dashboard_hub`; `scripts/publish_dashboards_to_hub.py` is a thin CLI
+over it.
+
+```bash
+# inspect what would be published -- no network writes
+python scripts/publish_dashboards_to_hub.py --run-root <run_dir> --repo-id <ns>/<name> --dry-run
+
+# publish (private) to a bucket, under an explicit prefix
+python scripts/publish_dashboards_to_hub.py --run-root <run_dir> --repo-id <ns>/<name> \
+    --store bucket --revision 24576-prompts --private
+
+# ...or at the bucket root, said deliberately
+python scripts/publish_dashboards_to_hub.py --run-root <run_dir> --repo-id <ns>/<name> \
+    --store bucket --bucket-root --private
+```
+
+```python
+from pathlib import Path
+from interpretune.utils import publish_dashboard_run, download_dashboard_run
+from interpretune.utils.neuronpedia_dashboard_hub import BUCKET_ROOT
+
+publish_dashboard_run(Path(run_dir), "ns/name", store="bucket", revision=BUCKET_ROOT, private=True)
+download_dashboard_run("ns/name", Path(dest), store="bucket")
+```
+
+### Choosing a backend
+
+| | `bucket` | `dataset` |
+| --- | --- | --- |
+| Access | **S3-compatible** (`s3.hf.co`): boto3, rclone, s5cmd, DuckDB `read_parquet('s3://…')` | Hub API / `snapshot_download` |
+| Versioning | none — mutable, overwrite-in-place | full git history, branches, pinnable revisions |
+| Revisions | a `revision` becomes a **path prefix** | real branches |
+| Deleting | frees storage | history retains it |
+| Collections / dataset card | no | yes |
+
+**Prefer `bucket`** when the consumer's tooling is S3-shaped — which is the common case for
+Neuronpedia-adjacent work — and because Parquet page indexes (with appropriate row_group_size granularity) make range reads over the S3 gateway
+actually pay off. **Prefer `dataset`** when you need to *pin* a corpus, e.g. so a PR or paper can
+reference exactly the artifacts a claim was measured on.
+
+Publishing to both is cheap: Xet deduplicates chunk-wise across them, so the second upload of an
+already-published corpus completes in seconds. Note `dataset → bucket` server-side copy exists while
+`bucket → dataset` does not, so if you will only ever do one, doing the dataset first keeps both open.
+
+### What Xet dedup does and does not buy here
+
+Xet chunks content at a 64 KB target (8–128 KB range) and deduplicates **globally — across all
+repositories and users**, not per repo. Co-locating corpora therefore buys no storage; layout is a
+discoverability and access-control decision, not a compression one.
+
+Measured on the two published corpora (CDC simulation at Xet's parameters):
+
+| Pair | Chunk dedup |
+| --- | --- |
+| `activation_copy_rows` vs `activation_rows`, same `feature_batch_*` | **96–99%** |
+| Same layer/batch across prompt corpora (monology vs RTE) | 0% |
+| Across layers within one corpus | 0% |
+
+So the copy-rows table — ~45% of every corpus, and the reason a publish looks twice as expensive as
+it should — costs essentially **nothing in stored bytes**, because it dedups against
+`activation_rows` inside the same directory. The only files byte-identical across prompt corpora are
+`logits_tables` and `logits_histograms` (decoder-derived, corpus-invariant): 165 MiB of 5.68 GiB.
+
+The practical consequence: do not split `activation_rows` and `activation_copy_rows` across repos or
+upload sessions to "save space". Local-session dedup is exact; global dedup is *sampled* (only chunks
+whose hash `% 1024 == 0` are eligible), so separating them downgrades a guaranteed saving to a
+probabilistic one and gains nothing.
+
+### Two guards that refuse to publish, and why
+
+**Missing Parquet page index.** Without one a reader cannot range-read individual pages, so HTTP
+streaming degrades to whole row groups. It cannot be added after the fact; the corpus must be
+regenerated. Generate with `runner_columnar_write_page_index: true` (the default). Override with
+`--allow-missing-page-index` only if the corpus is not intended for streaming.
+
+> **The page index alone does not make a corpus streamable — row group size does.** Readers prune at
+> **row group** granularity, so a file written as a single row group costs a reader the whole file to
+> fetch one feature no matter how its pages are indexed. Measured on a published 4,096-feature
+> artifact (35.6 MiB): every dashboard column for one feature cost **35.6 MiB (100%)** at one row
+> group, and **1.30 MiB (3.4%)** at `row_group_size = 4096`, for 6% more file. Shrinking
+> `data_page_size` to 64 KiB while keeping one row group changed it by 0.3%.
+>
+> `runner_columnar_parquet_row_group_size` defaults to SAEDashboard's
+> `DEFAULT_PARQUET_ROW_GROUP_SIZE` (4096) and is recorded in `dashboards.json` under
+> `artifacts.parquet_row_group_size`, so a published corpus says how it is laid out. The optimum
+> moves only as √(features per file), so the default holds across batch sizes; set it explicitly
+> only if you have measured a reason to. Like the page index, it is **fixed at write time**.
+>
+
+**Manifests referencing an excluded table.** Each `feature_batch_*/manifest.json` declares the tables
+in that batch, and the importer resolves the activation table from it and **raises** when the
+preferred entry is absent — it does not fall back. So excluding `activation_copy_rows` produces a
+corpus that downloads byte-identically and then **fails on the first import**. `--include-copy-rows`
+is therefore the default. Exclude it only for a consumer that reads the parquet directly (DuckDB,
+pandas) and never imports, which requires both `--no-include-copy-rows` and
+`--allow-manifest-inconsistency`. Excluding it saves little anyway — see the dedup table above.
+
+**Unspecified bucket destination.** Buckets have no revisions and no history, so a publish that does
+not say *where* in the bucket it lands puts every corpus at the root. Two corpora differing only in a
+dimension the bucket *name* does not carry — prompt count being the obvious one — then interleave,
+and a later sync overwrites in place with nothing to roll back to. Pass `--revision <prefix>` or
+`--bucket-root`. Dataset repos are unaffected: a revision defaults to a branch and destroys nothing.
+
+The destination guard is checked **after** the two corpus guards, deliberately: a missing page index
+costs a regeneration to fix, and reporting a missing flag first would hide that behind a retype.
+
+### What a corpus says about itself
+
+Two sidecars at the run root travel with a published corpus:
+
+| File | Role | Refreshable |
+| --- | --- | --- |
+| `source_ids.json` | **Identity** — the Neuronpedia source id per layer | No: rewriting it under an already-imported corpus silently re-keys it |
+| `dashboards.json` | **Provenance** — model, source set, prompt corpus, layers, artifact properties, tool versions | Yes: nothing imports from it |
+
+`dashboards.json` is what lets a consumer tell two corpora apart without downloading either or
+trusting a bucket name:
+
+```console
+$ python scripts/publish_dashboards_to_hub.py --run-root <run_dir> --repo-id <ns>/<name> --dry-run
+corpus manifest: gemma-3-1b-it / gemmascope-2-transcoder-16k-rte / 2490 prompts x 319 tokens / 26 layers
+```
+
+Both are written at generation start and refreshed at completion. Backfill a corpus generated before
+they existed — no regeneration required:
+
+```bash
+python -m interpretune.utils.neuronpedia_dashboard_pipeline --config <config>.yaml --write-source-ids
+```
+
+`layers.generated` reflects what is on disk at write time, not what was requested, so a run
+interrupted at layer 12 does not claim 26 layers it never produced.
+
+### Credentials
+
+Publishing reads `HF_HUB_DASHBOARDS_TOKEN` from the process environment, then the repo `.env`, then
+falls back to the ambient `huggingface-cli` credential. Keeping a separate variable from `HF_TOKEN`
+is deliberate: a repo-scoped dashboards token should not silently widen or narrow every other Hub
+operation in the process. The token needs **write** on the target — for a bucket that is a `bucket:`
+scope entry, which is distinct from the `dataset:` one.

@@ -1,0 +1,105 @@
+# 24,576-prompt variant of the all-layer Monology 16k dashboard generation for gemma-3-1b-it.
+#
+# Restores the prompt corpus the predecessor source set was built with (the `4096x256x24576`
+# benchmark suffixes). The sibling `...-production.yaml` stays at 4,096 prompts and remains the
+# proven overnight-window configuration; this file exists so the larger point does not require
+# editing that one.
+#
+# WHY THE EXTRA FLAGS BELOW ARE MANDATORY HERE
+# The feature-acts accumulation buffer is (n_prompts * n_tokens_in_prompt) * n_features_per_batch in
+# BFLOAT16 (2 bytes, not 4):  24,576 * 128 * 4096 * 2 = ~24 GiB   (at 4,096 prompts it is ~4 GiB).
+# 24 GiB fits a 62 GiB host on its own. What kills the run is the buffer being reallocated at every
+# feature-batch transition, so the allocator transiently holds two of them. Mitigations, all needed:
+#   - SAEDashboard >= b092461 makes the buffer run-persistent (already in the pinned fork).
+#   - columnar_max_device_staged_acts_bytes: 0 forces host staging rather than a device copy.
+#   - columnar_row_chunk_size: 16 bounds the GPU-side transient in quantile selection. NOTE this is
+#     a DIFFERENT budget from the host buffer -- lowering it alone still gets the run OOM-killed on
+#     the host, which is exactly how a 2026-08-01 attempt failed.
+#   - LD_PRELOAD=libjemalloc.so, which the benchmark suite uses for the same reason.
+#
+# Measured on the benchmark leg `columnar_monology_promptsweep_4096x256x24576`:
+#   ~28 GiB host RSS, ~22 GiB GPU, ~231 s per feature-batch => ~15 min/layer, ~6.5 h for 26 layers.
+# Free host memory should be >= ~35 GiB before starting; check `free -g` and close memory-hungry
+# editor language servers first.
+#
+# Artifact SIZE: ~1.8x larger on disk than 4,096 prompts -- MEASURED, correcting an earlier claim
+# that it would be essentially unchanged. The structural reasoning was right but incomplete:
+#   rows                    483,013 -> 509,992   (1.06x -- bounded at 20 + 5*5 = 45 per feature)
+#   uncompressed bytes/row      293 -> 312       (1.06x -- row width is the context length)
+#   compression ratio          2.45x -> 1.45x
+#   ON DISK (layer 0)        57.7 MB -> 109.9 MB (1.90x)
+# So the logical content is nearly identical and the growth is almost entirely reduced
+# COMPRESSIBILITY: top-k sequences drawn from 6x more prompts are less redundant. The extra bytes
+# are the extra information, which is the reason to scan more prompts. Budget ~11-12 GB for 26
+# layers rather than the ~6.4 GB the 4,096-prompt corpus occupies.
+#
+# import_to_local_db is OFF deliberately: the importer uses ON CONFLICT DO NOTHING, so importing on
+# top of an occupied source set writes nothing (it now warns rather than passing silently, but it
+# still writes nothing). To replace an existing corpus, purge the rows for modelId=gemma-3-1b-it
+# (scoped -- gemma-3-4b-it shares this setName with identical source-id strings) and re-run with
+# --import-only-local-db. Back up Explanation rows first: they CASCADE from Neuron.
+pipeline:
+  model_name: gemma-3-1b-it
+  model_layers: 26
+  creator_name: Google DeepMind
+  release_id: gemma-scope-2
+  release_title: Gemma Scope 2
+  release_url: https://huggingface.co/google/gemma-scope-2-1b-it
+  hook_point: hook_mlp_in
+  sae_set: gemma-scope-2-1b-it-transcoders-all
+  neuronpedia_source_set_id: gemmascope-2-transcoder-16k
+  neuronpedia_source_set_description: Transcoder - 16k
+  hf_weights_repo_id: google/gemma-scope-2-1b-it
+  hf_weights_path_template: transcoder_all/layer_{layer}_width_16k_l0_small_affine
+  sae_path_template: layer_{layer}_width_16k_l0_small_affine
+  prompts_huggingface_dataset_path: monology/pile-uncopyrighted
+  prompts_huggingface_dataset_split: train
+  start_layer: 0
+  end_layer: 25
+  start_batch: 0
+  n_prompts_total: 24576
+  n_tokens_in_prompt: 128
+  n_features_per_batch: 4096
+  n_prompts_in_forward_pass: 256
+  use_skip_transcoder: true
+  runner_dashboard_output_format: columnar
+  runner_sequence_selection_backend: columnar_gpu
+  runner_feature_statistics_backend: arrow
+  runner_logits_histogram_backend: arrow
+  runner_overlap_batch_packaging: true
+  runner_use_cached_activations: false
+  # Peak-memory recipe -- see the header. Both are required; they bound different budgets.
+  runner_columnar_max_staged_acts_bytes: 0
+  runner_columnar_row_chunk_size: 16
+  model_wrapper: bridge
+  bridge_enable_compatibility_mode: true
+  runner_log_resource_snapshots: true
+  runner_log_performance: true
+  import_to_local_db: false
+  # Emit activation_copy_rows even though the inline DB import is off. These default to
+  # `import_to_local_db`, so disabling the import would silently drop them -- and they are the
+  # importer's FAST lane (already in Neuronpedia's destination column layout, so its handler does no
+  # row-level Python). Without them a later --import-only-local-db falls back to activation_rows,
+  # which requires a full materialization. They also keep this corpus structurally comparable to the
+  # 4,096-prompt reference. Costs ~47% more on disk; the Hub publisher excludes them by default anyway.
+  runner_emit_activation_copy_rows: true
+  overlap_local_db_import: false
+  # Keeps every layer's neuron-import payload under postgres' 256 MB single-jsonb-array limit; the
+  # default 65000 trips ProgramLimitExceeded on dense layers and aborts the whole run.
+  local_db_import_chunk_size: 16000
+  # REQUIRED for inline import: without an explicit DB URL the pipeline logs one startup WARNING and
+  # silently degrades to generation-only.
+  local_db_url: postgres://postgres:postgres@127.0.0.1:5433/postgres
+  archive_partial_dirs: false
+  heartbeat_seconds: 60
+  stall_timeout_seconds: 1800
+  # No run_name_suffix: source ids stay canonical ({layer}-{set_id}). Setting one makes this a
+  # variant run, and the suffix is written into the corpus's own source_ids.json.
+launcher:
+  background: true
+  monitor: true
+  monitor_heartbeat_seconds: 60
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    # Bounds allocator retention across the ~24 GiB feature-acts buffer turnover.
+    LD_PRELOAD: /usr/lib/x86_64-linux-gnu/libjemalloc.so

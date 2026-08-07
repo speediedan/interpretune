@@ -9,11 +9,35 @@
 # production config. SAEDashboard tokenizes/concatenates to 128-token contexts. The pretokenization
 # CLI is documented separately in the pipeline guide as an option; it is NOT the path used here.
 #
-# n_prompts = 4,096 (USER decision 2026-07-31) to maximize the chance the full 26-layer run
-# completes in one overnight window. NOTE: the source set this replaces was built at 24,576 prompts
-# (per the local DB and the `4096x256x24576` benchmark run suffixes), so this regeneration uses a
-# SMALLER prompt corpus than its predecessor. A 24,576-prompt rerun is a follow-up; keep this file and
-# the run log so only `n_prompts_total` has to change.
+# n_prompts = 4,096. A 24,576-prompt rerun IS feasible on this host but needs the peak-memory flag
+# set below; a 2026-08-01 attempt without them was OOM-killed by the kernel.
+#
+# The feature-acts accumulation buffer is (n_prompts * n_tokens_in_prompt) * n_features_per_batch,
+# in BFLOAT16 (`feature_data_generator.py` casts to bf16 -- 2 bytes, not 4):
+#   24,576 * 128 * 4096 * 2 = ~24 GiB   (4,096 prompts = ~4 GiB)
+# That fits a 62 GiB host on its own. What kills it is the buffer being reallocated at every
+# feature-batch transition, so the allocator transiently holds two ~24 GiB buffers. SAEDashboard
+# `b092461` made the buffer run-persistent, and the benchmark suite additionally preloads jemalloc.
+#
+# PROVEN 24,576 recipe (benchmark leg `columnar_monology_promptsweep_4096x256x24576`, measured
+# ~28 GiB RSS / ~22 GiB GPU / ~231 s per feature-batch, i.e. ~15 min/layer, ~6.5 h for 26 layers):
+#   runner_columnar_max_staged_acts_bytes: 0     # force host staging
+#   runner_columnar_row_chunk_size: 16           # bounds the GPU-side quantile transient
+#   launcher.env.LD_PRELOAD: /usr/lib/x86_64-linux-gnu/libjemalloc.so
+# plus SAEDashboard >= b092461 (buffer reuse). Note these are DIFFERENT budgets: row_chunk_size
+# bounds a GPU transient in quantile selection and does nothing for the host buffer, which is why
+# lowering it alone still gets the run OOM-killed on the host.
+#
+# Artifact size is essentially UNCHANGED by prompt count, which is why a rerun is cheap in bytes. Stored
+# rows per feature are hard-bounded at top_acts_group_size + n_quantiles * quantile_group_size =
+# 20 + 5*5 = 45 (SAEDashboard `SequencesConfig` / `NeuronpediaRunnerConfig`), and row width is the
+# context length, not the prompt count. More prompts therefore buy a better-selected top-k and more
+# populated quantile intervals at ~constant bytes; what scales ~6x is generation TIME (the 4,096-prompt
+# run took 58 min for 26 layers).
+#
+# Parquet page index is ON (SAEDashboard `columnar_write_page_index`, default true). It costs ~0.01%
+# in size and cannot be added afterwards without rewriting every file, so a corpus generated without
+# it can only be fixed by regenerating it — which is the whole reason this rerun exists.
 #
 # Shapes: n_features_per_batch 4096 x n_prompts_in_forward_pass 256 — the "4096x256" configuration
 # that the benchmark wave found most efficient. Safe here where 262k needed 2048: the feature axis is

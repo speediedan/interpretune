@@ -1,4 +1,4 @@
-# Basic multi-GPU validation for columnar Monology 262k dashboard generation (Session 15, plan §3d).
+# Basic multi-GPU validation for columnar Monology 262k dashboard generation.
 #
 # Purpose: validate that the launcher's multi-worker mode still provides BASIC parallel dashboard
 # generation + resume on a heterogeneous pair (GPU0 = RTX 4090 24 GiB, GPU1 = RTX 2070 8 GiB) with

@@ -1,32 +1,36 @@
-# Production all-layer Monology 262k dashboard generation for gemma-3-1b-it (2026-07-11/12).
+# All-layer Monology 262k dashboard generation for gemma-3-1b-it.
 #
-# Purpose: the full "production" dashboard build validating the scalable-dashboards work and
-# providing the semantic substrate (feature dashboards + locally generated explanations) for the
-# refocused circuit-tracer demo notebooks. Run doc: distributed-insight
-# PRs/neuronpedia/source-set-enhancements/monology_262k_production_run.md
+# REFERENCE BASELINE, NOT A RECOMMENDED STARTING POINT. This was the widest configuration exercised
+# while validating the scalable-dashboards work, and it is retained for its 262k memory settings. The
+# published corpora and every current guide use the 16k transcoders
+# (`gemmascope-2-transcoder-16k-*.yaml`); nothing points a reader here to run it.
+#
+# It is still LIVE, indirectly: `gemmascope-2-transcoder-262k-monology-multigpu-validation.yaml`
+# EXTENDS this file, and the "Basic multi-GPU generation" section of
+# docs/neuronpedia_dashboard_pipeline.md documents running that one. So every setting below is
+# inherited by a documented command, and changing one changes that recipe. Treat the figures recorded
+# here as measurements taken on this host, not as recommendations.
 #
 # Prompt sourcing intentionally uses the standard streaming load_dataset path over
 # monology/pile-uncopyrighted (SAEDashboard tokenizes/concatenates to 128-token contexts) rather
 # than the benchmark suite's pretokenized 2,490-prompt concat dataset.
 #
-# n_prompts = 4,096 (Session 13 decision). WHY NOT larger: the columnar packaging exhibits a
-# GPU-memory CLIFF — feature_statistics_packaging + activation_histogram_packaging are near-free at
-# 2,490 AND 4,096 prompts (peak GPU reserved ~5 / 16.7 GiB) but jump +75x / +34x at 8,192 prompts
-# (peak 23.0 GiB, at the 24 GiB card) — a memory-pressure/allocator-thrash cliff, NOT algorithmic
-# (packaging is provably O(n_prompts) linear). 4,096 sits well below the cliff: ~7.4 s/batch
-# (~9x faster than 8,192), full 26-layer run < 24 h. Confirmed by a 3-point sweep + code read;
-# see monology_262k_production_run.md "Root cause — CONFIRMED". Larger n_prompts (24,576) needs the
-# opt-in token-chunked packaging mitigation (SD enhancement, plan §3d task 3).
+# MEMORY SETTINGS THAT WORK AT 262k, and why n_prompts stays at 4,096 here.
+# The columnar packaging shows a GPU-memory CLIFF against a 24 GiB card: feature_statistics and
+# activation_histogram packaging are near-free at 2,490 AND 4,096 prompts (peak GPU reserved
+# ~5 / 16.7 GiB) but jump +75x / +34x at 8,192 (peak 23.0 GiB) — memory pressure and allocator
+# thrash, NOT algorithmic; packaging is O(n_prompts) linear. Confirmed by a 3-point sweep plus a code
+# read. 4,096 sits well below the cliff at ~7.4 s/batch (~9x faster than 8,192), a full 26-layer run
+# in under 24 h, and is the combination benchmarked on this host.
 #
-# LESSONS (launches 1-5):
-# 1. ROUTE: runner_dashboard_output_format 'auto' resolves to columnar ONLY when
-#    runner_defer_component_construction is ALSO enabled; the explicit columnar flag set below is
-#    REQUIRED and must stay explicit. (Also: argparse defaults used to clobber these YAML values —
-#    fixed IT-6f03dad.)
-# 2. HOST RAM (legacy route): the LEGACY per-feature-batch assembly materializes a dense
-#    features x prompts x tokens matrix on the HOST — OOM-killed at 24,576 x 4096 on this 62 GiB
-#    host. The columnar route below keeps host RSS ~5 GiB; the constraint at scale is the GPU cliff
-#    above, not host RAM.
+# Larger prompt counts are NOT blocked any more — they need the peak-memory recipe rather than a
+# smaller corpus. `runner_columnar_max_staged_acts_bytes: 0` (host staging instead of a device copy)
+# and `runner_columnar_row_chunk_size: 16` (bounds the GPU transient in quantile selection) bound two
+# different budgets and are both required; jemalloc via LD_PRELOAD bounds allocator retention across
+# the feature-acts buffer turnover. That combination is what generates 24,576 prompts successfully —
+# see `gemmascope-2-transcoder-16k-monology-24576.yaml`, which carries the measured figures. It has
+# not been re-measured at 262k width, which is the only reason this file still reads 4,096.
+#
 pipeline:
   model_name: gemma-3-1b-it
   model_layers: 26
@@ -79,16 +83,15 @@ pipeline:
   local_db_import_chunk_size: 16000
   # REQUIRED for inline import: without an explicit DB URL (or LOCAL_NEURONPEDIA_DB_URL /
   # POSTGRES_URL_NON_POOLING in the env) the pipeline logs a single startup WARNING and silently
-  # degrades to generation-only (launch 5 ran layers this way; imports backfilled via
-  # --import-only-local-db). Candidate pipeline fix: import_to_local_db=true + unresolvable DB URL
-  # should be a hard error, not a warning.
+  # degrades to generation-only, with imports left to be backfilled via --import-only-local-db.
+  # Candidate pipeline fix: import_to_local_db=true + unresolvable DB URL should be a hard error,
+  # not a warning.
   local_db_url: postgres://postgres:postgres@127.0.0.1:5433/postgres
   archive_partial_dirs: false
   heartbeat_seconds: 60
   stall_timeout_seconds: 1800
-  # No run_name_suffix: keeps the run dir canonical (..._gemmascope-2-transcoder-262k) so
-  # _resolve_source_id derives canonical source ids ({layer}-{set_id}) for INLINE imports —
-  # sidesteps the columnar suffix-leak workaround (plain symlink + empty --run-name-suffix backfill).
+  # No run_name_suffix: source ids stay canonical ({layer}-{set_id}). Setting one makes this a
+  # variant run, and the suffix is written into the corpus's own source_ids.json.
 launcher:
   background: true
   monitor: true

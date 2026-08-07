@@ -66,6 +66,20 @@ released anyway.
 - The pipeline is `.azure-pipelines/gpu-tests.yml`
 - The GPU runner uses the self-hosted `Default` pool, but a queued build may still show `queue.name = Azure Pipelines` at the build level
 - PR-triggered GPU runs require explicit Azure approval before the job is dispatched to the self-hosted runner
+- **Path filters do not stop a docs-only PUSH from queueing a build.** For a `pr:` trigger the filters
+  are evaluated against the pull request's **cumulative diff**, not the delta of the push that fired
+  it — a pipeline validates the merge commit. So once a PR touches `src/**`, every later push
+  re-triggers it, including one that only edits `docs/`. Verified 2026-08-05: a docs-only commit
+  queued build 709 on PR #240 even though `docs/**` is absent from the include list.
+  - `[skip ci]` does **not** rescue this. Microsoft documents that PR pipelines run on the merge
+    commit "regardless if there exist pushed commits whose messages or descriptions contain
+    `[skip ci]`" — the skip tokens (`[skip ci]`, `[azurepipelines skip]`, `***NO_CI***`, …) suppress
+    only CI/branch triggers.
+  - What path filters DO buy is skipping a PR whose *entire* diff is documentation, so keep
+    `docs/**` and `*.md` in the exclude lists.
+  - Practical consequence when managing the queue: batch documentation pushes with the code they
+    describe, or expect to dispose of a gate per docs push. Approving a gate and then pushing again
+    is worse — Azure cancels the superseded run, so the approval buys nothing.
 - `AZURE_DEVOPS_EXT_PAT` is the preferred non-interactive authentication path for `az devops` and Azure DevOps REST calls
 - Runner constraints (**host-specific — see the note below; values here are illustrative**):
   - RAM on the order of tens of GiB, with **swap much smaller than RAM** (the current host is an example:
@@ -210,7 +224,7 @@ bash ./tests/special_tests.sh --mark_type=standalone
 bash ./tests/special_tests.sh --mark_type=profile_ci
 ```
 
-Fast-iteration guidance (validated Sessions 29-31, 2026-07; local runs are for DEBUG ONLY — the
+Fast-iteration guidance (validated 2026-07; local runs are for DEBUG ONLY — the
 gated pipeline must still pass on push/merge so coverage stays updated):
 
 - **Run the failing phase, not the pipeline.** A single phase locally gives minutes-scale signal vs
@@ -219,7 +233,7 @@ gated pipeline must still pass on push/merge so coverage stays updated):
   phases.
 - **Cuda-marked tests hide inside the "skipped" count** without `IT_RUN_CUDA_TESTS=1` — a locally
   "green" standard run does NOT imply the `standard gpu cuda-marked` phase is green (this exact gap
-  let the Session-31 CT merge land red). The phase also needs `HF_GATED_PUBLIC_REPO_AUTH_KEY`/
+  let the 2026-07-20 circuit-tracer merge land red). The phase also needs `HF_GATED_PUBLIC_REPO_AUTH_KEY`/
   `HF_TOKEN` in the environment (gated-model + notebook tests).
 - **Debug another branch without disturbing your working tree**: detached `git worktree` + an
   overlay venv — `python -m venv <env>`, `pip install -e <worktree> --no-deps`, then an executable

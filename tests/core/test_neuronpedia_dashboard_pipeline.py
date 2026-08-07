@@ -18,8 +18,13 @@ import torch
 import yaml
 from datasets import Dataset
 
+from sae_dashboard.neuronpedia.neuronpedia_runner_config import (
+    DEFAULT_PARQUET_ROW_GROUP_SIZE as SD_DEFAULT_PARQUET_ROW_GROUP_SIZE,
+)
+
 import interpretune.utils.neuronpedia_dashboard_pipeline as dashboard_pipeline
 from interpretune.utils.import_utils import _NEURONPEDIA_UTILS_AVAILABLE
+from interpretune.utils.neuronpedia_source_conflicts import ConflictResolution, SourceSetOccupancy
 from interpretune.utils.neuronpedia_dashboard_pipeline import (
     NeuronpediaDashboardPipelineConfig,
     completed_layers_from_logs,
@@ -1722,15 +1727,26 @@ def test_find_existing_export_root_prefers_matching_run_name_suffix(tmp_path: Pa
     assert dashboard_pipeline._find_existing_export_root(config, layer_num=7) == expected
 
 
-def test_resolve_source_id_uses_run_name_suffix_for_columnar_output(tmp_path: Path) -> None:
+def test_run_name_suffix_distinguishes_variant_runs_from_config_not_layout(tmp_path: Path) -> None:
+    """A variant run stays distinct, but because CONFIG says so -- not because of its directory.
+
+    Previously the suffix was parsed out of the run directory name, which made identity depend on where a corpus sat and
+    let a renamed download silently import under different ids. The suffix is now an explicit input, applied when
+    source_ids.json is written so it travels WITH the corpus.
+    """
     output_dir = (
         tmp_path / "runs" / "gemma-3-1b-it_gemmascope-2-transcoder-262k-rte_phase1-pr-clean-steadystate" / "layer_7"
     )
-    columnar_leaf = output_dir / "google_gemma-leaf" / "batch-0.columnar"
-    columnar_leaf.mkdir(parents=True)
+    (output_dir / "google_gemma-leaf" / "batch-0.columnar").mkdir(parents=True)
+    SET = "gemmascope-2-transcoder-262k-rte"
 
-    assert dashboard_pipeline._resolve_source_id(output_dir, 7, "gemmascope-2-transcoder-262k-rte") == (
-        "7-gemmascope-2-transcoder-262k-rte__phase1-pr-clean-steadystate"
+    # The directory name alone no longer means anything.
+    assert dashboard_pipeline._resolve_source_id(output_dir, 7, SET) == f"7-{SET}"
+
+    # The same suffix, stated in config, still yields a distinct id.
+    assert (
+        dashboard_pipeline._resolve_source_id(output_dir, 7, SET, run_name_suffix="phase1-pr-clean-steadystate")
+        == f"7-{SET}__phase1-pr-clean-steadystate"
     )
 
 
@@ -2720,8 +2736,8 @@ def test_run_dashboard_pipeline_skips_conversion_for_columnar_generation_only(
     assert results[0].export_root is None
     assert not results[0].skipped
     assert launched_commands
-    assert "--dashboard-output-format=columnar" in launched_commands[0]
-    assert "--correlation-accumulation-device=auto" in launched_commands[0]
+    assert "--dashboard-output-format=columnar" in _runner_command(launched_commands)
+    assert "--correlation-accumulation-device=auto" in _runner_command(launched_commands)
     assert "Skipping legacy Neuronpedia conversion for columnar dashboard output" in caplog.text
 
 
@@ -2790,8 +2806,8 @@ def test_run_dashboard_pipeline_skips_conversion_for_legacy_generation_only(
     assert results[0].export_root is None
     assert not results[0].skipped
     assert launched_commands
-    assert "--sequence-selection-backend=legacy" in launched_commands[0]
-    assert "--dashboard-output-format=legacy_json" in launched_commands[0]
+    assert "--sequence-selection-backend=legacy" in _runner_command(launched_commands)
+    assert "--dashboard-output-format=legacy_json" in _runner_command(launched_commands)
     assert "Skipping Neuronpedia conversion for legacy generation-only" in caplog.text
 
 
@@ -3067,6 +3083,32 @@ def test_import_requested_but_db_unavailable_hard_errors_by_default(
         dashboard_pipeline.run_dashboard_pipeline(config)
 
 
+def _runner_command(launched_commands: list[list[str]]) -> list[str]:
+    """The dashboard-runner invocation, ignoring incidental subprocesses.
+
+    The pipeline now probes the local DB for an occupied source set before generating, and psycopg's
+    library loader shells out to `ldconfig` on the way. That is unrelated to what these tests assert,
+    so select the runner command by its shape rather than assuming it is the first subprocess.
+    """
+    return next(c for c in launched_commands if any(str(part).startswith("--output-dir=") for part in c))
+
+
+def _unoccupied_occupancy(_db_url, *, model_id, source_set_id, **_kwargs):
+    """An empty target source set, without consulting any database."""
+    return SourceSetOccupancy(
+        model_id=model_id, source_set_id=source_set_id, source_count=0, neuron_count=0, explanation_count=0
+    )
+
+
+def _unoccupied_resolution(db_url, *, model_id, source_set_id, policy, **_kwargs):
+    """The no-conflict outcome: nothing occupied, so nothing renamed and nothing deleted."""
+    return ConflictResolution(
+        policy=policy,
+        occupancy=_unoccupied_occupancy(db_url, model_id=model_id, source_set_id=source_set_id),
+        effective_source_set_id=source_set_id,
+    )
+
+
 def test_run_dashboard_pipeline_imports_columnar_output_directly(
     tmp_path: Path,
     monkeypatch,
@@ -3113,6 +3155,15 @@ def test_run_dashboard_pipeline_imports_columnar_output_directly(
     monkeypatch.setattr(dashboard_pipeline.subprocess, "Popen", _fake_popen)
     monkeypatch.setattr(dashboard_pipeline, "convert_dashboard_output", _unexpected_convert)
     monkeypatch.setattr(dashboard_pipeline, "import_columnar_dashboard_output", _fake_import_columnar)
+    # The config below carries a REAL local Neuronpedia URL, and import_to_local_db defaults True, so
+    # the pipeline would otherwise probe whatever database is listening on 5433 and refuse when it
+    # finds the source set already populated. That made the outcome depend on the developer's DB
+    # contents AND on test ordering: in isolation psycopg cannot load libpq under pytest, the probe
+    # silently no-ops, and the test passes; later in a full run the probe works and it fails. Both
+    # collaborators here are exercised by tests/core/test_neuronpedia_source_conflicts.py -- this
+    # test is about the columnar import route, so it stubs them and stays hermetic.
+    monkeypatch.setattr(dashboard_pipeline, "resolve_source_set_conflict", _unoccupied_resolution)
+    monkeypatch.setattr(dashboard_pipeline, "describe_source_set", _unoccupied_occupancy)
 
     config = NeuronpediaDashboardPipelineConfig(
         model_name="gemma-3-1b-it",
@@ -3156,7 +3207,7 @@ def test_run_dashboard_pipeline_imports_columnar_output_directly(
     assert results[0].import_summary.imported_row_counts == {"Source": 1, "Neuron": 2, "Activation": 3}
     assert imported_layers == [(0, expected_output_dir)]
     assert launched_commands
-    assert "--dashboard-output-format=columnar" in launched_commands[0]
+    assert "--dashboard-output-format=columnar" in _runner_command(launched_commands)
     assert "Imported columnar layer=0 into local DB" in caplog.text
 
 
@@ -3828,3 +3879,454 @@ def test_layer_runner_command_forwards_columnar_peak_memory_controls(tmp_path: P
     )
     assert "--columnar-max-device-staged-acts-bytes=0" in opt_in_command
     assert "--columnar-row-chunk-size=64" in opt_in_command
+
+
+def test_layer_runner_command_forwards_write_page_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The page index must default ON and be explicitly negatable.
+
+    Asserted on the emitted command line because that is the entire transport between this pipeline and SAEDashboard --
+    a config field that never becomes a flag silently produces a corpus with no page index, which cannot be repaired
+    without regenerating it.
+
+    Covers emission only. There is no detection to cover: the option is required by the SAEDashboard floor rather than
+    probed, so nothing here depends on which SAEDashboard is installed.
+    """
+    base_kwargs = dict(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_description="Transcoder - 262k",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_mlp_in",
+        prompts_huggingface_dataset_path="monology/pile-uncopyrighted",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+    )
+
+    default_command = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(**base_kwargs, runner_dashboard_output_format="columnar"),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert "--columnar-write-page-index" in default_command
+    assert "--no-columnar-write-page-index" not in default_command
+
+    opted_out = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(
+            **base_kwargs,
+            runner_dashboard_output_format="columnar",
+            runner_columnar_write_page_index=False,
+        ),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert "--no-columnar-write-page-index" in opted_out
+    assert "--columnar-write-page-index" not in opted_out
+
+    # The legacy_json lane writes no parquet, so the flag would be meaningless there.
+    legacy_command = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(**base_kwargs, runner_dashboard_output_format="legacy_json"),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert not any("write-page-index" in arg for arg in legacy_command)
+
+
+def test_config_file_defaults_survive_cli_parsing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A flag not passed on the CLI must not override the config-file/dataclass default.
+
+    This parser sets ``argument_default=argparse.SUPPRESS`` so unpassed options stay out of the
+    namespace. An ``add_argument(..., default=None)`` defeats that silently: the None lands in the
+    merged config and, for a boolean, reads as False. That is how a run configured for
+    ``write_page_index`` on emitted ``--no-columnar-write-page-index`` and produced a corpus with no
+    page index -- a defect only fixable by regenerating.
+
+    Asserted through _parse_args -> _build_dashboard_pipeline_config -> _layer_runner_command, the
+    path the launcher actually takes; constructing the config directly bypasses the bug. The
+    This measures config-default survival; the flag itself is emitted unconditionally.
+    """
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "pipeline": {
+                    "model_name": "gemma-3-1b-it",
+                    "model_layers": 26,
+                    "sae_set": "gemma-scope-2-1b-it-transcoders-all",
+                    "neuronpedia_source_set_id": "gemmascope-2-transcoder-16k",
+                    "neuronpedia_source_set_description": "Transcoder - 16k",
+                    "creator_name": "Google DeepMind",
+                    "release_id": "gemma-scope-2",
+                    "release_title": "Gemma Scope 2",
+                    "release_url": "https://huggingface.co/google/gemma-scope-2-1b-it",
+                    "hf_weights_repo_id": "google/gemma-scope-2-1b-it",
+                    "hf_weights_path_template": "transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+                    "sae_path_template": "layer_{layer}_width_16k_l0_small_affine",
+                    "hook_point": "hook_mlp_in",
+                    "prompts_huggingface_dataset_path": "monology/pile-uncopyrighted",
+                    "start_layer": 0,
+                    "end_layer": 0,
+                    "run_root": str(tmp_path / "runs"),
+                    "export_root": str(tmp_path / "exports"),
+                    "runner_dashboard_output_format": "columnar",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    args = dashboard_pipeline._parse_args(["--config", str(config_path)])
+    config = dashboard_pipeline._build_dashboard_pipeline_config(args)
+
+    assert config.runner_columnar_write_page_index is True, "an unpassed CLI flag overrode the dataclass default"
+    command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
+    assert "--columnar-write-page-index" in command
+    assert "--no-columnar-write-page-index" not in command
+
+    # And an explicit opt-out on the CLI must still win.
+    opted_out = dashboard_pipeline._build_dashboard_pipeline_config(
+        dashboard_pipeline._parse_args(["--config", str(config_path), "--no-runner-columnar-write-page-index"])
+    )
+    assert opted_out.runner_columnar_write_page_index is False
+
+
+def test_write_page_index_flag_is_always_emitted(tmp_path: Path) -> None:
+    """Both polarities reach the runner command unconditionally.
+
+    There is no capability probe: the SAEDashboard floor defines this option, so it is a requirement
+    rather than something to detect. An install predating it fails loudly on its own with
+    "unrecognized arguments", which is the right outcome for an unsupported dependency version.
+    """
+    base_kwargs = dict(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemma-scope-2-1b-it-transcoders-all",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-16k",
+        neuronpedia_source_set_description="Transcoder - 16k",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+        sae_path_template="layer_{layer}_width_16k_l0_small_affine",
+        hook_point="hook_mlp_in",
+        prompts_huggingface_dataset_path="monology/pile-uncopyrighted",
+        start_layer=0,
+        end_layer=0,
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        runner_dashboard_output_format="columnar",
+    )
+    config = NeuronpediaDashboardPipelineConfig(**base_kwargs)
+
+    assert "--columnar-write-page-index" in dashboard_pipeline._layer_runner_command(
+        config, layer_num=0, output_dir=tmp_path / "l0"
+    )
+
+    opted_out = NeuronpediaDashboardPipelineConfig(**{**base_kwargs, "runner_columnar_write_page_index": False})
+    assert "--no-columnar-write-page-index" in dashboard_pipeline._layer_runner_command(
+        opted_out, layer_num=0, output_dir=tmp_path / "l0"
+    )
+
+
+def test_no_cli_option_declares_a_default_that_defeats_suppress() -> None:
+    """No option on this parser may declare an explicit `default=`.
+
+    The parser is built with ``argument_default=argparse.SUPPRESS`` so an option the user did not
+    pass stays out of the namespace and the config-file value survives the merge. Declaring
+    ``default=`` on an individual option -- including ``default=None`` -- puts the value back in,
+    where it overwrites the config file.
+
+    Not hypothetical, twice: it silently disabled the page-index flag, and separately it disabled
+    --runner-columnar-max-staged-acts-bytes and --runner-columnar-row-chunk-size, which are the
+    documented peak-memory recipe for large prompt counts. A YAML config setting them resolved to
+    None, so a run configured to fit host memory was OOM-killed instead.
+
+    Asserted structurally over every action so a newly added option cannot reintroduce it.
+    """
+    import argparse
+
+    parser = dashboard_pipeline._create_argument_parser()
+    assert parser.argument_default is argparse.SUPPRESS, (
+        "the SUPPRESS contract this test guards is gone; re-evaluate config-vs-CLI merge semantics"
+    )
+
+    offenders = sorted(
+        "/".join(action.option_strings)
+        for action in parser._actions
+        if action.dest != "help" and action.default is not argparse.SUPPRESS
+    )
+    assert offenders == [], (
+        "these options declare an explicit default and will overwrite config-file values "
+        f"(drop the `default=` so SUPPRESS applies): {offenders}"
+    )
+
+
+class TestDashboardManifest:
+    """``dashboards.json`` makes a corpus identifiable without opening a parquet file or a bucket name.
+
+    Purely descriptive: nothing imports from it, which is precisely why it may be refreshed freely
+    where ``source_ids.json`` may not.
+    """
+
+    def _config(self, tmp_path: Path, **overrides) -> NeuronpediaDashboardPipelineConfig:
+        kwargs = dict(
+            model_name="gemma-3-1b-it",
+            model_layers=26,
+            sae_set="gemma-scope-2-1b-it-transcoders-all",
+            neuronpedia_source_set_id="gemmascope-2-transcoder-16k",
+            neuronpedia_source_set_description="Transcoder - 16k",
+            creator_name="Google DeepMind",
+            release_id="gemma-scope-2",
+            release_title="Gemma Scope 2",
+            release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+            hf_weights_repo_id="google/gemma-scope-2-1b-it",
+            hf_weights_path_template="transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+            sae_path_template="layer_{layer}_width_16k_l0_small_affine",
+            hook_point="hook_mlp_in",
+            prompts_huggingface_dataset_path="monology/pile-uncopyrighted",
+            start_layer=0,
+            end_layer=2,
+            n_prompts_total=24576,
+            n_tokens_in_prompt=128,
+            run_root=tmp_path / "runs",
+            export_root=tmp_path / "exports",
+            saedashboard_repo_root=tmp_path,
+            saelens_repo_root=tmp_path,
+            neuronpedia_utils_root=tmp_path,
+            interpretune_env_file=None,
+        )
+        kwargs.update(overrides)
+        return NeuronpediaDashboardPipelineConfig(**kwargs)
+
+    def test_records_the_fields_a_consumer_identifies_a_corpus_by(self, tmp_path: Path) -> None:
+        config = self._config(tmp_path)
+        config.run_directory.mkdir(parents=True)
+        path = dashboard_pipeline.ensure_dashboard_manifest(config)
+
+        assert path is not None and path.name == dashboard_pipeline.DASHBOARD_MANIFEST_FILE
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["model"]["name"] == "gemma-3-1b-it"
+        assert payload["source_set"]["id"] == "gemmascope-2-transcoder-16k"
+        assert payload["prompt_corpus"]["n_prompts"] == 24576
+        assert payload["prompt_corpus"]["n_tokens_in_prompt"] == 128
+        assert payload["layers"]["requested"] == [0, 1, 2]
+        # Page index is what makes the published parquet range-readable; a consumer choosing between
+        # corpora needs to see it without downloading one.
+        assert payload["artifacts"]["page_index"] is True
+        assert "interpretune" in payload["tool_versions"]
+
+    def test_generated_layers_reflect_disk_not_intent(self, tmp_path: Path) -> None:
+        """A run interrupted at layer 1 must not claim the three layers it was asked for."""
+        config = self._config(tmp_path)
+        config.run_directory.mkdir(parents=True)
+        (config.run_directory / "layer_0").mkdir()
+        (config.run_directory / "layer_1").mkdir()
+
+        payload = json.loads(dashboard_pipeline.ensure_dashboard_manifest(config).read_text(encoding="utf-8"))
+        assert payload["layers"]["requested"] == [0, 1, 2]
+        assert payload["layers"]["generated"] == [0, 1]
+
+    def test_restates_the_source_ids_the_sidecar_declares(self, tmp_path: Path) -> None:
+        config = self._config(tmp_path)
+        config.run_directory.mkdir(parents=True)
+        dashboard_pipeline.ensure_source_ids_sidecar(config)
+
+        payload = json.loads(dashboard_pipeline.ensure_dashboard_manifest(config).read_text(encoding="utf-8"))
+        assert payload["source_ids"]["0"] == "0-gemmascope-2-transcoder-16k"
+
+    def test_refresh_overwrites_where_the_source_id_sidecar_would_not(self, tmp_path: Path) -> None:
+        """The asymmetry is deliberate: re-keying identity is destructive, restating provenance is not."""
+        config = self._config(tmp_path)
+        config.run_directory.mkdir(parents=True)
+        dashboard_pipeline.ensure_dashboard_manifest(config)
+
+        (config.run_directory / "layer_0").mkdir()
+        payload = json.loads(dashboard_pipeline.ensure_dashboard_manifest(config).read_text(encoding="utf-8"))
+        assert payload["layers"]["generated"] == [0]
+
+    def test_absent_run_directory_yields_none_rather_than_creating_one(self, tmp_path: Path) -> None:
+        assert dashboard_pipeline.ensure_dashboard_manifest(self._config(tmp_path)) is None
+
+    def test_unreadable_manifest_degrades_rather_than_crashes(self, tmp_path: Path) -> None:
+        run = tmp_path / "run"
+        run.mkdir()
+        (run / dashboard_pipeline.DASHBOARD_MANIFEST_FILE).write_text("{not json", encoding="utf-8")
+        assert dashboard_pipeline.read_dashboard_manifest(run) == {}
+
+
+class TestSourceIdResolution:
+    """Identity must come from the corpus or the caller -- never from where the files happen to sit.
+
+    Deriving it from the run directory name meant downloading to a differently-named target imported
+    cleanly into a SEPARATE set of source ids: a failure indistinguishable from success, and the
+    reason directory-name parsing was removed rather than merely warned about.
+    """
+
+    SET = "gemmascope-2-transcoder-16k"
+    HOSTILE = "gemma-3-1b-it_gemmascope-2-transcoder-16k_hub-download"
+
+    def _layer_dir(self, tmp_path: Path) -> Path:
+        d = tmp_path / self.HOSTILE / "layer_0"
+        d.mkdir(parents=True)
+        return d
+
+    def test_directory_name_no_longer_leaks_into_the_id(self, tmp_path: Path) -> None:
+        got = dashboard_pipeline._resolve_source_id(self._layer_dir(tmp_path), 0, self.SET)
+        assert got == f"0-{self.SET}", "the run directory name must not affect identity"
+
+    def test_sidecar_is_authoritative_over_layout(self, tmp_path: Path) -> None:
+        layer = self._layer_dir(tmp_path)
+        dashboard_pipeline.write_source_ids_sidecar(layer.parent, {0: f"0-{self.SET}__custom"}, source_set_id=self.SET)
+        assert dashboard_pipeline._resolve_source_id(layer, 0, self.SET) == f"0-{self.SET}__custom"
+
+    def test_template_beats_the_sidecar(self, tmp_path: Path) -> None:
+        """An explicit caller intent must win, so an import can be deliberately re-keyed."""
+        layer = self._layer_dir(tmp_path)
+        dashboard_pipeline.write_source_ids_sidecar(
+            layer.parent, {0: f"0-{self.SET}__from_sidecar"}, source_set_id=self.SET
+        )
+        got = dashboard_pipeline._resolve_source_id(
+            layer, 0, self.SET, source_id_template="{layer}-{source_set_id}__rte"
+        )
+        assert got == f"0-{self.SET}__rte"
+
+    def test_unknown_template_field_fails_loudly(self) -> None:
+        with pytest.raises(ValueError, match="unknown field"):
+            dashboard_pipeline.render_source_id_template("{nope}", layer_num=0, source_set_id=self.SET)
+
+    def test_unreadable_sidecar_degrades_rather_than_crashes(self, tmp_path: Path) -> None:
+        layer = self._layer_dir(tmp_path)
+        (layer.parent / "source_ids.json").write_text("{not json", encoding="utf-8")
+        assert dashboard_pipeline._resolve_source_id(layer, 0, self.SET) == f"0-{self.SET}"
+
+    def test_backfill_preserves_existing_ids(self, tmp_path: Path) -> None:
+        """Rewriting ids under a corpus already imported somewhere would silently re-key it."""
+        run = tmp_path / self.HOSTILE
+        (run / "layer_0").mkdir(parents=True)
+        dashboard_pipeline.write_source_ids_sidecar(run, {0: f"0-{self.SET}__original"}, source_set_id=self.SET)
+        assert dashboard_pipeline.read_source_ids_sidecar(run)["0"] == f"0-{self.SET}__original"
+
+
+def test_layer_runner_command_forwards_parquet_row_group_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Row group size must default on and reach the command line.
+
+    Passed EXPLICITLY rather than left to SAEDashboard's argparse default, so the value that shaped a
+    corpus is recorded here and in the manifest instead of being whatever SD happened to default to.
+
+    This matters more than the page index: readers prune per ROW GROUP, so a single-row-group file
+    costs a reader the whole file to fetch one feature and a page index does not change that. Like
+    the page index, it is fixed at write time -- a corpus written without it can only be repaired by
+    regenerating.
+    """
+    base_kwargs = dict(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-16k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-16k",
+        neuronpedia_source_set_description="Transcoder - 16k",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+        hook_point="hook_mlp_in",
+        prompts_huggingface_dataset_path="monology/pile-uncopyrighted",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+    )
+
+    default_command = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(**base_kwargs, runner_dashboard_output_format="columnar"),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert f"--columnar-parquet-row-group-size={SD_DEFAULT_PARQUET_ROW_GROUP_SIZE}" in default_command
+
+    overridden = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(
+            **base_kwargs,
+            runner_dashboard_output_format="columnar",
+            runner_columnar_parquet_row_group_size=1024,
+        ),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert "--columnar-parquet-row-group-size=1024" in overridden
+
+    # None means "leave the writer alone", i.e. the pre-2026-08-06 single-row-group behaviour.
+    opted_out = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(
+            **base_kwargs,
+            runner_dashboard_output_format="columnar",
+            runner_columnar_parquet_row_group_size=None,
+        ),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert not any("row-group-size" in arg for arg in opted_out)
+
+    # legacy_json writes no parquet, so the flag would be meaningless there.
+    legacy_command = dashboard_pipeline._layer_runner_command(
+        NeuronpediaDashboardPipelineConfig(**base_kwargs, runner_dashboard_output_format="legacy_json"),
+        layer_num=0,
+        output_dir=tmp_path / "layer_0",
+    )
+    assert not any("row-group-size" in arg for arg in legacy_command)
+
+
+def test_dashboard_manifest_records_the_row_group_size(tmp_path: Path) -> None:
+    """A published corpus has to say how it was laid out.
+
+    A consumer deciding whether streaming is viable needs this without downloading anything, and it is the only way to
+    tell a pre-2026-08-06 corpus (one row group) from a current one.
+    """
+    config = NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-16k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-16k",
+        neuronpedia_source_set_description="Transcoder - 16k",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+        hook_point="hook_mlp_in",
+        prompts_huggingface_dataset_path="monology/pile-uncopyrighted",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_16k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path,
+        saelens_repo_root=tmp_path,
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+        runner_dashboard_output_format="columnar",
+    )
+    manifest = dashboard_pipeline.build_dashboard_manifest(config)
+    assert manifest["artifacts"]["parquet_row_group_size"] == SD_DEFAULT_PARQUET_ROW_GROUP_SIZE

@@ -94,6 +94,21 @@ from interpretune.utils.neuronpedia_dashboard_pipeline import (
     convert_dashboard_output,
     run_dashboard_pipeline,
 )
+from interpretune.utils.neuronpedia_dashboard_hub import (
+    COPY_ROWS_STEM,
+    DASHBOARDS_TOKEN_ENV_VAR,
+    DashboardPublishPlan,
+    MissingPageIndexError,
+    PageIndexCoverage,
+    build_publish_plan,
+    collect_publish_files,
+    format_publish_plan,
+    page_index_coverage,
+    publish_dashboard_run,
+    publish_ignore_patterns,
+    resolve_dashboards_token,
+    summarize_by_table,
+)
 
 __all__ = [
     # exceptions
@@ -198,4 +213,18 @@ __all__ = [
     "completed_layers_from_logs",
     "convert_dashboard_output",
     "run_dashboard_pipeline",
+    # neuronpedia_dashboard_hub
+    "COPY_ROWS_STEM",
+    "DASHBOARDS_TOKEN_ENV_VAR",
+    "DashboardPublishPlan",
+    "MissingPageIndexError",
+    "PageIndexCoverage",
+    "build_publish_plan",
+    "collect_publish_files",
+    "format_publish_plan",
+    "page_index_coverage",
+    "publish_dashboard_run",
+    "publish_ignore_patterns",
+    "resolve_dashboards_token",
+    "summarize_by_table",
 ]

@@ -31,6 +31,9 @@ from urllib.parse import urlparse
 
 import certifi
 import yaml  # type: ignore[import-untyped]
+from sae_dashboard.neuronpedia.neuronpedia_runner_config import (
+    DEFAULT_PARQUET_ROW_GROUP_SIZE as SD_DEFAULT_PARQUET_ROW_GROUP_SIZE,
+)
 from sae_dashboard.neuronpedia.prompt_bucketing import derive_prompt_bucket_ceilings
 
 from interpretune.utils.neuronpedia_db_utils import (
@@ -46,6 +49,13 @@ from interpretune.utils.neuronpedia_db_utils import (
 from interpretune.utils.neuronpedia_explanations import (
     DEFAULT_EXPLANATION_AUTHOR_ID,
     DEFAULT_IT_NP_CACHE,
+)
+from interpretune.utils.neuronpedia_source_conflicts import (
+    ConflictPolicy,
+    ExplanationLossRefused,
+    SourceSetConflictError,
+    describe_source_set,
+    resolve_source_set_conflict,
 )
 
 DONE_LAYER_RE = re.compile(r"\bDONE layer=(\d+)\b")
@@ -167,6 +177,9 @@ class NeuronpediaDashboardPipelineConfig:
     prompts_shared_tokens_file: Path | None = None
     run_root: Path = DEFAULT_IT_NP_CACHE / "dashboard_runs"
     run_name_suffix: str | None = None
+    # Explicit override for Neuronpedia source ids, e.g. "{layer}-{source_set_id}". When set it wins
+    # over anything the corpus declares, so a consumer can re-key an import deliberately.
+    neuronpedia_source_id_template: str | None = None
     export_root: Path = field(default_factory=_default_dashboard_export_root)
     existing_log_path: Path | None = None
     pipeline_log_path: Path | None = None
@@ -221,6 +234,17 @@ class NeuronpediaDashboardPipelineConfig:
     runner_dashboard_output_format: str = "auto"
     legacy_export_bundle_contract: str = "auto"
     runner_columnar_artifact_format: str = "parquet"
+    # Parquet page index. Defaults ON: it costs ~0.01% in file size but cannot be added to existing
+    # files, so a corpus generated without it can only be fixed by regenerating. Without it a reader
+    # streaming one row group must fetch the whole group rather than range-reading pages.
+    runner_columnar_write_page_index: bool = True
+    # Rows per Parquet row group. Defaults to SAEDashboard's DEFAULT_PARQUET_ROW_GROUP_SIZE and is
+    # passed EXPLICITLY rather than left to the runner's argparse default, so the value that shaped a
+    # corpus is recorded in the manifest instead of being whatever SD happened to default to.
+    # Matters more than the page index: readers prune per ROW GROUP, so a single-row-group file
+    # costs a reader the whole file to fetch one feature. Fixed at write time, like the page index.
+    # None keeps the pyarrow default (one row group), which is what the pre-2026-08-06 corpora have.
+    runner_columnar_parquet_row_group_size: int | None = SD_DEFAULT_PARQUET_ROW_GROUP_SIZE
     runner_emit_activation_copy_rows: bool | None = None
     runner_overlap_batch_packaging: bool = False
     # Opt-in SAEDashboard selection/logits hygiene (columnar backend only; defaults off to
@@ -257,6 +281,20 @@ class NeuronpediaDashboardPipelineConfig:
     # Default off because a run that silently skips DB import is easy to mistake for a full run.
     allow_missing_local_db: bool = False
     local_db_url: str | None = None
+    # What to do when the target Neuronpedia source set is ALREADY populated. Default "error":
+    # importing over an occupied set is a silent no-op (ON CONFLICT DO NOTHING), so the alternatives
+    # are to destroy data or to change identity, and neither should happen without being asked for.
+    # See interpretune.utils.neuronpedia_source_conflicts.
+    on_existing_source_set: str = "error"
+    # None under --autosuffix-on-exists: the suffix is a UTC timestamp generated at resolution time.
+    # A caller-supplied value is treated as deliberate, so a collision on it is an error rather than
+    # something to route around.
+    source_set_rename_suffix: str | None = None
+    allow_explanation_loss: bool = False
+    # Set by conflict resolution under the "rename" policy; overrides the source set used at IMPORT
+    # time only. Deliberately separate from neuronpedia_source_set_id, which also names the run
+    # DIRECTORY -- renaming that would relocate the corpus out from under an --import-only run.
+    neuronpedia_import_source_set_id: str | None = None
     local_db_import_chunk_size: int = 65000
     overlap_local_db_import: bool = False
     webapp_url: str = DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL
@@ -339,6 +377,15 @@ class NeuronpediaDashboardPipelineConfig:
             worker_segment = f".{self.worker_id}" if self.worker_id else ""
             log_name = f"run{worker_segment}.resume-{self.start_layer}-{self.end_layer}.log"
             self.pipeline_log_path = self.run_directory / log_name
+
+    @property
+    def import_source_set_id(self) -> str:
+        """The source set rows land in.
+
+        Differs from :attr:`neuronpedia_source_set_id` only after a
+        ``rename`` conflict resolution, which must not move the run directory.
+        """
+        return self.neuronpedia_import_source_set_id or self.neuronpedia_source_set_id
 
     @property
     def run_name(self) -> str:
@@ -572,9 +619,22 @@ def _normalize_pipeline_overrides(values: Mapping[str, Any]) -> dict[str, Any]:
         bridge_kwargs = normalized.pop("bridge_compatibility_mode_kwargs_json")
         normalized.setdefault("bridge_compatibility_mode_kwargs", bridge_kwargs)
 
-    if "skip_local_db_import" in normalized:
+    skip_stated = "skip_local_db_import" in normalized
+    if skip_stated:
         skip_local_db_import = bool(normalized.pop("skip_local_db_import"))
         normalized.setdefault("import_to_local_db", not skip_local_db_import)
+    elif normalized.get("import_only_local_db"):
+        # `--import-only-local-db` means "do only the import", so it implies wanting one. Requiring
+        # the config to ALSO say import_to_local_db=true made the flag unusable against every
+        # generation-only config -- and the resulting error blamed --skip-local-db-import, which the
+        # caller had not passed. Checked against `skip_stated` because the branch above POPS the key,
+        # so testing membership again here would always pass.
+        normalized.setdefault("import_to_local_db", True)
+
+    if normalized.get("source_set_rename_suffix") and "on_existing_source_set" not in normalized:
+        # Naming a suffix is only meaningful under the rename policy, so asking for one selects it.
+        # Requiring both flags would make `--rename-suffix foo` silently do nothing on a collision.
+        normalized["on_existing_source_set"] = "rename"
     if "no_archive_partials" in normalized:
         no_archive_partials = bool(normalized.pop("no_archive_partials"))
         normalized.setdefault("archive_partial_dirs", not no_archive_partials)
@@ -601,9 +661,17 @@ def _normalize_pipeline_overrides(values: Mapping[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+#: Parser options that configure the invocation, not the run.
+CLI_ONLY_OPTIONS = frozenset({"write_source_ids"})
+
+
 def _build_dashboard_pipeline_config(args: argparse.Namespace) -> NeuronpediaDashboardPipelineConfig:
     cli_values = dict(vars(args))
     config_path_value = cli_values.pop("config", None)
+    # Options that drive the CLI itself rather than the run. They must not reach the dataclass,
+    # which would raise on an unexpected keyword.
+    for cli_only in CLI_ONLY_OPTIONS:
+        cli_values.pop(cli_only, None)
 
     merged_values: dict[str, Any] = {}
     if config_path_value is not None:
@@ -1643,6 +1711,17 @@ def _layer_runner_command(
     command.append(f"--dashboard-output-format={dashboard_output_format}")
     if dashboard_output_format == "columnar":
         command.append(f"--columnar-artifact-format={config.runner_columnar_artifact_format}")
+        # No capability probe: the SAEDashboard floor (SD 6f86560) defines this option, so it is a
+        # REQUIREMENT rather than something to detect. An install that predates it fails loudly on
+        # its own with "unrecognized arguments", which is the correct outcome for an unsupported
+        # dependency version -- and cheaper to carry than a gate that has to be kept in sync.
+        command.append(
+            "--columnar-write-page-index"
+            if config.runner_columnar_write_page_index
+            else "--no-columnar-write-page-index"
+        )
+        if config.runner_columnar_parquet_row_group_size is not None:
+            command.append(f"--columnar-parquet-row-group-size={int(config.runner_columnar_parquet_row_group_size)}")
         command.append("--columnar-emit-activation-rows")
         if config.runner_overlap_batch_packaging:
             command.append("--overlap-batch-packaging")
@@ -1865,30 +1944,129 @@ def _load_converter_module(neuronpedia_utils_root: Path) -> ModuleType:
     return module
 
 
-def _resolve_source_id(output_dir: Path, layer_num: int, neuronpedia_source_set_id: str) -> str:
+SOURCE_IDS_SIDECAR = "source_ids.json"
+SOURCE_IDS_SIDECAR_SCHEMA = 1
+
+
+def _run_root_for(output_dir: Path, layer_num: int) -> Path | None:
+    """Walk up from a layer/leaf dir to the run root (the parent of ``layer_<n>``)."""
+    layer_dir_name = f"layer_{layer_num}"
+    if output_dir.name == layer_dir_name:
+        return output_dir.parent
+    return next((p.parent for p in output_dir.parents if p.name == layer_dir_name), None)
+
+
+def source_ids_sidecar_path(run_root: Path) -> Path:
+    return Path(run_root) / SOURCE_IDS_SIDECAR
+
+
+def read_source_ids_sidecar(run_root: Path) -> dict[str, str]:
+    """Source ids a corpus declares about itself, or ``{}`` when it declares none."""
+    path = source_ids_sidecar_path(run_root)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.getLogger(__name__).warning("unreadable %s (%s); ignoring", path, exc)
+        return {}
+    return {str(k): str(v) for k, v in (payload.get("source_ids") or {}).items()}
+
+
+def write_source_ids_sidecar(
+    run_root: Path,
+    # A UNION rather than Mapping[int | str, str]: Mapping is invariant in its key type, so the
+    # latter rejects both a plain dict[str, str] (what read_source_ids_sidecar returns) and a plain
+    # dict[int, str] (what callers construct from layer numbers). Keys are stringified below either way.
+    source_ids: Mapping[int, str] | Mapping[str, str],
+    *,
+    source_set_id: str,
+    model_name: str = "",
+) -> Path:
+    """Record each layer's Neuronpedia source id INSIDE the corpus.
+
+    This is what makes a published corpus self-describing. Without it, identity has to be inferred from where the files
+    happen to sit, which stops being under our control the moment the corpus is downloaded somewhere else -- and
+    inferring it wrongly imports successfully into a DIFFERENT set of ids, a failure that looks like success.
+    """
+    path = source_ids_sidecar_path(run_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema": SOURCE_IDS_SIDECAR_SCHEMA,
+        "source_set_id": source_set_id,
+        "model_name": model_name,
+        "source_ids": {str(k): v for k, v in sorted(source_ids.items(), key=lambda kv: int(kv[0]))},
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def render_source_id_template(template: str, *, layer_num: int, source_set_id: str) -> str:
+    """Render an explicit source-id template.
+
+    Unknown fields fail loudly rather than silently.
+    """
+    try:
+        return template.format(layer=layer_num, source_set_id=source_set_id)
+    except KeyError as exc:
+        raise ValueError(
+            f"neuronpedia_source_id_template {template!r} uses unknown field {exc}; "
+            "available fields are {layer} and {source_set_id}."
+        ) from exc
+
+
+def _resolve_source_id(
+    output_dir: Path,
+    layer_num: int,
+    neuronpedia_source_set_id: str,
+    *,
+    source_id_template: str | None = None,
+    run_name_suffix: str | None = None,
+    ignore_declared_source_ids: bool = False,
+) -> str:
+    """Resolve a layer's Neuronpedia source id, most explicit source first.
+
+    1. ``source_id_template`` / ``run_name_suffix`` -- the caller stated it outright.
+    2. ``source_ids.json`` in the run root -- the corpus states it about itself.
+    3. ``batch-*.json`` ``sae_id_suffix`` -- legacy in-corpus metadata.
+
+    Falling through all three yields ``{layer}-{source_set_id}``, the canonical form.
+
+    Deriving ids from the RUN DIRECTORY NAME was removed 2026-08-03. It made identity depend on
+    where a corpus happened to be unpacked, so downloading to a differently-named directory imported
+    cleanly into a separate set of ids. Corpora generated before the sidecar existed can be
+    backfilled with ``--write-source-ids`` rather than regenerated.
+    """
+    if source_id_template:
+        return render_source_id_template(
+            source_id_template, layer_num=layer_num, source_set_id=neuronpedia_source_set_id
+        )
+
+    # A variant run states its distinctness in CONFIG (run_name_suffix), which is why removing
+    # directory-name parsing does not remove the feature: the suffix is applied when the sidecar is
+    # written, so the ids travel with the corpus instead of being re-derived from its location.
+    if run_name_suffix:
+        return f"{layer_num}-{neuronpedia_source_set_id}__{run_name_suffix}"
+
+    # `ignore_declared_source_ids` is set when the caller has deliberately re-keyed this import (a
+    # rename conflict resolution). The sidecar states the corpus's ORIGINAL identity, which is exactly
+    # what must not win in that case.
+    run_root = _run_root_for(output_dir, layer_num)
+    if run_root is not None and not ignore_declared_source_ids:
+        declared = read_source_ids_sidecar(run_root).get(str(layer_num))
+        if declared:
+            return declared
+
     batch_files = sorted(output_dir.glob("batch-*.json"))
     if not batch_files and output_dir.exists():
         leaf_dirs = _dashboard_leaf_dirs(output_dir)
         if leaf_dirs:
             batch_files = sorted(_resolve_dashboard_leaf_dir(output_dir).glob("batch-*.json"))
-    if not batch_files:
-        layer_dir_name = f"layer_{layer_num}"
-        layer_dir = output_dir if output_dir.name == layer_dir_name else None
-        if layer_dir is None:
-            layer_dir = next((parent for parent in output_dir.parents if parent.name == layer_dir_name), None)
-        if layer_dir is not None:
-            run_dir_name = layer_dir.parent.name
-            run_name_marker = f"_{neuronpedia_source_set_id}"
-            marker_index = run_dir_name.find(run_name_marker)
-            if marker_index != -1:
-                suffix = run_dir_name[marker_index + len(run_name_marker) :].lstrip("_")
-                if suffix:
-                    return f"{layer_num}-{neuronpedia_source_set_id}__{suffix}"
-        return f"{layer_num}-{neuronpedia_source_set_id}"
-    batch_data = json.loads(batch_files[0].read_text(encoding="utf-8"))
-    source_suffix = batch_data.get("sae_id_suffix") or ""
-    if source_suffix:
-        return f"{layer_num}-{neuronpedia_source_set_id}__{source_suffix}"
+    if batch_files:
+        batch_data = json.loads(batch_files[0].read_text(encoding="utf-8"))
+        source_suffix = batch_data.get("sae_id_suffix") or ""
+        if source_suffix:
+            return f"{layer_num}-{neuronpedia_source_set_id}__{source_suffix}"
     return f"{layer_num}-{neuronpedia_source_set_id}"
 
 
@@ -1968,13 +2146,22 @@ def import_columnar_dashboard_output(
 ) -> NeuronpediaLocalImportSummary:
     """Import SAEDashboard columnar output directly into local Neuronpedia tables."""
 
-    source_id = source_id_override or _resolve_source_id(output_dir, layer_num, config.neuronpedia_source_set_id)
+    source_id = source_id_override or _resolve_source_id(
+        output_dir,
+        layer_num,
+        config.import_source_set_id,
+        source_id_template=config.neuronpedia_source_id_template,
+        # A renamed import must not fall back to the corpus's own source_ids.json: that sidecar
+        # declares the ORIGINAL ids, so honoring it would re-key straight back into the set the
+        # rename exists to avoid.
+        ignore_declared_source_ids=config.neuronpedia_import_source_set_id is not None,
+    )
     decode_token_ids, pad_token_id = _build_columnar_token_decoder(config)
     return import_saedashboard_columnar_bundle_local_db(
         output_dir,
         local_db_url=config.local_db_url or "",
         model_id=config.model_name,
-        source_set_name=config.neuronpedia_source_set_id,
+        source_set_name=config.import_source_set_id,
         source_id=source_id,
         creator_id=DEFAULT_EXPLANATION_AUTHOR_ID,
         creator_name=config.creator_name,
@@ -2105,9 +2292,211 @@ def convert_dashboard_output(
         params if accepts_var_keyword else {name: value for name, value in params.items() if name in converter_params}
     )
     module_any.main(SimpleNamespace(params=call_params), **call_params)
-    source_id = _resolve_source_id(dashboard_leaf_dir, layer_num, config.neuronpedia_source_set_id)
+    source_id = _resolve_source_id(
+        dashboard_leaf_dir,
+        layer_num,
+        config.import_source_set_id,
+        source_id_template=config.neuronpedia_source_id_template,
+        ignore_declared_source_ids=config.neuronpedia_import_source_set_id is not None,
+    )
     export_root = _resolve_export_root(config.export_root / config.model_name, source_id)
     return export_root
+
+
+def ensure_source_ids_sidecar(config: NeuronpediaDashboardPipelineConfig, *, overwrite: bool = False) -> Path | None:
+    """Write ``source_ids.json`` for this run so the corpus declares its own identity.
+
+    Called at generation start, and by ``--write-source-ids`` to backfill a corpus produced before
+    the sidecar existed -- which is why it does not require regenerating anything.
+
+    Existing ids are preserved unless ``overwrite``: rewriting them under a corpus already imported
+    somewhere would silently re-key it.
+    """
+    run_root = config.run_directory
+    if not run_root.exists():
+        return None
+    existing = {} if overwrite else read_source_ids_sidecar(run_root)
+    resolved = dict(existing)
+    for layer_num in config.requested_layer_numbers():
+        if str(layer_num) in resolved:
+            continue
+        layer_dir = run_root / f"layer_{layer_num}"
+        resolved[str(layer_num)] = _resolve_source_id(
+            layer_dir if layer_dir.exists() else run_root,
+            layer_num,
+            config.neuronpedia_source_set_id,
+            source_id_template=config.neuronpedia_source_id_template,
+            run_name_suffix=config.run_name_suffix,
+        )
+    return write_source_ids_sidecar(
+        run_root,
+        resolved,
+        source_set_id=config.neuronpedia_source_set_id,
+        model_name=config.model_name,
+    )
+
+
+DASHBOARD_MANIFEST_FILE = "dashboards.json"
+DASHBOARD_MANIFEST_SCHEMA = 1
+
+#: Distributions whose versions determine what a corpus's bytes look like. ``sae-dashboard`` writes
+#: the parquet (page index included), ``pyarrow`` is the writer itself, and ``huggingface_hub``
+#: governs how it was transported. Anything else is noise for reproducing a corpus.
+_MANIFEST_TRACKED_DISTRIBUTIONS = ("interpretune", "sae-dashboard", "pyarrow", "huggingface_hub")
+
+
+def dashboard_manifest_path(run_root: Path) -> Path:
+    return Path(run_root) / DASHBOARD_MANIFEST_FILE
+
+
+def read_dashboard_manifest(run_root: Path) -> dict[str, Any]:
+    """What a corpus says it is, or ``{}`` when it says nothing."""
+    path = dashboard_manifest_path(run_root)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.getLogger(__name__).warning("unreadable %s (%s); ignoring", path, exc)
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _tracked_distribution_versions() -> dict[str, str]:
+    from importlib.metadata import PackageNotFoundError, version
+
+    versions: dict[str, str] = {}
+    for dist in _MANIFEST_TRACKED_DISTRIBUTIONS:
+        try:
+            versions[dist] = version(dist)
+        except PackageNotFoundError:  # an absent optional dependency is not an error here
+            continue
+    return versions
+
+
+def build_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> dict[str, Any]:
+    """Describe a corpus in terms a consumer can act on without opening a single parquet file.
+
+    Deliberately DESCRIPTIVE, not authoritative: ``source_ids.json`` remains the single source of
+    truth for identity, and this file merely restates it alongside the provenance a reader needs to
+    decide whether the corpus is the one they want. Nothing imports from here, so a stale or absent
+    manifest degrades discoverability and nothing else -- which is why it can be refreshed freely
+    while the source-id sidecar cannot.
+    """
+    from datetime import datetime, timezone
+
+    run_root = config.run_directory
+    requested = config.requested_layer_numbers()
+    generated = sorted(
+        int(p.name.removeprefix("layer_"))
+        for p in run_root.glob("layer_*")
+        if p.is_dir() and p.name.removeprefix("layer_").isdigit()
+    )
+    return {
+        "schema": DASHBOARD_MANIFEST_SCHEMA,
+        "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "model": {"name": config.model_name, "n_layers": config.model_layers},
+        "source_set": {
+            "id": config.neuronpedia_source_set_id,
+            "description": config.neuronpedia_source_set_description,
+            "sae_set": config.sae_set,
+            "hook_point": config.hook_point,
+            "release_id": config.release_id,
+            "release_title": config.release_title,
+            "release_url": config.release_url,
+            "creator": config.creator_name,
+        },
+        "prompt_corpus": {
+            "hf_dataset_path": config.prompts_huggingface_dataset_path,
+            "hf_dataset_config_name": config.prompts_huggingface_dataset_config_name,
+            "hf_dataset_split": config.prompts_huggingface_dataset_split,
+            "pretokenized_path_name": (
+                config.prompts_pretokenized_dataset_path.name if config.prompts_pretokenized_dataset_path else None
+            ),
+            "n_prompts": config.n_prompts_total,
+            "n_tokens_in_prompt": config.n_tokens_in_prompt,
+        },
+        # `requested` is what the run was asked for; `generated` is what is on disk at write time. A
+        # run interrupted at layer 12 must not claim 26 layers it never produced.
+        "layers": {"requested": requested, "generated": generated},
+        "source_ids": read_source_ids_sidecar(run_root),
+        "artifacts": {
+            "format": _resolve_runner_dashboard_output_format(config),
+            "page_index": bool(config.runner_columnar_write_page_index),
+            "parquet_row_group_size": config.runner_columnar_parquet_row_group_size,
+            "includes_copy_rows": _resolve_runner_emit_activation_copy_rows(config),
+            "n_features_per_batch": config.n_features_per_batch,
+        },
+        "tool_versions": _tracked_distribution_versions(),
+    }
+
+
+def ensure_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> Path | None:
+    """Write ``dashboards.json`` at the run root.
+
+    Always overwrites, unlike :func:`ensure_source_ids_sidecar`. The asymmetry is the point: rewriting
+    source ids under an already-imported corpus would silently re-key it, whereas this file carries no
+    identity, so a refresh can only make it more accurate.
+    """
+    run_root = config.run_directory
+    if not run_root.exists():
+        return None
+    path = dashboard_manifest_path(run_root)
+    path.write_text(json.dumps(build_dashboard_manifest(config), indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _apply_source_set_conflict_policy(config: NeuronpediaDashboardPipelineConfig) -> None:
+    """Detect an occupied target source set and apply the configured policy.
+
+    No-op when this run will not import. Failure to REACH the database is also a no-op rather than an
+    error: an unreachable DB is already handled by ``allow_missing_local_db``, and turning it into a
+    second, differently-worded failure here would obscure that.
+    """
+    if not config.import_to_local_db or not config.local_db_url:
+        return
+
+    policy = ConflictPolicy(config.on_existing_source_set)
+    try:
+        resolution = resolve_source_set_conflict(
+            config.local_db_url,
+            model_id=config.model_name,
+            source_set_id=config.neuronpedia_source_set_id,
+            policy=policy,
+            rename_suffix=config.source_set_rename_suffix,
+            allow_explanation_loss=config.allow_explanation_loss,
+        )
+    except (SourceSetConflictError, ExplanationLossRefused):
+        raise
+    except Exception as exc:  # unreachable DB, missing table on a fresh install, etc.
+        logging.getLogger(__name__).warning("could not check for an existing source set (%s); continuing", exc)
+        return
+
+    if resolution.renamed:
+        config.neuronpedia_import_source_set_id = resolution.effective_source_set_id
+    for note in resolution.notes:
+        logging.getLogger(__name__).info("source set conflict: %s", note)
+
+
+def summarize_imported_source_set(config: NeuronpediaDashboardPipelineConfig) -> str:
+    """Post-import counts, emitted by default.
+
+    Exists because ``ON CONFLICT DO NOTHING`` makes "imported everything" and "imported nothing"
+    both exit 0. A count is the cheapest thing that distinguishes them.
+    """
+    if not config.local_db_url:
+        return "no local_db_url configured; skipping import summary"
+    try:
+        occupancy = describe_source_set(
+            config.local_db_url, model_id=config.model_name, source_set_id=config.import_source_set_id
+        )
+    except Exception as exc:  # a summary must never be the thing that fails a completed import
+        return f"import summary unavailable ({exc})"
+    return (
+        f"IMPORT SUMMARY model={occupancy.model_id} source_set={occupancy.source_set_id} "
+        f"sources={occupancy.source_count} neurons={occupancy.neuron_count} "
+        f"explanations={occupancy.explanation_count}"
+    )
 
 
 def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[NeuronpediaDashboardLayerResult]:
@@ -2117,9 +2506,17 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
         raise ValueError("--import-only-local-db cannot be combined with --skip-local-db-import")
 
     config.run_directory.mkdir(parents=True, exist_ok=True)
+    # Declare identity up front so the corpus is self-describing even if the run is interrupted.
+    ensure_source_ids_sidecar(config)
+    ensure_dashboard_manifest(config)
     pipeline_log_path = cast(Path, config.pipeline_log_path)
     existing_log_path = cast(Path, config.existing_log_path)
     logger = _configure_logger(pipeline_log_path)
+    # Resolve source-set collisions BEFORE generating anything: the check costs one query, and the
+    # alternative is discovering after hours of GPU work that the import will be a silent no-op.
+    # Placed AFTER the logger so the chosen set is recorded in the run log -- resolving it earlier
+    # sent the decision to a logger with no handlers, leaving no record of which set was imported.
+    _apply_source_set_conflict_policy(config)
     env = _build_generation_env(config)
 
     service_status: LocalNeuronpediaServiceStatus | None = None
@@ -2535,6 +2932,11 @@ def run_dashboard_pipeline(config: NeuronpediaDashboardPipelineConfig) -> list[N
         _drain_oldest_deferred_import()
     if import_executor is not None:
         import_executor.shutdown(wait=True)
+    # Refresh now that the layers actually exist: the manifest written at start could only record an
+    # empty `layers.generated`, which would misdescribe the very corpus about to be published.
+    ensure_dashboard_manifest(config)
+    if config.import_to_local_db:
+        logger.info(summarize_imported_source_set(config))
     return results
 
 
@@ -2672,6 +3074,68 @@ def _create_argument_parser() -> argparse.ArgumentParser:
         choices=("arrow", "parquet"),
     )
     parser.add_argument(
+        "--overwrite-existing",
+        dest="on_existing_source_set",
+        action="store_const",
+        const="overwrite",
+        help="If the target source set is already populated, DELETE its rows and import over it. "
+        "Refused when explanations would cascade away unless --allow-explanation-loss is also given.",
+    )
+    parser.add_argument(
+        "--autosuffix-on-exists",
+        dest="on_existing_source_set",
+        action="store_const",
+        const="rename",
+        help="If the target source set is already populated, leave it alone and import under "
+        "<set>__<UTC timestamp> so both coexist. Renames the INCOMING import, not the resident rows. "
+        "Never refuses over the generated name -- a collision just regenerates a finer-grained one.",
+    )
+    parser.add_argument(
+        "--rename-suffix",
+        dest="source_set_rename_suffix",
+        help="Import under <set>__<this> instead of a generated timestamp, for explicit "
+        "deconfliction. Implies the rename policy. A collision on a name you chose is an ERROR "
+        "rather than something routed around.",
+    )
+    parser.add_argument(
+        "--allow-explanation-loss",
+        action="store_true",
+        help="Permit --overwrite-existing to cascade away explanations. They are the only rows here "
+        "that no corpus can regenerate, so this is never implied.",
+    )
+    parser.add_argument(
+        "--write-source-ids",
+        action="store_true",
+        help="Write (or backfill) source_ids.json and dashboards.json for this run and exit. Makes an "
+        "already-generated corpus self-describing without regenerating it.",
+    )
+    parser.add_argument(
+        "--neuronpedia-source-id-template",
+        help="Explicit source-id template, e.g. '{layer}-{source_set_id}'. Overrides whatever the "
+        "corpus declares; use to re-key an import deliberately.",
+    )
+    parser.add_argument(
+        "--runner-columnar-parquet-row-group-size",
+        type=int,
+        # No `default=`: argument_default=argparse.SUPPRESS keeps an unpassed flag out of the
+        # namespace so the dataclass default wins. Same reasoning as the page-index flag below --
+        # and the same consequence if ignored, since row-group boundaries are fixed at write time.
+        help="Rows per Parquet row group (default: SAEDashboard's, currently "
+        f"{SD_DEFAULT_PARQUET_ROW_GROUP_SIZE}). Readers prune per ROW GROUP, so one row group per "
+        "file makes streaming a single feature cost the whole file. Cannot be changed without "
+        "regenerating the corpus.",
+    )
+    parser.add_argument(
+        "--runner-columnar-write-page-index",
+        action=argparse.BooleanOptionalAction,
+        # No `default=`: this parser sets argument_default=argparse.SUPPRESS so an unpassed flag stays
+        # out of the namespace and the dataclass default wins. An explicit default here (even None)
+        # defeats that and silently overrides the config file -- for this flag that shipped a corpus
+        # with no page index, which cannot be fixed without regenerating it.
+        help="Write a Parquet page index (default: on). Needed for page-granular range reads when "
+        "artifacts are streamed from the Hub; it cannot be added without regenerating the corpus.",
+    )
+    parser.add_argument(
         "--runner-emit-activation-copy-rows",
         action=argparse.BooleanOptionalAction,
         help=(
@@ -2716,7 +3180,10 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--runner-columnar-max-staged-acts-bytes",
         type=int,
-        default=None,
+        # No `default=`: this parser uses argument_default=argparse.SUPPRESS, so an unpassed option
+        # must stay OUT of the namespace for the config-file value to survive the merge. An explicit
+        # default=None lands in the merged config and overwrites it -- which silently disabled this
+        # flag whenever it was set in a YAML config rather than on the command line.
         help=(
             "Opt-in: byte budget capping SAEDashboard's device retention/staging of the columnar "
             "activation matrix (default: SD's fixed 4 GiB; 0 forces host staging so dense layers fit "
@@ -2726,7 +3193,7 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--runner-columnar-row-chunk-size",
         type=int,
-        default=None,
+        # No `default=` -- see --runner-columnar-max-staged-acts-bytes above.
         help=(
             "Opt-in: feature-row chunk size for SAEDashboard's arrow statistics/histogram packaging "
             "loops (SD defaults 256/128), bounding density-scaled per-chunk GPU transients on dense "
@@ -2809,9 +3276,25 @@ def main() -> int:
     args = parser.parse_args()
     try:
         config = _build_dashboard_pipeline_config(args)
+        if getattr(args, "write_source_ids", False):
+            written = ensure_source_ids_sidecar(config, overwrite=True)
+            # Order matters: the manifest restates the source ids, so it must be written second to
+            # pick up what the sidecar just resolved rather than the previous run's answer.
+            manifest = ensure_dashboard_manifest(config) if written else None
+            if not written:
+                print(f"run directory not found: {config.run_directory}")
+                return 1
+            print("\n".join(f"wrote {p}" for p in (written, manifest) if p))
+            return 0
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
-    run_dashboard_pipeline(config)
+    try:
+        run_dashboard_pipeline(config)
+    except (SourceSetConflictError, ExplanationLossRefused) as exc:
+        # These are decisions for the operator, not defects: a traceback would bury the explanation
+        # and the two flags that resolve it under a stack the reader cannot act on.
+        print(f"\nREFUSING TO IMPORT:\n{exc}", file=sys.stderr)
+        return 3
     return 0
 
 
