@@ -12,12 +12,11 @@ import importlib.util
 import json
 from functools import lru_cache
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from unittest.mock import patch
 
 import pytest
 
-import interpretune.utils.neuronpedia_dashboard_hub as dashboard_hub
 from interpretune.utils.neuronpedia_dashboard_hub import (
     BUCKET_ROOT,
     CORPUS_MANIFEST_FILE,
@@ -572,65 +571,3 @@ class TestManifestConsistency:
                 store="dataset",
             )
         api.return_value.upload_folder.assert_called_once()
-
-
-class TestDownloadIntegrity:
-    """`sync_bucket` writes into an existing file WITHOUT truncating it.
-
-    Re-syncing a corpus over a longer previous version therefore leaves stale trailing bytes. Parquet
-    keeps its footer at the END of the file, so the result still starts and ends with ``PAR1`` and
-    fails only when the metadata is deserialized -- 1,010 of 1,016 files imported before a run died
-    on a small metadata table (observed 2026-08-07 re-fetching the regenerated monology corpus).
-    """
-
-    @staticmethod
-    def _entry(path: str, size: int):
-        return SimpleNamespace(path=path, size=size)
-
-    def test_size_mismatch_is_fatal_and_names_the_file(self, tmp_path: Path) -> None:
-        (tmp_path / "a.parquet").write_bytes(b"x" * 109)  # 9 stale bytes, exactly the shape observed
-        api = SimpleNamespace(list_bucket_tree=lambda *a, **k: [self._entry("a.parquet", 100)])
-
-        with pytest.raises(dashboard_hub.TruncatedDownloadError) as excinfo:
-            dashboard_hub._verify_bucket_download_sizes(api, "ns/bucket", "", tmp_path)
-
-        message = str(excinfo.value)
-        assert "a.parquet" in message
-        assert "local 109 B, bucket 100 B" in message
-        assert "without truncating" in message
-
-    def test_missing_file_is_fatal_too(self, tmp_path: Path) -> None:
-        """A partial sync is as unimportable as a corrupt one."""
-        api = SimpleNamespace(list_bucket_tree=lambda *a, **k: [self._entry("gone.parquet", 100)])
-
-        with pytest.raises(dashboard_hub.TruncatedDownloadError, match="MISSING gone.parquet"):
-            dashboard_hub._verify_bucket_download_sizes(api, "ns/bucket", "", tmp_path)
-
-    def test_matching_sizes_pass_silently(self, tmp_path: Path) -> None:
-        (tmp_path / "a.parquet").write_bytes(b"x" * 100)
-        api = SimpleNamespace(list_bucket_tree=lambda *a, **k: [self._entry("a.parquet", 100)])
-
-        dashboard_hub._verify_bucket_download_sizes(api, "ns/bucket", "", tmp_path)  # must not raise
-
-    def test_prefix_is_stripped_before_resolving_the_local_path(self, tmp_path: Path) -> None:
-        """Bucket entries are prefix-qualified; the local tree is not."""
-        (tmp_path / "a.parquet").write_bytes(b"x" * 100)
-        api = SimpleNamespace(list_bucket_tree=lambda *a, **k: [self._entry("rev1/a.parquet", 100)])
-
-        dashboard_hub._verify_bucket_download_sizes(api, "ns/bucket", "rev1", tmp_path)
-
-    def test_directories_and_sizeless_entries_are_skipped(self, tmp_path: Path) -> None:
-        api = SimpleNamespace(list_bucket_tree=lambda *a, **k: [SimpleNamespace(path="subdir", size=None)])
-
-        dashboard_hub._verify_bucket_download_sizes(api, "ns/bucket", "", tmp_path)
-
-    def test_a_flaky_listing_does_not_fail_a_good_download(self, tmp_path: Path, caplog) -> None:
-        """Verification is a safety net, not a second point of failure."""
-
-        def _boom(*a, **k):
-            raise OSError("transient")
-
-        api = SimpleNamespace(list_bucket_tree=_boom)
-        with caplog.at_level("WARNING"):
-            dashboard_hub._verify_bucket_download_sizes(api, "ns/bucket", "", tmp_path)
-        assert "could not verify" in caplog.text

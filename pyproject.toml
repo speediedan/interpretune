@@ -115,10 +115,9 @@ git-deps = [
     # fork-only surface, e.g. sae_dashboard.neuronpedia.prompt_bucketing); flip back to released
     # version floors at wave-merge time.
     "sae-lens @ git+https://github.com/speediedan/SAELens.git@86f90b3d3dccd3f6ac729577b979f76f88a525f1",
-    # Bumped 2026-08-06 to the SD#74 head carrying `columnar_parquet_row_group_size` (was
-    # 6f86560, `columnar_write_page_index`). Both are hard FLOORS rather than runtime-probed
-    # capabilities: interpretune emits --columnar-write-page-index unconditionally, so an older
-    # SAEDashboard fails with "unrecognized arguments" rather than silently producing an unindexed
+    # The SD#74 head carrying `columnar_parquet_row_group_size` and `columnar_write_page_index`. Both are hard FLOORS
+    # rather than runtime-probed capabilities: interpretune emits --columnar-write-page-index unconditionally, so an
+    # older SAEDashboard fails with "unrecognized arguments" rather than silently producing an unindexed
     # corpus. Neither a page index nor row-group boundaries can be added after generation, so that
     # trade -- loud failure over silent degradation -- is the only safe one. Pre-MVP, so requiring a
     # floor is cheaper than carrying a compatibility gate.
@@ -148,7 +147,13 @@ test = [
     # Additional test dependencies
     "twine >= 3.2",
     "psycopg",
-    "huggingface_hub[hf_xet]",
+    # >=1.9.0 is the first release whose own `hf_xet` extra floors hf-xet at 1.4.3, which is where
+    # xet-core#764 landed: before it, a bucket sync wrote into an existing local file WITHOUT
+    # truncating, so re-syncing a corpus whose files SHRANK left the previous tail in place. Parquet
+    # reads its footer from the end, so the result still began and ended with `PAR1` and failed to
+    # open. See huggingface_hub#3995. Floored here rather than on hf-xet directly so the platform
+    # markers (x86_64/arm64 only) stay hub's to maintain.
+    "huggingface_hub[hf_xet] >= 1.9.0",
     # Notebook testing
     "nbmake >= 1.5.0",
     "papermill >= 2.4.0",
@@ -185,7 +190,7 @@ override-dependencies = [
     # 4ba2187b), so this is the same code with a real version string instead of `0.0.0`.
     "transformer-lens==3.5.1",
     # keep transitive nnsight (pulled in by the sae-lens git dep) at the validated release
-    # (0.7.0 validated Session 36: nnsight slice + parity 34/0 + low-RAM mock, both versions)
+    # (0.7.0 validated: nnsight slice + parity 34/0 + low-RAM mock, both versions)
     "nnsight==0.7.0",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes

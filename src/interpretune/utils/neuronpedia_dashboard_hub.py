@@ -13,8 +13,7 @@ consumer could regenerate, and excluding it saves ~45% of the payload.
 **Excluding it produces a corpus that cannot be imported at all.** Each
 ``feature_batch_*/manifest.json`` declares the table, and the importer resolves the activation table
 from that manifest and RAISES when the preferred entry is absent -- it does not fall back to
-``activation_rows``. Verified the hard way: a corpus published without it downloaded byte-identically
-(910/910 files, sha256 clean) and then failed on layer 0 of the first import.
+``activation_rows``.
 
 So the default is to include it, and :func:`publish_dashboard_run` refuses to publish a corpus whose
 manifests reference a table the publish would drop. Exclusion remains available for a consumer who
@@ -74,7 +73,6 @@ __all__ = [
     "DEFAULT_STORE",
     "get_dashboard_store",
     "download_dashboard_run",
-    "TruncatedDownloadError",
 ]
 
 log = logging.getLogger(__name__)
@@ -117,19 +115,6 @@ class MissingPageIndexError(RuntimeError):
     """Raised when a corpus without a Parquet page index would be uploaded.
 
     Not a warning, because the remedy after the fact is to regenerate the corpus and upload it again.
-    """
-
-
-class TruncatedDownloadError(RuntimeError):
-    """Raised when a downloaded corpus file does not match the size the bucket reports.
-
-    The cause seen in practice is ``sync_bucket`` writing into an existing local file without
-    truncating it, so a re-sync over a LONGER previous version leaves stale trailing bytes. For
-    Parquet that is silent: the footer lives at the end of the file, so the file still opens as
-    "a parquet file" and fails only when its metadata is deserialized.
-
-    Raised rather than repaired because the safe repair -- delete the destination and re-download --
-    throws away a multi-GiB download the caller may not want redone implicitly.
     """
 
 
@@ -570,77 +555,14 @@ class HubBucketStore:
         revision: str | None = None,
         token: str | None = None,
         path_in_repo: str = "",
-        verify_sizes: bool = True,
     ) -> Path:
-        """Download the corpus, then verify every file is exactly the size the bucket reports.
-
-        The verification is not paranoia. ``sync_bucket`` writes into an existing local file WITHOUT
-        TRUNCATING it, so re-syncing over an older corpus leaves the tail of the previous, longer
-        file in place. Parquet reads its footer from the END of the file, so the result is a file
-        that still starts with ``PAR1``, still ends with ``PAR1``, and fails to open with
-        ``Couldn't deserialize thrift: TProtocolException: Invalid data``.
-
-        Observed 2026-08-07 re-fetching the regenerated monology corpus over the previous one:
-        ``feature_statistics.parquet`` arrived as 78,404 bytes -- the correct 78,395 bytes followed
-        by 9 stale bytes from the file it replaced. Only files that SHRANK are affected, which is
-        what makes it insidious: the big activation artifacts grew and were fine, so 1,010 of 1,016
-        files imported before the run died on a small metadata table.
-
-        A size check catches exactly this class, costs one listing call, and turns a corrupt corpus
-        into a loud failure. It does not catch same-length corruption; nothing short of hashing
-        would, and the bucket does not expose per-file hashes cheaply.
-        """
         from huggingface_hub import HfApi
 
         prefix = "/".join(p for p in (revision or "", path_in_repo or "") if p)
         dest = Path(dest)
         dest.mkdir(parents=True, exist_ok=True)
-        api = HfApi(token=token)
-        api.sync_bucket(source=self.uri(target, prefix), dest=str(dest))
-        if verify_sizes:
-            _verify_bucket_download_sizes(api, target, prefix, dest)
+        HfApi(token=token).sync_bucket(source=self.uri(target, prefix), dest=str(dest))
         return dest
-
-
-def _verify_bucket_download_sizes(api: Any, target: str, prefix: str, dest: Path) -> None:
-    """Compare every downloaded file against the size the bucket reports.
-
-    Cheap (one recursive listing) and catches the truncation class described in
-    :meth:`HubBucketStore.pull`. Missing files are reported too: a partial sync is as unimportable as
-    a corrupt one, and both are worth failing on before the importer spends an hour discovering it.
-    """
-    try:
-        entries = list(api.list_bucket_tree(target, path=prefix or None, recursive=True))
-    except Exception as exc:  # listing is best-effort; never fail a good download over a flaky list
-        log.warning("could not verify downloaded file sizes for %s: %s", target, exc)
-        return
-
-    mismatches: list[str] = []
-    missing: list[str] = []
-    for entry in entries:
-        size = getattr(entry, "size", None)
-        path = getattr(entry, "path", None)
-        if size is None or path is None:  # directories and anything unexpected
-            continue
-        relative = path[len(prefix) :].lstrip("/") if prefix and path.startswith(prefix) else path
-        local = dest / relative
-        if not local.is_file():
-            missing.append(relative)
-        elif local.stat().st_size != size:
-            mismatches.append(f"{relative}: local {local.stat().st_size} B, bucket {size} B")
-
-    if not (mismatches or missing):
-        return
-    detail = "\n".join([f"  SIZE MISMATCH {m}" for m in mismatches[:10]] + [f"  MISSING {m}" for m in missing[:10]])
-    more = len(mismatches) + len(missing) - min(len(mismatches), 10) - min(len(missing), 10)
-    raise TruncatedDownloadError(
-        f"{len(mismatches)} file(s) differ in size and {len(missing)} are missing after syncing "
-        f"{target!r} to {dest}.\n{detail}"
-        + (f"\n  ... and {more} more" if more > 0 else "")
-        + "\n\nA size mismatch is usually a re-sync over an older corpus: sync_bucket writes into "
-        "the existing file without truncating, so a shorter new file keeps the old tail and its "
-        "Parquet footer becomes unreadable. Delete the destination and download again."
-    )
 
 
 #: Backends by name.

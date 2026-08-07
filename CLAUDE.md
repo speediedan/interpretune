@@ -20,6 +20,18 @@ Interpretune is a flexible framework for collaborative AI world model analysis a
   upstream PR, validate in an env built FROM the pins, and check `pip show <pkg> | grep -i location`
   (or `direct_url.json`) rather than trusting the version number.
 
+- **Search upstream before building a guard around an apparent upstream bug.** When a dependency
+  misbehaves, check that project's issue tracker and releases FIRST: if it is already reported and
+  fixed, the correct response is a version floor, not defensive code plus tests we then own forever.
+  Search the issues (including closed ones), find the fixing PR, and read which release carries it —
+  a floor on the direct dependency usually will not do it, since the fix may live in a transitive
+  package whose floor only a NEWER release of the direct one raises. Worked example: a bucket
+  re-sync left stale trailing bytes in files that shrank, silently corrupting Parquet footers. We
+  wrote a size-verification guard and six tests. It was already `huggingface_hub#3995`, fixed in
+  `hf-xet` 1.4.3 — reachable only by flooring `huggingface_hub[hf_xet] >= 1.9.0`, the first release
+  whose own extra requires it. The guard and its tests were removed. Reproduce against the fixed
+  version before deleting a guard, and keep the guard only if the bug survives the upgrade.
+
 ## Build & Dev Environment
 
 Uses `uv` for dependency management. For Venvs, use `/mnt/cache/$USER/.venvs/` (preferred for hardlink perf), fall back to `~/.venvs/` if that path isn't available.
@@ -438,8 +450,8 @@ Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeli
   not just the locally-run pytest phases: the hosted GitHub workflows (Test full across all three OSes,
   Stale Stubs and Type Checks — BOTH halves: pyright AND `generate_op_stubs.py` freshness — PyPI dry-run,
   regen-ci-req report, benchmark-registry isolation) AND every phase of the gated Azure GPU pipeline
-  (standard, **standard gpu cuda-marked**, standalone, profile_ci). Lesson from the Session-31 CT merge
-  (2026-07-20): a branch was greened locally on three phases but the cuda-marked phase (whose tests hide
+  (standard, **standard gpu cuda-marked**, standalone, profile_ci). Lesson from the circuit-tracer merge
+  of 2026-07-20: a branch was greened locally on three phases but the cuda-marked phase (whose tests hide
   among the locally-skipped set) plus the hosted stubs/pyright/fixture-scope surfaces were never
   exercised, so `main` went red on merge. Run the cuda-marked phase locally via
   `IT_RUN_CUDA_TESTS=1 python -m pytest tests -v` (inline env var; these tests SKIP silently without it —
