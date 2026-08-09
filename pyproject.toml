@@ -84,14 +84,27 @@ examples = [
     "syrupy >= 4.6",  # snapshot testing consumed by the SAEDashboard/SAELens suites run from this env
     # v3 adds the TransformerBridge architecture. 3.5.1 is the release cut from the commit this project
     # previously pinned by git URL (tag v3.5.1 == 4ba2187b), so this is a release-pin of identical code.
-    # Downstreams still cap transformer-lens below 3.x (sae-dashboard `^2.2.0`, sae-lens `>=2.16.1`),
-    # hence the matching entry in [tool.uv] override-dependencies / requirements/ci/overrides.txt.
+    # sae-dashboard caps transformer-lens below 3.x (`^2.2.0`, i.e. <3.0.0), hence the matching entry
+    # in [tool.uv] override-dependencies / requirements/ci/overrides.txt. sae-lens does NOT cap it --
+    # its `>=2.16.1` is a FLOOR, which 3.5.1 satisfies. (Corrected 2026-08-09; the comment previously
+    # listed sae-lens as a capping downstream, which would have made the override look load-bearing
+    # for a constraint that does not exist.)
     "transformer-lens >=3.5.1,<4",
+    # Released floor since 2026-08-09: SAELens#721 merged (`3495640`) and shipped in 6.49.0, so the
+    # Scalable Dashboards fork pin is retired. 6.49.0 is the FIRST release carrying the
+    # `ActivationsStore.get_batch_tokens(move_to_model_device=...)` seam SAEDashboard's columnar
+    # runner uses; SAEDashboard probes for it and degrades gracefully, so this is a floor for the
+    # optimization rather than for correctness.
+    #
+    # NOTE the released alias set is deliberately NARROWER than the fork's: the maintainer verified
+    # every `neuronpedia:` entry against production neuronpedia.org and dropped all 52 gemma-3-1b-it
+    # aliases, which pointed at pages that do not exist. Nothing here depended on them resolving --
+    # they 404'd under the fork too.
+    "sae_lens >= 6.49.0",
     # we comment these out when installing from git urls to avoid dep conflicts
     # note packages that have need to have git url deps override transitive dependencies (e.g. needing to override
     # sae-lens' transformer-lens dependency with a git url dep) need to be moved to git-deps as well
     # "circuit-tracer>=0.1.0",
-    # "sae_lens >= 6.3.1",  # use new sae_lens API
     # "nnsight >= 0.5.15",
 ]
 
@@ -110,11 +123,19 @@ git-deps = [
     # a raw `str` prompt was re-tokenized with add_special_tokens=True, double-prefixing an explicit
     # BOS and silently shifting every position index in the feature-intervention path.
     "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@3fde7e203f3a73da28d24ce2d1f173f92eaf5480",
-    # sae-lens/sae-dashboard: pinned to the validated Scalable Dashboards fork SHAs until the
-    # upstream PRs merge/release (interpretune.utils.neuronpedia_dashboard_pipeline imports
-    # fork-only surface, e.g. sae_dashboard.neuronpedia.prompt_bucketing); flip back to released
-    # version floors at wave-merge time.
-    "sae-lens @ git+https://github.com/speediedan/SAELens.git@86f90b3d3dccd3f6ac729577b979f76f88a525f1",
+    # sae-lens RETIRED from git-deps 2026-08-09 -- SAELens#721 merged and released as 6.49.0, so it
+    # is now a released floor in `dependencies` above. This is the wave's first git-dep to go.
+    #
+    # The retired pin (`speediedan/SAELens@86f90b3d`) must NOT be resurrected: it carries 20 duplicate
+    # YAML keys in `pretrained_saes.yaml` (10 x `path`, 10 x `l0`) from a bad rebase, which silently
+    # bound 10 entries in `gemma-scope-2-1b-pt-` / `-12b-pt-transcoders-all` to the WRONG weights.
+    # Upstream main never had them and the maintainer fixed them before merging. Only `-pt-` releases
+    # were affected and everything here uses `gemma-scope-2-1b-it-transcoders-all`, so nothing we
+    # generated was wrong -- but the pin itself is unsafe.
+    #
+    # sae-dashboard stays pinned: its PR (SD#74) is still open, and
+    # interpretune.utils.neuronpedia_dashboard_pipeline imports fork-only surface
+    # (e.g. sae_dashboard.neuronpedia.prompt_bucketing). Flip it to a released floor at merge.
     # The SD#74 head carrying `columnar_parquet_row_group_size` and `columnar_write_page_index`. Both are hard FLOORS
     # rather than runtime-probed capabilities: interpretune emits --columnar-write-page-index unconditionally, so an
     # older SAEDashboard fails with "unrecognized arguments" rather than silently producing an unindexed
@@ -185,11 +206,12 @@ profiling = [
 # from source we also include this version to ensure it is respected when installing without the
 # --override flag (e.g CI)
 override-dependencies = [
-    # force the v3 line over downstream caps (sae-dashboard pins `^2.2.0`, i.e. <3.0.0; sae-lens
-    # `>=2.16.1`). 3.5.1 is the release of the commit formerly pinned here by git URL (tag v3.5.1 ==
-    # 4ba2187b), so this is the same code with a real version string instead of `0.0.0`.
+    # force the v3 line over sae-dashboard's cap (`^2.2.0`, i.e. <3.0.0). sae-lens' `>=2.16.1` is a
+    # FLOOR, not a cap, and needs no override. 3.5.1 is the release of the commit formerly pinned here
+    # by git URL (tag v3.5.1 == 4ba2187b), so this is the same code with a real version string
+    # instead of `0.0.0`.
     "transformer-lens==3.5.1",
-    # keep transitive nnsight (pulled in by the sae-lens git dep) at the validated release
+    # keep transitive nnsight (pulled in by sae-lens) at the validated release
     # (0.7.0 validated: nnsight slice + parity 34/0 + low-RAM mock, both versions)
     "nnsight==0.7.0",
 ]
