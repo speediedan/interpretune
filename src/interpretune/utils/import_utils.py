@@ -5,7 +5,7 @@ from importlib.util import find_spec
 from importlib.metadata import version as get_version, PackageNotFoundError
 import operator
 import torch
-from packaging.version import Version
+from packaging.version import InvalidVersion, Version
 
 from interpretune.utils import MisconfigurationException
 
@@ -155,8 +155,11 @@ def compare_version(package: str, op: Callable, version_str: str, use_base_versi
         else:
             # try importlib.metadata to infer version
             pkg_version = Version(get_version(package))
-    except (TypeError, PackageNotFoundError):
-        # this is mocked by Sphinx, so it should return True to generate all summaries
+    except (TypeError, InvalidVersion, PackageNotFoundError):
+        # `__version__` is not a parseable version -- Sphinx mocks it, so return True and let all
+        # summaries generate. BOTH exception types are required: packaging <= 26.2 let the underlying
+        # TypeError escape, while 26.3+ catches it and re-raises `InvalidVersion` (a ValueError).
+        # Catching only TypeError makes this raise on 26.3+, which is how CI caught it.
         return True
     if use_base_version:
         pkg_version = Version(pkg_version.base_version)
