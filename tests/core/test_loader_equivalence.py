@@ -144,3 +144,66 @@ def test_harness_link_fields_match_cli_wiring():
     assert 'skey = "session_cfg"' in src
     assert "{skey}.datamodule_cfg.init_args.{attr}" in src and "{skey}.module_cfg.init_args.{attr}" in src
     assert len(ITSharedConfig.__dataclass_fields__) > 0
+
+
+class TestOneGrammarRecursionRule:
+    """Directional pins for the type-aware recursion skip (umbrella ruling on the defaults fork).
+
+    Neither regression direction may go silent: a dict-typed field carrying a class_path-shaped dict
+    must NOT instantiate (declarative — the optimizer_init case), and a class-typed field MUST.
+    """
+
+    def test_dict_typed_field_stays_declarative(self):
+        from interpretune.registry import it_cfg_factory
+
+        cfg = it_cfg_factory(
+            {
+                "class_path": "interpretune.config.module.ITConfig",
+                "init_args": {
+                    "optimizer_init": {"class_path": "torch.optim.AdamW", "init_args": {"lr": 1.0e-3}},
+                },
+            },
+            {"model_name_or_path": "gpt2", "task_name": "rte"},
+        )
+        assert isinstance(cfg.optimizer_init, dict), "declarative dict-typed field was instantiated"
+        assert cfg.optimizer_init["class_path"] == "torch.optim.AdamW"
+
+    def test_class_typed_field_still_instantiates(self):
+        from interpretune.config.mixins import HFFromPretrainedConfig
+        from interpretune.registry import it_cfg_factory
+
+        cfg = it_cfg_factory(
+            {
+                "class_path": "interpretune.config.module.ITConfig",
+                "init_args": {
+                    "hf_from_pretrained_cfg": {
+                        "class_path": "interpretune.config.mixins.HFFromPretrainedConfig",
+                        "init_args": {"pretrained_kwargs": {"device_map": "cpu"}},
+                    },
+                },
+            },
+            {"model_name_or_path": "gpt2", "task_name": "rte"},
+        )
+        assert isinstance(cfg.hf_from_pretrained_cfg, HFFromPretrainedConfig), (
+            "class-typed field was left as a raw dict"
+        )
+
+
+def test_materialized_defaults_present_and_declarative():
+    """The former example defaults are MATERIALIZED into every published configuration (v3 ruling).
+
+    Pins both halves of the migration: the values are present in each published body's loader output
+    (per-config self-containment — no load-time injection exists to supply them anymore), and the
+    optimizer/scheduler entries remain DECLARATIVE dicts (the one-grammar recursion rule), ready for
+    configure_optimizers-time instantiation.
+    """
+    from interpretune.config.loading import load_session_cfg
+    from it_examples.example_module_registry import load_config_file
+
+    for config_path in EXAMPLE_CONFIGS:
+        key, body = load_config_file(config_path)
+        loaded = load_session_cfg(body, expected_key=key)
+        assert loaded.datamodule_cfg.prepare_data_map_cfg == {"batched": True}, key
+        assert isinstance(loaded.module_cfg.optimizer_init, dict), key
+        assert loaded.module_cfg.optimizer_init["class_path"] == "torch.optim.AdamW", key
+        assert loaded.module_cfg.lr_scheduler_init["init_args"]["T_mult"] == 2, key

@@ -16,10 +16,22 @@ from pathlib import Path
 
 from it_examples.example_module_registry import (
     LazyModuleRegistry,
-    example_datamodule_defaults,
-    example_itmodule_defaults,
     iter_component_manifests,
     load_config_file,
+)
+
+# Test-entry config defaults (formerly it_examples' example_*_defaults): published example configs
+# are self-contained, so these now exist ONLY for the pytest-scale entries in this registry.
+example_datamodule_defaults = dict(prepare_data_map_cfg={"batched": True})
+example_itmodule_defaults = dict(
+    optimizer_init={
+        "class_path": "torch.optim.AdamW",
+        "init_args": {"weight_decay": 1.0e-06, "eps": 1.0e-07, "lr": 3.0e-05},
+    },
+    lr_scheduler_init={
+        "class_path": "torch.optim.lr_scheduler.CosineAnnealingWarmRestarts",
+        "init_args": {"T_0": 1, "T_mult": 2, "eta_min": 1.0e-06},
+    },
 )
 
 TEST_MODULE_REGISTRY_PATH = Path(__file__).parent / "test_module_registry.yaml"

@@ -28,6 +28,9 @@ registered_cfg:
     enable_datasets_cache: False
     train_batch_size: 2
     eval_batch_size: 2
+    # materialized example default (was example_datamodule_defaults; per-config self-containment per hub design v3 ruling)
+    prepare_data_map_cfg:
+      batched: true
   module_cfg:
     class_path: interpretune.config.module.ITConfig
     init_args:
@@ -74,6 +77,19 @@ registered_cfg:
           offload: 'cpu'
           verbose: true
           use_neuronpedia: false
+      # materialized example defaults (was example_itmodule_defaults)
+      optimizer_init:
+        class_path: torch.optim.AdamW
+        init_args:
+          weight_decay: 1.0e-06
+          eps: 1.0e-07
+          lr: 3.0e-05
+      lr_scheduler_init:
+        class_path: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+        init_args:
+          T_0: 1
+          T_mult: 2
+          eta_min: 1.0e-06
   datamodule_cls:
     class_path: it_examples.experiments.rte_boolq.RTEBoolqDataModule
   module_cls:

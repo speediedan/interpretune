@@ -11,11 +11,11 @@ from interpretune.config import (
     ITLensFromPretrainedNoProcessingConfig,
     ITLensFromPretrainedConfig,
 )
-from it_examples.example_module_registry import (
+from tests.module_registry import (
+    TEST_MODULE_REGISTRY,
     example_datamodule_defaults,
     example_itmodule_defaults,
 )
-from tests.module_registry import TEST_MODULE_REGISTRY
 from base_defaults import default_prof_bs
 from tests.modules import TestFTS
 from tests.utils import get_nested, set_nested

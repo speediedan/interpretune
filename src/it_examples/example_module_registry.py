@@ -24,19 +24,11 @@ if TYPE_CHECKING:
 
 DEFAULT_REGISTRY_ROOT = Path(__file__).parent / "examples"
 
-# Export commonly used defaults to maintain API compatibility
+# NOTE: the former example_{datamodule,itmodule}_defaults are MATERIALIZED into the published
+# configuration files (per-config self-containment, hub design v3 ruling) — published bodies are
+# complete; no load-time defaults injection exists on the example path. Test-entry defaults live with
+# the test registry (tests/module_registry.py).
 default_experiment_tag = "test_itmodule"
-example_datamodule_defaults = dict(prepare_data_map_cfg={"batched": True})
-example_itmodule_defaults = dict(
-    optimizer_init={
-        "class_path": "torch.optim.AdamW",
-        "init_args": {"weight_decay": 1.0e-06, "eps": 1.0e-07, "lr": 3.0e-05},
-    },
-    lr_scheduler_init={
-        "class_path": "torch.optim.lr_scheduler.CosineAnnealingWarmRestarts",
-        "init_args": {"T_0": 1, "T_mult": 2, "eta_min": 1.0e-06},
-    },
-)
 
 
 def derive_config_key(cfg: dict) -> str:
@@ -47,15 +39,10 @@ def derive_config_key(cfg: dict) -> str:
 
 
 def example_register_func(target_registry):
-    """Registration callable applying the example config defaults into ``target_registry``."""
-    from interpretune.registry import instantiate_and_register, apply_defaults
+    """Registration callable for example configuration bodies (self-contained; no defaults injection)."""
+    from interpretune.registry import instantiate_and_register
 
-    return partial(
-        instantiate_and_register,
-        target_registry=target_registry,
-        itdm_cfg_defaults_fn=partial(apply_defaults, defaults=example_datamodule_defaults),
-        it_cfg_defaults_fn=partial(apply_defaults, defaults=example_itmodule_defaults),
-    )
+    return partial(instantiate_and_register, target_registry=target_registry)
 
 
 def iter_component_manifests(registry_root: Path | None = None) -> Iterator[tuple[Path, dict]]:
