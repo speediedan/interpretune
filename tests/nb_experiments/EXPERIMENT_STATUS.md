@@ -185,7 +185,7 @@ follows for the 7c execution ahead:
    demo instead). Between the two notebooks, cover analysis-op usage, native+hub op composition,
    embed- and store-based steering, the feature-selection API, and local feature explanations —
    while minimizing duplication and keeping each digestible.
-   **✅ DONE (2026-07-15)**: retargeted to the `gemma3.rte_demo.circuit_tracer_w_neuronpedia`
+   **✅ DONE (2026-07-15)**: retargeted to the `rte_demo.gemma3.circuit_tracer.neuronpedia`
    registry entry (262k transcoder set; chat-template-rendered prompt; gemma-3 key tokens;
    `neuronpedia_model="gemma-3-1b-it"`); RTE-demo references replaced with a pointer at the
    steering demo; `test_ct_analysis_backend_notebook[ct_analysis_backend_nnsight]` PASSED on

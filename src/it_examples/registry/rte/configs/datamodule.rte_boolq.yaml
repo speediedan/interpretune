@@ -1,0 +1,22 @@
+# Standalone-consumption default for the rte_boolq datamodule (#128 path; module configs inline their own)
+datamodule_cfg:
+  prompt_cfg:
+    class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+  signature_columns:
+  - input
+  - labels
+  text_fields:
+  - premise
+  - hypothesis
+  enable_datasets_cache: false
+  train_batch_size: 2
+  eval_batch_size: 2
+shared_config:
+  task_name: rte
+  os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
+  model_name_or_path: google/gemma-2-2b
+  tokenizer_kwargs:
+    model_input_names:
+    - input
+    padding_side: left
+    add_bos_token: true

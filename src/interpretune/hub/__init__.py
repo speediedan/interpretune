@@ -1,0 +1,57 @@
+"""interpretune.hub — the unified Hub client layer (hub-integration design, ACCEPTED v2).
+
+Kind-agnostic machinery for every interpretune Hub resource: cache roots and cache-scan discovery
+(`.cache`), the ``it_component.yaml`` manifest schema and configuration-key derivation (`.manifest`),
+generated discovery-sentinel cards (`.cards`), the generalized resource manager (`.manager`, relocated from
+``interpretune.analysis.ops.hub_manager``), manifest-first component fetch (`.components`), and component
+publishing (`.publish`).
+
+Attribute access is lazy (PEP 562) so importing ``interpretune.hub`` stays cheap.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+_LAZY_ATTRS = {
+    "IT_CACHE": "interpretune.hub.cache",
+    "IT_COMPONENTS_HUB_CACHE": "interpretune.hub.cache",
+    "IT_ARTIFACTS_HUB_CACHE": "interpretune.hub.cache",
+    "IT_ANALYSIS_HUB_CACHE": "interpretune.hub.cache",
+    "parse_hub_cache_path": "interpretune.hub.cache",
+    "scan_cached_repos": "interpretune.hub.cache",
+    "IT_COMPONENT_MANIFEST": "interpretune.hub.manifest",
+    "ComponentManifestError": "interpretune.hub.manifest",
+    "derive_config_key": "interpretune.hub.manifest",
+    "load_component_manifest": "interpretune.hub.manifest",
+    "validate_component_manifest": "interpretune.hub.manifest",
+    "check_config_key_parity": "interpretune.hub.manifest",
+    "component_card_metadata": "interpretune.hub.cards",
+    "generate_component_card": "interpretune.hub.cards",
+    "HubResourceKind": "interpretune.hub.manager",
+    "ITHubResourceManager": "interpretune.hub.manager",
+    "HubAnalysisOpManager": "interpretune.hub.manager",
+    "HubOpCollection": "interpretune.hub.manager",
+    "OPS_KIND": "interpretune.hub.manager",
+    "COMPONENT_KIND": "interpretune.hub.manager",
+    "pull_component_manifest": "interpretune.hub.components",
+    "pull_component_config": "interpretune.hub.components",
+    "register_component_config": "interpretune.hub.components",
+    "build_component_tree": "interpretune.hub.publish",
+    "publish_component": "interpretune.hub.publish",
+}
+
+__all__ = sorted(_LAZY_ATTRS)
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_ATTRS:
+        import importlib
+
+        module = importlib.import_module(_LAZY_ATTRS[name])
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return __all__

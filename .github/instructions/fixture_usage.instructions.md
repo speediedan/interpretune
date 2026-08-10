@@ -17,7 +17,7 @@ Interpretune uses a sophisticated fixture generation system that creates test fi
 
 ## Critical: TEST_MODULE_REGISTRY Dependency
 
-**IMPORTANT**: Most session fixtures (`it_session`, `it_session_cfg`, `analysis_session`) depend on the `TEST_MODULE_REGISTRY` (`tests/module_registry.py`), which registers the pytest-scale entries from `tests/module_registry.yaml` plus the shipping example entries from `src/it_examples/example_module_registry.yaml` — so test parametrization sees both key families. (`MODULE_EXAMPLE_REGISTRY` remains the user-facing registry of the 6 `*.rte_demo.*` example entries and no longer depends on the `tests` package.)
+**IMPORTANT**: Most session fixtures (`it_session`, `it_session_cfg`, `analysis_session`) depend on the `TEST_MODULE_REGISTRY` (`tests/module_registry.py`), which registers the pytest-scale entries from `tests/module_registry.yaml` plus the shipping example entries from the component trees under `src/it_examples/registry/` — so test parametrization sees both key families. (`MODULE_EXAMPLE_REGISTRY` remains the user-facing registry of the example entries, hydrating per-key from those trees, and does not depend on the `tests` package.)
 
 ### How Fixture Resolution Works
  - session fixture factory example
@@ -202,7 +202,7 @@ Create a test configuration class in `tests/core/cfg_aliases.py` or similar.
 
 Registry entries are looked up using `ModuleRegistry.get()` which accepts:
 - **Tuple**: `(model_src_key, model_cfg_key, phase, adapter_ctx)` - e.g., `("gemma2", "rte_base_test", "test", (Adapter.core, Adapter.circuit_tracer))`
-- **String**: Registry key like `"gemma2.rte_demo.circuit_tracer"`
+- **String**: Registry key like `"rte_demo.gemma2.circuit_tracer"`
 - **RegKeyQueryable**: Object with `model_src_key`, `model_cfg_key`, `phase`, `adapter_ctx` attributes (like BaseCfg)
 
 ```python

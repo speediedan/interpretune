@@ -18,6 +18,8 @@ from it_examples.example_module_registry import (
     LazyModuleRegistry,
     example_datamodule_defaults,
     example_itmodule_defaults,
+    iter_component_manifests,
+    load_config_file,
 )
 
 TEST_MODULE_REGISTRY_PATH = Path(__file__).parent / "module_registry.yaml"
@@ -25,7 +27,6 @@ TEST_MODULE_REGISTRY_PATH = Path(__file__).parent / "module_registry.yaml"
 
 def _create_test_registry():
     """Build a registry holding the test entries plus the example entries (test-class defaults for the former)."""
-    from interpretune.base import IT_BASE
     from interpretune.registry import ModuleRegistry, gen_module_registry, instantiate_and_register, apply_defaults
     from tests.modules import TestITDataModule, TestITModule
 
@@ -44,10 +45,12 @@ def _create_test_registry():
     )
 
     gen_module_registry(yaml_reg_path=TEST_MODULE_REGISTRY_PATH, register_func=test_instantiate_and_register)
-    # example entries register second so a key collision would resolve toward the shipping definition
-    gen_module_registry(
-        yaml_reg_path=Path(IT_BASE) / "example_module_registry.yaml", register_func=test_instantiate_and_register
-    )
+    # example entries register second (from the decomposed component trees) so a key collision would
+    # resolve toward the shipping definition
+    for component_dir, manifest in iter_component_manifests():
+        for key, rel in (manifest.get("module", {}).get("configs") or {}).items():
+            parity_key, body = load_config_file(component_dir / rel, expected_key=key)
+            test_instantiate_and_register(parity_key, body)
 
     return registry
 

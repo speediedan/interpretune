@@ -20,16 +20,16 @@ IT_TRUST_REMOTE_CODE = (
     IT_TRUST_REMOTE_CODE_ENV.lower() in ("true", "1", "yes") if IT_TRUST_REMOTE_CODE_ENV is not None else None
 )
 
-IT_ANALYSIS_HUB_CACHE_DIR_NAME = "interpretune_ops"
-DEFAULT_IT_ANALYSIS_HUB_CACHE = Path(os.path.join(HF_CACHE_HOME, "hub")) / IT_ANALYSIS_HUB_CACHE_DIR_NAME
-IT_ANALYSIS_HUB_CACHE = Path(os.getenv("IT_ANALYSIS_HUB_CACHE", DEFAULT_IT_ANALYSIS_HUB_CACHE))
+# op-collection hub cache now defined by the unified hub layer (interpretune.hub.cache); the env-var
+# override and on-disk default are unchanged
+from interpretune.hub.cache import IT_ANALYSIS_HUB_CACHE
 
 # Environment variable for additional op definition paths
 IT_ANALYSIS_OP_PATHS = os.getenv("IT_ANALYSIS_OP_PATHS", "").split(":") if os.getenv("IT_ANALYSIS_OP_PATHS") else []
 
 from interpretune.analysis.ops import ColCfg, OpSchema, AnalysisBatch, DISPATCHER, AnalysisOp, OpWrapper, AnalysisOpLike
 from interpretune.analysis.execution import AnalysisInputs, execute_analysis_op, execute_analysis_step
-from interpretune.analysis.ops.hub_manager import HubAnalysisOpManager
+from interpretune.hub.manager import HubAnalysisOpManager
 from interpretune.analysis.backends import (
     AnalysisBackend,
     AnalysisBackendCapability,

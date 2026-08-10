@@ -244,7 +244,9 @@ where = ["src"]
 namespaces = true
 
 [tool.setuptools.package-data]
-"it_examples" = ["*.yaml"]
+# registry/** must ship: the example registry hydrates from these component trees at runtime
+# (MANIFEST.in's recursive-include also covers them today; this glob is the belt to that braces)
+"it_examples" = ["*.yaml", "registry/**/*.yaml"]
 "interpretune" = ["*.yaml"]
 
 [tool.setuptools_scm]

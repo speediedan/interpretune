@@ -1,7 +1,6 @@
 """Cache manager for pre-compiled operation definitions."""
 
 from __future__ import annotations
-import re
 import hashlib
 import importlib.util
 from typing import Any
@@ -10,8 +9,9 @@ from dataclasses import dataclass, field
 
 
 from huggingface_hub import scan_cache_dir
-from huggingface_hub.utils._cache_manager import CachedRepoInfo, CachedRevisionInfo
 from transformers.dynamic_module_utils import resolve_trust_remote_code
+
+from interpretune.hub.cache import _get_latest_revision, parse_hub_cache_path
 
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 from interpretune.analysis.ops.base import OpSchema, ColCfg
@@ -70,27 +70,6 @@ class YamlFileInfo:
         content = path.read_bytes()
         content_hash = hashlib.sha256(content).hexdigest()
         return cls(path, stat.st_mtime, content_hash)
-
-
-def _get_latest_revision(repo: CachedRepoInfo) -> CachedRevisionInfo | None:
-    """Get the latest revision for a repository, preferring 'main' ref.
-
-    Args:
-        repo: CachedRepoInfo object from the cache scanner
-
-    Returns:
-        CachedRevisionInfo for the latest revision, or None if no revisions found
-    """
-    if not repo.revisions:
-        return None
-
-    # First, try to find revision referenced by 'main'
-    main_revision = repo.refs.get("main")
-    if main_revision is not None:
-        return main_revision
-
-    # Fallback: get the most recently modified revision
-    return max(repo.revisions, key=lambda rev: rev.last_modified)
 
 
 class OpDefinitionsCacheManager:
@@ -236,49 +215,11 @@ class OpDefinitionsCacheManager:
 
         rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Input yaml_file: {yaml_file}")
         rank_zero_debug(f"[ANALYSIS_HUB_CACHE] IT_ANALYSIS_HUB_CACHE: {IT_ANALYSIS_HUB_CACHE}")
-
-        # Check if file is in hub cache
-        try:
-            # Resolve both paths to handle symlinks (especially on macOS where /tmp -> /private/tmp)
-            resolved_yaml_file = yaml_file.resolve()
-            resolved_hub_cache = Path(IT_ANALYSIS_HUB_CACHE).resolve()
-
-            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Resolved yaml_file: {resolved_yaml_file}")
-            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Resolved hub_cache: {resolved_hub_cache}")
-
-            relative_path = resolved_yaml_file.relative_to(resolved_hub_cache)
-            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Relative path: {relative_path}")
-            parts = relative_path.parts
-
-            # Look for models-- pattern and snapshots or blobs directory
-            for i, part in enumerate(parts):
-                rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Checking part {i}: '{part}'")
-                if part.startswith("models--"):
-                    # Check if this is a valid hub cache structure (has snapshots or blobs)
-                    remaining_parts = parts[i:]
-                    if "snapshots" in remaining_parts or "blobs" in remaining_parts:
-                        # Use regex to properly extract user and repo parts
-                        # Only match exactly two sets of '--' (models--user--repo)
-                        regex_pattern = r"models--([^-]+(?:-[^-]+)*)--([^-]+(?:-[^-]+)*)$"
-                        match = re.match(regex_pattern, part)
-
-                        if match:
-                            user, repo = match.groups()
-                            namespace = f"{user}.{repo}"
-                            rank_zero_debug(
-                                f"[ANALYSIS_HUB_CACHE] REGEX MATCH SUCCESS: user='{user}', "
-                                f"repo='{repo}', namespace='{namespace}'"
-                            )
-                            # Return namespace without top-level package name
-                            return True, namespace
-                    break
-        except ValueError as e:
-            rank_zero_debug(f"[ANALYSIS_HUB_CACHE] ValueError in relative_to: {e}")
-            pass
-
-        # Not a hub file
-        rank_zero_debug("[ANALYSIS_HUB_CACHE] NOT A HUB FILE - returning (False, '')")
-        return False, ""
+        # cache-layout parsing lives in the unified hub layer now (interpretune.hub.cache)
+        is_hub_file, namespace = parse_hub_cache_path(yaml_file, Path(IT_ANALYSIS_HUB_CACHE))
+        if not is_hub_file:
+            rank_zero_debug("[ANALYSIS_HUB_CACHE] NOT A HUB FILE - returning (False, '')")
+        return is_hub_file, namespace
 
     def get_hub_namespace(self, yaml_file: Path) -> str:
         """Extract namespace from hub file path."""
