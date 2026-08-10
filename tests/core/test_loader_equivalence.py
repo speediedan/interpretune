@@ -36,3 +36,42 @@ def test_old_path_capture_baseline(config_path):
     # shared-field link propagation is the CLI behavior the unified loader must reproduce exactly:
     # model_name_or_path is an ITSharedConfig field linked datamodule -> module at parse time
     assert spec["module_cfg"].get("model_name_or_path") == spec["datamodule_cfg"].get("model_name_or_path")
+
+
+from tests.core.loader_equivalence import (  # noqa: E402
+    capture_registered_cfg_via_factories,
+    example_configuration_files,
+    registered_spec,
+)
+
+EXAMPLE_CONFIGS = example_configuration_files()
+
+
+def test_all_example_configurations_discovered():
+    assert len(EXAMPLE_CONFIGS) == 6, sorted(str(c) for c in EXAMPLE_CONFIGS)
+
+
+@pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
+def test_factory_path_capture_baseline(config_path):
+    """Every examples/ configuration instantiates via the factory path; AutoComp synthesis included."""
+    key, registered = capture_registered_cfg_via_factories(config_path)
+    spec = registered_spec(registered)
+    assert spec["datamodule_cfg"]["__class__"] and spec["module_cfg"]["__class__"]
+
+
+def test_autocomp_synthesis_baseline():
+    """The AutoComp acceptance case (umbrella 4a note 4): a synthesized module_cfg class, pinned.
+
+    ``rte_demo.gemma2.circuit_tracer`` declares ``auto_comp_cfg`` (module_cfg_name RTEBoolqConfig +
+    entailment-mapping mixin), so its concrete config class exists only as ``make_dataclass`` output.
+    The unified loader must route through the factories so this synthesis keeps happening; this pin
+    fails if a reimplementation constructs a plain ITConfig instead.
+    """
+    target = next(c for c in EXAMPLE_CONFIGS if c.stem == "rte_demo.gemma2.circuit_tracer")
+    _, registered = capture_registered_cfg_via_factories(target)
+    cfg_cls = type(registered.module_cfg)
+    assert cfg_cls.__module__ != "interpretune.config.module" or cfg_cls.__qualname__ != "ITConfig", (
+        "expected an AutoComp-synthesized config class, got plain ITConfig"
+    )
+    # the synthesized class must carry the entailment-mapping surface the mixin composes in
+    assert hasattr(registered.module_cfg, "entailment_mapping")

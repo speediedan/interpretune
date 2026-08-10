@@ -101,3 +101,43 @@ def session_spec(session_cfg: ITSessionConfig) -> dict:
         "datamodule_cfg": normalize(session_cfg.datamodule_cfg),
         "module_cfg": normalize(session_cfg.module_cfg),
     }
+
+
+EXAMPLES_DIR = REPO_ROOT / "src" / "it_examples" / "examples"
+
+
+def example_configuration_files() -> list[Path]:
+    """Every examples/ configuration indexed by a component manifest (the hub-side harness leg)."""
+    from it_examples.example_module_registry import iter_component_manifests
+
+    files = []
+    for component_dir, manifest in iter_component_manifests(EXAMPLES_DIR):
+        for rel in (manifest.get("module", {}).get("configs") or {}).values():
+            files.append(component_dir / rel)
+    return sorted(files)
+
+
+def capture_registered_cfg_via_factories(config_path: Path):
+    """Instantiate one examples/ configuration through the CURRENT factory path (the one merge site).
+
+    This is the baseline the unified loader must match for hub-shaped bodies — including
+    ``AutoCompConfig`` ``make_dataclass`` synthesis, which happens inside the config constructors the
+    factories invoke and which none of the CLI configs exercises.
+    """
+    from interpretune.registry import ModuleRegistry
+    from it_examples.example_module_registry import example_register_func, load_config_file
+
+    registry = ModuleRegistry()
+    key, body = load_config_file(config_path)
+    example_register_func(registry)(key, body)
+    return key, registry.get(key)
+
+
+def registered_spec(registered_cfg) -> dict:
+    """Comparison payload for the factory path (mirrors ``session_spec`` for hub-shaped bodies)."""
+    return {
+        "datamodule_cls": normalize(registered_cfg.datamodule_cls),
+        "module_cls": normalize(registered_cfg.module_cls),
+        "datamodule_cfg": normalize(registered_cfg.datamodule_cfg),
+        "module_cfg": normalize(registered_cfg.module_cfg),
+    }
