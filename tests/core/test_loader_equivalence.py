@@ -120,3 +120,27 @@ def test_unified_loader_matches_factory_core(config_path):
     assert normalize(loaded.module_cls) == normalize(m_cls)
     # AutoComp parity travels with the factories: synthesized classes must match by name on both paths
     assert type(loaded.module_cfg).__qualname__ == type(m_cfg).__qualname__
+
+
+def test_harness_link_fields_match_cli_wiring():
+    """Bridge-period decorative-check guard (umbrella 4a review note 3).
+
+    The baseline capture MIRRORS ITSessionMixin's link wiring rather than importing it, so if cli.py's linked-field set
+    drifts before the swap-in completes, the harness would silently diverge from the real CLI. Pin the two together: the
+    capture links exactly the ITSharedConfig field set, and the mixin's add_base_args must link exactly that set too
+    (source-inspected, not re-mirrored).
+    """
+    import inspect
+
+    from interpretune.base.components.cli import ITSessionMixin
+    from interpretune.config.shared import ITSharedConfig
+
+    src = inspect.getsource(ITSessionMixin.add_base_args)
+    assert "ITSharedConfig.__dataclass_fields__" in src, (
+        "ITSessionMixin.add_base_args no longer links over ITSharedConfig.__dataclass_fields__ — "
+        "update tests/core/loader_equivalence.capture_session_cfg_via_cli to match the new wiring."
+    )
+    # the mixin builds the link paths from f-strings over skey="session_cfg"
+    assert 'skey = "session_cfg"' in src
+    assert "{skey}.datamodule_cfg.init_args.{attr}" in src and "{skey}.module_cfg.init_args.{attr}" in src
+    assert len(ITSharedConfig.__dataclass_fields__) > 0

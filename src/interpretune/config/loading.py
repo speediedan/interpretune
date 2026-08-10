@@ -85,7 +85,15 @@ def load_session_cfg(
     if expected_key is not None or "task_variant" in body:
         from interpretune.hub.manifest import derive_config_key
 
-        derived = derive_config_key(body) if "task_variant" in body else None
+        if expected_key is not None and "task_variant" not in body:
+            raise ValueError(
+                f"Configuration key parity requested (expected_key={expected_key!r}) but the body carries no "
+                "structured key fields (task_variant/model/composition/...) to derive from."
+            )
+        # deriving even without an expected_key is deliberate: it validates that bodies carrying
+        # structured fields remain derivable (malformed composition/adapter names fail HERE, at the
+        # door, rather than later inside registry lookups)
+        derived = derive_config_key(body)
         if expected_key is not None and derived != expected_key:
             raise ValueError(
                 f"Configuration key parity violation: expected {expected_key!r}, derived {derived!r} "
