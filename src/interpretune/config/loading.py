@@ -14,10 +14,13 @@ design; defaults-directory merging is argv-shim territory.
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence, cast
 
 from interpretune.protocol import Adapter
 from interpretune.utils import instantiate_class
+
+if TYPE_CHECKING:
+    from interpretune.config import ITDataModuleConfig
 
 
 def resolve_adapter_ctx(body: dict[str, Any], adapter_ctx: Sequence[Adapter | str] | None = None) -> tuple:
@@ -102,14 +105,17 @@ def load_session_cfg(
         from interpretune.registry import instantiate_nested
 
         init_args = dict(dm_cfg_body.get("init_args") or {})
-        dm_cfg = instantiate_nested({"class_path": dm_cfg_body["class_path"], "init_args": {**shared, **init_args}})
+        dm_cfg = cast(
+            "ITDataModuleConfig",
+            instantiate_nested({"class_path": dm_cfg_body["class_path"], "init_args": {**shared, **init_args}}),
+        )
     else:
         dm_cfg = itdm_cfg_factory(dm_cfg_body, shared)
 
     m_cfg_body = dict(registered.get("module_cfg") or {})
     m_cfg = it_cfg_factory(m_cfg_body, shared)
 
-    def _resolve_cls(entry: Any, default: Any):
+    def _resolve_cls(entry: Any, default: Any) -> Any:
         if entry is None:
             return default
         if isinstance(entry, dict) and "class_path" in entry:
