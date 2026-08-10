@@ -6,19 +6,17 @@ class DummyRegistry(dict):
         return list(self.keys())
 
 
-def test_lazy_initialization_and_single_call(monkeypatch):
+def test_lazy_initialization_and_single_call():
     calls = []
 
-    def fake_create_registry(self):
+    def builder():
         calls.append(1)
         # return a simple dict-like registry
         return DummyRegistry({"a": 1, "b": 2})
 
-    monkeypatch.setattr(LazyModuleRegistry, "_create_registry", fake_create_registry)
+    lm = LazyModuleRegistry(builder=builder)
 
-    lm = LazyModuleRegistry()
-
-    # Before access, create_registry shouldn't be called
+    # Before access, the builder shouldn't be called
     assert calls == []
 
     # Access a method that triggers initialization
@@ -26,6 +24,19 @@ def test_lazy_initialization_and_single_call(monkeypatch):
     assert set(keys) == {"a", "b"}
     assert calls == [1]
 
-    # Subsequent access should not call _create_registry again
+    # Subsequent access should not call the builder again
     _ = lm.available_keys()
     assert calls == [1]
+
+
+def test_hydrator_mode_defers_and_indexes_without_construction():
+    lm = LazyModuleRegistry()
+
+    # instantiating the facade must not parse manifests or construct entries
+    assert lm._hydrator is not None
+    assert lm._hydrator._index is None
+    assert lm._hydrator._hydrated == set()
+
+    # membership via the manifest index constructs nothing
+    assert "rte_demo.gemma2.circuit_tracer" in lm
+    assert lm._hydrator._hydrated == set()
