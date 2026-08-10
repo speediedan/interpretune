@@ -30,7 +30,7 @@ class TestClassModuleRegistration:
     def test_it_cfg_factory_direct(self):
         from interpretune.config import ITConfig
 
-        cfg = TEST_MODULE_REGISTRY.get("cust.rte")
+        cfg = TEST_MODULE_REGISTRY.get("rte.cust.core")
         orig_cfg = cfg.module_cfg.__dict__
         for k in ("entailment_mapping_indices", "entailment_mapping"):
             del orig_cfg[k]

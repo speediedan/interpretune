@@ -17,7 +17,7 @@ from interpretune.hub.manifest import (
 )
 from interpretune.hub.publish import build_component_tree
 
-RTE_COMPONENT_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "registry" / "rte"
+RTE_COMPONENT_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "examples" / "rte"
 RTE_ENTRYPOINT = RTE_COMPONENT_DIR.parent.parent / "experiments" / "rte_boolq.py"
 
 

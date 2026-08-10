@@ -5,7 +5,7 @@ import sys
 
 def test_publish_force_dry_run_runs_without_error():
     """Running the publisher with --force and --dry-run should exit 0 and print results."""
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = Path(__file__).resolve().parents[3]
     script = repo_root / "scripts" / "publish_notebooks.py"
 
     # Call the script with --force --dry-run to avoid writing files

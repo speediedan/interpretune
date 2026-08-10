@@ -1,6 +1,6 @@
 """Assemble and publish component repos from in-repo component trees.
 
-The in-repo tree (``src/it_examples/registry/<task>/``) mirrors the Hub tree by construction, so publishing is
+The in-repo tree (``src/it_examples/examples/<task>/``) mirrors the Hub tree by construction, so publishing is
 a copy plus two generated additions: the entrypoint module file and the card. A parity test walks the built
 tree against the source tree so the mirror is enforced rather than aspirational.
 """

@@ -8,7 +8,13 @@
 ##################################
 # Cust Transformer
 ##################################
-cust.rte:
+rte.cust.core:
+  # was: cust.rte
+  task_variant: rte
+  model: cust
+  composition: []
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: cust
     model_cfg_key: rte
@@ -54,7 +60,13 @@ cust.rte:
                 return_dict_in_generate: true
     datamodule_cls:
       class_path: tests.modules.FingerprintTestITDataModule
-cust.rte.transformer_lens:
+rte.cust.transformer_lens:
+  # was: cust.rte.transformer_lens
+  task_variant: rte
+  model: cust
+  composition: [transformer_lens]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: cust
     model_cfg_key: rte
@@ -107,7 +119,13 @@ cust.rte.transformer_lens:
               tokenizer_name: 'gpt2'
     datamodule_cls:
       class_path: tests.modules.FingerprintTestITDataModule
-cust.rte.sae_lens:
+rte.cust.sae_lens:
+  # was: cust.rte.sae_lens
+  task_variant: rte
+  model: cust
+  composition: [sae_lens]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: cust
     model_cfg_key: rte
@@ -182,7 +200,13 @@ cust.rte.sae_lens:
 ##################################
 # GPT2
 ##################################
-gpt2.rte:
+rte.gpt2.core:
+  # was: gpt2.rte
+  task_variant: rte
+  model: gpt2
+  composition: []
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gpt2
     model_cfg_key: rte
@@ -231,7 +255,13 @@ gpt2.rte:
             model_head: transformers.GPT2LMHeadModel
     datamodule_cls:
       class_path: tests.modules.FingerprintTestITDataModule
-gpt2.rte.transformer_lens:
+rte.gpt2.transformer_lens:
+  # was: gpt2.rte.transformer_lens
+  task_variant: rte
+  model: gpt2
+  composition: [transformer_lens]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gpt2
     model_cfg_key: rte
@@ -291,7 +321,13 @@ gpt2.rte.transformer_lens:
       class_path: tests.modules.FingerprintTestITDataModule
     module_cls:
       class_path: tests.modules.TestITModule  # validate explicit class_path based module_cls registration
-gpt2.rte.sae_lens:
+rte.gpt2.sae_lens:
+  # was: gpt2.rte.sae_lens
+  task_variant: rte
+  model: gpt2
+  composition: [sae_lens]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gpt2
     model_cfg_key: rte
@@ -357,7 +393,13 @@ gpt2.rte.sae_lens:
               release: gpt2-small-res-jb
               sae_id: blocks.1.hook_resid_pre
               device: cuda
-gpt2.rte.nnsight:
+rte.gpt2.nnsight:
+  # was: gpt2.rte.nnsight
+  task_variant: rte
+  model: gpt2
+  composition: [nnsight]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gpt2
     model_cfg_key: rte
@@ -409,7 +451,13 @@ gpt2.rte.nnsight:
       class_path: tests.modules.FingerprintTestITDataModule
     module_cls:
       class_path: tests.modules.TestITModule
-gpt2.rte.nnsight_sae_lens:
+rte.gpt2.nnsight+sae_lens:
+  # was: gpt2.rte.nnsight_sae_lens
+  task_variant: rte
+  model: gpt2
+  composition: [nnsight, sae_lens]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gpt2
     model_cfg_key: rte
@@ -494,7 +542,13 @@ gpt2.rte.nnsight_sae_lens:
 ##################################
 # Gemma2
 ##################################
-gemma2.rte:
+rte.gemma2.core:
+  # was: gemma2.rte
+  task_variant: rte
+  model: gemma2
+  composition: []
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gemma2
     model_cfg_key: rte
@@ -540,7 +594,13 @@ gemma2.rte:
               device_map: cpu
               dtype: float32
             model_head: transformers.Gemma2ForCausalLM
-gemma2.rte.sae_lens:
+rte.gemma2.sae_lens:
+  # was: gemma2.rte.sae_lens
+  task_variant: rte
+  model: gemma2
+  composition: [sae_lens]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gemma2
     model_cfg_key: rte
@@ -592,7 +652,13 @@ gemma2.rte.sae_lens:
             release: gemma-scope-2b-pt-res-canonical
             sae_id: layer_25/width_16k/canonical
             device: cuda
-gemma2.rte.transformer_lens:
+rte.gemma2.transformer_lens:
+  # was: gemma2.rte.transformer_lens
+  task_variant: rte
+  model: gemma2
+  composition: [transformer_lens]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gemma2
     model_cfg_key: rte
@@ -653,7 +719,13 @@ gemma2.rte.transformer_lens:
       class_path: tests.modules.FingerprintTestITDataModule
     module_cls:
       class_path: tests.modules.TestITModule
-gemma2.rte.circuit_tracer:
+rte_base_test.gemma2.circuit_tracer:
+  # was: gemma2.rte.circuit_tracer
+  task_variant: rte_base_test
+  model: gemma2
+  composition: [circuit_tracer]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gemma2
     model_cfg_key: rte_base_test
@@ -722,7 +794,13 @@ gemma2.rte.circuit_tracer:
       class_path: tests.modules.FingerprintTestITDataModule
     module_cls:
       class_path: tests.modules.TestITModule
-gemma2.rte.circuit_tracer_tl:
+rte_base_test.gemma2.circuit_tracer+transformer_lens:
+  # was: gemma2.rte.circuit_tracer_tl
+  task_variant: rte_base_test
+  model: gemma2
+  composition: [circuit_tracer, transformer_lens]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gemma2
     model_cfg_key: rte_base_test
@@ -797,7 +875,13 @@ gemma2.rte.circuit_tracer_tl:
       class_path: tests.modules.FingerprintTestITDataModule
     module_cls:
       class_path: tests.modules.TestITModule
-gemma2.rte.circuit_tracer_nnsight:
+rte_base_test.gemma2.circuit_tracer+nnsight:
+  # was: gemma2.rte.circuit_tracer_nnsight
+  task_variant: rte_base_test
+  model: gemma2
+  composition: [circuit_tracer, nnsight]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gemma2
     model_cfg_key: rte_base_test
@@ -867,7 +951,13 @@ gemma2.rte.circuit_tracer_nnsight:
       class_path: tests.modules.FingerprintTestITDataModule
     module_cls:
       class_path: tests.modules.TestITModule
-gemma2.rte.circuit_tracer_nnsight_remote:
+rte_base_test.gemma2.circuit_tracer+nnsight.remote:
+  # was: gemma2.rte.circuit_tracer_nnsight_remote
+  task_variant: rte_base_test
+  model: gemma2
+  composition: [circuit_tracer, nnsight]
+  extensions: []
+  descriptor: remote
   reg_info:
     model_src_key: gemma2
     model_cfg_key: rte_base_test
@@ -940,7 +1030,13 @@ gemma2.rte.circuit_tracer_nnsight_remote:
 ##################################
 # Gemma3
 ##################################
-gemma3.rte:
+rte.gemma3.core:
+  # was: gemma3.rte
+  task_variant: rte
+  model: gemma3
+  composition: []
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gemma3
     model_cfg_key: rte
@@ -989,7 +1085,13 @@ gemma3.rte:
 ##################################
 # Gemma3 Circuit Tracer
 ##################################
-gemma3.rte.circuit_tracer_nnsight:
+rte_base_test.gemma3.circuit_tracer+nnsight:
+  # was: gemma3.rte.circuit_tracer_nnsight
+  task_variant: rte_base_test
+  model: gemma3
+  composition: [circuit_tracer, nnsight]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: gemma3
     model_cfg_key: rte_base_test
@@ -1062,7 +1164,13 @@ gemma3.rte.circuit_tracer_nnsight:
 ##################################
 # Llama3
 ##################################
-llama3.rte:
+rte.llama3.core:
+  # was: llama3.rte
+  task_variant: rte
+  model: llama3
+  composition: []
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: llama3
     model_cfg_key: rte
@@ -1126,7 +1234,13 @@ llama3.rte:
               lora_dropout: 0.05
               bias: none
               task_type: "CAUSAL_LM"
-llama3.rte.transformer_lens:
+rte.llama3.transformer_lens:
+  # was: llama3.rte.transformer_lens
+  task_variant: rte
+  model: llama3
+  composition: [transformer_lens]
+  extensions: []
+  descriptor: null
   reg_info:
     model_src_key: llama3
     model_cfg_key: rte

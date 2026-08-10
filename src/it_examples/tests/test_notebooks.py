@@ -26,7 +26,7 @@ except ImportError:
     pass
 
 # Directory containing published notebooks (processed versions without dev cells)
-NOTEBOOKS_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "notebooks" / "publish"
+NOTEBOOKS_DIR = Path(__file__).parent.parent / "notebooks" / "publish"
 
 # Local Neuronpedia dev-webapp base URL used by local-dashboard-mode notebook tests
 LOCAL_NP_WEBAPP_URL = os.environ.get("IT_LOCAL_NP_WEBAPP_URL", "http://localhost:3000")

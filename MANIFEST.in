@@ -16,6 +16,9 @@ include requirements.txt
 
 # Excludes
 # -----------------------------------------------------------------------
+# repo-only example/notebook tests (import repo-only helpers; wheel- and sdist-excluded)
+prune src/it_examples/tests
+
 # ci requirements
 prune requirements/ci
 prune requirements/utils

@@ -239,7 +239,7 @@ default_session_cfg = {
     "module_cfg": {"class_path": "interpretune.config.module.ITConfig"},
 }
 
-core_cust_cfg = deepcopy(TEST_MODULE_REGISTRY["cust.rte"]["cfg_dict"])
+core_cust_cfg = deepcopy(TEST_MODULE_REGISTRY["rte.cust.core"]["cfg_dict"])
 base_cust_rte_cfg = {
     "session_cfg": {
         "datamodule_cfg": {
@@ -253,7 +253,7 @@ base_cust_rte_cfg = {
     }
 }
 
-core_tl_cust_cfg = deepcopy(TEST_MODULE_REGISTRY["cust.rte.transformer_lens"]["cfg_dict"])
+core_tl_cust_cfg = deepcopy(TEST_MODULE_REGISTRY["rte.cust.transformer_lens"]["cfg_dict"])
 base_tl_cust_model_cfg = {
     "session_cfg": {
         "datamodule_cfg": {

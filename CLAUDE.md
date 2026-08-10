@@ -118,10 +118,10 @@ Where pins live and how to refresh them:
 
 ```bash
 # Basic test run (mirrors ci_test-full.yml)
-cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpretune tests -v
+cd /home/runner/work/interpretune/interpretune && python -m pytest tests src/it_examples/tests -v
 
 # With coverage
-python -m pytest --cov=src/interpretune --cov-append --cov-report= src/interpretune tests -v
+python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v
 python -m coverage report
 
 # Standalone tests (use inline env vars, NOT export, to avoid marker conflicts)
@@ -161,7 +161,7 @@ The basic test suite runs ~30 minutes; the full suite with `gen_it_coverage.sh` 
 # RECOMMENDED: Run basic test suite in the background (avoids truncation/OOM kills)
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
-nohup python -m pytest src/interpretune tests -v > /tmp/it_test_results.txt 2>&1 &
+nohup python -m pytest tests src/it_examples/tests -v > /tmp/it_test_results.txt 2>&1 &
 disown
 echo "Test PID: $!"
 
@@ -172,7 +172,7 @@ grep -c "PASSED\|FAILED\|ERROR" /tmp/it_test_results.txt
 ps -p <PID> -o pid,etime,rss,cmd
 
 # IMPORTANT: Kill the process before starting another test run to avoid conflicts
-kill <PID>  # or: pkill -f "pytest.*src/interpretune"
+kill <PID>  # or: pkill -f "pytest.*tests"
 ```
 
 **Full coverage run (background via harness):**
@@ -436,8 +436,8 @@ Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeli
 
 ## Commit & PR Requirements
 
-- Before each commit, run the basic local test command (`python -m pytest src/interpretune tests -v`) plus pre-commit. If the session is still blocked after reasonable debugging effort, an intermediate checkpoint commit is acceptable as long as the current blocker is documented.
-- All tests passing (`python -m pytest src/interpretune tests -v`)
+- Before each commit, run the basic local test command (`python -m pytest tests src/it_examples/tests -v`) plus pre-commit. If the session is still blocked after reasonable debugging effort, an intermediate checkpoint commit is acceptable as long as the current blocker is documented.
+- All tests passing (`python -m pytest tests src/it_examples/tests -v`)
 - All pre-commit hooks passing
 - CPU coverage >= existing coverage
 - Docstrings for all public functions/classes
