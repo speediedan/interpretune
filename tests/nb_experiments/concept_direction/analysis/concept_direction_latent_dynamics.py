@@ -38,7 +38,7 @@ from tests.nb_experiments.concept_direction.analysis.concept_direction_analysis 
     capture_context_enhanced_extraction_snapshot,
     compute_concept_direction_geometry,
 )
-from tests.nb_experiments.concept_direction.analysis.latent_state_projection import (
+from it_examples.utils.latent_state_projection import (
     ProjectionMethod,
     UmapBackendPreference,
     project_embeddings,

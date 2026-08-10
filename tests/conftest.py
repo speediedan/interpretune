@@ -103,7 +103,7 @@ from tests.core.cfg_aliases import (
     CoreSLBridgeGPT2LogitDiffsAttrGrad,
     CoreSLBridgeGPT2LogitDiffsAttrAblation,
 )
-from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
+from tests.module_registry import TEST_MODULE_REGISTRY
 
 
 test_cli_cfgs = deepcopy(parity_cli_cfgs)
@@ -483,7 +483,7 @@ def make_it_module(tmp_path_factory):
         m_kwargs = {"test_alias": f"{module_key}_{init_key}_it_m_fixture", "state_log_dir": None}
         test_cfg = FIXTURE_CFGS[module_key].test_cfg()
         core_log_dir = tmp_path_factory.mktemp(f"{module_key}_{init_key}_it_m_fixture")
-        _, base_it_cfg, *_ = MODULE_EXAMPLE_REGISTRY.get(test_cfg)
+        _, base_it_cfg, *_ = TEST_MODULE_REGISTRY.get(test_cfg)
         it_cfg = apply_it_test_cfg(base_it_cfg=base_it_cfg, test_cfg=test_cfg, core_log_dir=core_log_dir)
         m_cls = ITMeta(
             "InterpretunableModule",

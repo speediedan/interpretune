@@ -15,9 +15,9 @@ Interpretune uses a sophisticated fixture generation system that creates test fi
 3. **Scope Appropriately**: Use fixture scopes (`session`, `module`, `class`, `function`) to balance performance and isolation
 4. **Test Method Logic, Not Framework**: Focus unit tests on method behavior; use integration tests for full module lifecycle
 
-## Critical: MODULE_EXAMPLE_REGISTRY Dependency
+## Critical: TEST_MODULE_REGISTRY Dependency
 
-**IMPORTANT**: Most session fixtures (`it_session`, `it_session_cfg`, `analysis_session`) depend on the `MODULE_EXAMPLE_REGISTRY` defined in `src/it_examples/example_module_registry.yaml`.
+**IMPORTANT**: Most session fixtures (`it_session`, `it_session_cfg`, `analysis_session`) depend on the `TEST_MODULE_REGISTRY` (`tests/module_registry.py`), which registers the pytest-scale entries from `tests/module_registry.yaml` plus the shipping example entries from `src/it_examples/example_module_registry.yaml` — so test parametrization sees both key families. (`MODULE_EXAMPLE_REGISTRY` remains the user-facing registry of the 6 `*.rte_demo.*` example entries and no longer depends on the `tests` package.)
 
 ### How Fixture Resolution Works
  - session fixture factory example
@@ -30,7 +30,7 @@ config_modules() [tests/configuration.py]
          ↓
 gen_session_cfg()
          ↓
-MODULE_EXAMPLE_REGISTRY.get(test_cfg)  ← REGISTRY LOOKUP HERE
+TEST_MODULE_REGISTRY.get(test_cfg)  ← REGISTRY LOOKUP HERE
          ↓
 Returns: (base_itdm_cfg, base_it_cfg, dm_cls, m_cls)
 ```

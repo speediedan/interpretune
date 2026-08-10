@@ -39,7 +39,7 @@ from tests import seed_everything
 from tests.base_defaults import BaseCfg
 from tests.data_generation import gen_or_validate_input_data
 from tests.utils import get_model_input_dtype, cuda_reset
-from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
+from tests.module_registry import TEST_MODULE_REGISTRY
 
 
 IT_GLOBAL_STATE_LOG_MODE = os.environ.get("IT_GLOBAL_STATE_LOG_MODE", "0") == "1"
@@ -185,7 +185,7 @@ def config_session(
 def gen_session_cfg(
     test_cfg, test_alias, expected_results, tmp_path, prewrapped_modules, state_log_mode: bool = False
 ) -> ITSessionConfig:
-    base_itdm_cfg, base_it_cfg, dm_cls, m_cls = MODULE_EXAMPLE_REGISTRY.get(test_cfg)
+    base_itdm_cfg, base_it_cfg, dm_cls, m_cls = TEST_MODULE_REGISTRY.get(test_cfg)
     # Override with test_cfg classes if provided, ITSessionConfig.__post_init__ handles str-to-class conversion
     m_cls = test_cfg.module_cls if test_cfg.module_cls is not None else m_cls
     dm_cls = test_cfg.datamodule_cls if test_cfg.datamodule_cls is not None else dm_cls

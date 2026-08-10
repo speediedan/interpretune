@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 from dataclasses import dataclass
 
 from interpretune.registry import ModuleRegistry, RegisteredCfg, RegKeyType, it_cfg_factory
-from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
+from tests.module_registry import TEST_MODULE_REGISTRY
 from interpretune.protocol import Adapter
 from tests.base_defaults import default_test_task
 from base_defaults import BaseCfg
@@ -30,7 +30,7 @@ class TestClassModuleRegistration:
     def test_it_cfg_factory_direct(self):
         from interpretune.config import ITConfig
 
-        cfg = MODULE_EXAMPLE_REGISTRY.get("cust.rte")
+        cfg = TEST_MODULE_REGISTRY.get("cust.rte")
         orig_cfg = cfg.module_cfg.__dict__
         for k in ("entailment_mapping_indices", "entailment_mapping"):
             del orig_cfg[k]

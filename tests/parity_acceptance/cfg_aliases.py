@@ -12,10 +12,10 @@ from interpretune.config import (
     ITLensFromPretrainedConfig,
 )
 from it_examples.example_module_registry import (
-    MODULE_EXAMPLE_REGISTRY,
     example_datamodule_defaults,
     example_itmodule_defaults,
 )
+from tests.module_registry import TEST_MODULE_REGISTRY
 from base_defaults import default_prof_bs
 from tests.modules import TestFTS
 from tests.utils import get_nested, set_nested
@@ -239,7 +239,7 @@ default_session_cfg = {
     "module_cfg": {"class_path": "interpretune.config.module.ITConfig"},
 }
 
-core_cust_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY["cust.rte"]["cfg_dict"])
+core_cust_cfg = deepcopy(TEST_MODULE_REGISTRY["cust.rte"]["cfg_dict"])
 base_cust_rte_cfg = {
     "session_cfg": {
         "datamodule_cfg": {
@@ -253,7 +253,7 @@ base_cust_rte_cfg = {
     }
 }
 
-core_tl_cust_cfg = deepcopy(MODULE_EXAMPLE_REGISTRY["cust.rte.transformer_lens"]["cfg_dict"])
+core_tl_cust_cfg = deepcopy(TEST_MODULE_REGISTRY["cust.rte.transformer_lens"]["cfg_dict"])
 base_tl_cust_model_cfg = {
     "session_cfg": {
         "datamodule_cfg": {
