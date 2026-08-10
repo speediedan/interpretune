@@ -17,7 +17,7 @@ export IT_REPO_DIR=${HOME}/repos/interpretune
 1) Manually generate a flamegraph of pytest startup (collect-only):
 
 ```bash
-time py-spy record --subprocesses -o ${IT_REPO_DIR}/tests/profiling_artifacts/pytest_startup_collect_only.svg -- python -m pytest src/interpretune tests -q --collect-only
+time py-spy record --subprocesses -o ${IT_REPO_DIR}/tests/profiling_artifacts/pytest_startup_collect_only.svg -- python -m pytest tests src/it_examples/tests -q --collect-only
 ```
 
 2) Manually generate a speedscope-format JSON that can be uploaded to speedscope.app:
@@ -26,7 +26,7 @@ a) generate the speedscope json file (use --nonblocking for more accurate time e
 
 ```bash
 d=`date +%Y%m%d%H%M%S`
-time py-spy record --subprocesses --nonblocking -o ${IT_REPO_DIR}/tests/profiling_artifacts/pytest_startup_collect_only_speedscope_${d}.json --format speedscope -- python -m pytest src/interpretune tests -q --collect-only
+time py-spy record --subprocesses --nonblocking -o ${IT_REPO_DIR}/tests/profiling_artifacts/pytest_startup_collect_only_speedscope_${d}.json --format speedscope -- python -m pytest tests src/it_examples/tests -q --collect-only
 ```
 
 b) upload the speedscope json to the remote webapp: https://www.speedscope.app/ (or for offline viewing install speedscope locally via npm: `npm install -g speedscope`). See https://github.com/jlfwong/speedscope/wiki/Importing-from-py-spy-(python)
@@ -34,7 +34,7 @@ b) upload the speedscope json to the remote webapp: https://www.speedscope.app/ 
 3) Manually generate a raw collection-format capture:
 
 ```bash
-time py-spy record --subprocesses -o ${IT_REPO_DIR}/tests/profiling_artifacts/pytest_startup_collect_only_raw.json --format raw -- python -m pytest src/interpretune tests -q --collect-only
+time py-spy record --subprocesses -o ${IT_REPO_DIR}/tests/profiling_artifacts/pytest_startup_collect_only_raw.json --format raw -- python -m pytest tests src/it_examples/tests -q --collect-only
 ```
 
 4) Parse top packages appearing in a speedscope JSON (useful for agentic or manual analysis):

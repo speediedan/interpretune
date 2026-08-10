@@ -290,7 +290,7 @@ Before running this skill, gather the following:
 2. **Run the basic test suite** to ensure no regressions:
 
    ```bash
-   python -m pytest src/interpretune tests --tb=short -q
+   python -m pytest tests src/it_examples/tests --tb=short -q
    ```
 
 3. **If tests fail**, debug using the analysis injection debugging workflow:

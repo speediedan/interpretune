@@ -258,7 +258,7 @@ PY
 
     run_partitioned_cuda_pytest_phase(){
         env -u CUDA_VISIBLE_DEVICES IT_RUN_CUDA_TESTS=1 python -X faulthandler -m pytest \
-            --cov=src/interpretune --cov-append --cov-report= tests -v ${pytest_resource_args} ${rerun_args} \
+            --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v ${pytest_resource_args} ${rerun_args} \
             >> "$coverage_session_log" 2>&1
     }
 
@@ -286,7 +286,7 @@ PY
                 # Using pytest-cov ensures coverage starts before test collection imports
                 run_logged_phase \
                     "base pytest" \
-                    env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-report= src/interpretune src/it_examples tests -v ${pytest_resource_args} ${rerun_args} \
+                    env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-report= tests src/it_examples/tests src/it_examples -v ${pytest_resource_args} ${rerun_args} \
                     >> "$coverage_session_log" 2>&1
                 run_logged_cuda_phase \
                     "base pytest cuda-marked" \
@@ -311,7 +311,7 @@ PY
                 # Using pytest-cov ensures coverage starts before test collection imports
                 run_logged_phase \
                     "base pytest" \
-                    env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v ${pytest_resource_args} ${rerun_args} \
+                    env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v ${pytest_resource_args} ${rerun_args} \
                     >> "$coverage_session_log" 2>&1
                 run_logged_cuda_phase \
                     "base pytest cuda-marked" \

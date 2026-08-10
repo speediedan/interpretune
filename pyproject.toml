@@ -242,6 +242,8 @@ zip-safe = false
 [tool.setuptools.packages.find]
 where = ["src"]
 namespaces = true
+# example/notebook tests are repo-only: they may import test helpers (tests.runif) and must not ship
+exclude = ["it_examples.tests*"]
 
 [tool.setuptools.package-data]
 # registry/** must ship: the example registry hydrates from these component trees at runtime

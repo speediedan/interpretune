@@ -61,7 +61,7 @@ See `docs/config_hierarchy_analysis.md` for detailed configuration relationship 
 ### Required Before Each Commit
 - Unless guidance in a comment or a pull request or target issue description states otherwise, always run our basic tests (which mirror the `ci_test-full.yml` workflow) in your local environment and ensure all tests are passing before committing, for example:
 ```bash
-cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpretune tests -v
+cd /home/runner/work/interpretune/interpretune && python -m pytest tests src/it_examples/tests -v
 ```
 - Ensure all pre-commit hooks pass.
 - If the copilot session is still failing despite trying to get tests and pre-commit hooks passing for some time, it's okay to commit your intermediate work with a comment about the present challenge to be dealt with in a subsequent session.
@@ -245,10 +245,10 @@ cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 
 # Basic test run (requires full dependencies)
-cd /home/runner/work/interpretune/interpretune && python -m pytest src/interpretune tests -v
+cd /home/runner/work/interpretune/interpretune && python -m pytest tests src/it_examples/tests -v
 
 # With coverage (using pytest-cov ensures coverage starts before test collection imports)
-python -m pytest --cov=src/interpretune --cov-append --cov-report= src/interpretune tests -v
+python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v
 python -m coverage report
 
 # Test collection only (to check test discovery)
@@ -271,7 +271,7 @@ The basic test suite runs ~30 minutes; the full suite with `gen_it_coverage.sh` 
 # RECOMMENDED: Run basic test suite in the background (avoids truncation/OOM kills)
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
-nohup python -m pytest src/interpretune tests -v > /tmp/it_test_results.txt 2>&1 &
+nohup python -m pytest tests src/it_examples/tests -v > /tmp/it_test_results.txt 2>&1 &
 disown
 echo "Test PID: $!"
 
