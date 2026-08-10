@@ -22,7 +22,7 @@ from it_examples.example_module_registry import (
     load_config_file,
 )
 
-TEST_MODULE_REGISTRY_PATH = Path(__file__).parent / "module_registry.yaml"
+TEST_MODULE_REGISTRY_PATH = Path(__file__).parent / "test_module_registry.yaml"
 
 
 def _create_test_registry():
@@ -44,6 +44,16 @@ def _create_test_registry():
         it_cfg_defaults_fn=it_cfg_defaults,
     )
 
+    # test keys use the SAME derived grammar as hub configuration keys (umbrella design §11.8):
+    # parity-check every mapping key against derive_config_key over the entry's structured fields
+    import yaml
+    from interpretune.hub.manifest import derive_config_key
+
+    with open(TEST_MODULE_REGISTRY_PATH, encoding="utf-8") as fh:
+        for key, body in yaml.safe_load(fh).items():
+            derived = derive_config_key(body)
+            if derived != key:
+                raise ValueError(f"Test-registry key parity violation: {key!r} vs derived {derived!r}")
     gen_module_registry(yaml_reg_path=TEST_MODULE_REGISTRY_PATH, register_func=test_instantiate_and_register)
     # example entries register second (from the decomposed component trees) so a key collision would
     # resolve toward the shipping definition
