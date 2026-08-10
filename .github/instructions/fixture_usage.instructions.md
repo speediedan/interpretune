@@ -17,7 +17,7 @@ Interpretune uses a sophisticated fixture generation system that creates test fi
 
 ## Critical: TEST_MODULE_REGISTRY Dependency
 
-**IMPORTANT**: Most session fixtures (`it_session`, `it_session_cfg`, `analysis_session`) depend on the `TEST_MODULE_REGISTRY` (`tests/module_registry.py`), which registers the pytest-scale entries from `tests/module_registry.yaml` plus the shipping example entries from the component trees under `src/it_examples/registry/` — so test parametrization sees both key families. (`MODULE_EXAMPLE_REGISTRY` remains the user-facing registry of the example entries, hydrating per-key from those trees, and does not depend on the `tests` package.)
+**IMPORTANT**: Most session fixtures (`it_session`, `it_session_cfg`, `analysis_session`) depend on the `TEST_MODULE_REGISTRY` (`tests/module_registry.py`), which registers the pytest-scale entries from `tests/module_registry.yaml` plus the shipping example entries from the component trees under `src/it_examples/examples/` — so test parametrization sees both key families. (`MODULE_EXAMPLE_REGISTRY` remains the user-facing registry of the example entries, hydrating per-key from those trees, and does not depend on the `tests` package.)
 
 ### How Fixture Resolution Works
  - session fixture factory example

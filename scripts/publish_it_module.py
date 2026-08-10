@@ -6,7 +6,7 @@ it). The in-repo tree mirrors the Hub tree; publishing copies it and adds the ge
 
 Examples:
     # publish the rte task component (private until deliberately flipped public)
-    python scripts/publish_it_module.py --component src/it_examples/registry/rte \\
+    python scripts/publish_it_module.py --component src/it_examples/examples/rte \\
         --repo-id speediedan/rte --entrypoint src/it_examples/experiments/rte_boolq.py --private
 
     # regenerate + push ONLY the card/manifest for an op-collection repo

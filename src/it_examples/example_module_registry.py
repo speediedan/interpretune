@@ -1,6 +1,6 @@
 """Per-key lazy example module registry backed by decomposed component trees.
 
-Example definitions live in ``src/it_examples/registry/<task>/`` mirroring the Hub component-repo layout
+Example definitions live in ``src/it_examples/examples/<task>/`` mirroring the Hub component-repo layout
 (interpretune#1): an ``it_component.yaml`` manifest indexing self-contained configuration files under
 ``configs/<key>.yaml``, where ``<key>`` is derived as ``<task_variant>.<model>.<composition>[.<descriptor>]``
 (composition = ``+``-joined adapters in the composition registry's canonical order).
@@ -22,7 +22,7 @@ import yaml
 if TYPE_CHECKING:
     from interpretune.registry import ModuleRegistry
 
-DEFAULT_REGISTRY_ROOT = Path(__file__).parent / "registry"
+DEFAULT_REGISTRY_ROOT = Path(__file__).parent / "examples"
 
 # Export commonly used defaults to maintain API compatibility
 default_experiment_tag = "test_itmodule"
