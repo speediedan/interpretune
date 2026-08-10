@@ -206,6 +206,7 @@ class ITHubResourceManager:
     def get_cached(self) -> list[HubOpCollection]:
         """Get collections already present in this kind's local cache (no network)."""
         collections = []
+        assert self.cache_dir is not None  # always set in __post_init__
         if not self.cache_dir.exists():
             return collections
         try:

@@ -13,8 +13,7 @@ import re
 from pathlib import Path
 
 from datasets.config import HF_CACHE_HOME  # canonical HF cache root, shared with the analysis caches
-from huggingface_hub.utils import scan_cache_dir
-from huggingface_hub.utils._cache_manager import CachedRepoInfo, CachedRevisionInfo
+from huggingface_hub.utils._cache_manager import CachedRepoInfo, CachedRevisionInfo, scan_cache_dir
 
 IT_CACHE = Path(os.getenv("IT_CACHE", os.path.join(HF_CACHE_HOME, "interpretune")))
 
