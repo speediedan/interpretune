@@ -21,6 +21,7 @@ import tempfile
 
 import pytest
 import torch
+from packaging.version import InvalidVersion
 
 from tests.runif import RunIf
 from tests.utils import ablate_cls_attrs
@@ -147,6 +148,18 @@ class TestClassUtils:
         with ablate_cls_attrs(torch, "__version__"):
             assert compare_version("torch", operator.ge, "2.0.0", use_base_version=True)
         with patch.object(torch, "__version__", lambda x: x + 1):  # allow TypeError for Sphinx mocks
+            assert compare_version("torch", operator.ge, "2.0.0", use_base_version=True)
+
+    @pytest.mark.parametrize("raised", [TypeError("not a version"), InvalidVersion("not a version")])
+    def test_compare_version_tolerates_either_unparseable_version_error(self, raised):
+        """An unparseable ``__version__`` must degrade to True whichever error packaging raises.
+
+        The live test above only exercises whichever one the INSTALLED packaging happens to raise, so
+        it silently covers one branch per environment. packaging <= 26.2 let the underlying TypeError
+        escape; 26.3 catches it and re-raises ``InvalidVersion``. CI moved to 26.3 via a lock
+        regeneration and the previously-passing test failed, which is the gap this closes.
+        """
+        with patch("interpretune.utils.import_utils.Version", side_effect=raised):
             assert compare_version("torch", operator.ge, "2.0.0", use_base_version=True)
 
     @RunIf(min_cuda_gpus=1)

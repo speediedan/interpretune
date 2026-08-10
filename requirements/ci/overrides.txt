@@ -1,4 +1,4 @@
-transformer-lens==3.5.1  # release of the commit formerly pinned by git URL (tag v3.5.1 == 4ba2187b); overrides sae-dashboard's ^2.2.0 / sae-lens' >=2.16.1 caps
+transformer-lens==3.5.1  # release of the commit formerly pinned by git URL (tag v3.5.1 == 4ba2187b); overrides sae-dashboard's ^2.2.0 cap (sae-lens' >=2.16.1 is a floor, not a cap)
 nnsight==0.7.0  # released pin (0.7.0 validated: sig-key VAR_KEYWORD resolve-through fix + remote-init gating; nnsight slice + parity 34/0 green on 0.6.3 AND 0.7.0)
 # Exactly what torch 2.13.0 requires on Linux. The marker is load-bearing, not decoration: a uv
 # override replaces the target requirement *including its markers*, so an unmarked `triton==3.7.1`

@@ -4,7 +4,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -395,3 +395,56 @@ class TestRendering:
         payload = json.loads(out.read_text(encoding="utf-8"))
         assert len(payload["variants"]) == 2
         assert payload["summary_stages"] == list(dba.SUMMARY_STAGES)
+
+
+class TestLineageProvenance:
+    """A released dependency must be stamped as its RELEASE, never as a stale checkout's HEAD.
+
+    Regression guard for the sae-lens repin (2026-08-09). `speediedan/SAELens` stayed on disk after
+    the package moved to a released floor, so `capture_lineage` would have stamped `SL-86f90b3d` --
+    the commit retired for carrying corrupt `pretrained_saes.yaml` entries -- onto runs that actually
+    imported sae-lens 6.49.0 from PyPI. A manifest that names code the run never loaded is worse than
+    one that says nothing.
+    """
+
+    def test_release_install_is_stamped_as_the_release(self, tmp_path: Path, monkeypatch):
+        """Package resolved OUTSIDE the checkout -> the checkout is irrelevant."""
+        pkg = tmp_path / "site-packages" / "sae_lens" / "__init__.py"
+        pkg.parent.mkdir(parents=True)
+        pkg.write_text("", encoding="utf-8")
+        monkeypatch.setattr(suite.importlib.util, "find_spec", lambda _n: SimpleNamespace(origin=str(pkg)))
+        monkeypatch.setattr(suite.md, "version", lambda _d: "6.49.0")
+
+        assert suite._released_provenance("SL", tmp_path / "repos" / "SAELens") == "v6.49.0"
+
+    def test_source_install_keeps_the_git_sha(self, tmp_path: Path, monkeypatch):
+        """Package resolved INSIDE the checkout -> the git sha is the honest answer."""
+        root = tmp_path / "repos" / "SAELens"
+        pkg = root / "sae_lens" / "__init__.py"
+        pkg.parent.mkdir(parents=True)
+        pkg.write_text("", encoding="utf-8")
+        monkeypatch.setattr(suite.importlib.util, "find_spec", lambda _n: SimpleNamespace(origin=str(pkg)))
+
+        assert suite._released_provenance("SL", root) is None
+
+    def test_untracked_abbrs_are_never_release_stamped(self, tmp_path: Path):
+        """IT and NP are always source checkouts; they must keep using git."""
+        assert suite._released_provenance("IT", tmp_path) is None
+        assert suite._released_provenance("NP", tmp_path) is None
+
+    def test_provenance_never_raises(self, tmp_path: Path, monkeypatch):
+        """Provenance is metadata; it must not be able to fail a benchmark run."""
+
+        def _boom(_n):
+            raise RuntimeError("resolver exploded")
+
+        monkeypatch.setattr(suite.importlib.util, "find_spec", _boom)
+        assert suite._released_provenance("SL", tmp_path) is None
+
+    def test_released_dep_contributes_no_dirty_state(self, tmp_path: Path, monkeypatch):
+        """There is no working tree to be dirty, so a release must not appear in `dirty`."""
+        monkeypatch.setattr(suite, "_released_provenance", lambda abbr, _root: "v6.49.0" if abbr == "SL" else None)
+        shas, dirty = suite.capture_lineage({"SL": tmp_path / "nonexistent"})
+
+        assert shas == {"SL": "v6.49.0"}
+        assert dirty == []

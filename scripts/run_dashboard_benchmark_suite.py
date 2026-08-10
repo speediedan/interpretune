@@ -14,6 +14,8 @@ See ``scripts/dashboard_benchmark_suite_usage.md`` for example commands.
 from __future__ import annotations
 
 import argparse
+import importlib.metadata as md
+import importlib.util
 import json
 import os
 import shutil
@@ -237,12 +239,50 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: Benchmark-relevant packages that MAY be installed from a release rather than a source checkout.
+#: Mapped abbr -> distribution name so lineage can name the release instead of an unrelated checkout.
+LINEAGE_DISTRIBUTIONS = {"SD": "sae-dashboard", "SL": "sae-lens"}
+
+
+def _released_provenance(abbr: str, root: Path) -> str | None:
+    """``v<version>`` when the INSTALLED package is a release rather than this checkout, else None.
+
+    A source checkout sitting on disk does not mean the run used it. Once a package moves from a git
+    pin to a released floor (sae-lens did, 2026-08-09), the checkout usually stays behind — so
+    stamping its HEAD attributes the run to code that was never imported. That is worse than an
+    unknown: after the sae-lens repin the stale checkout still read ``86f90b3d``, the very commit
+    retired for carrying corrupt ``pretrained_saes.yaml`` entries, so every manifest would have
+    blamed a run on it.
+
+    Resolves the import location instead: if the package does not live under ``root``, the checkout
+    is irrelevant and the release version is the honest provenance.
+    """
+    dist = LINEAGE_DISTRIBUTIONS.get(abbr)
+    if dist is None:
+        return None
+    try:
+        spec = importlib.util.find_spec(dist.replace("-", "_"))
+        if spec is None or not spec.origin:
+            return None
+        if root.resolve() in Path(spec.origin).resolve().parents:
+            return None  # editable/source install backed by this checkout -- the git sha is correct
+        return f"v{md.version(dist)}"
+    except Exception:  # provenance must never be the thing that fails a benchmark run
+        return None
+
+
 def capture_lineage(repo_roots: dict[str, Path]) -> tuple[dict[str, str], list[str]]:
-    """Return {abbr: short_sha} plus the list of dirty repo abbreviations."""
+    """Return {abbr: short_sha or v<release>} plus the list of dirty repo abbreviations.
+
+    A released package contributes no dirty state -- there is no working tree to be dirty.
+    """
 
     shas: dict[str, str] = {}
     dirty: list[str] = []
     for abbr, root in repo_roots.items():
+        if (released := _released_provenance(abbr, root)) is not None:
+            shas[abbr] = released
+            continue
         try:
             sha = subprocess.run(
                 ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],

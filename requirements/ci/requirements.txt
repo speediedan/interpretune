@@ -14,7 +14,7 @@ aiohttp==3.14.3
     #   papermill
 aiosignal==1.4.0
     # via aiohttp
-annotated-doc==0.0.4
+annotated-doc==0.0.5
     # via typer
 annotated-types==0.8.0
     # via pydantic
@@ -41,6 +41,8 @@ attrs==26.1.0
     #   aiohttp
     #   jsonschema
     #   referencing
+babe==0.0.7
+    # via sae-lens
 babel==2.18.0
     # via jupyterlab-server
 backports-tarfile==1.2.0 ; python_full_version < '3.12' and platform_machine != 'ppc64le' and platform_machine != 's390x'
@@ -63,7 +65,7 @@ certifi==2026.7.22
     #   httpx
     #   requests
     #   sentry-sdk
-cffi==2.1.0
+cffi==2.1.1
     # via
     #   argon2-cffi-bindings
     #   cryptography
@@ -75,6 +77,7 @@ charset-normalizer==3.4.9
 click==8.4.2
     # via
     #   huggingface-hub
+    #   nltk
     #   papermill
     #   wandb
 colorama==0.4.6 ; sys_platform == 'win32'
@@ -88,30 +91,35 @@ comm==0.2.3
     # via
     #   ipykernel
     #   ipywidgets
+config2py==0.1.50
+    # via py2store
 contourpy==1.3.2 ; python_full_version < '3.11'
     # via matplotlib
 contourpy==1.3.3 ; python_full_version >= '3.11'
     # via matplotlib
-coverage[toml]==7.15.2
+coverage[toml]==7.15.4
     # via
     #   interpretune (pyproject.toml:test)
     #   nbval
     #   pytest-cov
-cryptography==49.0.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x' and sys_platform == 'linux'
+cryptography==50.0.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x' and sys_platform == 'linux'
     # via secretstorage
 cycler==0.12.1
     # via matplotlib
-datasets==5.0.0
+datasets==5.0.1
     # via
     #   interpretune (pyproject.toml)
     #   evaluate
+    #   sae-lens
     #   transformer-lens
 debugpy==1.8.21
     # via ipykernel
-decorator==5.3.1
+decorator==5.3.1 ; python_full_version < '3.11'
     # via ipython
 defusedxml==0.7.1
-    # via nbconvert
+    # via
+    #   nbconvert
+    #   nltk
 dill==0.4.1
     # via
     #   datasets
@@ -120,9 +128,16 @@ dill==0.4.1
 distlib==0.4.3
     # via virtualenv
 docstring-parser==0.18.0
-    # via jsonargparse
+    # via
+    #   jsonargparse
+    #   simple-parsing
 docutils==0.23
     # via readme-renderer
+dol==0.3.58
+    # via
+    #   config2py
+    #   graze
+    #   py2store
 einops==0.8.2
     # via transformer-lens
 entrypoints==0.4
@@ -138,9 +153,9 @@ executing==2.2.1
     # via stack-data
 fancy-einsum==0.0.3
     # via transformer-lens
-fastjsonschema==2.22.0
+fastjsonschema==2.22.1
     # via nbformat
-filelock==3.32.0
+filelock==3.32.2
     # via
     #   datasets
     #   gdown
@@ -158,7 +173,7 @@ frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
-fsspec[http]==2026.4.0
+fsspec[http]==2026.6.0
     # via
     #   datasets
     #   evaluate
@@ -168,11 +183,13 @@ fsspec[http]==2026.4.0
     #   torch
 gdown==6.1.0
     # via interpretune (pyproject.toml)
+graze==0.1.44
+    # via babe
 grpcio==1.83.0
     # via tensorboard
 h11==0.16.0
     # via httpcore
-hf-xet==1.5.2
+hf-xet==1.6.0
     # via huggingface-hub
 httpcore==1.0.9
     # via httpx
@@ -181,7 +198,7 @@ httpx==0.28.1
     #   datasets
     #   huggingface-hub
     #   jupyterlab
-huggingface-hub[hf-xet]==1.24.0
+huggingface-hub[hf-xet]==1.27.0
     # via
     #   interpretune (pyproject.toml:test)
     #   accelerate
@@ -191,6 +208,8 @@ huggingface-hub[hf-xet]==1.24.0
     #   tokenizers
     #   transformer-lens
     #   transformers
+i2==0.1.67
+    # via config2py
 id==1.6.1
     # via twine
 identify==2.6.19
@@ -205,7 +224,7 @@ idna==3.18
 importlib-metadata==9.0.0 ; python_full_version < '3.12' and platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via keyring
 importlib-resources==7.1.0
-    # via typeshed-client
+    # via py2store
 iniconfig==2.3.0
     # via pytest
 ipykernel==7.3.0
@@ -217,7 +236,7 @@ ipython==8.39.0 ; python_full_version < '3.11'
     # via
     #   ipykernel
     #   ipywidgets
-ipython==9.15.0 ; python_full_version >= '3.11'
+ipython==9.16.1 ; python_full_version >= '3.11'
     # via
     #   ipykernel
     #   ipywidgets
@@ -251,7 +270,9 @@ jinja2==3.1.6
     #   nbconvert
     #   torch
 joblib==1.5.3
-    # via scikit-learn
+    # via
+    #   nltk
+    #   scikit-learn
 json5==0.15.0
     # via jupyterlab-server
 jsonargparse[signatures]==4.41.0
@@ -265,7 +286,7 @@ jsonschema[format-nongpl]==4.26.0
     #   nbformat
 jsonschema-specifications==2025.9.1
     # via jsonschema
-jupyter-builder==1.1.1
+jupyter-builder==1.2.2
     # via
     #   jupyterlab
     #   notebook
@@ -325,7 +346,7 @@ lightning-utilities==0.15.3
     #   lightning
     #   pytorch-lightning
     #   torchmetrics
-markdown==3.10.2
+markdown==3.10.3
     # via tensorboard
 markdown-it-py==4.2.0
     # via
@@ -374,7 +395,7 @@ nbclient==0.11.0
     #   papermill
 nbconvert==7.17.1
     # via jupyter-server
-nbformat==5.10.4
+nbformat==5.11.0
     # via
     #   jupyter-server
     #   jupytext
@@ -389,10 +410,12 @@ nbval==0.11.0
     # via interpretune (pyproject.toml)
 nest-asyncio2==1.7.2
     # via ipykernel
-neuronpedia==1.2.0
+neuronpedia==1.2.1
     # via interpretune (pyproject.toml)
 nh3==0.3.6
     # via readme-renderer
+nltk==3.10.2
+    # via sae-lens
 nodeenv==1.10.0
     # via
     #   pre-commit
@@ -412,9 +435,12 @@ numpy==2.2.6 ; python_full_version < '3.11'
     #   evaluate
     #   matplotlib
     #   pandas
+    #   patsy
     #   peft
+    #   plotly-express
     #   scikit-learn
     #   scipy
+    #   statsmodels
     #   tensorboard
     #   torchmetrics
     #   transformer-lens
@@ -428,14 +454,17 @@ numpy==2.4.6 ; python_full_version == '3.11.*'
     #   evaluate
     #   matplotlib
     #   pandas
+    #   patsy
     #   peft
+    #   plotly-express
     #   scikit-learn
     #   scipy
+    #   statsmodels
     #   tensorboard
     #   torchmetrics
     #   transformer-lens
     #   transformers
-numpy==2.5.1 ; python_full_version >= '3.12'
+numpy==2.5.2 ; python_full_version >= '3.12'
     # via
     #   accelerate
     #   bitsandbytes
@@ -444,16 +473,19 @@ numpy==2.5.1 ; python_full_version >= '3.12'
     #   evaluate
     #   matplotlib
     #   pandas
+    #   patsy
     #   peft
+    #   plotly-express
     #   scikit-learn
     #   scipy
+    #   statsmodels
     #   tensorboard
     #   torchmetrics
     #   transformer-lens
     #   transformers
 overrides==7.7.0 ; python_full_version < '3.12'
     # via jupyter-server
-packaging==26.2
+packaging==26.3
     # via
     #   accelerate
     #   bitsandbytes
@@ -475,6 +507,7 @@ packaging==26.2
     #   pytest
     #   pytest-rerunfailures
     #   pytorch-lightning
+    #   statsmodels
     #   tensorboard
     #   torchmetrics
     #   transformer-lens
@@ -483,14 +516,20 @@ packaging==26.2
     #   wandb
 pandas==2.3.3 ; python_full_version < '3.11'
     # via
+    #   babe
     #   datasets
     #   evaluate
+    #   plotly-express
+    #   statsmodels
     #   torch-tb-profiler
     #   transformer-lens
 pandas==3.0.5 ; python_full_version >= '3.11'
     # via
+    #   babe
     #   datasets
     #   evaluate
+    #   plotly-express
+    #   statsmodels
     #   torch-tb-profiler
     #   transformer-lens
 pandocfilters==1.5.1
@@ -499,7 +538,11 @@ papermill==2.7.0
     # via interpretune (pyproject.toml:test)
 parso==0.8.7
     # via jedi
-peft==0.19.1
+patsy==1.0.2
+    # via
+    #   plotly-express
+    #   statsmodels
+peft==0.20.0
     # via interpretune (pyproject.toml)
 pexpect==4.9.0 ; sys_platform != 'emscripten' and sys_platform != 'win32'
     # via ipython
@@ -509,14 +552,18 @@ pillow==12.3.0
     # via
     #   matplotlib
     #   tensorboard
-platformdirs==4.11.0
+platformdirs==4.11.1
     # via
     #   jupyter-core
-    #   python-discovery
     #   virtualenv
     #   wandb
 plotly==6.9.0
-    # via interpretune (pyproject.toml)
+    # via
+    #   interpretune (pyproject.toml)
+    #   plotly-express
+    #   sae-lens
+plotly-express==0.4.1
+    # via sae-lens
 pluggy==1.6.0
     # via
     #   pytest
@@ -527,7 +574,7 @@ pre-commit==4.6.1
     #   interpretune (pyproject.toml:test)
 prometheus-client==0.26.0
     # via jupyter-server
-prompt-toolkit==3.0.52
+prompt-toolkit==3.0.53
     # via ipython
 propcache==0.5.2
     # via
@@ -554,6 +601,8 @@ pure-eval==0.2.3
     # via stack-data
 py-spy==0.4.2
     # via interpretune (pyproject.toml:profiling)
+py2store==0.1.22
+    # via babe
 pyarrow==25.0.0
     # via
     #   datasets
@@ -599,12 +648,13 @@ python-dateutil==2.9.0.post0
     #   jupyter-client
     #   matplotlib
     #   pandas
-python-discovery==1.5.0
+python-discovery==1.5.1
     # via virtualenv
 python-dotenv==1.2.2
     # via
     #   interpretune (pyproject.toml)
     #   neuronpedia
+    #   sae-lens
 python-json-logger==4.1.0
     # via jupyter-events
 pytorch-lightning==2.6.5
@@ -631,6 +681,7 @@ pyyaml==6.0.3
     #   peft
     #   pre-commit
     #   pytorch-lightning
+    #   sae-lens
     #   transformers
     #   wandb
 pyzmq==27.1.0
@@ -646,12 +697,15 @@ referencing==0.37.0
     #   jsonschema-specifications
     #   jupyter-events
 regex==2026.7.19
-    # via transformers
+    # via
+    #   nltk
+    #   transformers
 requests[socks]==2.34.2
     # via
     #   datasets
     #   evaluate
     #   gdown
+    #   graze
     #   jupyterlab-server
     #   neuronpedia
     #   papermill
@@ -685,21 +739,33 @@ rpds-py==2026.6.3 ; python_full_version >= '3.11'
     # via
     #   jsonschema
     #   referencing
+sae-lens==6.49.0
+    # via interpretune (pyproject.toml)
 safetensors==0.8.0
     # via
     #   accelerate
     #   peft
+    #   sae-lens
     #   transformers
 scikit-learn==1.7.2 ; python_full_version < '3.11'
     # via interpretune (pyproject.toml)
 scikit-learn==1.9.0 ; python_full_version >= '3.11'
     # via interpretune (pyproject.toml)
 scipy==1.15.3 ; python_full_version < '3.11'
-    # via scikit-learn
+    # via
+    #   plotly-express
+    #   scikit-learn
+    #   statsmodels
 scipy==1.17.1 ; python_full_version == '3.11.*'
-    # via scikit-learn
+    # via
+    #   plotly-express
+    #   scikit-learn
+    #   statsmodels
 scipy==1.18.0 ; python_full_version >= '3.12'
-    # via scikit-learn
+    # via
+    #   plotly-express
+    #   scikit-learn
+    #   statsmodels
 secretstorage==3.5.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x' and sys_platform == 'linux'
     # via keyring
 send2trash==2.1.0
@@ -708,26 +774,32 @@ sentencepiece==0.2.2
     # via transformer-lens
 sentry-sdk==2.66.1
     # via wandb
-setuptools==83.0.0
+setuptools==84.0.0
     # via
     #   tensorboard
     #   torch
 shellingham==1.5.4
     # via typer
+simple-parsing==0.1.9
+    # via sae-lens
 six==1.17.0
     # via
     #   python-dateutil
     #   rfc3339-validator
-soupsieve==2.9.1
+soupsieve==2.9.2
     # via beautifulsoup4
 stack-data==0.6.3
     # via ipython
+statsmodels==0.14.6
+    # via plotly-express
 syrupy==5.5.3
     # via interpretune (pyproject.toml)
 tabulate==0.10.0
     # via interpretune (pyproject.toml)
 tenacity==9.1.4
-    # via papermill
+    # via
+    #   papermill
+    #   sae-lens
 tensorboard==2.21.0
     # via torch-tb-profiler
 tensorboard-data-server==0.7.2
@@ -759,7 +831,7 @@ torchmetrics==1.9.0
     # via
     #   lightning
     #   pytorch-lightning
-tornado==6.5.7
+tornado==6.5.8
     # via
     #   ipykernel
     #   jupyter-client
@@ -767,19 +839,20 @@ tornado==6.5.7
     #   jupyterlab
     #   notebook
     #   terminado
-tqdm==4.69.1
+tqdm==4.70.0
     # via
     #   datasets
     #   evaluate
     #   gdown
     #   huggingface-hub
     #   lightning
+    #   nltk
     #   papermill
     #   peft
     #   pytorch-lightning
     #   transformer-lens
     #   transformers
-traitlets==5.15.1
+traitlets==5.16.1
     # via
     #   ipykernel
     #   ipython
@@ -798,21 +871,23 @@ transformer-lens==3.5.1
     # via
     #   --override (workspace)
     #   interpretune (pyproject.toml)
+    #   sae-lens
 transformers==5.14.1
     # via
     #   interpretune (pyproject.toml)
     #   peft
+    #   sae-lens
     #   transformer-lens
     #   transformers-stream-generator
 transformers-stream-generator==0.0.5
     # via transformer-lens
-twine==6.2.0
+twine==7.0.0
     # via interpretune (pyproject.toml:test)
-typeguard==4.5.2
+typeguard==4.6.0
     # via transformer-lens
-typer==0.27.0
+typer==0.27.1
     # via transformers
-typeshed-client==2.12.0
+typeshed-client==2.13.0
     # via jsonargparse
 typing-extensions==4.16.0
     # via
@@ -839,6 +914,8 @@ typing-extensions==4.16.0
     #   pyright
     #   pytorch-lightning
     #   referencing
+    #   sae-lens
+    #   simple-parsing
     #   torch
     #   transformer-lens
     #   typeguard
@@ -861,11 +938,11 @@ urllib3==2.7.0
     #   requests
     #   sentry-sdk
     #   twine
-uv==0.11.32
+uv==0.12.3
     # via
     #   interpretune (pyproject.toml:dev)
     #   interpretune (pyproject.toml:test)
-virtualenv==21.7.0
+virtualenv==21.7.3
     # via pre-commit
 wadler-lindig==0.1.7
     # via jaxtyping

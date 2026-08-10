@@ -2,7 +2,7 @@ import operator
 import sys
 from typing import Callable
 import importlib.metadata
-from packaging.version import Version
+from packaging.version import InvalidVersion, Version
 from functools import lru_cache
 
 
@@ -14,8 +14,9 @@ def lwt_compare_version(
         pkg_version = Version(importlib.metadata.version(package))
     except importlib.metadata.PackageNotFoundError:
         return False
-    except TypeError:
-        # possibly mocked by Sphinx so needs to return True to generate summaries
+    except (TypeError, InvalidVersion):
+        # possibly mocked by Sphinx so needs to return True to generate summaries. Both types are
+        # needed: packaging <= 26.2 let the TypeError escape, 26.3+ re-raises it as InvalidVersion.
         return True
     if local_version:
         if not operator.eq(local_version, pkg_version.local):
