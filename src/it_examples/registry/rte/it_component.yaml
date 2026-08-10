@@ -1,0 +1,41 @@
+# interpretune component manifest (schema v1) — see the hub-integration design (ACCEPTED v2)
+# In-repo tree mirrors the Hub tree; scripts/publish_it_module.py copies + adds the generated card.
+it_schema_version: 1
+kinds:
+- module
+- datamodule
+requires:
+  interpretune: '>=0.1a0'
+  adapters:
+  - lightning
+  - transformer_lens
+  - sae_lens
+  - circuit_tracer
+  - nnsight
+  pip: []
+module:
+  entrypoint: rte_boolq.py
+  task:
+    name: rte
+    description: SuperGLUE Recognizing Textual Entailment
+    datasets:
+    - path: aps/super_glue
+      config_name: rte
+      splits:
+        train: train
+        validation: validation
+    external_data: []
+    variants:
+      rte_demo:
+        description: demo-scale prompting flavor used by the example notebooks
+  configs:
+    rte_demo.gemma2.circuit_tracer: configs/rte_demo.gemma2.circuit_tracer.yaml
+    rte_demo.gemma2.circuit_tracer+nnsight: configs/rte_demo.gemma2.circuit_tracer+nnsight.yaml
+    rte_demo.gemma2.circuit_tracer.neuronpedia: configs/rte_demo.gemma2.circuit_tracer.neuronpedia.yaml
+    rte_demo.gemma3.circuit_tracer.neuronpedia: configs/rte_demo.gemma3.circuit_tracer.neuronpedia.yaml
+    rte_demo.gpt2.nnsight+sae_lens: configs/rte_demo.gpt2.nnsight+sae_lens.yaml
+    rte_demo.gpt2.sae_lens: configs/rte_demo.gpt2.sae_lens.yaml
+datamodules:
+  rte_boolq:
+    entrypoint: rte_boolq.py
+    config: configs/datamodule.rte_boolq.yaml

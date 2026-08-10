@@ -1,14 +1,28 @@
-"""Lazy-loading example module registry to improve test collection performance."""
+"""Per-key lazy example module registry backed by decomposed component trees.
+
+Example definitions live in ``src/it_examples/registry/<task>/`` mirroring the Hub component-repo layout
+(interpretune#1): an ``it_component.yaml`` manifest indexing self-contained configuration files under
+``configs/<key>.yaml``, where ``<key>`` is derived as ``<task_variant>.<model>.<composition>[.<descriptor>]``
+(composition = ``+``-joined adapters in the composition registry's canonical order).
+
+Resolution is per-key (interpretune#236): ``MODULE_EXAMPLE_REGISTRY.get(<key>)`` parses the small manifests, then
+constructs ONLY the requested entry — a broken sibling configuration cannot fail a caller that never touches it.
+Tuple/composition lookups (a test-suite pattern) fall back to hydrating all entries.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 from functools import partial
 import threading
-from typing import Any, Tuple, TYPE_CHECKING
+from typing import Any, Callable, Iterator, Tuple, TYPE_CHECKING
+
+import yaml
 
 if TYPE_CHECKING:
     from interpretune.registry import ModuleRegistry
+
+DEFAULT_REGISTRY_ROOT = Path(__file__).parent / "registry"
 
 # Export commonly used defaults to maintain API compatibility
 default_experiment_tag = "test_itmodule"
@@ -25,172 +39,204 @@ example_itmodule_defaults = dict(
 )
 
 
-def _ensure_repo_root_importable() -> None:
-    """Make the interpretune repo root importable so registry hydration can reach ``tests.modules``.
+def derive_config_key(cfg: dict) -> str:
+    """Derive the canonical configuration key (canonical implementation: ``interpretune.hub.manifest``)."""
+    from interpretune.hub.manifest import derive_config_key as _derive
 
-    The example registry's default datamodule/module classes currently live in ``tests/modules.py`` (a src -> tests
-    dependency slated to move into ``src`` post-PR-wave). Editable installs expose ``src/`` but not the repo root, so:
-
-    - pytest flows work because pytest prepends the repo root to ``sys.path`` (rootdir import mode), and papermill
-      *kernels* inherit the ``PYTHONPATH`` that ``tests/__init__.py`` exports for subprocesses;
-    - bare kernels (``jupyter nbconvert --execute``, ad-hoc ``jupyter lab``) get neither, failing with
-      ``ModuleNotFoundError: No module named 'tests.modules'`` unless ``PYTHONPATH`` is set manually.
-
-    This helper unifies those patterns in-process: it derives the repo root from this package's location
-    (``src/it_examples`` -> two parents up), verifies the candidate actually contains ``tests/modules.py`` before
-    touching anything, prepends it to ``sys.path`` for the current interpreter, and mirrors it onto ``PYTHONPATH``
-    (the existing ``tests/__init__.py`` convention) so subprocess kernels inherit it too. Sibling editable installs
-    can expose their own top-level ``tests`` packages (e.g. circuit-tracer's repo root is on ``sys.path``), so the
-    helper resolves shadowing by module identity rather than name: a cached/stray ``tests`` whose ``__path__`` is not
-    the interpretune ``tests`` directory is evicted from ``sys.modules`` and out-resolved by prepending our root.
-    """
-    import os
-    import sys
-
-    repo_root = Path(__file__).resolve().parents[2]
-    our_tests_dir = repo_root / "tests"
-    if not (our_tests_dir / "modules.py").is_file():
-        return  # non-editable/packaged layout: nothing sensible to bootstrap
-
-    cached_tests = sys.modules.get("tests")
-    if cached_tests is not None:
-        cached_paths = [Path(p).resolve() for p in (getattr(cached_tests, "__path__", None) or [])]
-        if our_tests_dir in cached_paths:
-            return  # our tests package is already loaded
-        # a sibling repo's top-level `tests` package shadows ours — evict the cached entries so the
-        # re-import (with our repo root prepended below) resolves to the interpretune package
-        for mod_name in [m for m in list(sys.modules) if m == "tests" or m.startswith("tests.")]:
-            del sys.modules[mod_name]
-
-    repo_root_str = str(repo_root)
-    # promote (not just insert) our root so it out-resolves any sibling repo root already on sys.path
-    if repo_root_str in sys.path:
-        sys.path.remove(repo_root_str)
-    sys.path.insert(0, repo_root_str)
-    if repo_root_str not in os.environ.get("PYTHONPATH", ""):
-        existing = os.environ.get("PYTHONPATH", "")
-        os.environ["PYTHONPATH"] = f"{repo_root_str}{os.pathsep + existing if existing else ''}"
+    return _derive(cfg)
 
 
-class LazyModuleRegistry:
-    """Lazy loading wrapper for ModuleRegistry that defers initialization until first access."""
+def example_register_func(target_registry):
+    """Registration callable applying the example config defaults into ``target_registry``."""
+    from interpretune.registry import instantiate_and_register, apply_defaults
 
-    def __init__(self):
+    return partial(
+        instantiate_and_register,
+        target_registry=target_registry,
+        itdm_cfg_defaults_fn=partial(apply_defaults, defaults=example_datamodule_defaults),
+        it_cfg_defaults_fn=partial(apply_defaults, defaults=example_itmodule_defaults),
+    )
+
+
+def iter_component_manifests(registry_root: Path | None = None) -> Iterator[tuple[Path, dict]]:
+    """Yield ``(component_dir, parsed_manifest)`` for every component tree under ``registry_root``."""
+    root = registry_root or DEFAULT_REGISTRY_ROOT
+    if not root.is_dir():
+        return
+    for manifest_path in sorted(root.glob("*/it_component.yaml")):
+        with open(manifest_path, encoding="utf-8") as fh:
+            yield manifest_path.parent, yaml.safe_load(fh)
+
+
+def load_config_file(config_path: Path, expected_key: str | None = None) -> tuple[str, dict]:
+    """Load one configuration file, parity-checking filename == manifest key == derived-from-fields."""
+    from interpretune.hub.manifest import check_config_key_parity
+
+    with open(config_path, encoding="utf-8") as fh:
+        body = yaml.safe_load(fh)
+    return check_config_key_parity(config_path, body, expected_key=expected_key), body
+
+
+class ExampleRegistryHydrator:
+    """Per-key hydration of example configuration files into a ``ModuleRegistry``."""
+
+    def __init__(self, registry_root: Path | None = None):
+        self.registry_root = registry_root or DEFAULT_REGISTRY_ROOT
+        self._index: dict[str, Path] | None = None
+        self._hydrated: set[str] = set()
         self._registry = None
-        # Use an RLock to avoid deadlocks if _create_registry() calls back into
-        # this object during initialization.
         self._lock = threading.RLock()
 
     @property
-    def registry(self) -> ModuleRegistry:
-        """Return a typed, initialized registry.
+    def index(self) -> dict[str, Path]:
+        """Key → configuration-file map assembled from the (small) component manifests; no entry construction."""
+        if self._index is None:
+            with self._lock:
+                if self._index is None:
+                    index: dict[str, Path] = {}
+                    for component_dir, manifest in iter_component_manifests(self.registry_root):
+                        for key, rel in (manifest.get("module", {}).get("configs") or {}).items():
+                            index[key] = component_dir / rel
+                    self._index = index
+        return self._index
 
-        This centralizes initialization and the non-None assertion so callers can access a statically-typed registry
-        without repeating boilerplate.
-        """
-        self._ensure_initialized()
-        assert self._registry is not None
-        return self._registry
-
-    def _ensure_initialized(self):
-        """Ensure the underlying registry is initialized (thread-safe)."""
+    @property
+    def registry(self) -> "ModuleRegistry":
         if self._registry is None:
             with self._lock:
-                if self._registry is None:  # Double-check locking
-                    self._registry = self._create_registry()
+                if self._registry is None:
+                    from interpretune.registry import ModuleRegistry
 
-    def _create_registry(self):
-        """Create the actual MODULE_EXAMPLE_REGISTRY with all the imports."""
-        from interpretune.base import IT_BASE
-        from interpretune.registry import ModuleRegistry, gen_module_registry, instantiate_and_register, apply_defaults
+                    self._registry = ModuleRegistry()
+        return self._registry
 
-        _ensure_repo_root_importable()
-        from tests.modules import TestITDataModule, TestITModule
+    def _register_func(self):
+        return example_register_func(self.registry)
 
-        DEFAULT_TEST_DATAMODULE = TestITDataModule
-        DEFAULT_TEST_MODULE = TestITModule
-        DEFAULT_MODULE_EXAMPLE_REGISTRY_PATH = Path(IT_BASE) / "example_module_registry.yaml"
+    def hydrate(self, key: str) -> bool:
+        """Construct and register exactly one entry.
 
-        registry = ModuleRegistry()
+        Returns False if the key is not in any manifest.
+        """
+        if key in self._hydrated:
+            return True
+        if key not in self.index:
+            return False
+        with self._lock:
+            if key in self._hydrated:
+                return True
+            parity_key, body = load_config_file(self.index[key], expected_key=key)
+            self._register_func()(parity_key, body)
+            self._hydrated.add(key)
+        return True
 
-        # Register Test/Example Module Configs
-        itdm_cfg_defaults = partial(apply_defaults, defaults=example_datamodule_defaults)
-        it_cfg_defaults = partial(apply_defaults, defaults=example_itmodule_defaults)
+    def hydrate_all(self) -> None:
+        """Hydrate every indexed entry.
 
-        example_instantiate_and_register = partial(
-            instantiate_and_register,
-            datamodule_cls=DEFAULT_TEST_DATAMODULE,
-            module_cls=DEFAULT_TEST_MODULE,
-            target_registry=registry,
-            itdm_cfg_defaults_fn=itdm_cfg_defaults,
-            it_cfg_defaults_fn=it_cfg_defaults,
-        )
+        Bulk hydration suppresses per-entry config-normalization feedback (`ITInstantiationFeedbackWarning`) just
+        as the pre-decomposition bulk loader did — callers listing or tuple-resolving the registry did not ask for
+        any single entry's feedback. Single-key `hydrate()` stays verbose: per-key construction is exactly the
+        "directly instantiating a config" case where feedback should surface (interpretune#236).
+        """
+        import warnings
 
-        gen_module_registry(
-            yaml_reg_path=DEFAULT_MODULE_EXAMPLE_REGISTRY_PATH, register_func=example_instantiate_and_register
-        )
+        from interpretune.utils import ITInstantiationFeedbackWarning
 
-        return registry
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ITInstantiationFeedbackWarning)
+            for key in self.index:
+                self.hydrate(key)
+
+
+class LazyModuleRegistry:
+    """Mapping-style facade over per-key lazy hydration; ``builder`` swaps in an eager registry (tests)."""
+
+    def __init__(self, builder: Callable[[], "ModuleRegistry"] | None = None, registry_root: Path | None = None):
+        self._builder = builder
+        self._built = None
+        self._hydrator = None if builder is not None else ExampleRegistryHydrator(registry_root)
+        self._lock = threading.RLock()
+
+    @property
+    def registry(self) -> "ModuleRegistry":
+        """The underlying registry.
+
+        Builder mode constructs eagerly; hydrator mode does NOT hydrate here.
+        """
+        if self._builder is not None:
+            if self._built is None:
+                with self._lock:
+                    if self._built is None:
+                        self._built = self._builder()
+            return self._built
+        assert self._hydrator is not None
+        return self._hydrator.registry
+
+    def _resolve(self, key) -> None:
+        """Hydrate what a lookup needs: one entry for a known string key, everything for tuple/protocol keys."""
+        if self._hydrator is None:
+            return
+        if isinstance(key, str):
+            if not self._hydrator.hydrate(key):
+                # unknown string key: hydrate all so the raised KeyError lists every available entry
+                self._hydrator.hydrate_all()
+        else:
+            self._hydrator.hydrate_all()
 
     def get(self, target: Tuple | str | Any, default: Any = None) -> Any:
-        """Get item from registry, initializing if needed."""
+        self._resolve(target)
         return self.registry.get(target, default)
 
     def register(self, *args, **kwargs):
-        """Register item in registry, initializing if needed."""
         return self.registry.register(*args, **kwargs)
 
     def __getitem__(self, key):
-        """Get item from registry, initializing if needed."""
+        self._resolve(key)
         return self.registry[key]
 
     def __setitem__(self, key, value):
-        """Set item in registry, initializing if needed."""
         self.registry[key] = value
 
     def __contains__(self, key):
-        """Check if key is in registry, initializing if needed."""
+        if self._hydrator is not None and isinstance(key, str) and key in self._hydrator.index:
+            return True
+        self._resolve(key)
         return key in self.registry
 
+    def _full_registry(self) -> "ModuleRegistry":
+        if self._hydrator is not None:
+            self._hydrator.hydrate_all()
+        return self.registry
+
     def keys(self):
-        """Get keys from registry, initializing if needed."""
-        return self.registry.keys()
+        return self._full_registry().keys()
 
     def values(self):
-        """Get values from registry, initializing if needed."""
-        return self.registry.values()
+        return self._full_registry().values()
 
     def items(self):
-        """Get items from registry, initializing if needed."""
-        return self.registry.items()
+        return self._full_registry().items()
 
     def __len__(self):
-        """Get length of registry, initializing if needed."""
-        return len(self.registry)
+        return len(self._full_registry())
 
     def __str__(self):
-        """String representation, initializing if needed."""
-        return str(self.registry)
+        return str(self._full_registry())
 
     def __repr__(self):
-        """Repr, initializing if needed."""
-        return repr(self.registry)
+        return repr(self._full_registry())
 
     # Forward other common methods
     def available_keys(self, *args, **kwargs):
-        """Available keys, initializing if needed."""
-        return self.registry.available_keys(*args, **kwargs)
+        return self._full_registry().available_keys(*args, **kwargs)
 
     def available_keys_feedback(self, *args, **kwargs):
-        """Available keys feedback, initializing if needed."""
-        return self.registry.available_keys_feedback(*args, **kwargs)
+        return self._full_registry().available_keys_feedback(*args, **kwargs)
 
     def available_compositions(self, *args, **kwargs):
-        """Available compositions, initializing if needed."""
-        return self.registry.available_compositions(*args, **kwargs)
+        return self._full_registry().available_compositions(*args, **kwargs)
 
     def remove(self, *args, **kwargs):
-        """Remove item, initializing if needed."""
         return self.registry.remove(*args, **kwargs)
 
 

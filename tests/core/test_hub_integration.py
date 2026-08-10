@@ -345,7 +345,7 @@ test_dynamic_function:
 
         # Mock all hub and dynamic module interactions to avoid HTTP calls
         with (
-            patch("interpretune.analysis.ops.hub_manager.snapshot_download", return_value=str(snapshot_dir)),
+            patch("interpretune.hub.manager.snapshot_download", return_value=str(snapshot_dir)),
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", str(self.cache_dir)),
             patch(
                 "interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it",
@@ -413,7 +413,7 @@ cached_dynamic_function:
 
         # Mock all hub and dynamic module interactions to avoid HTTP calls
         with (
-            patch("interpretune.analysis.ops.hub_manager.snapshot_download", return_value=str(snapshot_dir)),
+            patch("interpretune.hub.manager.snapshot_download", return_value=str(snapshot_dir)),
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", str(self.cache_dir)),
             patch(
                 "interpretune.analysis.ops.dynamic_module_utils.get_cached_module_file_it",

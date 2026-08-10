@@ -6,11 +6,11 @@ applyTo: "**/example_module_registry.yaml"
 
 ## Overview
 
-The `MODULE_EXAMPLE_REGISTRY` (defined in `src/it_examples/example_module_registry.yaml`) is the central registry for adapter configurations used in tests and examples. Session fixtures depend on this registry to resolve base configurations for different adapter combinations.
+Registry entries live in TWO places split by consumer: shipping example entries live in decomposed component trees under `src/it_examples/registry/<task>/` (an `it_component.yaml` manifest + self-contained `configs/<key>.yaml` files with derived keys `<task_variant>.<model>.<composition>[.<descriptor>]`, composition `+`-joined in canonical order; hydrated per-key by `MODULE_EXAMPLE_REGISTRY`, no `tests` dependencies allowed), while `tests/module_registry.yaml` holds the pytest-scale entries whose classes live in `tests.modules` (hydrated — together with the example entries — by `TEST_MODULE_REGISTRY` in `tests/module_registry.py`). Session fixtures resolve base configurations through `TEST_MODULE_REGISTRY`, so both families remain addressable in tests. Register test-only entries in the tests YAML; add a new example configuration file (plus its manifest `configs:` row) only if every `class_path` it references ships — the loader parity-checks filename == manifest key == key derived from the config's structured fields.
 
 ## Why Register Example Modules?
 
-1. **Session Fixtures**: `it_session`, `it_session_cfg`, and `analysis_session` fixtures use `gen_session_cfg()` which calls `MODULE_EXAMPLE_REGISTRY.get(test_cfg)` to resolve base configurations.
+1. **Session Fixtures**: `it_session`, `it_session_cfg`, and `analysis_session` fixtures use `gen_session_cfg()` which calls `TEST_MODULE_REGISTRY.get(test_cfg)` to resolve base configurations.
 
 2. **Test Organization**: Registered modules can be used by multiple tests without duplicating configuration.
 
@@ -204,12 +204,12 @@ Test that the registry lookup works:
 cd /home/speediedan/repos/interpretune && \
 source /mnt/cache/speediedan/.venvs/it_latest/bin/activate && \
 python -c "
-from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
+from tests.module_registry import TEST_MODULE_REGISTRY
 from interpretune.protocol import Adapter
 
 # Test lookup
 key = ('gpt2', 'rte', 'test', (Adapter.core, Adapter.nnsight))
-result = MODULE_EXAMPLE_REGISTRY.get(key)
+result = TEST_MODULE_REGISTRY.get(key)
 print(f'Registry lookup succeeded: {result is not None}')
 "
 ```

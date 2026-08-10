@@ -1493,7 +1493,7 @@ class TestCacheManagerHubFunctionality:
 
     def test_get_latest_revision_empty_revisions(self):
         """Test _get_latest_revision returns None when repo.revisions is empty."""
-        from interpretune.analysis.ops.compiler.cache_manager import _get_latest_revision
+        from interpretune.hub.cache import _get_latest_revision
 
         class DummyRepo:
             revisions = []
