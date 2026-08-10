@@ -75,3 +75,48 @@ def test_autocomp_synthesis_baseline():
     )
     # the synthesized class must carry the entailment-mapping surface the mixin composes in
     assert hasattr(registered.module_cfg, "entailment_mapping")
+
+
+# ---------------------------------------------------------------------------------------------------
+# Second (new-path) legs: the unified loader must reproduce each baseline exactly (4a acceptance)
+# ---------------------------------------------------------------------------------------------------
+
+import yaml  # noqa: E402
+
+from interpretune.config.loading import load_session_cfg, session_body_from_cli_mapping  # noqa: E402
+
+
+@pytest.mark.parametrize("config_path", CONFIGS, ids=lambda p: f"{p.parent.name}/{p.stem}")
+def test_unified_loader_matches_cli_baseline(config_path):
+    """Namespace-diff equivalence: shim-translated body through load_session_cfg == jsonargparse path."""
+    baseline = session_spec(capture_session_cfg_via_cli([config_path]))
+    mapping = yaml.safe_load(config_path.read_text(encoding="utf-8"))["session_cfg"]
+    loaded = load_session_cfg(session_body_from_cli_mapping(mapping))
+    assert session_spec(loaded) == baseline
+
+
+@pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
+def test_unified_loader_matches_factory_core(config_path):
+    """For hub-shaped bodies the loader must equal the factory primitive (defaults fns excluded).
+
+    The example REGISTRY additionally applies example_{datamodule,itmodule}_defaults via its register func; where those
+    defaults live post-centralization is a 4c design item, so this leg compares the loader against the same merge-site
+    primitive it wraps (instantiate_or_import), which is also what guarantees AutoComp synthesis parity.
+    """
+    from interpretune.registry import instantiate_or_import
+    from tests.core.loader_equivalence import normalize
+    from it_examples.example_module_registry import load_config_file
+
+    # fresh body per leg: instantiate_or_import mutates nested class_path nodes in place
+    key, factory_body = load_config_file(config_path)
+    dm_cfg, m_cfg, dm_cls, m_cls = instantiate_or_import(
+        dict(factory_body["registered_cfg"]), dict(factory_body["shared_config"]), None, None, None, None
+    )
+    _, loader_body = load_config_file(config_path)
+    loaded = load_session_cfg(loader_body, expected_key=key)
+    assert normalize(loaded.datamodule_cfg) == normalize(dm_cfg)
+    assert normalize(loaded.module_cfg) == normalize(m_cfg)
+    assert normalize(loaded.datamodule_cls) == normalize(dm_cls)
+    assert normalize(loaded.module_cls) == normalize(m_cls)
+    # AutoComp parity travels with the factories: synthesized classes must match by name on both paths
+    assert type(loaded.module_cfg).__qualname__ == type(m_cfg).__qualname__
