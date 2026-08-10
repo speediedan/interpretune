@@ -30,7 +30,7 @@ def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Pat
         src = component_dir / rel
         import yaml
 
-        check_config_key_parity(src, yaml.safe_load(src.read_text()), expected_key=key)
+        check_config_key_parity(src, yaml.safe_load(src.read_text(encoding="utf-8")), expected_key=key)
         dest = out_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)

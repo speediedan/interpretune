@@ -123,7 +123,10 @@ class TestExampleRegistryLaziness:
         shutil.copytree(DEFAULT_REGISTRY_ROOT, root)
         broken = root / "rte" / "configs" / f"{self.BROKEN_KEY}.yaml"
         broken.write_text(
-            broken.read_text().replace("it_examples.experiments.rte_boolq.RTEBoolqDataModule", "no.such.module.Nope")
+            broken.read_text(encoding="utf-8").replace(
+                "it_examples.experiments.rte_boolq.RTEBoolqDataModule", "no.such.module.Nope"
+            ),
+            encoding="utf-8",
         )
         return root
 
@@ -155,7 +158,9 @@ class TestExampleRegistryLaziness:
         shutil.copytree(DEFAULT_REGISTRY_ROOT, root)
         drifted = root / "rte" / "configs" / f"{self.GOOD_KEY}.yaml"
         # change a structured field without renaming the file: derived key no longer matches the stem
-        drifted.write_text(drifted.read_text().replace("task_variant: rte_demo", "task_variant: rte"))
+        drifted.write_text(
+            drifted.read_text(encoding="utf-8").replace("task_variant: rte_demo", "task_variant: rte"), encoding="utf-8"
+        )
         registry = LazyModuleRegistry(registry_root=root)
         with pytest.raises(ValueError, match="parity violation"):
             registry.get(self.GOOD_KEY)

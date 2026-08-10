@@ -47,7 +47,9 @@ def pull_component_manifest(
         token=token,
         **_TELEMETRY,
     )
-    manifest = validate_component_manifest(yaml.safe_load(Path(path).read_text()), source=f"{repo_id}@{revision}")
+    manifest = validate_component_manifest(
+        yaml.safe_load(Path(path).read_text(encoding="utf-8")), source=f"{repo_id}@{revision}"
+    )
     return manifest, _snapshot_revision(Path(path))
 
 
@@ -76,7 +78,7 @@ def pull_component_config(
             **_TELEMETRY,
         )
     )
-    body = yaml.safe_load(cfg_path.read_text())
+    body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     return check_config_key_parity(cfg_path, body, expected_key=key), body
 
 

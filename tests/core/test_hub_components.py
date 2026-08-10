@@ -73,7 +73,7 @@ class TestGeneratedCards:
         manifest = build_component_tree(RTE_COMPONENT_DIR, out, entrypoint_src=RTE_ENTRYPOINT)
         generate_component_card(manifest, "speediedan/rte").save(out / "README.md")
         assert (out / "README.md").exists()
-        assert "library_name: interpretune" in (out / "README.md").read_text()
+        assert "library_name: interpretune" in (out / "README.md").read_text(encoding="utf-8")
 
 
 class TestPublishTreeParity:
@@ -98,7 +98,9 @@ class TestPublishTreeParity:
         src_copy = tmp_path / "component"
         shutil.copytree(RTE_COMPONENT_DIR, src_copy)
         drifted = src_copy / "configs" / "rte_demo.gpt2.sae_lens.yaml"
-        drifted.write_text(drifted.read_text().replace("model: gpt2", "model: gpt3000"))
+        drifted.write_text(
+            drifted.read_text(encoding="utf-8").replace("model: gpt2", "model: gpt3000"), encoding="utf-8"
+        )
         with pytest.raises(ValueError, match="parity violation"):
             build_component_tree(src_copy, tmp_path / "build", entrypoint_src=RTE_ENTRYPOINT)
 
@@ -125,5 +127,5 @@ class TestManifestFirstOffline:
     def test_hub_config_body_roundtrips_registry_schema(self):
         """A fetched configuration body is exactly what the local loader consumes — one schema, no adapters."""
         cfg_path = RTE_COMPONENT_DIR / "configs" / "rte_demo.gemma2.circuit_tracer.yaml"
-        body = yaml.safe_load(cfg_path.read_text())
+        body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
         assert {"task_variant", "model", "composition", "reg_info", "shared_config", "registered_cfg"} <= set(body)
