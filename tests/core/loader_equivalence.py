@@ -48,7 +48,7 @@ def normalize(value: Any) -> Any:
     if isinstance(value, torch.dtype):
         return str(value)
     if isinstance(value, Path):
-        return _normalize_env_paths(str(value))
+        return _normalize_env_paths(value.as_posix())
     if isinstance(value, str):
         return _normalize_env_paths(value)
     if isinstance(value, dict):
@@ -84,9 +84,18 @@ def _env_path_tokens() -> dict[str, str]:
 
 
 def _normalize_env_paths(value: str) -> str:
+    """Tokenize env-derived roots and posix-ify the matched suffix.
+
+    Build 729's Windows twin failed on separators — the same roots resolve with backslashes there, so
+    both the prefix match and the suffix must be separator-insensitive. Values matching no root return
+    untouched: paths get normalized, URLs and ordinary strings do not.
+    """
+    from pathlib import PurePosixPath, PureWindowsPath
+
     for prefix, token in _env_path_tokens().items():
-        if value.startswith(prefix):
-            return token + value[len(prefix) :]
+        for pfx in {prefix, PurePosixPath(prefix).as_posix(), str(PureWindowsPath(prefix))}:
+            if value.startswith(pfx):
+                return token + value[len(pfx) :].replace("\\", "/")
     return value
 
 

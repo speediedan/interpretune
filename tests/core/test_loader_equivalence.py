@@ -185,3 +185,39 @@ def test_materialized_defaults_present_and_declarative():
         assert isinstance(loaded.module_cfg.optimizer_init, dict), key
         assert loaded.module_cfg.optimizer_init["class_path"] == "torch.optim.AdamW", key
         assert loaded.module_cfg.lr_scheduler_init["init_args"]["T_mult"] == 2, key
+
+
+class TestFixtureNormalizationRules:
+    """Directional pins for env-path normalization (builds 728/729-twin: the instrument's own rules).
+
+    A frozen baseline that embeds resolved cache paths pins the machine, not the behavior — and on Windows the same
+    roots resolve with backslashes, so tokenization must be separator-insensitive while leaving non-path strings (URLs)
+    untouched.
+    """
+
+    def test_windows_shaped_root_tokenizes_with_posix_suffix(self):
+        from datasets.config import HF_DATASETS_CACHE
+        from tests.core.loader_equivalence import _normalize_env_paths
+
+        win_value = str(HF_DATASETS_CACHE).replace("/", "\\") + "\\rte\\train"
+        assert _normalize_env_paths(win_value) == "<HF_DATASETS_CACHE>/rte/train"
+
+    def test_posix_root_tokenizes(self):
+        from datasets.config import HF_DATASETS_CACHE
+        from tests.core.loader_equivalence import _normalize_env_paths
+
+        assert _normalize_env_paths(str(HF_DATASETS_CACHE) + "/rte") == "<HF_DATASETS_CACHE>/rte"
+
+    def test_urls_and_plain_strings_pass_through(self):
+        from tests.core.loader_equivalence import _normalize_env_paths
+
+        for value in ("https://github.com/speediedan/interpretune", "gpt2", "a\\literal\\backslash"):
+            assert _normalize_env_paths(value) == value
+
+    def test_fixture_is_machine_independent(self):
+        """No absolute filesystem path may survive into the committed fixture."""
+        import re
+
+        raw = (Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text()
+        offenders = re.findall(r'"(?:/(?:home|mnt|Users|tmp)/|[A-Za-z]:\\\\)[^"]*"', raw)
+        assert not offenders, offenders[:5]
