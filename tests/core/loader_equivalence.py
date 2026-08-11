@@ -93,20 +93,64 @@ def _env_path_tokens() -> dict[str, str]:
     return dict(sorted(tokens.items(), key=lambda kv: -len(kv[0])))
 
 
-def _normalize_env_paths(value: str) -> str:
-    """Tokenize env-derived roots and posix-ify the matched suffix.
+def _canonical_path_form(value: str) -> str:
+    """Posix-canonical form of a path-shaped string; non-path strings pass through unchanged.
 
-    Build 729's Windows twin failed on separators — the same roots resolve with backslashes there, so
-    both the prefix match and the suffix must be separator-insensitive. Values matching no root return
-    untouched: paths get normalized, URLs and ordinary strings do not.
+    Windows-shaped values (backslashes or a drive-letter root — including the FORWARD-slash spelling
+    ``C:/...`` that ``Path.as_posix()`` produces) canonicalize via ``PureWindowsPath``; everything
+    else (posix paths, URLs, plain strings) is already canonical.
     """
-    from pathlib import PurePosixPath, PureWindowsPath
+    import re
+    from pathlib import PureWindowsPath
 
-    for prefix, token in _env_path_tokens().items():
-        for pfx in {prefix, PurePosixPath(prefix).as_posix(), str(PureWindowsPath(prefix))}:
-            if value.startswith(pfx):
-                return token + value[len(pfx) :].replace("\\", "/")
+    if "\\" in value or re.match(r"^[A-Za-z]:[/\\]", value):
+        return PureWindowsPath(value).as_posix()
     return value
+
+
+def _normalize_env_paths(value: str, tokens: dict[str, str] | None = None) -> str:
+    """Tokenize env-derived roots after canonicalizing BOTH sides to posix form.
+
+    Build 731's Windows twin: with ``HF_DATASETS_CACHE`` unset the root derives from home as a
+    drive-letter path, and the value reaches the spec in forward-slash spelling (``C:/Users/...``)
+    while the root's env value spells itself with backslashes — enumerating spellings is a blacklist
+    that missed exactly that pair. Canonical-compare is structural: posix-ify candidate and root once,
+    then a single prefix match. Values matching no root return UNCHANGED (URLs, plain strings,
+    literal-backslash strings — pinned).
+    """
+    canon = _canonical_path_form(value)
+    for prefix, token in (tokens if tokens is not None else _env_path_tokens()).items():
+        canon_prefix = _canonical_path_form(prefix)
+        if canon.startswith(canon_prefix):
+            return token + canon[len(canon_prefix) :]
+    return value
+
+
+def untokenized_abs_paths(spec: Any) -> list[str]:
+    """Absolute machine paths that survived normalization — must be EMPTY for any spec on any OS.
+
+    The live-side twin of the fixture's machine-independence pin: asserted in the equivalence legs so a normalization
+    gap fails loudly as a named local failure on the OS that has it, instead of surfacing as a cross-machine CI diff
+    (the build 728→731 fixture-hardening arc).
+    """
+    import re
+
+    abs_path_re = re.compile(r"^(?:/(?:home|mnt|Users|tmp)/|[A-Za-z]:[/\\])")
+    found: list[str] = []
+
+    def walk(v: Any) -> None:
+        if isinstance(v, str):
+            if abs_path_re.match(v):
+                found.append(v)
+        elif isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                walk(x)
+
+    walk(spec)
+    return found
 
 
 def session_spec(session_cfg: ITSessionConfig) -> dict:

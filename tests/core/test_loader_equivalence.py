@@ -91,10 +91,16 @@ def test_unified_loader_matches_frozen_baseline(config_path):
     edits to the flattened configs fail against the validated baseline. Bodies are one-door: no shim translation on this
     path.
     """
+    from tests.core.loader_equivalence import untokenized_abs_paths
+
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     body = {k: raw[k] for k in ("shared_config", "registered_cfg", "adapter_ctx") if k in raw}
     loaded = load_session_cfg(body)
-    assert json.loads(json.dumps(session_spec(loaded), default=str)) == _baseline_for(config_path)
+    spec = json.loads(json.dumps(session_spec(loaded), default=str))
+    # live-side machine-independence pin: a normalization gap must fail HERE, named, on the OS that
+    # has it — not as a cross-machine fixture diff (builds 728-731)
+    assert not untokenized_abs_paths(spec), untokenized_abs_paths(spec)[:5]
+    assert spec == _baseline_for(config_path)
 
 
 @pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
@@ -208,6 +214,33 @@ class TestFixtureNormalizationRules:
 
         assert _normalize_env_paths(str(HF_DATASETS_CACHE) + "/rte") == "<HF_DATASETS_CACHE>/rte"
 
+    def test_drive_letter_root_tokenizes_in_both_spellings(self):
+        """Build 731's Windows twin: forward-slash drive-letter values (``Path.as_posix()`` output) fell through
+        the spelling enumeration; canonical-compare must catch BOTH spellings of value AND root."""
+        from tests.core.loader_equivalence import _normalize_env_paths
+
+        for root in (
+            r"C:\Users\runneradmin\.cache\huggingface\datasets",
+            "C:/Users/runneradmin/.cache/huggingface/datasets",
+        ):
+            tokens = {root: "<HF_DATASETS_CACHE>"}
+            for value in (
+                "C:/Users/runneradmin/.cache/huggingface/datasets/rte",
+                r"C:\Users\runneradmin\.cache\huggingface\datasets\rte",
+            ):
+                assert _normalize_env_paths(value, tokens) == "<HF_DATASETS_CACHE>/rte", (root, value)
+
+    def test_live_spec_pin_names_untokenized_paths(self):
+        """The live-side pin must flag surviving absolute paths (posix and both drive-letter spellings)."""
+        from tests.core.loader_equivalence import untokenized_abs_paths
+
+        spec = {
+            "ok": ["<HF_DATASETS_CACHE>/rte", "https://x.test/home/y", "gpt2"],
+            "bad": {"a": "C:/Users/runneradmin/.cache/x", "b": r"C:\Users\x", "c": "/home/user/.cache/x"},
+        }
+        assert sorted(untokenized_abs_paths(spec)) == sorted(spec["bad"].values())
+        assert untokenized_abs_paths({"ok": spec["ok"]}) == []
+
     def test_urls_and_plain_strings_pass_through(self):
         from tests.core.loader_equivalence import _normalize_env_paths
 
@@ -235,5 +268,5 @@ class TestFixtureNormalizationRules:
         import re
 
         raw = (Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text()
-        offenders = re.findall(r'"(?:/(?:home|mnt|Users|tmp)/|[A-Za-z]:\\\\)[^"]*"', raw)
+        offenders = re.findall(r'"(?:/(?:home|mnt|Users|tmp)/|[A-Za-z]:(?:\\\\|/))[^"]*"', raw)
         assert not offenders, offenders[:5]
