@@ -61,6 +61,25 @@ def _serialize_col_cfg(store) -> dict[str, dict]:
     return out
 
 
+def _analysis_backend_name(store) -> str | None:
+    """The PORTABLE backend reference for the envelope: a registry name, never an instance."""
+    backend = (store.it_format_kwargs or {}).get("analysis_backend")
+    if backend is None:
+        return None
+    if isinstance(backend, str):
+        return backend
+    from interpretune.analysis.backends import ANALYSIS_BACKEND_REGISTRY
+
+    for name, registered in ANALYSIS_BACKEND_REGISTRY.items():
+        if registered is backend:
+            return name
+    raise ArtifactEnvelopeError(
+        f"The store's analysis_backend ({type(backend).__name__}) is not a registered named backend — "
+        "register it via interpretune.analysis.backends.register_analysis_backend so artifacts can "
+        "reference it portably."
+    )
+
+
 def content_fingerprint(store) -> str:
     """Deterministic sha256 over the store's Arrow record batches (change-detection, push-time cost).
 
@@ -123,7 +142,7 @@ def build_analysis_store_envelope(
         "identity": identity,
         "provenance": prov,
         "artifacts": artifacts,
-        "interpretune": {"col_cfg": _serialize_col_cfg(store)},
+        "interpretune": {"col_cfg": _serialize_col_cfg(store), "analysis_backend": _analysis_backend_name(store)},
     }
 
 
@@ -224,9 +243,17 @@ def pull_analysis_store(
     split = envelope["artifacts"].get("split") or "validation"
     dataset = load_dataset(str(snapshot), split=split)
     # the formatter contract is SERIALIZED col_cfg (OpSchemaExt runs ColCfg.from_dict itself), so
-    # the envelope block passes straight through as format kwargs
-    col_cfg = envelope["interpretune"].get("col_cfg") or {}
-    store = AnalysisStore(dataset=dataset, split=split, it_format_kwargs={"col_cfg": col_cfg} if col_cfg else None)
+    # the envelope block passes straight through as format kwargs; a named analysis backend
+    # re-attaches the hydration seam (graph consumers get Graph objects, not primitive columns)
+    it_block = envelope["interpretune"]
+    format_kwargs: dict[str, Any] = {}
+    if it_block.get("col_cfg"):
+        format_kwargs["col_cfg"] = it_block["col_cfg"]
+    if it_block.get("analysis_backend"):
+        from interpretune.analysis.backends import resolve_analysis_backend
+
+        format_kwargs["analysis_backend"] = resolve_analysis_backend(it_block["analysis_backend"])
+    store = AnalysisStore(dataset=dataset, split=split, it_format_kwargs=format_kwargs or None)
     return store
 
 

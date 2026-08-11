@@ -602,5 +602,10 @@ class CircuitTracerAnalysisBackend:
 
 DEFAULT_CT_ANALYSIS_BACKEND = CircuitTracerAnalysisBackend()
 
+# portable name (the reference it_artifact.json envelopes carry for hydration re-attach)
+from interpretune.analysis.backends import register_analysis_backend  # noqa: E402
+
+register_analysis_backend("circuit_tracer", DEFAULT_CT_ANALYSIS_BACKEND)
+
 
 __all__ = ["CircuitTracerAnalysisBackend", "DEFAULT_CT_ANALYSIS_BACKEND"]

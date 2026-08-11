@@ -785,6 +785,35 @@ def get_analysis_backend(module: Any) -> AnalysisBackend | None:
     return backend
 
 
+# Named analysis backends (hydration seam): names are the PORTABLE reference artifacts use — an
+# it_artifact.json envelope can only carry a backend NAME (instances are not wire-format). Backends
+# register at import; resolve_analysis_backend lazily imports interpretune.analysis.backends.<name>
+# on a miss before failing, keeping resolution extensible without eager imports.
+ANALYSIS_BACKEND_REGISTRY: dict[str, "AnalysisBackend"] = {}
+
+
+def register_analysis_backend(name: str, backend: "AnalysisBackend") -> None:
+    """Register a named analysis backend (idempotent for the same object)."""
+    ANALYSIS_BACKEND_REGISTRY[name] = backend
+
+
+def resolve_analysis_backend(name: str) -> "AnalysisBackend":
+    """Resolve a backend NAME to its registered instance, lazily importing the in-tree module."""
+    if name not in ANALYSIS_BACKEND_REGISTRY:
+        import importlib
+
+        try:
+            importlib.import_module(f"interpretune.analysis.backends.{name}")
+        except ImportError:
+            pass
+    if name not in ANALYSIS_BACKEND_REGISTRY:
+        raise KeyError(
+            f"No analysis backend registered as {name!r} (known: {sorted(ANALYSIS_BACKEND_REGISTRY)}). "
+            "Hydrating this artifact requires the backend's package/extra to be installed."
+        )
+    return ANALYSIS_BACKEND_REGISTRY[name]
+
+
 def require_analysis_backend(module: Any) -> AnalysisBackend:
     """Return the module's analysis backend or raise if it is unavailable."""
 

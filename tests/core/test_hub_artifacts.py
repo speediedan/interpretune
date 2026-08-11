@@ -158,6 +158,92 @@ class TestLocalArtifactRoundTrip:
         assert row["input_string"] == "a premise"  # non-tensor survives untouched
 
 
+class TestGraphHydrationRoundTrip:
+    """The gate's core (USER amendment): a REAL graph reproduces from the artifact, no pipeline re-run."""
+
+    def test_graph_store_roundtrips_and_hydrates_via_named_backend(self, tmp_path, monkeypatch):
+        import socket
+
+        import torch
+        from datasets import Dataset, load_dataset
+
+        pytest.importorskip("circuit_tracer")
+        from circuit_tracer.graph import Graph
+
+        from interpretune.analysis import AnalysisStore
+        from interpretune.analysis.core import schema_to_features
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+        from tests.core.test_analysis_backend_graph_serialization import (
+            _FakeModule,
+            _graph_batch_from_graph,
+            _make_graph,
+        )
+
+        graph = _make_graph()
+        decomposed = _graph_batch_from_graph(graph)
+        module = _FakeModule(graph=graph)
+        dataset = Dataset.from_dict(
+            {
+                "input_string": [decomposed.input_string],
+                "adjacency_matrix": [decomposed.adjacency_matrix.tolist()],
+                "active_features": [decomposed.active_features.tolist()],
+                "selected_features": [decomposed.selected_features.tolist()],
+                "activation_values": [decomposed.activation_values.tolist()],
+                "logit_target_ids": [decomposed.logit_target_ids.tolist()],
+                "logit_target_tokens": [decomposed.logit_target_tokens],
+                "logit_probabilities": [decomposed.logit_probabilities.tolist()],
+                "input_tokens": [decomposed.input_tokens.tolist()],
+                "graph_cfg_json": [decomposed.graph_cfg_json],
+                "graph_scan_json": [decomposed.graph_scan_json],
+                "graph_vocab_size": [decomposed.graph_vocab_size],
+                "graph_metadata": [decomposed.graph_metadata],
+            },
+            features=schema_to_features(module, schema=DISPATCHER.get_op("compute_attribution_graph").output_schema),
+        )
+        store = AnalysisStore(
+            dataset=dataset, split="validation", it_format_kwargs={"analysis_backend": "circuit_tracer"}
+        )
+
+        # envelope carries the backend NAME (instances are not wire-format)
+        env = build_analysis_store_envelope(store)
+        assert env["interpretune"]["analysis_backend"] == "circuit_tracer"
+
+        # parquet round-trip in HF cache layout, then hydrate CACHE-ONLY with sockets blocked
+        cache = tmp_path / "artifacts"
+        TestLocalArtifactRoundTrip._materialize_local_artifact(store, "someorg/graph-store", cache)
+        monkeypatch.setattr(socket.socket, "connect", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")))
+        env = describe_analysis_store("someorg/graph-store", cache_dir=cache)
+        repo_dir = cache / "datasets--someorg--graph-store"
+        snapshot = repo_dir / "snapshots" / (repo_dir / "refs" / "main").read_text(encoding="utf-8").strip()
+        dataset = load_dataset(str(snapshot / "data"), split="validation")
+        from interpretune.analysis.backends import resolve_analysis_backend
+
+        pulled = AnalysisStore(
+            dataset=dataset,
+            split="validation",
+            it_format_kwargs={"analysis_backend": resolve_analysis_backend(env["interpretune"]["analysis_backend"])},
+        )
+        restored = pulled[0]["attribution_graph"]
+        assert isinstance(restored, Graph)
+        assert torch.equal(restored.adjacency_matrix, graph.adjacency_matrix)
+        assert torch.equal(restored.active_features, graph.active_features)
+        assert restored.input_string == graph.input_string
+
+    def test_unresolvable_backend_names_requirement(self):
+        from interpretune.analysis.backends import resolve_analysis_backend
+
+        with pytest.raises(KeyError, match="No analysis backend registered"):
+            resolve_analysis_backend("no_such_backend")
+
+    def test_unregistered_backend_instance_refused_at_envelope(self, small_store):
+        class RogueBackend:
+            pass
+
+        small_store.it_format_kwargs = {"analysis_backend": RogueBackend()}
+        with pytest.raises(ArtifactEnvelopeError, match="register_analysis_backend"):
+            build_analysis_store_envelope(small_store)
+
+
 def test_artifact_surface_resolves_in_fresh_process():
     """Lesson 5: the surfaces the round-trip notebook will teach must work in a clean process."""
     import subprocess
