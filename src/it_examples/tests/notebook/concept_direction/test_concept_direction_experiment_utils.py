@@ -39,7 +39,7 @@ from it_examples.experiments.notebook.nb_harness_utils import (
     resolve_target_tokens,
 )
 from tests.configuration import config_modules
-from it_examples.experiments.notebook.session import build_test_cfg
+from it_examples.tests.notebook._harness.session import build_test_cfg
 
 
 class _StubTokenizer:

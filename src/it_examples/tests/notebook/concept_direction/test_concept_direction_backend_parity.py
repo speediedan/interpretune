@@ -40,7 +40,7 @@ from it_examples.experiments.notebook.nb_harness_utils import (
     _summarize_graph_input_tokens,
 )
 from it_examples.experiments.notebook.config import load_experiment_config
-from it_examples.experiments.notebook.session import experiment_session, resolve_model_spec
+from it_examples.tests.notebook._harness.session import experiment_session, resolve_model_spec
 from it_examples.experiments.notebook.concept_direction.analysis.concept_direction_analysis import (
     DEFAULT_RANDOM_PERTURBATION_SCALE,
     DEFAULT_RANDOM_PERTURBATION_SEED,

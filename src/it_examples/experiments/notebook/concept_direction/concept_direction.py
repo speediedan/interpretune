@@ -82,11 +82,27 @@ from it_examples.experiments.notebook.concept_direction.analysis.concept_directi
     compute_concept_direction_geometry,
     save_concept_direction_pipeline_state_artifacts,
 )
-from it_examples.experiments.notebook.session import (
-    experiment_session,
-    resolve_model_spec,
-    resolve_session_surface_preset_config_defaults,
-)
+
+
+# repo-only HARNESS drivers (it_examples/tests is wheel-excluded): lazy call-site wrappers so this
+# module imports cleanly from an installed wheel; harness-driven entry points raise at the call
+def _harness():
+    from it_examples.tests.notebook import _harness
+
+    return _harness.session
+
+
+def experiment_session(*args, **kwargs):
+    return _harness().experiment_session(*args, **kwargs)
+
+
+def resolve_model_spec(*args, **kwargs):
+    return _harness().resolve_model_spec(*args, **kwargs)
+
+
+def resolve_session_surface_preset_config_defaults(*args, **kwargs):
+    return _harness().resolve_session_surface_preset_config_defaults(*args, **kwargs)
+
 
 if TYPE_CHECKING:
     from interpretune.extensions.debug_generation import DebugGeneration

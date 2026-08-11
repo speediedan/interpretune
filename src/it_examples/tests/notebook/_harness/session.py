@@ -31,7 +31,8 @@ from tests.conftest import FixtPhase, session_fixture_hook_exec  # noqa: E402
 DebugSessionSurfacePreset = Literal["notebook_default", "parity_surface"]
 
 
-CONFIG_DIR = Path(__file__).resolve().parent / "configs"
+# config payloads live with the RESEARCH tree (shipped); the harness only drives them
+CONFIG_DIR = Path(__file__).resolve().parents[3] / "experiments" / "notebook" / "configs"
 MODEL_SPECS_PATH = CONFIG_DIR / "model_specs.yaml"
 SESSION_SURFACE_PRESETS_PATH = CONFIG_DIR / "session_surface_presets.yaml"
 

@@ -58,7 +58,17 @@ from it_examples.experiments.notebook.nb_harness_utils import (  # noqa: E402
     summarize_gap,
     tensor_to_cpu,
 )
-from it_examples.experiments.notebook.session import experiment_session  # noqa: E402
+
+
+# experiment_session is a repo-only HARNESS driver (it_examples/tests is wheel-excluded): imported
+# lazily inside the session-driving functions so this module imports cleanly from an installed wheel;
+# invoking a pipeline without the repo harness raises ImportError at the call, not at import
+def _experiment_session(*args, **kwargs):
+    from it_examples.tests.notebook._harness.session import experiment_session
+
+    return experiment_session(*args, **kwargs)
+
+
 from it_examples.experiments.notebook.concept_direction.analysis.intervention_drift_analysis import (  # noqa: E402
     build_intervention_drift_report,
     snapshot_analysis_batch,
@@ -154,7 +164,7 @@ def run_initial_sanity_check(cfg: NotebookHarnessConfig) -> dict[str, Any]:
     """
     raw_prompt = cfg.prompt
 
-    with experiment_session(
+    with _experiment_session(
         cfg.work_root,
         phase_run_name(cfg.experiment_name, "initial_sanity_check"),
         **cfg.session_kwargs,
@@ -214,7 +224,7 @@ def collect_baseline_path_debug(cfg: NotebookHarnessConfig) -> dict[str, Any]:
         "return_dict_in_generate": True,
     }
 
-    with experiment_session(
+    with _experiment_session(
         cfg.work_root,
         phase_run_name(cfg.experiment_name, "baseline_path_debug"),
         **cfg.session_kwargs,
@@ -284,7 +294,7 @@ def _build_render_variant_equalities(
 
 
 def run_tokenizer_verification(cfg: NotebookHarnessConfig) -> dict[str, Any]:
-    with experiment_session(
+    with _experiment_session(
         cfg.work_root,
         phase_run_name(cfg.experiment_name, "tokenizer_verification"),
         **cfg.session_kwargs,
@@ -347,7 +357,7 @@ def run_pipeline(
     if cfg.is_debug_intervention_mode:
         raise ValueError("run_pipeline is not available in debug_intervention_pipelines mode")
 
-    with experiment_session(
+    with _experiment_session(
         cfg.work_root,
         phase_run_name(cfg.experiment_name, f"{label}_pipeline_{scale_factor}x"),
         **cfg.session_kwargs,
@@ -498,7 +508,7 @@ def run_direct_projection_pipeline(
     if cfg.is_debug_intervention_mode:
         raise ValueError("run_direct_projection_pipeline is not available in debug_intervention_pipelines mode")
 
-    with experiment_session(
+    with _experiment_session(
         cfg.work_root,
         phase_run_name(cfg.experiment_name, f"{label}_direct_proj_{scale_factor}x"),
         **cfg.session_kwargs,
@@ -659,7 +669,7 @@ def run_scale_sweep(
     results = []
     for scale_factor in cfg.scale_factor_sweep:
         with _capture_internal_notebook_output():
-            with experiment_session(
+            with _experiment_session(
                 cfg.work_root,
                 phase_run_name(cfg.experiment_name, f"scale_sweep_{scale_factor}x"),
                 **cfg.session_kwargs,
@@ -748,7 +758,7 @@ def collect_feature_pool(
     if cfg.is_debug_intervention_mode:
         raise ValueError("collect_feature_pool is not available in debug_intervention_pipelines mode")
 
-    with experiment_session(
+    with _experiment_session(
         cfg.work_root,
         phase_run_name(cfg.experiment_name, "feature_pool"),
         **cfg.session_kwargs,
@@ -809,7 +819,7 @@ def run_ablations(
         "baseline": float(pre_logits_ref[feature_pool["target_a_id"]] - pre_logits_ref[feature_pool["target_b_id"]])
     }
     results: dict[int, torch.Tensor] = {}
-    with experiment_session(
+    with _experiment_session(
         cfg.work_root,
         phase_run_name(cfg.experiment_name, "progressive_ablation"),
         **cfg.session_kwargs,
@@ -852,7 +862,7 @@ def run_debug_intervention_validation(cfg: NotebookHarnessConfig) -> dict[str, A
     if not cfg.is_debug_intervention_mode:
         raise ValueError("run_debug_intervention_validation is only available in debug_intervention_pipelines mode")
 
-    with experiment_session(
+    with _experiment_session(
         cfg.work_root,
         phase_run_name(cfg.experiment_name, "debug_intervention_validation"),
         **cfg.session_kwargs,
@@ -1316,7 +1326,7 @@ def run_direction_probes(
 
     from interpretune.analysis.backends.circuit_tracer import CircuitTracerAnalysisBackend
 
-    with experiment_session(
+    with _experiment_session(
         cfg.work_root,
         phase_run_name(cfg.experiment_name, "direction_probes"),
         **cfg.session_kwargs,
