@@ -300,6 +300,10 @@ include = [
 ]
 exclude = [
     "src/it_examples/utils/raw_graph_analysis.py",
+    # relocated research/notebook trees (Phase 4): imported research code + repo-only tests,
+    # type-exempt exactly as they were under tests/ before the §11.6 moves
+    "src/it_examples/tests",
+    "src/it_examples/experiments/notebook",
 ]
 
 # Custom directives removed for stricter type checking
