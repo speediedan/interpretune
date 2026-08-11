@@ -1,14 +1,10 @@
-"""Old-path capture + normalization for the 4a loader-equivalence harness (hub design v3 §11.4).
+"""Normalization + capture helpers for the loader-equivalence harness (hub design v3 §11.4).
 
-The acceptance instrument for loader unification: for every CLI experiment config, the session
-configuration produced by the CURRENT jsonargparse path and by the unified declarative loader must be
-namespace-identical before the old path is removed. This module implements the old-path capture and the
-normalization; the comparison test lives in ``tests/core/test_loader_equivalence.py`` and gains its
-new-path leg when ``load_session_cfg`` lands.
-
-The capture instantiates ``session_cfg`` (the dataclasses, including any ``AutoCompConfig``
-``make_dataclass`` synthesis their ``__post_init__`` performs) but deliberately NOT ``it_session`` —
-session instantiation loads models, and config equivalence must be checkable on CPU in milliseconds.
+The acceptance instrument for loader unification. The jsonargparse old path was REMOVED after 45/45
+namespace-diff equivalence was proven against it; its final captures are frozen as
+``tests/core/fixtures/cli_session_baseline_specs.json``, which the harness now holds the unified
+loader to. Everything here works on config dataclasses only — deliberately never ``it_session`` —
+so equivalence stays checkable on CPU in milliseconds.
 """
 
 from __future__ import annotations
@@ -18,9 +14,6 @@ import enum
 from pathlib import Path
 from typing import Any
 
-from jsonargparse import ArgumentParser
-
-from interpretune.config.shared import ITSharedConfig
 from interpretune.session import ITSessionConfig
 
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -30,33 +23,6 @@ CLI_EXPERIMENTS_DIR = REPO_ROOT / "src" / "it_examples" / "config" / "experiment
 def cli_experiment_configs() -> list[Path]:
     """Every CLI experiment config the harness must hold equivalent across the unification."""
     return sorted(CLI_EXPERIMENTS_DIR.rglob("*.yaml"))
-
-
-def capture_session_cfg_via_cli(config_files: list[Path], defaults_dir: Path | None = None) -> ITSessionConfig:
-    """Instantiate ``session_cfg`` exactly as the current CLI does, without touching ``it_session``.
-
-    Mirrors ``ITSessionMixin.add_arguments_to_parser``'s session surface — ``add_class_arguments`` with
-    ``sub_configs=True`` plus the per-field ``ITSharedConfig`` links — and ``core_cli_main``'s
-    ``default_config_files`` composition, minus the ``ITSession``/runner registrations whose
-    instantiation loads models.
-    """
-    import yaml as _yaml
-
-    parser = ArgumentParser(exit_on_error=False)
-    parser.add_class_arguments(ITSessionConfig, "session_cfg", instantiate=True, sub_configs=True)
-    for attr in ITSharedConfig.__dataclass_fields__:
-        parser.link_arguments(
-            f"session_cfg.datamodule_cfg.init_args.{attr}", f"session_cfg.module_cfg.init_args.{attr}"
-        )
-    # The harness's contract is the SESSION subtree — trainer/runner keys remain jsonargparse/Lightning
-    # shim territory after unification, so they are out of comparison scope by design, not convenience.
-    merged: dict[str, Any] = {}
-    for cfg in [*(sorted(Path(defaults_dir).glob("*.yaml")) if defaults_dir else []), *config_files]:
-        body = _yaml.safe_load(Path(cfg).read_text(encoding="utf-8")) or {}
-        if "session_cfg" in body:
-            merged.update({"session_cfg": {**merged.get("session_cfg", {}), **body["session_cfg"]}})
-    config = parser.parse_object(merged)
-    return parser.instantiate_classes(config).session_cfg
 
 
 def normalize(value: Any) -> Any:

@@ -162,11 +162,13 @@ class TestClassContract:
         )
         assert isinstance(test_tmp_session_cfg, ITSessionConfig)
 
-    def test_it_session_cfg_override_warns(self, recwarn, get_it_session_cfg__tl_cust):
+    def test_it_session_cfg_shared_fanout_retired(self, get_it_session_cfg__tl_cust):
+        """The shared_cfg fan-out is retired to a deliberate assertion (hub design v3 §11.4).
+
+        Shared-config merging happens in exactly one place — load_session_cfg's factory path — so a caller still passing
+        shared values here must be pointed there, not silently un-merged.
+        """
         it_session_cfg = deepcopy(get_it_session_cfg__tl_cust)
-        default_shared_cfg = ITSharedConfig()
-        for attr in ITSharedConfig.__dataclass_fields__:
-            setattr(it_session_cfg.datamodule_cfg, attr, getattr(default_shared_cfg, attr))
         rebound_kwargs = dict(
             module_cls=it_session_cfg.module_cls,
             adapter_ctx=it_session_cfg.adapter_ctx,
@@ -175,15 +177,12 @@ class TestClassContract:
             datamodule_cfg=it_session_cfg.datamodule_cfg,
             module_kwargs=it_session_cfg.module_kwargs,
             dm_kwargs=it_session_cfg.dm_kwargs,
-            shared_cfg=default_shared_cfg.__dict__,
-        )  # exercise dict ctor branch
-        expected_override_msg = "Overriding `defer_model_init`"
-        # assert that we warn about overriding datamodule/module configs from a shared config only when values change
-        ITSessionConfig(**rebound_kwargs)
-        assert not any(expected_override_msg in str(w.message) for w in recwarn.list)
-        it_session_cfg.datamodule_cfg.defer_model_init = True
-        with pytest.warns(UserWarning, match=expected_override_msg):
-            ITSessionConfig(**rebound_kwargs)
+        )
+        # empty shared_cfg is tolerated (the no-op case) ...
+        ITSessionConfig(**rebound_kwargs, shared_cfg=None)
+        # ... but shared VALUES must route through the one merge site
+        with pytest.raises(AssertionError, match="load_session_cfg"):
+            ITSessionConfig(**rebound_kwargs, shared_cfg=ITSharedConfig().__dict__ | {"task_name": "rte"})
 
     def test_session_min_dep_installed(self):
         import sys

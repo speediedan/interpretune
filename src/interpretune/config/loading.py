@@ -28,8 +28,7 @@ def resolve_adapter_ctx(body: dict[str, Any], adapter_ctx: Sequence[Adapter | st
 
     Precedence: explicit ``adapter_ctx`` param → the body's own ``adapter_ctx`` (session-shaped bodies) →
     the FIRST ``reg_info.adapter_combinations`` entry (published bodies declare supported combinations;
-    the first is the publisher's primary). Raises when none is available — a session cannot be composed
-    without one.
+    the first is the publisher's primary) → ``(Adapter.core,)``, the session default.
     """
     from interpretune.adapter_registry import ADAPTER_REGISTRY
 
@@ -40,10 +39,9 @@ def resolve_adapter_ctx(body: dict[str, Any], adapter_ctx: Sequence[Adapter | st
             first = combos[0]
             ctx = (first,) if isinstance(first, str) else tuple(first)
     if ctx is None:
-        raise ValueError(
-            "No adapter context available: pass adapter_ctx=, or provide a body with `adapter_ctx` or "
-            "`reg_info.adapter_combinations`."
-        )
+        # session-shaped bodies may omit adapter_ctx entirely — the session default is core, exactly
+        # as ITSessionConfig's own field default provided on the retired parser path
+        ctx = (Adapter.core,)
     resolved = tuple(Adapter[a] if not isinstance(a, Adapter) else a for a in ctx)
     return ADAPTER_REGISTRY.canonicalize_composition(resolved)
 
@@ -158,6 +156,10 @@ def session_body_from_cli_mapping(session_cfg_mapping: dict[str, Any]) -> dict[s
     if "init_args" in module:
         # values the link DAG would overwrite must not linger as conflicting init_args
         module = {**module, "init_args": {k: v for k, v in module["init_args"].items() if k not in shared}}
+        if "class_path" not in module:
+            # jsonargparse's implied-class form ({init_args: ...} under a concretely-typed arg means
+            # "the declared type"): normalize to plain kwargs for the factory's default construction
+            module = module["init_args"]
     body: dict[str, Any] = {
         "shared_config": shared,
         "registered_cfg": {

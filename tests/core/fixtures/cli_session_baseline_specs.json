@@ -1,0 +1,3954 @@
+{
+ "experiments/rte_boolq/gemma2/2b_chat_lightning_qlora_zs_test.yaml": {
+  "adapter_ctx": [
+   "lightning"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "gemma-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-2-2b-it",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "model",
+    "B_TEXT": "<bos>",
+    "B_TURN": "<start_of_turn>",
+    "E_TURN": "<end_of_turn>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": "google/gemma-2-2b-it",
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqConfig",
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma2_2b_chat_lightning_qlora_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.mixins.HFGenerationConfig",
+     "default_overrides": {},
+     "generate_kwargs": {},
+     "model_config": {
+      "max_new_tokens": 5,
+      "output_logits": true,
+      "return_dict_in_generate": true,
+      "use_cache": false
+     }
+    }
+   },
+   "hf_from_pretrained_cfg": {
+    "__class__": "interpretune.config.mixins.HFFromPretrainedConfig",
+    "activation_checkpointing": false,
+    "bitsandbytesconfig": {
+     "bnb_4bit_compute_dtype": "bfloat16",
+     "bnb_4bit_quant_type": "nf4",
+     "bnb_4bit_use_double_quant": true,
+     "load_in_4bit": true
+    },
+    "default_head": "transformers.AutoModelForCausalLM",
+    "dynamic_module_cfg": {},
+    "enable_input_require_grads": true,
+    "lora_cfg": {
+     "r": 8,
+     "target_modules": [
+      "q_proj",
+      "o_proj",
+      "k_proj",
+      "v_proj",
+      "gate_proj",
+      "up_proj",
+      "down_proj"
+     ],
+     "task_type": "CAUSAL_LM"
+    },
+    "model_head": "transformers.Gemma2ForCausalLM",
+    "pretrained_kwargs": {
+     "device_map": 0
+    },
+    "use_model_cache": false
+   },
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {
+    "_attn_implementation": "eager"
+   },
+   "model_class": null,
+   "model_name_or_path": "google/gemma-2-2b-it",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "task_name": "rte",
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": "google/gemma-2-2b-it"
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gemma2/2b_chat_lightning_sl_br_zs_test.yaml": {
+  "adapter_ctx": [
+   "lightning",
+   "sae_lens"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "gemma-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-2-2b-it",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "model",
+    "B_TEXT": "<bos>",
+    "B_TURN": "<start_of_turn>",
+    "E_TURN": "<end_of_turn>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [
+    "input",
+    "attention_mask",
+    "labels"
+   ],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqSLConfig",
+   "add_saes_on_init": false,
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "backend": "transformerlens",
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma2_2b_chat_lightning_sl_br_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.transformer_lens.TLensGenerationConfig",
+     "do_sample": true,
+     "eos_token_id": null,
+     "freq_penalty": 0.0,
+     "generate_kwargs": {
+      "do_sample": true,
+      "eos_token_id": null,
+      "freq_penalty": 0.0,
+      "max_new_tokens": 5,
+      "output_logits": true,
+      "padding_side": "left",
+      "prepend_bos": null,
+      "return_dict_in_generate": null,
+      "return_type": "input",
+      "stop_at_eos": true,
+      "temperature": 1.0,
+      "top_k": 50,
+      "top_p": 1.0,
+      "use_past_kv_cache": false,
+      "verbose": true
+     },
+     "max_new_tokens": 5,
+     "output_logits": true,
+     "padding_side": "left",
+     "prepend_bos": null,
+     "return_dict_in_generate": null,
+     "return_type": "input",
+     "stop_at_eos": true,
+     "temperature": 1.0,
+     "top_k": 50,
+     "top_p": 1.0,
+     "use_past_kv_cache": false,
+     "verbose": true
+    }
+   },
+   "hf_from_pretrained_cfg": {
+    "__class__": "interpretune.config.mixins.HFFromPretrainedConfig",
+    "activation_checkpointing": false,
+    "bitsandbytesconfig": {},
+    "default_head": "transformers.AutoModelForCausalLM",
+    "dynamic_module_cfg": {},
+    "enable_input_require_grads": true,
+    "lora_cfg": {},
+    "model_head": "transformers.Gemma2ForCausalLM",
+    "pretrained_kwargs": {
+     "device_map": 0
+    },
+    "use_model_cache": false
+   },
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {
+    "_attn_implementation": "eager"
+   },
+   "model_class": null,
+   "model_name_or_path": "google/gemma-2-2b-it",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "nnsight_cfg": null,
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "sae_cfgs": [
+    {
+     "__class__": "interpretune.config.sae_lens.SAELensFromPretrainedConfig",
+     "device": "cuda",
+     "dtype": "torch.bfloat16",
+     "release": "gemma-scope-2b-pt-res-canonical",
+     "sae_id": "layer_25/width_16k/canonical"
+    }
+   ],
+   "task_name": "rte",
+   "tl_cfg": {
+    "__class__": "interpretune.config.transformer_lens.ITLensBridgeConfig",
+    "default_padding_side": "left",
+    "device": "cuda",
+    "dtype": "bfloat16",
+    "enable_compatibility_mode": true,
+    "enable_compatibility_mode_kwargs": {
+     "fold_ln": true,
+     "fold_value_biases": true
+    },
+    "model_name": "gemma-2-2b-it",
+    "move_to_device": true,
+    "transformer_bridge_config_overrides": null,
+    "use_bridge": true
+   },
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "use_bridge": true
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gemma2/2b_chat_lightning_sl_ht_zs_test.yaml": {
+  "adapter_ctx": [
+   "lightning",
+   "sae_lens"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "gemma-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-2-2b-it",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "model",
+    "B_TEXT": "<bos>",
+    "B_TURN": "<start_of_turn>",
+    "E_TURN": "<end_of_turn>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [
+    "input",
+    "attention_mask",
+    "labels"
+   ],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqSLConfig",
+   "add_saes_on_init": false,
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "backend": "transformerlens",
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma2_2b_chat_lightning_sl_ht_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.transformer_lens.TLensGenerationConfig",
+     "do_sample": true,
+     "eos_token_id": null,
+     "freq_penalty": 0.0,
+     "generate_kwargs": {
+      "do_sample": true,
+      "eos_token_id": null,
+      "freq_penalty": 0.0,
+      "max_new_tokens": 5,
+      "output_logits": true,
+      "padding_side": "left",
+      "prepend_bos": null,
+      "return_dict_in_generate": null,
+      "return_type": "input",
+      "stop_at_eos": true,
+      "temperature": 1.0,
+      "top_k": 50,
+      "top_p": 1.0,
+      "use_past_kv_cache": false,
+      "verbose": true
+     },
+     "max_new_tokens": 5,
+     "output_logits": true,
+     "padding_side": "left",
+     "prepend_bos": null,
+     "return_dict_in_generate": null,
+     "return_type": "input",
+     "stop_at_eos": true,
+     "temperature": 1.0,
+     "top_k": 50,
+     "top_p": 1.0,
+     "use_past_kv_cache": false,
+     "verbose": true
+    }
+   },
+   "hf_from_pretrained_cfg": {
+    "__class__": "interpretune.config.mixins.HFFromPretrainedConfig",
+    "activation_checkpointing": false,
+    "bitsandbytesconfig": {},
+    "default_head": "transformers.AutoModelForCausalLM",
+    "dynamic_module_cfg": {},
+    "enable_input_require_grads": true,
+    "lora_cfg": {},
+    "model_head": "transformers.Gemma2ForCausalLM",
+    "pretrained_kwargs": {
+     "device_map": 0
+    },
+    "use_model_cache": false
+   },
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {
+    "_attn_implementation": "eager"
+   },
+   "model_class": null,
+   "model_name_or_path": "google/gemma-2-2b-it",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "nnsight_cfg": null,
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "sae_cfgs": [
+    {
+     "__class__": "interpretune.config.sae_lens.SAELensFromPretrainedConfig",
+     "device": "cuda",
+     "dtype": "torch.bfloat16",
+     "release": "gemma-scope-2b-pt-res-canonical",
+     "sae_id": "layer_25/width_16k/canonical"
+    }
+   ],
+   "task_name": "rte",
+   "tl_cfg": {
+    "__class__": "interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig",
+    "center_unembed": false,
+    "center_writing_weights": false,
+    "checkpoint_index": null,
+    "checkpoint_value": null,
+    "default_padding_side": "left",
+    "default_prepend_bos": true,
+    "device": "cuda",
+    "dtype": "bfloat16",
+    "fold_ln": false,
+    "fold_value_biases": false,
+    "hf_model": null,
+    "model_name": "gemma-2-2b-it",
+    "move_to_device": true,
+    "n_devices": 1,
+    "refactor_factored_attn_matrices": false,
+    "tokenizer": null,
+    "use_bridge": false
+   },
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "use_bridge": false
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gemma2/2b_chat_lightning_sl_zs_test.yaml": {
+  "adapter_ctx": [
+   "lightning",
+   "sae_lens"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "gemma-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-2-2b-it",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "model",
+    "B_TEXT": "<bos>",
+    "B_TURN": "<start_of_turn>",
+    "E_TURN": "<end_of_turn>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [
+    "input",
+    "attention_mask",
+    "labels"
+   ],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqSLConfig",
+   "add_saes_on_init": false,
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "backend": "transformerlens",
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma2_2b_chat_lightning_sl_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.transformer_lens.TLensGenerationConfig",
+     "do_sample": true,
+     "eos_token_id": null,
+     "freq_penalty": 0.0,
+     "generate_kwargs": {
+      "do_sample": true,
+      "eos_token_id": null,
+      "freq_penalty": 0.0,
+      "max_new_tokens": 5,
+      "output_logits": true,
+      "padding_side": "left",
+      "prepend_bos": null,
+      "return_dict_in_generate": null,
+      "return_type": "input",
+      "stop_at_eos": true,
+      "temperature": 1.0,
+      "top_k": 50,
+      "top_p": 1.0,
+      "use_past_kv_cache": false,
+      "verbose": true
+     },
+     "max_new_tokens": 5,
+     "output_logits": true,
+     "padding_side": "left",
+     "prepend_bos": null,
+     "return_dict_in_generate": null,
+     "return_type": "input",
+     "stop_at_eos": true,
+     "temperature": 1.0,
+     "top_k": 50,
+     "top_p": 1.0,
+     "use_past_kv_cache": false,
+     "verbose": true
+    }
+   },
+   "hf_from_pretrained_cfg": {
+    "__class__": "interpretune.config.mixins.HFFromPretrainedConfig",
+    "activation_checkpointing": false,
+    "bitsandbytesconfig": {},
+    "default_head": "transformers.AutoModelForCausalLM",
+    "dynamic_module_cfg": {},
+    "enable_input_require_grads": true,
+    "lora_cfg": {},
+    "model_head": "transformers.Gemma2ForCausalLM",
+    "pretrained_kwargs": {
+     "device_map": 0
+    },
+    "use_model_cache": false
+   },
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {
+    "_attn_implementation": "eager"
+   },
+   "model_class": null,
+   "model_name_or_path": "google/gemma-2-2b-it",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "nnsight_cfg": null,
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "sae_cfgs": [
+    {
+     "__class__": "interpretune.config.sae_lens.SAELensFromPretrainedConfig",
+     "device": "cuda",
+     "dtype": "torch.bfloat16",
+     "release": "gemma-scope-2b-pt-res-canonical",
+     "sae_id": "layer_25/width_16k/canonical"
+    }
+   ],
+   "task_name": "rte",
+   "tl_cfg": {
+    "__class__": "interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig",
+    "center_unembed": false,
+    "center_writing_weights": false,
+    "checkpoint_index": null,
+    "checkpoint_value": null,
+    "default_padding_side": "left",
+    "default_prepend_bos": true,
+    "device": "cuda",
+    "dtype": "bfloat16",
+    "fold_ln": false,
+    "fold_value_biases": false,
+    "hf_model": null,
+    "model_name": "gemma-2-2b-it",
+    "move_to_device": true,
+    "n_devices": 1,
+    "refactor_factored_attn_matrices": false,
+    "tokenizer": null,
+    "use_bridge": true
+   },
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "use_bridge": true
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml": {
+  "adapter_ctx": [
+   "lightning"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "gemma-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-2-2b-it",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "model",
+    "B_TEXT": "<bos>",
+    "B_TURN": "<start_of_turn>",
+    "E_TURN": "<end_of_turn>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {
+    "eos_token_id": 1
+   },
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqConfig",
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma2_2b_chat_lightning_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.mixins.HFGenerationConfig",
+     "default_overrides": {},
+     "generate_kwargs": {},
+     "model_config": {
+      "do_sample": true,
+      "eos_token_id": 1,
+      "max_new_tokens": 5,
+      "output_logits": true,
+      "padding_side": "left",
+      "return_dict_in_generate": true,
+      "top_k": 50,
+      "use_cache": false
+     }
+    }
+   },
+   "hf_from_pretrained_cfg": {
+    "__class__": "interpretune.config.mixins.HFFromPretrainedConfig",
+    "activation_checkpointing": false,
+    "bitsandbytesconfig": {},
+    "default_head": "transformers.AutoModelForCausalLM",
+    "dynamic_module_cfg": {},
+    "enable_input_require_grads": true,
+    "lora_cfg": {},
+    "model_head": "transformers.Gemma2ForCausalLM",
+    "pretrained_kwargs": {
+     "device_map": 0
+    },
+    "use_model_cache": false
+   },
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {
+    "_attn_implementation": "eager"
+   },
+   "model_class": null,
+   "model_name_or_path": "google/gemma-2-2b-it",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "task_name": "rte",
+   "tokenizer": null,
+   "tokenizer_id_overrides": {
+    "eos_token_id": 1
+   },
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gemma2/2b_it_ct_ns_zs_test.yaml": {
+  "adapter_ctx": [
+   "circuit_tracer",
+   "core",
+   "nnsight"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "gemma-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-2-2b-it",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "model",
+    "B_TEXT": "<bos>",
+    "B_TURN": "<start_of_turn>",
+    "E_TURN": "<end_of_turn>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [
+    "input_ids",
+    "attention_mask",
+    "labels"
+   ],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {
+    "eos_token_id": 1
+   },
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqCTConfig",
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "circuit_tracer_cfg": {
+    "__class__": "interpretune.config.circuit_tracer.CircuitTracerConfig",
+    "analysis_target_tokens": [
+     "\u2581Yes",
+     "\u2581No"
+    ],
+    "backend": "nnsight",
+    "batch_size": 256,
+    "default_edge_threshold": 0.98,
+    "default_node_threshold": 0.8,
+    "desired_logit_prob": 0.95,
+    "dtype": "torch.bfloat16",
+    "graph_output_dir": null,
+    "intervention_apply_activation_function": null,
+    "intervention_constrained_layers": null,
+    "intervention_freeze_attention": null,
+    "intervention_max_influence_norm_scale": false,
+    "intervention_return_activations": false,
+    "intervention_scale_factor": 1.0,
+    "intervention_sign_aware_scale": true,
+    "intervention_sparse": false,
+    "intervention_value": null,
+    "intervention_value_source": "top_feature_scores",
+    "lazy_decoder": true,
+    "lazy_encoder": null,
+    "max_feature_nodes": 8192,
+    "max_n_logits": 10,
+    "model_name": null,
+    "ndif_api_key": null,
+    "nnsight_remote": false,
+    "offload": "cpu",
+    "save_graphs": true,
+    "target_token_ids": null,
+    "transcoder_set": "gemma",
+    "use_neuronpedia": false,
+    "verbose": true
+   },
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma2_2b_it_ct_ns_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.mixins.HFGenerationConfig",
+     "default_overrides": {},
+     "generate_kwargs": {},
+     "model_config": {
+      "do_sample": true,
+      "eos_token_id": 1,
+      "max_new_tokens": 3,
+      "output_logits": true,
+      "return_dict_in_generate": true,
+      "top_k": 50,
+      "use_cache": false
+     }
+    }
+   },
+   "hf_from_pretrained_cfg": {
+    "__class__": "interpretune.config.mixins.HFFromPretrainedConfig",
+    "activation_checkpointing": false,
+    "bitsandbytesconfig": {},
+    "default_head": "transformers.AutoModelForCausalLM",
+    "dynamic_module_cfg": {},
+    "enable_input_require_grads": true,
+    "lora_cfg": {},
+    "model_head": "transformers.Gemma2ForCausalLM",
+    "pretrained_kwargs": {
+     "device_map": 0
+    },
+    "use_model_cache": false
+   },
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {
+    "_attn_implementation": "eager"
+   },
+   "model_class": null,
+   "model_name_or_path": "google/gemma-2-2b-it",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "task_name": "rte",
+   "tokenizer": null,
+   "tokenizer_id_overrides": {
+    "eos_token_id": 1
+   },
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gemma2/2b_nonchat_lightning_qlora_zs_test.yaml": {
+  "adapter_ctx": [
+   "lightning"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": null,
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-2-2b",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": "google/gemma-2-2b",
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqConfig",
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma2_2b_nonchat_lightning_qlora_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.mixins.HFGenerationConfig",
+     "default_overrides": {},
+     "generate_kwargs": {},
+     "model_config": {
+      "do_sample": true,
+      "eos_token_id": 1,
+      "max_new_tokens": 5,
+      "output_logits": true,
+      "padding_side": "left",
+      "return_dict_in_generate": true,
+      "top_k": 50,
+      "use_cache": false
+     }
+    }
+   },
+   "hf_from_pretrained_cfg": {
+    "__class__": "interpretune.config.mixins.HFFromPretrainedConfig",
+    "activation_checkpointing": false,
+    "bitsandbytesconfig": {
+     "bnb_4bit_compute_dtype": "bfloat16",
+     "bnb_4bit_quant_type": "nf4",
+     "bnb_4bit_use_double_quant": true,
+     "load_in_4bit": true
+    },
+    "default_head": "transformers.AutoModelForCausalLM",
+    "dynamic_module_cfg": {},
+    "enable_input_require_grads": true,
+    "lora_cfg": {
+     "r": 8,
+     "target_modules": [
+      "q_proj",
+      "o_proj",
+      "k_proj",
+      "v_proj",
+      "gate_proj",
+      "up_proj",
+      "down_proj"
+     ],
+     "task_type": "CAUSAL_LM"
+    },
+    "model_head": "transformers.Gemma2ForCausalLM",
+    "pretrained_kwargs": {
+     "device_map": 0
+    },
+    "use_model_cache": false
+   },
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {
+    "_attn_implementation": "eager"
+   },
+   "model_class": null,
+   "model_name_or_path": "google/gemma-2-2b",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "task_name": "rte",
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": "google/gemma-2-2b"
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gemma3/1b_it_ct_ns_zs_test.yaml": {
+  "adapter_ctx": [
+   "circuit_tracer",
+   "core",
+   "nnsight"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "gemma-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-3-1b-it",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "model",
+    "B_TEXT": "<bos>",
+    "B_TURN": "<start_of_turn>",
+    "E_TURN": "<end_of_turn>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [
+    "input_ids",
+    "attention_mask",
+    "labels"
+   ],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqCTConfig",
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "circuit_tracer_cfg": {
+    "__class__": "interpretune.config.circuit_tracer.CircuitTracerConfig",
+    "analysis_target_tokens": [
+     "\u2581Yes",
+     "\u2581No"
+    ],
+    "backend": "nnsight",
+    "batch_size": 256,
+    "default_edge_threshold": 0.98,
+    "default_node_threshold": 0.8,
+    "desired_logit_prob": 0.95,
+    "dtype": "torch.bfloat16",
+    "graph_output_dir": null,
+    "intervention_apply_activation_function": null,
+    "intervention_constrained_layers": null,
+    "intervention_freeze_attention": null,
+    "intervention_max_influence_norm_scale": false,
+    "intervention_return_activations": false,
+    "intervention_scale_factor": 1.0,
+    "intervention_sign_aware_scale": true,
+    "intervention_sparse": false,
+    "intervention_value": null,
+    "intervention_value_source": "top_feature_scores",
+    "lazy_decoder": true,
+    "lazy_encoder": null,
+    "max_feature_nodes": 8192,
+    "max_n_logits": 10,
+    "model_name": null,
+    "ndif_api_key": null,
+    "nnsight_remote": false,
+    "offload": "cpu",
+    "save_graphs": true,
+    "target_token_ids": null,
+    "transcoder_set": "mwhanna/gemma-scope-2-1b-it/transcoder_all/width_16k_l0_small_affine",
+    "use_neuronpedia": false,
+    "verbose": true
+   },
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma3_1b_it_ct_ns_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.mixins.HFGenerationConfig",
+     "default_overrides": {},
+     "generate_kwargs": {},
+     "model_config": {
+      "do_sample": true,
+      "max_new_tokens": 3,
+      "output_logits": true,
+      "return_dict_in_generate": true,
+      "top_k": 50
+     }
+    }
+   },
+   "hf_from_pretrained_cfg": null,
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {},
+   "model_class": null,
+   "model_name_or_path": "google/gemma-3-1b-it",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "task_name": "rte",
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml": {
+  "adapter_ctx": [
+   "circuit_tracer",
+   "lightning",
+   "nnsight"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "gemma-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-3-1b-it",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "model",
+    "B_TEXT": "<bos>",
+    "B_TURN": "<start_of_turn>",
+    "E_TURN": "<end_of_turn>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [
+    "input_ids",
+    "attention_mask",
+    "labels"
+   ],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqCTConfig",
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "circuit_tracer_cfg": {
+    "__class__": "interpretune.config.circuit_tracer.CircuitTracerConfig",
+    "analysis_target_tokens": [
+     "\u2581Yes",
+     "\u2581No"
+    ],
+    "backend": "nnsight",
+    "batch_size": 256,
+    "default_edge_threshold": 0.98,
+    "default_node_threshold": 0.8,
+    "desired_logit_prob": 0.95,
+    "dtype": "torch.bfloat16",
+    "graph_output_dir": null,
+    "intervention_apply_activation_function": null,
+    "intervention_constrained_layers": null,
+    "intervention_freeze_attention": null,
+    "intervention_max_influence_norm_scale": false,
+    "intervention_return_activations": false,
+    "intervention_scale_factor": 1.0,
+    "intervention_sign_aware_scale": true,
+    "intervention_sparse": false,
+    "intervention_value": null,
+    "intervention_value_source": "top_feature_scores",
+    "lazy_decoder": true,
+    "lazy_encoder": null,
+    "max_feature_nodes": 8192,
+    "max_n_logits": 10,
+    "model_name": null,
+    "ndif_api_key": null,
+    "nnsight_remote": false,
+    "offload": "cpu",
+    "save_graphs": true,
+    "target_token_ids": null,
+    "transcoder_set": "mwhanna/gemma-scope-2-1b-it/transcoder_all/width_16k_l0_small_affine",
+    "use_neuronpedia": false,
+    "verbose": true
+   },
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma3_1b_it_lightning_ct_ns_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.mixins.HFGenerationConfig",
+     "default_overrides": {},
+     "generate_kwargs": {},
+     "model_config": {
+      "do_sample": true,
+      "max_new_tokens": 3,
+      "output_logits": true,
+      "return_dict_in_generate": true,
+      "top_k": 50
+     }
+    }
+   },
+   "hf_from_pretrained_cfg": null,
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {},
+   "model_class": null,
+   "model_name_or_path": "google/gemma-3-1b-it",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "task_name": "rte",
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gemma3/1b_it_lightning_ns_zs_test.yaml": {
+  "adapter_ctx": [
+   "lightning",
+   "nnsight"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "gemma-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-3-1b-it",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "model",
+    "B_TEXT": "<bos>",
+    "B_TURN": "<start_of_turn>",
+    "E_TURN": "<end_of_turn>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [
+    "input_ids",
+    "attention_mask",
+    "labels"
+   ],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqNNsightConfig",
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma3_1b_it_lightning_ns_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.mixins.HFGenerationConfig",
+     "default_overrides": {},
+     "generate_kwargs": {},
+     "model_config": {
+      "do_sample": true,
+      "max_new_tokens": 3,
+      "output_logits": true,
+      "return_dict_in_generate": true,
+      "top_k": 50
+     }
+    }
+   },
+   "hf_from_pretrained_cfg": null,
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {},
+   "model_class": null,
+   "model_name_or_path": "google/gemma-3-1b-it",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "nnsight_cfg": {
+    "__class__": "interpretune.config.nnsight.NNsightConfig",
+    "api_key": null,
+    "attn_implementation": "eager",
+    "default_padding_side": "left",
+    "device_map": "auto",
+    "dispatch": true,
+    "model_name": "google/gemma-3-1b-it",
+    "remote": false,
+    "tokenizer_kwargs": {
+     "add_bos_token": true,
+     "padding_side": "left"
+    },
+    "torch_dtype": "bfloat16",
+    "trust_remote_code": false
+   },
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "task_name": "rte",
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gemma3/1b_it_ns_zs_test.yaml": {
+  "adapter_ctx": [
+   "core",
+   "nnsight"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "gemma-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-3-1b-it",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "model",
+    "B_TEXT": "<bos>",
+    "B_TURN": "<start_of_turn>",
+    "E_TURN": "<end_of_turn>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [
+    "input_ids",
+    "attention_mask",
+    "labels"
+   ],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqNNsightConfig",
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma3_1b_it_ns_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.mixins.HFGenerationConfig",
+     "default_overrides": {},
+     "generate_kwargs": {},
+     "model_config": {
+      "do_sample": true,
+      "max_new_tokens": 3,
+      "output_logits": true,
+      "return_dict_in_generate": true,
+      "top_k": 50
+     }
+    }
+   },
+   "hf_from_pretrained_cfg": null,
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {},
+   "model_class": null,
+   "model_name_or_path": "google/gemma-3-1b-it",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "nnsight_cfg": {
+    "__class__": "interpretune.config.nnsight.NNsightConfig",
+    "api_key": null,
+    "attn_implementation": "eager",
+    "default_padding_side": "left",
+    "device_map": "auto",
+    "dispatch": true,
+    "model_name": "google/gemma-3-1b-it",
+    "remote": false,
+    "tokenizer_kwargs": {
+     "add_bos_token": true,
+     "padding_side": "left"
+    },
+    "torch_dtype": "bfloat16",
+    "trust_remote_code": false
+   },
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "task_name": "rte",
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gemma3/4b_262k_it_ct_ns_zs_test.yaml": {
+  "adapter_ctx": [
+   "circuit_tracer",
+   "core",
+   "nnsight"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "gemma-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-3-4b-it",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "model",
+    "B_TEXT": "<bos>",
+    "B_TURN": "<start_of_turn>",
+    "E_TURN": "<end_of_turn>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [
+    "input_ids",
+    "attention_mask",
+    "labels"
+   ],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqCTConfig",
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "circuit_tracer_cfg": {
+    "__class__": "interpretune.config.circuit_tracer.CircuitTracerConfig",
+    "analysis_target_tokens": [
+     "\u2581Yes",
+     "\u2581No"
+    ],
+    "backend": "nnsight",
+    "batch_size": 4,
+    "default_edge_threshold": 0.98,
+    "default_node_threshold": 0.8,
+    "desired_logit_prob": 0.95,
+    "dtype": "torch.bfloat16",
+    "graph_output_dir": null,
+    "intervention_apply_activation_function": null,
+    "intervention_constrained_layers": null,
+    "intervention_freeze_attention": null,
+    "intervention_max_influence_norm_scale": false,
+    "intervention_return_activations": false,
+    "intervention_scale_factor": 1.0,
+    "intervention_sign_aware_scale": true,
+    "intervention_sparse": false,
+    "intervention_value": null,
+    "intervention_value_source": "top_feature_scores",
+    "lazy_decoder": true,
+    "lazy_encoder": null,
+    "max_feature_nodes": 1024,
+    "max_n_logits": 10,
+    "model_name": null,
+    "ndif_api_key": null,
+    "nnsight_remote": false,
+    "offload": "cpu",
+    "save_graphs": true,
+    "target_token_ids": null,
+    "transcoder_set": "mwhanna/gemma-scope-2-4b-it/transcoder_all/width_262k_l0_small_affine",
+    "use_neuronpedia": false,
+    "verbose": true
+   },
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma3_4b_it_262k_ct_ns_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.mixins.HFGenerationConfig",
+     "default_overrides": {},
+     "generate_kwargs": {},
+     "model_config": {
+      "do_sample": true,
+      "max_new_tokens": 3,
+      "output_logits": true,
+      "return_dict_in_generate": true,
+      "top_k": 50
+     }
+    }
+   },
+   "hf_from_pretrained_cfg": {
+    "__class__": "interpretune.config.mixins.HFFromPretrainedConfig",
+    "activation_checkpointing": false,
+    "bitsandbytesconfig": {},
+    "default_head": "transformers.AutoModelForCausalLM",
+    "dynamic_module_cfg": {},
+    "enable_input_require_grads": true,
+    "lora_cfg": {},
+    "model_head": "transformers.Gemma3ForConditionalGeneration",
+    "pretrained_kwargs": {
+     "device_map": "auto"
+    },
+    "use_model_cache": false
+   },
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {},
+   "model_class": null,
+   "model_name_or_path": "google/gemma-3-4b-it",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "task_name": "rte",
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gemma3/4b_it_ct_ns_zs_test.yaml": {
+  "adapter_ctx": [
+   "circuit_tracer",
+   "core",
+   "nnsight"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "gemma-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "google/gemma-3-4b-it",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "model",
+    "B_TEXT": "<bos>",
+    "B_TURN": "<start_of_turn>",
+    "E_TURN": "<end_of_turn>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [
+    "input_ids",
+    "attention_mask",
+    "labels"
+   ],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null,
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqCTConfig",
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "circuit_tracer_cfg": {
+    "__class__": "interpretune.config.circuit_tracer.CircuitTracerConfig",
+    "analysis_target_tokens": [
+     "\u2581Yes",
+     "\u2581No"
+    ],
+    "backend": "nnsight",
+    "batch_size": 64,
+    "default_edge_threshold": 0.98,
+    "default_node_threshold": 0.8,
+    "desired_logit_prob": 0.95,
+    "dtype": "torch.bfloat16",
+    "graph_output_dir": null,
+    "intervention_apply_activation_function": null,
+    "intervention_constrained_layers": null,
+    "intervention_freeze_attention": null,
+    "intervention_max_influence_norm_scale": false,
+    "intervention_return_activations": false,
+    "intervention_scale_factor": 1.0,
+    "intervention_sign_aware_scale": true,
+    "intervention_sparse": false,
+    "intervention_value": null,
+    "intervention_value_source": "top_feature_scores",
+    "lazy_decoder": true,
+    "lazy_encoder": null,
+    "max_feature_nodes": 8192,
+    "max_n_logits": 10,
+    "model_name": null,
+    "ndif_api_key": null,
+    "nnsight_remote": false,
+    "offload": "cpu",
+    "save_graphs": true,
+    "target_token_ids": null,
+    "transcoder_set": "mwhanna/gemma-scope-2-4b-it/transcoder_all/width_16k_l0_small_affine",
+    "use_neuronpedia": false,
+    "verbose": true
+   },
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "gemma3_4b_it_ct_ns_zs_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.mixins.HFGenerationConfig",
+     "default_overrides": {},
+     "generate_kwargs": {},
+     "model_config": {
+      "do_sample": true,
+      "max_new_tokens": 3,
+      "output_logits": true,
+      "return_dict_in_generate": true,
+      "top_k": 50
+     }
+    }
+   },
+   "hf_from_pretrained_cfg": {
+    "__class__": "interpretune.config.mixins.HFFromPretrainedConfig",
+    "activation_checkpointing": false,
+    "bitsandbytesconfig": {},
+    "default_head": "transformers.AutoModelForCausalLM",
+    "dynamic_module_cfg": {},
+    "enable_input_require_grads": true,
+    "lora_cfg": {},
+    "model_head": "transformers.Gemma3ForConditionalGeneration",
+    "pretrained_kwargs": {
+     "device_map": "auto"
+    },
+    "use_model_cache": false
+   },
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {},
+   "model_class": null,
+   "model_name_or_path": "google/gemma-3-4b-it",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "task_name": "rte",
+   "tokenizer": null,
+   "tokenizer_id_overrides": {},
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left"
+   },
+   "tokenizer_name": null
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/gpt2/lightning_tl_rte_small_noquant_test.yaml": {
+  "adapter_ctx": [
+   "lightning",
+   "transformer_lens"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": null,
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": false,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "gpt2",
+   "os_env_model_auth_key": null,
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqPromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [
+    "input",
+    "attention_mask",
+    "labels"
+   ],
+   "special_tokens_dict": {},
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {
+    "pad_token_id": 50256
+   },
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input",
+     "attention_mask"
+    ],
+    "padding_side": "right"
+   },
+   "tokenizer_name": "gpt2",
+   "tokenizers_parallelism": true,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqTLConfig",
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "lightning_tl_rte_small_noquant_test",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.transformer_lens.TLensGenerationConfig",
+     "do_sample": true,
+     "eos_token_id": null,
+     "freq_penalty": 0.0,
+     "generate_kwargs": {
+      "do_sample": true,
+      "eos_token_id": null,
+      "freq_penalty": 0.0,
+      "max_new_tokens": 1,
+      "output_logits": null,
+      "padding_side": null,
+      "prepend_bos": null,
+      "return_dict_in_generate": null,
+      "return_type": "input",
+      "stop_at_eos": true,
+      "temperature": 1.0,
+      "top_k": 50,
+      "top_p": 1.0,
+      "use_past_kv_cache": true,
+      "verbose": true
+     },
+     "max_new_tokens": 1,
+     "output_logits": null,
+     "padding_side": null,
+     "prepend_bos": null,
+     "return_dict_in_generate": null,
+     "return_type": "input",
+     "stop_at_eos": true,
+     "temperature": 1.0,
+     "top_k": 50,
+     "top_p": 1.0,
+     "use_past_kv_cache": true,
+     "verbose": true
+    }
+   },
+   "hf_from_pretrained_cfg": {
+    "__class__": "interpretune.config.mixins.HFFromPretrainedConfig",
+    "activation_checkpointing": false,
+    "bitsandbytesconfig": {},
+    "default_head": "transformers.AutoModelForCausalLM",
+    "dynamic_module_cfg": {},
+    "enable_input_require_grads": true,
+    "lora_cfg": {},
+    "model_head": "transformers.GPT2LMHeadModel",
+    "pretrained_kwargs": {},
+    "use_model_cache": false
+   },
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {},
+   "model_class": null,
+   "model_name_or_path": "gpt2",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "optimizer_init": {},
+   "os_env_model_auth_key": null,
+   "pl_lrs_cfg": {},
+   "task_name": "rte",
+   "tl_cfg": {
+    "__class__": "interpretune.config.transformer_lens.ITLensFromPretrainedConfig",
+    "center_unembed": true,
+    "center_writing_weights": true,
+    "checkpoint_index": null,
+    "checkpoint_value": null,
+    "default_padding_side": "right",
+    "default_prepend_bos": true,
+    "device": "cuda",
+    "dtype": "bfloat16",
+    "fold_ln": true,
+    "fold_value_biases": true,
+    "hf_model": null,
+    "model_name": "gpt2-small",
+    "move_to_device": true,
+    "n_devices": 1,
+    "refactor_factored_attn_matrices": false,
+    "tokenizer": null,
+    "use_bridge": true
+   },
+   "tokenizer": null,
+   "tokenizer_id_overrides": {
+    "pad_token_id": 50256
+   },
+   "tokenizer_kwargs": {
+    "add_bos_token": true,
+    "local_files_only": false,
+    "model_input_names": [
+     "input",
+     "attention_mask"
+    ],
+    "padding_side": "right"
+   },
+   "tokenizer_name": "gpt2"
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ },
+ "experiments/rte_boolq/llama3_2/lightning_rte_3b_qlora_zero_shot_test_only.yaml": {
+  "adapter_ctx": [
+   "lightning"
+  ],
+  "datamodule_cfg": {
+   "__class__": "interpretune.config.datamodule.ITDataModuleConfig",
+   "cust_tokenization_pattern": "llama3-chat",
+   "data_collator_cfg": {
+    "collator_class": "transformers.DataCollatorWithPadding"
+   },
+   "dataloader_kwargs": {
+    "num_workers": 0,
+    "pin_memory": false
+   },
+   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "defer_model_init": false,
+   "enable_datasets_cache": true,
+   "eval_batch_size": 2,
+   "local_fast_tokenizer_path": null,
+   "max_seq_length": 2048,
+   "model_name_or_path": "meta-llama/Llama-3.2-3B-Instruct",
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "prepare_data_map_cfg": {
+    "batched": true
+   },
+   "prompt_cfg": {
+    "ASSISTANT_ROLE": "assistant",
+    "B_HEADER": "<|start_header_id|>",
+    "B_TEXT": "<|begin_of_text|>",
+    "E_HEADER": "<|end_header_id|>",
+    "E_TEXT": "<|end_of_text|>",
+    "E_TOOL_MSG": "<|eom_id|>",
+    "E_TURN": "<|eot_id|>",
+    "SYS_ROLE": "system",
+    "TOOL_ROLE": "ipython",
+    "TOOL_TAG": "<|python_tag|>",
+    "USER_ROLE": "user",
+    "__class__": "it_examples.example_prompt_configs.RTEBoolqLlama3PromptConfig",
+    "ctx_question_join": "Does the previous passage imply that ",
+    "cust_task_prompt": null,
+    "question_suffix": "? Answer with only one word, either Yes or No.",
+    "sys_prompt": "You are a helpful assistant."
+   },
+   "remove_unused_columns": true,
+   "signature_columns": [],
+   "special_tokens_dict": {
+    "pad_token": "<|finetune_right_pad_id|>"
+   },
+   "task_name": "rte",
+   "text_fields": null,
+   "tokenizer": null,
+   "tokenizer_id_overrides": {
+    "pad_token_id": 128004
+   },
+   "tokenizer_kwargs": {
+    "add_bos_token": false,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left",
+    "use_fast": true
+   },
+   "tokenizer_name": null,
+   "tokenizers_parallelism": false,
+   "train_batch_size": 2
+  },
+  "datamodule_cls": "it_examples.experiments.rte_boolq.RTEBoolqDataModule",
+  "module_cfg": {
+   "__class__": "it_examples.experiments.rte_boolq.RTEBoolqConfig",
+   "analysis_cfg": null,
+   "auto_comp_cfg": null,
+   "classification_mapping": null,
+   "classification_mapping_indices": null,
+   "compatibility_attrs": {},
+   "core_log_dir": null,
+   "cust_fwd_kwargs": {},
+   "debug_lm_cfg": {
+    "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+    "debug_raw_labels": null,
+    "debug_raw_preds": null,
+    "debug_raw_sequences": null,
+    "enabled": false,
+    "raw_debug_sequences": []
+   },
+   "defer_model_init": false,
+   "entailment_mapping": [
+    "Yes",
+    "No"
+   ],
+   "entailment_mapping_indices": null,
+   "experiment_tag": "default",
+   "generative_step_cfg": {
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig",
+    "enabled": true,
+    "entailment_mapping": [
+     "Yes",
+     "No"
+    ],
+    "entailment_mapping_indices": null,
+    "input_inspection_enabled": true,
+    "lm_generation_cfg": {
+     "__class__": "interpretune.config.mixins.HFGenerationConfig",
+     "default_overrides": {},
+     "generate_kwargs": {},
+     "model_config": {
+      "max_new_tokens": 5,
+      "output_logits": true,
+      "pad_token_id": 128004,
+      "return_dict_in_generate": true
+     }
+    }
+   },
+   "hf_from_pretrained_cfg": {
+    "__class__": "interpretune.config.mixins.HFFromPretrainedConfig",
+    "activation_checkpointing": false,
+    "bitsandbytesconfig": {
+     "bnb_4bit_compute_dtype": "bfloat16",
+     "bnb_4bit_quant_type": "nf4",
+     "bnb_4bit_use_double_quant": true,
+     "load_in_4bit": true
+    },
+    "default_head": "transformers.AutoModelForCausalLM",
+    "dynamic_module_cfg": {},
+    "enable_input_require_grads": true,
+    "lora_cfg": {
+     "bias": "none",
+     "lora_alpha": 32,
+     "lora_dropout": 0.05,
+     "r": 8,
+     "target_modules": [
+      "q_proj",
+      "v_proj"
+     ],
+     "task_type": "CAUSAL_LM"
+    },
+    "model_head": "transformers.LlamaForCausalLM",
+    "pretrained_kwargs": {
+     "device_map": 0
+    },
+    "use_model_cache": false
+   },
+   "log_env_details": true,
+   "log_to_file": true,
+   "log_to_stream": true,
+   "logging_level": "INFO",
+   "lr_scheduler_init": {},
+   "memprofiler_cfg": {
+    "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+    "cuda_allocator_history": false,
+    "enable_memory_hooks": true,
+    "enable_saved_tensors_hooks": true,
+    "enabled": false,
+    "enabled_funcs": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+     "cpu": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ],
+     "cuda_allocator_history": [
+      "predict_step",
+      "test_step",
+      "training_step",
+      "validation_step"
+     ]
+    },
+    "memory_hooks": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+     "post_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_post_forward"
+     ],
+     "pre_forward_hooks": [
+      "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+     ],
+     "reset_state_hooks": [
+      "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+     ]
+    },
+    "retain_hooks_for_funcs": [
+     "predict_step",
+     "test_step",
+     "training_step",
+     "validation_step"
+    ],
+    "save_dir": null,
+    "save_hook_attrs": [
+     "rss_pre_forward",
+     "rss_post_forward",
+     "rss_diff",
+     "npp_pre_forward",
+     "npp_post_forward",
+     "npp_diff"
+    ],
+    "saved_tensors_funcs": [
+     "interpretune.extensions.memprofiler._npp_hook",
+     "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+    ],
+    "schedule": {
+     "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+     "max_step": null,
+     "warmup_steps": 0
+    }
+   },
+   "model_cfg": {
+    "_attn_implementation": "eager"
+   },
+   "model_class": null,
+   "model_name_or_path": "meta-llama/Llama-3.2-3B-Instruct",
+   "neuronpedia_cfg": {
+    "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+    "auto_transform": true,
+    "backup_original": false,
+    "default_metadata": {
+     "info": {
+      "creator_name": "interpretune-user",
+      "creator_url": "https://github.com/speediedan/interpretune",
+      "generator": {
+       "name": "Interpretune Circuit Tracer",
+       "url": "https://github.com/speediedan/interpretune",
+       "version": "latest"
+      }
+     }
+    },
+    "default_slug_prefix": "it-generated",
+    "dynamic_np_schema_validation": false,
+    "enabled": false,
+    "graph_validation_sample_size": 10,
+    "pretty_print_json": true
+   },
+   "optimizer_init": {},
+   "os_env_model_auth_key": "HF_GATED_PUBLIC_REPO_AUTH_KEY",
+   "pl_lrs_cfg": {},
+   "task_name": "rte",
+   "tokenizer": null,
+   "tokenizer_id_overrides": {
+    "pad_token_id": 128004
+   },
+   "tokenizer_kwargs": {
+    "add_bos_token": false,
+    "local_files_only": false,
+    "model_input_names": [
+     "input_ids",
+     "attention_mask"
+    ],
+    "padding_side": "left",
+    "use_fast": true
+   },
+   "tokenizer_name": null
+  },
+  "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
+ }
+}

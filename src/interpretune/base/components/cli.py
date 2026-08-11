@@ -16,12 +16,18 @@ import torch
 from transformers import logging as transformers_logging
 from jsonargparse import ActionConfigFile, ArgumentParser, Namespace
 
-from interpretune.config import ITSharedConfig, SessionRunnerCfg
+from interpretune.config import SessionRunnerCfg
 from interpretune.base import ITDataModule
 from interpretune.protocol import InterpretunableType
-from interpretune.session import ITSession, ITSessionConfig
+from interpretune.session import ITSession
 
-from interpretune.utils import rank_zero_info, rank_zero_warn, _DOTENV_AVAILABLE, _LIGHTNING_AVAILABLE
+from interpretune.utils import (
+    MisconfigurationException,
+    rank_zero_info,
+    rank_zero_warn,
+    _DOTENV_AVAILABLE,
+    _LIGHTNING_AVAILABLE,
+)
 from interpretune.protocol import ArgsType
 
 if TYPE_CHECKING:
@@ -44,25 +50,62 @@ def _select_seed_randomly(min_seed_value: int = min_seed_value, max_seed_value: 
 
 class ITSessionMixin:
     def add_base_args(self, parser: ArgumentParser) -> None:
-        """Add and link args to the parser."""
-        # NOTE [Interpretune Dataclass-Oriented Configuration]:
-        # For base Interpretune classes, we use configuration dataclasses (e.g. `ITConfig`, `ITDataModuleConfig`) rather
-        # than passing numerous arguments to the relevant constructors. Aggregate feedback from other ML framework
-        # usage arguably suggests this approach makes instantiation both more flexible and intuitive. (e.g. nested
-        # configuration, configuration inheritance, modular `post_init` methods etc.)
-        # Also note that making these dataclasses subclass arguments maximizes flexibility of this experimental
-        # framework at the expense of modest marginal configuration verbosity (i.e. `init_args` nesting).
-
-        # link our datamodule and module shared configuration
-        skey = "session_cfg"
-        for attr in ITSharedConfig.__dataclass_fields__:
-            parser.link_arguments(f"{skey}.datamodule_cfg.init_args.{attr}", f"{skey}.module_cfg.init_args.{attr}")
-        parser.link_arguments(skey, f"it_session.{skey}", apply_on="instantiate")
+        """Add base args to the parser (session construction happens via the unified loader, not the parser)."""
 
     def add_arguments_to_parser(self, parser: ArgumentParser) -> None:
-        parser.add_class_arguments(ITSession, "it_session", instantiate=True, sub_configs=True)
-        parser.add_class_arguments(ITSessionConfig, "session_cfg", instantiate=True, sub_configs=True)
+        # NOTE [Interpretune One-Door Session Configuration]:
+        # The session subtree is parsed as a PLAIN MAPPING: jsonargparse is an argv/config-file shim
+        # here, and session construction goes through the one door
+        # (`interpretune.config.loading.load_session_cfg`, hub design v3 §11.4) — the same loader that
+        # serves hub-fetched and examples/ configuration bodies. The former per-field link_arguments
+        # DAG (ITSharedConfig propagation) is retired: the loader's shared_config handling is the one
+        # merge site.
+        parser.add_argument("--session_cfg", type=dict, default={}, help="Session configuration mapping.")
         self.add_base_args(parser)
+
+    @staticmethod
+    def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+        """The argv shim's defaults-dir merge (the ONLY merge outside the loader, by design §11.4).
+
+        Nested mappings merge per-key with the overlay winning; lists and scalars REPLACE wholesale (list concatenation
+        invites double-applied callbacks/schedules). Published/loader bodies are self-contained and never pass through
+        here.
+        """
+        merged = dict(base)
+        for key, value in overlay.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = ITSessionMixin._deep_merge(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+
+    def _session_mapping_from_sources(
+        self, config_files: Sequence[Any], default_config_files: Sequence[Any] | None
+    ) -> dict[str, Any]:
+        """Assemble the session mapping: defaults-dir files first, then explicit configs, in order."""
+        import yaml as _yaml
+
+        mapping: dict[str, Any] = {}
+        for source in [*(default_config_files or []), *(config_files or [])]:
+            source_path = Path(str(source))
+            if not source_path.is_file():
+                continue
+            body = _yaml.safe_load(source_path.read_text(encoding="utf-8")) or {}
+            if isinstance(body, dict) and isinstance(body.get("session_cfg"), dict):
+                mapping = self._deep_merge(mapping, body["session_cfg"])
+        return mapping
+
+    def build_it_session(self, session_mapping: dict[str, Any]) -> ITSession:
+        """Construct the ITSession from a session mapping via the unified loader."""
+        from interpretune.config.loading import load_session_cfg, session_body_from_cli_mapping
+
+        if not session_mapping:
+            raise MisconfigurationException("No `session_cfg` mapping was provided by the parsed configuration.")
+        # legacy session_cfg-shaped mappings translate to the one-door body; already-body-shaped
+        # mappings (post-4b flattened configs) pass through untranslated
+        mapping = dict(session_mapping)
+        body = mapping if "registered_cfg" in mapping else session_body_from_cli_mapping(mapping)
+        return ITSession(load_session_cfg(body))
 
     def _get(self, config: Namespace, key: str, default: Any | None = None) -> Any:
         """Utility to get a config value which might be inside a subcommand."""
@@ -181,17 +224,24 @@ class ITCLI(ITSessionMixin):
         )
 
     def add_base_args(self, parser: ArgumentParser) -> None:
-        """Adds core arguments to the parser."""
+        """Adds core arguments to the parser (parse-only; construction happens after the session exists)."""
         super().add_base_args(parser)
+        # object-valued params (run_cfg / it_session) are constructed after the loader builds the
+        # session, so they are skipped from the parse surface rather than link-supplied
         parser.add_class_arguments(
             self.runner_class,  # type: ignore[arg-type]
             "runner",
-            instantiate=True,
+            instantiate=False,
             sub_configs=True,
+            skip={"run_cfg"},
         )
-        parser.add_class_arguments(self.run_cfg, "run_cfg", instantiate=True, sub_configs=True)  # type: ignore[arg-type]
-        parser.link_arguments("it_session", "run_cfg.it_session", apply_on="instantiate")
-        parser.link_arguments("run_cfg", "runner.run_cfg", apply_on="instantiate")
+        parser.add_class_arguments(
+            self.run_cfg,  # type: ignore[arg-type]
+            "run_cfg",
+            instantiate=False,
+            sub_configs=True,
+            skip={"it_session", "module", "datamodule"},
+        )
 
     def parse_arguments(self, parser: ArgumentParser, args: ArgsType) -> None:
         """Parses command line arguments and stores it in ``self.config``."""
@@ -222,11 +272,24 @@ class ITCLI(ITSessionMixin):
         """Implement to run some code before instantiating the classes."""
 
     def instantiate_classes(self) -> None:
-        """Instantiates the classes and sets their attributes."""
+        """Builds the session via the unified loader, then the run config and runner around it."""
         self.config_init = self.parser.instantiate_classes(self.config)
-        self.datamodule = self._get(self.config_init.it_session, "datamodule")
-        self.module = self._get(self.config_init.it_session, "module")
-        self.runner = self._get(self.config_init, "runner")
+        default_files = self.parser_kwargs.get("default_config_files")
+        session_mapping = self._session_mapping_from_sources(
+            self._get(self.config, "config") or [], default_files if isinstance(default_files, (list, tuple)) else None
+        )
+        session_mapping = self._deep_merge(session_mapping, dict(self._get(self.config, "session_cfg") or {}))
+        self.it_session = self.build_it_session(session_mapping)
+        self.datamodule = self.it_session.datamodule
+        self.module = self.it_session.module
+        run_cfg_ns = self._get(self.config_init, "run_cfg")
+        run_cfg_kwargs = run_cfg_ns.as_dict() if hasattr(run_cfg_ns, "as_dict") else dict(run_cfg_ns or {})
+        run_cfg_kwargs.pop("it_session", None)
+        run_cfg = self.run_cfg(it_session=self.it_session, **run_cfg_kwargs)  # type: ignore[operator]
+        runner_ns = self._get(self.config_init, "runner")
+        runner_kwargs = runner_ns.as_dict() if hasattr(runner_ns, "as_dict") else dict(runner_ns or {})
+        runner_kwargs.pop("run_cfg", None)
+        self.runner = self.runner_class(run_cfg=run_cfg, **runner_kwargs)
 
 
 def env_setup() -> None:
@@ -325,13 +388,25 @@ if _LIGHTNING_AVAILABLE:
         core_to_lightning_cli_map = {"data": "it_session.datamodule", "model": "it_session.module"}
 
         def instantiate_classes(self) -> None:
+            # the session is built FIRST via the unified loader (one door); Lightning then instantiates
+            # the trainer and resolves data/model from the built session through `_get`'s mapping
+            sub_config = self.config.get(str(self.subcommand), self.config)  # type: ignore[attr-defined]
+            parser_kwargs = getattr(self, "parser_kwargs", None) or {}
+            defaults = (
+                parser_kwargs.get(str(self.subcommand), parser_kwargs) or {}  # type: ignore[attr-defined]
+            ).get("default_config_files")
+            session_mapping = self._session_mapping_from_sources(  # type: ignore[attr-defined]
+                sub_config.get("config") or [], defaults if isinstance(defaults, (list, tuple)) else None
+            )
+            session_mapping = ITSessionMixin._deep_merge(session_mapping, dict(sub_config.get("session_cfg") or {}))
+            self.it_session = self.build_it_session(session_mapping)  # type: ignore[attr-defined]  # mixin provides build_it_session
             super().instantiate_classes()  # type: ignore[misc]  # mixin provides instantiate_classes
             # create a convenient alias for the lightning model attribute that uses a standard `module` reference
             self.module = weakref.proxy(self.model)  # type: ignore[attr-defined]  # mixin provides model
 
-        def _it_session_cfg(self, config, key) -> InterpretunableType | None:
+        def _it_session_object_attr(self, key) -> InterpretunableType | None:
             try:
-                attr_val = reduce(getattr, key.split("."), config)
+                attr_val = reduce(getattr, key.split(".")[1:], self.it_session)  # strip the "it_session." prefix
             except AttributeError:
                 attr_val = None
             return attr_val
@@ -339,7 +414,7 @@ if _LIGHTNING_AVAILABLE:
         def _get(self, config: Namespace, key: str, default: Any | None = None) -> Any:
             """Utility to get a config value which might be inside a subcommand."""
             if target_key := self.core_to_lightning_cli_map.get(key, None):
-                return self._it_session_cfg(config.get(str(self.subcommand), config), target_key)  # type: ignore[attr-defined]  # mixin provides subcommand
+                return self._it_session_object_attr(target_key)
             return config.get(str(self.subcommand), config).get(key, default)  # type: ignore[attr-defined]  # mixin provides subcommand
 
     class LightningITCLI(LightningCLIAdapter, ITSessionMixin, LightningCLI):

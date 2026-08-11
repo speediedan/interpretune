@@ -12,30 +12,26 @@ from __future__ import annotations
 
 import pytest
 
+import json
+from pathlib import Path
+
 from tests.core.loader_equivalence import (
-    capture_session_cfg_via_cli,
     cli_experiment_configs,
     session_spec,
 )
 
 CONFIGS = cli_experiment_configs()
+BASELINE_SPECS = json.loads((Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text())
+
+
+def _baseline_for(config_path):
+    rel = str(config_path.relative_to(config_path.parents[3]))
+    return BASELINE_SPECS[rel]
 
 
 def test_all_cli_experiment_configs_discovered():
     """The harness must cover the full experiment-config surface; a moved/removed config shrinks it loudly."""
     assert len(CONFIGS) == 15, sorted(str(c) for c in CONFIGS)
-
-
-@pytest.mark.parametrize("config_path", CONFIGS, ids=lambda p: f"{p.parent.name}/{p.stem}")
-def test_old_path_capture_baseline(config_path):
-    """Every experiment config instantiates a complete session_cfg via the current jsonargparse surface."""
-    spec = session_spec(capture_session_cfg_via_cli([config_path]))
-    assert spec["adapter_ctx"], "adapter_ctx must be non-empty"
-    assert spec["datamodule_cfg"]["__class__"] and spec["module_cfg"]["__class__"]
-    assert spec["datamodule_cls"] and spec["module_cls"]
-    # shared-field link propagation is the CLI behavior the unified loader must reproduce exactly:
-    # model_name_or_path is an ITSharedConfig field linked datamodule -> module at parse time
-    assert spec["module_cfg"].get("model_name_or_path") == spec["datamodule_cfg"].get("model_name_or_path")
 
 
 from tests.core.loader_equivalence import (  # noqa: E402
@@ -87,12 +83,16 @@ from interpretune.config.loading import load_session_cfg, session_body_from_cli_
 
 
 @pytest.mark.parametrize("config_path", CONFIGS, ids=lambda p: f"{p.parent.name}/{p.stem}")
-def test_unified_loader_matches_cli_baseline(config_path):
-    """Namespace-diff equivalence: shim-translated body through load_session_cfg == jsonargparse path."""
-    baseline = session_spec(capture_session_cfg_via_cli([config_path]))
+def test_unified_loader_matches_frozen_baseline(config_path):
+    """The loader must keep producing what the (now-removed) jsonargparse path produced.
+
+    45/45 live equivalence was proven BEFORE the old path was removed; its final captures are frozen as a committed
+    fixture, so post-removal regressions in the loader (or accidental semantic edits to the experiment configs) still
+    fail against the validated baseline.
+    """
     mapping = yaml.safe_load(config_path.read_text(encoding="utf-8"))["session_cfg"]
     loaded = load_session_cfg(session_body_from_cli_mapping(mapping))
-    assert session_spec(loaded) == baseline
+    assert json.loads(json.dumps(session_spec(loaded), default=str)) == _baseline_for(config_path)
 
 
 @pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
@@ -120,30 +120,6 @@ def test_unified_loader_matches_factory_core(config_path):
     assert normalize(loaded.module_cls) == normalize(m_cls)
     # AutoComp parity travels with the factories: synthesized classes must match by name on both paths
     assert type(loaded.module_cfg).__qualname__ == type(m_cfg).__qualname__
-
-
-def test_harness_link_fields_match_cli_wiring():
-    """Bridge-period decorative-check guard (umbrella 4a review note 3).
-
-    The baseline capture MIRRORS ITSessionMixin's link wiring rather than importing it, so if cli.py's linked-field set
-    drifts before the swap-in completes, the harness would silently diverge from the real CLI. Pin the two together: the
-    capture links exactly the ITSharedConfig field set, and the mixin's add_base_args must link exactly that set too
-    (source-inspected, not re-mirrored).
-    """
-    import inspect
-
-    from interpretune.base.components.cli import ITSessionMixin
-    from interpretune.config.shared import ITSharedConfig
-
-    src = inspect.getsource(ITSessionMixin.add_base_args)
-    assert "ITSharedConfig.__dataclass_fields__" in src, (
-        "ITSessionMixin.add_base_args no longer links over ITSharedConfig.__dataclass_fields__ — "
-        "update tests/core/loader_equivalence.capture_session_cfg_via_cli to match the new wiring."
-    )
-    # the mixin builds the link paths from f-strings over skey="session_cfg"
-    assert 'skey = "session_cfg"' in src
-    assert "{skey}.datamodule_cfg.init_args.{attr}" in src and "{skey}.module_cfg.init_args.{attr}" in src
-    assert len(ITSharedConfig.__dataclass_fields__) > 0
 
 
 class TestOneGrammarRecursionRule:
