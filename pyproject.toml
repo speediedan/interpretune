@@ -44,7 +44,7 @@ dependencies = [
 [project.urls]
 "Homepage" = "https://github.com/speediedan/interpretune"
 "Bug Tracker" = "https://github.com/speediedan/interpretune/issues"
-"Documentation" = "https://interpretune.readthedocs.io/en/stable/"
+"Documentation" = "https://interpretune.org/en/latest/"
 "Source Code" = "https://github.com/speediedan/interpretune"
 
 [project.entry-points."console_scripts"]

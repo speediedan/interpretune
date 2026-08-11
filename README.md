@@ -7,7 +7,7 @@
 *Composable, shareable latent-space analysis mutually intelligible to humans and agents.*
 
 [![CI](https://github.com/speediedan/interpretune/actions/workflows/ci_test-full.yml/badge.svg)](https://github.com/speediedan/interpretune/actions/workflows/ci_test-full.yml)
-[![Docs](https://readthedocs.org/projects/interpretune/badge/?version=latest)](https://interpretune.readthedocs.io/en/latest/)
+[![Docs](https://readthedocs.org/projects/interpretune/badge/?version=latest)](https://interpretune.org/en/latest/)
 [![codecov](https://codecov.io/gh/speediedan/interpretune/branch/main/graph/badge.svg)](https://codecov.io/gh/speediedan/interpretune)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://github.com/speediedan/interpretune/blob/main/pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](./LICENSE)
@@ -62,7 +62,7 @@ is planned.
 | **Extensions** | Cross-cutting capabilities: memory profiling, debug generation, Neuronpedia dashboard/explanation integration. |
 
 A minimal flavor of the composition pattern (see the
-[docs](https://interpretune.readthedocs.io/en/latest/) and `src/it_examples/notebooks/` demos for
+[docs](https://interpretune.org/en/latest/) and `src/it_examples/notebooks/` demos for
 runnable versions):
 
 ```python
@@ -157,11 +157,11 @@ Jacobian-space (J-lens) analysis support
 reflection heuristics for more sample-efficient RL exploration), epistemic-coherence objectives,
 reflective cognition for counterfactuals via latent-state evaluation, meta-latent world-model
 interfaces, and multimodal world-model support — see the
-[roadmap docs](https://interpretune.readthedocs.io/en/latest/roadmap.html).
+[roadmap docs](https://interpretune.org/en/latest/roadmap.html).
 
 ## Documentation
 
-- [Latest docs](https://interpretune.readthedocs.io/en/latest/) — concepts, usage guides, design
+- [Latest docs](https://interpretune.org/en/latest/) — concepts, usage guides, design
   notes, API reference
 - Demo notebooks: `src/it_examples/notebooks/` (circuit-tracer analysis + concept-steering demos,
   SAE-Lens and NNsight adapter examples, with Colab badges on published copies)
