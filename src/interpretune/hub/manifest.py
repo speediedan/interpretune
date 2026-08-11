@@ -14,7 +14,7 @@ import yaml
 
 IT_COMPONENT_MANIFEST = "it_component.yaml"
 SUPPORTED_SCHEMA_VERSIONS = (1,)
-KNOWN_KINDS = ("module", "datamodule", "ops", "adapters")
+KNOWN_KINDS = ("module", "datamodule", "ops", "adapters", "promptconfigs")
 
 
 class ComponentManifestError(ValueError):
@@ -53,6 +53,13 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
         raise ComponentManifestError(f"{source}: `kinds` must be a non-empty subset of {KNOWN_KINDS}, got {kinds!r}")
     if "module" in kinds and "configs" not in (manifest.get("module") or {}):
         raise ComponentManifestError(f"{source}: kind `module` requires a `module.configs` index")
+    if "promptconfigs" in kinds:
+        pc = manifest.get("promptconfigs") or {}
+        if not pc.get("entrypoint") or not isinstance(pc.get("definitions"), dict) or not pc["definitions"]:
+            raise ComponentManifestError(
+                f"{source}: kind `promptconfigs` requires a `promptconfigs.entrypoint` and a non-empty "
+                "`promptconfigs.definitions` index (definition name -> metadata; one repo, many definitions)."
+            )
     return manifest
 
 

@@ -308,6 +308,11 @@ def _admits_plain_dict(declared) -> bool:
 
 def instantiate_nested(c: Dict | List, skip_keys: Set | None = None):
     skip_keys = skip_keys or set()
+    if isinstance(c, dict) and "compose_ref" in c:
+        # cross-repo prompt-config composition (design §11.5): one grammar, one extension point
+        from interpretune.hub.promptconfigs import instantiate_prompt_cfg_node
+
+        return instantiate_prompt_cfg_node(c)
     if isinstance(c, dict):
         child_skip: Set = set()
         if "class_path" in c:
@@ -340,9 +345,14 @@ def apply_defaults(cfg: ITConfig | ITDataModuleConfig, defaults: Dict, force_ove
 
 def itdm_cfg_factory(cfg: Dict, shared_config: Dict, defaults_func: Callable | None = None):
     prompt_cfg = cfg.get("prompt_cfg", {})
-    # instantiate supported class_path refs
+    # instantiate supported class_path refs (compose_ref EXTENDS class_path instantiation: the
+    # class_path task schema composes with a hub-referenced model-prompt definition, design §11.5)
     # TODO: add path for specifying custom datamodule_cfg subclass when necessary
-    if "class_path" in prompt_cfg:
+    if "compose_ref" in prompt_cfg:
+        from interpretune.hub.promptconfigs import instantiate_prompt_cfg_node
+
+        cfg["prompt_cfg"] = instantiate_prompt_cfg_node(prompt_cfg)
+    elif "class_path" in prompt_cfg:
         cfg["prompt_cfg"] = instantiate_class(prompt_cfg)
     instantiated_cfg = ITDataModuleConfig(**shared_config, **cfg)
     if defaults_func:

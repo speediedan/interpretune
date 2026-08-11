@@ -1,14 +1,22 @@
+"""Model-family prompt-config definitions (interpretune ``promptconfigs`` component entrypoint).
+
+These are the EXCEPTIONS to chat-template-first prompt construction (hub design §11.5): manual
+token-spelling dataclasses for provenance-sensitive workflows and research-specific formatting. Most
+models need no published prompt artifacts at all — ``interpretune.config.ChatTemplatePromptConfig``
+delegates to the tokenizer's native chat template.
+
+This module is SELF-CONTAINED by design: no interpretune/it_examples imports, so the published copy
+imports identically from a hub cache snapshot. Task modules compose these definitions with their own
+task-level prompt schemas via ``compose_ref`` (``<org>/<repo>#<name>``).
+"""
+
 from dataclasses import dataclass
 from typing import Any
-from it_examples.experiments.rte_boolq import RTEBoolqPromptConfig
 
 ####################################
 # Gemma (unified for Gemma2/Gemma3)
 ####################################
 # Gemma2 and Gemma3 instruction-tuned models use the same <start_of_turn>/<end_of_turn> chat template.
-# NOTE: chat-templated construction via HF `tokenizer.apply_chat_template` is available as the
-#       opt-in `apply_chat_template_fn` path (manual construction remains the default for prompt
-#       provenance; see docs Design Rationale — resolved interpretune#202)
 
 
 @dataclass(kw_only=True)
@@ -51,20 +59,6 @@ class GemmaPromptConfig:
         return sequence
 
 
-# Backward-compatible aliases
-Gemma2PromptConfig = GemmaPromptConfig
-Gemma3PromptConfig = GemmaPromptConfig
-
-
-@dataclass(kw_only=True)
-class RTEBoolqGemmaPromptConfig(GemmaPromptConfig, RTEBoolqPromptConfig): ...
-
-
-# Backward-compatible aliases
-RTEBoolqGemma2PromptConfig = RTEBoolqGemmaPromptConfig
-RTEBoolqGemma3PromptConfig = RTEBoolqGemmaPromptConfig
-
-
 ####################################
 # Llama3
 ####################################
@@ -103,7 +97,3 @@ class Llama3PromptConfig:
         else:
             sequence = task_prompt.strip()
         return sequence
-
-
-@dataclass(kw_only=True)
-class RTEBoolqLlama3PromptConfig(Llama3PromptConfig, RTEBoolqPromptConfig): ...

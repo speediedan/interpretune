@@ -50,4 +50,14 @@ def generate_component_card(manifest: dict, repo_id: str, summary: str | None = 
             "",
             "Resolution is manifest-first: fetch `it_component.yaml`, then only the configuration you need.",
         ]
+    definitions = (manifest.get("promptconfigs") or {}).get("definitions") or {}
+    if definitions:
+        lines += ["", "## Prompt-config definitions", ""]
+        for name in sorted(definitions):
+            desc = (definitions[name] or {}).get("description")
+            lines.append(f"- `{name}`" + (f" — {desc}" if desc else ""))
+        lines += [
+            "",
+            "Reference a definition from a task configuration via `compose_ref: <org>/<repo>#<name>`.",
+        ]
     return ModelCard(f"---\n{meta.to_yaml()}\n---\n\n" + "\n".join(lines) + "\n")

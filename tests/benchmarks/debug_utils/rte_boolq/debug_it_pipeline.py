@@ -59,7 +59,7 @@ def main():
         enable_datasets_cache=True,
         prepare_data_map_cfg={"batched": True},
         data_collator_cfg={"collator_class": "transformers.DataCollatorWithPadding"},
-        prompt_cfg={"class_path": "it_examples.example_prompt_configs.RTEBoolqGemma2PromptConfig"},
+        prompt_cfg={"class_path": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig"},
         tokenizers_parallelism=False,
         tokenizer_kwargs={
             "local_files_only": False,

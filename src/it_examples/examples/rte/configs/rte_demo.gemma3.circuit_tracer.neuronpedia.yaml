@@ -22,7 +22,7 @@ shared_config:
 registered_cfg:
   datamodule_cfg:
     prompt_cfg:
-      class_path: it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig
+      class_path: it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig
     signature_columns: ['input', 'labels']
     text_fields: ["premise", "hypothesis"]
     enable_datasets_cache: False

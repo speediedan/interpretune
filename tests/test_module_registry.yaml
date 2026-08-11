@@ -567,7 +567,7 @@ rte.gemma2.core:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig
       signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
@@ -1055,7 +1055,7 @@ rte.gemma3.core:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig
       signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
@@ -1192,7 +1192,8 @@ rte.llama3.core:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.example_prompt_configs.RTEBoolqLlama3PromptConfig
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        compose_ref: speediedan/prompt-configs#Llama3PromptConfig
       signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
@@ -1262,7 +1263,8 @@ rte.llama3.transformer_lens:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.example_prompt_configs.RTEBoolqLlama3PromptConfig
+        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        compose_ref: speediedan/prompt-configs#Llama3PromptConfig
       signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True

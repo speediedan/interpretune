@@ -48,7 +48,7 @@ from interpretune.utils.neuronpedia_explanations import (
     write_cached_feature_activations,
 )
 
-from it_examples.example_prompt_configs import GemmaPromptConfig
+from it_examples.examples.prompt_configs.prompt_configs import GemmaPromptConfig
 from it_examples.utils.nb_ui_utils import display_layer_divergence_summary, display_logit_drift_summary
 from it_examples.experiments.notebook.config import get_config_value
 from it_examples.experiments.notebook.concept_direction.analysis.concept_direction_analysis import (

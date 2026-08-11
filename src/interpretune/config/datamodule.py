@@ -25,6 +25,54 @@ class PromptConfig(ITSerializableCfg):
 
 
 @dataclass(kw_only=True)
+class ChatTemplatePromptConfig(PromptConfig):
+    """Chat-template-first prompt construction (hub design §11.5): delegate to the tokenizer's native template.
+
+    The default prompt path: most models need ZERO published prompt artifacts because the tokenizer
+    already carries the chat template. Per-model token-spelling dataclasses become the exception
+    (template-less base models, research-specific formatting) and are published as ``promptconfigs``
+    components. The owning datamodule binds its tokenizer via :meth:`bind_tokenizer`; unbound (or for
+    a tokenizer without a chat template) construction falls back to the plain stripped prompt.
+    """
+
+    add_generation_prompt: bool = True
+
+    def __post_init__(self) -> None:
+        self._tokenizer: Any = None
+
+    def bind_tokenizer(self, tokenizer: Any) -> None:
+        """Bind the datamodule's tokenizer so template construction can delegate to it."""
+        self._tokenizer = tokenizer
+
+    def build_messages(self, task_prompt: str) -> list[dict[str, str]]:
+        return [{"role": "user", "content": task_prompt.strip()}]
+
+    def apply_chat_template_fn(
+        self,
+        tokenizer: Any,
+        task_prompt: str,
+        *,
+        tokenize: bool = False,
+        add_generation_prompt: bool = True,
+        return_tensors: str | None = None,
+    ) -> Any:
+        """Explicit-tokenizer template application (the pretokenization consumers' seam)."""
+        return tokenizer.apply_chat_template(
+            self.build_messages(task_prompt),
+            tokenize=tokenize,
+            add_generation_prompt=add_generation_prompt,
+            return_tensors=return_tensors,
+        )
+
+    def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: str | None = None) -> str:
+        if self._tokenizer is None or not getattr(self._tokenizer, "chat_template", None):
+            return task_prompt.strip()
+        return self._tokenizer.apply_chat_template(
+            self.build_messages(task_prompt), tokenize=False, add_generation_prompt=self.add_generation_prompt
+        )
+
+
+@dataclass(kw_only=True)
 class TokenizationConfig(ITSerializableCfg):
     tokenizers_parallelism: bool = True
     local_fast_tokenizer_path: str | None = None

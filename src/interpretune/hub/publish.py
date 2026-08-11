@@ -53,6 +53,17 @@ def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Pat
                 f"({entrypoint_src})."
             )
         shutil.copy2(entrypoint_src, out_dir / entrypoint)
+    # promptconfigs entrypoints are SELF-CONTAINED by design (no in-repo package imports), so the
+    # source lives inside the component dir itself rather than arriving via entrypoint_src
+    pc_entrypoint = (manifest.get("promptconfigs") or {}).get("entrypoint")
+    if pc_entrypoint:
+        pc_src = component_dir / pc_entrypoint
+        if not pc_src.is_file():
+            raise FileNotFoundError(
+                f"Manifest declares promptconfigs entrypoint {pc_entrypoint!r} but "
+                f"{pc_src} does not exist (promptconfigs entrypoints live inside the component dir)."
+            )
+        shutil.copy2(pc_src, out_dir / pc_entrypoint)
     return manifest
 
 

@@ -42,6 +42,10 @@ _LAZY_ATTRS = {
     "resolve_component_config": "interpretune.hub.components",
     "register_component_config": "interpretune.hub.components",
     "local_publish": "interpretune.hub.components",
+    "import_cached_entrypoint": "interpretune.hub.promptconfigs",
+    "resolve_prompt_config_class": "interpretune.hub.promptconfigs",
+    "compose_prompt_config_class": "interpretune.hub.promptconfigs",
+    "instantiate_prompt_cfg_node": "interpretune.hub.promptconfigs",
     "build_component_tree": "interpretune.hub.publish",
     "publish_component": "interpretune.hub.publish",
     # the ratified verb surface (design 5e): it.hub.pull / it.hub.load / it.hub.push

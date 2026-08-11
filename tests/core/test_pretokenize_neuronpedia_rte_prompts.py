@@ -64,7 +64,13 @@ def test_load_rte_pretokenization_settings_uses_gemma_prompt_config() -> None:
 
     assert settings.task_name == "rte"
     assert settings.text_fields == ("premise", "hypothesis")
-    assert settings.prompt_config_class_path == "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig"
+    # pin by REFERENCE, not string literal: the default must resolve to the intended class without
+    # this test becoming a hardcoded coordination point for future re-points
+    from it_examples.experiments.rte_boolq import RTEBoolqChatTemplatePromptConfig
+
+    expected_cls_path = f"{RTEBoolqChatTemplatePromptConfig.__module__}.{RTEBoolqChatTemplatePromptConfig.__qualname__}"
+    assert settings.prompt_config_class_path == expected_cls_path
+    assert isinstance(settings.prompt_cfg, RTEBoolqChatTemplatePromptConfig)
     assert settings.prompt_cfg.ctx_question_join == "Does the previous passage imply that "
     assert settings.windowing_mode == "max-prompt-pad"
 

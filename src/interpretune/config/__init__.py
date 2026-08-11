@@ -5,7 +5,7 @@ from interpretune.config.shared import (
     AutoCompConfig,
     search_candidate_subclass_attrs,
 )
-from interpretune.config.datamodule import ITDataModuleConfig, PromptConfig
+from interpretune.config.datamodule import ChatTemplatePromptConfig, ITDataModuleConfig, PromptConfig
 from interpretune.config.extensions import ExtensionConf, ITExtension, ITExtensionsConfigMixin
 from interpretune.config.mixins import (
     GenerativeClassificationConfig,
@@ -68,6 +68,7 @@ __all__ = [
     "search_candidate_subclass_attrs",
     # from interpretune.config.datamodule
     "ITDataModuleConfig",
+    "ChatTemplatePromptConfig",
     "PromptConfig",
     # from interpretune.config.extensions
     "ExtensionConf",

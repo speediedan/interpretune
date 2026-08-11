@@ -14,10 +14,12 @@ from pathlib import Path
 _PKG_ROOT = Path(__file__).parent
 _EXAMPLES_ROOT = _PKG_ROOT / "examples"
 
-# repo_id -> (component publish source, module entrypoint source). Seed repos live under the
-# maintainer org by convention; users publish their OWN components under their own orgs.
-SEED_COMPONENTS: dict[str, tuple[Path, Path]] = {
+# repo_id -> (component publish source, module entrypoint source — None for self-contained kinds
+# whose entrypoint lives inside the component dir). Seed repos live under the maintainer org by
+# convention; users publish their OWN components under their own orgs.
+SEED_COMPONENTS: dict[str, tuple[Path, Path | None]] = {
     "speediedan/rte": (_EXAMPLES_ROOT / "rte", _PKG_ROOT / "experiments" / "rte_boolq.py"),
+    "speediedan/prompt-configs": (_EXAMPLES_ROOT / "prompt_configs", None),
 }
 
 

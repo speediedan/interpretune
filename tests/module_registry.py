@@ -62,15 +62,17 @@ def _create_test_registry():
             derived = derive_config_key(body)
             if derived != key:
                 raise ValueError(f"Test-registry key parity violation: {key!r} vs derived {derived!r}")
+    # seeds FIRST: test entries composing published prompt definitions (compose_ref) hydrate during
+    # gen_module_registry and resolve cache-only, so the components cache must already be seeded
+    from interpretune.hub.components import resolve_component_config, resolve_component_manifest
+    from it_examples.seeds import SEED_COMPONENTS, ensure_local_seeds
+
+    ensure_local_seeds()
     gen_module_registry(yaml_reg_path=TEST_MODULE_REGISTRY_PATH, register_func=test_instantiate_and_register)
     # example entries register second (so a key collision would resolve toward the shipping definition),
     # resolved from the COMPONENTS CACHE via the local-publish bridge — post-flip, in-tree examples/
     # trees are publish sources only; the loader reads exclusively from the cache, and the publish
     # machinery itself is exercised on every test run (co-evolution atomicity)
-    from interpretune.hub.components import resolve_component_config, resolve_component_manifest
-    from it_examples.seeds import SEED_COMPONENTS, ensure_local_seeds
-
-    ensure_local_seeds()
     for repo_id in SEED_COMPONENTS:
         manifest, _, _ = resolve_component_manifest(repo_id)
         for key in manifest.get("module", {}).get("configs") or {}:
