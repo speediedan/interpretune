@@ -1,6 +1,6 @@
 """Test-owned module registry (interpretune#1 / #236 workstream, lane 3d).
 
-Owns the pytest-scale entries split out of ``src/it_examples/example_module_registry.yaml`` — the ones whose
+Owns the pytest-scale entries split out of the former monolithic example registry — the ones whose
 datamodule/module classes live in ``tests.modules`` and therefore cannot ship. Registers BOTH YAMLs (test entries
 first, then the example entries) into one registry so test parametrization keeps seeing the full original key set;
 the example entries all declare shipping classes explicitly, so the test-class defaults below never leak into them.
@@ -14,11 +14,7 @@ from __future__ import annotations
 from functools import partial
 from pathlib import Path
 
-from it_examples.example_module_registry import (
-    LazyModuleRegistry,
-    iter_component_manifests,
-    load_config_file,
-)
+from interpretune.registry import LazyModuleRegistry
 
 # Test-entry config defaults (formerly it_examples' example_*_defaults): published example configs
 # are self-contained, so these now exist ONLY for the pytest-scale entries in this registry.
@@ -67,14 +63,35 @@ def _create_test_registry():
             if derived != key:
                 raise ValueError(f"Test-registry key parity violation: {key!r} vs derived {derived!r}")
     gen_module_registry(yaml_reg_path=TEST_MODULE_REGISTRY_PATH, register_func=test_instantiate_and_register)
-    # example entries register second (from the decomposed component trees) so a key collision would
-    # resolve toward the shipping definition
-    for component_dir, manifest in iter_component_manifests():
-        for key, rel in (manifest.get("module", {}).get("configs") or {}).items():
-            parity_key, body = load_config_file(component_dir / rel, expected_key=key)
+    # example entries register second (so a key collision would resolve toward the shipping definition),
+    # resolved from the COMPONENTS CACHE via the local-publish bridge — post-flip, in-tree examples/
+    # trees are publish sources only; the loader reads exclusively from the cache, and the publish
+    # machinery itself is exercised on every test run (co-evolution atomicity)
+    from interpretune.hub.components import resolve_component_config, resolve_component_manifest
+    from it_examples.seeds import SEED_COMPONENTS, ensure_local_seeds
+
+    ensure_local_seeds()
+    for repo_id in SEED_COMPONENTS:
+        manifest, _, _ = resolve_component_manifest(repo_id)
+        for key in manifest.get("module", {}).get("configs") or {}:
+            parity_key, body = resolve_component_config(repo_id, key)
             test_instantiate_and_register(parity_key, body)
 
     return registry
 
 
 TEST_MODULE_REGISTRY = LazyModuleRegistry(builder=_create_test_registry)
+
+
+def make_component_tree_registry(registry_root: Path) -> LazyModuleRegistry:
+    """Hydrator-mode registry over a component tree (TEST-ONLY: exercises the core hydration machinery).
+
+    The runtime loader never reads component trees directly post-flip; tests use this to exercise per-key hydration,
+    parity enforcement, and broken-sibling isolation against fixture trees.
+    """
+    from interpretune.registry import instantiate_and_register
+
+    return LazyModuleRegistry(
+        registry_root=registry_root,
+        register_func_factory=lambda reg: partial(instantiate_and_register, target_registry=reg),
+    )

@@ -113,7 +113,7 @@ def test_unified_loader_matches_factory_core(config_path):
     """
     from interpretune.registry import instantiate_or_import
     from tests.core.loader_equivalence import normalize
-    from it_examples.example_module_registry import load_config_file
+    from interpretune.hub.manifest import load_config_file
 
     # fresh body per leg: instantiate_or_import mutates nested class_path nodes in place
     key, factory_body = load_config_file(config_path)
@@ -182,7 +182,7 @@ def test_materialized_defaults_present_and_declarative():
     configure_optimizers-time instantiation.
     """
     from interpretune.config.loading import load_session_cfg
-    from it_examples.example_module_registry import load_config_file
+    from interpretune.hub.manifest import load_config_file
 
     for config_path in EXAMPLE_CONFIGS:
         key, body = load_config_file(config_path)

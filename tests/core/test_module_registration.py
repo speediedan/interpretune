@@ -12,6 +12,7 @@
 import pytest
 from unittest.mock import MagicMock
 from dataclasses import dataclass
+from pathlib import Path
 
 from interpretune.registry import ModuleRegistry, RegisteredCfg, RegKeyType, it_cfg_factory
 from tests.module_registry import TEST_MODULE_REGISTRY
@@ -107,20 +108,30 @@ class TestClassModuleRegistration:
             registry.get(("cust", default_test_task, "train", (Adapter.core,)))
 
 
-class TestExampleRegistryLaziness:
-    """Per-key hydration guarantees for the decomposed example registry (interpretune#236 / #1)."""
+class TestComponentTreeRegistryLaziness:
+    """Per-key hydration guarantees for the core hydrator machinery (interpretune#236 / #1).
+
+    Post-flip, no runtime registry reads the in-tree example trees — these tests exercise the CORE
+    ``ModuleHydrator``/``LazyModuleRegistry`` machinery against the seed publish sources as fixture data
+    (via the test-only ``make_component_tree_registry`` helper).
+    """
 
     GOOD_KEY = "rte_demo.gemma2.circuit_tracer+nnsight"
     BROKEN_KEY = "rte_demo.gpt2.sae_lens"
+
+    @staticmethod
+    def _examples_root():
+        import it_examples
+
+        return Path(it_examples.__file__).parent / "examples"
 
     @pytest.fixture()
     def broken_sibling_root(self, tmp_path):
         """Copy of the component trees with one configuration's class_path made unimportable."""
         import shutil
-        from it_examples.example_module_registry import DEFAULT_REGISTRY_ROOT
 
         root = tmp_path / "registry"
-        shutil.copytree(DEFAULT_REGISTRY_ROOT, root)
+        shutil.copytree(self._examples_root(), root)
         broken = root / "rte" / "configs" / f"{self.BROKEN_KEY}.yaml"
         broken.write_text(
             broken.read_text(encoding="utf-8").replace(
@@ -131,9 +142,9 @@ class TestExampleRegistryLaziness:
         return root
 
     def test_get_hydrates_only_requested_entry(self):
-        from it_examples.example_module_registry import LazyModuleRegistry
+        from tests.module_registry import make_component_tree_registry
 
-        registry = LazyModuleRegistry()
+        registry = make_component_tree_registry(self._examples_root())
         cfg = registry.get(self.GOOD_KEY)
         assert cfg is not None
         assert registry._hydrator._hydrated == {self.GOOD_KEY}
@@ -142,9 +153,9 @@ class TestExampleRegistryLaziness:
         assert registry._hydrator._hydrated == {self.GOOD_KEY}
 
     def test_broken_sibling_does_not_break_other_entries(self, broken_sibling_root):
-        from it_examples.example_module_registry import LazyModuleRegistry
+        from tests.module_registry import make_component_tree_registry
 
-        registry = LazyModuleRegistry(registry_root=broken_sibling_root)
+        registry = make_component_tree_registry(broken_sibling_root)
         assert registry.get(self.GOOD_KEY) is not None  # must not raise
         with pytest.raises(ModuleNotFoundError):
             registry.get(self.BROKEN_KEY)
@@ -152,23 +163,32 @@ class TestExampleRegistryLaziness:
     def test_key_parity_enforced(self, tmp_path):
         """Filename == manifest key == derived-from-fields, or the loader refuses."""
         import shutil
-        from it_examples.example_module_registry import DEFAULT_REGISTRY_ROOT, LazyModuleRegistry
+
+        from tests.module_registry import make_component_tree_registry
 
         root = tmp_path / "registry"
-        shutil.copytree(DEFAULT_REGISTRY_ROOT, root)
+        shutil.copytree(self._examples_root(), root)
         drifted = root / "rte" / "configs" / f"{self.GOOD_KEY}.yaml"
         # change a structured field without renaming the file: derived key no longer matches the stem
         drifted.write_text(
             drifted.read_text(encoding="utf-8").replace("task_variant: rte_demo", "task_variant: rte"), encoding="utf-8"
         )
-        registry = LazyModuleRegistry(registry_root=root)
+        registry = make_component_tree_registry(root)
         with pytest.raises(ValueError, match="parity violation"):
             registry.get(self.GOOD_KEY)
 
-    def test_all_manifest_keys_resolve(self):
-        from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
+    def test_all_seed_keys_resolve_from_cache(self, tmp_path):
+        """Every seed configuration resolves CACHE-ONLY post-flip (bridge -> resolve -> hydrate)."""
+        from interpretune.hub.components import resolve_component_manifest
+        import interpretune as it
+        from it_examples.seeds import SEED_COMPONENTS, ensure_local_seeds
 
-        string_keys = [k for k in MODULE_EXAMPLE_REGISTRY.keys() if isinstance(k, str)]
-        assert len(string_keys) == 6
-        for key in string_keys:
-            assert MODULE_EXAMPLE_REGISTRY.get(key) is not None
+        cache = tmp_path / "components"
+        ensure_local_seeds(cache_dir=cache)
+        resolved = 0
+        for repo_id in SEED_COMPONENTS:
+            manifest, _, _ = resolve_component_manifest(repo_id, cache_dir=cache)
+            for key in manifest.get("module", {}).get("configs") or {}:
+                assert it.hub.load(repo_id, key, cache_dir=cache) is not None
+                resolved += 1
+        assert resolved == 6

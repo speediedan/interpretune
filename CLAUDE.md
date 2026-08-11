@@ -514,7 +514,7 @@ better-fitting design) so it can be implemented and validated in a subsequent se
 ## Important Caveats
 
 - **Git dependencies** (circuit_tracer, sae_lens, sae_dashboard) are pinned to specific commits in `pyproject.toml`'s `git-deps` group; transformer_lens and nnsight are release pins carried by `[tool.uv] override-dependencies` + `requirements/ci/overrides.txt`, and finetuning_scheduler is a plain release floor (`>= 2.13.0`) in the `lightning` extra
-- **Type checking:** Enabled for all `src/` files except `src/it_examples/utils/raw_graph_analysis.py`; all `tests/` files are excluded
+- **Type checking:** Enabled for all `src/` files except `src/it_examples/utils/raw_graph_analysis.py` and the relocated research/notebook trees (`src/it_examples/tests`, `src/it_examples/experiments/notebook` — type-exempt exactly as they were under `tests/`); all `tests/` files are excluded
 - **Full test suite requires ML dependencies** — tests will fail without proper env setup
 - **Import guards:** `tests/core/test_adapters_import_time.py` prevents accidental eager imports
 - **No test-environment bandaids in application code:** When test failures stem from environment issues (e.g., `isinstance()` failures due to importlib double-loading modules), fix the problem in the test infrastructure or use an app-level registry pattern (like `CT_BACKEND_REGISTRY` in `circuit_tracer.py`) — never degrade application code with workarounds for test-specific problems

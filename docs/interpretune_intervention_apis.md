@@ -6,7 +6,7 @@ analysis-level intervention ops.
 ## Current surfaces
 
 There are two distinct model-facing surfaces (a high-level tour with the full control matrix lives in
-`tests/nb_experiments/intervention_capabilities_overview.md`):
+`src/it_examples/experiments/notebook/intervention_capabilities_overview.md`):
 
 - `ModelBackend.fwd_w_intervention(...)` is the shared model-level API for **hook-tensor ("embed"-path)
   interventions**, implemented with identical last-token math by both the TransformerLens and NNsight model

@@ -124,6 +124,36 @@ class ITSession(Mapping):
             base_attrs[Adapter.lightning] if Adapter.lightning in session_cfg.adapter_ctx else base_attrs[Adapter.core]
         )
 
+    @classmethod
+    def from_hub(
+        cls,
+        repo_id: str,
+        key: str,
+        *,
+        adapter_ctx: Any = None,
+        pull: bool = False,
+        revision: str | None = None,
+        cache_dir: Any = None,
+        token: str | None = None,
+    ) -> "ITSession":
+        """Construct a session directly from a hub component configuration.
+
+        Cache-only by default (the component must be cached via an explicit ``it.hub.pull`` or the
+        local-publish bridge); pass ``pull=True`` to fetch from the Hub first. ``adapter_ctx``
+        overrides the configuration's own adapter context when given.
+        """
+        from interpretune.config.loading import load_session_cfg
+
+        if pull:
+            from interpretune.hub.components import pull_component_config
+
+            canonical, body = pull_component_config(repo_id, key, revision=revision, cache_dir=cache_dir, token=token)
+        else:
+            from interpretune.hub.components import resolve_component_config
+
+            canonical, body = resolve_component_config(repo_id, key, cache_dir=cache_dir)
+        return cls(load_session_cfg(body, adapter_ctx=adapter_ctx, expected_key=canonical))
+
     def __getitem__(self, key):
         return self.to_dict()[key]
 

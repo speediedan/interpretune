@@ -72,3 +72,18 @@ def check_config_key_parity(config_path: Path, body: dict, expected_key: str | N
             f"manifest key {expected_key!r}, derived-from-fields {derived!r} must all match."
         )
     return derived
+
+
+def iter_component_manifests(registry_root: Path | None):
+    """Yield ``(component_dir, parsed_manifest)`` for every component tree under ``registry_root``."""
+    if registry_root is None or not Path(registry_root).is_dir():
+        return
+    for manifest_path in sorted(Path(registry_root).glob(f"*/{IT_COMPONENT_MANIFEST}")):
+        yield manifest_path.parent, load_component_manifest(manifest_path)
+
+
+def load_config_file(config_path: Path, expected_key: str | None = None) -> tuple[str, dict]:
+    """Load one configuration file, parity-checking filename == manifest key == derived-from-fields."""
+    with open(config_path, encoding="utf-8") as fh:
+        body = yaml.safe_load(fh)
+    return check_config_key_parity(Path(config_path), body, expected_key=expected_key), body

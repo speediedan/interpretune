@@ -320,7 +320,7 @@ class LightningTLBridgeGPT2Processed(BaseCfg):
 class CoreNNsightGPT2(BaseCfg):
     """Core NNsight adapter with GPT-2 for unit testing.
 
-    Registered in example_module_registry.yaml as gpt2.rte.nnsight. Uses adapter combination (core, nnsight).
+    Registered in tests/test_module_registry.yaml as gpt2.rte.nnsight. Uses adapter combination (core, nnsight).
     """
 
     phase: str = "test"
@@ -341,7 +341,7 @@ class CoreNNsightGPT2(BaseCfg):
 class LightningNNsightGPT2(BaseCfg):
     """Lightning NNsight adapter with GPT-2 for unit testing.
 
-    Registered in example_module_registry.yaml as gpt2.rte.nnsight. Uses adapter combination (lightning, nnsight).
+    Registered in tests/test_module_registry.yaml as gpt2.rte.nnsight. Uses adapter combination (lightning, nnsight).
     """
 
     phase: str = "test"
@@ -362,7 +362,7 @@ class LightningNNsightGPT2(BaseCfg):
 class CoreNNsightRemoteGPT2(BaseCfg):
     """Core NNsight adapter with GPT-2 for unit testing.
 
-    Registered in example_module_registry.yaml as gpt2.rte.nnsight. Uses adapter combination (core, nnsight).
+    Registered in tests/test_module_registry.yaml as gpt2.rte.nnsight. Uses adapter combination (core, nnsight).
     """
 
     phase: str = "test"
@@ -453,7 +453,7 @@ class LightningCircuitTracerTLGemma2(BaseCfg):
 class CircuitTracerNNsightGemma2(BaseCfg):
     """Circuit Tracer with NNsight backend on Gemma2.
 
-    Registered in example_module_registry.yaml as gemma2.rte.circuit_tracer_nnsight. Uses adapter combination (core,
+    Registered in tests/test_module_registry.yaml as gemma2.rte.circuit_tracer_nnsight. Uses adapter combination (core,
     nnsight, circuit_tracer).
     """
 
@@ -489,7 +489,7 @@ class CircuitTracerNNsightGemma2(BaseCfg):
 class LightningCircuitTracerNNsightGemma2(BaseCfg):
     """Lightning Circuit Tracer with NNsight backend on Gemma2.
 
-    Registered in example_module_registry.yaml as gemma2.rte.circuit_tracer_nnsight. Uses adapter combination
+    Registered in tests/test_module_registry.yaml as gemma2.rte.circuit_tracer_nnsight. Uses adapter combination
     (lightning, nnsight, circuit_tracer).
     """
 
@@ -525,7 +525,7 @@ class LightningCircuitTracerNNsightGemma2(BaseCfg):
 class CircuitTracerNNsightRemoteGemma2(BaseCfg):
     """Circuit Tracer with NNsight backend on Gemma2 for remote mode testing.
 
-    Registered in example_module_registry.yaml as gemma2.rte.circuit_tracer_nnsight_remote. Uses adapter combination
+    Registered in tests/test_module_registry.yaml as gemma2.rte.circuit_tracer_nnsight_remote. Uses adapter combination
     (core, nnsight, circuit_tracer) with nnsight_remote=True.
     """
 
@@ -566,7 +566,7 @@ class CircuitTracerNNsightRemoteGemma2(BaseCfg):
 class CircuitTracerNNsightGemma3(BaseCfg):
     """Circuit Tracer with NNsight backend on Gemma3-1B-PT.
 
-    Registered in example_module_registry.yaml as gemma3.rte.circuit_tracer_nnsight. Uses adapter combination (core,
+    Registered in tests/test_module_registry.yaml as gemma3.rte.circuit_tracer_nnsight. Uses adapter combination (core,
     nnsight, circuit_tracer). Gemma3 only supports NNsight backend in circuit-tracer (no TL/HookedTransformer path).
     """
 
@@ -591,7 +591,7 @@ class CircuitTracerNNsightGemma3(BaseCfg):
 class LightningCircuitTracerNNsightGemma3(BaseCfg):
     """Lightning Circuit Tracer with NNsight backend on Gemma3-1B-PT.
 
-    Registered in example_module_registry.yaml as gemma3.rte.circuit_tracer_nnsight. Uses adapter combination
+    Registered in tests/test_module_registry.yaml as gemma3.rte.circuit_tracer_nnsight. Uses adapter combination
     (lightning, nnsight, circuit_tracer).
     """
 

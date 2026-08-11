@@ -5,7 +5,9 @@ kinds:
 - module
 - datamodule
 requires:
-  interpretune: '>=0.1a0'
+  # dev floor until the alpha releases (PEP 440: 0.1.0.devN sorts BEFORE 0.1a0, so an alpha floor
+  # would reject every dev/CI build); tighten to '>=0.1a0' at release
+  interpretune: '>=0.1.dev0'
   adapters:
   - lightning
   - transformer_lens

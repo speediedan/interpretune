@@ -169,7 +169,7 @@ EXAMPLES_DIR = REPO_ROOT / "src" / "it_examples" / "examples"
 
 def example_configuration_files() -> list[Path]:
     """Every examples/ configuration indexed by a component manifest (the hub-side harness leg)."""
-    from it_examples.example_module_registry import iter_component_manifests
+    from interpretune.hub.manifest import iter_component_manifests
 
     files = []
     for component_dir, manifest in iter_component_manifests(EXAMPLES_DIR):
@@ -185,12 +185,14 @@ def capture_registered_cfg_via_factories(config_path: Path):
     ``AutoCompConfig`` ``make_dataclass`` synthesis, which happens inside the config constructors the
     factories invoke and which none of the CLI configs exercises.
     """
-    from interpretune.registry import ModuleRegistry
-    from it_examples.example_module_registry import example_register_func, load_config_file
+    from functools import partial
+
+    from interpretune.hub.manifest import load_config_file
+    from interpretune.registry import ModuleRegistry, instantiate_and_register
 
     registry = ModuleRegistry()
     key, body = load_config_file(config_path)
-    example_register_func(registry)(key, body)
+    partial(instantiate_and_register, target_registry=registry)(key, body)
     return key, registry.get(key)
 
 

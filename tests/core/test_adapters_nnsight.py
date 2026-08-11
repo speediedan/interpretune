@@ -229,7 +229,7 @@ class TestNNsightAPIKey:
 class TestNNsightSession:
     """Tests for NNsight session initialization and module behavior.
 
-    These tests use class-scoped fixtures registered in example_module_registry.yaml as gpt2.rte.nnsight, enabling
+    These tests use class-scoped fixtures registered in tests/test_module_registry.yaml as gpt2.rte.nnsight, enabling
     efficient fixture sharing across test methods.
     """
 
@@ -346,7 +346,7 @@ class TestNNsightMixinAttributes:
 class TestNNsightLightningIntegration:
     """Tests for NNsight adapter with Lightning integration.
 
-    These tests use class-scoped fixtures registered in example_module_registry.yaml.
+    These tests use class-scoped fixtures registered in tests/test_module_registry.yaml.
     """
 
     @RunIf(lightning=True)
