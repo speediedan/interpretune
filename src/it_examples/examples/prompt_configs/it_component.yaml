@@ -1,0 +1,19 @@
+# interpretune component manifest (schema v1) — see the hub-integration design (§11.5)
+# An UNPRIVILEGED seed repo of model-family prompt-config definitions: users may reference it,
+# nothing canonical about it. Most models need no published prompt artifacts (chat-template-first);
+# these are the manual token-spelling exceptions, composed with task schemas via compose_ref.
+it_schema_version: 1
+kinds:
+- promptconfigs
+requires:
+  # dev floor until the alpha releases (PEP 440: 0.1.0.devN sorts BEFORE 0.1a0); tighten at release
+  interpretune: '>=0.1.dev0'
+  adapters: []
+  pip: []
+promptconfigs:
+  entrypoint: prompt_configs.py
+  definitions:
+    GemmaPromptConfig:
+      description: Gemma2/Gemma3 instruction-tuned chat spelling (<start_of_turn>/<end_of_turn>)
+    Llama3PromptConfig:
+      description: Llama 3.x chat spelling (header/turn tags incl. tool-call markers)
