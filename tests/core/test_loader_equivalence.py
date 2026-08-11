@@ -17,6 +17,7 @@ from pathlib import Path
 
 from tests.core.loader_equivalence import (
     cli_experiment_configs,
+    fixture_key,
     session_spec,
 )
 
@@ -25,8 +26,7 @@ BASELINE_SPECS = json.loads((Path(__file__).parent / "fixtures" / "cli_session_b
 
 
 def _baseline_for(config_path):
-    rel = str(config_path.relative_to(config_path.parents[6]))  # repo root -> src/it_examples/...
-    return BASELINE_SPECS[rel]
+    return BASELINE_SPECS[fixture_key(config_path)]
 
 
 def test_all_cli_experiment_configs_discovered():
@@ -213,6 +213,22 @@ class TestFixtureNormalizationRules:
 
         for value in ("https://github.com/speediedan/interpretune", "gpt2", "a\\literal\\backslash"):
             assert _normalize_env_paths(value) == value
+
+    def test_fixture_key_derives_posix_from_windows_shaped_path(self):
+        """Key-side symmetry (build 730's Windows twin): lookup keys are POSIX whatever OS derives them.
+
+        The values were normalized in the prior two cycles while the KEYS were still ``str()``-derived —
+        on Windows that backslashed them into a KeyError before any value comparison ran.
+        """
+        from pathlib import PureWindowsPath
+
+        root = PureWindowsPath(r"D:\a\interpretune\interpretune")
+        cfg = root / "src" / "it_examples" / "experiments" / "cli" / "rte_boolq" / "gpt2" / "x.yaml"
+        assert fixture_key(cfg, root) == "src/it_examples/experiments/cli/rte_boolq/gpt2/x.yaml"
+
+    def test_fixture_keys_are_posix(self):
+        """No separator spelling may leak into the committed fixture's lookup keys either."""
+        assert BASELINE_SPECS and all("\\" not in key for key in BASELINE_SPECS)
 
     def test_fixture_is_machine_independent(self):
         """No absolute filesystem path may survive into the committed fixture."""

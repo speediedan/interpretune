@@ -25,6 +25,16 @@ def cli_experiment_configs() -> list[Path]:
     return sorted(p for p in CLI_EXPERIMENTS_DIR.rglob("*.yaml") if "ft_schedules" not in p.parts)
 
 
+def fixture_key(config_path: Path, repo_root: Path | None = None) -> str:
+    """Repo-relative fixture lookup key — POSIX by contract, whatever OS derives it.
+
+    Build 730's Windows twin: ``str(path.relative_to(root))`` backslashes the key on Windows, so the
+    Linux-captured fixture keys never matched (KeyError before any value comparison ran). Keys get the
+    same machine-independence treatment as values: derive via ``as_posix()``.
+    """
+    return config_path.relative_to(repo_root if repo_root is not None else REPO_ROOT).as_posix()
+
+
 def normalize(value: Any) -> Any:
     """Reduce a config object graph to a canonical, comparison- and diff-friendly structure.
 
