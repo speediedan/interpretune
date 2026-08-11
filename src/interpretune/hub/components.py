@@ -19,14 +19,19 @@ from huggingface_hub import hf_hub_download
 from interpretune.hub.cache import IT_COMPONENTS_HUB_CACHE
 from interpretune.hub.manifest import IT_COMPONENT_MANIFEST, check_config_key_parity, validate_component_manifest
 
-try:  # version telemetry for hf_hub_download (design §8); interpretune may be running from a raw checkout
-    from importlib.metadata import version as _pkg_version
 
-    _IT_VERSION: str | None = _pkg_version("interpretune")
-except Exception:  # pragma: no cover - metadata unavailable in exotic layouts
-    _IT_VERSION = None
+def _installed_version(dist_name: str) -> str | None:
+    """Installed distribution version, or ``None`` when metadata is unavailable (e.g. raw checkouts)."""
+    from importlib.metadata import version
 
-_TELEMETRY = {"library_name": "interpretune", "library_version": _IT_VERSION}
+    try:
+        return version(dist_name)
+    except Exception:
+        return None
+
+
+# version telemetry for hf_hub_download (design §8); interpretune may be running from a raw checkout
+_TELEMETRY = {"library_name": "interpretune", "library_version": _installed_version("interpretune")}
 
 
 class ComponentRequirementError(ImportError):
@@ -47,11 +52,12 @@ def enforce_component_requires(manifest: dict, source: str = "<component>") -> N
     req = manifest.get("requires") or {}
     it_spec = req.get("interpretune")
     if it_spec:
-        try:
-            it_version = _pkg_version("interpretune")
-        except Exception:
-            from interpretune import __version__ as it_version  # raw-checkout fallback
-        if not SpecifierSet(str(it_spec)).contains(it_version, prereleases=True):
+        it_version = _installed_version("interpretune")
+        if it_version is None:  # raw-checkout fallback; skip when genuinely undeterminable
+            import interpretune
+
+            it_version = getattr(interpretune, "__version__", None)
+        if it_version is not None and not SpecifierSet(str(it_spec)).contains(it_version, prereleases=True):
             raise ComponentRequirementError(
                 f"{source}: requires interpretune {it_spec!r} but {it_version!r} is installed. "
                 "(If this version looks wrong for your checkout, stale packaging metadata — e.g. an old "
@@ -67,12 +73,9 @@ def enforce_component_requires(manifest: dict, source: str = "<component>") -> N
             )
     for entry in req.get("pip") or []:
         r = Requirement(str(entry))
-        try:
-            installed = _pkg_version(r.name)
-        except Exception:
-            raise ComponentRequirementError(
-                f"{source}: requires pip package {entry!r}, which is not installed."
-            ) from None
+        installed = _installed_version(r.name)
+        if installed is None:
+            raise ComponentRequirementError(f"{source}: requires pip package {entry!r}, which is not installed.")
         if r.specifier and not r.specifier.contains(installed, prereleases=True):
             raise ComponentRequirementError(f"{source}: requires {entry!r} but {r.name} {installed!r} is installed.")
 

@@ -19,7 +19,12 @@ def _hydrate_component_body(key: str, body: dict) -> RegisteredCfg:
     from interpretune.config.loading import load_session_cfg
 
     loaded = load_session_cfg(body, expected_key=key)
-    return RegisteredCfg(loaded.datamodule_cfg, loaded.module_cfg, loaded.datamodule_cls, loaded.module_cls)
+    return RegisteredCfg(
+        loaded.datamodule_cfg,
+        loaded.module_cfg,
+        loaded.datamodule_cls,  # type: ignore[arg-type]  # loader resolves str/None to concrete classes
+        loaded.module_cls,  # type: ignore[arg-type]
+    )
 
 
 def pull(
