@@ -48,13 +48,45 @@ def normalize(value: Any) -> Any:
     if isinstance(value, torch.dtype):
         return str(value)
     if isinstance(value, Path):
-        return str(value)
+        return _normalize_env_paths(str(value))
+    if isinstance(value, str):
+        return _normalize_env_paths(value)
     if isinstance(value, dict):
         return {str(k): normalize(v) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))}
     if isinstance(value, (list, tuple)):
         return [normalize(v) for v in value]
     if isinstance(value, (set, frozenset)):
         return sorted(normalize(v) for v in value)
+    return value
+
+
+def _env_path_tokens() -> dict[str, str]:
+    """Environment-derived roots → stable tokens, so specs compare across machines.
+
+    Config construction resolves paths from the ambient environment (HF caches, home) — the frozen baseline must pin the
+    CONFIGURATION, not the machine it was captured on. (Found the hard way: 45 absolute local cache paths in the first
+    frozen fixture failed every comparison on CI.)
+    """
+    import os
+
+    from datasets.config import HF_CACHE_HOME, HF_DATASETS_CACHE
+
+    tokens = {
+        str(HF_DATASETS_CACHE): "<HF_DATASETS_CACHE>",
+        str(HF_CACHE_HOME): "<HF_CACHE_HOME>",
+        str(Path.home()): "<HOME>",
+    }
+    for var in ("HF_HUB_CACHE", "HF_HOME"):
+        if os.environ.get(var):
+            tokens[os.environ[var]] = f"<{var}>"
+    # longest prefixes first so nested roots tokenize deterministically
+    return dict(sorted(tokens.items(), key=lambda kv: -len(kv[0])))
+
+
+def _normalize_env_paths(value: str) -> str:
+    for prefix, token in _env_path_tokens().items():
+        if value.startswith(prefix):
+            return token + value[len(prefix) :]
     return value
 
 

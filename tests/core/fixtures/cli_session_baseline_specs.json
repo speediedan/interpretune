@@ -13,7 +13,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -261,7 +261,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -548,7 +548,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -840,7 +840,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -1131,7 +1131,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -1371,7 +1371,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -1649,7 +1649,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -1897,7 +1897,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -2156,7 +2156,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -2414,7 +2414,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -2651,7 +2651,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -2889,7 +2889,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -3161,7 +3161,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
@@ -3432,7 +3432,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": false,
    "eval_batch_size": 2,
@@ -3705,7 +3705,7 @@
     "num_workers": 0,
     "pin_memory": false
    },
-   "dataset_path": "/mnt/cache_extended/speediedan/.cache/huggingface/datasets/rte",
+   "dataset_path": "<HF_DATASETS_CACHE>/rte",
    "defer_model_init": false,
    "enable_datasets_cache": true,
    "eval_batch_size": 2,
