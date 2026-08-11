@@ -148,10 +148,18 @@ def __getattr__(name: str):
     This uses PEP 562 (__getattr__ on packages).
     """
     if name in _LAZY_MODULE_ATTRS:
+        import importlib
+
         module_path = _LAZY_MODULE_ATTRS[name]
         module_name, attr = module_path.rsplit(".", 1)
-        module = __import__(module_name, fromlist=[attr])
-        val = getattr(module, attr)
+        if module_name == __name__ and attr == name:
+            # the attr IS a direct submodule (e.g. `it.hub`): import it directly. Importing the
+            # PARENT with fromlist would re-enter this __getattr__ for the same name — infinite
+            # recursion in any process that has not already imported the submodule some other way.
+            val = importlib.import_module(module_path)
+        else:
+            module = importlib.import_module(module_name)
+            val = getattr(module, attr)
         globals()[name] = val
         return val
     raise AttributeError(f"module {__name__} has no attribute {name}")

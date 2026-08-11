@@ -74,3 +74,24 @@ def test_import_interpretune_does_not_pull_adapters_and_is_fast():
         f"interpretune median import time across {attempts} subprocesses took too long "
         f"({duration:.2f}s) — expected < {threshold:.1f}s on {system}; raw timings={durations}"
     )
+
+
+def test_it_hub_resolves_in_fresh_process():
+    """`it.hub` must resolve in a process that never imported interpretune.hub another way.
+
+    Regression pin for the lazy-submodule recursion: resolving a direct-submodule attr by importing
+    the PARENT with a fromlist re-enters the package __getattr__ for the same name — infinite
+    recursion. Every in-repo consumer imported interpretune.hub.* directly first, which masked it;
+    the first clean-process `it.hub.push(...)` (the seed publish) hit it. Subprocess-only by
+    necessity: an in-process assertion could pass spuriously for exactly the masking reason.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import interpretune as it; assert it.hub.__name__ == 'interpretune.hub'"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
