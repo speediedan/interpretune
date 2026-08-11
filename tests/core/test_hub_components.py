@@ -110,19 +110,11 @@ class TestPublishTreeParity:
 
 
 class TestManifestFirstOffline:
-    """Local resolution must never touch the network (design invariant)."""
+    """Local resolution must never touch the network (design invariant).
 
-    def test_local_resolution_with_sockets_blocked(self, monkeypatch):
-        import socket
-
-        def _blocked(*args, **kwargs):
-            raise AssertionError("local example resolution attempted a network connection")
-
-        monkeypatch.setattr(socket.socket, "connect", _blocked)
-        from it_examples.example_module_registry import make_example_registry
-
-        registry = make_example_registry()
-        assert registry.get("rte_demo.gemma2.circuit_tracer") is not None
+    The socket-blocked resolution leg lives in ``TestHubVerbSurface.test_load_returns_hydrated_registered_cfg``
+    (the post-flip surface); this class keeps the schema-roundtrip half.
+    """
 
     def test_hub_config_body_roundtrips_registry_schema(self):
         """A fetched configuration body is exactly what the local loader consumes — one schema, no adapters."""

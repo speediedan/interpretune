@@ -47,14 +47,15 @@ def main() -> None:
 
     import interpretune as it
     from it_examples import _ACTIVE_PATCHES  # noqa: F401
-    from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
+    from it_examples.seeds import ensure_local_seeds
     from it_examples.utils.example_helpers import concept_token_positions
     from interpretune import ITSession, ITSessionConfig
     from interpretune.analysis.backends import require_analysis_backend
     from interpretune.analysis.ops.base import AnalysisBatch
     from interpretune.config import AnalysisCfg, init_analysis_cfgs
 
-    base_itdm_cfg, base_it_cfg, dm_cls, m_cls = MODULE_EXAMPLE_REGISTRY.get("rte_demo.gemma2.circuit_tracer")
+    ensure_local_seeds()  # idempotent, offline: seed publish sources -> components cache
+    base_itdm_cfg, base_it_cfg, dm_cls, m_cls = it.hub.load("speediedan/rte", "rte_demo.gemma2.circuit_tracer")
     base_it_cfg.circuit_tracer_cfg.backend = "nnsight"
     base_it_cfg.circuit_tracer_cfg.transcoder_set = "gemma"
     session_cfg = ITSessionConfig(

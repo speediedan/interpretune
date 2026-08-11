@@ -1304,6 +1304,17 @@ def restore_env_variables():
         "HF_MCP_TOKEN_RW",
         "COPILOT_PROVIDER_API_KEY",  # explanation-CLI BYOK key (see neuronpedia_explanations.py)
         "READTHEDOCS_TOKEN",  # RTD API token added to .env for docs automation
+        # the unified CLI (#245) calls load_dotenv() inside the tested code path, so any .env key not
+        # already exported when the fixture snapshots appears as a leak on a fresh shell (CI has no
+        # .env, so this is local-only). Recent .env additions:
+        "IT_HF_TOKEN",  # hub-examples workstream publish token
+        "OPENROUTER_API_KEY",
+        "IT_EXPLANATION_CLI_MODEL",
+        "IT_EXPLANATION_PROVIDER_API_KEY",
+        "HF_HUB_DASHBOARDS_TOKEN",
+        "HF_S3_ENDPOINT_URL",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
     }
     allowlist.update(okay_session_scope_keys)
     leaked_vars.difference_update(allowlist)

@@ -1,5 +1,12 @@
+"""LazyModuleRegistry facade behavior (builder + hydrator modes) — core machinery, fixture-tree data."""
+
+from pathlib import Path
+
+import it_examples
 from interpretune.registry import LazyModuleRegistry
-from it_examples.example_module_registry import make_example_registry
+from tests.module_registry import make_component_tree_registry
+
+EXAMPLES_ROOT = Path(it_examples.__file__).parent / "examples"
 
 
 class DummyRegistry(dict):
@@ -31,7 +38,7 @@ def test_lazy_initialization_and_single_call():
 
 
 def test_hydrator_mode_defers_and_indexes_without_construction():
-    lm = make_example_registry()
+    lm = make_component_tree_registry(EXAMPLES_ROOT)
 
     # instantiating the facade must not parse manifests or construct entries
     assert lm._hydrator is not None
