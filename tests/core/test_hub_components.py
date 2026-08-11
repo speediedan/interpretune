@@ -166,5 +166,165 @@ class TestLocalPublishBridge:
     def test_uncached_component_names_the_fetch_command(self, tmp_path):
         from interpretune.hub.components import resolve_component_config
 
-        with pytest.raises(KeyError, match="pull_component_config"):
+        with pytest.raises(KeyError, match="interpretune.hub.pull"):
             resolve_component_config("someorg/absent", "rte.x.core", cache_dir=tmp_path / "empty")
+
+
+@pytest.fixture()
+def seeded_cache(tmp_path):
+    """A components cache holding the in-tree rte seed, materialized via the local-publish bridge."""
+    from it_examples.seeds import ensure_local_seeds
+
+    cache = tmp_path / "components"
+    ensure_local_seeds(cache_dir=cache)
+    return cache
+
+
+class TestHubVerbSurface:
+    """The ratified 5e verb surface: ``it.hub.pull`` / ``it.hub.load`` / ``ITSession.from_hub``."""
+
+    def test_load_returns_hydrated_registered_cfg(self, seeded_cache, monkeypatch):
+        import socket
+
+        monkeypatch.setattr(socket.socket, "connect", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")))
+        import interpretune as it
+
+        dm_cfg, m_cfg, dm_cls, m_cls = it.hub.load(
+            "speediedan/rte", "rte_demo.gemma2.circuit_tracer", cache_dir=seeded_cache
+        )
+        assert type(dm_cfg).__name__ == "ITDataModuleConfig"
+        assert m_cls.__name__ == "RTEBoolqModule"
+        assert m_cfg.optimizer_init["class_path"] == "torch.optim.AdamW"  # materialized default survives
+
+    def test_load_uncached_raises_with_fetch_command(self, tmp_path):
+        import interpretune as it
+
+        with pytest.raises(KeyError, match="interpretune.hub.pull"):
+            it.hub.load("someorg/absent", "rte.x.core", cache_dir=tmp_path / "empty")
+
+    def test_from_hub_constructs_session_cfg_path(self, seeded_cache, monkeypatch):
+        """from_hub routes the cached body through the one-door loader before session construction."""
+        from interpretune.session import ITSession
+
+        captured = {}
+
+        def _capture_init(self, session_cfg, *args, **kwargs):
+            captured["cfg"] = session_cfg
+
+        monkeypatch.setattr(ITSession, "__init__", _capture_init)
+        ITSession.from_hub("speediedan/rte", "rte_demo.gemma2.circuit_tracer", cache_dir=seeded_cache)
+        cfg = captured["cfg"]
+        assert type(cfg).__name__ == "ITSessionConfig"
+        assert cfg.module_cls.__name__ == "RTEBoolqModule"
+
+
+class TestComponentRequires:
+    """`requires:` enforcement — each failure mode fails informatively at resolution time."""
+
+    @staticmethod
+    def _publish_with_requires(tmp_path, requires_patch: str) -> Path:
+        import shutil
+
+        from interpretune.hub.components import local_publish
+
+        src_copy = tmp_path / "component"
+        shutil.copytree(RTE_COMPONENT_DIR, src_copy)
+        manifest_path = src_copy / "it_component.yaml"
+        patched = manifest_path.read_text(encoding="utf-8").replace("interpretune: '>=0.1.dev0'", requires_patch)
+        assert patched != manifest_path.read_text(encoding="utf-8"), "requires patch did not apply"
+        manifest_path.write_text(patched, encoding="utf-8")
+        cache = tmp_path / "components"
+        local_publish(src_copy, "someorg/patched", entrypoint_src=RTE_ENTRYPOINT, cache_dir=cache)
+        return cache
+
+    @pytest.mark.parametrize(
+        ("requires_patch", "match"),
+        [
+            ("interpretune: '>=999.0'", "requires interpretune"),
+            ("interpretune: '>=0.1.dev0'\n  extra_unknown_adapter_sentinel: true", None),  # control: still passes
+        ],
+        ids=["unsatisfied-interpretune-floor", "unknown-extra-key-ignored"],
+    )
+    def test_interpretune_floor(self, tmp_path, requires_patch, match):
+        from interpretune.hub.components import ComponentRequirementError, resolve_component_config
+
+        cache = self._publish_with_requires(tmp_path, requires_patch)
+        if match:
+            with pytest.raises(ComponentRequirementError, match=match):
+                resolve_component_config("someorg/patched", "rte_demo.gpt2.sae_lens", cache_dir=cache)
+        else:
+            key, _ = resolve_component_config("someorg/patched", "rte_demo.gpt2.sae_lens", cache_dir=cache)
+            assert key == "rte_demo.gpt2.sae_lens"
+
+    @pytest.mark.parametrize(
+        ("mutation", "match"),
+        [
+            (("- nnsight", "- no_such_adapter"), "does not provide"),
+            (("pip: []", "pip:\n  - definitely-not-a-real-package-xyz"), "not installed"),
+            (("pip: []", "pip:\n  - pytest>=999.0"), "is installed"),
+        ],
+        ids=["unknown-adapter", "missing-pip-package", "unsatisfied-pip-specifier"],
+    )
+    def test_requires_failure_modes(self, tmp_path, mutation, match):
+        import shutil
+
+        from interpretune.hub.components import (
+            ComponentRequirementError,
+            local_publish,
+            resolve_component_config,
+        )
+
+        src_copy = tmp_path / "component"
+        shutil.copytree(RTE_COMPONENT_DIR, src_copy)
+        manifest_path = src_copy / "it_component.yaml"
+        old, new = mutation
+        patched = manifest_path.read_text(encoding="utf-8").replace(old, new)
+        assert patched != manifest_path.read_text(encoding="utf-8"), "requires mutation did not apply"
+        manifest_path.write_text(patched, encoding="utf-8")
+        cache = tmp_path / "components"
+        local_publish(src_copy, "someorg/patched", entrypoint_src=RTE_ENTRYPOINT, cache_dir=cache)
+        with pytest.raises(ComponentRequirementError, match=match):
+            resolve_component_config("someorg/patched", "rte_demo.gpt2.sae_lens", cache_dir=cache)
+
+
+class TestBareKeyAliasing:
+    """Collision-aware bare-key aliasing atop namespaced hub registration."""
+
+    def _register_from_cache(self, seeded_cache, registry, monkeypatch, alias_bare_key=True):
+        """Route register_component_config's fetch through the cache (no network in tests)."""
+        from interpretune.hub import components as hub_components
+
+        def _cache_pull(repo_id, key, revision=None, cache_dir=None, token=None):
+            return hub_components.resolve_component_config(repo_id, key, cache_dir=seeded_cache)
+
+        monkeypatch.setattr(hub_components, "pull_component_config", _cache_pull)
+        return hub_components.register_component_config(
+            "speediedan/rte", "rte_demo.gpt2.sae_lens", target_registry=registry, alias_bare_key=alias_bare_key
+        )
+
+    def test_namespaced_and_bare_keys_both_register(self, seeded_cache, monkeypatch):
+        from interpretune.registry import ModuleRegistry
+
+        registry = ModuleRegistry()
+        namespaced = self._register_from_cache(seeded_cache, registry, monkeypatch)
+        assert namespaced == "speediedan.rte.rte_demo.gpt2.sae_lens"
+        assert registry.get(namespaced) is not None
+        assert registry.get("rte_demo.gpt2.sae_lens") is not None
+
+    def test_bare_key_collision_keeps_existing_entry(self, seeded_cache, monkeypatch, recwarn):
+        from interpretune.registry import ModuleRegistry
+
+        registry = ModuleRegistry()
+        sentinel = {"existing": True}
+        registry["rte_demo.gpt2.sae_lens"] = sentinel
+        self._register_from_cache(seeded_cache, registry, monkeypatch)
+        assert registry["rte_demo.gpt2.sae_lens"] is sentinel  # never silently overridden
+        assert any("already registered" in str(w.message) for w in recwarn.list)
+
+    def test_alias_can_be_disabled(self, seeded_cache, monkeypatch):
+        from interpretune.registry import ModuleRegistry
+
+        registry = ModuleRegistry()
+        self._register_from_cache(seeded_cache, registry, monkeypatch, alias_bare_key=False)
+        assert registry.get("speediedan.rte.rte_demo.gpt2.sae_lens") is not None
+        assert "rte_demo.gpt2.sae_lens" not in registry

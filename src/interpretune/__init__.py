@@ -69,6 +69,8 @@ class _AnalysisImportHook(MetaPathFinder):
 sys.meta_path.insert(0, _AnalysisImportHook())
 
 _LAZY_MODULE_ATTRS = {
+    # hub (the `it.hub` verb surface — itself lazy per-attribute, so this stays cheap)
+    "hub": "interpretune.hub",
     # adapters
     "ITModule": "interpretune.adapters.ITModule",
     "LightningDataModule": "interpretune.adapters.LightningDataModule",

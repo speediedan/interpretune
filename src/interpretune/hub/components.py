@@ -29,6 +29,52 @@ except Exception:  # pragma: no cover - metadata unavailable in exotic layouts
 _TELEMETRY = {"library_name": "interpretune", "library_version": _IT_VERSION}
 
 
+class ComponentRequirementError(ImportError):
+    """The current environment cannot satisfy a component manifest's ``requires:`` block."""
+
+
+def enforce_component_requires(manifest: dict, source: str = "<component>") -> None:
+    """Enforce a manifest's ``requires:`` block against the current environment (fail informatively).
+
+    Three failure modes, each with its own message: an unsatisfied ``interpretune`` version specifier,
+    an adapter name this interpretune does not know (usually means a newer interpretune is required —
+    NOT that every listed adapter's backend must be importable, since configs compose subsets), and a
+    ``pip`` requirement that is not installed / does not satisfy its specifier.
+    """
+    from packaging.requirements import Requirement
+    from packaging.specifiers import SpecifierSet
+
+    req = manifest.get("requires") or {}
+    it_spec = req.get("interpretune")
+    if it_spec:
+        try:
+            it_version = _pkg_version("interpretune")
+        except Exception:
+            from interpretune import __version__ as it_version  # raw-checkout fallback
+        if not SpecifierSet(str(it_spec)).contains(it_version, prereleases=True):
+            raise ComponentRequirementError(
+                f"{source}: requires interpretune {it_spec!r} but {it_version!r} is installed."
+            )
+    from interpretune.protocol import Adapter
+
+    for name in req.get("adapters") or []:
+        if name not in Adapter.__members__:
+            raise ComponentRequirementError(
+                f"{source}: requires adapter {name!r}, which this interpretune does not provide "
+                f"(known: {sorted(Adapter.__members__)}) — a newer interpretune release may be required."
+            )
+    for entry in req.get("pip") or []:
+        r = Requirement(str(entry))
+        try:
+            installed = _pkg_version(r.name)
+        except Exception:
+            raise ComponentRequirementError(
+                f"{source}: requires pip package {entry!r}, which is not installed."
+            ) from None
+        if r.specifier and not r.specifier.contains(installed, prereleases=True):
+            raise ComponentRequirementError(f"{source}: requires {entry!r} but {r.name} {installed!r} is installed.")
+
+
 def _snapshot_revision(downloaded_path: Path) -> str:
     """Extract the resolved commit hash from an hf-cache download path (``.../snapshots/<commit>/...``)."""
     parts = Path(downloaded_path).parts
@@ -62,6 +108,7 @@ def pull_component_config(
     manifest key == derived-from-fields) runs on the fetched file before it is returned.
     """
     manifest, commit = pull_component_manifest(repo_id, revision=revision, cache_dir=cache_dir, token=token)
+    enforce_component_requires(manifest, source=f"{repo_id}@{commit[:12]}")
     configs = (manifest.get("module") or {}).get("configs") or {}
     if key not in configs:
         raise KeyError(
@@ -83,27 +130,49 @@ def pull_component_config(
 
 
 def register_component_config(
-    repo_id: str, key: str, revision: str | None = None, cache_dir: Path | None = None, token: str | None = None
+    repo_id: str,
+    key: str,
+    target_registry=None,
+    revision: str | None = None,
+    cache_dir: Path | None = None,
+    token: str | None = None,
+    alias_bare_key: bool = True,
 ) -> str:
     """Fetch one configuration and register it under its hub-namespaced key ``<org>.<repo>.<key>``.
 
-    Returns the namespaced registry key. Bare-key aliasing (collision-aware) is dispatcher-style follow-up work; the
-    namespaced form is always registered and always unambiguous.
+    Returns the namespaced registry key — always registered, always unambiguous. With ``alias_bare_key``
+    (default), the bare canonical key is additionally registered as a collision-aware alias: an existing
+    bare-key entry is KEPT (never silently overridden) with a warning pointing at the namespaced form.
     """
-    from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY, example_register_func
+    import copy
+    from functools import partial
 
+    from interpretune.registry import MODULE_REGISTRY, instantiate_and_register
+    from interpretune.utils.logging import rank_zero_warn
+
+    if target_registry is None:
+        target_registry = MODULE_REGISTRY
     canonical_key, body = pull_component_config(repo_id, key, revision=revision, cache_dir=cache_dir, token=token)
     namespaced = f"{repo_id.replace('/', '.')}.{canonical_key}"
-    example_register_func(MODULE_EXAMPLE_REGISTRY.registry)(namespaced, body)
+    register = partial(instantiate_and_register, target_registry=target_registry)
+    register(namespaced, copy.deepcopy(body))
+    if alias_bare_key:
+        if canonical_key in target_registry:
+            rank_zero_warn(
+                f"Bare key {canonical_key!r} is already registered; keeping the existing entry. "
+                f"Use the namespaced key {namespaced!r} to address this component unambiguously."
+            )
+        else:
+            register(canonical_key, copy.deepcopy(body))
     return namespaced
 
 
-def resolve_component_config(repo_id: str, key: str, cache_dir: Path | None = None) -> tuple[str, dict]:
-    """CACHE-ONLY resolution of one configuration: never touches the network (design invariant §3.2).
+def resolve_component_manifest(repo_id: str, cache_dir: Path | None = None) -> tuple[dict, Path, str]:
+    """CACHE-ONLY manifest read: returns ``(manifest, snapshot_dir, revision)``; never touches the network.
 
     Reads the repo's cached ``refs/main`` revision from the components cache — whether it got there via
-    an explicit hub fetch or the local-publish bridge — and returns the parity-checked configuration.
-    Raises with the explicit fetch command when the component is not cached.
+    an explicit hub fetch or the local-publish bridge. Raises with the explicit fetch command when the
+    component is not cached (the no-implicit-network invariant, design §3.2).
     """
     root = Path(cache_dir or IT_COMPONENTS_HUB_CACHE)
     repo_dir = root / f"models--{repo_id.replace('/', '--')}"
@@ -111,13 +180,20 @@ def resolve_component_config(repo_id: str, key: str, cache_dir: Path | None = No
     if not ref.is_file():
         raise KeyError(
             f"Component {repo_id!r} is not in the local cache ({root}). Fetch it explicitly first: "
-            f"interpretune.hub.pull_component_config({repo_id!r}, {key!r}) — local resolution never "
-            "performs implicit network access."
+            f"interpretune.hub.pull({repo_id!r}) — local resolution never performs implicit network access."
         )
-    snapshot = repo_dir / "snapshots" / ref.read_text(encoding="utf-8").strip()
+    revision = ref.read_text(encoding="utf-8").strip()
+    snapshot = repo_dir / "snapshots" / revision
     manifest = validate_component_manifest(
         yaml.safe_load((snapshot / IT_COMPONENT_MANIFEST).read_text(encoding="utf-8")), source=f"{repo_id}@cache"
     )
+    return manifest, snapshot, revision
+
+
+def resolve_component_config(repo_id: str, key: str, cache_dir: Path | None = None) -> tuple[str, dict]:
+    """CACHE-ONLY resolution of one configuration: never touches the network (design invariant §3.2)."""
+    manifest, snapshot, _ = resolve_component_manifest(repo_id, cache_dir=cache_dir)
+    enforce_component_requires(manifest, source=f"{repo_id}@cache")
     configs = (manifest.get("module") or {}).get("configs") or {}
     if key not in configs:
         raise KeyError(f"{repo_id} (cached) declares no configuration {key!r}. Available: {sorted(configs)}")
