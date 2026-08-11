@@ -91,8 +91,14 @@ class ITSessionMixin:
             if not source_path.is_file():
                 continue
             body = _yaml.safe_load(source_path.read_text(encoding="utf-8")) or {}
-            if isinstance(body, dict) and isinstance(body.get("session_cfg"), dict):
+            if not isinstance(body, dict):
+                continue
+            if isinstance(body.get("session_cfg"), dict):  # legacy session_cfg-subtree files
                 mapping = self._deep_merge(mapping, body["session_cfg"])
+            elif "registered_cfg" in body:  # flattened one-door bodies (4b): body keys at top level
+                mapping = self._deep_merge(
+                    mapping, {k: body[k] for k in ("shared_config", "registered_cfg", "adapter_ctx") if k in body}
+                )
         return mapping
 
     def build_it_session(self, session_mapping: dict[str, Any]) -> ITSession:

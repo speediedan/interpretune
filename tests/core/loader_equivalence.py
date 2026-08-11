@@ -17,12 +17,12 @@ from typing import Any
 from interpretune.session import ITSessionConfig
 
 REPO_ROOT = Path(__file__).parent.parent.parent
-CLI_EXPERIMENTS_DIR = REPO_ROOT / "src" / "it_examples" / "config" / "experiments"
+CLI_EXPERIMENTS_DIR = REPO_ROOT / "src" / "it_examples" / "experiments" / "cli" / "rte_boolq"
 
 
 def cli_experiment_configs() -> list[Path]:
-    """Every CLI experiment config the harness must hold equivalent across the unification."""
-    return sorted(CLI_EXPERIMENTS_DIR.rglob("*.yaml"))
+    """Every flattened CLI experiment configuration (one-door bodies + shim passthrough keys)."""
+    return sorted(p for p in CLI_EXPERIMENTS_DIR.rglob("*.yaml") if "ft_schedules" not in p.parts)
 
 
 def normalize(value: Any) -> Any:

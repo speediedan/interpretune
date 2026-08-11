@@ -25,7 +25,7 @@ BASELINE_SPECS = json.loads((Path(__file__).parent / "fixtures" / "cli_session_b
 
 
 def _baseline_for(config_path):
-    rel = str(config_path.relative_to(config_path.parents[3]))
+    rel = str(config_path.relative_to(config_path.parents[6]))  # repo root -> src/it_examples/...
     return BASELINE_SPECS[rel]
 
 
@@ -79,19 +79,21 @@ def test_autocomp_synthesis_baseline():
 
 import yaml  # noqa: E402
 
-from interpretune.config.loading import load_session_cfg, session_body_from_cli_mapping  # noqa: E402
+from interpretune.config.loading import load_session_cfg  # noqa: E402
 
 
 @pytest.mark.parametrize("config_path", CONFIGS, ids=lambda p: f"{p.parent.name}/{p.stem}")
 def test_unified_loader_matches_frozen_baseline(config_path):
-    """The loader must keep producing what the (now-removed) jsonargparse path produced.
+    """Flattened configurations must keep producing what the validated migration produced.
 
-    45/45 live equivalence was proven BEFORE the old path was removed; its final captures are frozen as a committed
-    fixture, so post-removal regressions in the loader (or accidental semantic edits to the experiment configs) still
-    fail against the validated baseline.
+    Live equivalence to the old jsonargparse path was proven pre-removal (45/45); the 4b migration round-trip-verified
+    every flattened body against the post-4a runtime and froze those specs, so loader regressions or accidental semantic
+    edits to the flattened configs fail against the validated baseline. Bodies are one-door: no shim translation on this
+    path.
     """
-    mapping = yaml.safe_load(config_path.read_text(encoding="utf-8"))["session_cfg"]
-    loaded = load_session_cfg(session_body_from_cli_mapping(mapping))
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    body = {k: raw[k] for k in ("shared_config", "registered_cfg", "adapter_ctx") if k in raw}
+    loaded = load_session_cfg(body)
     assert json.loads(json.dumps(session_spec(loaded), default=str)) == _baseline_for(config_path)
 
 

@@ -1,5 +1,5 @@
 {
- "experiments/rte_boolq/gemma2/2b_chat_lightning_qlora_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_qlora_zs_test.yaml": {
   "adapter_ctx": [
    "lightning"
   ],
@@ -246,7 +246,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gemma2/2b_chat_lightning_sl_br_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_sl_br_zs_test.yaml": {
   "adapter_ctx": [
    "lightning",
    "sae_lens"
@@ -533,7 +533,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gemma2/2b_chat_lightning_sl_ht_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_sl_ht_zs_test.yaml": {
   "adapter_ctx": [
    "lightning",
    "sae_lens"
@@ -825,7 +825,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gemma2/2b_chat_lightning_sl_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_sl_zs_test.yaml": {
   "adapter_ctx": [
    "lightning",
    "sae_lens"
@@ -1117,7 +1117,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml": {
   "adapter_ctx": [
    "lightning"
   ],
@@ -1355,7 +1355,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gemma2/2b_it_ct_ns_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_it_ct_ns_zs_test.yaml": {
   "adapter_ctx": [
    "circuit_tracer",
    "core",
@@ -1635,7 +1635,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gemma2/2b_nonchat_lightning_qlora_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_nonchat_lightning_qlora_zs_test.yaml": {
   "adapter_ctx": [
    "lightning"
   ],
@@ -1881,7 +1881,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gemma3/1b_it_ct_ns_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma3/1b_it_ct_ns_zs_test.yaml": {
   "adapter_ctx": [
    "circuit_tracer",
    "core",
@@ -2140,7 +2140,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml": {
   "adapter_ctx": [
    "circuit_tracer",
    "lightning",
@@ -2399,7 +2399,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gemma3/1b_it_lightning_ns_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma3/1b_it_lightning_ns_zs_test.yaml": {
   "adapter_ctx": [
    "lightning",
    "nnsight"
@@ -2636,7 +2636,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gemma3/1b_it_ns_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma3/1b_it_ns_zs_test.yaml": {
   "adapter_ctx": [
    "core",
    "nnsight"
@@ -2873,7 +2873,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gemma3/4b_262k_it_ct_ns_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma3/4b_262k_it_ct_ns_zs_test.yaml": {
   "adapter_ctx": [
    "circuit_tracer",
    "core",
@@ -3145,7 +3145,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gemma3/4b_it_ct_ns_zs_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gemma3/4b_it_ct_ns_zs_test.yaml": {
   "adapter_ctx": [
    "circuit_tracer",
    "core",
@@ -3417,7 +3417,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/gpt2/lightning_tl_rte_small_noquant_test.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/gpt2/lightning_tl_rte_small_noquant_test.yaml": {
   "adapter_ctx": [
    "lightning",
    "transformer_lens"
@@ -3691,7 +3691,7 @@
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
- "experiments/rte_boolq/llama3_2/lightning_rte_3b_qlora_zero_shot_test_only.yaml": {
+ "src/it_examples/experiments/cli/rte_boolq/llama3_2/lightning_rte_3b_qlora_zero_shot_test_only.yaml": {
   "adapter_ctx": [
    "lightning"
   ],

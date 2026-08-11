@@ -23,7 +23,7 @@ from it_examples.experiments.rte_boolq import TASK_TEXT_FIELD_MAP
 
 DEFAULT_EXPERIMENT_CONFIG = (
     Path(__file__).resolve().parents[2]
-    / "it_examples/config/experiments/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml"
+    / "it_examples/experiments/cli/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml"
 )
 
 
