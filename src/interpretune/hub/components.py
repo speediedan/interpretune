@@ -53,7 +53,9 @@ def enforce_component_requires(manifest: dict, source: str = "<component>") -> N
             from interpretune import __version__ as it_version  # raw-checkout fallback
         if not SpecifierSet(str(it_spec)).contains(it_version, prereleases=True):
             raise ComponentRequirementError(
-                f"{source}: requires interpretune {it_spec!r} but {it_version!r} is installed."
+                f"{source}: requires interpretune {it_spec!r} but {it_version!r} is installed. "
+                "(If this version looks wrong for your checkout, stale packaging metadata — e.g. an old "
+                "src/*.egg-info directory — can shadow the real installation when src/ is on sys.path.)"
             )
     from interpretune.protocol import Adapter
 
