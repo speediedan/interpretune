@@ -38,6 +38,7 @@ from interpretune.analysis.backends import (
 )
 from interpretune.analysis.core import (
     AnalysisStore,
+    analysis_store_from_batches,
     LatentAnalysisTargets,
     LatentAnalysisDict,
     LatentMetrics,
@@ -66,6 +67,7 @@ _register_formatter(ITAnalysisFormatter, "interpretune", aliases=["it", "itanaly
 __all__ = [
     # Core Analysis Classes
     "AnalysisStore",
+    "analysis_store_from_batches",
     "LatentAnalysisTargets",
     "schema_to_features",
     "_make_simple_cache_hook",

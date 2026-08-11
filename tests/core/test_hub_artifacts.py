@@ -229,6 +229,52 @@ class TestGraphHydrationRoundTrip:
         assert torch.equal(restored.active_features, graph.active_features)
         assert restored.input_string == graph.input_string
 
+    def test_store_from_batches_to_envelope_to_hydration(self, tmp_path, monkeypatch):
+        """The notebook's exact seam: in-memory pipeline results -> store -> artifact -> hydrated Graph."""
+        import socket
+
+        import torch
+        from datasets import load_dataset
+
+        pytest.importorskip("circuit_tracer")
+        from circuit_tracer.graph import Graph
+
+        from interpretune.analysis import AnalysisStore, analysis_store_from_batches
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+        from tests.core.test_analysis_backend_graph_serialization import (
+            _FakeModule,
+            _graph_batch_from_graph,
+            _make_graph,
+        )
+
+        graph = _make_graph()
+        decomposed = _graph_batch_from_graph(graph)
+        module = _FakeModule(graph=graph)
+        store = analysis_store_from_batches(
+            module,
+            [decomposed],
+            op=DISPATCHER.get_op("compute_attribution_graph"),
+            analysis_backend="circuit_tracer",
+        )
+        env = build_analysis_store_envelope(store)
+        assert env["interpretune"]["analysis_backend"] == "circuit_tracer"  # instance mapped back to its name
+        cache = tmp_path / "artifacts"
+        TestLocalArtifactRoundTrip._materialize_local_artifact(store, "someorg/nb-seam", cache)
+        monkeypatch.setattr(socket.socket, "connect", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")))
+        env = describe_analysis_store("someorg/nb-seam", cache_dir=cache)
+        repo_dir = cache / "datasets--someorg--nb-seam"
+        snapshot = repo_dir / "snapshots" / (repo_dir / "refs" / "main").read_text(encoding="utf-8").strip()
+        from interpretune.analysis.backends import resolve_analysis_backend
+
+        pulled = AnalysisStore(
+            dataset=load_dataset(str(snapshot / "data"), split="validation"),
+            split="validation",
+            it_format_kwargs={"analysis_backend": resolve_analysis_backend(env["interpretune"]["analysis_backend"])},
+        )
+        restored = pulled[0]["attribution_graph"]
+        assert isinstance(restored, Graph)
+        assert torch.equal(restored.adjacency_matrix, graph.adjacency_matrix)
+
     def test_unresolvable_backend_names_requirement(self):
         from interpretune.analysis.backends import resolve_analysis_backend
 
