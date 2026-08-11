@@ -73,11 +73,10 @@ class TestCachedEntrypointResolution:
 
         cls = resolve_prompt_config_class("speediedan/prompt-configs#GemmaPromptConfig", cache_dir=seeded_cache)
         assert cls.__name__ == "GemmaPromptConfig"
-        # published definition matches the (dissolving) in-repo spelling byte-for-byte
-        from it_examples.example_prompt_configs import GemmaPromptConfig as InRepoGemma
-
-        assert cls().model_chat_template_fn("Hi", "gemma-chat") == InRepoGemma().model_chat_template_fn(
-            "Hi", "gemma-chat"
+        # published definition produces the pinned gemma-chat spelling byte-for-byte
+        assert (
+            cls().model_chat_template_fn("Hi", "gemma-chat")
+            == "<bos><start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n"
         )
 
     def test_unknown_definition_names_available(self, seeded_cache):
@@ -118,33 +117,43 @@ class TestCachedEntrypointResolution:
 
 
 class TestComposeRefParity:
-    """MRO-equivalence pins vs the dissolving hand-written compositions (umbrella spec, pre-deletion)."""
+    """MRO/byte pins for compose_ref synthesis (verified against the dissolved hand-written classes pre-
+    deletion)."""
 
-    @pytest.mark.parametrize(
-        ("ref_name", "dissolving_cls_name", "pattern"),
-        [
-            ("GemmaPromptConfig", "RTEBoolqGemmaPromptConfig", "gemma-chat"),
-            ("Llama3PromptConfig", "RTEBoolqLlama3PromptConfig", "llama3-chat"),
-        ],
-    )
-    def test_composed_class_mirrors_dissolving_composition(self, seeded_cache, ref_name, dissolving_cls_name, pattern):
+    EXPECTED_BYTES = {
+        "GemmaPromptConfig": (
+            "gemma-chat",
+            "<bos><start_of_turn>user\nDoes A imply B?<end_of_turn>\n<start_of_turn>model\n",
+        ),
+        "Llama3PromptConfig": (
+            "llama3-chat",
+            "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\nYou are a helpful assistant."
+            "<|eot_id|><|start_header_id|>user<|end_header_id|>\nDoes A imply B? "
+            "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
+        ),
+    }
+
+    @pytest.mark.parametrize("ref_name", ["GemmaPromptConfig", "Llama3PromptConfig"])
+    def test_composed_class_pins_mro_fields_and_bytes(self, seeded_cache, ref_name):
+        """Bases order (RefClass, TaskSchema), merged field surface, and prompt bytes — all pinned.
+
+        The byte literals were captured from the hand-written ``RTEBoolq{Gemma,Llama3}PromptConfig``
+        compositions before ``example_prompt_configs.py`` dissolved (umbrella spec: pinned
+        pre-deletion), so this composition path reproduces those classes exactly.
+        """
         import dataclasses
 
-        import it_examples.example_prompt_configs as legacy
         from it_examples.experiments.rte_boolq import RTEBoolqPromptConfig
         from interpretune.hub.promptconfigs import compose_prompt_config_class, resolve_prompt_config_class
 
         ref_cls = resolve_prompt_config_class(f"speediedan/prompt-configs#{ref_name}", cache_dir=seeded_cache)
         composed = compose_prompt_config_class(ref_cls, RTEBoolqPromptConfig)
-        dissolving = getattr(legacy, dissolving_cls_name)
-        # (RefClass, TaskSchema) base order mirrors the hand-written MRO shape
-        assert [b.__name__ for b in composed.__bases__] == [b.__name__ for b in dissolving.__bases__]
-        # field surface identical
-        assert {f.name for f in dataclasses.fields(composed)} == {f.name for f in dataclasses.fields(dissolving)}
-        # produced prompt bytes identical
-        assert composed().model_chat_template_fn("Does A imply B?", pattern) == dissolving().model_chat_template_fn(
-            "Does A imply B?", pattern
-        )
+        assert [b.__name__ for b in composed.__bases__] == [ref_name, "RTEBoolqPromptConfig"]
+        fields = {f.name for f in dataclasses.fields(composed)}
+        assert {f.name for f in dataclasses.fields(ref_cls)} <= fields
+        assert {"ctx_question_join", "question_suffix", "cust_task_prompt"} <= fields
+        pattern, expected = self.EXPECTED_BYTES[ref_name]
+        assert composed().model_chat_template_fn("Does A imply B?", pattern) == expected
 
     def test_compose_ref_through_factory_merge_site(self, seeded_cache, monkeypatch):
         """The one-merge-site path instantiates a compose_ref prompt_cfg node end-to-end."""

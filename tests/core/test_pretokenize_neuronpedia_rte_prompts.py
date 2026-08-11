@@ -64,7 +64,7 @@ def test_load_rte_pretokenization_settings_uses_gemma_prompt_config() -> None:
 
     assert settings.task_name == "rte"
     assert settings.text_fields == ("premise", "hypothesis")
-    assert settings.prompt_config_class_path == "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig"
+    assert settings.prompt_config_class_path == "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig"
     assert settings.prompt_cfg.ctx_question_join == "Does the previous passage imply that "
     assert settings.windowing_mode == "max-prompt-pad"
 

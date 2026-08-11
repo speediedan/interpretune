@@ -25,14 +25,10 @@
     "batched": true
    },
    "prompt_cfg": {
-    "ASSISTANT_ROLE": "model",
-    "B_TEXT": "<bos>",
-    "B_TURN": "<start_of_turn>",
-    "E_TURN": "<end_of_turn>",
-    "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig",
+    "add_generation_prompt": true,
     "ctx_question_join": "Does the previous passage imply that ",
-    "cust_task_prompt": null,
+    "cust_task_prompt": {},
     "question_suffix": "? Answer with only one word, either Yes or No."
    },
    "remove_unused_columns": true,
@@ -273,14 +269,10 @@
     "batched": true
    },
    "prompt_cfg": {
-    "ASSISTANT_ROLE": "model",
-    "B_TEXT": "<bos>",
-    "B_TURN": "<start_of_turn>",
-    "E_TURN": "<end_of_turn>",
-    "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig",
+    "add_generation_prompt": true,
     "ctx_question_join": "Does the previous passage imply that ",
-    "cust_task_prompt": null,
+    "cust_task_prompt": {},
     "question_suffix": "? Answer with only one word, either Yes or No."
    },
    "remove_unused_columns": true,
@@ -560,14 +552,10 @@
     "batched": true
    },
    "prompt_cfg": {
-    "ASSISTANT_ROLE": "model",
-    "B_TEXT": "<bos>",
-    "B_TURN": "<start_of_turn>",
-    "E_TURN": "<end_of_turn>",
-    "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig",
+    "add_generation_prompt": true,
     "ctx_question_join": "Does the previous passage imply that ",
-    "cust_task_prompt": null,
+    "cust_task_prompt": {},
     "question_suffix": "? Answer with only one word, either Yes or No."
    },
    "remove_unused_columns": true,
@@ -852,14 +840,10 @@
     "batched": true
    },
    "prompt_cfg": {
-    "ASSISTANT_ROLE": "model",
-    "B_TEXT": "<bos>",
-    "B_TURN": "<start_of_turn>",
-    "E_TURN": "<end_of_turn>",
-    "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig",
+    "add_generation_prompt": true,
     "ctx_question_join": "Does the previous passage imply that ",
-    "cust_task_prompt": null,
+    "cust_task_prompt": {},
     "question_suffix": "? Answer with only one word, either Yes or No."
    },
    "remove_unused_columns": true,
@@ -1143,14 +1127,10 @@
     "batched": true
    },
    "prompt_cfg": {
-    "ASSISTANT_ROLE": "model",
-    "B_TEXT": "<bos>",
-    "B_TURN": "<start_of_turn>",
-    "E_TURN": "<end_of_turn>",
-    "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig",
+    "add_generation_prompt": true,
     "ctx_question_join": "Does the previous passage imply that ",
-    "cust_task_prompt": null,
+    "cust_task_prompt": {},
     "question_suffix": "? Answer with only one word, either Yes or No."
    },
    "remove_unused_columns": true,
@@ -1383,14 +1363,10 @@
     "batched": true
    },
    "prompt_cfg": {
-    "ASSISTANT_ROLE": "model",
-    "B_TEXT": "<bos>",
-    "B_TURN": "<start_of_turn>",
-    "E_TURN": "<end_of_turn>",
-    "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig",
+    "add_generation_prompt": true,
     "ctx_question_join": "Does the previous passage imply that ",
-    "cust_task_prompt": null,
+    "cust_task_prompt": {},
     "question_suffix": "? Answer with only one word, either Yes or No."
    },
    "remove_unused_columns": true,
@@ -1909,14 +1885,10 @@
     "batched": true
    },
    "prompt_cfg": {
-    "ASSISTANT_ROLE": "model",
-    "B_TEXT": "<bos>",
-    "B_TURN": "<start_of_turn>",
-    "E_TURN": "<end_of_turn>",
-    "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig",
+    "add_generation_prompt": true,
     "ctx_question_join": "Does the previous passage imply that ",
-    "cust_task_prompt": null,
+    "cust_task_prompt": {},
     "question_suffix": "? Answer with only one word, either Yes or No."
    },
    "remove_unused_columns": true,
@@ -2168,14 +2140,10 @@
     "batched": true
    },
    "prompt_cfg": {
-    "ASSISTANT_ROLE": "model",
-    "B_TEXT": "<bos>",
-    "B_TURN": "<start_of_turn>",
-    "E_TURN": "<end_of_turn>",
-    "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig",
+    "add_generation_prompt": true,
     "ctx_question_join": "Does the previous passage imply that ",
-    "cust_task_prompt": null,
+    "cust_task_prompt": {},
     "question_suffix": "? Answer with only one word, either Yes or No."
    },
    "remove_unused_columns": true,
@@ -2426,14 +2394,10 @@
     "batched": true
    },
    "prompt_cfg": {
-    "ASSISTANT_ROLE": "model",
-    "B_TEXT": "<bos>",
-    "B_TURN": "<start_of_turn>",
-    "E_TURN": "<end_of_turn>",
-    "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig",
+    "add_generation_prompt": true,
     "ctx_question_join": "Does the previous passage imply that ",
-    "cust_task_prompt": null,
+    "cust_task_prompt": {},
     "question_suffix": "? Answer with only one word, either Yes or No."
    },
    "remove_unused_columns": true,
@@ -2663,14 +2627,10 @@
     "batched": true
    },
    "prompt_cfg": {
-    "ASSISTANT_ROLE": "model",
-    "B_TEXT": "<bos>",
-    "B_TURN": "<start_of_turn>",
-    "E_TURN": "<end_of_turn>",
-    "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig",
+    "add_generation_prompt": true,
     "ctx_question_join": "Does the previous passage imply that ",
-    "cust_task_prompt": null,
+    "cust_task_prompt": {},
     "question_suffix": "? Answer with only one word, either Yes or No."
    },
    "remove_unused_columns": true,
@@ -2901,14 +2861,10 @@
     "batched": true
    },
    "prompt_cfg": {
-    "ASSISTANT_ROLE": "model",
-    "B_TEXT": "<bos>",
-    "B_TURN": "<start_of_turn>",
-    "E_TURN": "<end_of_turn>",
-    "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig",
+    "add_generation_prompt": true,
     "ctx_question_join": "Does the previous passage imply that ",
-    "cust_task_prompt": null,
+    "cust_task_prompt": {},
     "question_suffix": "? Answer with only one word, either Yes or No."
    },
    "remove_unused_columns": true,
@@ -3173,14 +3129,10 @@
     "batched": true
    },
    "prompt_cfg": {
-    "ASSISTANT_ROLE": "model",
-    "B_TEXT": "<bos>",
-    "B_TURN": "<start_of_turn>",
-    "E_TURN": "<end_of_turn>",
-    "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqGemmaPromptConfig",
+    "__class__": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig",
+    "add_generation_prompt": true,
     "ctx_question_join": "Does the previous passage imply that ",
-    "cust_task_prompt": null,
+    "cust_task_prompt": {},
     "question_suffix": "? Answer with only one word, either Yes or No."
    },
    "remove_unused_columns": true,
@@ -3728,7 +3680,7 @@
     "TOOL_ROLE": "ipython",
     "TOOL_TAG": "<|python_tag|>",
     "USER_ROLE": "user",
-    "__class__": "it_examples.example_prompt_configs.RTEBoolqLlama3PromptConfig",
+    "__class__": "interpretune.hub.promptconfigs.Llama3PromptConfig_RTEBoolqPromptConfig",
     "ctx_question_join": "Does the previous passage imply that ",
     "cust_task_prompt": null,
     "question_suffix": "? Answer with only one word, either Yes or No.",

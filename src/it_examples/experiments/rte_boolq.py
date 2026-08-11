@@ -42,6 +42,7 @@ from interpretune import (
     ITLensConfig,
     SAELensConfig,
     CircuitTracerConfig,
+    ChatTemplatePromptConfig,
     PromptConfig,
     ITDataModuleConfig,
     ITConfig,
@@ -85,6 +86,17 @@ class RTEBoolqPromptConfig(PromptConfig):
     cust_task_prompt: dict[str, Any] | None = None  # type: ignore[assignment]  # intentional override for demo
 
 
+@dataclass(kw_only=True)
+class RTEBoolqChatTemplatePromptConfig(ChatTemplatePromptConfig, RTEBoolqPromptConfig):
+    """Chat-template-first RTE/BoolQ prompt construction (hub design §11.5).
+
+    The default for chat models whose native template is byte-equivalent to the retired manual
+    spellings (gemma2/gemma3 — pinned by ``test_prompt_template_equivalence``). Model families whose
+    native template violates provenance (llama3's is date-stamped) instead compose a published manual
+    definition via ``compose_ref``.
+    """
+
+
 # add our custom model attributes
 @dataclass(kw_only=True)
 class RTEBoolqConfig(RTEBoolqEntailmentMapping, ITConfig): ...
@@ -124,6 +136,9 @@ class RTEBoolqDataModule(ITDataModule):
         # NOTE [HF Datasets Transformation Caching]:
         # HF Datasets' transformation cache fingerprinting algo necessitates construction of these partials as the hash
         # is generated using function args, dataset file, mapping args: https://bit.ly/HF_Datasets_fingerprint_algo)
+        # chat-template-first configs delegate to the tokenizer; bind it before template_fn is captured
+        if hasattr(self.itdm_cfg.prompt_cfg, "bind_tokenizer"):
+            self.itdm_cfg.prompt_cfg.bind_tokenizer(self.tokenizer)
         tokenization_func = partial(
             self.encode_for_rteboolq,
             tokenizer=self.tokenizer,

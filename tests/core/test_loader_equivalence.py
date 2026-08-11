@@ -25,6 +25,14 @@ CONFIGS = cli_experiment_configs()
 BASELINE_SPECS = json.loads((Path(__file__).parent / "fixtures" / "cli_session_baseline_specs.json").read_text())
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _seed_components():
+    """compose_ref nodes (llama3 prompt definitions) resolve cache-only — seed the components cache."""
+    from it_examples.seeds import ensure_local_seeds
+
+    ensure_local_seeds()
+
+
 def _baseline_for(config_path):
     return BASELINE_SPECS[fixture_key(config_path)]
 

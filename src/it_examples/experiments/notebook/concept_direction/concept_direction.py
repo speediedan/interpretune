@@ -44,7 +44,7 @@ from interpretune.utils.neuronpedia_explanations import (
     write_cached_feature_activations,
 )
 
-from it_examples.example_prompt_configs import GemmaPromptConfig
+from it_examples.examples.prompt_configs.prompt_configs import GemmaPromptConfig
 from it_examples.experiments.notebook.config import (
     SharedHarnessSections,
     build_shared_harness_sections,

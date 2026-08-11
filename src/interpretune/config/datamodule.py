@@ -47,6 +47,23 @@ class ChatTemplatePromptConfig(PromptConfig):
     def build_messages(self, task_prompt: str) -> list[dict[str, str]]:
         return [{"role": "user", "content": task_prompt.strip()}]
 
+    def apply_chat_template_fn(
+        self,
+        tokenizer: Any,
+        task_prompt: str,
+        *,
+        tokenize: bool = False,
+        add_generation_prompt: bool = True,
+        return_tensors: str | None = None,
+    ) -> Any:
+        """Explicit-tokenizer template application (the pretokenization consumers' seam)."""
+        return tokenizer.apply_chat_template(
+            self.build_messages(task_prompt),
+            tokenize=tokenize,
+            add_generation_prompt=add_generation_prompt,
+            return_tensors=return_tensors,
+        )
+
     def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: str | None = None) -> str:
         if self._tokenizer is None or not getattr(self._tokenizer, "chat_template", None):
             return task_prompt.strip()
