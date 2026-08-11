@@ -4,7 +4,7 @@ import shutil
 from copy import deepcopy
 
 import pytest
-from jsonargparse import Namespace, ArgumentError
+from jsonargparse import ArgumentError
 
 from interpretune.base import LightningCLIAdapter, bootstrap_cli
 from tests.runif import RunIf
@@ -117,10 +117,13 @@ def test_compose_config_relative(clean_cli_env, cli_test_configs, fnf_error, glo
 
 @RunIf(lightning=True)
 def test_lightning_adapter_attr_missing(clean_cli_env):
+    class _MockSession:
+        datamodule = "mock_dm"
+
     lightning_cli_adapter = LightningCLIAdapter()
-    mock_config = Namespace({"it_session": Namespace({"datamodule": "mock_dm"})})
-    assert lightning_cli_adapter._it_session_cfg(mock_config, "it_session.datamodule") == "mock_dm"
-    assert lightning_cli_adapter._it_session_cfg(mock_config, "it_session.missing") is None
+    lightning_cli_adapter.it_session = _MockSession()  # the session is loader-built and object-resolved now
+    assert lightning_cli_adapter._it_session_object_attr("it_session.datamodule") == "mock_dm"
+    assert lightning_cli_adapter._it_session_object_attr("it_session.missing") is None
 
 
 @pytest.mark.parametrize("run", [True, False], ids=["run", "norun"])

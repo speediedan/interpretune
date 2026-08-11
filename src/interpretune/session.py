@@ -91,17 +91,14 @@ class ITSessionConfig(UnencapsulatedArgs):
                 module, module_cls = getattr(self, attr_k).rsplit(".", 1)
                 mod = importlib.import_module(module)
                 setattr(self, attr_k, getattr(mod, module_cls, None))
-        if self.shared_cfg:
-            if isinstance(self.shared_cfg, dict):
-                self.shared_cfg = ITSharedConfig(**self.shared_cfg)
-            for attr, value in self.shared_cfg.__dict__.items():
-                for cfg in [self.datamodule_cfg, self.module_cfg]:
-                    if getattr(cfg, attr, None) not in (None, {}, "", value):
-                        rank_zero_warn(
-                            f"Overriding `{attr}` from `{cfg.__class__.__name__}` with value from `shared_cfg`"
-                        )
-                    setattr(cfg, attr, value)
-                    cfg._validate_on_session_cfg_init()
+        # The shared_cfg fan-out is RETIRED (hub design v3 §11.4): shared-config application happens in
+        # exactly ONE place — the loader/factory path (interpretune.config.loading.load_session_cfg).
+        # This assertion is deliberate (not silent removal): a caller still passing shared values here
+        # gets pointed at the one merge site rather than silently losing the merge.
+        assert not self.shared_cfg, (
+            "ITSessionConfig no longer applies shared_cfg — shared-config merging happens only in "
+            "`interpretune.config.loading.load_session_cfg` (pass a body with a `shared_config` block)."
+        )
 
 
 class ITSession(Mapping):

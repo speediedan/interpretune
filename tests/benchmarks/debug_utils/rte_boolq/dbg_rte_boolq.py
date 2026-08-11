@@ -8,7 +8,7 @@ Includes entailment mapping verification and label analysis.
 
 Usage:
     python tests/benchmarks/debug_utils/rte_boolq/dbg_rte_boolq.py \
-        --config src/it_examples/config/experiments/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml \
+        --config src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml \
         --output /tmp/rte_boolq_diagnostics.log
 """
 

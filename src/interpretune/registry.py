@@ -251,11 +251,77 @@ def resolve_adapter_combinations(adapter_combinations: Sequence):
     return tuple(registered_combinations)
 
 
-def instantiate_nested(c: Dict | List):
+def _declarative_field_names(cls: type) -> Set:
+    """Field names whose DECLARED dataclass type says a plain dict IS the value (one-grammar recursion rule).
+
+    ``class_path`` dicts instantiate recursively EXCEPT where the target field's declared type admits a plain
+    dict — those fields are declarative (e.g. ``optimizer_init``: a directive instantiated later, with model
+    params, at ``configure_optimizers`` time). Type-driven only, never a name list; ``Optional``/``Union``
+    members are unwrapped; ``Any``-typed fields KEEP the instantiate behavior (the skip applies only where the
+    type explicitly says dict), matching how jsonargparse already treated declared types.
+    """
+    import dataclasses
+    import typing
+
+    import re
+
+    if not dataclasses.is_dataclass(cls):
+        return set()
+    try:
+        hints = typing.get_type_hints(cls)
+    except Exception:
+        # unresolvable hints (TYPE_CHECKING-only forward refs, synthesized classes): the declared type
+        # is still authoritative — read it textually from the stringized annotations instead
+        hints = None
+    names = set()
+    dict_ann = re.compile(r"(?:^|[\[\s|,])(?:dict|Dict)(?:\[|$|[\s\]|,])")
+    for f in dataclasses.fields(cls):
+        declared = hints.get(f.name) if hints is not None else f.type
+        if isinstance(declared, str):
+            # genuinely stringized annotation that could not be resolved: read the declared type textually
+            if dict_ann.search(declared):
+                names.add(f.name)
+            continue
+        if _admits_plain_dict(declared):
+            names.add(f.name)
+    return names
+
+
+def _admits_plain_dict(declared) -> bool:
+    """True when the declared type is dict (possibly parameterized) or a Union admitting one.
+
+    ``get_args`` on ``dict[str, Any]`` yields the TYPE PARAMETERS, not union members — only Unions
+    unwrap; a parameterized dict is itself the answer.
+    """
+    import types
+    import typing
+
+    origin = typing.get_origin(declared) or declared
+    if origin is dict:
+        return True
+    if origin in (typing.Union, types.UnionType):
+        return any(_admits_plain_dict(member) for member in typing.get_args(declared))
+    return False
+
+
+def instantiate_nested(c: Dict | List, skip_keys: Set | None = None):
+    skip_keys = skip_keys or set()
     if isinstance(c, dict):
+        child_skip: Set = set()
+        if "class_path" in c:
+            # resolve the TARGET class first so its declared field types govern which init_args
+            # children are declarative dicts (skipped) vs nested directives (recursed)
+            try:
+                child_skip = _declarative_field_names(
+                    instantiate_class({"class_path": c["class_path"]}, import_only=True)
+                )
+            except Exception:
+                child_skip = set()
         for k, v in c.items():  # recursively instantiate nested directives
+            if k in skip_keys:
+                continue
             if isinstance(v, (dict, List)):
-                c[k] = instantiate_nested(v)
+                c[k] = instantiate_nested(v, skip_keys=child_skip if k == "init_args" else None)
     elif isinstance(c, List):
         for i, v in enumerate(c):
             c[i] = instantiate_nested(c[i])

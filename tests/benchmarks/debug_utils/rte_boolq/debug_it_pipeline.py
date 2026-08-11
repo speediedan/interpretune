@@ -24,7 +24,7 @@ def main():
     log(f"=== IT Pipeline Batch Collapse Debug ({timestamp}) ===\n")
 
     # Load the YAML config to understand what we're working with
-    config_path = "src/it_examples/config/experiments/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml"
+    config_path = "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml"
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
 

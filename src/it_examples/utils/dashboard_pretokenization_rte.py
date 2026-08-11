@@ -23,7 +23,7 @@ from it_examples.experiments.rte_boolq import TASK_TEXT_FIELD_MAP
 
 DEFAULT_EXPERIMENT_CONFIG = (
     Path(__file__).resolve().parents[2]
-    / "it_examples/config/experiments/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml"
+    / "it_examples/experiments/cli/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml"
 )
 
 
@@ -44,7 +44,10 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
 
 def load_custom_pretokenization_settings(args: argparse.Namespace) -> RTEPretokenizationSettings:
     payload = yaml.safe_load(args.experiment_config.read_text(encoding="utf-8"))
-    datamodule_args = payload["session_cfg"]["datamodule_cfg"]["init_args"]
+    # flattened one-door body (post-4b): datamodule config under registered_cfg, shared fields split
+    # into the shared_config block — recombine for field lookups
+    registered_dm = payload["registered_cfg"]["datamodule_cfg"]
+    datamodule_args = {**payload.get("shared_config", {}), **(registered_dm.get("init_args") or registered_dm)}
     prompt_cfg_payload = datamodule_args["prompt_cfg"]
     prompt_config_class_path = prompt_cfg_payload["class_path"]
     prompt_config_cls = _import_from_class_path(prompt_config_class_path)
