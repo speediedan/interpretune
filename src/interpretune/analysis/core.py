@@ -402,19 +402,24 @@ def analysis_store_from_batches(
             return value.detach().cpu().tolist()
         return value
 
+    output_schema = getattr(resolved_op, "output_schema", None) or {}
     columns: dict[str, list[Any]] = {name: [] for name in features}
     for idx, analysis_batch in enumerate(analysis_batches):
         raw = raw_batches[idx] if raw_batches is not None else None
         processed = resolved_op.save_batch(analysis_batch, raw)
         row = dict(processed)
-        missing = [name for name in features if name not in row]
-        if missing:
+        # strict only for REQUIRED schema columns; optional (required: false) columns fill with None
+        missing_required = [
+            name for name in features if name not in row and getattr(output_schema.get(name), "required", True)
+        ]
+        if missing_required:
             raise ValueError(
-                f"Batch {idx} is missing schema column(s) {missing} — analysis_store_from_batches serializes "
-                f"strictly by the op's output schema ({getattr(resolved_op, 'name', resolved_op)})."
+                f"Batch {idx} is missing required schema column(s) {missing_required} — "
+                f"analysis_store_from_batches serializes by the op's output schema "
+                f"({getattr(resolved_op, 'name', resolved_op)})."
             )
         for name in features:
-            columns[name].append(_to_column_value(row[name]))
+            columns[name].append(_to_column_value(row[name]) if name in row else None)
 
     dataset = HfDatasetCls.from_dict(columns, features=features)
     if isinstance(analysis_backend, str):
