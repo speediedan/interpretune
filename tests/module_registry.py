@@ -15,10 +15,11 @@ from functools import partial
 from pathlib import Path
 
 from it_examples.example_module_registry import (
-    LazyModuleRegistry,
+    DEFAULT_REGISTRY_ROOT,
     iter_component_manifests,
     load_config_file,
 )
+from interpretune.registry import LazyModuleRegistry
 
 # Test-entry config defaults (formerly it_examples' example_*_defaults): published example configs
 # are self-contained, so these now exist ONLY for the pytest-scale entries in this registry.
@@ -69,7 +70,7 @@ def _create_test_registry():
     gen_module_registry(yaml_reg_path=TEST_MODULE_REGISTRY_PATH, register_func=test_instantiate_and_register)
     # example entries register second (from the decomposed component trees) so a key collision would
     # resolve toward the shipping definition
-    for component_dir, manifest in iter_component_manifests():
+    for component_dir, manifest in iter_component_manifests(DEFAULT_REGISTRY_ROOT):
         for key, rel in (manifest.get("module", {}).get("configs") or {}).items():
             parity_key, body = load_config_file(component_dir / rel, expected_key=key)
             test_instantiate_and_register(parity_key, body)

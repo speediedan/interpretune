@@ -12,6 +12,8 @@ from typing import (
     runtime_checkable,
 )
 import warnings
+import threading
+from functools import partial
 
 from typing_extensions import override
 from pprint import pformat
@@ -364,3 +366,180 @@ def it_cfg_factory(cfg: Dict, shared_config: Dict | None = None, defaults_func: 
 #######################################
 
 gen_module_registry()
+
+
+class ModuleHydrator:
+    """Per-key hydration of component-tree configuration files into a :class:`ModuleRegistry`.
+
+    Generic over the component root and the registration callable (hub design v3 §11.2 centralization):
+    ``register_func_factory(registry)`` returns the callable applied to each ``(key, body)``. Manifest
+    parsing and key parity live in ``interpretune.hub.manifest``; nothing here is example-specific.
+    """
+
+    def __init__(self, registry_root: Path | None = None, register_func_factory: Callable | None = None):
+        self.registry_root = registry_root
+        self._register_func_factory = register_func_factory
+        self._index: dict[str, Path] | None = None
+        self._hydrated: set[str] = set()
+        self._registry = None
+        self._lock = threading.RLock()
+
+    @property
+    def index(self) -> dict[str, Path]:
+        """Key → configuration-file map assembled from the (small) component manifests; no entry construction."""
+        from interpretune.hub.manifest import iter_component_manifests
+
+        if self._index is None:
+            with self._lock:
+                if self._index is None:
+                    index: dict[str, Path] = {}
+                    for component_dir, manifest in iter_component_manifests(self.registry_root):
+                        for key, rel in (manifest.get("module", {}).get("configs") or {}).items():
+                            index[key] = component_dir / rel
+                    self._index = index
+        return self._index
+
+    @property
+    def registry(self) -> "ModuleRegistry":
+        if self._registry is None:
+            with self._lock:
+                if self._registry is None:
+                    self._registry = ModuleRegistry()
+        return self._registry
+
+    def _register_func(self):
+        factory = self._register_func_factory or (
+            lambda registry: partial(instantiate_and_register, target_registry=registry)
+        )
+        return factory(self.registry)
+
+    def hydrate(self, key: str) -> bool:
+        """Construct and register exactly one entry.
+
+        Returns False if the key is not in any manifest.
+        """
+        if key in self._hydrated:
+            return True
+        if key not in self.index:
+            return False
+        with self._lock:
+            if key in self._hydrated:
+                return True
+            from interpretune.hub.manifest import load_config_file
+
+            parity_key, body = load_config_file(self.index[key], expected_key=key)
+            self._register_func()(parity_key, body)
+            self._hydrated.add(key)
+        return True
+
+    def hydrate_all(self) -> None:
+        """Hydrate every indexed entry.
+
+        Bulk hydration suppresses per-entry config-normalization feedback (`ITInstantiationFeedbackWarning`) just
+        as the pre-decomposition bulk loader did — callers listing or tuple-resolving the registry did not ask for
+        any single entry's feedback. Single-key `hydrate()` stays verbose: per-key construction is exactly the
+        "directly instantiating a config" case where feedback should surface (interpretune#236).
+        """
+        from interpretune.utils import ITInstantiationFeedbackWarning
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ITInstantiationFeedbackWarning)
+            for key in self.index:
+                self.hydrate(key)
+
+
+class LazyModuleRegistry:
+    """Mapping-style facade over per-key lazy hydration; ``builder`` swaps in an eager registry (tests)."""
+
+    def __init__(
+        self,
+        builder: Callable[[], "ModuleRegistry"] | None = None,
+        registry_root: Path | None = None,
+        register_func_factory: Callable | None = None,
+    ):
+        self._builder = builder
+        self._built = None
+        self._hydrator = None if builder is not None else ModuleHydrator(registry_root, register_func_factory)
+        self._lock = threading.RLock()
+
+    @property
+    def registry(self) -> "ModuleRegistry":
+        """The underlying registry.
+
+        Builder mode constructs eagerly; hydrator mode does NOT hydrate here.
+        """
+        if self._builder is not None:
+            if self._built is None:
+                with self._lock:
+                    if self._built is None:
+                        self._built = self._builder()
+            return self._built
+        assert self._hydrator is not None
+        return self._hydrator.registry
+
+    def _resolve(self, key) -> None:
+        """Hydrate what a lookup needs: one entry for a known string key, everything for tuple/protocol keys."""
+        if self._hydrator is None:
+            return
+        if isinstance(key, str):
+            if not self._hydrator.hydrate(key):
+                # unknown string key: hydrate all so the raised KeyError lists every available entry
+                self._hydrator.hydrate_all()
+        else:
+            self._hydrator.hydrate_all()
+
+    def get(self, target: Tuple | str | Any, default: Any = None) -> Any:
+        self._resolve(target)
+        return self.registry.get(target, default)
+
+    def register(self, *args, **kwargs):
+        return self.registry.register(*args, **kwargs)
+
+    def __getitem__(self, key):
+        self._resolve(key)
+        return self.registry[key]
+
+    def __setitem__(self, key, value):
+        self.registry[key] = value
+
+    def __contains__(self, key):
+        if self._hydrator is not None and isinstance(key, str) and key in self._hydrator.index:
+            return True
+        self._resolve(key)
+        return key in self.registry
+
+    def _full_registry(self) -> "ModuleRegistry":
+        if self._hydrator is not None:
+            self._hydrator.hydrate_all()
+        return self.registry
+
+    def keys(self):
+        return self._full_registry().keys()
+
+    def values(self):
+        return self._full_registry().values()
+
+    def items(self):
+        return self._full_registry().items()
+
+    def __len__(self):
+        return len(self._full_registry())
+
+    def __str__(self):
+        return str(self._full_registry())
+
+    def __repr__(self):
+        return repr(self._full_registry())
+
+    # Forward other common methods
+    def available_keys(self, *args, **kwargs):
+        return self._full_registry().available_keys(*args, **kwargs)
+
+    def available_keys_feedback(self, *args, **kwargs):
+        return self._full_registry().available_keys_feedback(*args, **kwargs)
+
+    def available_compositions(self, *args, **kwargs):
+        return self._full_registry().available_compositions(*args, **kwargs)
+
+    def remove(self, *args, **kwargs):
+        return self.registry.remove(*args, **kwargs)

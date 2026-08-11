@@ -119,9 +119,9 @@ class TestManifestFirstOffline:
             raise AssertionError("local example resolution attempted a network connection")
 
         monkeypatch.setattr(socket.socket, "connect", _blocked)
-        from it_examples.example_module_registry import LazyModuleRegistry
+        from it_examples.example_module_registry import make_example_registry
 
-        registry = LazyModuleRegistry()
+        registry = make_example_registry()
         assert registry.get("rte_demo.gemma2.circuit_tracer") is not None
 
     def test_hub_config_body_roundtrips_registry_schema(self):
@@ -129,3 +129,42 @@ class TestManifestFirstOffline:
         cfg_path = RTE_COMPONENT_DIR / "configs" / "rte_demo.gemma2.circuit_tracer.yaml"
         body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
         assert {"task_variant", "model", "composition", "reg_info", "shared_config", "registered_cfg"} <= set(body)
+
+
+class TestLocalPublishBridge:
+    """The local-publish bridge + cache-only resolution (design v3 §11.2): the 4c acceptance core."""
+
+    def test_bridge_roundtrip_sockets_blocked(self, tmp_path, monkeypatch):
+        """Local-publish a seed -> cache -> resolve -> load a session cfg, with the network unreachable."""
+        import socket
+
+        def _blocked(*args, **kwargs):
+            raise AssertionError("cache-backed resolution attempted a network connection")
+
+        monkeypatch.setattr(socket.socket, "connect", _blocked)
+        from interpretune.config.loading import load_session_cfg
+        from interpretune.hub.components import local_publish, resolve_component_config
+
+        cache = tmp_path / "components"
+        rev = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=RTE_ENTRYPOINT, cache_dir=cache)
+        assert rev.startswith("local") and len(rev) == 40
+        key, body = resolve_component_config("speediedan/rte", "rte_demo.gemma2.circuit_tracer", cache_dir=cache)
+        loaded = load_session_cfg(body, expected_key=key)
+        assert type(loaded.datamodule_cfg).__name__ == "ITDataModuleConfig"
+        assert loaded.module_cfg.optimizer_init["class_path"] == "torch.optim.AdamW"  # materialized default
+
+    def test_bridge_is_idempotent_and_tracks_content(self, tmp_path):
+        from interpretune.hub.components import local_publish
+
+        cache = tmp_path / "components"
+        rev1 = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=RTE_ENTRYPOINT, cache_dir=cache)
+        rev2 = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=RTE_ENTRYPOINT, cache_dir=cache)
+        assert rev1 == rev2, "unchanged content must map to the same pseudo-revision"
+        snapshots = tmp_path / "components" / "models--speediedan--rte" / "snapshots"
+        assert len(list(snapshots.iterdir())) == 1
+
+    def test_uncached_component_names_the_fetch_command(self, tmp_path):
+        from interpretune.hub.components import resolve_component_config
+
+        with pytest.raises(KeyError, match="pull_component_config"):
+            resolve_component_config("someorg/absent", "rte.x.core", cache_dir=tmp_path / "empty")

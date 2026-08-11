@@ -131,9 +131,9 @@ class TestExampleRegistryLaziness:
         return root
 
     def test_get_hydrates_only_requested_entry(self):
-        from it_examples.example_module_registry import LazyModuleRegistry
+        from it_examples.example_module_registry import make_example_registry
 
-        registry = LazyModuleRegistry()
+        registry = make_example_registry()
         cfg = registry.get(self.GOOD_KEY)
         assert cfg is not None
         assert registry._hydrator._hydrated == {self.GOOD_KEY}
@@ -142,9 +142,9 @@ class TestExampleRegistryLaziness:
         assert registry._hydrator._hydrated == {self.GOOD_KEY}
 
     def test_broken_sibling_does_not_break_other_entries(self, broken_sibling_root):
-        from it_examples.example_module_registry import LazyModuleRegistry
+        from it_examples.example_module_registry import make_example_registry
 
-        registry = LazyModuleRegistry(registry_root=broken_sibling_root)
+        registry = make_example_registry(broken_sibling_root)
         assert registry.get(self.GOOD_KEY) is not None  # must not raise
         with pytest.raises(ModuleNotFoundError):
             registry.get(self.BROKEN_KEY)
@@ -152,7 +152,7 @@ class TestExampleRegistryLaziness:
     def test_key_parity_enforced(self, tmp_path):
         """Filename == manifest key == derived-from-fields, or the loader refuses."""
         import shutil
-        from it_examples.example_module_registry import DEFAULT_REGISTRY_ROOT, LazyModuleRegistry
+        from it_examples.example_module_registry import DEFAULT_REGISTRY_ROOT, make_example_registry
 
         root = tmp_path / "registry"
         shutil.copytree(DEFAULT_REGISTRY_ROOT, root)
@@ -161,7 +161,7 @@ class TestExampleRegistryLaziness:
         drifted.write_text(
             drifted.read_text(encoding="utf-8").replace("task_variant: rte_demo", "task_variant: rte"), encoding="utf-8"
         )
-        registry = LazyModuleRegistry(registry_root=root)
+        registry = make_example_registry(root)
         with pytest.raises(ValueError, match="parity violation"):
             registry.get(self.GOOD_KEY)
 

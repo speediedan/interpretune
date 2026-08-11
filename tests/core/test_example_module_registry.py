@@ -1,4 +1,5 @@
-from it_examples.example_module_registry import LazyModuleRegistry
+from interpretune.registry import LazyModuleRegistry
+from it_examples.example_module_registry import make_example_registry
 
 
 class DummyRegistry(dict):
@@ -30,7 +31,7 @@ def test_lazy_initialization_and_single_call():
 
 
 def test_hydrator_mode_defers_and_indexes_without_construction():
-    lm = LazyModuleRegistry()
+    lm = make_example_registry()
 
     # instantiating the facade must not parse manifests or construct entries
     assert lm._hydrator is not None

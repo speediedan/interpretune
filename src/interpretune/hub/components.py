@@ -96,3 +96,70 @@ def register_component_config(
     namespaced = f"{repo_id.replace('/', '.')}.{canonical_key}"
     example_register_func(MODULE_EXAMPLE_REGISTRY.registry)(namespaced, body)
     return namespaced
+
+
+def resolve_component_config(repo_id: str, key: str, cache_dir: Path | None = None) -> tuple[str, dict]:
+    """CACHE-ONLY resolution of one configuration: never touches the network (design invariant §3.2).
+
+    Reads the repo's cached ``refs/main`` revision from the components cache — whether it got there via
+    an explicit hub fetch or the local-publish bridge — and returns the parity-checked configuration.
+    Raises with the explicit fetch command when the component is not cached.
+    """
+    root = Path(cache_dir or IT_COMPONENTS_HUB_CACHE)
+    repo_dir = root / f"models--{repo_id.replace('/', '--')}"
+    ref = repo_dir / "refs" / "main"
+    if not ref.is_file():
+        raise KeyError(
+            f"Component {repo_id!r} is not in the local cache ({root}). Fetch it explicitly first: "
+            f"interpretune.hub.pull_component_config({repo_id!r}, {key!r}) — local resolution never "
+            "performs implicit network access."
+        )
+    snapshot = repo_dir / "snapshots" / ref.read_text(encoding="utf-8").strip()
+    manifest = validate_component_manifest(
+        yaml.safe_load((snapshot / IT_COMPONENT_MANIFEST).read_text(encoding="utf-8")), source=f"{repo_id}@cache"
+    )
+    configs = (manifest.get("module") or {}).get("configs") or {}
+    if key not in configs:
+        raise KeyError(f"{repo_id} (cached) declares no configuration {key!r}. Available: {sorted(configs)}")
+    cfg_path = snapshot / configs[key]
+    body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    return check_config_key_parity(cfg_path, body, expected_key=key), body
+
+
+def local_publish(
+    component_dir: Path, repo_id: str, entrypoint_src: Path | None = None, cache_dir: Path | None = None
+) -> str:
+    """The LOCAL-PUBLISH BRIDGE (design v3 §11.2): materialize an in-tree component into the cache.
+
+    Builds the publishable tree exactly as a hub publish would (same builder, same parity checks, card
+    included) and installs it into the components cache in HF layout under a content-derived
+    pseudo-revision, updating ``refs/main``. CI and dev then resolve seeds from the cache with no
+    network — the loader's cache-only invariant holds, the CURRENT tree is what gets tested
+    (co-evolution atomicity), and the publish machinery itself is exercised on every run. Idempotent:
+    unchanged content maps to the same revision.
+    """
+    import hashlib
+    import shutil
+    import tempfile
+
+    from interpretune.hub.cards import generate_component_card
+    from interpretune.hub.publish import build_component_tree
+
+    root = Path(cache_dir or IT_COMPONENTS_HUB_CACHE)
+    with tempfile.TemporaryDirectory() as tmp:
+        build = Path(tmp) / "build"
+        manifest = build_component_tree(Path(component_dir), build, entrypoint_src=entrypoint_src)
+        generate_component_card(manifest, repo_id).save(build / "README.md")
+        digest = hashlib.sha256()
+        for f in sorted(p for p in build.rglob("*") if p.is_file()):
+            digest.update(f.relative_to(build).as_posix().encode())
+            digest.update(f.read_bytes())
+        revision = f"local{digest.hexdigest()[:35]}"  # 40 chars total: matches sha-shaped revision dirs
+        repo_dir = root / f"models--{repo_id.replace('/', '--')}"
+        snapshot = repo_dir / "snapshots" / revision
+        if not snapshot.exists():
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(build, snapshot)
+        (repo_dir / "refs").mkdir(parents=True, exist_ok=True)
+        (repo_dir / "refs" / "main").write_text(revision, encoding="utf-8")
+    return revision

@@ -169,7 +169,7 @@ EXAMPLES_DIR = REPO_ROOT / "src" / "it_examples" / "examples"
 
 def example_configuration_files() -> list[Path]:
     """Every examples/ configuration indexed by a component manifest (the hub-side harness leg)."""
-    from it_examples.example_module_registry import iter_component_manifests
+    from interpretune.hub.manifest import iter_component_manifests
 
     files = []
     for component_dir, manifest in iter_component_manifests(EXAMPLES_DIR):
