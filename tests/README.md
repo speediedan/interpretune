@@ -163,7 +163,7 @@ To add or update a HuggingFace token secret:
 
 ## Concept-Direction Notebook Config Notes
 
-The concept-direction notebook configs under `tests/nb_experiments/concept_direction/configs/` now expose two
+The concept-direction notebook configs under `src/it_examples/experiments/notebook/concept_direction/configs/` now expose two
 intervention-related capabilities that are useful for local experiment reproduction:
 
 - `ANALYSIS.direct_projection.interventions` mirrors `model_fwd_intervention`'s explicit intervention mapping. The

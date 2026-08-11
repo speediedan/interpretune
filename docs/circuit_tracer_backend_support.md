@@ -65,7 +65,7 @@ subclasses `HookedTransformer` directly, so TransformerLens v3 `TransformerBridg
 supported (`use_bridge: false` in the CT TL registry entries). Tracked in
 [interpretune#223](https://github.com/speediedan/interpretune/issues/223) — revisit when upstream
 circuit-tracer gains bridge support; historically this limitation (plus minor NNsight efficiencies and keeping
-experimental variables fixed) is why the `tests/nb_experiments` concept-direction experimentation
+experimental variables fixed) is why the `src/it_examples/experiments/notebook` concept-direction experimentation
 standardized on the NNsight backend.
 
 ## Backend Compatibility Matrix
