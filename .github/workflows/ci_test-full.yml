@@ -138,6 +138,10 @@ jobs:
       # sysmon coverage core (coverage>=7.4, py>=3.12): immune to nnsight's sys.settrace(None)
       # trace-teardown wipe of the default settrace-based core (see gen_it_coverage.sh)
       COVERAGE_CORE: sysmon
+      # Windows console streams default to cp1252, so any non-latin-1 char in a log message (e.g.
+      # the '→' in the TL param-mapping summary) raises UnicodeEncodeError inside logging.emit —
+      # non-fatal but it buries real errors under charmap tracebacks. UTF-8 mode fixes the class.
+      PYTHONUTF8: "1"
       ### we need to set the below secrets/vars for Grafana Alloy monitoring in our composite action (which doesn't have direct access to those workflow inputs)
       IT_GRAFANA_GITHUB_TOKEN: ${{ secrets.IT_GRAFANA_GITHUB_TOKEN }}
       PROM_PUSH_URL: ${{ vars.PROM_PUSH_URL }}
