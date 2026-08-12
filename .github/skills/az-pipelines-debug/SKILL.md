@@ -81,6 +81,14 @@ released anyway.
     describe, or expect to dispose of a gate per docs push. Approving a gate and then pushing again
     is worse — Azure cancels the superseded run, so the approval buys nothing.
 - `AZURE_DEVOPS_EXT_PAT` is the preferred non-interactive authentication path for `az devops` and Azure DevOps REST calls
+- **Approving a gate dispatches a memory-heavy job to the self-hosted host immediately.** Before
+  approving/releasing any gated build, confirm no full local test suite is running on that host —
+  a local full-suite run and the CI container's suite contend on host RAM (not GPU) and can
+  OOM-kill BOTH sides: the local run dies silently mid-progress (frozen log, no summary — easily
+  misread as a hang or genuine failure) while the build completes `failed`. CPU-only local runs
+  (`CUDA_VISIBLE_DEVICES=''`) are NOT exempt: the GPU lease doesn't serialize them. Serialize by
+  wrapping local full-suite runs under the host's lease mechanism, or by waiting out the build.
+  (Host-specific values and the exact lease wrap live in the machine-local notes.)
 - Runner constraints (**host-specific — see the note below; values here are illustrative**):
   - RAM on the order of tens of GiB, with **swap much smaller than RAM** (the current host is an example:
     roughly 62 GiB RAM against 2 GiB swap unless explicitly expanded). This ratio is why memory pressure,
