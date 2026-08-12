@@ -333,8 +333,9 @@ class ColCfg:
 
     @classmethod
     def from_dict(cls, data: dict) -> "ColCfg":
-        """Create from dict representation."""
-        # TODO: expected to add custom logic here
+        """Create from dict representation (tolerating JSON round-trips: array_shape list -> tuple)."""
+        if isinstance(data.get("array_shape"), list):
+            data = {**data, "array_shape": tuple(data["array_shape"])}
         return cls(**data)
 
     def __hash__(self) -> int:

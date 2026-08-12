@@ -369,6 +369,70 @@ def schema_to_features(
     return Features(features_dict)
 
 
+def analysis_store_from_batches(
+    module: Any,
+    analysis_batches: Sequence[Any],
+    op: str | AnalysisOp | None = None,
+    raw_batches: Sequence[Any] | None = None,
+    split: str = "validation",
+    analysis_backend: Any = None,
+) -> "AnalysisStore":
+    """Materialize in-memory analysis results into an :class:`AnalysisStore` (savable, pushable).
+
+    The direct-op-call twin of the runner's generator path (#124 MVP): rows serialize through the
+    SAME ``op.save_batch`` schema machinery, features derive from the same schema, and the returned
+    store carries backend-aware format kwargs so local access hydrates exactly as a pulled store
+    would. ``analysis_backend`` accepts a registered backend NAME (preferred — it is what the
+    artifact envelope records) or an instance.
+    """
+    import torch
+
+    from datasets import Dataset as HfDatasetCls
+
+    # resolved via the dispatcher (str), the module's analysis cfg (None), or passed directly; the
+    # save_batch capability check below is the real contract, so the static type stays loose
+    resolved_op: Any
+    if isinstance(op, str) or op is None:
+        resolved_op = DISPATCHER.get_op(op) if isinstance(op, str) else getattr(module.analysis_cfg, "op", None)
+    else:
+        resolved_op = op
+    if resolved_op is None or not hasattr(resolved_op, "save_batch"):
+        raise ValueError("analysis_store_from_batches requires an op (or module.analysis_cfg.op) with save_batch.")
+    features = schema_to_features(module, op=resolved_op)
+
+    def _to_column_value(value: Any) -> Any:
+        if isinstance(value, torch.Tensor):
+            return value.detach().cpu().tolist()
+        return value
+
+    output_schema = getattr(resolved_op, "output_schema", None) or {}
+    columns: dict[str, list[Any]] = {name: [] for name in features}
+    for idx, analysis_batch in enumerate(analysis_batches):
+        raw = raw_batches[idx] if raw_batches is not None else None
+        processed = resolved_op.save_batch(analysis_batch, raw)
+        row = dict(processed)
+        # strict only for REQUIRED schema columns; optional (required: false) columns fill with None
+        missing_required = [
+            name for name in features if name not in row and getattr(output_schema.get(name), "required", True)
+        ]
+        if missing_required:
+            raise ValueError(
+                f"Batch {idx} is missing required schema column(s) {missing_required} — "
+                f"analysis_store_from_batches serializes by the op's output schema "
+                f"({getattr(resolved_op, 'name', resolved_op)})."
+            )
+        for name in features:
+            columns[name].append(_to_column_value(row[name]) if name in row else None)
+
+    dataset = HfDatasetCls.from_dict(columns, features=features)
+    if isinstance(analysis_backend, str):
+        from interpretune.analysis.backends import resolve_analysis_backend
+
+        analysis_backend = resolve_analysis_backend(analysis_backend)
+    it_format_kwargs = {"analysis_backend": analysis_backend} if analysis_backend is not None else None
+    return AnalysisStore(dataset=dataset, split=split, it_format_kwargs=it_format_kwargs)
+
+
 class AnalysisStore:
     def __init__(
         self,

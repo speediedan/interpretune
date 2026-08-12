@@ -9,7 +9,7 @@
   "notebooks/dev/circuit_tracer_examples/ct_analysis_backend_demo.ipynb": "baa01c18c10ec421e07b00de3c0faf7201043217027793f28bbfb999e9e09ea4",
   "notebooks/dev/circuit_tracer_examples/ct_analysis_backend_demo_gemma2_ref.ipynb": "39989b9b096e4d71e41c6f5c0bb7ce699bbb730975a3cc20e32602b79d7424c7",
   "notebooks/dev/circuit_tracer_examples/ct_concept_steering_demo.ipynb": "971b5eea8778ff7019e5d23ba43fbf542ec42081bf53dc69d202e00b77a1e214",
-  "notebooks/dev/circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb": "a8d8d26a36a6cc7638ed1f86c016d19a2e6f0576f0f808754888994b61c2a87c",
+  "notebooks/dev/circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb": "b4566db2b4f3beaabf62c5eb23ade934e483057fc144251c4d35a5d8e5268c61",
   "notebooks/dev/circuit_tracer_examples/ct_cross_backend_demo.ipynb": "73e71eb9a991f98d7704c00064998680d6ac2f41e8a1551680ec1cc355b4038a",
   "notebooks/dev/circuit_tracer_examples/ct_cross_backend_demo_gemma2_ref.ipynb": "66f43497da48180357c2d87cc5e8fbd2f34137bd9cb460a6c4d9316599693f14",
   "notebooks/dev/circuit_tracer_examples/gradient_flow_analysis.ipynb": "21818d3fa9765b29b84d38d977a744c185d89fced8913893147d61600c124b45",
@@ -35,5 +35,6 @@
   "notebooks/dev/saelens_adapter_example/side_by_side_yaml.png": "d190f0c9c0946347f77f109b4ff1e1d65bc2be70a1903defbf651b9bc75da281",
   "notebooks/dev/saelens_adapter_example/sl_utils/__pycache__/sl_mem_utils.cpython-310.pyc": "f8562d08fe5158376862c62e0bab25d55ed7a6ac321a5cd503c4fe61ddc136e3",
   "notebooks/dev/saelens_adapter_example/sl_utils/__pycache__/sl_mem_utils.cpython-312.pyc": "23cc4b9179e33e8154381cbeded275ce9195c8a0924deee610462662cdf2047c",
-  "notebooks/dev/saelens_adapter_example/sl_utils/sl_mem_utils.py": "e5d212369c23b6ebfef3d25a0642b8f1a87e430964c1ae8d55607f88b6228654"
+  "notebooks/dev/saelens_adapter_example/sl_utils/sl_mem_utils.py": "e5d212369c23b6ebfef3d25a0642b8f1a87e430964c1ae8d55607f88b6228654",
+  "notebooks/dev/shared_analysis/shared_analysis_roundtrip.ipynb": "689bb190fa22c35289a8a42c13487cabc79b5217d6d2abd623b94b725c8877fe"
 }

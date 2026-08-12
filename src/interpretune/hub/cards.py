@@ -30,6 +30,38 @@ def component_card_metadata(manifest: dict, license_id: str = "apache-2.0") -> M
     )
 
 
+def generate_artifact_card(envelope: dict, repo_id: str, summary: str | None = None) -> ModelCard:
+    """Generate the card for an artifact (dataset) repo from its validated envelope.
+
+    The card behavior is reimplemented once for BOTH repo types (§8): dataset repos carry the same
+    ``library_name`` + tag sentinel so ``interpretune-analysis-store`` artifacts are discoverable.
+    """
+    kind = envelope["artifact_kind"]
+    meta = ModelCardData(license="apache-2.0", library_name=LIBRARY_NAME, tags=[LIBRARY_NAME, f"{LIBRARY_NAME}-{kind}"])
+    title = repo_id.split("/", 1)[-1]
+    arts = envelope.get("artifacts") or {}
+    prov = envelope.get("provenance") or {}
+    lines = [f"# {title}", ""]
+    lines.append(summary or f"An interpretune {kind} artifact ({title}).")
+    lines.append("")
+    lines.append(
+        f"An [interpretune](https://github.com/speediedan/interpretune) artifact repo "
+        f"(kind: {kind}; envelope schema v{envelope['schema']})."
+    )
+    lines += ["", "## Artifact", ""]
+    lines.append(f"- split: `{arts.get('split')}`, rows: {arts.get('num_rows')}")
+    if arts.get("columns"):
+        lines.append(f"- columns: {', '.join(f'`{c}`' for c in arts['columns'])}")
+    if prov.get("interpretune_version"):
+        lines.append(f"- generated with interpretune `{prov['interpretune_version']}`")
+    lines += [
+        "",
+        "Load with `interpretune.hub.pull_analysis_store(...)` — the interpretune formatter",
+        "re-attaches from the `it_artifact.json` envelope; no pipeline re-run is required.",
+    ]
+    return ModelCard(f"---\n{meta.to_yaml()}\n---\n\n" + "\n".join(lines) + "\n")
+
+
 def generate_component_card(manifest: dict, repo_id: str, summary: str | None = None) -> ModelCard:
     """Generate the full card for a component repo from its manifest."""
     meta = component_card_metadata(manifest)
