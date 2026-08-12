@@ -389,6 +389,9 @@ def analysis_store_from_batches(
 
     from datasets import Dataset as HfDatasetCls
 
+    # resolved via the dispatcher (str), the module's analysis cfg (None), or passed directly; the
+    # save_batch capability check below is the real contract, so the static type stays loose
+    resolved_op: Any
     if isinstance(op, str) or op is None:
         resolved_op = DISPATCHER.get_op(op) if isinstance(op, str) else getattr(module.analysis_cfg, "op", None)
     else:
