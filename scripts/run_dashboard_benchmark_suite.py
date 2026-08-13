@@ -311,6 +311,40 @@ def lineage_strings(shas: dict[str, str]) -> dict[str, str]:
     return {"detached_legacy": detached, "current_legacy": current, "columnar_gpu": current}
 
 
+MEASUREMENT_RECORD_NAME = "measurement_record.json"
+
+
+def write_measurement_record(session_root: Path, shas: dict[str, str], dirty: list[str], mode: str) -> None:
+    """Pin what the legs were measured against, next to the legs themselves.
+
+    Packaging happens later and possibly on a different checkout (``--from-existing`` can repackage a
+    session root months afterwards), so lineage read at package time is not necessarily lineage the
+    numbers were produced on. Recording it here is what lets a re-stamp refresh presentation without
+    rewriting history.
+    """
+
+    record = {
+        "measured_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+        "repo_heads": shas,
+        "dirty_repos": dirty,
+        "mode": mode,
+    }
+    (session_root / MEASUREMENT_RECORD_NAME).write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+
+def read_measurement_record(session_root: Path) -> dict | None:
+    """The measurement record for ``session_root``, or None when it predates the record."""
+
+    path = session_root / MEASUREMENT_RECORD_NAME
+    if not path.exists():
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return record if isinstance(record, dict) and "repo_heads" in record else None
+
+
 def build_leg_command(
     args: argparse.Namespace,
     *,
@@ -539,6 +573,29 @@ def build_package(args: argparse.Namespace, source_root: Path, package_dir: Path
             "Commit first (see the benchmark regeneration reproducibility policy) or pass --allow-dirty "
             "for a disposable diagnostic package."
         )
+
+    # A re-stamp repackages legs it did not run, so the live capture above describes the checkout
+    # doing the stamping, not the one that produced the numbers. Prefer the record the run left
+    # behind, and keep the live capture as separate restamp_* fields rather than overwriting.
+    mode = args.mode
+    restamp: dict[str, object] = {}
+    if args.from_existing is not None:
+        record = read_measurement_record(source_root)
+        if record is not None:
+            restamp = {"restamped_at_utc": datetime.now(UTC).isoformat(timespec="seconds"), "restamp_repo_heads": shas}
+            shas, dirty, mode = record["repo_heads"], record.get("dirty_repos", []), record.get("mode", mode)
+        else:
+            # Pre-record session root: we cannot recover the measurement heads, so say so in the
+            # manifest instead of presenting today's heads as though they were measured on.
+            restamp = {
+                "restamped_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+                "restamp_provenance": (
+                    f"no {MEASUREMENT_RECORD_NAME} in {source_root}; repo_heads/mode below are the "
+                    "RE-STAMP-TIME checkout, not necessarily what the legs were measured on"
+                ),
+            }
+            print(f"WARNING: {restamp['restamp_provenance']}", flush=True)
+
     lineages = lineage_strings(shas)
 
     variants = extract_root(
@@ -574,7 +631,7 @@ def build_package(args: argparse.Namespace, source_root: Path, package_dir: Path
     manifest = {
         "generated_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
         "source_root": str(source_root),
-        "mode": args.mode,
+        "mode": mode,
         "timing_mode": args.timing_mode,
         "summary_warmup_batches": args.summary_warmup_batches,
         "target_batches": args.target_batches,
@@ -594,6 +651,7 @@ def build_package(args: argparse.Namespace, source_root: Path, package_dir: Path
         "repo_heads": shas,
         "dirty_repos": dirty,
         "lineages": lineages,
+        **restamp,
         "variants": [
             {"variant_dir": v.variant_dir, "label": v.label, "scenario": v.scenario, "path": v.path_key}
             for v in variants
@@ -678,6 +736,10 @@ def main() -> int:
     else:
         source_root = args.session_root or Path(f"/tmp/np_dashboard_generation_profiles/{args.mode}_{timestamp}")
         source_root.mkdir(parents=True, exist_ok=True)
+        # Pin lineage BEFORE the legs run: this is the only moment at which the checkout producing
+        # the numbers is unambiguously the current one.
+        measured_shas, measured_dirty = capture_lineage(DEFAULT_REPO_ROOTS)
+        write_measurement_record(source_root, measured_shas, measured_dirty, args.mode)
         run_benchmark_legs(args, source_root, run_tag)
 
     package_dir = args.package_root or DEFAULT_PACKAGE_PARENT / source_root.name
