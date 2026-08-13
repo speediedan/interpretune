@@ -200,14 +200,6 @@ With the environment from **(a)** activated, the benchmark suite runs in one com
 python scripts/run_dashboard_benchmark_suite.py --mode threeway   # ~25 min
 python scripts/run_dashboard_benchmark_suite.py --mode full       # ~2 h, 17 legs
 ```
-
-To repackage existing artifacts without re-running anything:
-`--from-existing <artifact_root> --package-root <dir>`. This refreshes presentation only — the
-manifest keeps reporting the lineage and mode the legs were actually measured under, and records the
-re-stamping checkout separately. Artifact roots predating that record cannot have their measurement
-heads recovered, so repackaging one warns and marks the manifest provenance-unknown; see "Mode 4" in
-`scripts/dashboard_benchmark_suite_usage.md` (in the repository).
-
 Full usage: `scripts/dashboard_benchmark_suite_usage.md` (in the repository).
 
 For a single end-to-end generation rather than the benchmark wave, see the

@@ -171,20 +171,11 @@ python scripts/run_dashboard_benchmark_suite.py \
   --allow-dirty          # only when the working trees are intentionally dirty (diagnostic package)
 ```
 
-**Provenance in this mode.** Every run writes `measurement_record.json` into its session root before
+Provenance in this mode: Every run writes `measurement_record.json` into its session root before
 the first leg starts, pinning the lineage, dirty state and mode the numbers were produced under.
-Re-packaging reads that record, so `repo_heads` / `lineages` / `mode` keep describing the ORIGINAL
-run; the checkout doing the re-stamp is reported separately as `restamped_at_utc` and
+Re-packaging reads that record, so `repo_heads` / `lineages` / `mode` keep describing the *original*
+run and the checkout doing the re-stamp is reported separately as `restamped_at_utc` and
 `restamp_repo_heads`.
-
-A session root produced before the record existed cannot have its measurement heads recovered.
-Re-packaging one still works, but it warns and stamps `restamp_provenance` into the manifest saying
-the recorded heads are the re-stamp-time checkout. Treat such a manifest as provenance-unknown
-rather than authoritative — `docs/benchmark_artifacts/full_20260727/` is exactly this case, and its
-`mode: threeway` is an artifact of the re-stamp, not of how it was generated.
-
-Pass `--mode` explicitly when re-packaging a pre-record root, or the manifest inherits `--mode`'s
-`threeway` default regardless of what actually ran.
 
 ## Mode 5: Prompt-dimension scaling sweep
 
@@ -266,7 +257,7 @@ python scripts/run_dashboard_benchmark_suite.py \
 | `--target-batches` / `--summary-warmup-batches` / `--layer` | Benchmark shape (defaults 4 / 1 / 9) |
 | `--rolling-threads` | `--runner-rolling-coefficient-num-threads` value for every leg (default 8) |
 | `--run-tag` | Suffix tag baked into child run names |
-| `--coordination-pr-url` | Scalable Dashboards coordination PR reference stamped into the summary/notebook (defaults to a backfill placeholder; refresh a shipped package via `--from-existing` + this flag — see the provenance note under Mode 4 for what a re-stamp does and does not rewrite) |
+| `--coordination-pr-url` | Scalable Dashboards coordination PR reference stamped into the summary/notebook (defaults to a backfill placeholder; refresh a shipped package via `--from-existing` + this flag but see the provenance note under Mode 4 for what a re-stamp does and does not rewrite) |
 
 ## Package layout
 
