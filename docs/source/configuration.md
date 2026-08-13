@@ -15,7 +15,7 @@ flatness is what keeps the composition space legible and greppable as the config
 Configuration files can technically be composed arbitrarily, but the convention used throughout
 the examples — and recommended for your own experiments — is grouping by **model level** (shared
 per-model substrate settings) and **experiment level** (task/experiment-specific settings layered
-on a model config). See `src/it_examples/config/experiments/` for the reference layout
+on a model config). See `src/it_examples/experiments/cli/` for the reference layout
 (e.g. `rte_boolq/gemma2/...`, `rte_boolq/gemma3/...`).
 
 ## HookedTransformer: `model_name_or_path` can be arbitrary

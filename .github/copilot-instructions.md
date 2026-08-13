@@ -710,7 +710,7 @@ IT_RUN_OPTIONAL_TESTS=1 python -m pytest tests/parity_acceptance/test_it_fts.py:
   instead of `item.own_markers` so class-level standalone marks are properly collected.
 
 ### Configuration
-- YAML configs in `src/it_examples/config/`
+- YAML configs in `src/it_examples/experiments/cli/` (experiment configs) and `src/it_examples/neuronpedia_dashboard/` (dashboard pipeline configs)
 - Use dataclasses for configuration objects
 - Support jsonargparse CLI integration
 

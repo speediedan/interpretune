@@ -44,7 +44,7 @@ log = logging.getLogger(__name__)
 #: Self-description carried at the root of every published corpus.
 CORPUS_MANIFEST = "dashboards.json"
 
-CONFIG_DIR = Path(__file__).resolve().parents[2] / "it_examples/config/neuronpedia_dashboard"
+CONFIG_DIR = Path(__file__).resolve().parents[2] / "it_examples/neuronpedia_dashboard"
 
 # TEMPORARY STUB -- a hardcoded stand-in for a dashboard repository that does not exist yet.
 #
