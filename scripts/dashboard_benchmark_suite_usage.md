@@ -283,7 +283,7 @@ row COUNTS equal between the preserved-baseline and in-tree legacy legs) and **v
 match (the sets of nonzero-activation rows equal).
 
 **Current status (torch 2.13 stack): both rates read 100.00%, 0 mismatches**, across three
-consecutive runs (`full_20260727` plus two `--mode threeway` samples, 2026-07-27). Both rates are
+consecutive runs (one full-mode run plus two `--mode threeway` samples, 2026-07-27). Both rates are
 still reported, because they answer different questions and the distinction is what makes a
 non-100% raw rate interpretable rather than alarming: a raw-only difference is benign, whereas a
 **value-bearing mismatch above 0 is NOT expected and should be treated as a real parity failure**.
