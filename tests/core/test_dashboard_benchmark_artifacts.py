@@ -448,3 +448,34 @@ class TestLineageProvenance:
 
         assert shas == {"SL": "v6.49.0"}
         assert dirty == []
+
+
+class TestMeasurementRecord:
+    """A re-stamp must refresh presentation without rewriting what the numbers were measured on.
+
+    Regression guard for the `--from-existing` provenance overwrite (found 2026-08-12). Re-stamping
+    called `capture_lineage` unconditionally and wrote `"mode": args.mode`, so repackaging a session
+    root relabelled it with the RE-STAMP-time checkout and with `--mode`'s `threeway` default. The
+    shipped `full_20260727` package carries exactly that damage: `mode: threeway` on a full-mode
+    package, under heads it was never measured on. Because manifest and summary were both derived
+    from the same wrong values, it read as internally consistent.
+    """
+
+    def test_record_round_trips(self, tmp_path: Path):
+        suite.write_measurement_record(tmp_path, {"IT": "abc1234"}, ["NP"], "full")
+        record = suite.read_measurement_record(tmp_path)
+
+        assert record["repo_heads"] == {"IT": "abc1234"}
+        assert record["dirty_repos"] == ["NP"]
+        assert record["mode"] == "full"
+        assert record["measured_at_utc"]
+
+    def test_absent_record_reads_as_none(self, tmp_path: Path):
+        assert suite.read_measurement_record(tmp_path) is None
+
+    @pytest.mark.parametrize("body", ["{ not json", '{"no_repo_heads": true}', "[]"])
+    def test_unusable_record_reads_as_none(self, tmp_path: Path, body: str):
+        """A corrupt record must degrade to the explicit-warning path, never to a partial read."""
+        (tmp_path / suite.MEASUREMENT_RECORD_NAME).write_text(body, encoding="utf-8")
+
+        assert suite.read_measurement_record(tmp_path) is None

@@ -202,7 +202,11 @@ python scripts/run_dashboard_benchmark_suite.py --mode full       # ~2 h, 17 leg
 ```
 
 To repackage existing artifacts without re-running anything:
-`--from-existing <artifact_root> --package-root <dir>`.
+`--from-existing <artifact_root> --package-root <dir>`. This refreshes presentation only — the
+manifest keeps reporting the lineage and mode the legs were actually measured under, and records the
+re-stamping checkout separately. Artifact roots predating that record cannot have their measurement
+heads recovered, so repackaging one warns and marks the manifest provenance-unknown; see "Mode 4" in
+`scripts/dashboard_benchmark_suite_usage.md` (in the repository).
 
 Full usage: `scripts/dashboard_benchmark_suite_usage.md` (in the repository).
 
