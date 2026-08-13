@@ -99,7 +99,7 @@ deterministic_token_ids = {
 ```
 
 1. OPTIONAL:Update examples if desired, potentially adding a new model directory
-   `~/repos/interpretune/src/it_examples/config/experiments/rte_boolq/lightning_rte_3b_qlora_genclassif_test_only.yaml`
+   `~/repos/interpretune/src/it_examples/experiments/cli/rte_boolq/llama3_2/lightning_rte_3b_qlora_zero_shot_test_only.yaml`
 
 ### Debugging guidance
 
