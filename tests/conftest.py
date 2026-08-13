@@ -1312,6 +1312,7 @@ def restore_env_variables():
         "IT_EXPLANATION_CLI_MODEL",
         "IT_EXPLANATION_PROVIDER_API_KEY",
         "HF_HUB_DASHBOARDS_TOKEN",
+        "IT_GH_RW_PROJECT_CLASSIC",  # gh project-board access token (maintainer-local)
         "HF_S3_ENDPOINT_URL",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
