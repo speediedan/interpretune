@@ -456,9 +456,9 @@ class TestMeasurementRecord:
     Regression guard for the `--from-existing` provenance overwrite (found 2026-08-12). Re-stamping
     called `capture_lineage` unconditionally and wrote `"mode": args.mode`, so repackaging a session
     root relabelled it with the RE-STAMP-time checkout and with `--mode`'s `threeway` default. The
-    shipped `full_20260727` package carries exactly that damage: `mode: threeway` on a full-mode
-    package, under heads it was never measured on. Because manifest and summary were both derived
-    from the same wrong values, it read as internally consistent.
+    since-retired `full_20260727` package carried exactly that damage: `mode: threeway` on a
+    full-mode package, under heads it was never measured on. Because manifest and summary were both
+    derived from the same wrong values, it read as internally consistent.
     """
 
     def test_record_round_trips(self, tmp_path: Path):

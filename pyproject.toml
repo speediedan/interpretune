@@ -253,6 +253,13 @@ exclude = ["it_examples.tests*"]
 
 [tool.setuptools_scm]
 fallback_version = "0.1.0.dev0"
+# Only `v`-prefixed release tags are version tags. Without this, any tag reachable from HEAD that
+# ends in digits — e.g. the dashboards evidence tag `scalable-dashboards-wave1-evidence-20260812`,
+# cut on a main commit — parses as a calendar version (`20260812`), which then satisfies floors
+# like `>=999.0` and broke the hub-component floor test on the first main build after the tag push
+# (build 753; hosted CI was blind to it because actions/checkout does not fetch tags).
+tag_regex = '^v(?P<version>\d.*)$'
+git_describe_command = "git describe --dirty --tags --long --match v[0-9]*"
 
 [tool.ruff]
 line-length = 120

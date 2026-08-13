@@ -39,13 +39,13 @@ worktrees, integrated venv, prompt datasets) in one guided, non-destructive comm
 [dashboard_benchmark_suite_usage.md](../../../scripts/dashboard_benchmark_suite_usage.md) and the
 reproduction quickstart in the [umbrella](https://github.com/speediedan/interpretune/issues/231).
 
-## Relationship to `full_20260727`
+## Relationship to the retired `full_20260727` package
 
-This package supersedes [`full_20260727`](../full_20260727/), which is retained until the PR
-citations move over. Both measure the same code paths; this one re-measures them on the current
-dependency stack (sae-lens 6.49.0 released wheel, torch 2.13.0+cu130) at `IT-dfee9e8`.
+This package supersedes `full_20260727`, since removed from the tree (the PR citations now point
+here). Both measured the same code paths; this one re-measures them on the current dependency
+stack (sae-lens 6.49.0 released wheel, torch 2.13.0+cu130) at `IT-dfee9e8`.
 
-Two differences worth knowing when comparing the two:
+Two differences worth knowing when comparing against its published numbers:
 
 1. **Parity is cleaner here.** Detached-vs-current legacy activation rows now match exactly on every
    batch of both scenarios — 0 mismatched features, 0 value-bearing mismatches. The predecessor
@@ -55,8 +55,9 @@ Two differences worth knowing when comparing the two:
    between runs; the columnar numerator is ~5% slower. That is a real difference in the measurement,
    not a re-baselining — treat the columnar figure as carrying run-to-run variance of that order.
 
-`full_20260727`'s own manifest additionally misreports its lineage and mode: it was re-stamped with
-`--from-existing`, which (before the fix shipped alongside this package) overwrote `repo_heads` with
-the re-stamp-time checkout and reset `mode` to the `threeway` default. Its `benchmark_summary.md`
-lineage table inherits the same values. The measurement lineage of record for that package is
-`SD-1c36394/SL-990b6b37/NP-f8b13ef2/IT-9bf79d4`.
+`full_20260727`'s own manifest additionally misreported its lineage and mode: it was re-stamped
+with `--from-existing`, which (before the fix shipped alongside this package) overwrote
+`repo_heads` with the re-stamp-time checkout and reset `mode` to the `threeway` default; its
+`benchmark_summary.md` lineage table inherited the same values. **The measurement lineage of
+record for that package is `SD-1c36394/SL-990b6b37/NP-f8b13ef2/IT-9bf79d4`** — with the artifact
+retired, this note is the durable record.
