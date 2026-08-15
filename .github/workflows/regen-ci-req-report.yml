@@ -78,7 +78,11 @@ jobs:
 
 
       - name: Create or update PR comment (single-comment)
-        if: ${{ github.event_name == 'pull_request' }}
+        # Never comment on the regen automation's own PR. Regenerating on a branch that exists
+        # BECAUSE it was just regenerated finds nothing by construction, so the comment there is a
+        # tautology that reads like a verdict on the PR's contents ("no pin changes detected" on a
+        # PR whose entire diff is pin changes) — it wasted a maintainer's time exactly once.
+        if: ${{ github.event_name == 'pull_request' && github.head_ref != 'regen/pinned-requirements' }}
         uses: actions/github-script@v7
         env:
           CHANGED: ${{ steps.regen_ci_reqs.outputs.changed }}
@@ -101,7 +105,10 @@ jobs:
             if (changed === 'true') {
               bodyText = `${marker}\n**regen-ci-req-check** detected changes to pinned CI requirements and uploaded a patch artifact named 'regen-pins-diff'.\n\n${summary ? summary + '\n\n' : ''}Please review the artifact and CI results. This workflow is report-only and will not open a PR; the scheduled regen workflow will open PRs automatically.`;
             } else {
-              bodyText = `${marker}\nNo CI pin file changes detected by regen-ci-req-check.`;
+              // Say what was actually checked. The old wording ("No CI pin file changes detected by
+              // regen-ci-req-check") named the OTHER workflow and read as a claim about this PR's
+              // diff, rather than the regeneration this job just ran against this branch.
+              bodyText = `${marker}\nRegenerating the CI pins on this branch produces no changes — the committed pins are current.`;
             }
             const pr = context.payload.pull_request && context.payload.pull_request.number;
             const headFullName = context.payload.pull_request && context.payload.pull_request.head && context.payload.pull_request.head.repo && context.payload.pull_request.head.repo.full_name;
