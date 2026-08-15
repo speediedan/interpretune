@@ -9,6 +9,7 @@ import pytest
 
 from interpretune.hub.artifacts import (
     ANALYSIS_STORE_KIND,
+    ARTIFACT_SCHEMA_MIN_READABLE,
     ARTIFACT_SCHEMA_VERSION,
     IT_ARTIFACT_ENVELOPE,
     ArtifactEnvelopeError,
@@ -86,7 +87,7 @@ class TestEnvelope:
     @pytest.mark.parametrize(
         ("mutation", "match"),
         [
-            ({}, "version header"),
+            ({}, "not an integer version"),
             ({"schema": 1, "artifact_kind": "sorcery"}, "artifact_kind"),
             ({"schema": 1, "artifact_kind": ANALYSIS_STORE_KIND, "identity": {}}, "store_id"),
             (
@@ -99,6 +100,74 @@ class TestEnvelope:
     def test_envelope_validation_failure_modes(self, mutation, match):
         with pytest.raises(ArtifactEnvelopeError, match=match):
             validate_artifact_envelope(mutation)
+
+
+class TestSchemaVersionPolicy:
+    """#257: hub artifacts outlive the code that wrote them, so the reader accepts a WINDOW."""
+
+    @staticmethod
+    def _envelope(schema):
+        return {
+            "schema": schema,
+            "artifact_kind": ANALYSIS_STORE_KIND,
+            "identity": {"store_id": "x"},
+            "interpretune": {"col_cfg": {}},
+        }
+
+    def test_current_schema_reads(self):
+        validate_artifact_envelope(self._envelope(ARTIFACT_SCHEMA_VERSION))
+
+    def test_newer_schema_refused_pointing_at_an_upgrade(self):
+        """A reader that cannot know what a newer schema means must not guess."""
+        with pytest.raises(ArtifactEnvelopeError, match="written by a newer Interpretune"):
+            validate_artifact_envelope(self._envelope(ARTIFACT_SCHEMA_VERSION + 1))
+
+    def test_older_than_floor_refused_pointing_at_a_republish(self):
+        with pytest.raises(ArtifactEnvelopeError, match="older than the minimum readable schema"):
+            validate_artifact_envelope(self._envelope(ARTIFACT_SCHEMA_MIN_READABLE - 1))
+
+    @pytest.mark.parametrize("schema", ["1", 1.0, True, None], ids=["str", "float", "bool", "none"])
+    def test_non_integer_schema_refused(self, schema):
+        """`True` is an int subclass — an envelope declaring it is malformed, not version 1."""
+        with pytest.raises(ArtifactEnvelopeError, match="not an integer version"):
+            validate_artifact_envelope(self._envelope(schema))
+
+    def test_floor_does_not_exceed_current(self):
+        assert ARTIFACT_SCHEMA_MIN_READABLE <= ARTIFACT_SCHEMA_VERSION
+
+    def test_unknown_keys_tolerated_so_additive_fields_need_no_bump(self):
+        """The tolerance IS the policy: additive optional fields ship without a schema bump."""
+        envelope = self._envelope(ARTIFACT_SCHEMA_VERSION)
+        envelope["a_field_from_a_later_release"] = {"anything": [1, 2, 3]}
+        envelope["identity"]["future_identity_field"] = "tolerated"
+        validate_artifact_envelope(envelope)
+
+    def test_frozen_schema1_envelope_still_reads(self):
+        """A literal v1 envelope pinned in-tree: what actually stops a silent mandatory-field change.
+
+        Every other test builds its envelope with the current writer, so writer and reader drift
+        together and neither notices. This one cannot drift.
+        """
+        fixture = Path(__file__).parent / "fixtures" / "it_artifact_schema1.json"
+        envelope = validate_artifact_envelope(json.loads(fixture.read_text(encoding="utf-8")), source=str(fixture))
+        assert envelope["schema"] == 1
+        # the fields a reader must still find after any future in-window schema work
+        assert envelope["identity"]["store_id"] and envelope["artifacts"]["split"] == "validation"
+        assert envelope["interpretune"]["analysis_backend"] == "circuit_tracer"
+        assert envelope["interpretune"]["col_cfg"]["active_features"]["array_shape"] == [None, 3]
+
+
+class TestWriterSideGuard:
+    """#257: refuse to PUBLISH an envelope this build could not itself read back."""
+
+    def test_build_returns_a_validated_envelope(self, small_store):
+        env = build_analysis_store_envelope(small_store)
+        assert validate_artifact_envelope(env) is env
+
+    def test_malformed_preserved_identity_refused_before_upload(self, small_store):
+        """The re-push path feeds an EXISTING envelope's identity back in; a bad one must not ship."""
+        with pytest.raises(ArtifactEnvelopeError, match="store_id"):
+            build_analysis_store_envelope(small_store, identity={"created_utc": "2026-08-15T00:00:00+00:00"})
 
 
 class TestLocalArtifactRoundTrip:

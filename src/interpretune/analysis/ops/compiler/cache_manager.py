@@ -9,13 +9,12 @@ from dataclasses import dataclass, field
 
 
 from huggingface_hub import scan_cache_dir
-from transformers.dynamic_module_utils import resolve_trust_remote_code
 
 from interpretune.hub.cache import _get_latest_revision, parse_hub_cache_path
+from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR, remote_code_trust, remote_code_trusted
 
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 from interpretune.analysis.ops.base import OpSchema, ColCfg
-from interpretune.analysis import IT_TRUST_REMOTE_CODE
 
 
 CACHE_FORMAT_VERSION = "2"
@@ -75,13 +74,10 @@ class YamlFileInfo:
 class OpDefinitionsCacheManager:
     """Manages caching of compiled operation definitions."""
 
-    _it_trust_remote_code_warning = (
-        "The environmental variable IT_TRUST_REMOTE_CODE is not currently set. In order "
-        "to load analysis operations from previously downloaded op collection modules without being re-prompted "
-        "repository by repository, you can set the environmental variable IT_TRUST_REMOTE_CODE to "
-        "('1', 'yes' or 'true')"
+    _it_trust_false_skipping = (
+        f"Skipping loading ops from hub repositories: {IT_TRUST_REMOTE_CODE_ENV_VAR} is set to a "
+        "non-affirmative value, which is a deliberate opt-out from executing hub-resident code."
     )
-    _it_trust_false_skipping = "Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`."
 
     def __init__(self, cache_dir: Path):
         self.cache_dir = Path(cache_dir)
@@ -107,10 +103,11 @@ class OpDefinitionsCacheManager:
         """Add hub YAML files to monitoring."""
         hub_yaml_files = []
         try:
-            # we can short-circuit if IT_TRUST_REMOTE_CODE is explicitly set to False
-            if IT_TRUST_REMOTE_CODE is False:
+            # short-circuit on a deliberate opt-out; an UNSET decision is reported by discovery,
+            # where a real cached repo can be named in the advice
+            if remote_code_trust() is False:
                 rank_zero_warn(OpDefinitionsCacheManager._it_trust_false_skipping)
-                rank_zero_debug("[ANALYSIS_HUB_CACHE] Returning early due to IT_TRUST_REMOTE_CODE=False")
+                rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Returning early: {IT_TRUST_REMOTE_CODE_ENV_VAR} opt-out")
                 return []
 
             hub_yaml_files = self.discover_hub_yaml_files()
@@ -143,9 +140,9 @@ class OpDefinitionsCacheManager:
 
         yaml_files = []
 
-        # in case this method is called directly, short-circuit if IT_TRUST_REMOTE_CODE is explicitly set to False
-        if IT_TRUST_REMOTE_CODE is False:
-            # If IT_TRUST_REMOTE_CODE is explicitly set to False, we skip loading ops from hub repositories
+        # in case this method is called directly, honor a deliberate opt-out before touching the cache
+        trust = remote_code_trust()
+        if trust is False:
             rank_zero_warn(OpDefinitionsCacheManager._it_trust_false_skipping)
             return yaml_files
 
@@ -158,22 +155,16 @@ class OpDefinitionsCacheManager:
             # Use HuggingFace cache manager
             cache_info = scan_cache_dir(hub_cache_path)
 
-            if len(cache_info.repos) > 0 and IT_TRUST_REMOTE_CODE is None:
-                rank_zero_warn(OpDefinitionsCacheManager._it_trust_remote_code_warning)
-
             # Sort repos by repo_id for deterministic ordering
             sorted_repos = sorted(cache_info.repos, key=lambda repo: repo.repo_id)
 
-            for repo in sorted_repos:
-                trust_remote_code = IT_TRUST_REMOTE_CODE or resolve_trust_remote_code(
-                    IT_TRUST_REMOTE_CODE, repo.repo_id, False, True
-                )
+            # An unset decision denies, once, with advice naming a real cached repo. Ops discovery
+            # degrades rather than raising: a session with no hub ops still works, so failing the
+            # first op access over an undeclared preference would be disproportionate.
+            if sorted_repos and not remote_code_trusted(sorted_repos[0].repo_id, what="analysis ops"):
+                return yaml_files
 
-                if not trust_remote_code:
-                    rank_zero_warn(
-                        f"Skipping loading ops from repository {repo.repo_id} due to trust_remote_code being `False`."
-                    )
-                    continue
+            for repo in sorted_repos:
                 # Only consider model repositories
                 if repo.repo_type != "model":
                     continue

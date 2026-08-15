@@ -1502,30 +1502,26 @@ class TestCacheManagerHubFunctionality:
         repo = DummyRepo()
         assert _get_latest_revision(repo) is None
 
-    def test_discover_hub_yaml_files_trust_remote_code_false(self, tmp_path):
-        """Test that discover_hub_yaml_files returns early when IT_TRUST_REMOTE_CODE is False."""
+    def test_discover_hub_yaml_files_trust_remote_code_false(self, tmp_path, monkeypatch):
+        """Test that discover_hub_yaml_files returns early on an explicit trust opt-out."""
         from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
 
         cache_manager = OpDefinitionsCacheManager(Path("/tmp/test_cache"))
+        monkeypatch.setenv("IT_TRUST_REMOTE_CODE", "0")
 
-        with (
-            patch("interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE", False),
-            pytest.warns(match="Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`"),
-        ):
+        with pytest.warns(match="deliberate opt-out from executing hub-resident code"):
             result = cache_manager.discover_hub_yaml_files()
 
             assert result == []  # Early return should not return hub_yaml_files
 
-    def test_add_hub_yaml_files_trust_remote_code_false(self, tmp_path):
-        """Test that discover_hub_yaml_files returns early when IT_TRUST_REMOTE_CODE is False."""
+    def test_add_hub_yaml_files_trust_remote_code_false(self, tmp_path, monkeypatch):
+        """Test that add_hub_yaml_files returns early on an explicit trust opt-out."""
         from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
 
         cache_manager = OpDefinitionsCacheManager(Path("/tmp/test_cache"))
+        monkeypatch.setenv("IT_TRUST_REMOTE_CODE", "0")
 
-        with (
-            patch("interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE", False),
-            pytest.warns(match="Skipping loading ops from hub repositories due to IT_TRUST_REMOTE_CODE being `False`"),
-        ):
+        with pytest.warns(match="deliberate opt-out from executing hub-resident code"):
             result = cache_manager.add_hub_yaml_files()
 
             assert result == []  # Early return should not return hub_yaml_files
@@ -1552,48 +1548,20 @@ class TestCacheManagerHubFunctionality:
             assert discovered_files == []
             # The test passes because the non-model repository is skipped by the continue statement
 
-    def test_discover_hub_yaml_files_trust_remote_code_none_with_repos(self, tmp_path):
-        """Test warning when IT_TRUST_REMOTE_CODE is None and repos exist."""
-        from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
+    def test_discover_hub_yaml_files_unset_trust_denies_with_advice(self, tmp_path, monkeypatch):
+        """An UNSET trust decision denies once, naming a real cached repo in the advice (#255).
 
-        # Create hub cache with mock structure
-        hub_cache = tmp_path / "hub_cache"
-        hub_cache.mkdir()
-
-        cache_manager = OpDefinitionsCacheManager(Path("/tmp/test_cache"))
-
-        # Mock cache_info with repos
-        mock_repo = Mock()
-        mock_repo.repo_id = "test/repo"
-        mock_repo.repo_type = "model"
-        mock_repo.revisions = []
-        mock_repo.refs = {}
-
-        mock_cache_info = Mock()
-        mock_cache_info.repos = [mock_repo]
-
-        with (
-            patch("interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE", None),
-            patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
-            patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
-            patch("interpretune.analysis.ops.compiler.cache_manager.resolve_trust_remote_code", return_value=False),
-            patch("interpretune.analysis.ops.compiler.cache_manager.rank_zero_warn") as mock_warn,
-        ):
-            cache_manager.discover_hub_yaml_files()
-
-            # Should warn about IT_TRUST_REMOTE_CODE being None
-            mock_warn.assert_any_call(OpDefinitionsCacheManager._it_trust_remote_code_warning)
-
-    def test_discover_hub_yaml_files_skip_untrusted_repo(self, tmp_path):
-        """Test skipping repos when trust_remote_code is False."""
+        The per-repo interactive prompt this replaced is gone entirely; the deny/opt-in/opt-out matrix itself lives in
+        tests/core/test_hub_trust.py.
+        """
         from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
 
         hub_cache = tmp_path / "hub_cache"
         hub_cache.mkdir()
+        monkeypatch.delenv("IT_TRUST_REMOTE_CODE", raising=False)
 
         cache_manager = OpDefinitionsCacheManager(Path("/tmp/test_cache"))
 
-        # Mock repo that should be skipped
         mock_repo = Mock()
         mock_repo.repo_id = "untrusted/repo"
         mock_repo.repo_type = "model"
@@ -1604,19 +1572,11 @@ class TestCacheManagerHubFunctionality:
         mock_cache_info.repos = [mock_repo]
 
         with (
-            patch("interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE", None),
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
             patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
-            patch("interpretune.analysis.ops.compiler.cache_manager.resolve_trust_remote_code", return_value=False),
-            patch("interpretune.analysis.ops.compiler.cache_manager.rank_zero_warn") as mock_warn,
+            pytest.warns(match="untrusted/repo"),
         ):
-            result = cache_manager.discover_hub_yaml_files()
-
-            # Should skip the untrusted repo and warn
-            assert result == []
-            mock_warn.assert_any_call(
-                f"Skipping loading ops from repository {mock_repo.repo_id} due to trust_remote_code being `False`."
-            )
+            assert cache_manager.discover_hub_yaml_files() == []
 
     def test_discover_hub_yaml_files_skip_non_model_repos(self, tmp_path):
         """Test that non-model repositories are skipped."""
@@ -1643,7 +1603,6 @@ class TestCacheManagerHubFunctionality:
         mock_cache_info.repos = [mock_dataset_repo, mock_model_repo]
 
         with (
-            patch("interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE", True),
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
             patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
             patch("interpretune.analysis.ops.compiler.cache_manager._get_latest_revision", return_value=None),
@@ -1673,7 +1632,6 @@ class TestCacheManagerHubFunctionality:
         mock_cache_info.repos = [mock_repo]
 
         with (
-            patch("interpretune.analysis.ops.compiler.cache_manager.IT_TRUST_REMOTE_CODE", True),
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
             patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
             patch("interpretune.analysis.ops.compiler.cache_manager._get_latest_revision", return_value=None),

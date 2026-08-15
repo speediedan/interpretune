@@ -1,0 +1,46 @@
+{
+ "artifact_kind": "analysis-store",
+ "artifacts": {
+  "columns": [
+   "active_features",
+   "graph_cfg_json",
+   "input_string",
+   "input_tokens"
+  ],
+  "interchange": {
+   "files": [
+    "data/validation-00000-of-00001.parquet"
+   ],
+   "format": "parquet",
+   "local_format": "arrow"
+  },
+  "num_rows": 2,
+  "split": "validation"
+ },
+ "generated_utc": "2026-08-12T04:11:07+00:00",
+ "identity": {
+  "created_utc": "2026-08-12T04:11:07+00:00",
+  "store_id": "aadcd8d6-0000-4000-8000-000000000000"
+ },
+ "interpretune": {
+  "analysis_backend": "circuit_tracer",
+  "col_cfg": {
+   "active_features": {
+    "array_shape": [
+     null,
+     3
+    ],
+    "datasets_dtype": "int64",
+    "sequence_type": false
+   },
+   "input_tokens": {
+    "datasets_dtype": "int64"
+   }
+  }
+ },
+ "provenance": {
+  "content_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+  "interpretune_version": "0.1.0.dev1"
+ },
+ "schema": 1
+}

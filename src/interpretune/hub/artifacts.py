@@ -22,7 +22,18 @@ from typing import Any
 from interpretune.hub.cache import IT_ARTIFACTS_HUB_CACHE
 
 IT_ARTIFACT_ENVELOPE = "it_artifact.json"
+
+#: The schema this code WRITES. A single integer major version, deliberately: additive optional
+#: fields never bump it (readers ignore unknown keys by contract), so the only thing a version
+#: change communicates is "a reader that does not understand this cannot be correct". See
+#: `docs/analysis_store_serialization.md` for the policy and the rejected major.minor alternative.
 ARTIFACT_SCHEMA_VERSION = 1
+
+#: The oldest schema this code READS. Hub artifacts outlive the code that wrote them, so the
+#: reader accepts a WINDOW, never a single version; raising this floor retires published
+#: artifacts and is a documented, deliberate act.
+ARTIFACT_SCHEMA_MIN_READABLE = 1
+
 ANALYSIS_STORE_KIND = "analysis-store"
 
 
@@ -30,15 +41,42 @@ class ArtifactEnvelopeError(ValueError):
     """An artifact envelope is missing, malformed, or declares an unsupported schema/kind."""
 
 
+def _validate_schema_version(envelope: dict, source: str) -> None:
+    """Enforce the readable-window rule, distinguishing too-new from too-old from malformed.
+
+    The three cases need three different actions from the reader, so they get three messages: too new means upgrade
+    interpretune, too old means the artifact predates the supported floor and needs a re-publish, malformed means the
+    envelope is not one of ours at all.
+    """
+    schema = envelope.get("schema")
+    if not isinstance(schema, int) or isinstance(schema, bool):
+        raise ArtifactEnvelopeError(
+            f"{source}: artifact schema {schema!r} is not an integer version — the `schema` header is "
+            "mandatory and identifies the envelope as an interpretune artifact."
+        )
+    if schema > ARTIFACT_SCHEMA_VERSION:
+        raise ArtifactEnvelopeError(
+            f"{source}: artifact schema {schema} was written by a newer Interpretune than this one "
+            f"(this build reads {ARTIFACT_SCHEMA_MIN_READABLE}-{ARTIFACT_SCHEMA_VERSION}). Upgrade "
+            "interpretune to read it; older readers cannot safely guess what a newer schema means."
+        )
+    if schema < ARTIFACT_SCHEMA_MIN_READABLE:
+        raise ArtifactEnvelopeError(
+            f"{source}: artifact schema {schema} is older than the minimum readable schema "
+            f"({ARTIFACT_SCHEMA_MIN_READABLE}). Re-publish the artifact with a current interpretune "
+            "(push_analysis_store) to bring its envelope forward."
+        )
+
+
 def validate_artifact_envelope(envelope: Any, source: str = "<envelope>") -> dict:
-    """Validate the coarse shape of a parsed artifact envelope, returning it on success."""
+    """Validate the coarse shape of a parsed artifact envelope, returning it on success.
+
+    Unknown top-level keys are deliberately tolerated: that tolerance is what lets additive
+    envelope fields ship without a schema bump, so it is part of the contract rather than laxity.
+    """
     if not isinstance(envelope, dict):
         raise ArtifactEnvelopeError(f"{source}: envelope must be a mapping, got {type(envelope).__name__}")
-    if envelope.get("schema") != ARTIFACT_SCHEMA_VERSION:
-        raise ArtifactEnvelopeError(
-            f"{source}: unsupported artifact schema {envelope.get('schema')!r} "
-            f"(supported: {ARTIFACT_SCHEMA_VERSION}) — the version header is mandatory."
-        )
+    _validate_schema_version(envelope, source)
     if envelope.get("artifact_kind") != ANALYSIS_STORE_KIND:
         raise ArtifactEnvelopeError(
             f"{source}: unsupported artifact_kind {envelope.get('artifact_kind')!r} "
@@ -135,7 +173,7 @@ def build_analysis_store_envelope(
         # page-index detail joins post-MVP with the streaming guards — no schema bump needed then
         "interchange": {"format": "parquet", "local_format": "arrow", **(interchange or {})},
     }
-    return {
+    envelope = {
         "schema": ARTIFACT_SCHEMA_VERSION,
         "artifact_kind": ANALYSIS_STORE_KIND,
         "generated_utc": now,
@@ -144,6 +182,10 @@ def build_analysis_store_envelope(
         "artifacts": artifacts,
         "interpretune": {"col_cfg": _serialize_col_cfg(store), "analysis_backend": _analysis_backend_name(store)},
     }
+    # writer-side guard: never emit an envelope this build could not itself read back. Catches a
+    # schema bumped past the reader's window and a caller-supplied `identity` that would publish
+    # unreadable — both cheap here, both expensive once they are on the hub.
+    return validate_artifact_envelope(envelope, source="<writer>")
 
 
 def push_analysis_store(

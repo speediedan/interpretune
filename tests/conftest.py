@@ -31,6 +31,14 @@ import yaml
 import torch
 import torch.distributed
 
+# The suite deliberately consents to executing hub-resident code: the local-publish bridge and the
+# compose_ref entries in the test registry import component entrypoints, which are gated by default
+# since interpretune#255. Set before any registry hydration (module import is the only point early
+# enough for collection-time parametrization) and unconditionally, so a developer's own opt-out in
+# the ambient environment cannot make the suite nondeterministic. Tests that assert the DENY path
+# monkeypatch this away per-test — see tests/core/test_hub_trust.py.
+os.environ["IT_TRUST_REMOTE_CODE"] = "1"
+
 from interpretune.base import _call_itmodule_hook, ITDataModule
 from interpretune.runners import AnalysisRunner
 from interpretune.config.runner import AnalysisRunnerCfg

@@ -114,6 +114,7 @@ usage/session_module_datamodule_usage
 usage/analysis_runner_usage
 usage/analysis_store_serialization
 usage/cache_behavior
+usage/hub_trust_posture
 usage/generation_precedence
 ```
 
