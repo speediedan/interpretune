@@ -121,3 +121,69 @@ The structured representation avoids those issues by keeping the persisted state
 Interpretune should treat graph reconstruction as a protocol boundary instead of hard-coding blob deserialization in op definitions. A graph-like consumer only needs a primitive payload containing tensors, strings, lists, and scalar config metadata. Circuit-tracer can then rebuild `Graph` from that payload, and other integrations can do the same for their own graph types.
 
 The current implementation pushes that package-specific logic into an analysis backend rather than into `definitions.py`. The formatter can optionally call that backend after row decoding, which keeps the persisted dataset primitive while making hydrated graph access more seamless at read time.
+
+## Publishing to the Hub: the `it_artifact.json` envelope
+
+An AnalysisStore published to the Hub travels as a dataset repo: parquet files (the interchange
+format; the local store stays Arrow) plus an `it_artifact.json` envelope at the repo root. The
+envelope is **descriptive, not authoritative** — the dataset files are the truth, and the envelope
+restates identity and provenance so a reader can decide whether this is the artifact they want, and
+so the interpretune formatter can be re-attached from the serialized `col_cfg` without re-running
+the pipeline.
+
+Two blocks with opposite rules:
+
+- `identity` is written once at first publish and preserved verbatim on every re-push. A store keeps
+  its `store_id` across renames, re-pushes and regenerations.
+- `provenance` (including `content_fingerprint`) is refreshed freely, so consumers get change
+  detection without identity churn.
+
+### Schema versioning policy
+
+Hub artifacts outlive the code that wrote them, and the publisher is usually not the reader. That
+makes the envelope the one interpretune surface where the alpha's otherwise-liberal
+breaking-change posture does not apply.
+
+**`schema` is a single integer major version.** There is no minor component, deliberately: readers
+ignore unknown keys by contract, so shipping an additive optional field needs no version change at
+all, and the only thing a version bump has left to communicate is "a reader that does not
+understand this cannot be correct". A `major.minor` scheme would encode that same distinction in a
+second number that nothing would consult. (`it_component.yaml` uses the same rule under the key
+`it_schema_version`.)
+
+The rules:
+
+| Change | Schema bump |
+| --- | --- |
+| Add an optional field readers may ignore | none |
+| Add a field a correct reader must understand | major |
+| Remove, rename, or redefine an existing field | major |
+| Change what an existing value means | major |
+
+**Readers accept a window, not a single version.** `ARTIFACT_SCHEMA_VERSION` is what this build
+writes; `ARTIFACT_SCHEMA_MIN_READABLE` is the oldest it will read. Both live in
+`interpretune.hub.artifacts`, and the three failure cases are distinguished because they call for
+three different actions:
+
+| Envelope | Reader behavior |
+| --- | --- |
+| within `[MIN_READABLE, VERSION]` | read it; unknown keys ignored |
+| newer than `VERSION` | refuse, naming the upgrade — an older reader cannot safely guess |
+| older than `MIN_READABLE` | refuse, pointing at a re-publish |
+| `schema` missing or not an integer | refuse: this is not an interpretune artifact envelope |
+
+**Raising the floor retires published artifacts**, so it is a deliberate, documented act rather
+than a side effect of a refactor. The floor is currently `1`, the schema is currently `1`, and
+`tests/core/fixtures/it_artifact_schema1.json` pins a literal v1 envelope that the test suite reads
+on every run — the piece that actually catches an accidental mandatory-field change, since every
+other test builds its envelope with the current writer and so drifts along with it.
+
+**Publishing refuses to emit an envelope this build could not read back.** `build_analysis_store_envelope`
+returns its result through the same validator the read paths use, so a schema bumped past the
+reader's window, or an identity block preserved from a corrupted existing envelope, fails locally
+instead of landing on the Hub.
+
+Neuronpedia dashboard corpora carry their own manifests (`dashboards.json` for provenance,
+`source_ids.json` for identity), documented in the dashboard pipeline guide. They follow the same
+single-integer convention but are read leniently today; if and when they adopt this envelope they
+take a distinct `artifact_kind` under the rules above.
