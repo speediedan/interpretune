@@ -37,6 +37,11 @@ def import_cached_entrypoint(repo_id: str, cache_dir: Path | None = None) -> Mod
     module_name = f"it_hub_components.{sanitized}.{revision}"
     if module_name in sys.modules:
         return sys.modules[module_name]
+    # the gate belongs HERE, at the point of execution: this is the one place outside op discovery
+    # where interpretune runs Python that came from a hub repo (interpretune#255)
+    from interpretune.hub.trust import ensure_remote_code_trusted
+
+    ensure_remote_code_trusted(repo_id, what=f"the prompt-config entrypoint {entrypoint!r}")
     spec = importlib.util.spec_from_file_location(module_name, snapshot / entrypoint)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

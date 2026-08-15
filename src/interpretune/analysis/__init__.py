@@ -14,11 +14,8 @@ IT_ANALYSIS_CACHE = Path(os.getenv("IT_ANALYSIS_CACHE", DEFAULT_IT_ANALYSIS_CACH
 IT_MODULES_CACHE = os.getenv("IT_MODULES_CACHE", os.path.join(IT_ANALYSIS_CACHE, "modules"))
 IT_DYNAMIC_MODULE_NAME = "interpretune_modules"
 
-# Hub cache configuration
-IT_TRUST_REMOTE_CODE_ENV = os.getenv("IT_TRUST_REMOTE_CODE", "true")  # TODO: make this None by default before release
-IT_TRUST_REMOTE_CODE = (
-    IT_TRUST_REMOTE_CODE_ENV.lower() in ("true", "1", "yes") if IT_TRUST_REMOTE_CODE_ENV is not None else None
-)
+# Trust for hub-resident code is resolved at call time by interpretune.hub.trust — never captured
+# into a constant here, so opting in from inside a running session (a notebook cell) works.
 
 # op-collection hub cache now defined by the unified hub layer (interpretune.hub.cache); the env-var
 # override and on-disk default are unchanged
