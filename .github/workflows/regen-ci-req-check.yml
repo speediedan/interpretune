@@ -3,7 +3,11 @@ name: regen-ci-req-check (scheduled)
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 1,15 * *'  # run 00:00 UTC on 1st and 15th of each month
+    # 00:00 UTC on the 1st. MONTHLY, deliberately: the pins this refreshes are CI-only, every run
+    # that finds drift costs a full matrix review, and a fortnightly cadence produced a standing
+    # open PR that was continuously force-pushed rather than reviewed. `workflow_dispatch` covers
+    # the case where a refresh is wanted sooner.
+    - cron: '0 0 1 * *'
 
 jobs:
   regen:
