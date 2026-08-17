@@ -840,7 +840,8 @@ def _run_chained_concept_direction_for_aggregate_mode(
 ):
     """Drive extract_concept_latent_state + extract_concept_latent_examples + concept_direction per batch.
 
-    Returns the list of analysis batches emitted by the chained op for each input batch.
+    Returns ``(emitted_batches, analysis_cfg)``. The cfg is returned because it owns the ops'
+    declared ``op_state`` containers, which is where cross-batch aggregation state now lives.
     """
     analysis_cfg = it.AnalysisCfg(
         name=f"chained_concept_direction_{aggregate_mode}_{direction_mode}",
@@ -875,7 +876,7 @@ def _run_chained_concept_direction_for_aggregate_mode(
                 analysis_inputs=AnalysisInputs(store=shared_store),
             )
         )
-    return emitted_batches
+    return emitted_batches, analysis_cfg
 
 
 def test_concept_direction_streaming_matches_in_memory_aggregate(tmp_path) -> None:
@@ -894,7 +895,7 @@ def test_concept_direction_streaming_matches_in_memory_aggregate(tmp_path) -> No
         orig_labels=[torch.tensor([0, 1], dtype=torch.long), torch.tensor([0, 1], dtype=torch.long)],
         logit_diffs=[torch.tensor([2.0, 1.0], dtype=torch.float32), torch.tensor([-0.25, 0.5], dtype=torch.float32)],
     )
-    streaming_batches = _run_chained_concept_direction_for_aggregate_mode(
+    streaming_batches, streaming_cfg = _run_chained_concept_direction_for_aggregate_mode(
         streaming_module,
         streaming_module.datamodule,
         streaming_inputs,
@@ -914,7 +915,7 @@ def test_concept_direction_streaming_matches_in_memory_aggregate(tmp_path) -> No
         orig_labels=[torch.tensor([0, 1], dtype=torch.long), torch.tensor([0, 1], dtype=torch.long)],
         logit_diffs=[torch.tensor([2.0, 1.0], dtype=torch.float32), torch.tensor([-0.25, 0.5], dtype=torch.float32)],
     )
-    in_memory_batches = _run_chained_concept_direction_for_aggregate_mode(
+    in_memory_batches, in_memory_cfg = _run_chained_concept_direction_for_aggregate_mode(
         in_memory_module,
         in_memory_module.datamodule,
         in_memory_inputs,
@@ -966,7 +967,7 @@ def test_concept_direction_streaming_paired_rejection_matches_in_memory(tmp_path
         orig_labels=orig_labels,
         logit_diffs=logit_diffs,
     )
-    streaming_batches = _run_chained_concept_direction_for_aggregate_mode(
+    streaming_batches, streaming_cfg = _run_chained_concept_direction_for_aggregate_mode(
         streaming_module,
         streaming_module.datamodule,
         streaming_inputs,
@@ -984,7 +985,7 @@ def test_concept_direction_streaming_paired_rejection_matches_in_memory(tmp_path
         orig_labels=orig_labels,
         logit_diffs=logit_diffs,
     )
-    in_memory_batches = _run_chained_concept_direction_for_aggregate_mode(
+    in_memory_batches, in_memory_cfg = _run_chained_concept_direction_for_aggregate_mode(
         in_memory_module,
         in_memory_module.datamodule,
         in_memory_inputs,
@@ -1009,12 +1010,13 @@ def test_concept_direction_streaming_paired_rejection_matches_in_memory(tmp_path
     assert in_memory_final.concept_direction_mode == "paired_rejection"
     assert streaming_final.get("concept_aggregate_output_mode") == "streaming"
 
-    # Storage contract: streaming must populate paired-rejection running totals on the store and
-    # leave no unmatched pending rows after the final batch (counts are balanced per batch).
-    assert getattr(streaming_inputs, "concept_running_residual_sum", None) is not None
-    assert float(getattr(streaming_inputs, "concept_running_pair_weight")) == pytest.approx(2.25, abs=1e-5)
-    assert int(getattr(streaming_inputs, "concept_pending_a_states").shape[0]) == 0
-    assert int(getattr(streaming_inputs, "concept_pending_b_states").shape[0]) == 0
+    # Storage contract: streaming must populate paired-rejection running totals in the op's declared
+    # state and leave no unmatched pending rows after the final batch (counts are balanced per batch).
+    streaming_state = streaming_cfg.op_state_for(it.concept_direction)
+    assert streaming_state.get("concept_running_residual_sum") is not None
+    assert float(streaming_state.get("concept_running_pair_weight")) == pytest.approx(2.25, abs=1e-5)
+    assert int(streaming_state.get("concept_pending_a_states").shape[0]) == 0
+    assert int(streaming_state.get("concept_pending_b_states").shape[0]) == 0
 
 
 def test_concept_direction_streaming_paired_rejection_handles_unmatched_batches(tmp_path) -> None:
@@ -1041,7 +1043,7 @@ def test_concept_direction_streaming_paired_rejection_handles_unmatched_batches(
         orig_labels=orig_labels,
         logit_diffs=logit_diffs,
     )
-    streaming_batches = _run_chained_concept_direction_for_aggregate_mode(
+    streaming_batches, streaming_cfg = _run_chained_concept_direction_for_aggregate_mode(
         streaming_module,
         streaming_module.datamodule,
         streaming_inputs,
@@ -1056,8 +1058,9 @@ def test_concept_direction_streaming_paired_rejection_handles_unmatched_batches(
     expected = torch.tensor([1.0, 0.0], dtype=torch.float32)
     assert torch.allclose(streaming_batches[1].concept_direction, expected, atol=1e-6)
     # Pending buffers are drained.
-    assert int(getattr(streaming_inputs, "concept_pending_a_states").shape[0]) == 0
-    assert int(getattr(streaming_inputs, "concept_pending_b_states").shape[0]) == 0
+    streaming_state = streaming_cfg.op_state_for(it.concept_direction)
+    assert int(streaming_state.get("concept_pending_a_states").shape[0]) == 0
+    assert int(streaming_state.get("concept_pending_b_states").shape[0]) == 0
 
 
 def test_concept_direction_streaming_does_not_retain_latent_state_rows(tmp_path) -> None:
@@ -1074,7 +1077,7 @@ def test_concept_direction_streaming_does_not_retain_latent_state_rows(tmp_path)
         logit_diffs=[torch.tensor([2.0, 1.0], dtype=torch.float32), torch.tensor([-0.25, 0.5], dtype=torch.float32)],
     )
 
-    streaming_batches = _run_chained_concept_direction_for_aggregate_mode(
+    streaming_batches, streaming_cfg = _run_chained_concept_direction_for_aggregate_mode(
         module,
         module.datamodule,
         extraction_inputs,
@@ -1087,11 +1090,12 @@ def test_concept_direction_streaming_does_not_retain_latent_state_rows(tmp_path)
         assert emitted.get("concept_latent_state_rows") is None
         assert emitted.get("concept_group_id_rows") is None
 
-    # And the shared store's running aggregate state must be populated.
-    assert getattr(extraction_inputs, "concept_running_state_sum_a", None) is not None
-    assert getattr(extraction_inputs, "concept_running_state_sum_b", None) is not None
-    assert float(extraction_inputs.concept_running_weight_a) > 0.0
-    assert float(extraction_inputs.concept_running_weight_b) > 0.0
+    # And the op's declared running aggregate state must be populated.
+    streaming_state = streaming_cfg.op_state_for(it.concept_direction)
+    assert streaming_state.get("concept_running_state_sum_a") is not None
+    assert streaming_state.get("concept_running_state_sum_b") is not None
+    assert float(streaming_state.get("concept_running_weight_a")) > 0.0
+    assert float(streaming_state.get("concept_running_weight_b")) > 0.0
 
 
 def test_concept_direction_ignores_empty_store_rows(tmp_path) -> None:

@@ -17,6 +17,7 @@ from interpretune.analysis import (
     AnalysisOpLike,
 )
 from interpretune.analysis.execution import execute_analysis_step
+from interpretune.analysis.inputs import OpStateStore
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 from interpretune.config import ITSerializableCfg
 from interpretune.protocol import NamesFilter, AnalysisStoreProtocol, BaseAnalysisBatchProtocol, STEP_OUTPUT
@@ -123,6 +124,10 @@ class AnalysisCfg(ITSerializableCfg):
         repr=False,
         compare=False,
     )  # Tracks which live module instances this cfg has been applied to
+    # Run-scoped containers for ops that declare an `op_state` trait, keyed by op name. Keyed rather
+    # than single because a composite's MEMBER ops are the state declarers (e.g. concept_direction
+    # inside attribution_from_concept), and each needs its own namespace.
+    _op_states: dict[str, OpStateStore] = field(default_factory=dict, init=False, repr=False, compare=False)
     _op: str | AnalysisOp | Callable | list[AnalysisOp | Callable] | None = None  # op via generated analysis step
 
     @property
@@ -141,6 +146,45 @@ class AnalysisCfg(ITSerializableCfg):
     def op(self, value: str | AnalysisOp | Callable | list[AnalysisOp | Callable] | None) -> None:
         """Set the operation value."""
         self._op = value
+
+    def op_state_for(self, op: Any) -> OpStateStore | None:
+        """Return the run-scoped state container for ``op``, or None if it declares no ``op_state``.
+
+        This cfg is the owner for the duration of an analysis run: the container is created on first
+        use and cleared by :meth:`reset_op_state` / :meth:`finalize_op_state`. Called by
+        ``AnalysisOp._bind_op_state``, including for the member ops of a composite.
+        """
+        spec = getattr(op, "op_state", None)
+        if spec is None:
+            return None
+        op_name = getattr(op, "name", None) or str(op)
+        existing = self._op_states.get(op_name)
+        if existing is None or existing.spec != spec:
+            existing = OpStateStore(spec)
+            self._op_states[op_name] = existing
+        return existing
+
+    def reset_op_state(self, *, epoch_boundary: bool = False) -> None:
+        """Clear declared op state at a run start, or at an epoch boundary for ops that ask for it.
+
+        ``epoch_boundary=True`` honors each op's ``reset_each_epoch`` (default ``False``), which is
+        what makes multi-epoch analysis accumulate instead of silently discarding every epoch but the
+        last -- the behavior of the previous ``batch_idx == 0`` reset heuristic, since ``batch_idx``
+        restarts at 0 for each epoch.
+        """
+        for state in self._op_states.values():
+            if not epoch_boundary or state.spec.reset_each_epoch:
+                state.clear()
+
+    def finalize_op_state(self) -> None:
+        """Release declared op state at the end of an analysis run.
+
+        Accumulators can hold sizable tensors (the paired-rejection pending buffers are O(pending x d_model)), and this
+        cfg may outlive the run, so run end drops them. Converged results reach the caller through the op's declared
+        output schema, not through this container.
+        """
+        for state in self._op_states.values():
+            state.clear()
 
     def __post_init__(self):
         # Process the target_op if provided and set it as the op
@@ -485,26 +529,28 @@ class AnalysisCfg(ITSerializableCfg):
             self.bwd_hooks = bwd_hooks
 
     def check_add_default_hooks(self) -> tuple[list, list] | None:
-        """Construct forward and backward hooks based on analysis operation."""
+        """Install the default activation-cache hooks if the active op declares it needs them.
+
+        Driven by the op's ``uses_default_hooks`` trait rather than by op name, so hub and local ops
+        can ask for the default hooks exactly as bundled ops do.
+        """
+        # TODO: add in an op attribute akin to "uses_sae_hooks" to enable names_filter validation resolution etc.
+        # if self.op_name in ('logit_diffs_attr_ablation', 'logit_diffs_attr_grad') and self.names_filter is None:
+        #     raise ValueError("names_filter required for non-clean operations")
         fwd_hooks, bwd_hooks = [], []
 
         if self.op is None:
             self.fwd_hooks, self.bwd_hooks = fwd_hooks, bwd_hooks
-            return
+            return None
 
         assert isinstance(self.op, AnalysisOpLike), (
             f"op expected to be AnalysisOp (or uninstantiated OpWrapper), got {type(self.op)}"
         )
-        # TODO: change these op-based checks to be functionally driven (e.g. uses_default_hooks attribute of ops)
-        if self.op.name == "logit_diffs_base":
-            return fwd_hooks, bwd_hooks
-
-        if self.op.name == "logit_diffs_attr_grad":
+        if getattr(self.op, "uses_default_hooks", False):
             self.add_default_cache_hooks()
+            return None
 
-        # TODO: add in an op attribute akin to "uses_sae_hooks" to enable names_filter validation resolution etc.
-        # if self.op_name in ('logit_diffs_attr_ablation', 'logit_diffs_attr_grad') and self.names_filter is None:
-        #     raise ValueError("names_filter required for non-clean operations")
+        return fwd_hooks, bwd_hooks
 
     def applied_to(self, module) -> bool:
         """Check if this configuration has been applied to a specific module.

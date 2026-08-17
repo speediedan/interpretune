@@ -7,6 +7,7 @@ import re
 
 from ..base import OpSchema, ColCfg, AnalysisOp
 from interpretune.utils.logging import rank_zero_warn
+from interpretune.analysis.ops.compiler.load_policy import op_load_failure
 
 
 # Type variables for schema and field definition types
@@ -303,17 +304,25 @@ def build_operation_compositions(yaml_config: Dict) -> dict[str, Any]:
         try:
             input_schema, output_schema = compile_operation_composition_schema(composition, all_ops_dict)
         except Exception as e:
-            rank_zero_warn(f"Failed to compile operation '{name}' with composition {composition}: {e}")
+            op_load_failure(f"Failed to compile operation '{name}' with composition {composition}: {e}")
             continue
 
-        # Create a new operation definition with the compiled schemas
-        ops[name] = {
-            "description": f"Compiled composition: {'.'.join(composition)}",
-            "composition": composition,
-            "input_schema": input_schema,
-            "output_schema": output_schema,
-            "aliases": aliases,
-        }
+        # Carry the author's declaration through, overriding only what compilation derives. Building
+        # a fresh dict here silently discarded every other declared key -- including `description`
+        # (composites with a written description got "Compiled composition: ..." instead) and the
+        # behavioral traits (`requires_grad`, `uses_default_hooks`, `per_latent_preds`), which is
+        # what a composite needs in order to declare anything at all.
+        compiled_def = dict(composition_def)
+        compiled_def.update(
+            {
+                "description": composition_def.get("description") or f"Compiled composition: {'.'.join(composition)}",
+                "composition": composition,
+                "input_schema": input_schema,
+                "output_schema": output_schema,
+                "aliases": aliases,
+            }
+        )
+        ops[name] = compiled_def
 
     return ops
 

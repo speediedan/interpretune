@@ -1951,3 +1951,46 @@ class TestOpWrapper:
         assert unpickled_op.output_schema == op.output_schema
         assert unpickled_op.input_schema == op.input_schema
         assert unpickled_op._aliases == op._aliases
+
+
+class TestOpIdentityComparison:
+    """`cfg.op == it.some_op` must hold whether or not the wrapper has been instantiated yet.
+
+    `AnalysisCfg.op` unwraps an instantiated OpWrapper to its AnalysisOp while `it.some_op` stays a
+    wrapper, so before these were symmetric the comparison flipped from True to False as soon as
+    anything else in the process instantiated that op -- an order-dependent test failure.
+    """
+
+    @staticmethod
+    def _op(name: str = "cmp_op") -> AnalysisOp:
+        return AnalysisOp(name=name, description="", output_schema=OpSchema({}))
+
+    def test_analysis_op_defers_to_reflected_comparison(self):
+        # The concrete regression: AnalysisOp.__eq__ returned False for unknown types, which
+        # suppressed OpWrapper's reflected __eq__ entirely.
+        assert AnalysisOp.__eq__(self._op(), object()) is NotImplemented
+
+    def test_wrapper_and_op_compare_equal_in_both_directions(self):
+        wrapper = OpWrapper("cmp_op")
+        op = self._op()
+        assert wrapper == op and op == wrapper
+
+    def test_comparison_does_not_instantiate_the_wrapper(self):
+        wrapper = OpWrapper("cmp_op")
+        assert wrapper == self._op()
+        assert not wrapper._is_instantiated
+
+    def test_name_and_wrapper_comparisons(self):
+        wrapper = OpWrapper("cmp_op")
+        assert wrapper == "cmp_op"
+        assert wrapper == OpWrapper("cmp_op")
+        assert wrapper != OpWrapper("other_op")
+        assert wrapper != self._op("other_op")
+
+    def test_unrelated_objects_are_not_equal(self):
+        assert OpWrapper("cmp_op") != 42
+        assert self._op() != 42
+
+    def test_wrapper_is_hashable_by_name(self):
+        assert hash(OpWrapper("cmp_op")) == hash(OpWrapper("cmp_op"))
+        assert len({OpWrapper("cmp_op"), OpWrapper("cmp_op")}) == 1

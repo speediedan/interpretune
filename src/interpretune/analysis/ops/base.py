@@ -4,6 +4,7 @@ from __future__ import annotations  # see PEP 749, no longer needed when 3.13 re
 from typing import Literal, Any, Callable, Sequence
 from dataclasses import dataclass, fields
 from contextlib import contextmanager
+from functools import lru_cache
 import os
 
 import torch
@@ -58,6 +59,30 @@ DEFAULT_OP_PARAMS = {"module": None, "analysis_batch": None, "batch": None, "bat
 
 DEFAULT_OP_PARAM_NAMES = frozenset(DEFAULT_OP_PARAMS.keys())
 _ANALYSIS_MISSING = object()
+
+
+@lru_cache(maxsize=512)
+def _cached_signature(impl_func: Callable) -> Any:
+    import inspect
+
+    return inspect.signature(impl_func)
+
+
+def _impl_signature(impl_func: Callable) -> Any | None:
+    """Return the (cached) signature of an op implementation, or None if it cannot be introspected.
+
+    Every op call resolved its impl signature from scratch; impls are stable for a process lifetime, so the result is
+    cached. Unhashable callables fall back to the uncached path rather than failing.
+    """
+    try:
+        return _cached_signature(impl_func)
+    except (ValueError, TypeError):
+        import inspect
+
+        try:
+            return inspect.signature(impl_func)
+        except (ValueError, TypeError):
+            return None
 
 
 def build_call_args(module, analysis_batch, batch, batch_idx, impl_params=None, **kwargs):
@@ -446,6 +471,10 @@ class AnalysisOp:
         aliases: Sequence[str] | None = None,
         impl_params: dict[str, Any] | None = None,
         required_capabilities: Sequence[str | Any] | None = None,
+        op_state: Any = None,
+        uses_default_hooks: bool = False,
+        requires_grad: bool = False,
+        per_latent_preds: bool = False,
     ) -> None:
         self.name = name
         self.description = description
@@ -456,6 +485,14 @@ class AnalysisOp:
         self._impl: Callable | None = None
         self.impl_params = impl_params or {}
         self.required_capabilities = self._normalize_required_capabilities(required_capabilities)
+        # Declared cross-batch state (OpStateSpec | None). The SPEC lives on the op; the state
+        # itself does not -- ops are process-global singletons, so per-run state is owned by the
+        # AnalysisCfg for that run (see AnalysisCfg.op_state).
+        self.op_state = op_state
+        # Behavioral traits (see OpDef): framework code branches on these instead of on op names.
+        self.uses_default_hooks = uses_default_hooks
+        self.requires_grad = requires_grad
+        self.per_latent_preds = per_latent_preds
 
     @staticmethod
     def _normalize_required_capabilities(
@@ -710,7 +747,9 @@ class AnalysisOp:
             return self.name == other
         elif isinstance(other, AnalysisOp):
             return self.name == other.name
-        return False
+        # NotImplemented, not False: returning False here suppressed the reflected comparison, so
+        # `some_op == it.some_op` was False whenever the right side was still an OpWrapper.
+        return NotImplemented
 
     def __hash__(self) -> int:
         # Updated hash to use input_schema instead of description.
@@ -743,16 +782,15 @@ class AnalysisOp:
         self, impl_func: Callable, module, analysis_batch, batch, batch_idx, **kwargs
     ) -> dict[str, Any]:
         """Resolve parameters to pass to the implementation function using smart parameter detection."""
-        import inspect
-
         # Use centralized parameter building
         available_defaults = build_call_args(
             module, analysis_batch, batch, batch_idx, impl_params=self.impl_params, **kwargs
         )
 
-        try:
-            sig = inspect.signature(impl_func)
-        except (ValueError, TypeError):
+        import inspect
+
+        sig = _impl_signature(impl_func)
+        if sig is None:
             # If we can't get signature, fall back to passing all defaults
             return available_defaults
 
@@ -768,10 +806,44 @@ class AnalysisOp:
 
         return call_args
 
+    def _resolve_op_state_store(self, module) -> Any:
+        """Return this op's run-scoped state container, or None if no owner is active.
+
+        The container is owned by the ``AnalysisCfg`` for the run (ops are process-global singletons,
+        so state must not live on the op). Duck-typed on purpose: ops must not import config.
+        """
+        cfg = getattr(module, "analysis_cfg", None)
+        resolver = getattr(cfg, "op_state_for", None)
+        return resolver(self) if callable(resolver) else None
+
+    def _bind_op_state(self, module, kwargs: dict[str, Any]) -> None:
+        """Attach this op's declared cross-batch state container to the inputs the impl will see.
+
+        No-op unless the op declares ``op_state`` AND an owner is active, so a bare op call with no
+        active ``AnalysisCfg`` reaches the impl unchanged and fails there with a clear message rather
+        than silently accumulating into a container nobody can reset.
+        """
+        if self.op_state is None:
+            return
+        store = self._resolve_op_state_store(module)
+        if store is None:
+            return
+
+        from dataclasses import replace
+
+        from interpretune.analysis.inputs import AnalysisInputs, coerce_analysis_inputs
+
+        inputs = coerce_analysis_inputs(kwargs.get("analysis_inputs")) or AnalysisInputs()
+        if inputs.op_state is None:
+            inputs = replace(inputs, op_state=store)
+        kwargs["analysis_inputs"] = inputs
+
     def _call_with_resolved_params(self, module, analysis_batch, batch, batch_idx, **kwargs):
         """Unified call method that handles parameter resolution."""
         if self._impl is None:
             raise NotImplementedError(f"Operation {self.name} has no implementation")
+
+        self._bind_op_state(module, kwargs)
 
         # Use centralized parameter building
         all_params = build_call_args(module, analysis_batch, batch, batch_idx, impl_params=self.impl_params, **kwargs)
@@ -908,6 +980,9 @@ class OpWrapper:
         "_dispatcher",
         "__reduce__",
         "__reduce_ex__",
+        "__eq__",
+        "__ne__",
+        "__hash__",
     )
 
     _DEBUG_OVERRIDE_ATTRS = ("__iter__", "__len__")
@@ -980,6 +1055,28 @@ class OpWrapper:
 
             return self._instantiated_op
         return self._instantiated_op
+
+    def __eq__(self, other) -> bool:
+        """Compare equal to the op this wrapper stands for, however that op is referenced.
+
+        Without this, ``cfg.op == it.some_op`` was order-dependent: ``AnalysisCfg.op`` unwraps an
+        *instantiated* wrapper to its ``AnalysisOp``, while ``it.some_op`` stays a wrapper, so the
+        comparison flipped from True to False as soon as anything else in the process instantiated
+        that op. Dunder lookup bypasses ``__getattr__``, so proxying is not enough -- the method has
+        to exist on the class.
+        """
+        if other is self:
+            return True
+        if isinstance(other, OpWrapper):
+            return self._op_name == other._op_name
+        if isinstance(other, (AnalysisOp, str)):
+            # Name-based, matching AnalysisOp.__eq__, and side-effect free: comparing must not
+            # instantiate the op.
+            return self._op_name == (other if isinstance(other, str) else other.name)
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self._op_name)
 
     def __getattribute__(self, name):
         """Override to monitor all attribute access."""

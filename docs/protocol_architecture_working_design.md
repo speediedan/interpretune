@@ -79,7 +79,9 @@ This split is important. It keeps execution concerns separate from richer analys
 
 Relevant code:
 
-- `src/interpretune/analysis/backends/__init__.py`
+- `src/interpretune/analysis/backends/protocols.py` (the two protocols)
+- `src/interpretune/analysis/backends/capabilities.py` (capability enums, aggregation, named-backend registry)
+- `src/interpretune/analysis/backends/__init__.py` (re-export façade; the public import path)
 
 ### 5. Analysis op layer
 

@@ -16,9 +16,12 @@ carried on ``helpers.py``. Concretely, a family module may only import:
   jaxtyping, transformer_lens).
 
 Anything else (another family, runners, config internals, private modules elsewhere in
-interpretune) is a latent privileged dependency and fails this lint. The family YAMLs are held to
-the matching rule: ``implementation``/``importable_params`` may reference only the family's own
-module or ``interpretune.analysis.optools``.
+interpretune) is a latent privileged dependency and fails this lint. Sanctioned modules may be
+imported only for their **public** names: an underscore-prefixed import from interpretune is the same
+defect at name granularity, so whatever a family genuinely needs is promoted in the sanctioned
+surface instead. The family YAMLs are held to the matching rule:
+``implementation``/``importable_params`` may reference only the family's own module or
+``interpretune.analysis.optools``.
 
 Scope limits (deliberate, so this lint is not read as more than it proves):
 
@@ -73,7 +76,16 @@ def _family_yamls() -> list[Path]:
 
 def _collect_imports(tree: ast.AST) -> list[tuple[str, int, bool]]:
     """Return (module_path, level, is_function_level) for every import in the tree."""
-    imports: list[tuple[str, int, bool]] = []
+    return [(module, level, fn_level) for module, level, fn_level, _ in _collect_imports_with_names(tree)]
+
+
+def _collect_imports_with_names(tree: ast.AST) -> list[tuple[str, int, bool, tuple[str, ...]]]:
+    """Return (module_path, level, is_function_level, imported_names) for every import in the tree.
+
+    ``imported_names`` is empty for plain ``import x`` statements (there the module path itself is
+    the thing being checked) and carries the ``from x import a, b`` names otherwise.
+    """
+    imports: list[tuple[str, int, bool, tuple[str, ...]]] = []
 
     class Visitor(ast.NodeVisitor):
         def __init__(self) -> None:
@@ -88,10 +100,10 @@ def _collect_imports(tree: ast.AST) -> list[tuple[str, int, bool]]:
 
         def visit_Import(self, node):
             for alias in node.names:
-                imports.append((alias.name, 0, self._depth > 0))
+                imports.append((alias.name, 0, self._depth > 0, ()))
 
         def visit_ImportFrom(self, node):
-            imports.append((node.module or "", node.level, self._depth > 0))
+            imports.append((node.module or "", node.level, self._depth > 0, tuple(a.name for a in node.names)))
 
     Visitor().visit(tree)
     return imports
@@ -128,6 +140,33 @@ def test_bundled_family_module_imports_are_sanctioned(module_path: Path):
     assert not violations, (
         f"{module_path.parent.name}/{module_path.name} imports unsanctioned modules "
         f"(latent privileged dependencies): {violations}"
+    )
+
+
+@pytest.mark.parametrize("module_path", _family_impl_modules(), ids=lambda p: f"{p.parent.name}/{p.name}")
+def test_bundled_family_imports_no_private_names(module_path: Path):
+    """A family may import from a sanctioned module, but only its PUBLIC names.
+
+    The module allowlist above is necessary but not sufficient: a hub op collection cannot depend on
+    ``interpretune.analysis.backends._select_top_feature_indices`` any more than the old
+    ``definitions.py`` could legitimately depend on ``helpers.py``. Whatever a family genuinely needs
+    gets promoted to a public name in the sanctioned surface instead.
+    """
+    family_prefix = f"{BUNDLED_PKG}.{module_path.parent.name}"
+    tree = ast.parse(module_path.read_text(), filename=str(module_path))
+    violations: list[str] = []
+
+    for module_name, level, _is_function_level, names in _collect_imports_with_names(tree):
+        if level > 0 or module_name.startswith(family_prefix):
+            # A family's own module may share privates within the family (a hub op file may too).
+            continue
+        if module_name.split(".")[0] != "interpretune":
+            continue
+        violations.extend(f"{module_name}.{name}" for name in names if name.startswith("_"))
+
+    assert not violations, (
+        f"{module_path.parent.name}/{module_path.name} imports private names from interpretune "
+        f"(promote them in the sanctioned surface instead): {violations}"
     )
 
 

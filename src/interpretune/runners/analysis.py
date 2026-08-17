@@ -47,6 +47,12 @@ def analysis_store_generator(
             # TODO: move previous inference_mode toggle to IT dispatch logic
             yield from run_step(step_fn=step_fn, batch=batch, batch_idx=batch_idx, **test_ctx)
         _call_itmodule_hook(module, hook_name="on_analysis_epoch_end", hook_msg="Running analysis epoch end hooks")
+        # Declared op state (`op_state` trait) is reset here only for ops that ask for it; by default
+        # it accumulates across epochs. `batch_idx` restarts at 0 above, so the previous
+        # `batch_idx == 0` reset heuristic silently discarded every epoch but the last.
+        epoch_cfg = getattr(module, "analysis_cfg", None)
+        if epoch_cfg is not None and hasattr(epoch_cfg, "reset_op_state"):
+            epoch_cfg.reset_op_state(epoch_boundary=True)
 
 
 def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: AnalysisCfg | None = None, **kwargs) -> dict:
@@ -301,7 +307,16 @@ class AnalysisRunner(SessionRunner):
             return self.analysis_results
 
     def _run_analysis_cfg(self, analysis_cfg: AnalysisCfg) -> Any:
-        """Run a single analysis operation with the provided configuration."""
+        """Run a single analysis operation with the provided configuration.
+
+        Owns the run boundary of the declared `op_state` lifecycle: cleared before the first batch,
+        released once the store has been materialized. Note this is NOT `activated_analysis_cfg`,
+        which is re-entered per batch by `execute_analysis_op` and so cannot delimit a run.
+        """
         ignore_manual = bool(getattr(self.run_cfg, "ignore_manual", False))
-        with activated_analysis_cfg(self.run_cfg.module, analysis_cfg, ignore_manual=ignore_manual):
-            return self.analysis(step_fn=analysis_cfg.step_fn, **self.run_cfg.__dict__)
+        analysis_cfg.reset_op_state()
+        try:
+            with activated_analysis_cfg(self.run_cfg.module, analysis_cfg, ignore_manual=ignore_manual):
+                return self.analysis(step_fn=analysis_cfg.step_fn, **self.run_cfg.__dict__)
+        finally:
+            analysis_cfg.finalize_op_state()

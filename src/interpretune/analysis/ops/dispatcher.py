@@ -12,9 +12,11 @@ import torch
 from transformers import BatchEncoding
 
 from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS, IT_ANALYSIS_HUB_CACHE
+from interpretune.analysis.inputs import OpStateSpec
 from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg, OpWrapper
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
+from interpretune.analysis.ops.compiler.load_policy import op_load_failure
 from interpretune.analysis.ops.dynamic_module_utils import ensure_op_paths_in_syspath, get_function_from_dynamic_module
 from interpretune.protocol import BaseAnalysisBatchProtocol
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
@@ -172,14 +174,17 @@ class AnalysisOpDispatcher:
                 # Apply namespace prefixes for hub operations
                 namespaced_content = self._apply_hub_namespacing(yaml_content, yaml_file)
 
+                source = self._op_source_for(yaml_file)
+
                 # Separate composite operations from regular operations
                 for key, value in namespaced_content.items():
                     if key == "composite_operations":
-                        composite_operations.update(value)
+                        for comp_name, comp_def in value.items():
+                            composite_operations[comp_name] = {**comp_def, "source": source}
                     else:
                         if key in raw_definitions:
                             rank_zero_debug(f"Operation '{key}' redefined in {yaml_file}, using latest definition")
-                        raw_definitions[key] = value
+                        raw_definitions[key] = {**value, "source": source} if isinstance(value, dict) else value
 
             except Exception as e:
                 rank_zero_debug(f"Failed to load YAML file {yaml_file}: {e}")
@@ -235,9 +240,10 @@ class AnalysisOpDispatcher:
                 # Apply optional auto-columns after compilation
                 apply_auto_columns(definitions_to_compile[op_name])
             except ValueError as e:
-                rank_zero_warn(f"Failed to compile operation '{op_name}': {e}")
-                # Remove the operation if it fails to compile
+                # Dropping an op whose required_ops do not resolve is exactly the silent failure
+                # #266 flags, so strict loading turns it into an error.
                 definitions_to_compile.pop(op_name, None)
+                op_load_failure(f"Failed to compile operation '{op_name}': {e}")
 
     def _convert_raw_definitions_to_opdefs(self, raw_definitions: dict[str, Dict]):
         """Convert raw dictionary definitions to OpDef objects."""
@@ -262,9 +268,47 @@ class AnalysisOpDispatcher:
                 required_ops=op_def.get("required_ops", []),
                 required_capabilities=op_def.get("required_capabilities", []),
                 composition=op_def.get("composition", None),
+                op_state=self._resolve_op_state_spec(op_name, op_def.get("op_state")),
+                source=str(op_def.get("source", "bundled")),
+                uses_default_hooks=bool(op_def.get("uses_default_hooks", False)),
+                requires_grad=bool(op_def.get("requires_grad", False)),
+                per_latent_preds=bool(op_def.get("per_latent_preds", False)),
             )
 
             self._op_definitions[op_name] = op_def_obj
+
+    def _op_source_for(self, yaml_file: Path) -> str:
+        """Classify where an op definition came from: ``bundled``, ``local``, or ``hub:<namespace>``.
+
+        Replaces dot-counting on the op NAME as the hub test. A dotted name means "namespaced", which
+        is how hub ops are addressed, but it is a property of the name rather than of provenance --
+        and provenance is what the version/precedence work in #266 Phase 3 needs to key on.
+        """
+        try:
+            resolved = Path(yaml_file).resolve()
+            bundled_dir = getattr(self, "_bundled_ops_dir", None)
+            if bundled_dir is not None and Path(bundled_dir).resolve() in resolved.parents:
+                return "bundled"
+            namespace = self._cache_manager.get_hub_namespace(resolved)
+            if namespace and "." in namespace:
+                return f"hub:{namespace}"
+        except Exception as source_error:  # provenance must never break loading
+            rank_zero_debug(f"[DISPATCHER] Could not classify source for {yaml_file}: {source_error}")
+        return "local"
+
+    @staticmethod
+    def _resolve_op_state_spec(op_name: str, raw: Any) -> OpStateSpec | None:
+        """Compile an op's ``op_state`` trait, warning and dropping the trait if it is malformed.
+
+        Fail-soft matches the surrounding YAML/compile paths (a malformed hub op must not take down the dispatcher); the
+        op still loads, just without declared cross-batch state, which surfaces as a clear error the first time an impl
+        tries to use it.
+        """
+        try:
+            return OpStateSpec.from_raw(raw)
+        except (ValueError, TypeError) as spec_error:
+            op_load_failure(f"Ignoring invalid op_state declaration for operation '{op_name}': {spec_error}")
+            return None
 
     def _apply_hub_namespacing(self, yaml_content: dict[str, Any], yaml_file: Path) -> dict[str, Any]:
         """Apply hub namespacing to operations from hub files."""
@@ -544,6 +588,35 @@ class AnalysisOpDispatcher:
                 resolved_fn_param = getattr(module_obj, func_name, None)
         return resolved_fn_param
 
+    # The only interpretune namespace a hub op may bind an importable_param to. Anything else is an
+    # unsanctioned reach into internals -- the `_import_callable` fallback would happily import any
+    # installed dotted path, which is the one privilege leak #266 left open on the hub side.
+    _SANCTIONED_HUB_PARAM_NAMESPACE = "interpretune.analysis.optools"
+
+    def _hub_param_target_is_sanctioned(self, op_name: str, param_name: str, param_path: str) -> bool:
+        """Whether a hub op may bind ``param_name`` to ``param_path`` outside its own repo modules.
+
+        This is the opening half of the warn-then-error window: an unsanctioned target is *skipped*
+        (resolving it is what the restriction exists to prevent) and reported through the load
+        policy, so it warns by default and raises under ``IT_STRICT_OP_LOAD``. Promoting the default
+        to an error is a follow-on once the window has elapsed.
+        """
+        if param_path == self._SANCTIONED_HUB_PARAM_NAMESPACE or param_path.startswith(
+            self._SANCTIONED_HUB_PARAM_NAMESPACE + "."
+        ):
+            return True
+        if param_path.split(".")[0] != "interpretune":
+            # Non-interpretune targets (its own repo modules, third-party deps) are unchanged: the
+            # hub-module resolution above is what normally binds them.
+            return True
+        op_load_failure(
+            f"Importable parameter '{param_name}' in hub operation '{op_name}' targets "
+            f"'{param_path}', which is interpretune-internal. Hub op collections may bind "
+            f"importable_params only to modules in their own repo or to "
+            f"'{self._SANCTIONED_HUB_PARAM_NAMESPACE}'. This parameter is skipped."
+        )
+        return False
+
     @_ensure_loaded
     def _instantiate_op(self, op_name: str) -> AnalysisOp:
         """Instantiate an operation from its definition."""
@@ -564,10 +637,16 @@ class AnalysisOpDispatcher:
             op.description = op_def.description
             op.input_schema = op_def.input_schema
             op.output_schema = op_def.output_schema
+            # A composite carries its OWN declared traits; its members carry theirs (op_state in
+            # particular is bound per-member at call time, not on the composite).
+            op.uses_default_hooks = op_def.uses_default_hooks
+            op.requires_grad = op_def.requires_grad
+            op.per_latent_preds = op_def.per_latent_preds
             return op
 
-        # Check if this is a namespaced operation that needs dynamic loading
-        if _is_hub_op := ("." in op_def.name and self.enable_hub_ops):
+        # Hub ops load dynamically from the hub cache. Keyed on declared provenance rather than on
+        # counting dots in the op name.
+        if _is_hub_op := (op_def.source.startswith("hub") and self.enable_hub_ops):
             implementation = self._import_hub_callable(op_def.name, op_def)
         else:
             # Handle regular operations
@@ -582,9 +661,11 @@ class AnalysisOpDispatcher:
             if _is_hub_op:
                 resolved_fn_param = AnalysisOpDispatcher._function_param_from_hub_module(param_path, implementation)
             if not resolved_fn_param:
+                if _is_hub_op and not self._hub_param_target_is_sanctioned(op_name, param_name, param_path):
+                    continue
                 resolved_fn_param = self._import_callable(param_path)
             if resolved_fn_param is None:
-                rank_zero_warn(
+                op_load_failure(
                     f"Importable parameter '{param_name}' in operation '{op_name}' could not be resolved: "
                     f"{param_path}. It will not be available in the operation."
                 )
@@ -602,6 +683,10 @@ class AnalysisOpDispatcher:
             aliases=op_def.aliases,
             impl_params=impl_params,
             required_capabilities=op_def.required_capabilities,
+            op_state=op_def.op_state,
+            uses_default_hooks=op_def.uses_default_hooks,
+            requires_grad=op_def.requires_grad,
+            per_latent_preds=op_def.per_latent_preds,
         )
 
         # Set the implementation
@@ -622,6 +707,14 @@ class AnalysisOpDispatcher:
             elif isinstance(field_config, ColCfg):
                 result[field_name] = field_config
         return OpSchema(result)
+
+    @_ensure_loaded
+    def _is_resolvable_op_name(self, op_name: str) -> bool:
+        """Whether ``op_name`` names a single registered op (directly or via an alias)."""
+        try:
+            return self._resolve_name_safe(op_name) in self._op_definitions
+        except Exception:
+            return False
 
     @_ensure_loaded
     def get_op(self, op_name: str, context: DispatchContext | None = None, lazy: bool = False) -> AnalysisOp | Callable:
@@ -774,9 +867,14 @@ class AnalysisOpDispatcher:
         batch: BatchEncoding | None = None,
         batch_idx: int | None = None,
     ) -> BaseAnalysisBatchProtocol:
-        """Call an operation by name."""
-        # Support for dot-separated operation names (creating compositions on-demand)
-        if "." in op_name:
+        """Call an operation by name.
+
+        A dotted name is a composition ("op_a.op_b") *unless* it resolves to a single registered op,
+        which is how hub ops are namespaced ("user.repo.op"). Resolution wins, matching ``get_op``;
+        splitting first meant calling a namespaced hub op through the dispatcher tried to compose
+        three nonexistent ops.
+        """
+        if "." in op_name and not self._is_resolvable_op_name(op_name):
             composite_op = self.compile_ops(op_name)
             return composite_op(module=module, analysis_batch=analysis_batch, batch=batch, batch_idx=batch_idx)
 

@@ -30,6 +30,10 @@ Analysis
 
    interpretune.analysis
    interpretune.analysis.backends
+   interpretune.analysis.backends.protocols
+   interpretune.analysis.backends.capabilities
+   interpretune.analysis.backends.interventions
+   interpretune.analysis.backends.feature_selection
    interpretune.analysis.ops.base
    interpretune.analysis.inputs
    interpretune.analysis.optools

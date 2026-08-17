@@ -8,10 +8,15 @@ composite_operations:
 
   logit_diffs_attr_grad:
     composition: labels_to_ids.model_gradient.gradient_attribution
+    # Gradient attribution needs grad enabled and the default activation-cache hooks installed.
+    requires_grad: true
+    uses_default_hooks: true
 
   logit_diffs_attr_ablation:
     composition: labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.model_ablation.ablation_attribution
     aliases: [logit_diffs_ablation]
+    # Ablation emits one preds row per latent model, so scoring joins across SAEs first.
+    per_latent_preds: true
 
   attribution_from_concept:
     description: Concept direction through graph attribution and top-feature extraction

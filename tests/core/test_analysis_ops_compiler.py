@@ -9,7 +9,12 @@ import pytest
 
 from huggingface_hub import CachedRepoInfo, CachedRevisionInfo
 
-from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef, YamlFileInfo
+from interpretune.analysis.ops.compiler.cache_manager import (
+    CACHE_FORMAT_VERSION,
+    OpDefinitionsCacheManager,
+    OpDef,
+    YamlFileInfo,
+)
 from interpretune.analysis.ops.base import OpSchema, ColCfg, AnalysisOp
 from interpretune.analysis.ops.compiler.schema_compiler import (
     _compile_composition_schema_core,
@@ -658,7 +663,9 @@ test_op:
 
     def test_fingerprint_empty(self, cache_manager):
         """Test fingerprint with no YAML files."""
-        assert cache_manager.fingerprint == "empty_v2"
+        # Derived from CACHE_FORMAT_VERSION rather than hardcoded: the version bumps whenever the
+        # OpDef shape changes, and a stale literal here fails for a reason unrelated to the check.
+        assert cache_manager.fingerprint == f"empty_v{CACHE_FORMAT_VERSION}"
 
     def test_fingerprint_changes_with_content(self, cache_manager, tmp_path):
         """Test that fingerprint changes when file content changes."""

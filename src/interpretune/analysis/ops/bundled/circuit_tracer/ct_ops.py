@@ -14,9 +14,9 @@ from transformers import BatchEncoding
 
 from interpretune.analysis.backends import (
     FeatureSelectionSpec,
-    _apply_optional_feature_sign_filter,
-    _augment_feature_rows_for_selection,
-    _select_top_feature_indices,
+    apply_optional_feature_sign_filter,
+    augment_feature_rows_for_selection,
+    select_top_feature_indices,
     apply_feature_selection_filter,
     require_analysis_backend,
 )
@@ -159,7 +159,7 @@ def extract_top_features_impl(
         aligned_activation_values = activation_tensor
 
     if feature_selection is not None:
-        feature_rows, scores, aligned_activation_values = _augment_feature_rows_for_selection(
+        feature_rows, scores, aligned_activation_values = augment_feature_rows_for_selection(
             feature_rows,
             scores,
             aligned_activation_values,
@@ -176,7 +176,7 @@ def extract_top_features_impl(
             if aligned_activation_values is not None:
                 aligned_activation_values = aligned_activation_values.index_select(0, sel_idx)
 
-        feature_rows, scores, aligned_activation_values = _apply_optional_feature_sign_filter(
+        feature_rows, scores, aligned_activation_values = apply_optional_feature_sign_filter(
             feature_rows,
             scores,
             aligned_activation_values,
@@ -184,7 +184,7 @@ def extract_top_features_impl(
         )
 
     rank_by_abs = bool(kwargs.get("rank_by_abs", feature_selection.rank_by_abs if feature_selection else False))
-    top_indices = _select_top_feature_indices(
+    top_indices = select_top_feature_indices(
         feature_rows,
         scores,
         top_n,

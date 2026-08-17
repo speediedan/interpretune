@@ -14,10 +14,12 @@ from interpretune.hub.cache import _get_latest_revision, parse_hub_cache_path
 from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR, remote_code_trust, remote_code_trusted
 
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
+from interpretune.analysis.inputs import OpStateSpec
 from interpretune.analysis.ops.base import OpSchema, ColCfg
 
 
-CACHE_FORMAT_VERSION = "2"
+# 3: adds the `op_state` trait (declared cross-batch state) to OpDef.
+CACHE_FORMAT_VERSION = "3"
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,16 @@ class OpDef:
     required_ops: list[str] = field(default_factory=list)
     required_capabilities: list[str] = field(default_factory=list)
     composition: list[str] | None = None
+    op_state: OpStateSpec | None = None
+    # Where this definition came from: "bundled" | "local" | "hub:<user.repo>". Provenance, not name
+    # shape: a dotted name means namespaced, which is how hub ops are addressed, but only provenance
+    # answers "should this load dynamically from the hub cache".
+    source: str = "bundled"
+    # Behavioral traits. These replace name-based special cases: framework code asks what an op
+    # NEEDS, so hub and local ops can declare the same things bundled ops do.
+    uses_default_hooks: bool = False  # install the default activation-cache fwd/bwd hooks
+    requires_grad: bool = False  # run the analysis loop with grad enabled
+    per_latent_preds: bool = False  # preds are per-latent-model and join across SAEs before scoring
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for compatibility with existing code."""
@@ -50,6 +62,11 @@ class OpDef:
             "required_ops": self.required_ops,
             "required_capabilities": self.required_capabilities,
             "composition": self.composition,
+            "op_state": self.op_state.to_dict() if self.op_state is not None else None,
+            "source": self.source,
+            "uses_default_hooks": self.uses_default_hooks,
+            "requires_grad": self.requires_grad,
+            "per_latent_preds": self.per_latent_preds,
         }
         return result
 
@@ -296,6 +313,7 @@ class OpDefinitionsCacheManager:
             "# This file contains cached operation definitions",
             f"# Fingerprint: {self.fingerprint}",
             "",
+            "from interpretune.analysis.inputs import OpStateSpec",
             "from interpretune.analysis.ops.base import OpSchema, ColCfg",
             "from interpretune.analysis.ops.compiler.cache_manager import OpDef",
             "",
@@ -344,8 +362,22 @@ class OpDefinitionsCacheManager:
             fields.append(f"required_capabilities={op_def.required_capabilities!r}")
         if op_def.composition:
             fields.append(f"composition={op_def.composition!r}")
+        if op_def.op_state is not None:
+            fields.append(f"op_state={self._serialize_op_state(op_def.op_state)}")
+        if op_def.source != "bundled":
+            fields.append(f"source={op_def.source!r}")
+        for trait in ("uses_default_hooks", "requires_grad", "per_latent_preds"):
+            if getattr(op_def, trait):
+                fields.append(f"{trait}=True")
 
         return f"OpDef({', '.join(fields)})"
+
+    def _serialize_op_state(self, op_state: OpStateSpec) -> str:
+        """Serialize an OpStateSpec to Python code."""
+        return (
+            f"OpStateSpec(fields={tuple(op_state.fields)!r}, scope={op_state.scope!r}, "
+            f"reset_each_epoch={op_state.reset_each_epoch!r})"
+        )
 
     def _serialize_op_schema(self, schema: OpSchema) -> str:
         """Serialize an OpSchema to Python code."""
