@@ -232,7 +232,17 @@ matrix (`ci_test-full`, `type-check`) and the self-hosted Azure GPU pipeline
 Azure PR trigger; approve the gated run per `.github/skills/az-pipelines-debug/SKILL.md`) or a manual
 pipeline run.
 
-If the coverage harness reports a conflicting pytest process, check whether it is still active before starting a second run. Old hung collectors are usually safe to kill with `pkill -f "pytest.*--collect-only"`; recently started runs should usually be allowed to finish.
+If the coverage harness reports a conflicting pytest process, check whether it is still active before
+starting a second run. Old hung collectors (VS Code leaves these behind; check their rootdir, they may
+belong to a sibling repo) are usually safe to kill **by exact PID** from the listing; recently started
+runs should usually be allowed to finish. Do not reach for `pkill -f "pytest..."` here — a command line
+containing the pattern matches itself, and the same shell may be hosting the run you meant to keep.
+
+`manage_standalone_processes.sh` exempts its own PID **and its whole ancestor chain** from that
+`pgrep -f` check, so a launcher whose command line spells out a configured pattern (`gen_it_coverage.sh`,
+`special_tests.sh`, `python -m pytest`, ...) no longer self-matches. A reported conflict is therefore a
+genuine other run — including an Azure CI container's suite, which is visible on the host and *should*
+block a local run per the serial-execution rule in `CLAUDE.local.md`.
 
 The local coverage harness now mirrors the Azure GPU pipeline's phase split:
 - `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''`
