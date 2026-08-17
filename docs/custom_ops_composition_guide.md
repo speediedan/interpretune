@@ -65,9 +65,11 @@ rather than a reach into package internals:
 
 - `interpretune.analysis.optools`: the op-authoring toolkit (tensor/logits utilities,
   tokenizer/embedding resolution, tokenization helpers, scoped-input conveniences)
-- `interpretune.analysis.backends`: the capability seam for backend-specific behavior (its
+- `interpretune.analysis.backends`: the capability seam for backend-specific behavior. Its
   `protocols`, `capabilities`, `interventions` and `feature_selection` modules are re-exported from
-  the package, so import from `interpretune.analysis.backends` rather than the submodules)
+  the package, so **import from `interpretune.analysis.backends`** even though the API reference
+  documents each module separately (the pages tell you where a name lives; the package is the stable
+  import path). Importing a submodule directly is not rejected, it is just a path we may move.
 - `interpretune.analysis.inputs`: the scoped-input execution contract (`AnalysisInputs`)
 - the public op classes in `interpretune.analysis.ops.base` (`AnalysisBatch`, `OpSchema`,
   `ColCfg`, `get_batch_input`)
@@ -244,8 +246,8 @@ When your op depends on richer analysis object semantics, rely on the analysis b
 
 Op loading is fail-soft by design: a definition that fails to compile, an `importable_params`
 reference that will not resolve, or a malformed `op_state` block is reported as a warning and the op
-is dropped, so one bad collection cannot take down a session. While developing a collection that is
-the wrong default — a dropped op looks exactly like one you never wrote.
+is dropped, so one bad collection cannot take down a session. While you are *developing* a
+collection, that is the wrong default: a dropped op looks exactly like one you never wrote.
 
 ```bash
 IT_STRICT_OP_LOAD=1 python -m pytest tests/my_op_tests.py
@@ -385,7 +387,7 @@ What the framework guarantees:
   `reset_each_epoch: true`, and released at the end of the run. Ops never decide when accumulation
   starts over, so nothing depends on `batch_idx == 0` (which restarts every epoch and therefore
   discards all but the last). Driving `execute_analysis_op` yourself in a loop, those callbacks do
-  not fire — a fresh `AnalysisCfg` starts with fresh state, and `cfg.reset_op_state()` /
+  not fire: a fresh `AnalysisCfg` starts with fresh state, and `cfg.reset_op_state()` /
   `cfg.finalize_op_state()` are there if you reuse one across independent runs.
 - **Isolation.** State is keyed per op, so the member ops of a composite each get their own.
 
@@ -396,7 +398,7 @@ Two consequences worth knowing:
 - An op that declares `op_state` needs an owner. Run it through a runner or
   `interpretune.analysis.execution.execute_analysis_op` (both activate an `AnalysisCfg`). With no
   active cfg the framework has nothing to bind, so `analysis_inputs.op_state` is `None` and reaches
-  your implementation that way — it does not invent a container nobody can reset. **Raise on `None`
+  your implementation that way, and it does not invent a container nobody can reset. **Raise on `None`
   rather than silently degrading**; the bundled concept ops do exactly that, and the message names
   what is missing. (Their previous behavior is the argument for it: the writes were swallowed and the
   failure surfaced several frames later as a data error.)

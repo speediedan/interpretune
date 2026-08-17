@@ -60,6 +60,21 @@ class TestOpStateSpec:
         with pytest.raises(ValueError, match="must be a mapping"):
             OpStateSpec.from_raw(["alpha"])
 
+    @pytest.mark.parametrize("fields", ["my_field", b"my_field"])
+    def test_from_raw_rejects_a_bare_string_for_fields(self, fields):
+        """`fields: my_field` is a natural YAML slip and `tuple()` would shred it per character.
+
+        It previously loaded clean as eight single-character fields and only failed later, at the
+        impl's first `state.get("my_field")`, with a message listing ['m','y','_',...]. Worse, it was
+        inconsistent: `fields: concept` DID fail at load, but as "duplicate fields: ['c']". Declaring
+        exists so this fails at load, every time (umbrella review finding, 2026-08-17).
+        """
+        with pytest.raises(ValueError, match="must be a sequence of names"):
+            OpStateSpec.from_raw({"fields": fields})
+
+    def test_a_single_field_list_is_still_accepted(self):
+        assert OpStateSpec.from_raw({"fields": ["my_field"]}).fields == ("my_field",)
+
 
 class TestOpStateStore:
     def test_set_get_and_clear(self):
@@ -554,3 +569,139 @@ class TestBundledDefinitionsLoadStrictly:
             if op_def.name != op_name:
                 continue  # alias entry
             dispatcher.get_op(op_name)
+
+
+class TestNonBundledDeclarations:
+    """Declaring `op_state`/traits must work from a NON-bundled YAML, demonstrated rather than inferred.
+
+    Every other compilation test here drives bundled definitions or calls the compiler entry points directly. That
+    infers hub/local declarability from a shared code path, which is the same shape of argument Phase 1's guide made
+    about liftability and had to retract. These load a real local collection instead (umbrella review finding,
+    2026-08-17).
+    """
+
+    OP_YAML = """
+my_local_streaming_op:
+  description: Local op that declares state and traits
+  implementation: interpretune.analysis.ops.bundled.core.core_ops.model_fwd_impl
+  requires_grad: true
+  uses_default_hooks: true
+  per_latent_preds: true
+  op_state:
+    scope: run
+    reset_each_epoch: true
+    fields: [running_total]
+  input_schema: {}
+  output_schema: {}
+"""
+
+    @staticmethod
+    def _dispatcher_over(op_dir, cache_dir):
+        from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+        dispatcher = AnalysisOpDispatcher(yaml_paths=[op_dir], enable_hub_ops=False)
+        dispatcher._cache_manager.cache_dir = cache_dir
+        dispatcher.load_definitions()
+        return dispatcher
+
+    def _load(self, tmp_path, yaml_text: str):
+        op_dir = tmp_path / "my_ops"
+        op_dir.mkdir()
+        (op_dir / "my_ops.yaml").write_text(yaml_text)
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        return self._dispatcher_over(op_dir, cache_dir)
+
+    def test_local_yaml_can_declare_op_state_and_traits(self, tmp_path):
+        dispatcher = self._load(tmp_path, self.OP_YAML)
+        op_def = dispatcher._op_definitions["my_local_streaming_op"]
+        assert op_def.op_state is not None
+        assert op_def.op_state.fields == ("running_total",)
+        assert op_def.op_state.reset_each_epoch is True
+        assert (op_def.requires_grad, op_def.uses_default_hooks, op_def.per_latent_preds) == (True, True, True)
+
+    def test_local_yaml_is_classified_local_not_bundled(self, tmp_path):
+        dispatcher = self._load(tmp_path, self.OP_YAML)
+        assert dispatcher._op_definitions["my_local_streaming_op"].source == "local"
+
+    def test_declared_source_cannot_be_spoofed(self, tmp_path):
+        """Provenance is computed from where the YAML lives, never read from the YAML.
+
+        `{**value, "source": source}` puts the computed value last, so an author-declared `source:` is overwritten. That
+        key ordering is load-bearing for the Phase 3 precedence work and is one reordering away from silent breakage, so
+        it is pinned here.
+        """
+        spoofed = self.OP_YAML.replace("  description:", "  source: bundled\n  description:")
+        dispatcher = self._load(tmp_path, spoofed)
+        assert dispatcher._op_definitions["my_local_streaming_op"].source == "local"
+
+    def test_declared_state_container_is_usable_for_a_local_op(self, tmp_path):
+        from interpretune.config.analysis import AnalysisCfg
+
+        dispatcher = self._load(tmp_path, self.OP_YAML)
+        op = dispatcher.get_op("my_local_streaming_op")
+        state = AnalysisCfg().op_state_for(op)
+        assert state is not None
+        state.set("running_total", 3)
+        assert state.get("running_total") == 3
+        with pytest.raises(KeyError, match="not a declared op_state field"):
+            state.set("undeclared", 1)
+
+
+class TestRequiresGradTraitDrivesTheAnalysisLoop:
+    """The `requires_grad` trait's True branch had no end-to-end coverage.
+
+    `logit_diffs_attr_grad` (the only op declaring it) is exercised by an attribute test but never run
+    through the analysis loop, so the previous op-name check was untested here too. Pin the hook
+    itself rather than leaving the trait covered only by declaration tests.
+    """
+
+    @staticmethod
+    def _module_with(op):
+        import torch
+
+        from interpretune.base.components.mixins import AnalysisStepMixin
+        from interpretune.config.analysis import AnalysisCfg
+
+        cfg = AnalysisCfg(name="grad_probe")
+        cfg.op = op
+
+        class _Probe(AnalysisStepMixin):
+            def __init__(self):
+                self.it_cfg = SimpleNamespace(analysis_cfg=cfg)
+
+        del torch
+        return _Probe()
+
+    @staticmethod
+    def _op(name: str, **traits):
+        from interpretune.analysis.ops.base import AnalysisOp, OpSchema
+
+        return AnalysisOp(name=name, description="", output_schema=OpSchema({}), **traits)
+
+    def test_grad_enabled_for_an_op_that_declares_it(self):
+        import torch
+
+        previous = torch.is_grad_enabled()
+        try:
+            torch.set_grad_enabled(False)
+            self._module_with(self._op("wants_grad", requires_grad=True)).on_analysis_start()
+            assert torch.is_grad_enabled()
+        finally:
+            torch.set_grad_enabled(previous)
+
+    def test_grad_disabled_for_an_op_that_does_not(self):
+        import torch
+
+        previous = torch.is_grad_enabled()
+        try:
+            torch.set_grad_enabled(True)
+            self._module_with(self._op("no_grad")).on_analysis_start()
+            assert not torch.is_grad_enabled()
+        finally:
+            torch.set_grad_enabled(previous)
+
+    def test_the_bundled_grad_composite_still_declares_it(self):
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        assert DISPATCHER.get_op("logit_diffs_attr_grad").requires_grad is True

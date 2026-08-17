@@ -68,8 +68,16 @@ class OpStateSpec:
         unrecognized = sorted(set(raw) - cls.RECOGNIZED_KEYS)
         if unrecognized:
             raise ValueError(f"Unrecognized op_state keys: {unrecognized} (recognized: {sorted(cls.RECOGNIZED_KEYS)})")
+        declared_fields = raw.get("fields") or ()
+        if isinstance(declared_fields, (str, bytes)):
+            # `fields: my_field` is a natural YAML slip for a single-field op, and tuple() would
+            # silently shred it into one field per character. Declaring exists to fail at load.
+            raise ValueError(
+                f"op_state fields must be a sequence of names, got a bare {type(declared_fields).__name__} "
+                f"({declared_fields!r}); write it as a list, e.g. fields: [{declared_fields!r}]"
+            )
         return cls(
-            fields=tuple(raw.get("fields") or ()),
+            fields=tuple(declared_fields),
             scope=str(raw.get("scope", "run")),
             reset_each_epoch=bool(raw.get("reset_each_epoch", False)),
         )

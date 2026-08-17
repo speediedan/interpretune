@@ -86,8 +86,10 @@ class AnalysisStepMixin:
 
     def on_analysis_start(self) -> Any | None:
         """Optionally execute some post-interpretune session steps if the session is not complete."""
-        # TODO: we plan to avoid op-specific conditioning of this behavior, should be functionally specified in config,
-        #       we should also narrow the scope if possible to a context manager around the relevant ops themselves
+        # Op-specific conditioning is gone (#266 Phase 2): grad mode is now a declared `requires_grad`
+        # trait rather than a comparison against a specific op.
+        # TODO: narrow the scope if possible to a context manager around the relevant ops themselves,
+        #       rather than toggling a global for the whole analysis run
         # Preserve caller's grad state and restore later in on_analysis_end. Tests expect we do not leak
         # a global torch grad_enabled state change across tests.
         try:
