@@ -240,11 +240,29 @@ def generate_composition_stub(op_name: str, op_def: Dict[str, Any]) -> str:
     return stub
 
 
-def generate_stubs(yaml_path: Path, output_path: Path) -> None:
-    """Generate type stubs for all operations in the YAML file."""
-    # Load YAML definitions
-    with open(yaml_path, "r", encoding="utf-8") as f:
-        yaml_content = yaml.safe_load(f)
+def load_bundled_definitions(yaml_paths: List[Path]) -> Dict[str, Any]:
+    """Load and merge the bundled op-family YAMLs into a single definitions mapping."""
+    merged: Dict[str, Any] = {}
+    for yaml_path in yaml_paths:
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            content = yaml.safe_load(f) or {}
+        for op_name, op_def in content.items():
+            if op_name == "composite_operations":
+                merged.setdefault("composite_operations", {}).update(op_def)
+            else:
+                if op_name in merged:
+                    raise ValueError(f"Duplicate bundled op definition '{op_name}' in {yaml_path}")
+                merged[op_name] = op_def
+    return merged
+
+
+def generate_stubs(yaml_paths: Union[Path, List[Path]], output_path: Path) -> None:
+    """Generate type stubs for all operations in the bundled op-family YAML files."""
+    # Load YAML definitions (committed stubs are derived from the bundled op set only, so the
+    # stale-stubs CI check stays hermetic and network-independent)
+    if isinstance(yaml_paths, Path):
+        yaml_paths = [yaml_paths]
+    yaml_content = load_bundled_definitions(sorted(yaml_paths))
 
     # Start with header
     stubs = [
@@ -347,7 +365,8 @@ def generate_stubs(yaml_path: Path, output_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    yaml_path = project_root / "src" / "interpretune" / "analysis" / "ops" / "native_analysis_functions.yaml"
+    bundled_dir = project_root / "src" / "interpretune" / "analysis" / "ops" / "bundled"
+    yaml_paths = sorted(bundled_dir.glob("**/*.yaml"))
     output_path = project_root / "src" / "interpretune" / "__init__.pyi"
 
-    generate_stubs(yaml_path, output_path)
+    generate_stubs(yaml_paths, output_path)

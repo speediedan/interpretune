@@ -1,6 +1,6 @@
 """Circuit-tracer analysis backend helpers.
 
-This module owns circuit-tracer specific graph hydration/decomposition and concept direction helpers so native op
+This module owns circuit-tracer specific graph hydration/decomposition and concept direction helpers so bundled op
 definitions can stay thin and delegate backend-specific logic to a dedicated analysis backend.
 """
 

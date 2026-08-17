@@ -21,7 +21,7 @@ else:
 import interpretune as it  # noqa: E402
 import interpretune.analysis  # noqa: E402
 from interpretune.analysis.backends import require_analysis_backend  # noqa: E402
-from interpretune.analysis.ops.helpers import last_token_logits  # noqa: E402
+from interpretune.analysis.optools import last_token_logits  # noqa: E402
 
 from it_examples.experiments.notebook.nb_harness_utils import (  # noqa: E402
     _build_classification_prompt,

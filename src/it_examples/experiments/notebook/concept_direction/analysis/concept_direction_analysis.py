@@ -18,7 +18,7 @@ from typing import Any, Mapping, Sequence
 
 import torch
 
-from interpretune.analysis.ops.helpers import _project_context_enhanced_states
+from interpretune.analysis.ops.bundled.concept.concept_ops import project_context_enhanced_states
 
 
 PRESERVE_ARTIFACTS_ENV = "IT_PARITY_PRESERVE_ARTIFACTS"
@@ -776,7 +776,7 @@ def capture_context_enhanced_extraction_snapshot(
 
     batch_flag = _get_analysis_value(analysis_batch, "use_answer_state_as_basis")
     resolved_use_answer_state_as_basis = bool(batch_flag) if batch_flag is not None else use_answer_state_as_basis
-    scaled_answer, dot_num, dot_den, projected_states = _project_context_enhanced_states(
+    scaled_answer, dot_num, dot_den, projected_states = project_context_enhanced_states(
         answer_states,
         context_states,
         context_scale=context_scale,

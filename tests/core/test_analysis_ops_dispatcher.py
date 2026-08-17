@@ -33,13 +33,13 @@ class TestAnalysisOpDispatcher:
         # Create dispatcher with string path
         dispatcher = AnalysisOpDispatcher(yaml_paths=[sub_dir, string_path])
 
-        # The dispatcher now always includes the built-in native YAML file, so expect 3 paths
+        # The dispatcher now always includes the bundled op-family directory, so expect 3 paths
         assert len(dispatcher.yaml_paths) == 3
 
-        # Check that the built-in YAML file is present by matching the filename
-        native_yaml_filename = "native_analysis_functions.yaml"
-        assert any(p.name == native_yaml_filename for p in dispatcher.yaml_paths), (
-            f"Expected a path ending with {native_yaml_filename} in {dispatcher.yaml_paths}"
+        # Check that the bundled op-family directory is present
+        bundled_dir_name = "bundled"
+        assert any(p.name == bundled_dir_name and p.is_dir() for p in dispatcher.yaml_paths), (
+            f"Expected the bundled op directory in {dispatcher.yaml_paths}"
         )
 
         # Check the other two paths are present
@@ -107,7 +107,7 @@ test_op:
     def test_import_callable(self):
         """Test importing a callable from a path."""
         # Test importing a valid callable
-        callable_obj = DISPATCHER._import_callable("interpretune.analysis.ops.definitions.labels_to_ids_impl")
+        callable_obj = DISPATCHER._import_callable("interpretune.analysis.ops.bundled.core.core_ops.labels_to_ids_impl")
         assert callable(callable_obj)
         assert callable_obj.__name__ == "labels_to_ids_impl"
 
@@ -117,7 +117,7 @@ test_op:
 
         # Test importing from existing module but non-existent function
         with pytest.raises(ValueError, match="Import of the specified function"):
-            DISPATCHER._import_callable("interpretune.analysis.ops.definitions.non_existent_function")
+            DISPATCHER._import_callable("interpretune.analysis.ops.bundled.core.core_ops.non_existent_function")
 
     def test_convert_to_op_schema(self):
         """Test converting dictionary to OpSchema."""

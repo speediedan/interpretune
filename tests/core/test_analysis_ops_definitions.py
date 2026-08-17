@@ -9,11 +9,11 @@ from torch.testing import assert_close
 
 import interpretune as it
 from interpretune.analysis.backends.transformer_lens import TLModelBackend
-from interpretune.analysis.ops.definitions import (
+from interpretune.analysis.optools import (
     get_loss_preds_diffs,
-    ablate_sae_latent,
     boolean_logits_to_avg_logit_diff,
 )
+from interpretune.analysis.ops.bundled.sae.sae_ops import ablate_sae_latent
 from interpretune.analysis.ops.base import AnalysisBatch
 from tests.analysis_resource_utils import log_resource_snapshot
 from tests.utils import _unwrap_one
@@ -122,7 +122,7 @@ class TestLabelsAndIndicesFunctions:
         mock_batch = {"labels": ["label1", "label2"]}
 
         # Test with analysis_batch=None
-        from interpretune.analysis.ops.definitions import labels_to_ids_impl
+        from interpretune.analysis.ops.bundled.core.core_ops import labels_to_ids_impl
 
         # Test with existing analysis_batch
         existing_batch = AnalysisBatch()
@@ -146,7 +146,7 @@ class TestLabelsAndIndicesFunctions:
         mock_batch = {"input": torch.ones(3, 5)}  # batch_size=3, seq_len=5
 
         # Import function under test
-        from interpretune.analysis.ops.definitions import get_answer_indices_impl
+        from interpretune.analysis.ops.bundled.core.core_ops import get_answer_indices_impl
 
         existing_batch = AnalysisBatch()
         result_batch = get_answer_indices_impl(mock_module, existing_batch, mock_batch, 0)
@@ -176,7 +176,7 @@ class TestLabelsAndIndicesFunctions:
         mock_batch = {"input": mock_input}
 
         # Import function under test
-        from interpretune.analysis.ops.definitions import get_answer_indices_impl
+        from interpretune.analysis.ops.bundled.core.core_ops import get_answer_indices_impl
 
         existing_batch = AnalysisBatch()
         result_batch = get_answer_indices_impl(mock_module, existing_batch, mock_batch, 0)
@@ -198,7 +198,7 @@ class TestLabelsAndIndicesFunctions:
         mock_batch = {"input": torch.ones(2, 5)}
 
         # Import function under test
-        from interpretune.analysis.ops.definitions import get_answer_indices_impl
+        from interpretune.analysis.ops.bundled.core.core_ops import get_answer_indices_impl
 
         existing_batch = AnalysisBatch()
         # Test with batch_idx=0
@@ -224,7 +224,7 @@ class TestLabelsAndIndicesFunctions:
         )
 
         # Import function under test
-        from interpretune.analysis.ops.definitions import get_alive_latents_impl
+        from interpretune.analysis.ops.bundled.sae.sae_ops import get_alive_latents_impl
 
         # Run the function
         result_batch = get_alive_latents_impl(mock_module, analysis_batch, 0)
@@ -285,7 +285,7 @@ class TestLabelsAndIndicesFunctions:
         mock_module.analysis_cfg.input_store.alive_latents = [{"hook1": [0, 1], "hook2": [2, 3]}]
 
         # Import function under test
-        from interpretune.analysis.ops.definitions import get_alive_latents_impl
+        from interpretune.analysis.ops.bundled.sae.sae_ops import get_alive_latents_impl
 
         existing_batch = AnalysisBatch()
         # Test with batch_idx=0
@@ -307,7 +307,7 @@ class TestLabelsAndIndicesFunctions:
         analysis_batch = AnalysisBatch(alive_latents=existing_alive_latents)
 
         # Import function under test
-        from interpretune.analysis.ops.definitions import get_alive_latents_impl
+        from interpretune.analysis.ops.bundled.sae.sae_ops import get_alive_latents_impl
 
         # Run the function
         result_batch = get_alive_latents_impl(mock_module, analysis_batch, 0)
@@ -339,7 +339,7 @@ class TestGradientOperations:
         assert scalar_logit_diff.dim() == 0, "Setup requires a scalar tensor"
 
         # Create mock_get_loss_preds_diffs that returns scalar logit_diffs
-        with patch("interpretune.analysis.ops.definitions.get_loss_preds_diffs") as mock_get_loss_preds_diffs:
+        with patch("interpretune.analysis.optools.get_loss_preds_diffs") as mock_get_loss_preds_diffs:
             mock_get_loss_preds_diffs.return_value = (
                 torch.tensor(0.2),  # loss (scalar)
                 scalar_logit_diff,  # logit_diffs (scalar tensor)
@@ -402,7 +402,7 @@ class TestGradientOperations:
         )
 
         # Import the function to be tested
-        from interpretune.analysis.ops.definitions import model_gradient_impl
+        from interpretune.analysis.ops.bundled.attribution.attribution_ops import model_gradient_impl
 
         # Run the function with appropriate mocks
         with (
@@ -464,7 +464,7 @@ class TestGradientOperations:
         )
 
         # Import the function to be tested
-        from interpretune.analysis.ops.definitions import logit_diffs_impl
+        from interpretune.analysis.ops.bundled.core.core_ops import logit_diffs_impl
 
         # Run the function - this will use our mocked get_loss_preds_diffs
         result_batch = logit_diffs_impl(
@@ -508,7 +508,7 @@ class TestGradientOperations:
         mock_batch = BatchEncoding({"input": torch.ones(2, 10)})
 
         # Import function under test and functions it depends on
-        from interpretune.analysis.ops.definitions import model_ablation_impl
+        from interpretune.analysis.ops.bundled.sae.sae_ops import model_ablation_impl
 
         # Test case 1: Analysis batch already has both answer_indices and alive_latents
         analysis_batch_complete = AnalysisBatch(
@@ -516,8 +516,8 @@ class TestGradientOperations:
         )
 
         with (
-            patch("interpretune.analysis.ops.definitions.get_answer_indices_impl") as mock_get_indices,
-            patch("interpretune.analysis.ops.definitions.get_alive_latents_impl") as mock_get_alive,
+            patch("interpretune.analysis.ops.bundled.core.core_ops.get_answer_indices_impl") as mock_get_indices,
+            patch("interpretune.analysis.ops.bundled.sae.sae_ops.get_alive_latents_impl") as mock_get_alive,
         ):
             result_batch = model_ablation_impl(mock_module, analysis_batch_complete, mock_batch, 0)
 
@@ -541,8 +541,8 @@ class TestGradientOperations:
         analysis_batch_no_indices = AnalysisBatch(alive_latents={"hook1": [0, 1], "hook2": [2, 3]})
 
         with (
-            patch("interpretune.analysis.ops.definitions.it.get_answer_indices") as mock_get_indices,
-            patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive,
+            patch("interpretune.get_answer_indices") as mock_get_indices,
+            patch("interpretune.get_alive_latents") as mock_get_alive,
         ):
             # Set up mock to return an analysis batch with answer_indices
             mock_get_indices.return_value = AnalysisBatch(
@@ -566,8 +566,8 @@ class TestGradientOperations:
         mock_module.analysis_cfg.input_store.alive_latents = [{"hook1": [0, 1], "hook2": [2, 3]}]
 
         with (
-            patch("interpretune.analysis.ops.definitions.it.get_answer_indices") as mock_get_indices,
-            patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive,
+            patch("interpretune.get_answer_indices") as mock_get_indices,
+            patch("interpretune.get_alive_latents") as mock_get_alive,
         ):
             # Set up mock to return an analysis batch with alive_latents
             mock_get_alive.return_value = AnalysisBatch(
@@ -590,8 +590,8 @@ class TestGradientOperations:
         mock_module.analysis_cfg.input_store = None
 
         with (
-            patch("interpretune.analysis.ops.definitions.it.get_answer_indices") as mock_get_indices,
-            patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive,
+            patch("interpretune.get_answer_indices") as mock_get_indices,
+            patch("interpretune.get_alive_latents") as mock_get_alive,
         ):
             with pytest.raises(AssertionError, match="alive_latents required for ablation op"):
                 model_ablation_impl(mock_module, analysis_batch_error, mock_batch, 0)
@@ -610,7 +610,7 @@ class TestGradientOperations:
         mock_batch = {"input": torch.ones(1, 5)}
 
         # Import the function to be tested
-        from interpretune.analysis.ops.definitions import sae_correct_acts_impl
+        from interpretune.analysis.ops.bundled.sae.sae_ops import sae_correct_acts_impl
 
         # Test missing required inputs (ValueError case)
         incomplete_batch = AnalysisBatch(
@@ -695,7 +695,7 @@ class TestGradientOperations:
         mock_batch = {"input": torch.ones(1, 5)}
 
         # Import the function to be tested
-        from interpretune.analysis.ops.definitions import gradient_attribution_impl
+        from interpretune.analysis.ops.bundled.attribution.attribution_ops import gradient_attribution_impl
 
         # Test 1: Missing required input 'answer_indices'
         incomplete_batch = AnalysisBatch(
@@ -757,7 +757,7 @@ class TestGradientOperations:
         mock_module.analysis_cfg.names_filter = lambda x: True
 
         # Create mock_get_loss_preds_diffs that returns scalar logit_diffs
-        with patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive_latents_impl:
+        with patch("interpretune.get_alive_latents") as mock_get_alive_latents_impl:
             mock_get_alive_latents_impl.return_value = AnalysisBatch(alive_latents={"hook1": [0, 1]})
 
             # Run the function
@@ -779,7 +779,7 @@ class TestGradientOperations:
         # Set up module's cache_dict
         mock_module.analysis_cfg.cache_dict = mock_grad_cache
 
-        with patch("interpretune.analysis.ops.definitions.it.get_alive_latents") as mock_get_alive_latents_impl:
+        with patch("interpretune.get_alive_latents") as mock_get_alive_latents_impl:
             mock_get_alive_latents_impl.return_value = AnalysisBatch(alive_latents={"hook1": [0, 1]})
             # Run the function
             result_batch = gradient_attribution_impl(mock_module, module_cache_batch, mock_batch, 0)
@@ -810,7 +810,7 @@ class TestGradientOperations:
         mock_batch = {"input": torch.ones(1, 5)}
 
         # Import the function
-        from interpretune.analysis.ops.definitions import ablation_attribution_impl
+        from interpretune.analysis.ops.bundled.attribution.attribution_ops import ablation_attribution_impl
 
         # Test 1: Missing required inputs (answer_logits, alive_latents, logit_diffs)
         for missing_key in ["answer_logits", "alive_latents", "logit_diffs"]:

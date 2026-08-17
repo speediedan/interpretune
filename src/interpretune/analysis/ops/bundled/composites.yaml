@@ -1,0 +1,26 @@
+# Composite operations
+composite_operations:
+  logit_diffs_base:
+    composition: labels_to_ids.model_fwd.logit_diffs
+
+  logit_diffs_sae:
+    composition: labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.sae_correct_acts
+
+  logit_diffs_attr_grad:
+    composition: labels_to_ids.model_gradient.gradient_attribution
+
+  logit_diffs_attr_ablation:
+    composition: labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.model_ablation.ablation_attribution
+    aliases: [logit_diffs_ablation]
+
+  attribution_from_concept:
+    description: Concept direction through graph attribution and top-feature extraction
+    composition: concept_direction.compute_attribution_graph.graph_node_influence.extract_top_features
+
+  intervention_from_features:
+    description: Feature intervention from extracted top features
+    composition: feature_intervention_forward
+
+  intervention_from_concept:
+    description: Full analysis-level concept attribution and intervention pipeline
+    composition: concept_direction.compute_attribution_graph.graph_node_influence.extract_top_features.feature_intervention_forward

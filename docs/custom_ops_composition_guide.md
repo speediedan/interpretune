@@ -5,7 +5,8 @@
 
 ## Purpose
 
-Interpretune's analysis system is most valuable when custom ops behave like built-in ops:
+Interpretune's analysis system is most valuable when custom ops behave like the bundled ops
+(the op families shipped with the package under `src/interpretune/analysis/ops/bundled/`):
 
 - composable
 - schema-aware
@@ -32,13 +33,50 @@ An op should define:
 - input schema
 - output schema
 - optional required capabilities
+- optional `required_ops`: upstream ops whose declared fields your op consumes. Compilation merges
+  their schemas into yours (schema inheritance, not execution), and it is the declared record of
+  op-to-op dependency that composition and reviewers rely on.
+- optional `importable_params`: callables injected into the implementation at instantiation time
+  (e.g. a `logit_diff_fn`). References may target modules shipped in your own op collection or the
+  sanctioned `interpretune.analysis.optools` namespace.
 - one implementation function
 
 Relevant code:
 
 - `src/interpretune/analysis/ops/base.py`
 - `src/interpretune/analysis/ops/dispatcher.py`
-- `src/interpretune/analysis/ops/definitions.py`
+- `src/interpretune/analysis/ops/bundled/` (the bundled op families, each a worked example of the
+  op-collection shape: one YAML plus one implementation module)
+- `src/interpretune/analysis/optools.py` (the op-authoring toolkit)
+
+## What an op implementation may import
+
+An op implementation module must be self-contained modulo the sanctioned surfaces below. This is
+the same contract for every op source: bundled families, local collections, and hub repos.
+Interpretune is installed wherever an op runs, so these imports are a declared, supported contract
+rather than a reach into package internals:
+
+- `interpretune.analysis.optools`: the op-authoring toolkit (tensor/logits utilities,
+  tokenizer/embedding resolution, tokenization helpers, scoped-input conveniences)
+- `interpretune.analysis.backends`: the capability seam for backend-specific behavior
+- `interpretune.analysis.inputs`: the scoped-input execution contract (`AnalysisInputs`)
+- the public op classes in `interpretune.analysis.ops.base` (`AnalysisBatch`, `OpSchema`,
+  `ColCfg`, `get_batch_input`)
+- `interpretune.protocol` types
+- the bare public `interpretune` surface, function-level only, to invoke ops your YAML declares in
+  `required_ops`
+- your own collection's modules, plus the standard library and the op-level third-party
+  dependencies (torch, transformers, jaxtyping, transformer_lens)
+
+Anything else inside interpretune is private and may change without notice. The bundled families
+are held to exactly this rule by CI (`tests/core/test_bundled_op_publishability.py`), so no bundled
+family depends on interpretune internals that a hub op collection could not import.
+
+Two mechanical gaps remain before a bundled family is literally publishable as-is, and both are
+tracked in [#266](https://github.com/speediedan/interpretune/issues/266): implementation paths must
+be rewritten to the hub loader's `module.function` form, and `required_ops` that cross family
+boundaries need a declaration mechanism (today an unresolvable `required_ops` entry drops the op
+with a warning rather than failing loudly).
 
 ## Preferred Notebook And Script Surface
 
@@ -200,6 +238,8 @@ Good test targets include:
 - `tests/core/test_analysis_ops_dispatcher.py`
 - `tests/core/test_analysis_ops_definitions.py`
 - `tests/core/test_cross_backend_compat.py`
+- `tests/core/test_bundled_op_publishability.py` (the sanctioned-imports contract the bundled
+  families are held to; a useful template for linting your own collection)
 
 ### Add round-trip tests when serialization matters
 
@@ -254,7 +294,10 @@ Avoid:
 - manually constructing resolver handles in op implementations unless you are extending framework internals
 - assuming that every list-like value coming from an input store is row-scoped
 
-`get_analysis_value(...)` and `get_analysis_resolver(...)` still exist during the transition, but new op code should prefer the `AnalysisBatch` access surface.
+The former `get_analysis_value(...)` / `get_input_store_value(...)` transition helpers have been
+removed; op code resolves values through the `AnalysisBatch` access surface. For whole-column
+aggregate inputs, `interpretune.analysis.optools.resolve_aggregate_input(...)` remains the
+sanctioned bridge until the framework-level aggregation path lands.
 
 ### Serialization and formatter boundary
 
@@ -286,7 +329,7 @@ Keep the conceptual split clear:
 
 ### Aggregate analysis patterns need a cleaner framework home
 
-Do not hard-code runner-specific assumptions into custom ops just to support aggregate workflows. Keep aggregation orchestration in helpers or workflow code until the framework-level path lands.
+Do not hard-code runner-specific assumptions into custom ops just to support aggregate workflows. Keep aggregation orchestration in application-level workflow code until the framework-level path (a declared per-op cross-batch state lifecycle) lands.
 
 ## Practical Rule of Thumb
 

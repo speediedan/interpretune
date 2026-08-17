@@ -97,7 +97,7 @@ Relevant code:
 
 - `src/interpretune/analysis/ops/base.py`
 - `src/interpretune/analysis/ops/dispatcher.py`
-- `src/interpretune/analysis/ops/definitions.py`
+- `src/interpretune/analysis/ops/bundled/` (op-family definitions)
 
 ### 6. Persistence layer
 

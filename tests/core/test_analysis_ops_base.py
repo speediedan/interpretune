@@ -19,7 +19,7 @@ from interpretune.analysis.ops.base import (
     _reconstruct_op,
     OpWrapper,
 )
-from interpretune.analysis.ops.helpers import AnalysisInputs
+from interpretune.analysis.inputs import AnalysisInputs
 
 
 # Module-level implementation function for test operations

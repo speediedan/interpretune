@@ -1,0 +1,89 @@
+get_alive_latents:
+  description: Extract alive latents from cache
+  implementation: interpretune.analysis.ops.bundled.sae.sae_ops.get_alive_latents_impl
+  required_ops: [get_answer_indices]
+  aliases: []
+  input_schema:
+    cache:
+      required: false
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    answer_indices:
+      required: false
+      datasets_dtype: int64
+  output_schema:
+    alive_latents:
+      required: false
+      datasets_dtype: int64
+      per_latent_model_hook: true
+      non_tensor: true
+
+model_fwd_w_cache_latent_models:
+  description: Model forward pass with activation caching and latent model (SAE) hooks
+  implementation: interpretune.analysis.ops.bundled.sae.sae_ops.model_fwd_w_cache_latent_models_impl
+  required_ops: [get_answer_indices, get_alive_latents]
+  aliases: []
+  input_schema:
+    input:
+      datasets_dtype: int64
+      connected_obj: datamodule
+  output_schema:
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      dyn_dim: 1
+      dyn_dim_ceil: max_seq_len
+      array_shape: [null, batch_size, vocab_size]
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+
+model_ablation:
+  description: Model ablation analysis
+  implementation: interpretune.analysis.ops.bundled.sae.sae_ops.model_ablation_impl
+  importable_params:
+    ablate_latent_fn: interpretune.analysis.ops.bundled.sae.sae_ops.ablate_sae_latent
+  required_ops: [get_answer_indices, get_alive_latents]
+  aliases: []
+  input_schema:
+    input:
+      datasets_dtype: int64
+      connected_obj: datamodule
+    alive_latents:
+      datasets_dtype: int64
+      per_latent_model_hook: true
+      non_tensor: true
+    answer_indices:
+      datasets_dtype: int64
+      required: false
+  output_schema:
+    answer_logits:
+      datasets_dtype: float32
+      per_latent: true
+      sequence_type: false
+      array_shape: [batch_size, vocab_size]
+
+sae_correct_acts:
+  description: Compute correct activations from SAE cache
+  implementation: interpretune.analysis.ops.bundled.sae.sae_ops.sae_correct_acts_impl
+  required_ops: [get_alive_latents]
+  aliases: []
+  input_schema:
+    logit_diffs:
+      datasets_dtype: float32
+    answer_indices:
+      datasets_dtype: int64
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+  output_schema:
+    correct_activations:
+      datasets_dtype: float32
+      per_latent_model_hook: true

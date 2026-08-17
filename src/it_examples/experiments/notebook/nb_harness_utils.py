@@ -22,7 +22,7 @@ import torch
 from dotenv import load_dotenv
 
 import interpretune as it
-from interpretune.analysis.ops.helpers import (
+from interpretune.analysis.backends import (
     FeatureSelectionSpec,
     apply_feature_selection_filter,
 )

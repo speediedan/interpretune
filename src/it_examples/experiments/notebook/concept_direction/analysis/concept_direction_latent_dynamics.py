@@ -11,7 +11,7 @@ import torch
 import interpretune as it
 from interpretune.analysis.backends import require_analysis_backend
 from interpretune.analysis.ops.base import AnalysisBatch
-from interpretune.analysis.ops.helpers import _flatten_concept_store_rows
+from interpretune.analysis.ops.bundled.concept.concept_ops import flatten_concept_store_rows
 
 from it_examples.experiments.notebook.concept_direction.concept_direction import (
     NotebookHarnessConfig,
@@ -576,7 +576,7 @@ def run_latent_dynamics_analysis(
                 plain_group_id_rows = cast(Any, plain_aggregated_batch.concept_group_id_rows)
                 plain_group_name_rows = cast(Any, plain_aggregated_batch.concept_group_name_rows)
                 plain_weight_rows = cast(Any, plain_aggregated_batch.concept_example_weight_rows)
-                plain_states, plain_group_ids, plain_weights, _ = _flatten_concept_store_rows(
+                plain_states, plain_group_ids, plain_weights, _ = flatten_concept_store_rows(
                     plain_latent_rows,
                     plain_group_id_rows,
                     plain_group_name_rows,
@@ -588,7 +588,7 @@ def run_latent_dynamics_analysis(
                 context_group_name_rows = cast(Any, context_aggregated_batch.concept_group_name_rows)
                 context_weight_rows = cast(Any, context_aggregated_batch.concept_example_weight_rows)
                 context_states_final, context_group_ids, context_weights, context_group_names = (
-                    _flatten_concept_store_rows(
+                    flatten_concept_store_rows(
                         context_latent_rows,
                         context_group_id_rows,
                         context_group_name_rows,

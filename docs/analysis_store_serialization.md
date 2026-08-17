@@ -6,17 +6,17 @@ Interpretune persists analysis outputs through Hugging Face Datasets rather than
 2. `schema_to_features()` converts that schema into Hugging Face `Features`.
 3. The dataset is materialized with `with_format("interpretune")`, which routes reads through `ITAnalysisFormatter`.
 
-This document describes the current flow, how native and hub ops contribute schema metadata, and the structured graph representation used for circuit-tracer outputs.
+This document describes the current flow, how bundled and hub ops contribute schema metadata, and the structured graph representation used for circuit-tracer outputs.
 
 ## Current Pipeline
 
 ### Schema declaration
 
-Each native analysis op in [src/interpretune/analysis/ops/native_analysis_functions.yaml](../src/interpretune/analysis/ops/native_analysis_functions.yaml) declares `input_schema`, `output_schema`, `aliases`, and optional `required_capabilities` entries. Those YAML entries become `ColCfg` instances in [src/interpretune/analysis/ops/base.py](../src/interpretune/analysis/ops/base.py).
+Each bundled analysis op, declared in its op-family YAML under [src/interpretune/analysis/ops/bundled/](../src/interpretune/analysis/ops/bundled/) (e.g. `concept/concept_ops.yaml`), declares `input_schema`, `output_schema`, `aliases`, and optional `required_capabilities` entries. Those YAML entries become `ColCfg` instances in [src/interpretune/analysis/ops/base.py](../src/interpretune/analysis/ops/base.py).
 
-Hub ops follow the same shape after download and load through [src/interpretune/analysis/ops/hub_manager.py](../src/interpretune/analysis/ops/hub_manager.py) and [src/interpretune/analysis/ops/dispatcher.py](../src/interpretune/analysis/ops/dispatcher.py). Once loaded, native and hub ops are normalized into the same `AnalysisOp` representation, so serialization is driven by resolved schema rather than by the source registry.
+Hub ops follow the same shape after download and load through [src/interpretune/hub/manager.py](../src/interpretune/hub/manager.py) and [src/interpretune/analysis/ops/dispatcher.py](../src/interpretune/analysis/ops/dispatcher.py). Once loaded, bundled and hub ops are normalized into the same `AnalysisOp` representation, so serialization is driven by resolved schema rather than by the source registry.
 
-Aliases and composite ops do not create separate storage rules. Aliases resolve to the same concrete op definition, and composite ops serialize only the union of the concrete stage schemas produced by compilation. The formatter therefore sees final compiled column metadata, not whether a column originated in a native op, a hub op, or a composite expansion.
+Aliases and composite ops do not create separate storage rules. Aliases resolve to the same concrete op definition, and composite ops serialize only the union of the concrete stage schemas produced by compilation. The formatter therefore sees final compiled column metadata, not whether a column originated in a bundled op, a hub op, or a composite expansion.
 
 `ColCfg` controls the Arrow representation and formatter behavior:
 
@@ -40,7 +40,7 @@ The important behaviors are:
 - Rank-2 and rank-3 tensors become `Array2D` and `Array3D`.
 - Per-latent and per-hook fields become nested dictionaries of those same primitives.
 
-This stage is where Interpretune commits to an Arrow-native layout. If a field is not representable here, the formatter cannot rescue it later. That applies equally to native ops and downloaded hub ops.
+This stage is where Interpretune commits to an Arrow-native layout. If a field is not representable here, the formatter cannot rescue it later. That applies equally to bundled ops and downloaded hub ops.
 
 ### Dataset generation
 
