@@ -240,6 +240,20 @@ When your op depends on richer analysis object semantics, rely on the analysis b
 - correct behavior on at least one supported backend path
 - persistence or serialization behavior if the op produces reusable artifacts
 
+### Develop against `IT_STRICT_OP_LOAD=1`
+
+Op loading is fail-soft by design: a definition that fails to compile, an `importable_params`
+reference that will not resolve, or a malformed `op_state` block is reported as a warning and the op
+is dropped, so one bad collection cannot take down a session. While developing a collection that is
+the wrong default — a dropped op looks exactly like one you never wrote.
+
+```bash
+IT_STRICT_OP_LOAD=1 python -m pytest tests/my_op_tests.py
+```
+
+turns those paths into errors. Interpretune's own CI asserts every bundled op compiles and
+instantiates under strict loading; the same check is worth having for your collection.
+
 ### Prefer focused tests over overly broad notebook-only validation
 
 Notebook tests are useful, but they should not be the only correctness signal.
