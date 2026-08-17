@@ -2008,12 +2008,14 @@ dependent_op:
             }
         }
 
-        with patch("interpretune.analysis.ops.dispatcher.rank_zero_warn") as mock_warn:
+        # Asserted on the emitted warning rather than on a patched module symbol: the fail-soft
+        # paths route through `load_policy.op_load_failure` now, so patching this module's
+        # `rank_zero_warn` would silently intercept nothing.
+        with pytest.warns(UserWarning, match="Failed to compile operation 'test_op'"):
             dispatcher._compile_required_ops_schemas(definitions)
 
-            # Should have issued a warning and removed the failed operation
-            mock_warn.assert_called()
-            assert "test_op" not in definitions
+        # Should have issued a warning and removed the failed operation
+        assert "test_op" not in definitions
 
     def test_convert_raw_definitions_exception_handling(self, tmp_path):
         """Test exception handling in _convert_raw_definitions_to_opdefs."""
@@ -2473,6 +2475,8 @@ dependent_op:
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
             importable_params={"helper_func": "module.helper"},
+            # Hub-ness is declared provenance, not a dotted name (see OpDef.source).
+            source="hub:testuser.repo",
         )
 
         dispatcher._op_definitions = {"testuser.repo.test_op": op_def}
@@ -2530,21 +2534,14 @@ dependent_op:
                 return None
             return original_import(path)
 
-        with (
-            patch.object(dispatcher, "_import_callable", side_effect=mock_import_callable),
-            patch("interpretune.analysis.ops.dispatcher.rank_zero_warn") as mock_warn,
-        ):
-            # Instantiate the operation
-            op = dispatcher._instantiate_op("test_op")
+        # See the note in test_compile_required_ops_schemas_warning: this warn path now routes
+        # through `load_policy.op_load_failure`, so assert on the warning itself.
+        with patch.object(dispatcher, "_import_callable", side_effect=mock_import_callable):
+            with pytest.warns(UserWarning, match=r"Importable parameter 'bad_param'.*could not be resolved"):
+                op = dispatcher._instantiate_op("test_op")
 
-            # Verify warning was issued
-            mock_warn.assert_called_with(
-                "Importable parameter 'bad_param' in operation 'test_op' could not be resolved: "
-                "module.nonexistent_func. It will not be available in the operation."
-            )
-
-            # Verify the bad parameter was not added to impl_params
-            assert "bad_param" not in op.impl_params
+        # Verify the bad parameter was not added to impl_params
+        assert "bad_param" not in op.impl_params
 
     def test_instantiate_op_function_params_not_callable_warning(self):
         """Test warning when function parameter is not callable."""
@@ -2592,6 +2589,7 @@ dependent_op:
             input_schema=OpSchema({}),
             output_schema=OpSchema({}),
             importable_params={"helper_func": "other_module.helper"},
+            source="hub:testuser.repo",
         )
 
         dispatcher._op_definitions = {"testuser.repo.test_op": op_def}

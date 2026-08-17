@@ -1092,6 +1092,12 @@ class TestMetricsAndTargets:
         mock_analysis_cfg.output_store.preds = [torch.tensor([0, 1]), torch.tensor([1, 0])]
         mock_analysis_cfg.op = MagicMock(autospec=it.logit_diffs_sae)
         mock_analysis_cfg.op.aliases = ["test_alias"]
+        # Behavioral traits must be set explicitly: a bare MagicMock auto-creates every attribute as
+        # a truthy Mock, so `per_latent_preds` would read as True and send compute_correct down the
+        # join-across-SAEs path this store does not model. logit_diffs_sae declares none of them.
+        mock_analysis_cfg.op.per_latent_preds = False
+        mock_analysis_cfg.op.uses_default_hooks = False
+        mock_analysis_cfg.op.requires_grad = False
 
         # Create a mock for get_preds_summ
         from dataclasses import dataclass

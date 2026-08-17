@@ -1227,8 +1227,10 @@ def compute_correct(
     if isinstance(op, str):
         op = DISPATCHER.get_op(op)  # type: ignore[assignment]  # DISPATCHER.get_op can return AnalysisOp
 
-    # TODO: this is another location where we should be conditioning behavior on op functionality, not name
-    if hasattr(op, "ctx_key") and op.ctx_key == "logit_diffs_attr_ablation":  # type: ignore[attr-defined]  # AnalysisOp has ctx_key
+    # Declared trait, not an op-name check: any op whose preds are emitted per latent model needs
+    # them joined across SAEs before they can be compared against labels.
+    per_latent_preds = bool(getattr(op, "per_latent_preds", False))
+    if per_latent_preds:
         batch_preds = [
             b.mode(dim=0).values.cpu()
             for b in analysis_store.by_latent_model("preds").batch_join(across_saes=True)  # type: ignore[attr-defined]  # analysis_store has by_latent_model method
@@ -1244,7 +1246,7 @@ def compute_correct(
     return PredSumm(
         total_correct,
         percentage_correct,
-        batch_preds if hasattr(op, "ctx_key") and op.ctx_key == "logit_diffs_attr_ablation" else None,  # type: ignore[attr-defined]  # AnalysisOp has ctx_key
+        batch_preds if per_latent_preds else None,
     )
 
 

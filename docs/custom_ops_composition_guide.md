@@ -39,6 +39,13 @@ An op should define:
 - optional `importable_params`: callables injected into the implementation at instantiation time
   (e.g. a `logit_diff_fn`). References may target modules shipped in your own op collection or the
   sanctioned `interpretune.analysis.optools` namespace.
+- optional `op_state`: declared cross-batch state (see "Cross-batch state" below). Declaring it is
+  what authorizes an op to accumulate across batches.
+- optional behavioral traits, which let your op ask the framework for what it needs instead of the
+  framework special-casing op names: `requires_grad` (run the analysis loop with grad enabled),
+  `uses_default_hooks` (install the default activation-cache forward/backward hooks), and
+  `per_latent_preds` (predictions are emitted per latent model and must be joined across SAEs before
+  scoring). All default to `false`, and hub and local ops declare them exactly as bundled ops do.
 - one implementation function
 
 Relevant code:
@@ -200,7 +207,10 @@ If a sequence is reused often, define a composite op rather than duplicating not
 
 ### Pattern 3: Aggregate workflow feeding later ops
 
-If an analysis result is derived across multiple batches and then reused later, prefer storing it through `AnalysisStore` or a framework-level aggregate helper rather than threading it through notebook-local state only.
+If an analysis result is derived across multiple batches, declare `op_state` and accumulate through
+it (see "Cross-batch state" below). Persist the *result* through `AnalysisStore` when it has reuse
+value; do not thread accumulator state through notebook-local variables or write it onto the store
+as ad-hoc attributes.
 
 ## Cross-Backend Guidance
 
@@ -298,8 +308,9 @@ Avoid:
 
 The former `get_analysis_value(...)` / `get_input_store_value(...)` transition helpers have been
 removed; op code resolves values through the `AnalysisBatch` access surface. For whole-column
-aggregate inputs, `interpretune.analysis.optools.resolve_aggregate_input(...)` remains the
-sanctioned bridge until the framework-level aggregation path lands.
+aggregate inputs, `interpretune.analysis.optools.resolve_aggregate_input(...)` is the sanctioned
+bridge. Note it solves a different problem from `op_state`: it *reads* an already-materialized
+column, whereas `op_state` is where an op *accumulates* across batches.
 
 ### Serialization and formatter boundary
 
@@ -329,9 +340,46 @@ Keep the conceptual split clear:
 - `batch` means the dataloader batch argument passed into the op
 - `AnalysisStore` means the persisted dataset-backed artifact layer
 
-### Aggregate analysis patterns need a cleaner framework home
+### Cross-batch state
 
-Do not hard-code runner-specific assumptions into custom ops just to support aggregate workflows. Keep aggregation orchestration in application-level workflow code until the framework-level path (a declared per-op cross-batch state lifecycle) lands.
+An op that accumulates across batches declares what it accumulates:
+
+```yaml
+my_streaming_op:
+  implementation: my_ops.my_streaming_op_impl
+  op_state:
+    scope: run             # only `run` is supported today
+    reset_each_epoch: false  # default: accumulate across epochs
+    fields: [running_sum, running_weight]
+```
+
+The implementation reads and writes through `analysis_inputs.op_state`:
+
+```python
+def my_streaming_op_impl(module, analysis_batch, batch, batch_idx, **kwargs):
+    state = kwargs["analysis_inputs"].op_state
+    running = state.get("running_sum")            # None until first set
+    state.set("running_sum", batch_value if running is None else running + batch_value)
+```
+
+What the framework guarantees:
+
+- **A namespace.** Only declared field names are readable or writable; anything else raises, so a
+  typo is an error rather than a silently-`None` read.
+- **A lifecycle owner.** The container belongs to the `AnalysisCfg` for the run: cleared before the
+  first batch, cleared at epoch boundaries only for ops that set `reset_each_epoch: true`, and
+  released at the end of the run. Ops never decide when accumulation starts over, so nothing depends
+  on `batch_idx == 0` (which restarts every epoch and therefore discards all but the last).
+- **Isolation.** State is keyed per op, so the member ops of a composite each get their own.
+
+Two consequences worth knowing:
+
+- Accumulator state is *not* an input scope. `analysis_batch.get(...)` will not resolve it, and it
+  is not persisted; emit converged results through your output schema.
+- An op that declares `op_state` needs an owner. Run it through a runner or
+  `interpretune.analysis.execution.execute_analysis_op` (both activate an `AnalysisCfg`); a bare
+  `it.my_streaming_op(...)` call with no active cfg raises rather than accumulating into a container
+  nobody can reset.
 
 ## Practical Rule of Thumb
 

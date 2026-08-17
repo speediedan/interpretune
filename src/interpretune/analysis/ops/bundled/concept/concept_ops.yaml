@@ -39,6 +39,18 @@ extract_concept_latent_examples:
   description: Filter and annotate latent rows for concept-direction aggregation
   implementation: interpretune.analysis.ops.bundled.concept.concept_ops.extract_concept_latent_examples_impl
   aliases: [concept_latent_examples]
+  # Declared cross-batch state for the legacy `in_memory` aggregation mode; the module constants
+  # CONCEPT_AGGREGATE_ROW_FIELDS are the source of truth (pinned by test_bundled_concept_streaming).
+  op_state:
+    scope: run
+    reset_each_epoch: false
+    fields:
+      - concept_latent_state_rows
+      - concept_group_id_rows
+      - concept_group_name_rows
+      - concept_example_logit_diff_rows
+      - concept_example_weight_rows
+      - concept_context_indices_rows
   input_schema:
     concept_latent_state:
       datasets_dtype: float32
@@ -141,6 +153,24 @@ concept_direction:
   implementation: interpretune.analysis.ops.bundled.concept.concept_ops.concept_direction_impl
   required_capabilities: [attribution_graph]
   aliases: [semantic_direction]
+  # Declared cross-batch state for streaming aggregation; the module constants
+  # CONCEPT_STREAMING_STATE_FIELDS are the source of truth (pinned by test_bundled_concept_streaming).
+  # reset_each_epoch stays false so multi-epoch analysis accumulates instead of discarding every
+  # epoch but the last (batch_idx restarts at 0 per epoch).
+  op_state:
+    scope: run
+    reset_each_epoch: false
+    fields:
+      - concept_running_state_sum_a
+      - concept_running_weight_a
+      - concept_running_state_sum_b
+      - concept_running_weight_b
+      - concept_pending_a_states
+      - concept_pending_a_weights
+      - concept_pending_b_states
+      - concept_pending_b_weights
+      - concept_running_residual_sum
+      - concept_running_pair_weight
   input_schema:
     concept_latent_state:
       datasets_dtype: float32

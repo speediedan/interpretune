@@ -11,7 +11,6 @@ from transformers import AutoConfig, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
 
-import interpretune as it
 from interpretune.utils import rank_zero_warn, _import_class, _BNB_AVAILABLE
 from interpretune.config import (
     HFFromPretrainedConfig,
@@ -97,10 +96,9 @@ class AnalysisStepMixin:
             # defensive: if something goes wrong, fallback to default True
             self._prev_grad_enabled = True
 
-        if self.analysis_cfg is not None and self.analysis_cfg.op == it.logit_diffs_attr_grad:
-            torch.set_grad_enabled(True)
-        else:
-            torch.set_grad_enabled(False)
+        # Declared trait, not an op-name comparison: any op (bundled, local or hub) can ask for grad.
+        active_op = getattr(self.analysis_cfg, "op", None) if self.analysis_cfg is not None else None
+        torch.set_grad_enabled(bool(getattr(active_op, "requires_grad", False)))
 
     def on_analysis_epoch_end(self) -> Any | None:
         pass
