@@ -58,6 +58,48 @@ class TestComponentManifest:
         assert key == "rte.gpt2.core"
 
 
+class TestOpsKindSpec:
+    """``kinds: [ops]`` had no manifest spec at all: ``validate_component_manifest`` special-cased only ``module``
+    and ``promptconfigs``, and the sole ops-aware code copied an unvalidated ``ops.files`` list at publish time.
+
+    That list is what makes op discovery manifest-routed rather than a blind glob over every YAML in the repo, which is
+    also what makes the registration claim "one manifest fetch per logical load" true for the ops kind (#266 Phase 3).
+    """
+
+    _VALID = {"it_schema_version": 1, "kinds": ["ops"], "ops": {"files": ["concept_ops.yaml"]}}
+
+    def test_valid_ops_manifest_accepted(self):
+        assert validate_component_manifest(dict(self._VALID))["ops"]["files"] == ["concept_ops.yaml"]
+
+    def test_ops_kind_may_be_combined_with_others(self):
+        manifest = dict(self._VALID, kinds=["ops", "module"], module={"configs": {"rte.gpt2.core": {}}})
+        assert validate_component_manifest(manifest)["kinds"] == ["ops", "module"]
+
+    @pytest.mark.parametrize(
+        "ops, why",
+        [
+            (None, "no ops block at all"),
+            ({}, "no files key"),
+            ({"files": []}, "empty file list"),
+            ({"files": "concept_ops.yaml"}, "a bare string rather than a list"),
+            ({"files": ["concept_ops.yaml", ""]}, "an empty path entry"),
+            ({"files": [{"path": "concept_ops.yaml"}]}, "a non-string entry"),
+        ],
+    )
+    def test_malformed_ops_declarations_rejected(self, ops, why):
+        manifest = {"it_schema_version": 1, "kinds": ["ops"]}
+        if ops is not None:
+            manifest["ops"] = ops
+        with pytest.raises(ComponentManifestError, match="`ops.files`|kind `ops`"):
+            validate_component_manifest(manifest, source=why)
+
+    def test_manifest_may_not_list_itself_as_an_op_file(self):
+        """The manifest declares the op definitions; parsing it as one fails on its own scalar keys."""
+        manifest = {"it_schema_version": 1, "kinds": ["ops"], "ops": {"files": ["it_component.yaml"]}}
+        with pytest.raises(ComponentManifestError, match="must not list it_component.yaml"):
+            validate_component_manifest(manifest)
+
+
 class TestGeneratedCards:
     def test_card_carries_discovery_sentinel_and_dataset_mirror(self):
         manifest = load_component_manifest(RTE_COMPONENT_DIR / "it_component.yaml")

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from huggingface_hub import scan_cache_dir
 
 from interpretune.hub.cache import _get_latest_revision, parse_hub_cache_path
+from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
 from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR, remote_code_trust, remote_code_trusted
 
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
@@ -191,8 +192,12 @@ class OpDefinitionsCacheManager:
                 if latest_revision is None:
                     continue
 
-                # Check for YAML files in this revision
+                # Check for YAML files in this revision. The component manifest is excluded: it is the
+                # file that DECLARES a collection's op YAMLs, never one of them, and feeding it to the op
+                # compiler raises on its scalar keys and drops every op in the process, bundled included.
                 for file_info in latest_revision.files:
+                    if file_info.file_name == IT_COMPONENT_MANIFEST:
+                        continue
                     if file_info.file_name.endswith((".yaml", ".yml")):
                         # use file_path if available, otherwise construct path
                         if hasattr(file_info, "file_path") and file_info.file_path is not None:

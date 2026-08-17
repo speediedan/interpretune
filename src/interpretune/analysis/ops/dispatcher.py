@@ -12,11 +12,12 @@ import torch
 from transformers import BatchEncoding
 
 from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS, IT_ANALYSIS_HUB_CACHE
+from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
 from interpretune.analysis.inputs import OpStateSpec
 from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg, OpWrapper
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
-from interpretune.analysis.ops.compiler.load_policy import op_load_failure, strict_op_load
+from interpretune.analysis.ops.compiler.load_policy import OpLoadError, op_load_failure, strict_op_load
 from interpretune.analysis.ops.dynamic_module_utils import ensure_op_paths_in_syspath, get_function_from_dynamic_module
 from interpretune.protocol import BaseAnalysisBatchProtocol
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
@@ -96,7 +97,14 @@ class AnalysisOpDispatcher:
         return name.replace("/", ".").replace("-", "_").lower()
 
     def _discover_yaml_files(self, paths: list[Path]) -> list[Path]:
-        """Discover all YAML files from the given paths (files or directories)."""
+        """Discover all YAML files from the given paths (files or directories).
+
+        A component manifest is never an op-definitions file. It shares the ``.yaml`` suffix and sits at the root of
+        every interpretune component repo, including op collections, so a directory holding both a manifest and its op
+        YAMLs (the ordinary shape when authoring a collection locally) would otherwise feed the manifest through the op
+        compiler, where its scalar keys (``it_schema_version: 1``) raise on ``op_def.get(...)`` and take down the whole
+        load -- every bundled op included.
+        """
         yaml_files = []
         for path in paths:
             if path.is_file() and path.suffix.lower() in (".yaml", ".yml"):
@@ -105,7 +113,7 @@ class AnalysisOpDispatcher:
                 # Recursively find all YAML files in the directory
                 yaml_files.extend(path.glob("**/*.yaml"))
                 yaml_files.extend(path.glob("**/*.yml"))
-        return sorted(set(yaml_files))  # Remove duplicates and sort for consistency
+        return sorted({p for p in yaml_files if p.name != IT_COMPONENT_MANIFEST})
 
     def load_definitions(self) -> None:
         """Load operation definitions from YAML files."""
@@ -193,11 +201,28 @@ class AnalysisOpDispatcher:
                             composite_operations[comp_name] = {**comp_def, "source": source}
                             self._op_declaration_sites[comp_name] = str(yaml_file)
                     else:
+                        if not isinstance(value, dict):
+                            # Reject at INGEST, not at conversion: `_compile_required_ops_schemas` runs
+                            # first and catches only ValueError, so a scalar reaching it raised
+                            # AttributeError from `op_def.get(...)` and took down every op in the process,
+                            # bundled included. The usual cause is a non-op YAML being read as op
+                            # definitions, where scalar top-level values are perfectly normal.
+                            op_load_failure(
+                                f"Skipping '{key}' in {yaml_file}: an op definition must be a mapping, got "
+                                f"{type(value).__name__}. Is this file an op-definitions YAML?"
+                            )
+                            continue
                         if key in raw_definitions:
                             rank_zero_debug(f"Operation '{key}' redefined in {yaml_file}, using latest definition")
-                        raw_definitions[key] = {**value, "source": source} if isinstance(value, dict) else value
+                        raw_definitions[key] = {**value, "source": source}
                         self._op_declaration_sites[key] = str(yaml_file)
 
+            except OpLoadError:
+                # Strict loading must not be swallowed by the per-file fail-soft handler: the whole point
+                # of IT_STRICT_OP_LOAD is that a definition problem stops the run, and a broad `except
+                # Exception` here would quietly downgrade it to a debug line -- the same way a warm cache
+                # used to skip these checks entirely.
+                raise
             except Exception as e:
                 rank_zero_debug(f"Failed to load YAML file {yaml_file}: {e}")
                 # Continue processing other files rather than failing completely

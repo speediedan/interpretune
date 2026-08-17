@@ -187,6 +187,58 @@ class TestStrictLoadVetoesTheCache:
         assert not [w for w in recwarn if "collision" in str(w.message)]
 
 
+class TestNonOpYamlIsNotParsedAsOps:
+    """A YAML that is not an op-definitions file must not be able to drop every op in the process.
+
+    ``it_component.yaml`` sits at the root of every interpretune component repo, op collections included, and shares
+    the ``.yaml`` suffix that discovery keys on. Feeding it to the op compiler raised ``AttributeError: 'int' object
+    has no attribute 'get'`` on its own scalar keys (``it_schema_version: 1``) from
+    ``_compile_required_ops_schemas``, which catches only ``ValueError`` -- so the whole load died and
+    ``_op_definitions`` came back EMPTY, bundled ops included (#266 Phase 3).
+    """
+
+    _MANIFEST = "it_schema_version: 1\nkinds: [ops]\nops:\n  files: [my_ops.yaml]\n"
+
+    def test_a_collection_dir_with_its_manifest_loads_cleanly(self, tmp_path, cache_dir, recwarn):
+        """The ordinary local-authoring shape: one manifest plus the op YAMLs it declares, same directory."""
+        op_dir = _collection(tmp_path, "collection", _op_yaml("my_op"))
+        (op_dir / "it_component.yaml").write_text(self._MANIFEST)
+
+        dispatcher = _dispatcher(cache_dir, op_dir)
+        dispatcher.load_definitions()
+
+        assert "my_op" in dispatcher._op_definitions
+        assert "model_fwd" in dispatcher._op_definitions, "bundled ops must survive"
+        # None of the manifest's own keys may be registered as operations.
+        assert not {"it_schema_version", "kinds", "ops"} & set(dispatcher._op_definitions)
+        assert not [w for w in recwarn if "mapping" in str(w.message)]
+
+    def test_manifest_is_excluded_from_discovery(self, tmp_path, cache_dir):
+        op_dir = _collection(tmp_path, "collection", _op_yaml("my_op"))
+        (op_dir / "it_component.yaml").write_text(self._MANIFEST)
+
+        discovered = _dispatcher(cache_dir, op_dir)._discover_yaml_files([op_dir])
+        assert [p.name for p in discovered] == ["collection.yaml"]
+
+    def test_scalar_entry_is_skipped_not_fatal(self, tmp_path, cache_dir):
+        """Defence in depth for any other non-op YAML: contain the bad entry, keep the rest."""
+        yaml_text = "some_scalar: 1\n" + _op_yaml("good_op")
+        dispatcher = _dispatcher(cache_dir, _collection(tmp_path, "ops", yaml_text))
+        with pytest.warns(UserWarning, match="must be a mapping"):
+            dispatcher.load_definitions()
+
+        assert "good_op" in dispatcher._op_definitions
+        assert "model_fwd" in dispatcher._op_definitions
+
+    def test_scalar_entry_raises_under_strict_load(self, tmp_path, cache_dir, monkeypatch):
+        """Must survive the per-file fail-soft handler, which would otherwise swallow it to a debug line."""
+        monkeypatch.setenv(IT_STRICT_OP_LOAD_ENV_VAR, "1")
+        yaml_text = "some_scalar: 1\n" + _op_yaml("good_op")
+        dispatcher = _dispatcher(cache_dir, _collection(tmp_path, "ops", yaml_text))
+        with pytest.raises(OpLoadError, match="must be a mapping"):
+            dispatcher.load_definitions()
+
+
 class TestBundledOpsAreUnaffected:
     """The bundled set must neither collide nor change shape under the symmetric lookup."""
 
