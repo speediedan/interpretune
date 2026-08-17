@@ -45,8 +45,8 @@ Relevant code:
 
 - `src/interpretune/analysis/ops/base.py`
 - `src/interpretune/analysis/ops/dispatcher.py`
-- `src/interpretune/analysis/ops/bundled/` (the bundled op families, each a worked example of a
-  self-contained op collection)
+- `src/interpretune/analysis/ops/bundled/` (the bundled op families, each a worked example of the
+  op-collection shape: one YAML plus one implementation module)
 - `src/interpretune/analysis/optools.py` (the op-authoring toolkit)
 
 ## What an op implementation may import
@@ -69,8 +69,14 @@ rather than a reach into package internals:
   dependencies (torch, transformers, jaxtyping, transformer_lens)
 
 Anything else inside interpretune is private and may change without notice. The bundled families
-are held to exactly this rule by CI (`tests/core/test_bundled_op_publishability.py`), so every
-bundled family could be lifted into a standalone hub op collection unchanged.
+are held to exactly this rule by CI (`tests/core/test_bundled_op_publishability.py`), so no bundled
+family depends on interpretune internals that a hub op collection could not import.
+
+Two mechanical gaps remain before a bundled family is literally publishable as-is, and both are
+tracked in [#266](https://github.com/speediedan/interpretune/issues/266): implementation paths must
+be rewritten to the hub loader's `module.function` form, and `required_ops` that cross family
+boundaries need a declaration mechanism (today an unresolvable `required_ops` entry drops the op
+with a warning rather than failing loudly).
 
 ## Preferred Notebook And Script Surface
 

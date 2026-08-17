@@ -1,8 +1,8 @@
 """Publishability lint for the bundled op families.
 
-Bundled ops must follow the same compositional contract we require of hub op collections: each
-family implementation module must be liftable into a standalone ``kinds: [ops]`` hub repo
-unchanged. Concretely, a family module may only import:
+Bundled ops must follow the same compositional contract we require of hub op collections: no family
+may carry a privileged latent dependency on interpretune internals of the kind ``definitions.py``
+carried on ``helpers.py``. Concretely, a family module may only import:
 
 - the sanctioned op-authoring surfaces: ``interpretune.analysis.optools``,
   ``interpretune.analysis.backends``, ``interpretune.analysis.inputs``, and the public op classes
@@ -19,6 +19,21 @@ Anything else (another family, runners, config internals, private modules elsewh
 interpretune) is a latent privileged dependency and fails this lint. The family YAMLs are held to
 the matching rule: ``implementation``/``importable_params`` may reference only the family's own
 module or ``interpretune.analysis.optools``.
+
+Scope limits (deliberate, so this lint is not read as more than it proves):
+
+- ``required_ops`` resolution is NOT checked here, and real cross-family coupling exists today
+  (``sae`` and ``attribution`` both require ``get_answer_indices``, which only ``core`` defines;
+  ``attribution`` also requires ``get_alive_latents``, which only ``sae`` defines). An unresolvable
+  ``required_ops`` entry is dropped with a warning by
+  ``AnalysisOpDispatcher._compile_required_ops_schemas`` rather than failing loudly.
+- The ``implementation`` grammar this lint mandates (fully-qualified interpretune paths) is not the
+  grammar the hub loader accepts: ``get_function_from_dynamic_module`` parses a bare
+  ``module.function`` pair, so publishing a family verbatim would require rewriting those paths.
+- ``composites.yaml`` is skipped: compositions reference ops by name and cross family boundaries.
+
+So this lint establishes the *import* half of the contract (no privileged latent dependency), not
+literal publish-as-is liftability. Closing the remaining gaps is tracked in issue #266.
 """
 
 from __future__ import annotations
