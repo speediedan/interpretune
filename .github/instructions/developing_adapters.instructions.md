@@ -77,7 +77,7 @@ NNsight analysis operations chunk batched hook configurations through the
 backend layer rather than a public `NNsightForwardContext` helper:
 
 ```python
-from interpretune.analysis.backends.nnsight import NNsightModelBackend
+from interpretune.analysis.backends.impls.nnsight import NNsightModelBackend
 
 backend = NNsightModelBackend(hook_resolver=resolver, configs_per_pass=8)
 

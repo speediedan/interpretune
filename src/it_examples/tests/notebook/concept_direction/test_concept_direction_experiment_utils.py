@@ -2084,7 +2084,7 @@ def test_pipeline_run_direction_probes_allows_missing_group_b(monkeypatch) -> No
             )
 
     monkeypatch.setattr(pipeline_patterns, "experiment_session", lambda *args, **kwargs: _Session())
-    monkeypatch.setattr("interpretune.analysis.backends.circuit_tracer.CircuitTracerAnalysisBackend", _Backend)
+    monkeypatch.setattr("interpretune.analysis.backends.impls.circuit_tracer.CircuitTracerAnalysisBackend", _Backend)
 
     results = pipeline_patterns.run_direction_probes(
         cfg,

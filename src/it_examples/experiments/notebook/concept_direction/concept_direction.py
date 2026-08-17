@@ -2963,7 +2963,7 @@ def run_direction_probes(
     if not cfg.supports_store_direction:
         raise ValueError("run_direction_probes is only available in concept_pair mode")
 
-    from interpretune.analysis.backends.circuit_tracer import CircuitTracerAnalysisBackend
+    from interpretune.analysis.backends.impls.circuit_tracer import CircuitTracerAnalysisBackend
 
     with experiment_session(
         cfg.work_root,

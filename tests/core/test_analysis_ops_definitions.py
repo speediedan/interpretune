@@ -8,7 +8,7 @@ from transformers import BatchEncoding
 from torch.testing import assert_close
 
 import interpretune as it
-from interpretune.analysis.backends.transformer_lens import TLModelBackend
+from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
 from interpretune.analysis.optools import (
     get_loss_preds_diffs,
     boolean_logits_to_avg_logit_diff,

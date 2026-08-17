@@ -30,7 +30,7 @@ from circuit_tracer.graph import Graph
 from circuit_tracer.utils.tl_nnsight_mapping import UnifiedConfig
 
 from interpretune.analysis import AnalysisInputs, execute_analysis_op
-from interpretune.analysis.backends.circuit_tracer import DEFAULT_CT_ANALYSIS_BACKEND
+from interpretune.analysis.backends.impls.circuit_tracer import DEFAULT_CT_ANALYSIS_BACKEND
 from interpretune.analysis.core import AnalysisStore
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.bundled.concept.concept_ops import (
