@@ -17,7 +17,8 @@ from torch.testing import assert_close
 
 from interpretune.analysis.backends import require_analysis_backend
 from interpretune.analysis.ops.base import AnalysisBatch
-from interpretune.analysis.ops.helpers import _flatten_concept_store_rows, last_token_logits
+from interpretune.analysis.ops.bundled.concept.concept_ops import flatten_concept_store_rows
+from interpretune.analysis.optools import last_token_logits
 from tests.conftest import clean_cuda
 from it_examples.experiments.notebook.concept_direction.concept_direction import PromptRenderMode
 from tests.core.test_analysis_backend_parity import (
@@ -2076,7 +2077,7 @@ def _compute_store_concept_direction_stage(
     group_id_rows = [batch.concept_group_id for batch in extracted_batches]
     group_name_rows = [batch.concept_group_name for batch in extracted_batches]
     example_weight_rows = [batch.concept_example_weight for batch in extracted_batches]
-    flattened_states, group_ids, example_weights, _ = _flatten_concept_store_rows(
+    flattened_states, group_ids, example_weights, _ = flatten_concept_store_rows(
         latent_state_rows,
         group_id_rows,
         group_name_rows,

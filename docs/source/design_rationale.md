@@ -69,10 +69,11 @@ Two contract semantics govern composite-op compilation (exercised by
 A relaxation option (allowing parents to implicitly re-expose child outputs) has been considered
 but is deliberately not implemented — explicit schemas keep compiled plans auditable.
 
-## `.pyi` stubs are generated for native ops only
+## `.pyi` stubs are generated for bundled ops only
 
 `scripts/generate_op_stubs.py` generates type stubs (`src/interpretune/__init__.pyi`) for
-**native ops only** — user-defined/composed ops are dispatched dynamically and do not get stubs
+**bundled ops only** (the op families under `src/interpretune/analysis/ops/bundled/`) —
+user-defined/composed ops are dispatched dynamically and do not get stubs
 by default. (A future option may extend generation to all registered ops.) The stale-stubs CI
 check compares committed stubs against regeneration output, so run the script after changing
-native op definitions.
+bundled op definitions.

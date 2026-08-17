@@ -48,7 +48,7 @@ Analysis flows are built from composable **ops** (`it.concept_direction`,
 `it.compute_attribution_graph`, `it.intervention_from_concept`, …) declared with input/output
 schemas and compiled into execution plans. Ops are dispatched over the active adapter composition,
 so a concept-direction intervention runs identically over a TransformerLens or NNsight substrate.
-Native ops ship with generated `.pyi` stubs for IDE support.
+Bundled ops (the op families shipped with the package) ship with generated `.pyi` stubs for IDE support.
 
 ## `AnalysisStore`: shareable world-model analysis artifacts
 

@@ -20,11 +20,8 @@ from torch.testing import assert_close
 from interpretune.analysis.backends import require_analysis_backend
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.dispatcher import DISPATCHER
-from interpretune.analysis.ops.helpers import (
-    FeatureSelectionSpec,
-    apply_feature_selection_filter,
-    last_token_logits,
-)
+from interpretune.analysis.backends import FeatureSelectionSpec, apply_feature_selection_filter
+from interpretune.analysis.optools import last_token_logits
 from interpretune.config import AnalysisCfg, CircuitTracerConfig, NNsightConfig, init_analysis_cfgs
 from tests import load_dotenv
 from tests.analysis_resource_utils import clear_nnsight_test_state, serial_test_cleanup

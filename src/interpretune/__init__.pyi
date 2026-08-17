@@ -62,8 +62,8 @@ def ablation_attribution(
         preds (int64)
 
     Function parameter defaults (from YAML):
-        logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
-        get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
+        logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
+        get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
     """
     ...
 
@@ -382,8 +382,8 @@ def logit_diffs(
         answer_logits (float32)
 
     Function parameter defaults (from YAML):
-        logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
-        get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
+        logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
+        get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
     """
     ...
 
@@ -411,8 +411,8 @@ def logit_diffs_cache(
         answer_logits (float32)
 
     Function parameter defaults (from YAML):
-        logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
-        get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
+        logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
+        get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
     """
     ...
 
@@ -434,7 +434,7 @@ def model_ablation(
         answer_logits (float32)
 
     Function parameter defaults (from YAML):
-        ablate_latent_fn: interpretune.analysis.ops.definitions.ablate_sae_latent
+        ablate_latent_fn: interpretune.analysis.ops.bundled.sae.sae_ops.ablate_sae_latent
     """
     ...
 
@@ -540,8 +540,8 @@ def model_gradient(
         prompts (string)
 
     Function parameter defaults (from YAML):
-        logit_diff_fn: interpretune.analysis.ops.definitions.boolean_logits_to_avg_logit_diff
-        get_loss_preds_diffs: interpretune.analysis.ops.definitions.get_loss_preds_diffs
+        logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
+        get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
     """
     ...
 

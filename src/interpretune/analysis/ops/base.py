@@ -162,7 +162,7 @@ class AnalysisBatch(AttrDict):
         scopes: tuple[str, ...] | None = None,
     ) -> Any:
         """Resolve a value using the bound analysis execution context."""
-        from interpretune.analysis.ops.helpers import DEFAULT_ANALYSIS_SCOPES, get_analysis_resolver
+        from interpretune.analysis.inputs import DEFAULT_ANALYSIS_SCOPES, get_analysis_resolver
 
         direct_value = super().get(key, _ANALYSIS_MISSING)
         if direct_value is not _ANALYSIS_MISSING:

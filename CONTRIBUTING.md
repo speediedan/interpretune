@@ -184,8 +184,9 @@ SPHINX_MOCK_REQUIREMENTS=1 python -m sphinx -b html --keep-going docs/source doc
 ```
 
 The `Docs build` CI workflow is **required** on every push and PR (errors fail the build), and
-Read the Docs builds pull-request previews. When adding native analysis ops, regenerate the type
-stubs (`python scripts/generate_op_stubs.py`) — the stale-stubs CI check enforces freshness.
+Read the Docs builds pull-request previews. When adding bundled analysis ops (the op families under
+`src/interpretune/analysis/ops/bundled/`), regenerate the type stubs
+(`python scripts/generate_op_stubs.py`) — the stale-stubs CI check enforces freshness.
 
 ## Naming
 

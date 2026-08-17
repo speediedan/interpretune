@@ -1,0 +1,116 @@
+model_gradient:
+  description: Model gradient-based attribution
+  implementation: interpretune.analysis.ops.bundled.attribution.attribution_ops.model_gradient_impl
+  importable_params:
+    logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
+    get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
+  required_ops: [get_answer_indices]
+  aliases: []
+  input_schema:
+    input:
+      datasets_dtype: int64
+      connected_obj: datamodule
+    label_ids:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+  output_schema:
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    answer_indices:
+      datasets_dtype: int64
+    loss:
+      datasets_dtype: float32
+      sequence_type: false
+    logit_diffs:
+      datasets_dtype: float32
+    preds:
+      datasets_dtype: int64
+    grad_cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+
+gradient_attribution:
+  description: Compute attribution values from gradients
+  implementation: interpretune.analysis.ops.bundled.attribution.attribution_ops.gradient_attribution_impl
+  required_ops: [get_alive_latents]
+  aliases: []
+  input_schema:
+    input:
+      datasets_dtype: float32
+      connected_obj: datamodule
+    answer_indices:
+      datasets_dtype: int64
+    logit_diffs:
+      datasets_dtype: float32
+    grad_cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+  output_schema:
+    attribution_values:
+      datasets_dtype: float32
+      per_latent_model_hook: true
+    correct_activations:
+      datasets_dtype: float32
+      per_latent_model_hook: true
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+
+ablation_attribution:
+  description: Compute attribution values from ablation
+  implementation: interpretune.analysis.ops.bundled.attribution.attribution_ops.ablation_attribution_impl
+  importable_params:
+    logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
+    get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
+  aliases: []
+  # TODO: remove appropriate output_schema input_schema columns if/when get_loss_preds_diffs is made an op
+  input_schema:
+    input:
+      datasets_dtype: float32
+      connected_obj: datamodule
+    answer_indices:
+      datasets_dtype: int64
+    alive_latents:
+      datasets_dtype: int64
+      per_latent_model_hook: true
+      non_tensor: true
+    logit_diffs:
+      datasets_dtype: float32
+    answer_logits:
+      datasets_dtype: float32
+      per_latent: true
+      sequence_type: false
+      array_shape: [batch_size, vocab_size]
+    label_ids:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+  output_schema:
+    attribution_values:
+      datasets_dtype: float32
+      per_latent_model_hook: true
+    logit_diffs:
+      datasets_dtype: float32
+      per_latent: true
+    answer_logits:
+      datasets_dtype: float32
+      per_latent: true
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+    loss:
+      datasets_dtype: float32
+      per_latent: true
+      sequence_type: false
+    preds:
+      datasets_dtype: int64
+      per_latent: true

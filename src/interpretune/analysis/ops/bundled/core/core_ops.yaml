@@ -1,0 +1,159 @@
+---
+# TODO: we need to more elegantly account for global wrap_summary behavior. For example, any
+# batch with an `input` could also serialize `tokens` and `prompts` columns if configured to do so which we
+# explicitly define currently but should be introspected during compilation.
+labels_to_ids:
+  description: Convert label strings to tensor IDs
+  implementation: interpretune.analysis.ops.bundled.core.core_ops.labels_to_ids_impl
+  aliases: []
+  output_schema:
+    label_ids:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+  input_schema:
+    labels:
+      datasets_dtype: string
+      connected_obj: datamodule
+
+get_answer_indices:
+  description: Extract answer indices from batch
+  implementation: interpretune.analysis.ops.bundled.core.core_ops.get_answer_indices_impl
+  aliases: []
+  input_schema:
+    input:
+      datasets_dtype: int64
+      connected_obj: datamodule
+    answer_indices:
+      datasets_dtype: int64
+      required: false
+  output_schema:
+    answer_indices:
+      datasets_dtype: int64
+
+model_fwd:
+  description: Basic model forward pass
+  implementation: interpretune.analysis.ops.bundled.core.core_ops.model_fwd_impl
+  required_ops: [get_answer_indices]
+  aliases: ['model_forward']
+  input_schema:
+    input:
+      datasets_dtype: int64
+      connected_obj: datamodule
+    answer_indices:
+      required: false
+      datasets_dtype: int64
+  output_schema:
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      dyn_dim: 1
+      dyn_dim_ceil: max_seq_len
+      array_shape: [null, batch_size, vocab_size]
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+
+model_fwd_w_cache:
+  description: Model forward pass with activation caching (no latent model hooks)
+  implementation: interpretune.analysis.ops.bundled.core.core_ops.model_fwd_w_cache_impl
+  required_ops: [get_answer_indices]
+  aliases: []
+  input_schema:
+    input:
+      datasets_dtype: int64
+      connected_obj: datamodule
+  output_schema:
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      dyn_dim: 1
+      dyn_dim_ceil: max_seq_len
+      array_shape: [null, batch_size, vocab_size]
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    prompts:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+
+logit_diffs:
+  description: Clean forward pass for computing logit differences
+  implementation: interpretune.analysis.ops.bundled.core.core_ops.logit_diffs_impl
+  importable_params:
+    logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
+    get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
+  aliases: []
+  # TODO: remove appropriate output_schema input_schema columns if/when get_loss_preds_diffs is made an op
+  input_schema:
+    input:
+      datasets_dtype: float32
+      connected_obj: datamodule
+    label_ids:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      dyn_dim: 1
+      dyn_dim_ceil: max_seq_len
+      array_shape: [null, batch_size, vocab_size]
+    answer_indices:
+      datasets_dtype: int64
+  output_schema:
+    loss:
+      datasets_dtype: float32
+      sequence_type: false
+    logit_diffs:
+      datasets_dtype: float32
+    preds:
+      datasets_dtype: int64
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]
+
+logit_diffs_cache:
+  description: Clean forward pass for computing logit differences including cache activations (composition only)
+  implementation: interpretune.analysis.ops.bundled.core.core_ops.logit_diffs_impl
+  importable_params:
+    logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
+    get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
+  aliases: []
+  # TODO: remove appropriate output_schema input_schema columns if/when get_loss_preds_diffs is made an op
+  input_schema:
+    input:
+      datasets_dtype: float32
+      connected_obj: datamodule
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      dyn_dim: 1
+      dyn_dim_ceil: max_seq_len
+      array_shape: [null, batch_size, vocab_size]
+    answer_indices:
+      datasets_dtype: int64
+    label_ids:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+  output_schema:
+    loss:
+      datasets_dtype: float32
+      sequence_type: false
+    logit_diffs:
+      datasets_dtype: float32
+    preds:
+      datasets_dtype: int64
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+      array_shape: [batch_size, max_answer_tokens, num_classes]

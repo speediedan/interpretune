@@ -1,0 +1,294 @@
+extract_concept_latent_state:
+  description: Extract per-example latent rows from the configured cache key
+  implementation: interpretune.analysis.ops.bundled.concept.concept_ops.extract_concept_latent_state_impl
+  aliases: [concept_latent_state_from_cache]
+  input_schema:
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    answer_indices:
+      datasets_dtype: int64
+    context_token_indices:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      default: unembed.hook_in
+  output_schema:
+    concept_latent_state:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    context_token_indices:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+
+extract_concept_latent_examples:
+  description: Filter and annotate latent rows for concept-direction aggregation
+  implementation: interpretune.analysis.ops.bundled.concept.concept_ops.extract_concept_latent_examples_impl
+  aliases: [concept_latent_examples]
+  input_schema:
+    concept_latent_state:
+      datasets_dtype: float32
+      required: false
+      array_shape: [null, null]
+      sequence_type: false
+    cache:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+      intermediate_only: true
+    answer_indices:
+      datasets_dtype: int64
+      required: false
+    context_token_indices:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+    orig_labels:
+      datasets_dtype: int64
+    logit_diffs:
+      datasets_dtype: float32
+    concept_group_a_label_ids:
+      datasets_dtype: int64
+      non_tensor: true
+      sequence_type: true
+    concept_group_b_label_ids:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
+    concept_group_a_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_group_b_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      default: unembed.hook_in
+    concept_correct_only:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      default: 1
+    concept_weight_by_logit_diff:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      default: 0
+  output_schema:
+    concept_latent_state:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    concept_group_id:
+      datasets_dtype: int64
+      array_shape: [null]
+      sequence_type: false
+    concept_group_name:
+      datasets_dtype: string
+      non_tensor: true
+      sequence_type: true
+    concept_example_logit_diff:
+      datasets_dtype: float32
+      array_shape: [null]
+      sequence_type: false
+    concept_example_weight:
+      datasets_dtype: float32
+      array_shape: [null]
+      sequence_type: false
+    concept_context_indices:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    concept_group_a_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    concept_group_b_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+
+concept_direction:
+  description: Aggregate latent concept examples into a normalized concept direction vector
+  implementation: interpretune.analysis.ops.bundled.concept.concept_ops.concept_direction_impl
+  required_capabilities: [attribution_graph]
+  aliases: [semantic_direction]
+  input_schema:
+    concept_latent_state:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    concept_group_id:
+      datasets_dtype: int64
+      required: false
+    concept_group_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_example_weight:
+      datasets_dtype: float32
+      required: false
+    concept_group_a_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_group_b_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_label:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_group_a:
+      required: false
+      datasets_dtype: string
+      non_tensor: true
+    concept_group_b:
+      required: false
+      datasets_dtype: string
+      non_tensor: true
+    concept_direction_mode:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      default: mean_difference
+  output_schema:
+    concept_direction:
+      datasets_dtype: float32
+      dyn_dim: 0
+      dyn_dim_ceil: vocab_size
+      sequence_type: true
+    concept_label:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    concept_group_a_token_ids:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
+    concept_group_b_token_ids:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: true
+    concept_group_a_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    concept_group_b_name:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    concept_direction_mode:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+
+model_fwd_intervention:
+  description: Apply generalized hook-point interventions and return pre/post intervention logits
+  implementation: interpretune.analysis.ops.bundled.concept.concept_ops.model_fwd_intervention_impl
+  aliases: [direction_intervention, direct_concept_direction_intervention]
+  input_schema:
+    interventions:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+    interventions_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_hook_pattern:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_tensor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    intervention_tensors_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_mode:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_use_intervention_tensor_as_basis:
+      datasets_dtype: bool
+      required: false
+      sequence_type: false
+    intervention_scale_factor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    use_latent_models:
+      datasets_dtype: bool
+      required: false
+      sequence_type: false
+    concept_direction:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    direction_scale_factor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+  output_schema:
+    pre_intervention_logits:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    post_intervention_logits:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    logit_diff:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false

@@ -14,12 +14,9 @@ import torch
 import interpretune as it
 import interpretune.analysis
 from interpretune.analysis.execution import execute_analysis_op
-from interpretune.analysis.ops.helpers import (
-    AnalysisInputs,
-    FEATURE_SCORE_SOURCE_ALIASES,
-    _flatten_concept_store_rows,
-    last_token_logits,
-)
+from interpretune.analysis.inputs import AnalysisInputs
+from interpretune.analysis.optools import FEATURE_SCORE_SOURCE_ALIASES, last_token_logits
+from interpretune.analysis.ops.bundled.concept.concept_ops import flatten_concept_store_rows
 from interpretune.config import AnalysisCfg, init_analysis_cfgs
 from interpretune.utils import (
     DEFAULT_EXPLANATION_CLI_MAX_RETRIES,
@@ -2743,7 +2740,7 @@ def compute_store_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
             else getattr(aggregated_batch, "concept_example_weight_rows", None),
         )
         if aggregate_latent_rows is not None:
-            flattened_states, flattened_group_ids, flattened_example_weights, _ = _flatten_concept_store_rows(
+            flattened_states, flattened_group_ids, flattened_example_weights, _ = flatten_concept_store_rows(
                 aggregate_latent_rows,
                 aggregate_group_id_rows,
                 aggregate_group_name_rows,

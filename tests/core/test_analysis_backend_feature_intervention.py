@@ -19,9 +19,9 @@ from interpretune.analysis.backends import FeatureSelectionSpec, InterventionDic
 from interpretune.analysis.backends.circuit_tracer import DEFAULT_CT_ANALYSIS_BACKEND
 from interpretune.analysis.core import AnalysisStore, schema_to_features
 from interpretune.analysis.ops.base import AnalysisBatch
-from interpretune.analysis.ops.definitions import feature_intervention_forward_impl
+from interpretune.analysis.ops.bundled.circuit_tracer.ct_ops import feature_intervention_forward_impl
 from interpretune.analysis.ops.dispatcher import DISPATCHER
-from interpretune.analysis.ops.helpers import mean_target_logit_delta
+from interpretune.analysis.optools import mean_target_logit_delta
 from interpretune.config.circuit_tracer import CircuitTracerConfig
 
 

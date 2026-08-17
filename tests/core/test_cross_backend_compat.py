@@ -33,11 +33,11 @@ from interpretune.analysis import AnalysisInputs, execute_analysis_op
 from interpretune.analysis.backends.circuit_tracer import DEFAULT_CT_ANALYSIS_BACKEND
 from interpretune.analysis.core import AnalysisStore
 from interpretune.analysis.ops.base import AnalysisBatch
-from interpretune.analysis.ops.definitions import (
+from interpretune.analysis.ops.bundled.concept.concept_ops import (
     extract_concept_latent_state_impl,
     extract_concept_latent_examples_impl,
 )
-from interpretune.analysis.ops.helpers import _extract_concept_latent_state_from_cache
+from interpretune.analysis.ops.bundled.concept.concept_ops import extract_concept_latent_state_from_cache
 from interpretune.config.circuit_tracer import CircuitTracerConfig
 from interpretune.config import init_analysis_cfgs
 from tests import load_dotenv
@@ -526,7 +526,7 @@ def test_context_enhanced_extraction_snapshot_matches_helper_projection() -> Non
     )
 
     snapshot = capture_context_enhanced_extraction_snapshot(analysis_batch, context_scale=2.0)
-    latent_states, _ = _extract_concept_latent_state_from_cache(
+    latent_states, _ = extract_concept_latent_state_from_cache(
         analysis_batch,
         context_enhanced=True,
         context_scale=2.0,
@@ -562,7 +562,7 @@ def test_context_enhanced_extraction_snapshot_matches_answer_basis_projection() 
         context_scale=2.0,
         use_answer_state_as_basis=True,
     )
-    latent_states, _ = _extract_concept_latent_state_from_cache(
+    latent_states, _ = extract_concept_latent_state_from_cache(
         analysis_batch,
         context_enhanced=True,
         context_scale=2.0,
@@ -1700,7 +1700,7 @@ def test_context_enhanced_projection_math() -> None:
     answer_indices = torch.tensor([2], dtype=torch.long)
     batch = AnalysisBatch(cache={"unembed.hook_in": cache_tensor}, answer_indices=answer_indices)
 
-    latent_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=2.0)
+    latent_states, _ = extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=2.0)
 
     # answer = cache[0, 2] = [1, 2, 0, 0]; context = cache[0, prev=1] = [3, 4, 0, 0]
     # scaled_answer = 2.0 * [1, 2, 0, 0] = [2, 4, 0, 0]
@@ -1722,7 +1722,7 @@ def test_context_enhanced_projection_uses_explicit_context_indices() -> None:
         context_token_indices=torch.tensor([0], dtype=torch.long),
     )
 
-    latent_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=2.0)
+    latent_states, _ = extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=2.0)
 
     expected = torch.tensor([[2.0, 0.0, 0.0]], dtype=torch.float32)
     assert torch.allclose(latent_states, expected, atol=1e-5), f"Expected {expected}, got {latent_states}"
@@ -1737,7 +1737,7 @@ def test_context_enhanced_projection_default_scale() -> None:
     answer_indices = torch.tensor([2], dtype=torch.long)
     batch = AnalysisBatch(cache={"unembed.hook_in": cache_tensor}, answer_indices=answer_indices)
 
-    latent_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=1.0)
+    latent_states, _ = extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=1.0)
 
     # answer = [50, 60]; context = [30, 40]
     # dot(answer, context) = 1500 + 2400 = 3900
@@ -1754,7 +1754,7 @@ def test_context_enhanced_projection_can_use_answer_state_as_basis() -> None:
     )
     batch = AnalysisBatch(cache={"unembed.hook_in": cache_tensor}, answer_indices=torch.tensor([2], dtype=torch.long))
 
-    latent_states, _ = _extract_concept_latent_state_from_cache(
+    latent_states, _ = extract_concept_latent_state_from_cache(
         batch,
         context_enhanced=True,
         context_scale=2.0,
@@ -1774,7 +1774,7 @@ def test_context_enhanced_projection_skips_ans_idx_zero() -> None:
     answer_indices = torch.tensor([0], dtype=torch.long)
     batch = AnalysisBatch(cache={"unembed.hook_in": cache_tensor}, answer_indices=answer_indices)
 
-    latent_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=1.0)
+    latent_states, _ = extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=1.0)
 
     # answer at position 0 → no valid preceding position → raw answer returned
     expected = torch.tensor([[5.0, 5.0]], dtype=torch.float32)
@@ -1790,8 +1790,8 @@ def test_context_enhanced_projection_differs_from_default() -> None:
     answer_indices = torch.tensor([2], dtype=torch.long)
     batch = AnalysisBatch(cache={"unembed.hook_in": cache_tensor}, answer_indices=answer_indices)
 
-    default_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=False)
-    enhanced_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=1.0)
+    default_states, _ = extract_concept_latent_state_from_cache(batch, context_enhanced=False)
+    enhanced_states, _ = extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=1.0)
 
     assert not torch.equal(enhanced_states, default_states), (
         "Context-enhanced latent should differ from raw answer-position state"
@@ -1811,7 +1811,7 @@ def test_context_enhanced_projection_multiple_examples() -> None:
     answer_indices = torch.tensor([2, 2], dtype=torch.long)
     batch = AnalysisBatch(cache={"unembed.hook_in": cache_tensor}, answer_indices=answer_indices)
 
-    latent_states, _ = _extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=1.0)
+    latent_states, _ = extract_concept_latent_state_from_cache(batch, context_enhanced=True, context_scale=1.0)
 
     # Example 0: answer=[2,3], context=[0,1]
     # dot([2,3],[0,1])=3, dot([0,1],[0,1])=1 → (3/1)*[0,1] = [0, 3]

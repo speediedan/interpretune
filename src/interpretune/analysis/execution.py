@@ -8,8 +8,9 @@ from typing import Any
 
 from transformers import BatchEncoding
 
+from interpretune.analysis.inputs import AnalysisInputs, coerce_analysis_inputs
 from interpretune.analysis.ops.base import AnalysisBatch
-from interpretune.analysis.ops.helpers import AnalysisInputs, coerce_analysis_inputs, resolve_tokenizer
+from interpretune.analysis.optools import resolve_tokenizer
 from interpretune.protocol import STEP_OUTPUT
 
 

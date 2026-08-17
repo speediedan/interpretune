@@ -31,7 +31,13 @@ Analysis
    interpretune.analysis
    interpretune.analysis.backends
    interpretune.analysis.ops.base
-   interpretune.analysis.ops.definitions
+   interpretune.analysis.inputs
+   interpretune.analysis.optools
+   interpretune.analysis.ops.bundled.core.core_ops
+   interpretune.analysis.ops.bundled.sae.sae_ops
+   interpretune.analysis.ops.bundled.attribution.attribution_ops
+   interpretune.analysis.ops.bundled.concept.concept_ops
+   interpretune.analysis.ops.bundled.circuit_tracer.ct_ops
 
 Extensions and utilities
 ------------------------

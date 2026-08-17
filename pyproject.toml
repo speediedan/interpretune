@@ -250,6 +250,13 @@ exclude = ["it_examples.tests*"]
 # (MANIFEST.in's recursive-include also covers them today; this glob is the belt to that braces)
 "it_examples" = ["*.yaml", "examples/**/*.yaml"]
 "interpretune" = ["*.yaml"]
+# bundled op-family definitions must ship in the wheel (belt to MANIFEST.in's recursive-include)
+"interpretune.analysis.ops.bundled" = ["*.yaml"]
+"interpretune.analysis.ops.bundled.core" = ["*.yaml"]
+"interpretune.analysis.ops.bundled.sae" = ["*.yaml"]
+"interpretune.analysis.ops.bundled.attribution" = ["*.yaml"]
+"interpretune.analysis.ops.bundled.concept" = ["*.yaml"]
+"interpretune.analysis.ops.bundled.circuit_tracer" = ["*.yaml"]
 
 [tool.setuptools_scm]
 fallback_version = "0.1.0.dev0"

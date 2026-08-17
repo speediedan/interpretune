@@ -52,8 +52,11 @@ class AnalysisOpDispatcher:
         # Initialize yaml_paths
         self.yaml_paths = [Path(p.strip()) for p in IT_ANALYSIS_OP_PATHS]  # Start with op_paths
 
-        # Always include the default built-in analysis ops yaml file.
-        self.yaml_paths.append(Path(__file__).parent / "native_analysis_functions.yaml")
+        # Always include the bundled op-family definitions shipped with the package. Bundled YAMLs
+        # reference fully-qualified interpretune implementation paths, so the bundled tree is
+        # deliberately excluded from op_paths/sys.path exposure (see _resolve_op_paths_from_yaml_paths).
+        self._bundled_ops_dir = Path(__file__).parent / "bundled"
+        self.yaml_paths.append(self._bundled_ops_dir)
 
         # Handle user-provided yaml_paths
         if yaml_paths:  # otherwise use only use the default
@@ -786,10 +789,15 @@ class AnalysisOpDispatcher:
         """Resolve op_paths from yaml_paths.
 
         For directories in yaml_paths, add the yaml_path to op_paths. For yaml files, add the direct parent directory of
-        the yaml file to op_paths.
+        the yaml file to op_paths. The bundled op tree is skipped: its YAMLs resolve implementations via fully-qualified
+        interpretune module paths and must not leak family packages onto sys.path.
         """
+        bundled_dir = getattr(self, "_bundled_ops_dir", None)
+        bundled_resolved = Path(bundled_dir).resolve() if bundled_dir is not None else None
         for yaml_path in self.yaml_paths:
             yaml_path = Path(yaml_path).resolve()
+            if bundled_resolved is not None and yaml_path == bundled_resolved:
+                continue
 
             if yaml_path.is_dir():
                 # Add directory to op_paths if not already present

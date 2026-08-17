@@ -20,14 +20,14 @@ from interpretune.analysis.backends.circuit_tracer import DEFAULT_CT_ANALYSIS_BA
 from interpretune.analysis.core import AnalysisStore, schema_to_features
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.dispatcher import DISPATCHER
-from interpretune.analysis.ops.definitions import (
+from interpretune.analysis.ops.bundled.circuit_tracer.ct_ops import (
     compute_attribution_graph_impl,
-    concept_direction_impl,
     extract_top_features_impl,
     graph_node_influence_impl,
     graph_prune_impl,
 )
-from interpretune.analysis.ops.helpers import (
+from interpretune.analysis.ops.bundled.concept.concept_ops import concept_direction_impl
+from interpretune.analysis.backends import (
     FeatureSelectionSpec,
     apply_feature_score_sign_filter,
     apply_feature_selection_filter,
