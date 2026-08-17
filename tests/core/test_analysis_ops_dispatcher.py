@@ -1811,15 +1811,15 @@ text_processor:
             # assert dispatcher.resolve_operation_name("user1.nlp.text_processor") == "user1.nlp.text_processor"
             # assert dispatcher.resolve_operation_name("text_processor") == "user1.nlp.text_processor"
 
-    def test_dispatcher_mixed_native_and_hub_ops(self, tmp_path):
-        """Test dispatcher with both native and hub operations."""
-        # Create native ops file
-        native_yaml = tmp_path / "native_ops.yaml"
-        native_yaml.write_text("""
-native_op:
-  description: A native operation
-  implementation: native.module.func
-  aliases: ['native_alias']
+    def test_dispatcher_mixed_local_and_hub_ops(self, tmp_path):
+        """Test dispatcher with both local-collection and hub operations."""
+        # Create a local op collection
+        local_yaml = tmp_path / "local_ops.yaml"
+        local_yaml.write_text("""
+local_op:
+  description: A local operation
+  implementation: local.module.func
+  aliases: ['local_alias']
   input_schema:
     data:
       datasets_dtype: float32
@@ -1853,12 +1853,12 @@ hub_special_op:
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
             patch("interpretune.analysis.IT_ANALYSIS_OP_PATHS", []),
         ):
-            dispatcher = AnalysisOpDispatcher(yaml_paths=native_yaml, enable_hub_ops=True)
+            dispatcher = AnalysisOpDispatcher(yaml_paths=local_yaml, enable_hub_ops=True)
             dispatcher.load_definitions()
 
-            # Native op should be stored without namespace
-            assert "native_op" in dispatcher._op_definitions
-            assert "native_alias" in dispatcher._aliases
+            # Local op should be stored without namespace
+            assert "local_op" in dispatcher._op_definitions
+            assert "local_alias" in dispatcher._aliases
 
             # Hub op should be stored with namespace
             assert "hubuser.special.hub_special_op" in dispatcher._op_definitions

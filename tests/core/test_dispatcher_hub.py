@@ -59,17 +59,26 @@ test_op:
             dispatcher.load_definitions()
             mock_add_hub.assert_called_once()
 
-    def test_apply_hub_namespacing_native_file(self):
-        """Test namespacing is not applied to native files."""
+    def test_apply_hub_namespacing_bundled_file(self):
+        """Test namespacing is not applied to bundled files."""
         dispatcher = AnalysisOpDispatcher(yaml_paths=[self.test_yaml])
 
         raw_definitions = {"test_op": {"description": "Test operation", "aliases": ["test_alias"]}}
 
-        # Mock native file path
-        native_file = Path(__file__).parent.parent / "src" / "interpretune" / "analysis" / "ops" / "native.yaml"
+        # A bundled family YAML: namespacing keys on the empty namespace, not on this path existing.
+        bundled_file = (
+            Path(__file__).parent.parent
+            / "src"
+            / "interpretune"
+            / "analysis"
+            / "ops"
+            / "bundled"
+            / "core"
+            / "core_ops.yaml"
+        )
 
         with patch.object(dispatcher._cache_manager, "get_hub_namespace", return_value=""):
-            result = dispatcher._apply_hub_namespacing(raw_definitions, native_file)
+            result = dispatcher._apply_hub_namespacing(raw_definitions, bundled_file)
 
         assert "test_op" in result
 
