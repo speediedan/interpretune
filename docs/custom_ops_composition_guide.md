@@ -58,7 +58,9 @@ rather than a reach into package internals:
 
 - `interpretune.analysis.optools`: the op-authoring toolkit (tensor/logits utilities,
   tokenizer/embedding resolution, tokenization helpers, scoped-input conveniences)
-- `interpretune.analysis.backends`: the capability seam for backend-specific behavior
+- `interpretune.analysis.backends`: the capability seam for backend-specific behavior (its
+  `protocols`, `capabilities`, `interventions` and `feature_selection` modules are re-exported from
+  the package, so import from `interpretune.analysis.backends` rather than the submodules)
 - `interpretune.analysis.inputs`: the scoped-input execution contract (`AnalysisInputs`)
 - the public op classes in `interpretune.analysis.ops.base` (`AnalysisBatch`, `OpSchema`,
   `ColCfg`, `get_batch_input`)
