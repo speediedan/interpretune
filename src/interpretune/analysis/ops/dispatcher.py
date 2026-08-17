@@ -16,7 +16,7 @@ from interpretune.analysis.inputs import OpStateSpec
 from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg, OpWrapper
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
-from interpretune.analysis.ops.compiler.load_policy import op_load_failure
+from interpretune.analysis.ops.compiler.load_policy import op_load_failure, strict_op_load
 from interpretune.analysis.ops.dynamic_module_utils import ensure_op_paths_in_syspath, get_function_from_dynamic_module
 from interpretune.protocol import BaseAnalysisBatchProtocol
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
@@ -73,6 +73,11 @@ class AnalysisOpDispatcher:
 
         self.enable_hub_ops = enable_hub_ops
         self._op_definitions: dict[str, OpDef] = {}
+        # Declared-name -> originating YAML, for diagnostics only. Deliberately NOT a field on OpDef:
+        # OpDef is serialized into the generated cache, so adding one would force a
+        # CACHE_FORMAT_VERSION bump and invalidate every user's cache for a string used only in error
+        # messages. If a source path is ever needed at RUNTIME rather than at load, promote it then.
+        self._op_declaration_sites: dict[str, str] = {}
         self._dispatch_table = {}  # {op_name: {context: instantiated_op}}
         self._aliases = {}  # {alias: op_name}
         self._op_to_aliases = defaultdict(list)  # {op_name: [aliases]}
@@ -128,8 +133,13 @@ class AnalysisOpDispatcher:
                     self._cache_manager.add_yaml_file(yaml_file)
 
             rank_zero_debug("[DISPATCHER] Attempting to load from cache")
-            # Try to load from cache first
-            cached_definitions = self._cache_manager.load_cache()
+            # Strict loading vetoes the cache. Every check `op_load_failure` guards -- failed compiles,
+            # unresolvable importable_params, invalid op_state, unsanctioned hub params, name collisions --
+            # runs while definitions are COMPILED, so reading a precompiled artifact skips all of them and
+            # `IT_STRICT_OP_LOAD=1` silently becomes a no-op against a warm cache. Measured before fixing:
+            # a non-strict load warned once and cached; the next load with strict enabled reused that cache
+            # and reported nothing. Verifying is the whole point of the flag, so it recompiles.
+            cached_definitions = None if strict_op_load() else self._cache_manager.load_cache()
             if cached_definitions is not None:
                 rank_zero_debug(f"[DISPATCHER] Cache HIT: Loaded {len(cached_definitions)} definitions from cache")
                 self._op_definitions = cached_definitions
@@ -181,10 +191,12 @@ class AnalysisOpDispatcher:
                     if key == "composite_operations":
                         for comp_name, comp_def in value.items():
                             composite_operations[comp_name] = {**comp_def, "source": source}
+                            self._op_declaration_sites[comp_name] = str(yaml_file)
                     else:
                         if key in raw_definitions:
                             rank_zero_debug(f"Operation '{key}' redefined in {yaml_file}, using latest definition")
                         raw_definitions[key] = {**value, "source": source} if isinstance(value, dict) else value
+                        self._op_declaration_sites[key] = str(yaml_file)
 
             except Exception as e:
                 rank_zero_debug(f"Failed to load YAML file {yaml_file}: {e}")
@@ -245,9 +257,39 @@ class AnalysisOpDispatcher:
                 definitions_to_compile.pop(op_name, None)
                 op_load_failure(f"Failed to compile operation '{op_name}': {e}")
 
+    def _declaration_site(self, declared_name: str) -> str:
+        """Where a declared op name came from, for diagnostics ("<unknown source>" if untracked)."""
+        return self._op_declaration_sites.get(declared_name, "<unknown source>")
+
+    def _check_normalization_collision(self, declared_name: str, normalized: str, claimed_by: dict[str, str]) -> None:
+        """Report when two distinct declared names normalize to the same op name.
+
+        Distinct declared names collapse to one key because :meth:`_normalize_op_name` case-folds and maps ``-``/``/``
+        (``my-collide-op`` and ``my_collide_op`` both become ``my_collide_op``). Undetected, the later definition
+        silently replaces the earlier one and lookup returns whichever won: a wrong answer rather than an error, and
+        invisible when the two come from different collections. The check spans the whole merged definition set, not a
+        single file, because that cross-collection case is the realistic one and no per-file check can see it.
+
+        ``OpDef.source`` cannot name the sources here: it is a category (``bundled`` | ``local`` | ``hub:<user.repo>``),
+        so two local collections both report ``local``. The declared-name -> YAML side map supplies the actual files.
+        """
+        prior = claimed_by.get(normalized)
+        if prior is None or prior == declared_name:
+            return
+        op_load_failure(
+            f"Operation name collision: '{declared_name}' (declared in {self._declaration_site(declared_name)}) "
+            f"normalizes to '{normalized}', which is already declared as '{prior}' in "
+            f"{self._declaration_site(prior)}. Op names are matched case-insensitively with '-' and '/' normalized, "
+            f"so these are the same operation. Rename one of them; the later definition currently wins."
+        )
+
     def _convert_raw_definitions_to_opdefs(self, raw_definitions: dict[str, Dict]):
         """Convert raw dictionary definitions to OpDef objects."""
+        # normalized name -> the declared name that claimed it, so a collision can name both sides.
+        claimed_by: dict[str, str] = {}
         for op_name, op_def in raw_definitions.items():
+            self._check_normalization_collision(op_name, self._normalize_op_name(op_name), claimed_by)
+            claimed_by[self._normalize_op_name(op_name)] = op_name
             op_name = self._normalize_op_name(op_name)
             # Convert schemas to OpSchema objects
             input_schema = self._convert_to_op_schema(op_def.get("input_schema", {}))
@@ -446,9 +488,18 @@ class AnalysisOpDispatcher:
             yield (alias, op_name)
 
     def _resolve_name_safe(self, op_name: str, visited: set | None = None) -> str:
-        """Safely resolve names with cycle detection."""
+        """Safely resolve names with cycle detection, normalizing the way storage does.
+
+        Normalizing here is what makes lookup symmetric with registration. Definitions are stored under
+        :meth:`_normalize_op_name` of their declared name (case-folded, ``-``->``_``, ``/``->``.``), and this is the
+        single choke point every external lookup passes through, so without it an op declared ``my-hyphen-op`` or
+        ``MyCasedOp`` registered under a name its own author could not use -- ``get_op`` raised ``Unknown operation``
+        with no warning at load. The docstring on ``_normalize_op_name`` always claimed normalization was "for
+        consistent lookup"; only the storage half implemented it.
+        """
         if visited is None:
             visited = set()
+        op_name = self._normalize_op_name(op_name)
 
         if op_name in visited:
             # Cycle detected, return the original name
