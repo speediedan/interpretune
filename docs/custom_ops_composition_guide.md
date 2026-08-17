@@ -380,10 +380,13 @@ What the framework guarantees:
 
 - **A namespace.** Only declared field names are readable or writable; anything else raises, so a
   typo is an error rather than a silently-`None` read.
-- **A lifecycle owner.** The container belongs to the `AnalysisCfg` for the run: cleared before the
-  first batch, cleared at epoch boundaries only for ops that set `reset_each_epoch: true`, and
-  released at the end of the run. Ops never decide when accumulation starts over, so nothing depends
-  on `batch_idx == 0` (which restarts every epoch and therefore discards all but the last).
+- **A lifecycle owner.** The container belongs to the `AnalysisCfg`, and the *analysis runner* drives
+  it: cleared before the first batch, cleared at epoch boundaries only for ops that set
+  `reset_each_epoch: true`, and released at the end of the run. Ops never decide when accumulation
+  starts over, so nothing depends on `batch_idx == 0` (which restarts every epoch and therefore
+  discards all but the last). Driving `execute_analysis_op` yourself in a loop, those callbacks do
+  not fire — a fresh `AnalysisCfg` starts with fresh state, and `cfg.reset_op_state()` /
+  `cfg.finalize_op_state()` are there if you reuse one across independent runs.
 - **Isolation.** State is keyed per op, so the member ops of a composite each get their own.
 
 Two consequences worth knowing:
@@ -391,9 +394,12 @@ Two consequences worth knowing:
 - Accumulator state is *not* an input scope. `analysis_batch.get(...)` will not resolve it, and it
   is not persisted; emit converged results through your output schema.
 - An op that declares `op_state` needs an owner. Run it through a runner or
-  `interpretune.analysis.execution.execute_analysis_op` (both activate an `AnalysisCfg`); a bare
-  `it.my_streaming_op(...)` call with no active cfg raises rather than accumulating into a container
-  nobody can reset.
+  `interpretune.analysis.execution.execute_analysis_op` (both activate an `AnalysisCfg`). With no
+  active cfg the framework has nothing to bind, so `analysis_inputs.op_state` is `None` and reaches
+  your implementation that way — it does not invent a container nobody can reset. **Raise on `None`
+  rather than silently degrading**; the bundled concept ops do exactly that, and the message names
+  what is missing. (Their previous behavior is the argument for it: the writes were swallowed and the
+  failure surfaced several frames later as a data error.)
 
 ## Practical Rule of Thumb
 
