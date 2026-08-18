@@ -134,6 +134,35 @@ class TestHeaderIsNotAnOperation:
         assert COLLECTION_HEADER_KEY not in dispatcher._op_definitions
         assert "my_collection_op" in dispatcher._op_definitions
 
+    def test_the_header_is_not_registered_as_an_op_on_the_HUB_path_either(self, tmp_path, monkeypatch):
+        """The header is dropped BEFORE hub namespacing, which is where this went wrong.
+
+        Namespacing rewrites every top-level key, so the header arrived as ``<user>.<repo>.collection`` and no
+        longer matched the header key -- it was then registered as an op, giving every hub collection a junk
+        ``collection`` op whose "definition" was the header mapping. Bundled files are not namespaced, which is
+        why the equality check held there and hid it; the first evidence was a generated stub declaring a
+        ``collection`` function.
+        """
+        from tests.hub_op_fixtures import write_cached_op_collection
+
+        hub_cache = tmp_path / "hub"
+        header = "collection:\n  name: hub_collection\n  version: 2.0.0\n"
+        write_cached_op_collection(
+            hub_cache, repo_id="someone/ops", op_files={"ops.yaml": _collection_yaml(header, "hub_op")}
+        )
+        monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache)
+        monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_OP_PATHS", [])
+
+        dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
+        (tmp_path / "cache").mkdir()
+        dispatcher._cache_manager.cache_dir = tmp_path / "cache"
+        dispatcher.load_definitions()
+
+        assert "someone.ops.hub_op" in dispatcher._op_definitions, "fixture collection failed to load"
+        assert not [name for name in dispatcher._op_definitions if name.split(".")[-1] == COLLECTION_HEADER_KEY]
+        # and the header still parsed, so collection identity is intact
+        assert dispatcher._op_definitions["someone.ops.hub_op"].collection_name == "hub_collection"
+
 
 class TestBundledFamiliesDeclareCollections:
     """The CI assertion D8 asks for, in the form that actually protects.

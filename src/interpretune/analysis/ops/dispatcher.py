@@ -294,8 +294,13 @@ class AnalysisOpDispatcher:
                     )
                     continue
 
-                # Apply namespace prefixes for hub operations
-                namespaced_content = self._apply_hub_namespacing(yaml_content, yaml_file)
+                # Drop the header BEFORE namespacing. Namespacing rewrites every top-level key, so a
+                # hub collection's header arrived as `<user>.<repo>.collection` and no longer matched the
+                # header key -- it was then registered as an op, giving every hub collection a junk
+                # `collection` op with the header's mapping as its definition. Bundled files are not
+                # namespaced, which is why the equality check held there and hid this.
+                op_content = {key: value for key, value in yaml_content.items() if key != COLLECTION_HEADER_KEY}
+                namespaced_content = self._apply_hub_namespacing(op_content, yaml_file)
 
                 source = self._op_source_for(yaml_file)
 
@@ -309,8 +314,6 @@ class AnalysisOpDispatcher:
 
                 # Separate composite operations from regular operations
                 for key, value in namespaced_content.items():
-                    if key == COLLECTION_HEADER_KEY:
-                        continue  # a declared header, not an op (already parsed above)
                     if key == "composite_operations":
                         for comp_name, comp_def in value.items():
                             composite_operations[comp_name] = {**comp_def, **provenance}
