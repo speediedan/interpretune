@@ -229,6 +229,27 @@ def test_attribution_analysis_notebook(params: dict[str, Any], tmp_path: Path):
 _hf_token_available = bool(os.environ.get("HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY") or os.environ.get("HF_TOKEN"))
 
 
+_flagship_token_available = bool(os.environ.get("IT_HF_TOKEN") or os.environ.get("HF_TOKEN"))
+
+
+@pytest.mark.skipif(not _flagship_token_available, reason="IT_HF_TOKEN or HF_TOKEN required")
+@pytest.mark.parametrize("notebook_file", ["bundled_ops_hub_optin.ipynb"])
+def test_bundled_ops_hub_optin_notebook(notebook_file: str, tmp_path: Path):
+    """The hub-op opt-in flow, end to end against the published flagship collection.
+
+    Token-gated only because `speediedan/concept_direction_ops` is private until interpretune's Hub library registration
+    lands; the pull path needs no auth once the repo is public. The notebook only PULLS, so it cannot modify a
+    repository regardless of the token's scope.
+    """
+    notebook_path = NOTEBOOKS_DIR / "example_op_collections" / notebook_file
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_notebook = execute_notebook_with_params(notebook_path=notebook_path, parameters={}, output_dir=output_dir)
+    assert output_notebook.exists(), f"Output notebook not created at {output_notebook}"
+    _cleanup_notebook_artifacts()
+
+
 @pytest.mark.skipif(not _hf_token_available, reason="HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY or HF_TOKEN required")
 @pytest.mark.parametrize("notebook_file", ["op_collection_example.ipynb"])
 def test_op_collection_notebooks(notebook_file: str, tmp_path: Path):
@@ -533,6 +554,7 @@ def test_notebook_discovery():
         "circuit_tracer_examples/ct_analysis_backend_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb",
+        "example_op_collections/bundled_ops_hub_optin.ipynb",
         "example_op_collections/op_collection_example.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",

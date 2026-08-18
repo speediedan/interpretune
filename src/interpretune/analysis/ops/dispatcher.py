@@ -246,6 +246,25 @@ class AnalysisOpDispatcher:
         finally:
             self._loading_in_progress = False
 
+    def reload_definitions(self) -> None:
+        """Re-discover and reload every op definition, picking up collections cached since the last load.
+
+        Needed because a session loads definitions once. Without this, fetching a collection and then using
+        one of its ops in the SAME process raises ``Unknown operation`` -- the ops are on disk, and nothing
+        looks at the disk again -- so the fetch appeared to do nothing until the next process. Discovery
+        re-runs the trust gate and every collection's compatibility window, exactly as the first load did.
+        """
+        self._op_definitions = {}
+        self._op_declaration_sites = {}
+        self._op_collections = {}
+        self._aliases = {}
+        self._op_to_aliases = defaultdict(list)
+        self._dispatch_table = {}
+        self._cache_manager._yaml_files = []
+        self._cache_manager._fingerprint = None
+        self._loaded = False
+        self.load_definitions()
+
     def _load_from_yaml_and_compile(self, yaml_files: list[Path]):
         """Load from YAML files and compile to cache."""
         # Load and merge all YAML files
