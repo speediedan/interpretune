@@ -1,0 +1,9 @@
+---
+# The manifest that makes this directory a well-formed interpretune ops repo. Op discovery is
+# manifest-routed: a collection declares which of its YAMLs are op definitions, so anything else the repo
+# carries (a card, a config sample, this file) is never fed to the op compiler.
+it_schema_version: 1
+kinds: [ops]
+ops:
+  files:
+    - hub_op_collection.yaml

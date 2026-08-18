@@ -12,6 +12,8 @@ from typing import Dict, Any, Callable, List, Union
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from interpretune.analysis.ops.collection import COLLECTION_HEADER_KEY  # noqa: E402  (needs project_root)
+
 
 def import_callable(callable_path: str) -> Callable:
     """Import a callable from a path."""
@@ -241,12 +243,20 @@ def generate_composition_stub(op_name: str, op_def: Dict[str, Any]) -> str:
 
 
 def load_bundled_definitions(yaml_paths: List[Path]) -> Dict[str, Any]:
-    """Load and merge the bundled op-family YAMLs into a single definitions mapping."""
+    """Load and merge the bundled op-family YAMLs into a single definitions mapping.
+
+    Non-op top-level keys are skipped. Every family declares a ``collection:`` header, and treating it as an
+    op made the generator fail on its second family with a misleading "Duplicate bundled op definition
+    'collection'" -- the same shape of bug the header caused in the op compiler.
+    """
+    non_op_keys = {COLLECTION_HEADER_KEY}
     merged: Dict[str, Any] = {}
     for yaml_path in yaml_paths:
         with open(yaml_path, "r", encoding="utf-8") as f:
             content = yaml.safe_load(f) or {}
         for op_name, op_def in content.items():
+            if op_name in non_op_keys:
+                continue
             if op_name == "composite_operations":
                 merged.setdefault("composite_operations", {}).update(op_def)
             else:

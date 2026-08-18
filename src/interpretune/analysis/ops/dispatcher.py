@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 from typing import Dict, NamedTuple, Iterator, Callable, Any
+from dataclasses import dataclass
 from pathlib import Path
 from functools import wraps
 from collections import defaultdict
 import importlib
+import os
 import yaml
 
 import torch
@@ -40,6 +42,73 @@ class DispatchContext(NamedTuple):
     """Context for dispatching operations."""
 
     pass  # We don't use context keys yet but may in the future
+
+
+# Ordered, comma-separated namespaces whose ops win bare-name resolution. The env parity for
+# `it.hub.prefer_ops`, for CLI and scripted runs where there is no place to call it.
+IT_OP_PRECEDENCE_ENV_VAR = "IT_OP_PRECEDENCE"
+
+
+def _cached_op_revision(source: str) -> str | None:
+    """Cached commit a hub op collection currently resolves to (``None`` for bundled/local ops).
+
+    Read from the ops hub cache, never the network: this answers "which revision am I running", and a lookup that could
+    silently fetch would change the answer while reporting it.
+    """
+    if not source.startswith("hub:"):
+        return None
+    namespace = source.split(":", 1)[1]
+    user, _, repo = namespace.partition(".")
+    ref = Path(IT_ANALYSIS_HUB_CACHE) / f"models--{user}--{repo}" / "refs" / "main"
+    try:
+        return ref.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+@dataclass(frozen=True)
+class OpCandidate:
+    """One definition a bare op name could reach, with its provenance and declared collection identity."""
+
+    name: str
+    source: str
+    collection: str | None
+    version: str | None
+    revision: str | None
+
+    def __str__(self) -> str:
+        detail = [self.source]
+        if self.collection:
+            detail.append(f"collection {self.collection} {self.version or '(unversioned)'}")
+        if self.revision:
+            detail.append(f"revision {self.revision[:12]}")
+        return f"{self.name} [{', '.join(detail)}]"
+
+
+@dataclass(frozen=True)
+class OpResolution:
+    """What a name resolves to right now, the alternatives, and the precedence that chose between them."""
+
+    requested: str
+    resolved: str
+    active: OpCandidate
+    alternatives: tuple[OpCandidate, ...] = ()
+    precedence: tuple[str, ...] = ()
+
+    @property
+    def is_shadowing_bundled(self) -> bool:
+        """Whether a non-bundled definition is currently winning a name a bundled op also defines."""
+        return not self.active.source.startswith("bundled") and any(
+            candidate.source == "bundled" for candidate in self.alternatives
+        )
+
+    def __str__(self) -> str:
+        lines = [f"{self.requested!r} resolves to {self.active}"]
+        if self.alternatives:
+            lines.append("  also available:")
+            lines += [f"    {candidate}" for candidate in self.alternatives]
+        lines.append(f"  precedence: {list(self.precedence) or 'none (bundled ops win bare names)'}")
+        return "\n".join(lines)
 
 
 class AnalysisOpDispatcher:
@@ -83,6 +152,9 @@ class AnalysisOpDispatcher:
         # Originating YAML -> its declared `collection:` header, for compatibility enforcement at load and
         # for op_info attribution. Load-time only, like the declaration sites above.
         self._op_collections: dict[str, CollectionSpec] = {}
+        # Namespaces (`user.repo`) whose ops win BARE-name resolution, highest precedence first. Empty by
+        # default: bundled ops win bare names, and opting into a newer hub copy is explicit (D8 item 2).
+        self._preferred_op_namespaces: list[str] = []
         self._dispatch_table = {}  # {op_name: {context: instantiated_op}}
         self._aliases = {}  # {alias: op_name}
         self._op_to_aliases = defaultdict(list)  # {op_name: [aliases]}
@@ -567,6 +639,9 @@ class AnalysisOpDispatcher:
             visited = set()
         op_name = self._normalize_op_name(op_name)
 
+        if (preferred := self._preferred_name(op_name)) is not None and preferred not in visited:
+            op_name = preferred
+
         if op_name in visited:
             # Cycle detected, return the original name
             return op_name
@@ -579,6 +654,111 @@ class AnalysisOpDispatcher:
         visited.remove(op_name)
 
         return resolved
+
+    @property
+    def op_precedence(self) -> list[str]:
+        """Namespaces whose ops win bare-name resolution, highest precedence first.
+
+        In-process :meth:`prefer_ops` declarations come first, then any from ``IT_OP_PRECEDENCE`` (comma
+        separated, ordered) that they do not already name. The env var is read on every access rather than
+        cached at construction because the dispatcher is a module-level singleton built at import: a value
+        exported after that would otherwise never be seen.
+        """
+        from_env = [
+            namespace
+            for entry in os.environ.get(IT_OP_PRECEDENCE_ENV_VAR, "").split(",")
+            if (namespace := self._normalize_op_name(entry.strip()))
+        ]
+        ordered = list(self._preferred_op_namespaces)
+        ordered += [namespace for namespace in from_env if namespace not in ordered]
+        return ordered
+
+    def prefer_ops(self, *repo_ids: str, replace: bool = False) -> list[str]:
+        """Opt into resolving bare op names to a collection's ops; returns the active precedence list.
+
+        Ops are addressed by bare name throughout examples and notebooks, and bundled ops win those names by
+        default. This is how a caller opts into a hub collection's copy of an op instead -- per namespace and
+        explicitly, never as a side effect of pulling. Fully-qualified names are unaffected in both
+        directions: they always address exactly what they name.
+
+        Called with no arguments it clears the in-process opt-in (``IT_OP_PRECEDENCE`` still applies).
+        """
+        namespaces = [self._normalize_op_name(repo_id) for repo_id in repo_ids]
+        if replace or not repo_ids:
+            self._preferred_op_namespaces = namespaces
+        else:
+            for namespace in namespaces:
+                if namespace in self._preferred_op_namespaces:
+                    self._preferred_op_namespaces.remove(namespace)
+                self._preferred_op_namespaces.append(namespace)
+        # Bare names may already be bound in the dispatch table; drop those so the flip takes effect for ops
+        # that have been called earlier in the session.
+        self._dispatch_table.clear()
+        return self.op_precedence
+
+    def _preferred_name(self, op_name: str) -> str | None:
+        """The namespaced name a BARE op name resolves to under an explicit precedence opt-in, if any.
+
+        Re-ranking happens at lookup rather than by rewriting ``_op_definitions``, for two reasons: a bundled
+        op's only name IS its bare name (nothing else addresses it), so rebinding that key would make the
+        bundled copy unreachable rather than merely lower-priority; and precedence stays reversible within a
+        session, which is what the opt-in demo notebook shows.
+        """
+        if "." in op_name:
+            return None  # explicit beats implicit: a fully-qualified name is never re-ranked
+        for namespace in self.op_precedence:
+            candidate = f"{namespace}.{op_name}"
+            if candidate in self._op_definitions:
+                return candidate
+        return None
+
+    @_ensure_loaded
+    def op_info(self, op_name: str) -> "OpResolution":
+        """Report which collection a name currently resolves to, and what the alternatives are.
+
+        The question "am I running the bundled ``concept_direction`` or the one I pulled" has no answer from
+        the op object itself, so this reports the resolution: the definition a name reaches now, its
+        provenance and declared collection identity, every other definition sharing that bare name, and the
+        precedence that decided between them.
+        """
+        normalized = self._normalize_op_name(op_name)
+        resolved = self._resolve_name_safe(normalized)
+        reached = self._op_definitions.get(resolved)
+        if reached is None:
+            # Raising rather than reporting an empty resolution: "what does this name resolve to" has no
+            # useful answer for a name that resolves to nothing, and a typo must not read as a finding.
+            raise ValueError(f"Unknown operation: {op_name}")
+        # Bare-name aliasing registers a second `_op_definitions` key pointing at the SAME OpDef, so report
+        # the canonical name; otherwise a namespaced op's own bare entry shows up as an alternative to itself.
+        resolved = reached.name if reached.name in self._op_definitions else resolved
+        bare = resolved.split(".")[-1]
+        candidates = [
+            name
+            for name, op_def in self._op_definitions.items()
+            if name.split(".")[-1] == bare and op_def.name == name  # canonical entries only, not aliases
+        ]
+        return OpResolution(
+            requested=normalized,
+            resolved=resolved,
+            active=self._describe_candidate(self._op_definitions[resolved], resolved),
+            alternatives=tuple(
+                self._describe_candidate(self._op_definitions[name], name)
+                for name in sorted(candidates)
+                if name != resolved
+            ),
+            precedence=tuple(self.op_precedence),
+        )
+
+    @staticmethod
+    def _describe_candidate(op_def: OpDef, name: str) -> "OpCandidate":
+        """Provenance, collection identity and cached revision for one definition."""
+        return OpCandidate(
+            name=name,
+            source=op_def.source,
+            collection=op_def.collection_name,
+            version=op_def.collection_version,
+            revision=_cached_op_revision(op_def.source),
+        )
 
     def _set_default_hub_op_aliases(self) -> dict[str, "OpDef"]:
         """Ensure operations are accessible both with and without namespaces."""

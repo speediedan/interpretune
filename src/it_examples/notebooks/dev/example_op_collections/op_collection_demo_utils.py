@@ -271,8 +271,10 @@ def setup_hub_op_collection(
         rank_zero_warn(f"Destination folder {tmp_op_collection} already exists and will be overwritten!")
         shutil.rmtree(tmp_op_collection)
 
-    # Copy the folder
-    shutil.copytree(source_op_collection, tmp_op_collection)
+    # Copy the folder. `__pycache__` is excluded because whatever is staged here is what gets published:
+    # a stray .pyc reaches the repo and then survives re-publishes, since the ops kind's delete patterns
+    # (`*.py`, `*.yaml`) do not match it.
+    shutil.copytree(source_op_collection, tmp_op_collection, ignore=shutil.ignore_patterns("__pycache__"))
     print(f"✓ Successfully copied hub op_collection to {tmp_op_collection}")
 
     # Verify contents

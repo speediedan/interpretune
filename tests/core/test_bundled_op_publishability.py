@@ -48,6 +48,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from interpretune.analysis.ops.collection import COLLECTION_HEADER_KEY
+
 BUNDLED_ROOT = Path(__file__).parent.parent.parent / "src" / "interpretune" / "analysis" / "ops" / "bundled"
 BUNDLED_PKG = "interpretune.analysis.ops.bundled"
 
@@ -253,7 +255,7 @@ def test_bundled_family_yaml_references_are_sanctioned(yaml_path: Path):
     content = yaml.safe_load(yaml_path.read_text()) or {}
     violations: list[str] = []
     for op_name, op_def in content.items():
-        if op_name == "composite_operations" or not isinstance(op_def, dict):
+        if op_name in (COLLECTION_HEADER_KEY, "composite_operations") or not isinstance(op_def, dict):
             continue
         refs = [op_def.get("implementation", "")]
         refs.extend((op_def.get("importable_params") or {}).values())
@@ -274,7 +276,9 @@ def test_bundled_yaml_op_names_are_globally_unique():
     for yaml_path in _family_yamls():
         content = yaml.safe_load(yaml_path.read_text()) or {}
         for op_name in content:
-            if op_name == "composite_operations":
+            # `collection:` is family metadata, not an op; every family declares one, so treating it as an
+            # op name made this fail on the second family with a misleading duplicate-op message.
+            if op_name in (COLLECTION_HEADER_KEY, "composite_operations"):
                 continue
             assert op_name not in seen, f"op '{op_name}' defined in both {seen[op_name]} and {yaml_path}"
             seen[op_name] = yaml_path

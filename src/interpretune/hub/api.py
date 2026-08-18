@@ -83,6 +83,36 @@ def load(repo_id: str, key: str, *, cache_dir: Path | None = None) -> Registered
     return _hydrate_component_body(canonical, body)
 
 
+def prefer_ops(*repo_ids: str, replace: bool = False) -> list[str]:
+    """Resolve BARE op names to these collections' ops; returns the active precedence list.
+
+    Bundled ops win bare names by default, which is what makes a session work offline and identically for
+    everyone. Opting into a hub collection's copy of an op is therefore explicit and per-namespace, never a
+    side effect of pulling one::
+
+        it.hub.pull_ops("speediedan/concept_direction_ops")   # fetch (network)
+        it.hub.prefer_ops("speediedan/concept_direction_ops") # and now `concept_direction` means theirs
+
+    Fully-qualified names are unaffected: they always address exactly what they name, in both directions.
+    Call with no arguments to clear the opt-in. ``IT_OP_PRECEDENCE`` is the env parity for scripted runs.
+    """
+    from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+    return DISPATCHER.prefer_ops(*repo_ids, replace=replace)
+
+
+def op_info(op_name: str):
+    """Report which collection an op name resolves to now, and what the alternatives are.
+
+    Returns an :class:`~interpretune.analysis.ops.dispatcher.OpResolution` -- provenance, declared collection
+    identity, cached revision for hub collections, the other definitions sharing the bare name, and the
+    precedence that decided between them. Printing it is the intended use.
+    """
+    from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+    return DISPATCHER.op_info(op_name)
+
+
 def push(
     component_dir: Path,
     repo_id: str,

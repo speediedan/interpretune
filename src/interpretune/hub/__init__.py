@@ -69,6 +69,8 @@ _LAZY_ATTRS = {
     "pull_ops": "interpretune.hub.api",
     "load": "interpretune.hub.api",
     "push": "interpretune.hub.api",
+    "prefer_ops": "interpretune.hub.api",
+    "op_info": "interpretune.hub.api",
 }
 
 __all__ = sorted(_LAZY_ATTRS)
