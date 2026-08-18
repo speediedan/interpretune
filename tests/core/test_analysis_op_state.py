@@ -499,6 +499,8 @@ class TestOpDefCacheRoundTrip:
             output_schema=OpSchema({}),
             op_state=spec,
             source="hub:user.repo",
+            collection_name="user/repo",
+            collection_version="2.1.0",
             uses_default_hooks=True,
             requires_grad=True,
             per_latent_preds=True,
@@ -512,6 +514,9 @@ class TestOpDefCacheRoundTrip:
         )
         assert restored.op_state == spec
         assert restored.source == "hub:user.repo"
+        # Collection identity must survive: unlike the declaration-site path it is wanted at RUNTIME
+        # (op_info reports it), which is what earned it a place on OpDef and a cache-format bump.
+        assert (restored.collection_name, restored.collection_version) == ("user/repo", "2.1.0")
         assert (restored.uses_default_hooks, restored.requires_grad, restored.per_latent_preds) == (True, True, True)
         # Defaults stay out of the serialized form so the cache does not grow for every new trait.
         plain = OpDef(
@@ -521,8 +526,9 @@ class TestOpDefCacheRoundTrip:
             OpDefinitionsCacheManager.__new__(OpDefinitionsCacheManager), plain
         )
         assert "source=" not in plain_serialized and "requires_grad" not in plain_serialized
+        assert "collection_name" not in plain_serialized
         # Adding fields to OpDef without bumping this makes stale caches deserialize silently wrong.
-        assert CACHE_FORMAT_VERSION == "3"
+        assert CACHE_FORMAT_VERSION == "4"
 
 
 class TestOpStateIsNotSerialized:

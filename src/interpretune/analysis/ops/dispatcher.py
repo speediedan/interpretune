@@ -15,6 +15,7 @@ from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS, IT_AN
 from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
 from interpretune.analysis.inputs import OpStateSpec
 from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg, OpWrapper
+from interpretune.analysis.ops.collection import COLLECTION_HEADER_KEY, CollectionSpec
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
 from interpretune.analysis.ops.compiler.load_policy import OpLoadError, op_load_failure, strict_op_load
@@ -79,6 +80,9 @@ class AnalysisOpDispatcher:
         # CACHE_FORMAT_VERSION bump and invalidate every user's cache for a string used only in error
         # messages. If a source path is ever needed at RUNTIME rather than at load, promote it then.
         self._op_declaration_sites: dict[str, str] = {}
+        # Originating YAML -> its declared `collection:` header, for compatibility enforcement at load and
+        # for op_info attribution. Load-time only, like the declaration sites above.
+        self._op_collections: dict[str, CollectionSpec] = {}
         self._dispatch_table = {}  # {op_name: {context: instantiated_op}}
         self._aliases = {}  # {alias: op_name}
         self._op_to_aliases = defaultdict(list)  # {op_name: [aliases]}
@@ -189,16 +193,36 @@ class AnalysisOpDispatcher:
                     rank_zero_debug(f"Skipping non-dictionary YAML file: {yaml_file}")
                     continue
 
+                collection = self._collection_for(yaml_file, yaml_content)
+                if collection is not None and (incompatible := collection.incompatibility()) is not None:
+                    # Skip the WHOLE collection, not individual ops: the compatibility window is declared
+                    # per collection, so a partial load would present half a contract set.
+                    op_load_failure(
+                        f"Skipping op collection {collection.name!r} (version {collection.version}) from "
+                        f"{yaml_file}: {incompatible}"
+                    )
+                    continue
+
                 # Apply namespace prefixes for hub operations
                 namespaced_content = self._apply_hub_namespacing(yaml_content, yaml_file)
 
                 source = self._op_source_for(yaml_file)
 
+                # Stamped onto every definition from this file so the identity survives the cache: the
+                # `collection:` header is parsed at compile time only, and `op_info` needs it at runtime.
+                provenance = {
+                    "source": source,
+                    "collection_name": collection.name if collection else None,
+                    "collection_version": collection.version if collection else None,
+                }
+
                 # Separate composite operations from regular operations
                 for key, value in namespaced_content.items():
+                    if key == COLLECTION_HEADER_KEY:
+                        continue  # a declared header, not an op (already parsed above)
                     if key == "composite_operations":
                         for comp_name, comp_def in value.items():
-                            composite_operations[comp_name] = {**comp_def, "source": source}
+                            composite_operations[comp_name] = {**comp_def, **provenance}
                             self._op_declaration_sites[comp_name] = str(yaml_file)
                     else:
                         if not isinstance(value, dict):
@@ -214,7 +238,7 @@ class AnalysisOpDispatcher:
                             continue
                         if key in raw_definitions:
                             rank_zero_debug(f"Operation '{key}' redefined in {yaml_file}, using latest definition")
-                        raw_definitions[key] = {**value, "source": source}
+                        raw_definitions[key] = {**value, **provenance}
                         self._op_declaration_sites[key] = str(yaml_file)
 
             except OpLoadError:
@@ -282,6 +306,21 @@ class AnalysisOpDispatcher:
                 definitions_to_compile.pop(op_name, None)
                 op_load_failure(f"Failed to compile operation '{op_name}': {e}")
 
+    def _collection_for(self, yaml_file: Path, yaml_content: dict[str, Any]) -> CollectionSpec | None:
+        """Parse a YAML's ``collection:`` header, recording it per file for later attribution.
+
+        Fail-soft on a malformed header, matching the surrounding load paths: the ops still load, just without
+        collection identity, which surfaces as a missing version in ``op_info`` rather than a dead session.
+        """
+        try:
+            collection = CollectionSpec.from_raw(yaml_content.get(COLLECTION_HEADER_KEY))
+        except (ValueError, TypeError) as bad_header:
+            op_load_failure(f"Ignoring invalid `{COLLECTION_HEADER_KEY}` header in {yaml_file}: {bad_header}")
+            return None
+        if collection is not None:
+            self._op_collections[str(yaml_file)] = collection
+        return collection
+
     def _declaration_site(self, declared_name: str) -> str:
         """Where a declared op name came from, for diagnostics ("<unknown source>" if untracked)."""
         return self._op_declaration_sites.get(declared_name, "<unknown source>")
@@ -337,6 +376,8 @@ class AnalysisOpDispatcher:
                 composition=op_def.get("composition", None),
                 op_state=self._resolve_op_state_spec(op_name, op_def.get("op_state")),
                 source=str(op_def.get("source", "bundled")),
+                collection_name=op_def.get("collection_name"),
+                collection_version=op_def.get("collection_version"),
                 uses_default_hooks=bool(op_def.get("uses_default_hooks", False)),
                 requires_grad=bool(op_def.get("requires_grad", False)),
                 per_latent_preds=bool(op_def.get("per_latent_preds", False)),

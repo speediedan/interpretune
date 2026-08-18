@@ -1,3 +1,13 @@
+# Collection header (#266 Phase 3, D8): versions this family's op CONTRACT SET -- the names, schemas and
+# traits its ops present to callers -- not the interpretune package. Bundled families deliberately declare NO
+# `requires:` window: they ship inside the wheel, so a compatibility window against the installed package is
+# vacuous by construction, and a naive one is actively harmful (a `>=0.1` floor does not match the
+# `0.1.0.devN+g<sha>` versions setuptools_scm produces between tags, so every bundled op would be skipped in a
+# source checkout). Hub collections are the ones that can be out of step, so they declare windows.
+collection:
+  name: concept
+  version: 0.1.0
+
 extract_concept_latent_state:
   description: Extract per-example latent rows from the configured cache key
   implementation: interpretune.analysis.ops.bundled.concept.concept_ops.extract_concept_latent_state_impl

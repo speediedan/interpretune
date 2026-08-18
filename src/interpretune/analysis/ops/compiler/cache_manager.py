@@ -20,7 +20,7 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 
 
 # 3: adds the `op_state` trait (declared cross-batch state) to OpDef.
-CACHE_FORMAT_VERSION = "3"
+CACHE_FORMAT_VERSION = "4"
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,12 @@ class OpDef:
     # shape: a dotted name means namespaced, which is how hub ops are addressed, but only provenance
     # answers "should this load dynamically from the hub cache".
     source: str = "bundled"
+    # Declared collection identity (the `collection:` header). Serialized into the cache -- and worth its
+    # CACHE_FORMAT_VERSION bump -- because unlike the declaration-site path this is wanted at RUNTIME:
+    # `op_info` reports which collection and version a bare name resolves to, and the cache path would
+    # otherwise leave it empty on every warm load.
+    collection_name: str | None = None
+    collection_version: str | None = None
     # Behavioral traits. These replace name-based special cases: framework code asks what an op
     # NEEDS, so hub and local ops can declare the same things bundled ops do.
     uses_default_hooks: bool = False  # install the default activation-cache fwd/bwd hooks
@@ -65,11 +71,20 @@ class OpDef:
             "composition": self.composition,
             "op_state": self.op_state.to_dict() if self.op_state is not None else None,
             "source": self.source,
+            "collection_name": self.collection_name,
+            "collection_version": self.collection_version,
             "uses_default_hooks": self.uses_default_hooks,
             "requires_grad": self.requires_grad,
             "per_latent_preds": self.per_latent_preds,
         }
         return result
+
+
+def _interpretune_version() -> str:
+    """The installed interpretune version, for the cache key ("unknown" when undeterminable)."""
+    from interpretune.hub.components import _installed_version
+
+    return str(_installed_version("interpretune") or "unknown")
 
 
 class YamlFileInfo:
@@ -252,8 +267,11 @@ class OpDefinitionsCacheManager:
             if not self._yaml_files:
                 self._fingerprint = f"empty_v{CACHE_FORMAT_VERSION}"
             else:
-                # Create a combined hash of all file information
-                combined_info = [f"cache_format:{CACHE_FORMAT_VERSION}"]
+                # Create a combined hash of all file information. The installed interpretune version is part
+                # of the key because compiled definitions depend on it: a collection's `requires:` window is
+                # enforced at COMPILE time, so without this an upgrade would keep serving definitions from a
+                # collection that the new version no longer satisfies, never re-running the check.
+                combined_info = [f"cache_format:{CACHE_FORMAT_VERSION}", f"interpretune:{_interpretune_version()}"]
                 for file_info in self._yaml_files:
                     # Include path, mtime, and content hash
                     combined_info.append(f"{file_info.path}:{file_info.mtime}:{file_info.content_hash}")
@@ -371,6 +389,9 @@ class OpDefinitionsCacheManager:
             fields.append(f"op_state={self._serialize_op_state(op_def.op_state)}")
         if op_def.source != "bundled":
             fields.append(f"source={op_def.source!r}")
+        for collection_field in ("collection_name", "collection_version"):
+            if (value := getattr(op_def, collection_field)) is not None:
+                fields.append(f"{collection_field}={value!r}")
         for trait in ("uses_default_hooks", "requires_grad", "per_latent_preds"):
             if getattr(op_def, trait):
                 fields.append(f"{trait}=True")
