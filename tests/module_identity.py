@@ -17,6 +17,7 @@ after-every-test hook in ``tests/conftest.py`` that attributes a split to the te
 
 from __future__ import annotations
 
+import contextlib
 import sys
 
 # The interpretune packages tests reimport, plus the ones op/hub tests patch values through. `interpretune`
@@ -56,6 +57,39 @@ def module_identity_split(dotted: str) -> str | None:
         "invisible to the code under test. Restore BOTH references -- via monkeypatch, so the restore also "
         "survives an assertion failure."
     )
+
+
+@contextlib.contextmanager
+def purged_modules(*prefixes: str):
+    """Temporarily drop every module under ``prefixes`` from ``sys.modules``, restoring BOTH bindings after.
+
+    The tool to use whenever a test needs to observe import-time behavior. Restoring only ``sys.modules`` --
+    the obvious half, and what every hand-rolled version here did -- leaves the parent-package attribute
+    pointing at the module object created by the reimport, so the two disagree for the rest of the session and
+    later dotted patch targets silently miss (see this module's docstring). Both are restored here, in a
+    ``finally``, so an assertion failure inside the block cannot skip the restore.
+
+    Yields nothing: the caller reimports whatever it needs inside the block.
+    """
+    saved = {
+        name: module
+        for name, module in list(sys.modules.items())
+        if any(name == prefix or name.startswith(prefix + ".") for prefix in prefixes)
+    }
+    try:
+        for name in saved:
+            sys.modules.pop(name, None)
+        yield
+    finally:
+        for name, module in saved.items():
+            sys.modules[name] = module
+        # Re-point every parent attribute at the restored object. Done in a second pass so a parent restored
+        # later in the dict cannot be re-bound to the reimported child by an earlier iteration.
+        for name, module in saved.items():
+            parent_name, _, leaf = name.rpartition(".")
+            parent = sys.modules.get(parent_name) if parent_name else None
+            if parent is not None:
+                setattr(parent, leaf, module)
 
 
 def first_module_identity_split() -> str | None:

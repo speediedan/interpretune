@@ -338,7 +338,7 @@ class TestHubAnalysisOpManagerIntegration:
             assert collection.namespace_prefix == expected_namespace
 
     @patch.dict(os.environ, {"IT_ANALYSIS_OP_PATHS": "/path1:/path2"})
-    def test_environment_variable_parsing(self, monkeypatch):
+    def test_environment_variable_parsing(self):
         """Test that environment variables are properly parsed.
 
         Reimporting ``interpretune.analysis`` leaves TWO things pointing at a module, and restoring only one
@@ -352,21 +352,16 @@ class TestHubAnalysisOpManagerIntegration:
         unpatched original. Measured 2026-08-18: it took 41 op-collection tests red in the full suite while
         every one of them passed in isolation.
 
-        Both are now restored through ``monkeypatch``, which also makes the restore exception-safe (the
-        hand-rolled version skipped it entirely if the assertion failed).
+        Both are restored by ``purged_modules`` (``tests/module_identity.py``), which is also
+        exception-safe: the hand-rolled version skipped the restore entirely if the assertion failed.
         """
-        import sys
         import importlib
 
-        import interpretune
+        from tests.module_identity import purged_modules
 
-        monkeypatch.setitem(sys.modules, "interpretune.analysis", sys.modules["interpretune.analysis"])
-        monkeypatch.setattr(interpretune, "analysis", interpretune.analysis)
-
-        sys.modules.pop("interpretune.analysis", None)
-        analysis_mod = importlib.import_module("interpretune.analysis")
-
-        assert getattr(analysis_mod, "IT_ANALYSIS_OP_PATHS", None) == ["/path1", "/path2"]
+        with purged_modules("interpretune.analysis"):
+            analysis_mod = importlib.import_module("interpretune.analysis")
+            assert getattr(analysis_mod, "IT_ANALYSIS_OP_PATHS", None) == ["/path1", "/path2"]
 
 
 class TestDynamicModuleUtils:

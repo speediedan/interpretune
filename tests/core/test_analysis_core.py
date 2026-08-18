@@ -933,22 +933,22 @@ class TestCoreFunctionality:
         )
 
     def test_operation_aliases_registered(self):
-        """Test that operation aliases are registered in the top-level module."""
+        """Test that operation aliases are registered in the top-level module.
+
+        Uses ``purged_modules`` rather than a hand-rolled save/restore: reimporting rebinds BOTH
+        ``sys.modules["interpretune.analysis"]`` and the ``analysis`` attribute on the ``interpretune``
+        package, and restoring only the former leaves them disagreeing for the rest of the session. Measured
+        2026-08-18: that left every later dotted patch target on those modules silently ineffective, which
+        surfaced as 42 unrelated-looking op-collection failures in the full suite. See
+        ``tests/module_identity.py``.
+        """
         import interpretune
         from interpretune.analysis import DISPATCHER
         import importlib
-        import sys
 
-        # Save the modules we're going to modify
-        modules_to_reload = {
-            name: module for name, module in sys.modules.items() if name.startswith("interpretune.analysis")
-        }
-        try:
-            # Remove analysis modules to force reload
-            for module_name in modules_to_reload.keys():
-                if module_name in sys.modules:
-                    del sys.modules[module_name]
+        from tests.module_identity import purged_modules
 
+        with purged_modules("interpretune.analysis"):
             importlib.import_module("interpretune.analysis")
 
             # Get the OpWrapper class
@@ -969,13 +969,6 @@ class TestCoreFunctionality:
                 assert DISPATCHER.get_op(wrapper._op_name).name == op_name, (
                     f"Alias '{alias}' points to '{wrapper._op_name}' instead of '{op_name}'"
                 )
-
-        finally:
-            for module_name, module in modules_to_reload.items():
-                # Restore the original module
-                if module_name in sys.modules:
-                    del sys.modules[module_name]
-                sys.modules[module_name] = module
 
     def test_analysis_import_hook_system_modules_cache(self):
         """Test _AnalysisImportHook returns cached module from sys.modules (line 35)."""
