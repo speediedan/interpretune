@@ -1320,7 +1320,9 @@ class TestCacheManagerHubFunctionality:
                 assert namespace == ""
 
     def test_discover_hub_yaml_files_basic(self, tmp_path):
-        """Test basic hub YAML file discovery."""
+        """Test basic hub YAML file discovery (manifest-routed: each collection declares its op files)."""
+        from tests.hub_op_fixtures import declare_cached_op_files
+
         cache_manager = OpDefinitionsCacheManager(tmp_path)
 
         # Create hub cache structure
@@ -1346,10 +1348,12 @@ class TestCacheManagerHubFunctionality:
                 ops_yml.write_text("another_op: {}")
                 expected_files.append(ops_yml)
 
+            declare_cached_op_files(repo_dir)
+
         with patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache):
             discovered_files = cache_manager.discover_hub_yaml_files()
 
-            # Should find all YAML files
+            # Should find all declared YAML files
             assert len(discovered_files) == len(expected_files)
             for expected_file in expected_files:
                 assert expected_file in discovered_files
@@ -1386,10 +1390,13 @@ class TestCacheManagerHubFunctionality:
         hub_cache.mkdir(parents=True)
 
         # Valid repository
+        from tests.hub_op_fixtures import declare_cached_op_files
+
         valid_repo = hub_cache / "models--user--valid" / "snapshots" / "abc"
         valid_repo.mkdir(parents=True)
         ops_yaml_file = valid_repo / "ops.yaml"
         ops_yaml_file.write_text("valid_op: {}")
+        declare_cached_op_files(valid_repo)
 
         # Invalid repository names (should be ignored)
         invalid_repos = [
@@ -1458,6 +1465,10 @@ class TestCacheManagerHubFunctionality:
         snapshot2.mkdir(parents=True)
         operations_yaml_file = snapshot2 / "operations.yaml"
         operations_yaml_file.write_text("op3: {}")
+        from tests.hub_op_fixtures import declare_cached_op_files
+
+        declare_cached_op_files(snapshot2)
+        declare_cached_op_files(snapshot1, "ops.yaml", "subfolder/more_ops.yml")
 
         # Mock scan_cache_dir to return only the latest revision (snapshot2)
         from huggingface_hub.utils import CachedRepoInfo, CachedRevisionInfo
@@ -1648,70 +1659,29 @@ class TestCacheManagerHubFunctionality:
             # Should skip repo without latest revision
             assert result == []
 
-    def test_discover_hub_yaml_files_fallback_path_construction(self, tmp_path):
-        """Test hub YAML discovery when file_info lacks file_path and uses snapshot_path fallback."""
+    def test_discover_hub_yaml_files_paths_are_snapshot_rooted(self, tmp_path):
+        """Discovered paths are built from the snapshot dir plus the manifest's declared relative names.
+
+        Replaces two tests that covered a per-file ``file_info.file_path``-or-``snapshot_path`` fallback branch.
+        That branch is gone: manifest routing never consults ``latest_revision.files``, so path construction is
+        snapshot-rooted unconditionally -- which this asserts by giving the revision a files list that
+        disagrees with the manifest.
+        """
+        from tests.hub_op_fixtures import declare_cached_op_files
+
         cache_manager = OpDefinitionsCacheManager(tmp_path)
         hub_cache = tmp_path / "hub_cache"
         hub_cache.mkdir(parents=True)
 
-        # Create actual YAML file in expected location
-        snapshot_dir = hub_cache / "models--testuser--repo" / "snapshots" / "abc123"
-        snapshot_dir.mkdir(parents=True)
-        yaml_file = snapshot_dir / "ops.yaml"
-        yaml_file.write_text("test_op: {}")
-
-        # Create mock file info WITHOUT file_path attribute
-        # We need to create a custom object that actually lacks the file_path attribute
-        class MockFileInfo:
-            def __init__(self, file_name):
-                self.file_name = file_name
-                # Explicitly do NOT set file_path attribute
-
-        mock_file_info = MockFileInfo("ops.yaml")
-
-        mock_revision = Mock(spec=CachedRevisionInfo)
-        mock_revision.files = [mock_file_info]
-        mock_revision.snapshot_path = snapshot_dir  # This will be used in fallback
-
-        mock_repo = Mock(spec=CachedRepoInfo)
-        mock_repo.repo_type = "model"
-        mock_repo.repo_id = "testuser/repo"
-        mock_repo.revisions = [mock_revision]
-        mock_repo.refs = {"main": mock_revision}
-
-        mock_cache_info = Mock()
-        mock_cache_info.repos = [mock_repo]
-
-        with (
-            patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
-            patch("interpretune.analysis.ops.compiler.cache_manager.scan_cache_dir", return_value=mock_cache_info),
-        ):
-            discovered_files = cache_manager.discover_hub_yaml_files()
-
-            # Should find the YAML file using fallback path construction
-            assert len(discovered_files) == 1
-            assert discovered_files[0] == yaml_file
-
-    def test_discover_hub_yaml_files_fallback_path_construction_file_path_none(self, tmp_path):
-        """Test hub YAML discovery when file_info.file_path is explicitly None."""
-        cache_manager = OpDefinitionsCacheManager(tmp_path)
-        hub_cache = tmp_path / "hub_cache"
-        hub_cache.mkdir(parents=True)
-
-        # Create actual YAML file in expected location
         snapshot_dir = hub_cache / "models--testuser--repo" / "snapshots" / "abc123"
         snapshot_dir.mkdir(parents=True)
         yaml_file = snapshot_dir / "operations.yml"
         yaml_file.write_text("another_op: {}")
-
-        # Create mock file info WITH file_path attribute set to None
-        mock_file_info = Mock()
-        mock_file_info.file_name = "operations.yml"
-        mock_file_info.file_path = None  # Explicitly set to None to trigger fallback
+        declare_cached_op_files(snapshot_dir)
 
         mock_revision = Mock(spec=CachedRevisionInfo)
-        mock_revision.files = [mock_file_info]
-        mock_revision.snapshot_path = snapshot_dir  # This will be used in fallback
+        mock_revision.files = []  # deliberately disagrees with the manifest; routing must not consult it
+        mock_revision.snapshot_path = snapshot_dir
 
         mock_repo = Mock(spec=CachedRepoInfo)
         mock_repo.repo_type = "model"
@@ -1728,9 +1698,7 @@ class TestCacheManagerHubFunctionality:
         ):
             discovered_files = cache_manager.discover_hub_yaml_files()
 
-            # Should find the YAML file using fallback path construction
-            assert len(discovered_files) == 1
-            assert discovered_files[0] == yaml_file
+        assert discovered_files == [yaml_file]
 
 
 class TestCompileOperationCompositionSchema:

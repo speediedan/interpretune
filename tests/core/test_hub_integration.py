@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 import os
 
+from tests.hub_op_fixtures import declare_cached_op_files
 from tests.warns import unmatched_warns
 from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager
@@ -65,6 +66,9 @@ another_op:
       datasets_dtype: string
 """)
 
+        # Op discovery is manifest-routed: a cached snapshot's op YAMLs are the ones it declares.
+        declare_cached_op_files(self.snapshot_dir)
+
         rank_zero_debug(f"[HUB_INTEGRATION_SETUP] Created ops.yaml: {self.test_ops_yaml}")
         rank_zero_debug(f"[HUB_INTEGRATION_SETUP] ops.yaml exists: {self.test_ops_yaml.exists()}")
         rank_zero_debug(f"[HUB_INTEGRATION_SETUP] ops.yaml size: {self.test_ops_yaml.stat().st_size} bytes")
@@ -111,6 +115,7 @@ test_hub_op:
     result:
       datasets_dtype: string
 """)
+        declare_cached_op_files(another_snapshot)
 
         with (
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", str(self.hub_cache)),
@@ -163,9 +168,10 @@ test_hub_op:
     def test_error_handling_invalid_yaml(self, huggingface_env):
         """Test graceful handling of invalid YAML files."""
 
-        # Create invalid YAML file
+        # Create invalid YAML file (declared, so it reaches the compiler and its handling is exercised)
         invalid_yaml = self.snapshot_dir / "invalid.yaml"
         invalid_yaml.write_text("invalid: yaml: content: [")
+        declare_cached_op_files(self.snapshot_dir)
 
         with (
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", str(self.hub_cache)),
@@ -197,6 +203,9 @@ incomplete_op:
     result:
       datasets_dtype: string
 """)
+        # re-declared so the incomplete definition still REACHES the compiler; an undeclared YAML would
+        # simply be ignored and the test would assert nothing about missing-implementation handling
+        declare_cached_op_files(self.snapshot_dir)
 
         with (
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", str(self.hub_cache)),
@@ -259,6 +268,7 @@ op_{i}:
     result:
       datasets_dtype: string
 """)
+            declare_cached_op_files(snapshot_dir)
 
         with (
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", str(self.hub_cache)),
@@ -342,6 +352,7 @@ test_dynamic_function:
   input_schema: {}
   output_schema: {}
 """)
+        declare_cached_op_files(snapshot_dir)
 
         # Mock all hub and dynamic module interactions to avoid HTTP calls
         with (
@@ -410,6 +421,7 @@ cached_dynamic_function:
   input_schema: {}
   output_schema: {}
 """)
+        declare_cached_op_files(snapshot_dir)
 
         # Mock all hub and dynamic module interactions to avoid HTTP calls
         with (

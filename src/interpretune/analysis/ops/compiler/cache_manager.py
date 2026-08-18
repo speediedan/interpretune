@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 from huggingface_hub import scan_cache_dir
 
 from interpretune.hub.cache import _get_latest_revision, parse_hub_cache_path
-from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
 from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR, remote_code_trust, remote_code_trusted
+from interpretune.analysis.ops.compiler.load_policy import OpLoadError, op_load_failure
 
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 from interpretune.analysis.inputs import OpStateSpec
@@ -20,6 +20,7 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 
 
 # 3: adds the `op_state` trait (declared cross-batch state) to OpDef.
+# 4: adds declared collection identity (`collection_name`/`collection_version`).
 CACHE_FORMAT_VERSION = "4"
 
 
@@ -150,6 +151,8 @@ class OpDefinitionsCacheManager:
                 rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Adding YAML file: {yaml_file}")
                 self.add_yaml_file(yaml_file)
 
+        except OpLoadError:
+            raise  # strict loading must not be swallowed by the fail-soft discovery wrapper
         except Exception as e:
             rank_zero_warn(f"Error discovering hub YAML files: {e}")
             rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Exception details: {type(e).__name__}: {str(e)}")
@@ -161,13 +164,16 @@ class OpDefinitionsCacheManager:
         return hub_yaml_files  # type: ignore[return-value]
 
     def discover_hub_yaml_files(self) -> list[Path]:
-        """Discover YAML files from the most recent revision of each hub repository.
+        """Discover op-definition YAMLs from the latest cached revision of each hub op collection.
 
-        Uses HuggingFace's cache manager to efficiently find YAML files only from
-        the latest revision (preferring 'main' ref) of each cached model repository.
+        MANIFEST-ROUTED (not a glob): each cached repo's ``it_component.yaml`` is read first and its
+        ``ops.files`` list says which YAMLs are op definitions. A repo carrying no manifest is reported
+        through ``op_load_failure`` and contributes nothing -- that is the well-formed-ops-repo contract, and
+        reporting it is the point, since under the old glob such a repo appeared to work until one of its
+        non-op YAMLs reached the compiler and dropped every op in the process.
 
         Returns:
-            List of Path objects pointing to YAML files from latest revisions only.
+            List of Path objects pointing to declared op YAMLs, from one revision per collection.
         """
         from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
 
@@ -207,26 +213,34 @@ class OpDefinitionsCacheManager:
                 if latest_revision is None:
                     continue
 
-                # Check for YAML files in this revision. The component manifest is excluded: it is the
-                # file that DECLARES a collection's op YAMLs, never one of them, and feeding it to the op
-                # compiler raises on its scalar keys and drops every op in the process, bundled included.
-                for file_info in latest_revision.files:
-                    if file_info.file_name == IT_COMPONENT_MANIFEST:
-                        continue
-                    if file_info.file_name.endswith((".yaml", ".yml")):
-                        # use file_path if available, otherwise construct path
-                        if hasattr(file_info, "file_path") and file_info.file_path is not None:
-                            yaml_path = Path(file_info.file_path)
-                        else:
-                            yaml_path = latest_revision.snapshot_path / file_info.file_name
+                # The manifest declares which of this snapshot's YAMLs are op definitions. Every path
+                # therefore comes from one revision by construction, and the manifest is never itself fed
+                # to the op compiler (it raises on its scalar keys, dropping every op including bundled).
+                yaml_files.extend(self._declared_op_files(repo.repo_id, latest_revision.snapshot_path))
 
-                        if yaml_path.exists():
-                            yaml_files.append(yaml_path)
-
+        except OpLoadError:
+            raise  # strict loading must not be swallowed by the fail-soft discovery wrapper
         except Exception as e:
             rank_zero_warn(f"Failed to discover hub YAML files: {e}")
 
         return sorted(yaml_files)  # Sort for deterministic results
+
+    def _declared_op_files(self, repo_id: str, snapshot_path: Path) -> list[Path]:
+        """Manifest-routed op YAMLs for one cached collection, with load failures reported not raised.
+
+        ``OpLoadError`` propagates so strict loading still fails the session; every other manifest problem
+        is scoped to this one collection, because a malformed third-party collection must not be able to
+        deny a session the ops it does have.
+        """
+        from interpretune.hub.opcollections import resolve_cached_op_files
+
+        try:
+            return resolve_cached_op_files(snapshot_path, source=f"op collection {repo_id!r}")
+        except OpLoadError:
+            raise
+        except Exception as failure:
+            op_load_failure(f"Skipping op collection {repo_id!r}: {failure}")
+            return []
 
     def _parse_hub_file_path(self, yaml_file: Path) -> tuple[bool, str]:
         """Parse a file path to determine if it's a hub ops file and extract namespace.

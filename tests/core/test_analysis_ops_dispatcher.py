@@ -7,6 +7,7 @@ import os
 import sys
 from collections import defaultdict
 
+from tests.hub_op_fixtures import declare_cached_op_files
 from tests.warns import unmatched_warns
 import interpretune as it
 from interpretune.analysis.ops.dispatcher import DISPATCHER, AnalysisOpDispatcher, DispatchContext
@@ -1759,6 +1760,7 @@ test_hub_op:
     output1:
       datasets_dtype: float32
 """)
+            declare_cached_op_files(repo_dir)
 
             with patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache):
                 dispatcher = AnalysisOpDispatcher()
@@ -1795,6 +1797,7 @@ text_processor:
     tokens:
       datasets_dtype: int64
 """)
+        declare_cached_op_files(snapshot_dir)
 
         with (
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
@@ -1848,6 +1851,7 @@ hub_special_op:
     special_result:
       datasets_dtype: string
 """)
+        declare_cached_op_files(snapshot_dir)
 
         with (
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),
@@ -1895,6 +1899,7 @@ dependent_op:
     output2:
       datasets_dtype: int64
 """)
+        declare_cached_op_files(snapshot_dir)
 
         with (
             patch("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache),

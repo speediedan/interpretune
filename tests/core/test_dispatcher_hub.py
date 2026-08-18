@@ -145,17 +145,18 @@ class TestOpDefinitionsCacheManagerHub:
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_discover_hub_yaml_files_hub_cache(self):
-        """Test discovering YAML files from hub cache."""
-        # Create fake hub cache structure
+        """Test discovering YAML files from hub cache.
+
+        Discovery is manifest-routed, so the cached snapshot carries an ``it_component.yaml`` declaring its op
+        YAMLs; a snapshot without one contributes nothing (asserted in ``test_op_collection_manifest_routing``).
+        """
         hub_cache = self.temp_dir / "hub"
-        hub_cache.mkdir()
-        repo_dir = hub_cache / "models--username--repo"
-        repo_dir.mkdir(parents=True)
-        snapshots_dir = repo_dir / "snapshots"
-        snapshots_dir.mkdir()
-        snapshot_dir = snapshots_dir / "abc123"
-        snapshot_dir.mkdir()
+        snapshot_dir = hub_cache / "models--username--repo" / "snapshots" / "abc123"
+        snapshot_dir.mkdir(parents=True)
         (snapshot_dir / "ops.yaml").write_text("test: {}")
+        (snapshot_dir / "it_component.yaml").write_text(
+            "it_schema_version: 1\nkinds: [ops]\nops:\n  files: [ops.yaml]\n"
+        )
 
         cache_manager = OpDefinitionsCacheManager(self.temp_dir)
 

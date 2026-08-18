@@ -50,6 +50,26 @@ def pull(
     return _hydrate_component_body(canonical, body)
 
 
+def pull_ops(
+    repo_id: str,
+    *,
+    revision: str | None = None,
+    cache_dir: Path | None = None,
+    token: str | None = None,
+) -> tuple[list[Path], str]:
+    """Explicitly fetch an op collection from the Hub (network; manifest-first, revision-pinned).
+
+    Returns ``(op_yaml_paths, resolved_commit)``. The ops kind needs its own verb rather than a ``key``-less
+    :func:`pull`: op collections live in their own cache (``IT_ANALYSIS_HUB_CACHE``, which is what op
+    discovery scans), so a collection fetched through the component verb would land where the dispatcher
+    never looks. Fetching does not load -- the dispatcher picks the collection up on its next load, subject to
+    the trust gate and the collection's compatibility window.
+    """
+    from interpretune.hub.opcollections import pull_op_collection
+
+    return pull_op_collection(repo_id, revision=revision, cache_dir=cache_dir, token=token)
+
+
 def load(repo_id: str, key: str, *, cache_dir: Path | None = None) -> RegisteredCfg:
     """Cache-only hydration of one configuration — never touches the network.
 
