@@ -290,6 +290,76 @@ Design custom ops so they are compatible with that future:
 - avoid implicit local-path assumptions
 - prefer stable schema contracts
 
+### Publishing an op collection
+
+A well-formed ops repo carries three things: the op-definitions YAML, the Python module its
+`implementation` references point at, and an `it_component.yaml` declaring which YAMLs are op
+definitions.
+
+```yaml
+# it_component.yaml
+it_schema_version: 1
+kinds: [ops]
+ops:
+  files:
+    - my_ops.yaml
+```
+
+Discovery is manifest-routed, so anything else the repo carries (a card, a config sample, a notebook)
+is never fed to the op compiler. Publish with `interpretune.hub.publish_op_collection`, or generate a
+collection from an in-tree op family with `scripts/publish_op_collection.py`, which also handles the
+one transformation publishing requires: bundled YAMLs address implementations by installed package
+path, while the hub loader resolves a repo-relative `<module>.<function>` pair. A family published
+verbatim is a repo whose every op fails to import.
+
+### Versioning your op collection
+
+Declare the collection's identity in a header at the top of its op YAML:
+
+```yaml
+collection:
+  name: my_ops
+  version: 0.3.0
+  requires:
+    interpretune: ">=0.1.0.dev0"    # optional; one window, checked at load
+```
+
+Four things to internalize before you pick a version or a window:
+
+1. **The version versions the CONTRACT SET, not your package.** It describes the names, schemas and
+   traits your ops present to callers. Bump it when a caller would have to change; leave it alone for
+   an internal refactor that keeps every schema and trait identical.
+2. **There is no solver.** One window per collection against the installed interpretune, and no
+   cross-collection dependency resolution. An incompatible collection is skipped whole with a warning
+   (or raises under `IT_STRICT_OP_LOAD=1`), because a partial load presents half a contract set.
+3. **`>=0.1` does not mean what you want.** `setuptools_scm` produces `0.1.0.devN+g<sha>` between
+   tags, and PEP 440 sorts a dev release *before* its release, so a bare floor silently skips your
+   whole collection for anyone on a source install. Write `>=0.1.0.dev0`.
+4. **The header lives in the op YAML, not in `it_component.yaml`.** It travels with the definitions,
+   so bundled families and local collections — which have no manifest at all — declare it the same
+   way, and there is no second place for it to disagree with itself.
+
+Consumers can see exactly what they got:
+
+```python
+import interpretune as it
+
+print(it.hub.op_info("my_op"))   # provenance, collection, version, cached revision, alternatives
+```
+
+### Naming an op-collection repo
+
+Name ops repos **lowercase with underscores** (`concept_direction_ops`, not
+`concept-direction-ops`), which differs from the hyphenated convention common on the Hub. The reason
+is specific to this kind: an ops repo name is not just a label, it is an **identifier prefix**. It
+prefixes every op's namespaced name (`speediedan.concept_direction_ops.concept_direction`) and feeds
+the module path a collection's implementations resolve through.
+
+Interpretune normalizes op names — case-folding, `-` to `_`, `/` to `.` — so a hyphenated repo does
+work. But then the name you typed and the name the op answers to differ, and two repos whose names
+differ only by that punctuation collide on one normalized namespace. Choosing the normalized form up
+front makes the name you read the name you address.
+
 ## Current Open Gaps
 
 ### Prefer AnalysisBatch-scoped lookup for mixed batch, run, and store inputs

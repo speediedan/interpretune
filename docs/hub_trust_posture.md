@@ -108,9 +108,100 @@ executing publisher code keeps working: local modules and datamodules, hub-resid
 that name locally installed `class_path`s, artifact pull and hydration, and the whole analysis-op
 surface that ships with interpretune. You lose hub op collections and `compose_ref` prompt configs.
 
+## Bundled ops, hub ops, and which one you are running
+
+Interpretune ships a set of **bundled** analysis ops, and bundled ops win their bare names. That
+default is what makes a session behave the same offline as online, and the same for you as for a
+collaborator who has pulled nothing. It also means **pulling an op collection cannot silently
+re-point existing code**: a pull adds namespaced ops, it does not take over names.
+
+Nothing is guessed, so nothing has to be inferred from behavior. Ask:
+
+```python
+import interpretune as it
+
+print(it.hub.op_info("concept_direction"))
+```
+
+```text
+'concept_direction' resolves to concept_direction [bundled, collection concept 0.1.0]
+  also available:
+    speediedan.concept_direction_ops.concept_direction [hub:speediedan.concept_direction_ops, collection concept_direction_ops 0.1.0, revision 16affe3811eb]
+  precedence: none (bundled ops win bare names)
+```
+
+That reports the provenance of what is active, its declared collection and version, the cached
+revision for a hub collection, every other definition sharing the bare name, and the precedence that
+chose between them. The revision is read from the cache and never fetched: a lookup that could fetch
+would change the answer while reporting it.
+
+### Opting into a hub collection's bare names
+
+```python
+it.hub.prefer_ops("speediedan/concept_direction_ops")
+```
+
+Per namespace, explicit, and reversible — `it.hub.prefer_ops()` with no arguments clears it.
+Precedence is applied when a name is resolved rather than by rewriting the op registry, so the
+bundled definition is never evicted, only outranked. `IT_OP_PRECEDENCE="org/repo1,org/repo2"` is the
+same opt-in, ordered, for runs with no place to call it.
+
+**Fully-qualified names ignore precedence entirely**, in both directions. Explicit beats implicit,
+so `speediedan.concept_direction_ops.concept_direction` addresses exactly that op whether or not its
+collection is preferred. That is how you pin one specific copy in code that has to keep working
+regardless of what precedence a session declares.
+
+Precedence never bypasses the trust gate. An untrusted session has no hub collections loaded, so it
+has none to prefer, and a preferred collection resolves at the revision its manifest pinned — so
+"newer" is a deliberate pull, not drift.
+
+## Collection versions and compatibility windows
+
+An op collection declares its own identity and, optionally, one compatibility window against the
+installed interpretune:
+
+```yaml
+collection:
+  name: my_ops
+  version: 0.3.0
+  requires:
+    interpretune: ">=0.1.0.dev0"
+```
+
+The version versions the op **contract set** — the names, schemas and traits the ops present to
+callers — not a package. There is deliberately no cross-collection dependency resolution and no
+solver: one window per collection, checked with the same `requires:` grammar and machinery component
+manifests use. An incompatible collection is skipped **whole** with a warning, because compatibility
+is declared once per collection and a partial load would present half a contract set. Set
+`IT_STRICT_OP_LOAD=1` to make that a hard failure instead.
+
+Two things worth knowing before you write a window:
+
+- **Bundled families declare none.** They ship inside the wheel, so a window against the installed
+  package is vacuous by construction.
+- **A `>=0.1`-style floor does not match a source install.** `setuptools_scm` produces
+  `0.1.0.devN+g<sha>` between tags, and a dev release sorts *before* its release under PEP 440, so
+  that floor silently skips the whole collection in any checkout. Write `>=0.1.0.dev0` when you mean
+  "0.1 or later, including pre-releases".
+
 ## For component authors
 
 Publishing an entrypoint means asking your users for this consent, so keep the ask small: prefer
 configuration over code, keep entrypoints self-contained and readable, and describe in your card
 what the entrypoint does. A component whose executable surface a reader can check in a minute is
 one they can actually decide about.
+
+For an op collection specifically, `it_component.yaml` is what makes the repo well-formed:
+
+```yaml
+it_schema_version: 1
+kinds: [ops]
+ops:
+  files:
+    - my_ops.yaml
+```
+
+Op discovery is **manifest-routed**: the files listed there are the op definitions, and nothing else
+in the repo is read as one. That is what lets a collection carry a card, a config sample or a
+notebook without any of them reaching the op compiler. A repo with no manifest publishes fine and
+then contributes no ops, and interpretune says so rather than guessing.

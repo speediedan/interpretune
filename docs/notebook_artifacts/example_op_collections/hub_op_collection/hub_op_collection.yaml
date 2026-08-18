@@ -1,4 +1,15 @@
 ---
+# Collection identity: versions the op CONTRACT SET (names, schemas, traits), not a package. It lives here
+# rather than in `it_component.yaml` because the header travels with the definitions -- bundled families and
+# local collections have no manifest at all, and a second declaration could disagree with this one.
+#
+# No `requires:` window is declared. A window would be enforced against the installed interpretune, and note
+# a `>=0.1`-style floor does NOT match a `0.1.0.devN+g<sha>` source install (a dev release sorts before its
+# release), so a naive one silently skips the whole collection in any checkout.
+collection:
+  name: trivial_op_repo
+  version: 0.1.0
+
 trivial_test_op:
   description: Hub-based test op that sums the preds tensor over each batch
   implementation: hub_op_definitions.trivial_test_op_impl

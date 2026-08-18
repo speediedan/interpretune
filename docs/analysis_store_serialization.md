@@ -187,3 +187,46 @@ Neuronpedia dashboard corpora carry their own manifests (`dashboards.json` for p
 `source_ids.json` for identity), documented in the dashboard pipeline guide. They follow the same
 single-integer convention but are read leniently today; if and when they adopt this envelope they
 take a distinct `artifact_kind` under the rules above.
+
+### Op-collection provenance: what the envelope does and does not record
+
+The envelope records the interpretune version, a content fingerprint, the analysis backend, and the
+`ColCfg` needed to re-attach the formatter. It does **not** record which op collections produced the
+store.
+
+That distinction matters once a store's columns come from a hub op collection rather than from the
+bundled set. The bundled case is fully covered by `interpretune_version`, because a bundled op's
+contract is pinned by the package that shipped it. A hub op's is not: its collection carries its own
+version and resolves at a specific commit, so `interpretune_version` alone does not identify the
+contract that produced the columns. Reproducing such a store means knowing the collection and its
+revision, and today that has to come from outside the envelope.
+
+`provenance` is caller-supplied and merged over the defaults, so a producer can record it now without
+any schema change — additive keys are a minor bump under the policy above, and readers ignore keys
+they do not know:
+
+```python
+import interpretune as it
+
+active = it.hub.op_info("concept_direction").active
+it.hub.push_analysis_store(
+    store,
+    "me/my-analysis-store",
+    provenance={
+        "op_collections": [
+            # `source` is the provenance field: "bundled", "local", or "hub:<user>.<repo>". Do not derive
+            # a namespace by splitting the op name -- a bundled op has no namespace to split off.
+            {"source": active.source,
+             "collection": active.collection,
+             "version": active.version,
+             "revision": active.revision}
+        ]
+    },
+)
+```
+
+Whether interpretune should record this **by default** — and therefore make every published store
+carry the resolved identity of every collection that contributed a column — is an open decision on
+the AnalysisStore hub workstream (#124), deliberately not settled here. The pieces it would need now
+exist: collection identity survives the op cache, and `op_info` reports the resolved revision without
+touching the network.
