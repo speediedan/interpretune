@@ -1448,6 +1448,30 @@ def pytest_collection_modifyitems(items):
         ]
 
 
+def _check_module_identity(item) -> None:
+    """Fail the test that leaves an interpretune module bound to two different objects.
+
+    Runs after EVERY test because attribution is the hard part here, not detection. A module reimported
+    without restoring both its ``sys.modules`` entry and its parent-package attribute makes later dotted
+    patch targets silently ineffective, and the resulting failures appear in unrelated tests far downstream:
+    measured 2026-08-18, one such test took 41 op-collection tests red in the full suite while every one of
+    them passed in isolation. Detecting the state is easy; without this hook, finding the cause meant a
+    module-level bisect, a class-level bisect, and a hand-written probe.
+
+    Reported once per session. After the first offender the invariant stays broken, so every subsequent
+    teardown would fail too and bury the one report that identifies the cause.
+    """
+    from tests.module_identity import first_module_identity_split
+
+    if getattr(item.session, "_it_module_identity_reported", False):
+        return
+    split = first_module_identity_split()
+    if split is None:
+        return
+    item.session._it_module_identity_reported = True
+    pytest.fail(f"{item.nodeid} left an interpretune module double-bound.\n\n{split}", pytrace=False)
+
+
 def pytest_runtest_setup(item):
     if not _test_resource_debug_enabled():
         return
@@ -1460,7 +1484,9 @@ def pytest_runtest_setup(item):
     )
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_runtest_teardown(item, nextitem):
+    _check_module_identity(item)
     if not _test_resource_debug_enabled():
         return
 

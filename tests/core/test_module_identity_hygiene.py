@@ -9,13 +9,16 @@ because they are read by different mechanisms:
 - a call-time ``from pkg.sub import NAME`` reads ``SYS.MODULES``.
 
 Leave those disagreeing and a patch lands on a module nothing reads: the patch "succeeds", the code under
-test sees the original value, and the test fails with a confusing symptom far from the cause. Measured
+test sees the original value, and the failure surfaces as a confusing symptom far from the cause. Measured
 2026-08-18: ``test_hub_manager.py::test_environment_variable_parsing`` restored only ``sys.modules``, which
 took 41 op-collection tests red in the full suite while every one of them passed in isolation, since nothing
 before them in a targeted run had done the reimport.
 
-This is a session-wide invariant rather than a property of one test, so it is asserted directly. It is cheap
-and it fails loudly at the point of breakage instead of somewhere downstream.
+**Attribution is the hard part, not detection.** The check below reports that the invariant is broken; it
+cannot say who broke it, and a bare "module identity is split" failure is only marginally better than the
+symptoms it replaces. The ``interpretune_module_identity`` hook in ``tests/conftest.py`` is the instrument
+that matters: it runs after every test and fails the test that ACTUALLY caused the split. This module keeps
+the invariant documented and gives a fast standalone check.
 """
 
 from __future__ import annotations
@@ -24,36 +27,13 @@ import sys
 
 import pytest
 
-# Packages whose reimport is known to be attempted by tests, plus the ones op/hub tests patch through.
-WATCHED_MODULES = (
-    "interpretune",
-    "interpretune.analysis",
-    "interpretune.analysis.ops",
-    "interpretune.analysis.ops.dispatcher",
-    "interpretune.analysis.ops.compiler.cache_manager",
-    "interpretune.hub",
-    "interpretune.hub.cache",
-    "interpretune.hub.manager",
-)
+from tests.module_identity import WATCHED_MODULES, module_identity_split
 
 
 @pytest.mark.parametrize("dotted", WATCHED_MODULES)
 def test_parent_attribute_and_sys_modules_agree(dotted: str):
     """The parent-package attribute and ``sys.modules`` must be the SAME object."""
     __import__(dotted)
-    in_sys = sys.modules.get(dotted)
-    assert in_sys is not None, f"{dotted} is not in sys.modules after import"
-
-    parent_name, _, leaf = dotted.rpartition(".")
-    if not parent_name:
-        return  # a top-level package has no parent attribute to disagree with
-
-    parent = sys.modules.get(parent_name)
-    assert parent is not None, f"{parent_name} is not in sys.modules"
-    via_attribute = getattr(parent, leaf, None)
-    assert via_attribute is in_sys, (
-        f"{dotted} is bound to two different module objects: {parent_name}.{leaf} is not "
-        f"sys.modules[{dotted!r}]. Some test reimported it and restored only one of the two references. "
-        "Patches that walk the parent attribute and reads that go through sys.modules now disagree, so a "
-        "patched value can be invisible to the code under test."
-    )
+    assert sys.modules.get(dotted) is not None, f"{dotted} is not in sys.modules after import"
+    split = module_identity_split(dotted)
+    assert split is None, split
