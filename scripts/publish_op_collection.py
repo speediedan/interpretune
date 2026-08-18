@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Publish an in-tree bundled op family to the Hub as an op collection.
 
-The flagship seed collection (``speediedan/concept_direction_ops``) is generated from
+The first published seed collection (``speediedan/concept_direction_ops``) is generated from
 ``src/interpretune/analysis/ops/bundled/concept/`` rather than maintained separately, so the bundled copy
 remains the single source and the two cannot drift (design §3.9, D9). The concept family stays bundled: it is
 load-bearing in hermetic CI (the GPU parity gates, cross-backend compatibility, capability discovery), so

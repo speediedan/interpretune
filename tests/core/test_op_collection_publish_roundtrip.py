@@ -44,7 +44,7 @@ REVISION = "f" * 40
 @pytest.fixture(scope="module")
 def published_tree(tmp_path_factory) -> Path:
     """The publishable ops repo, built from the in-tree concept family exactly as a publish would."""
-    out = tmp_path_factory.mktemp("flagship") / "build"
+    out = tmp_path_factory.mktemp("published_collection") / "build"
     build_op_collection_tree(CONCEPT_FAMILY, out, REPO_ID)
     return out
 

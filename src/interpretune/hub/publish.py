@@ -78,7 +78,7 @@ def build_op_collection_tree(
 ) -> dict:
     """Build a publishable ops repo from an in-tree bundled op family; returns the generated manifest.
 
-    The flagship seed collection is GENERATED from the bundled family rather than maintained beside it (design
+    A published seed collection is GENERATED from the bundled family rather than maintained beside it (design
     §3.9, D9), so the bundled copy stays the single source and the two cannot drift. One transformation is
     mandatory, not cosmetic: bundled YAMLs address implementations by installed package path
     (``interpretune.analysis.ops.bundled.<family>.<module>.<fn>``), while the hub loader resolves a

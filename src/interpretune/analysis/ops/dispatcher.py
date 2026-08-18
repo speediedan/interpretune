@@ -793,7 +793,7 @@ class AnalysisOpDispatcher:
         A hub op losing a bare name to a BUNDLED op is the documented default rather than an anomaly: bundled
         ops win bare names so a session behaves identically with and without hub access, and
         :func:`interpretune.hub.prefer_ops` is the supported way to change that. Warning on it is actively
-        harmful once collections mirror bundled families -- pulling the flagship concept mirror emitted nine
+        harmful once collections mirror bundled families -- pulling the published concept mirror emitted nine
         warnings about working-as-designed behavior, which is how a warning channel stops being read. A
         contest whose incumbent is NOT bundled is genuinely ambiguous and still warns.
         """

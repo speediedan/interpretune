@@ -17,7 +17,7 @@
   "notebooks/dev/example_op_collections/__pycache__/op_collection_demo_utils.cpython-310.pyc": "4df5302c879b8ae9cd51b4c2e19f877e3532f64494f4f2bf0facc57a103176cd",
   "notebooks/dev/example_op_collections/__pycache__/op_collection_demo_utils.cpython-312.pyc": "26040b9a677df03c8b52c34bb31682936a16a5fa6e790b856e8596d64452b12e",
   "notebooks/dev/example_op_collections/__pycache__/op_collection_demo_utils.cpython-313.pyc": "2c11c11ae2de2d56fe81bbf9b1aaa8cc2e5f71ff2ff14fc202e28d6f9022bb89",
-  "notebooks/dev/example_op_collections/bundled_ops_hub_optin.ipynb": "402715b2a7751b5b0ba628fcc2c14d1f2855d4961b0788214e5351a67ce8f122",
+  "notebooks/dev/example_op_collections/bundled_ops_hub_optin.ipynb": "cd24d46c31d362cfa1a04b4f2f74a278c04a8f55f8f5aa13fa4c2d68036686e4",
   "notebooks/dev/example_op_collections/hub_op_collection/__pycache__/hub_op_definitions.cpython-310.pyc": "8441fb50fe5a5bf1ce924a5126a8aa521c4e09405dd7e88fe738753eb9dd948d",
   "notebooks/dev/example_op_collections/hub_op_collection/hub_op_collection.yaml": "c9afc68ee32514a3b7efca39f5ba9f58848242af849f4789a4f6e0e6864a3f92",
   "notebooks/dev/example_op_collections/hub_op_collection/hub_op_definitions.py": "423bf5982fae43be9e340401d27818062b05fc961919cf4dd72eb7dd21fae718",

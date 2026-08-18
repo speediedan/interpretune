@@ -115,6 +115,20 @@ default is what makes a session behave the same offline as online, and the same 
 collaborator who has pulled nothing. It also means **pulling an op collection cannot silently
 re-point existing code**: a pull adds namespaced ops, it does not take over names.
 
+### Two words, deliberately not interchangeable
+
+- **hub-resident** describes code whose *publisher is not you*, in the context of consenting to
+  **execute** it. That is what the trust gate governs, and it stays true wherever the code now sits:
+  a collection you pulled last month is still hub-resident code when this session runs it.
+- **hub-sourced** describes an op's **provenance** — where the definition came from — when the
+  question is resolution rather than consent.
+
+The distinction matters because **fetching is the only step that needs the network**. Once a
+collection is in the ops cache, discovery scans that cache, so later sessions load and run its ops
+**offline**, at the revision you pulled: hub-sourced, locally resolved. The trust gate still applies
+each session, because it is about executing someone else's code rather than about reaching the
+network, and `op_info` reports the cached revision without fetching anything.
+
 Nothing is guessed, so nothing has to be inferred from behavior. Ask:
 
 ```python

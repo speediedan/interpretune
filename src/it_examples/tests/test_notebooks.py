@@ -229,13 +229,13 @@ def test_attribution_analysis_notebook(params: dict[str, Any], tmp_path: Path):
 _hf_token_available = bool(os.environ.get("HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY") or os.environ.get("HF_TOKEN"))
 
 
-_flagship_token_available = bool(os.environ.get("IT_HF_TOKEN") or os.environ.get("HF_TOKEN"))
+_published_collection_token_available = bool(os.environ.get("IT_HF_TOKEN") or os.environ.get("HF_TOKEN"))
 
 
-@pytest.mark.skipif(not _flagship_token_available, reason="IT_HF_TOKEN or HF_TOKEN required")
+@pytest.mark.skipif(not _published_collection_token_available, reason="IT_HF_TOKEN or HF_TOKEN required")
 @pytest.mark.parametrize("notebook_file", ["bundled_ops_hub_optin.ipynb"])
 def test_bundled_ops_hub_optin_notebook(notebook_file: str, tmp_path: Path):
-    """The hub-op opt-in flow, end to end against the published flagship collection.
+    """The hub-op opt-in flow, end to end against the published concept_direction_ops collection.
 
     Token-gated only because `speediedan/concept_direction_ops` is private until interpretune's Hub library registration
     lands; the pull path needs no auth once the repo is public. The notebook only PULLS, so it cannot modify a
