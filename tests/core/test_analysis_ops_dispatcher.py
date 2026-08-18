@@ -1,4 +1,6 @@
 from __future__ import annotations
+import dataclasses
+
 import pytest
 import torch
 from unittest.mock import patch, MagicMock
@@ -2199,12 +2201,22 @@ dependent_op:
         with patch("interpretune.analysis.ops.dispatcher.rank_zero_warn") as mock_warn:
             dispatcher._set_default_hub_op_aliases()
 
-            # Should warn about base name conflict
+            # Should warn about base name conflict, naming both ways out (fully-qualified name, or prefer_ops)
             mock_warn.assert_called_with(
                 "Base name 'test_op' already has an assigned op or alias so 'namespace.test_op' "
-                "cannot be mapped to it. The fully-qualified name will need to be "
-                "used unless another alias is provided."
+                "cannot be mapped to it. Address it by its fully-qualified name, or opt into "
+                "resolving the bare name to this collection with it.hub.prefer_ops('namespace')."
             )
+
+        # A HUB op losing a bare name to a BUNDLED one is the documented default rather than an anomaly, so
+        # that contest is reported at debug volume (asserted end-to-end in test_op_collection_publish_roundtrip)
+        dispatcher._op_definitions = {
+            "test_op": base_op_def,
+            "namespace.test_op": dataclasses.replace(namespaced_op_def, source="hub:name.space"),
+        }
+        with patch("interpretune.analysis.ops.dispatcher.rank_zero_warn") as mock_warn:
+            dispatcher._set_default_hub_op_aliases()
+            mock_warn.assert_not_called()
 
     def test_set_default_hub_op_aliases_self_referencing_alias_skip(self):
         """Test skipping self-referencing aliases."""
@@ -2295,9 +2307,9 @@ dependent_op:
 
             # Should warn about base alias conflict
             mock_warn.assert_called_with(
-                "Base alias 'existing_op' already has an assigned op or alias so the alias"
-                " specified by 'namespace.existing_op' cannot be mapped to it. The fully-qualified "
-                " name will need to be used unless another alias is provided."
+                "Base alias 'existing_op' already has an assigned op or alias so the alias "
+                "specified by 'namespace.existing_op' cannot be mapped to it. Address it by its "
+                "fully-qualified name, or opt into the bare name with it.hub.prefer_ops()."
             )
 
     def test_set_default_hub_op_aliases_complex_scenario(self):

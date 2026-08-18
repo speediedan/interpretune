@@ -143,7 +143,9 @@ test_hub_op:
             assert "hub_test" in all_ops
 
             assert "hub_test" in dispatcher._aliases
-            w_expected = ["The fully-qualified name will need.*", ".*multiple matching operations found.*"]
+            # Two HUB collections contesting one bare name is genuine ambiguity, so it still warns (unlike a
+            # hub op losing to a bundled one, which is the documented default and reports at debug volume).
+            w_expected = ["Address it by its fully-qualified name.*", ".*multiple matching operations found.*"]
             unmatched = unmatched_warns(rec_warns=recwarn.list, expected_warns=w_expected)
             assert not unmatched
 

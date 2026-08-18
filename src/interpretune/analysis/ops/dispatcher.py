@@ -585,11 +585,16 @@ class AnalysisOpDispatcher:
                     if original_alias in self._aliases:
                         # If the original alias already exists, ensure it points to the same op_name
                         if self._aliases[original_alias] != op_name_norm:
-                            rank_zero_warn(
+                            incumbent = self._op_definitions.get(self._aliases[original_alias])
+                            message = (
                                 f"The name '{original_alias}' already exists for a different operation. "
                                 f"The fully-qualified alias name ({alias_norm}) has been added as an alias "
                                 f"for {op_name_norm}."
                             )
+                            if incumbent is None:
+                                rank_zero_warn(message)
+                            else:
+                                self._report_bare_name_contest(incumbent, op_def, message)
                     else:
                         if self._aliases and original_alias != op_name_norm:
                             self._aliases[original_alias] = op_name_norm
@@ -760,6 +765,22 @@ class AnalysisOpDispatcher:
             revision=_cached_op_revision(op_def.source),
         )
 
+    def _report_bare_name_contest(self, incumbent: OpDef, challenger: OpDef, message: str) -> None:
+        """Report a contested bare name at the volume the contest actually warrants.
+
+        A hub op losing a bare name to a BUNDLED op is the documented default rather than an anomaly: bundled
+        ops win bare names so a session behaves identically with and without hub access, and
+        :func:`interpretune.hub.prefer_ops` is the supported way to change that. Warning on it is actively
+        harmful once collections mirror bundled families -- pulling the flagship concept mirror emitted nine
+        warnings about working-as-designed behavior, which is how a warning channel stops being read. A
+        contest whose incumbent is NOT bundled is genuinely ambiguous and still warns.
+        """
+        by_design = incumbent.source == "bundled" and challenger.source.startswith("hub:")
+        if by_design:
+            rank_zero_debug(f"[ANALYSIS_OPS] {message}")
+        else:
+            rank_zero_warn(message)
+
     def _set_default_hub_op_aliases(self) -> dict[str, "OpDef"]:
         """Ensure operations are accessible both with and without namespaces."""
         # Use existing definitions if no raw definitions provided
@@ -777,10 +798,13 @@ class AnalysisOpDispatcher:
                 if base_name in target_ops:
                     # If the base name already exists, ensure it points to the same OpDef
                     if target_ops[base_name] != target_ops[op_name]:
-                        rank_zero_warn(
+                        self._report_bare_name_contest(
+                            target_ops[base_name],
+                            target_ops[op_name],
                             f"Base name '{base_name}' already has an assigned op or alias so '{op_name}' "
-                            "cannot be mapped to it. The fully-qualified name will need to be "
-                            "used unless another alias is provided."
+                            f"cannot be mapped to it. Address it by its fully-qualified name, or opt into "
+                            f"resolving the bare name to this collection with "
+                            f"it.hub.prefer_ops('{op_name.rsplit('.', 1)[0].replace('.', '/', 1)}').",
                         )
                 else:
                     if base_name != op_name:
@@ -795,9 +819,11 @@ class AnalysisOpDispatcher:
                 if alias in target_ops:
                     # If alias already exists, ensure it points to the same OpDef
                     if target_ops[alias] != target_ops[op_name]:
-                        rank_zero_warn(
+                        self._report_bare_name_contest(
+                            target_ops[alias],
+                            target_ops[op_name],
                             f"Alias '{alias}' already has an assigned op or alias so the "
-                            f"alias specified by '{op_name}' cannot be mapped to it"
+                            f"alias specified by '{op_name}' cannot be mapped to it",
                         )
                 else:
                     target_ops[alias] = target_ops[op_name]
@@ -809,10 +835,12 @@ class AnalysisOpDispatcher:
                     if base_alias in target_ops:
                         # If base alias already exists, ensure it points to the same OpDef
                         if target_ops[base_alias] != target_ops[op_name]:
-                            rank_zero_warn(
-                                f"Base alias '{base_alias}' already has an assigned op or alias so the alias"
-                                f" specified by '{alias}' cannot be mapped to it. The fully-qualified "
-                                " name will need to be used unless another alias is provided."
+                            self._report_bare_name_contest(
+                                target_ops[base_alias],
+                                target_ops[op_name],
+                                f"Base alias '{base_alias}' already has an assigned op or alias so the alias "
+                                f"specified by '{alias}' cannot be mapped to it. Address it by its "
+                                f"fully-qualified name, or opt into the bare name with it.hub.prefer_ops().",
                             )
                     else:
                         if base_alias != op_name and base_alias != alias:
