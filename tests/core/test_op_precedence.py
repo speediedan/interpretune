@@ -11,6 +11,11 @@ from pathlib import Path
 
 import pytest
 
+# The dispatcher MODULE object, not a dotted string: `monkeypatch.setattr("a.b.c.NAME", ...)` walks the
+# path with `getattr`, and `interpretune.analysis` is a lazy PEP 562 package that does not expose `ops` as an
+# attribute until something imports it -- so the string form resolves only when an unrelated earlier import
+# happened to set it, i.e. it passes in isolation and fails inside the suite.
+from interpretune.analysis.ops import dispatcher as dispatcher_module
 from interpretune.analysis.ops.dispatcher import (
     IT_OP_PRECEDENCE_ENV_VAR,
     AnalysisOpDispatcher,
@@ -60,7 +65,7 @@ def hub_dispatcher(tmp_path, monkeypatch) -> AnalysisOpDispatcher:
         hub_cache, repo_id="rival/ops", op_files={"ops.yaml": HUB_OPS, "rival_impl.py": HUB_IMPL}
     )
     monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache)
-    monkeypatch.setattr("interpretune.analysis.ops.dispatcher.IT_ANALYSIS_HUB_CACHE", hub_cache)
+    monkeypatch.setattr(dispatcher_module, "IT_ANALYSIS_HUB_CACHE", hub_cache)
     monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_OP_PATHS", [])
     monkeypatch.delenv(IT_OP_PRECEDENCE_ENV_VAR, raising=False)
 
@@ -233,13 +238,13 @@ class TestCachedRevisionReporting:
         refs = cache / "models--rival--ops" / "refs"
         refs.mkdir(parents=True)
         (refs / "main").write_text("c0ffee" * 6 + "abcd")
-        monkeypatch.setattr("interpretune.analysis.ops.dispatcher.IT_ANALYSIS_HUB_CACHE", cache)
+        monkeypatch.setattr(dispatcher_module, "IT_ANALYSIS_HUB_CACHE", cache)
         assert _cached_op_revision("hub:rival.ops") == "c0ffee" * 6 + "abcd"
 
     def test_an_uncached_hub_source_reports_none_rather_than_raising(self, tmp_path, monkeypatch):
         from interpretune.analysis.ops.dispatcher import _cached_op_revision
 
-        monkeypatch.setattr("interpretune.analysis.ops.dispatcher.IT_ANALYSIS_HUB_CACHE", tmp_path / "absent")
+        monkeypatch.setattr(dispatcher_module, "IT_ANALYSIS_HUB_CACHE", tmp_path / "absent")
         assert _cached_op_revision("hub:rival.ops") is None
 
 

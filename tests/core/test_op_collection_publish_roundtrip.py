@@ -23,6 +23,11 @@ from pathlib import Path
 import pytest
 import yaml
 
+# The dispatcher MODULE object, not a dotted string: `monkeypatch.setattr("a.b.c.NAME", ...)` walks the
+# path with `getattr`, and `interpretune.analysis` is a lazy PEP 562 package that does not expose `ops` as an
+# attribute until something imports it -- so the string form resolves only when an unrelated earlier import
+# happened to set it, i.e. it passes in isolation and fails inside the suite.
+from interpretune.analysis.ops import dispatcher as dispatcher_module
 from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
 from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
 from interpretune.hub.opcollections import resolve_cached_op_files
@@ -56,7 +61,7 @@ def pulled_dispatcher(published_tree, tmp_path, monkeypatch) -> AnalysisOpDispat
     (refs / "main").write_text(REVISION, encoding="utf-8")
 
     monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache)
-    monkeypatch.setattr("interpretune.analysis.ops.dispatcher.IT_ANALYSIS_HUB_CACHE", hub_cache)
+    monkeypatch.setattr(dispatcher_module, "IT_ANALYSIS_HUB_CACHE", hub_cache)
     monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_OP_PATHS", [])
     monkeypatch.delenv("IT_OP_PRECEDENCE", raising=False)
 
