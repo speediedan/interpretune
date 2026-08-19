@@ -228,10 +228,10 @@ base_env_build(){
     # Read torch prerelease configuration if it exists
     read_torch_pre_config "${torch_pre_file}"
 
+    local cuda_target index_url
     if [[ -n "${TORCH_PRE_VERSION}" ]]; then
         # Install torch prerelease from nightly/test channel
-        local cuda_target="${TORCH_PRE_CUDA:-cu128}"
-        local index_url
+        cuda_target="${TORCH_PRE_CUDA:-cu128}"
         index_url=$(get_torch_index_url "${TORCH_PRE_CHANNEL}" "${cuda_target}")
         echo "Installing torch prerelease: ${TORCH_PRE_VERSION} from ${TORCH_PRE_CHANNEL}/${cuda_target}..."
         uv pip install ${uv_install_flags} --prerelease=if-necessary-or-explicit "torch==${TORCH_PRE_VERSION}" --index-url "${index_url}"
@@ -248,6 +248,30 @@ base_env_build(){
         else
             echo "Installing stable torch with --torch-backend=${torch_backend}..."
             uv pip install ${uv_install_flags} torch --torch-backend=${torch_backend}
+        fi
+    fi
+
+    # Install the PAIRED torch-ecosystem pins here, under the same backend/index as torch itself.
+    #
+    # Why here and not with the bulk resolve: torchvision ships a SEPARATE wheel per backend, but the
+    # pin in overrides.txt names only the VERSION. it_install() deliberately omits --torch-backend (see
+    # the comment there), so a torchvision pulled at that point comes from the DEFAULT index -- which on
+    # Linux is the CUDA build. Paired with a --torch-backend=cpu torch that ships no libtorch_cuda.so,
+    # the extension cannot load. Nothing fails at install time; it surfaces much later, and only once
+    # something touches a torchvision C++ op, as:
+    #     RuntimeError: operator torchvision::nms does not exist
+    # Installing the pin now means the bulk resolve finds it already satisfied and leaves it alone.
+    # Reproduced 2026-08-19 in a two-command scratch venv; this is what blocked the clean pins env.
+    local pinned_torchvision
+    pinned_torchvision=$(grep -oP '^torchvision==\K[0-9][^\s#]*' "${repo_home}/requirements/ci/overrides.txt" 2>/dev/null | head -1 || echo "")
+    if [[ -n "${pinned_torchvision}" ]]; then
+        if [[ -n "${TORCH_PRE_VERSION}" ]]; then
+            echo "Installing paired torchvision==${pinned_torchvision} from ${TORCH_PRE_CHANNEL}/${cuda_target}..."
+            uv pip install ${uv_install_flags} --prerelease=if-necessary-or-explicit \
+                "torchvision==${pinned_torchvision}" --index-url "${index_url}"
+        else
+            echo "Installing paired torchvision==${pinned_torchvision} with --torch-backend=${torch_backend}..."
+            uv pip install ${uv_install_flags} "torchvision==${pinned_torchvision}" --torch-backend=${torch_backend}
         fi
     fi
 }
