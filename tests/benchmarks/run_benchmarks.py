@@ -167,6 +167,14 @@ def run_cli_benchmark(
             cmd.extend(["--run_cfg.limit_test_batches", str(limit_batches)])
 
     env = os.environ.copy()
+    # Capture plain text, not a terminal rendering. `capture_output` already makes stdout a pipe, but an
+    # ambient FORCE_COLOR (set on at least one dev host) makes rich colorize anyway, and the ANSI runs
+    # inside Lightning's metric table then sit between "accuracy" and its value where `parse_accuracy`
+    # cannot bridge them. That silently scored every Lightning benchmark as N/A while the run itself
+    # returned 0. Normalize the child's environment so the instrument does not depend on the ambient one.
+    env.pop("FORCE_COLOR", None)
+    env["NO_COLOR"] = "1"
+    env["TERM"] = "dumb"
     if debug:
         env["IT_CI_LOG_LEVEL"] = "DEBUG"
 

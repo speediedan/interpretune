@@ -2,11 +2,15 @@ from unittest.mock import patch
 import os
 import shutil
 from copy import deepcopy
+from functools import partial
 
 import pytest
-from jsonargparse import ArgumentError
+import yaml
+from jsonargparse import ArgumentError, ArgumentParser
 
-from interpretune.base import LightningCLIAdapter, bootstrap_cli
+from interpretune.base import LightningCLIAdapter, ITSessionMixin, bootstrap_cli
+from interpretune.base.components.cli import ONE_DOOR_BODY_KEYS
+from tests.core.loader_equivalence import cli_experiment_configs
 from tests.runif import RunIf
 from tests.warns import unexpected_warns, CLI_EXPECTED_WARNS
 from tests.base_defaults import pytest_factory
@@ -147,3 +151,88 @@ def test_bootstrap_cli(clean_cli_env, l_cli, run):
     with pytest.raises((SystemExit, ArgumentError)) as err, patch("sys.argv", cli_args):
         _ = bootstrap_cli()
     assert err.traceback[1].locals["cli_main"] is target_cli
+
+
+################################################################################
+# Parse-surface pins for the shipped one-door configurations
+################################################################################
+# NOTE [Parse Surface vs Loader]: `tests/core/test_loader_equivalence.py` pins what the LOADER makes of
+# these bodies; the tests below pin that the argv/config-file shim ACCEPTS them in the first place.
+# Nothing pinned the second half before, and the gap shipped: the 4b migration (25ee43c) flattened every
+# config in `experiments/cli/` to the one-door schema without adding those top-level keys to the parse
+# surface, so all 15 failed `interpretune --config <cfg>` with rc=2. The loader harness stayed green
+# (it bypasses the parser) and every CLI test config stayed in the legacy `session_cfg` dialect (see
+# `tests/parity_acceptance/cfg_aliases.py`), so nothing failed, while the entire registered-benchmark
+# lane, which drives the real CLI, was dark.
+
+SHIPPED_CLI_CONFIGS = cli_experiment_configs()
+
+
+def _is_lightning_config(config_path) -> bool:
+    return "lightning" in (yaml.safe_load(config_path.read_text(encoding="utf-8")).get("adapter_ctx") or [])
+
+
+CORE_CLI_CONFIGS = [p for p in SHIPPED_CLI_CONFIGS if not _is_lightning_config(p)]
+LIGHTNING_CLI_CONFIGS = [p for p in SHIPPED_CLI_CONFIGS if _is_lightning_config(p)]
+
+
+def _assert_parses(cli_main, args, config_path, surface):
+    """`--print_config` dumps and exits DURING parsing, so the parse surface is pinned on CPU without
+    loading a model: a rejected key exits 2, an accepted one exits 0."""
+    with pytest.raises(SystemExit) as exc, patch("sys.argv", [RUN_FN]):
+        cli_main(args=args)
+    assert exc.value.code == 0, f"the {surface} parse surface rejected the shipped config {config_path.name}"
+
+
+def test_shipped_cli_configs_discovered():
+    """Both halves must stay populated; an empty half would make the pins below vacuously pass."""
+    assert len(SHIPPED_CLI_CONFIGS) == 15, sorted(str(c) for c in SHIPPED_CLI_CONFIGS)
+    assert CORE_CLI_CONFIGS and LIGHTNING_CLI_CONFIGS
+
+
+@pytest.mark.parametrize("config_path", CORE_CLI_CONFIGS, ids=lambda p: p.stem)
+def test_shipped_core_cli_config_parses(clean_cli_env, config_path):
+    from interpretune.base import core_cli_main
+
+    _assert_parses(
+        partial(core_cli_main, run_mode=False), ["--config", str(config_path), "--print_config"], config_path, "core"
+    )
+
+
+@RunIf(lightning=True)
+@pytest.mark.parametrize("config_path", LIGHTNING_CLI_CONFIGS, ids=lambda p: p.stem)
+def test_shipped_lightning_cli_config_parses(clean_cli_env, config_path):
+    from interpretune.base import l_cli_main
+
+    _assert_parses(
+        partial(l_cli_main, run_mode=True),
+        ["test", "--config", str(config_path), "--print_config"],
+        config_path,
+        "lightning",
+    )
+
+
+def test_one_door_body_keys_are_on_the_parse_surface():
+    """The shim's read set and its parse surface must not drift apart.
+
+    `_session_mapping_from_sources` reads `ONE_DOOR_BODY_KEYS` out of a flattened body, but jsonargparse rejects the
+    file before the shim ever sees it unless the parser also declares them. Pinning the two together means a future
+    dialect key fails here, naming its cause, instead of failing opaquely in every shipped configuration at once.
+    """
+    parser = ArgumentParser()
+    ITSessionMixin().add_arguments_to_parser(parser)
+    declared = {action.dest for action in parser._actions}
+    assert set(ONE_DOOR_BODY_KEYS) <= declared, f"read but not declared: {set(ONE_DOOR_BODY_KEYS) - declared}"
+
+
+def test_shipped_configs_use_only_known_top_level_keys():
+    """The other direction: a config may not introduce a top-level key the shim has no action for.
+
+    `trainer` is Lightning's own argument group, so it is allowed only where Lightning is in `adapter_ctx`. A core
+    configuration carrying one would parse against a parser that has no such group.
+    """
+    shim_keys = {"seed_everything", "session_cfg", *ONE_DOOR_BODY_KEYS}
+    for config_path in SHIPPED_CLI_CONFIGS:
+        top_level = set(yaml.safe_load(config_path.read_text(encoding="utf-8")))
+        allowed = shim_keys | {"trainer"} if _is_lightning_config(config_path) else shim_keys
+        assert top_level <= allowed, f"{config_path.name} has unknown top-level keys: {sorted(top_level - allowed)}"

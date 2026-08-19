@@ -125,3 +125,61 @@ def test_benchmark(experiment_name, benchmark_id, benchmark_entry):
         assert abs(accuracy - expected) <= tolerance, (
             f"Benchmark {experiment_name}/{benchmark_id}: accuracy={accuracy:.4f}, expected={expected:.3f}±{tolerance}"
         )
+
+
+################################################################################
+# Accuracy-parsing pins (ungated: pure string handling, no GPU and no benchmark run)
+################################################################################
+# NOTE [Colorized Metric Tables]: `run_benchmarks.py` scores a run by matching "accuracy" and its value
+# in captured output. Lightning renders that value in a rich table which colorizes whenever a terminal is
+# signalled, and an ambient FORCE_COLOR does so even into a pipe. The escape runs then land BETWEEN the
+# metric name and its value, so the pattern cannot bridge them and the benchmark scores N/A on a run that
+# returned 0. That is a silent wrong answer from the instrument, not a loud failure, so it is pinned with
+# the exact bytes observed rather than a hand-written approximation.
+
+# Captured verbatim from a gemma3_1b_it_l_ns Lightning run (accuracy 0.75) with FORCE_COLOR=3 ambient.
+ANSI_METRIC_TABLE_ROW = (
+    "│\x1b[36m \x1b[0m\x1b[36m        accuracy         \x1b[0m\x1b[36m \x1b[0m"
+    "│\x1b[35m \x1b[0m\x1b[35m          0.75           \x1b[0m\x1b[35m \x1b[0m│"
+)
+
+
+def test_parse_accuracy_reads_colorized_lightning_table():
+    from tests.benchmarks.benchmark_utils import parse_accuracy
+
+    assert parse_accuracy(ANSI_METRIC_TABLE_ROW) == 0.75
+
+
+def test_parse_accuracy_reads_uncolored_lightning_table():
+    """The same row without color must keep working; the fix may not trade one rendering for the other."""
+    from tests.benchmarks.benchmark_utils import parse_accuracy, strip_ansi
+
+    assert parse_accuracy(strip_ansi(ANSI_METRIC_TABLE_ROW)) == 0.75
+
+
+def test_parse_accuracy_reads_core_epoch_end():
+    """The core CLI reports through a plain dict rather than a table."""
+    from tests.benchmarks.benchmark_utils import parse_accuracy
+
+    assert parse_accuracy("Test epoch end: {'accuracy': 0.7500}") == 0.75
+
+
+def test_parse_accuracy_returns_none_without_a_metric():
+    from tests.benchmarks.benchmark_utils import parse_accuracy
+
+    assert parse_accuracy("Testing ... 2/2 0:00:01") is None
+
+
+def test_benchmark_subprocess_env_is_color_neutral():
+    """The instrument must not inherit the ambient host's color settings.
+
+    Pinned at the source rather than only at the parser: a colorized capture is unreadable for any future consumer of
+    the raw log, not just `parse_accuracy`.
+    """
+    import inspect
+
+    from tests.benchmarks import run_benchmarks
+
+    source = inspect.getsource(run_benchmarks.run_cli_benchmark)
+    assert 'env.pop("FORCE_COLOR", None)' in source
+    assert 'env["NO_COLOR"] = "1"' in source

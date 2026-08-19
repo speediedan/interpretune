@@ -27,6 +27,20 @@ def section(title: str) -> str:
     return f"\n{'=' * 70}\n  {title}\n{'=' * 70}\n"
 
 
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences so rendered output can be parsed as plain text.
+
+    Lightning renders its metric table with rich, which colorizes whenever a terminal is signalled. The escape runs land
+    BETWEEN the metric name and its value, so a pattern matching ``accuracy <spaces> <value>`` cannot bridge them and
+    the benchmark scores N/A on a run that actually succeeded. `run_benchmarks.py` also neutralizes color in the child
+    environment; this keeps the parser correct for output captured anywhere else.
+    """
+    return _ANSI_ESCAPE.sub("", text)
+
+
 def parse_accuracy(output: str) -> float | None:
     """Parse accuracy from CLI test output.
 
@@ -44,6 +58,7 @@ def parse_accuracy(output: str) -> float | None:
         r"accuracy\s+[\│|]?\s*([\d.]+)",
         r"['\"]accuracy['\"]:\s*([\d.]+)",
     ]
+    output = strip_ansi(output)
     last_match = None
     for pattern in patterns:
         for match in re.finditer(pattern, output):
