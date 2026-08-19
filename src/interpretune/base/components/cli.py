@@ -14,7 +14,10 @@ from functools import reduce
 
 import torch
 from transformers import logging as transformers_logging
-from jsonargparse import ActionConfigFile, ArgumentParser, Namespace
+
+# `ActionConfigFile` is public jsonargparse API but is absent from its `__all__` and imported without the
+# redundant-alias form, so pyright reports it as private from 4.42.0 onward. Upstream oversight, not ours.
+from jsonargparse import ActionConfigFile, ArgumentParser, Namespace  # pyright: ignore[reportPrivateImportUsage]
 
 from interpretune.config import SessionRunnerCfg
 from interpretune.base import ITDataModule
