@@ -137,6 +137,12 @@ python -m pytest tests/
 ```
 
 ### Development Environment Scripts
+
+**Always `uv pip`, never bare `pip`.** The `transformer-lens` / `nnsight` pins live in
+`[tool.uv] override-dependencies`, which pip ignores, so `pip install .` resolves the wrong
+TransformerLens line and fails downstream in ways that look like application bugs. See the install-flow
+table in `CLAUDE.md` for the three supported flows.
+
 Use the provided build script for automated setup:
 
 ```bash
