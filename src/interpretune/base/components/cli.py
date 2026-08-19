@@ -43,6 +43,14 @@ IT_CONFIG_GLOBAL = Path(os.environ.get("IT_CONFIG_GLOBAL", IT_CONFIG_BASE / "glo
 
 log = logging.getLogger(__name__)
 
+# NOTE [One-Door Body Keys]: the top-level keys of a flattened one-door configuration body (hub design
+# v3 §11.4). They are BOTH declared on the parse surface and read by the argv shim's file merge, and
+# the two must not drift: the 4b migration flattened every shipped experiments/cli config while leaving
+# the parse surface knowing only the legacy `session_cfg` subtree, so jsonargparse rejected all of them
+# before the loader ever ran. `tests/core/test_components_cli.py` pins the parse surface against the
+# shipped configs so a future dialect change cannot ship that way again.
+ONE_DOOR_BODY_KEYS: tuple[str, ...] = ("shared_config", "registered_cfg", "adapter_ctx")
+
 
 def _select_seed_randomly(min_seed_value: int = min_seed_value, max_seed_value: int = max_seed_value) -> int:
     return random.randint(min_seed_value, max_seed_value)
@@ -61,6 +69,12 @@ class ITSessionMixin:
         # DAG (ITSharedConfig propagation) is retired: the loader's shared_config handling is the one
         # merge site.
         parser.add_argument("--session_cfg", type=dict, default={}, help="Session configuration mapping.")
+        # A flattened one-door body (4b) spells that same subtree as top-level keys, so the shim must
+        # ACCEPT what `_session_mapping_from_sources` already knows how to read. Plain-mapping types for
+        # the same reason `session_cfg` is one: these are shim keys, not a construction surface.
+        parser.add_argument("--shared_config", type=dict, default={}, help="Shared configuration block.")
+        parser.add_argument("--registered_cfg", type=dict, default={}, help="Registered session components.")
+        parser.add_argument("--adapter_ctx", type=list, default=[], help="Adapter composition context.")
         self.add_base_args(parser)
 
     @staticmethod
@@ -96,10 +110,19 @@ class ITSessionMixin:
             if isinstance(body.get("session_cfg"), dict):  # legacy session_cfg-subtree files
                 mapping = self._deep_merge(mapping, body["session_cfg"])
             elif "registered_cfg" in body:  # flattened one-door bodies (4b): body keys at top level
-                mapping = self._deep_merge(
-                    mapping, {k: body[k] for k in ("shared_config", "registered_cfg", "adapter_ctx") if k in body}
-                )
+                mapping = self._deep_merge(mapping, {k: body[k] for k in ONE_DOOR_BODY_KEYS if k in body})
         return mapping
+
+    def _merge_parsed_session_overrides(self, config: Namespace, session_mapping: dict[str, Any]) -> dict[str, Any]:
+        """Overlay the parsed session surface onto the file-sourced mapping.
+
+        Covers both dialects the shim accepts: the legacy `session_cfg` subtree and the flattened one-door keys. Values
+        that reached the parser from argv therefore override the files; unset args default to empty and merge as
+        no-ops, so this is inert for configurations that set nothing on the command line.
+        """
+        session_mapping = self._deep_merge(session_mapping, dict(self._get(config, "session_cfg") or {}))
+        overrides = {k: v for k in ONE_DOOR_BODY_KEYS if (v := self._get(config, k))}
+        return self._deep_merge(session_mapping, overrides) if overrides else session_mapping
 
     def build_it_session(self, session_mapping: dict[str, Any]) -> ITSession:
         """Construct the ITSession from a session mapping via the unified loader."""
@@ -284,7 +307,7 @@ class ITCLI(ITSessionMixin):
         session_mapping = self._session_mapping_from_sources(
             self._get(self.config, "config") or [], default_files if isinstance(default_files, (list, tuple)) else None
         )
-        session_mapping = self._deep_merge(session_mapping, dict(self._get(self.config, "session_cfg") or {}))
+        session_mapping = self._merge_parsed_session_overrides(self.config, session_mapping)
         self.it_session = self.build_it_session(session_mapping)
         self.datamodule = self.it_session.datamodule
         self.module = self.it_session.module
@@ -404,7 +427,7 @@ if _LIGHTNING_AVAILABLE:
             session_mapping = self._session_mapping_from_sources(  # type: ignore[attr-defined]
                 sub_config.get("config") or [], defaults if isinstance(defaults, (list, tuple)) else None
             )
-            session_mapping = ITSessionMixin._deep_merge(session_mapping, dict(sub_config.get("session_cfg") or {}))
+            session_mapping = self._merge_parsed_session_overrides(self.config, session_mapping)  # type: ignore[attr-defined]  # mixin provides the overlay
             self.it_session = self.build_it_session(session_mapping)  # type: ignore[attr-defined]  # mixin provides build_it_session
             super().instantiate_classes()  # type: ignore[misc]  # mixin provides instantiate_classes
             # create a convenient alias for the lightning model attribute that uses a standard `module` reference
