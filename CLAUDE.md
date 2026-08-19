@@ -61,11 +61,13 @@ any editable checkout sneaking ahead of them.
 - **pip ignores `[tool.uv] override-dependencies`**, so it can quietly resolve a dependency the
   overrides exist to prevent, and the version string will not show it.
 - **It can leave TWO `.dist-info` directories for the same package** (one uv, one pip), so two owners
-  disagree about what is on disk while the import system uses whichever files landed last. That
-  happened here and cost a session's worth of misdiagnosis.
-- **It silently detaches a `--from-source` package from its checkout.** A pip-installed `sae_lens`
-  replaced the local SAELens checkout in `it_latest` and went unnoticed until a benchmark refresh
-  recorded the changed provenance.
+  disagree about what is on disk while the import system uses whichever files landed last. Observed in
+  `it_pins_check` on 2026-08-18, where a `pip install torchvision==0.28.0+cu130` repair layered a
+  second dist-info over the uv-installed one; the stale `+cu130` label then misdirected the diagnosis
+  onto `--torch-backend` for a day. `it_latest` was censused on 2026-08-19 and has no duplicates.
+- **It defeats the audit you would use to catch any of the above.** `INSTALLER` is the only cheap
+  signal that a package did not come from the resolver that governs this project, and it is per-package
+  metadata nobody reads unless prompted.
 
 Audit any dev venv before trusting it for something that gates a release, an upstream PR, or a
 benchmark artifact. Expect `uv` throughout:
@@ -132,14 +134,31 @@ source ${IT_VENV_BASE:-~/.venvs}/${IT_TARGET_VENV}/bin/activate
 
 ### From-Source Builds (multi-repo integrated env)
 
-The integrated dev env (`it_latest`) builds the salient upstream deps **editable from source** via repeated
-`--from-source="pkg:path:extras:ENVVAR=...:FLAGS=..."` directives. Canonical full rebuild (SAEDashboard,
-SAELens, circuit-tracer, TransformerLens, nnsight all from local checkouts):
+The integrated dev env (`it_latest`) can build salient upstream deps **editable from source** via repeated
+`--from-source="pkg:path:extras:ENVVAR=...:FLAGS=..."` directives.
+
+**Only add a directive for a repo you are actually developing.** A from-source directive is a
+*developer choice*, not part of the supported build, and it takes that package OUT of the governance the
+pins provide. Reconcile this list against `pyproject.toml`'s `git-deps` block before trusting it:
+
+| Package | Current governance | From-source still appropriate? |
+| --- | --- | --- |
+| `sae-dashboard` | git-deps pin (SD#74 still open) | yes, while the fork surface is required |
+| `circuit-tracer` | git-deps pin (`3fde7e2`) | yes, no release carries the attribution-target surface |
+| `sae-lens` | **released floor `6.49.0`** | **NO. Retired from git-deps 2026-08-09.** |
+| `transformer-lens`, `nnsight` | release pins in `[tool.uv] override-dependencies` | only for upstream work |
+
+**`sae_lens` must not be resurrected as a from-source or git pin.** `pyproject.toml` records why: the
+retired pin (`speediedan/SAELens@86f90b3d`) carries 20 duplicate YAML keys in `pretrained_saes.yaml` from
+a bad rebase, silently binding 10 `-pt-` transcoder entries to the WRONG weights. It was the wave's first
+git-dep to go, and `6.49.0` matches `requirements/ci/requirements.txt` exactly. A registry entry recording
+a plain `6.49.0` with no fork/branch/sha for sae_lens is therefore CORRECT, not a provenance loss.
+
+Canonical rebuild for someone developing SAEDashboard and circuit-tracer alongside interpretune:
 
 ```bash
 ./scripts/build_it_env.sh --repo-home=${IT_REPO_DIR} --target-env-name=it_latest --venv-dir=${IT_VENV_BASE} \
   --from-source="sae_dashboard:${HOME}/repos/SAEDashboard:dev:UV_EXCLUDE=${IT_REPO_DIR}/requirements/ci/excludes.txt:UV_OVERRIDE=${IT_REPO_DIR}/requirements/ci/overrides.txt" \
-  --from-source="sae_lens:${HOME}/repos/SAELens:dev:UV_OVERRIDE=${IT_REPO_DIR}/requirements/ci/overrides.txt:FLAGS=-r ${IT_REPO_DIR}/requirements/ci/sl_uv_requirements.txt" \
   --from-source="circuit_tracer:${HOME}/repos/circuit-tracer:dev:UV_EXCLUDE=${IT_REPO_DIR}/requirements/ci/excludes.txt:UV_OVERRIDE=${IT_REPO_DIR}/requirements/ci/overrides.txt" \
   --from-source="transformer-lens:${HOME}/repos/TransformerLens" \
   --from-source="nnsight:${HOME}/repos/nnsight:all:UV_OVERRIDE=${IT_REPO_DIR}/requirements/ci/overrides.txt"
@@ -151,9 +170,11 @@ Rules of thumb:
   transformer-lens caps (`^2.2.0`, `>=2.16.0`) would otherwise pull the v2 line over the v3 install.
   Excluding leaves the already-installed transformer-lens untouched, so exactly one directive controls it
   even when interpretune, circuit-tracer and transformer-lens are all from source.
-- SAELens is Poetry-legacy (not PEP 621), so uv needs an exported requirements file passed via `FLAGS=-r`.
-  The vendored copy lives at `requirements/ci/sl_uv_requirements.txt`; regenerate it whenever SAELens
-  `pyproject.toml`/lock changes (`poetry export --all-groups --all-extras` → post-process).
+- **If** you are deliberately doing SAELens upstream work and add a `sae_lens` directive back (see the
+  warning above before you do), note SAELens is Poetry-legacy (not PEP 621), so uv needs an exported
+  requirements file passed via `FLAGS=-r`. The vendored copy lives at
+  `requirements/ci/sl_uv_requirements.txt`; regenerate it whenever SAELens `pyproject.toml`/lock changes
+  (`poetry export --all-groups --all-extras` → post-process).
 - nnsight should be installed first among the from-source set (its vllm-era pins occasionally need the
   override file).
 - **After every rebuild**: recreate circuit-tracer's untracked `temp_hf_override.txt` (stash/restore or
