@@ -69,9 +69,31 @@ def timestamp() -> str:
 
 
 def _check_clean_working_tree() -> bool:
-    """Return True if the git working tree is clean or benchmark_update.allow exists."""
+    """Return True if the git working tree is clean, or a one-shot bypass file was present.
+
+    The registry is a provenance artifact: every entry records `commit_sha` and `salient_pkg_versions` beside its
+    `expected_accuracy`, so a refresh from a dirty tree writes a lineage no clean checkout can reproduce. The bypass is
+    therefore CONSUMED rather than merely honored, which is the whole point of it being a file:
+    `--force-update-registry` cannot outlive the command that typed it, but a file can, and a bypass forgotten on disk
+    would silently disarm this guard on every future refresh rather than the single one it was created for.
+    Deleting it here scopes its effect to exactly one invocation and self-heals the forgotten-file case. Consuming
+    is safe because this is consulted once per run, before the benchmark loop, not once per benchmark.
+    """
     if ALLOW_FILE.exists():
-        log.warning("benchmark_update.allow found — bypassing clean working tree check")
+        try:
+            ALLOW_FILE.unlink()
+            consumed = "consumed (deleted); re-create it if you need another"
+        except OSError as ex:  # a bypass we cannot consume is one that could outlive this run
+            log.error(
+                "%s exists but could not be consumed (%s); refusing to bypass the clean-tree check", ALLOW_FILE, ex
+            )
+            return False
+        log.warning(
+            "%s found: BYPASSING the clean working tree check for this run only, and %s. The registry lineage "
+            "written by this refresh may not be reproducible from a clean checkout.",
+            ALLOW_FILE.name,
+            consumed,
+        )
         return True
     result = subprocess.run(
         ["git", "status", "--porcelain"],

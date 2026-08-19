@@ -183,3 +183,76 @@ def test_benchmark_subprocess_env_is_color_neutral():
     source = inspect.getsource(run_benchmarks.run_cli_benchmark)
     assert 'env.pop("FORCE_COLOR", None)' in source
     assert 'env["NO_COLOR"] = "1"' in source
+
+
+################################################################################
+# Registry clean-tree guard (ungated: no GPU, no benchmark run)
+################################################################################
+# NOTE [One-Shot Bypass]: the registry records `commit_sha` and `salient_pkg_versions` beside each
+# `expected_accuracy`, so a refresh from a dirty tree writes a lineage no clean checkout can
+# reproduce. `--force-update-registry` is the safe shape of an escape hatch because it cannot outlive
+# the command that typed it; a FILE can, and an unconsumed one would disarm the guard on every future
+# refresh rather than the single one it was created for (#275). These pin both halves of the fix: the
+# bypass is consumed, and it can never be committed.
+
+
+def _clean_tree_check(monkeypatch, allow_file, porcelain_stdout="", returncode=0):
+    """Drive `_check_clean_working_tree` with a chosen bypass path and a stubbed `git status`."""
+    from tests.benchmarks import run_benchmarks
+
+    monkeypatch.setattr(run_benchmarks, "ALLOW_FILE", allow_file)
+    monkeypatch.setattr(
+        run_benchmarks.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(args=[], returncode=returncode, stdout=porcelain_stdout, stderr=""),
+    )
+    return run_benchmarks._check_clean_working_tree()
+
+
+def test_bypass_is_consumed_on_use(monkeypatch, tmp_path):
+    """The bypass must not survive the run it authorized, so the next refresh is guarded again."""
+    allow_file = tmp_path / "benchmark_update.allow"
+    allow_file.touch()
+    # a dirty tree, so a True result can only have come from the bypass
+    assert _clean_tree_check(monkeypatch, allow_file, porcelain_stdout=" M some/file.py") is True
+    assert not allow_file.exists(), "the bypass file survived the run it authorized"
+
+
+def test_bypass_that_cannot_be_consumed_is_refused(monkeypatch, tmp_path):
+    """A bypass we cannot delete is one that could outlive this run, so it must not be honored.
+
+    Fail closed rather than open: honoring it would grant exactly the unbounded bypass the consume step exists to
+    prevent, and it would do so silently.
+    """
+
+    class UndeletableAllowFile:
+        name = "benchmark_update.allow"
+
+        def exists(self):
+            return True
+
+        def unlink(self):
+            raise OSError("read-only filesystem")
+
+    assert _clean_tree_check(monkeypatch, UndeletableAllowFile(), porcelain_stdout=" M some/file.py") is False
+
+
+def test_clean_tree_passes_without_a_bypass(monkeypatch, tmp_path):
+    assert _clean_tree_check(monkeypatch, tmp_path / "absent.allow", porcelain_stdout="") is True
+
+
+def test_dirty_tree_fails_without_a_bypass(monkeypatch, tmp_path):
+    assert _clean_tree_check(monkeypatch, tmp_path / "absent.allow", porcelain_stdout=" M some/file.py") is False
+
+
+def test_bypass_file_is_gitignored():
+    """A committed bypass would disarm the guard in every checkout that pulled it, not just its author's."""
+    from tests.benchmarks import run_benchmarks
+
+    result = subprocess.run(
+        ["git", "check-ignore", str(run_benchmarks.ALLOW_FILE)],
+        capture_output=True,
+        text=True,
+        cwd=str(run_benchmarks.REPO_ROOT),
+    )
+    assert result.returncode == 0, f"{run_benchmarks.ALLOW_FILE.name} is not gitignored; it could be committed"
