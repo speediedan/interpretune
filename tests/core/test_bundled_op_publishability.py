@@ -48,6 +48,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from interpretune.analysis.ops.collection import COLLECTION_HEADER_KEY
+
 BUNDLED_ROOT = Path(__file__).parent.parent.parent / "src" / "interpretune" / "analysis" / "ops" / "bundled"
 BUNDLED_PKG = "interpretune.analysis.ops.bundled"
 
@@ -58,8 +60,21 @@ SANCTIONED_IT_PREFIXES = (
     "interpretune.analysis.ops.base",
     "interpretune.protocol",
 )
+
+# Checked BEFORE the prefix allow above, and deliberately an exclusion list rather than a narrowed
+# prefix: `SANCTIONED_IT_PREFIXES` matches by prefix, so every submodule of a sanctioned package is
+# sanctioned by default. `backends.impls` holds the concrete per-library backends, which an op must
+# consume through the protocols and capability helpers rather than importing -- importing one is the
+# backend entanglement the seam exists to prevent, and it would pass the prefix check unnoticed.
+# Expressed as an exclusion so that adding a future seam module cannot silently re-open it.
+UNSANCTIONED_IT_PREFIXES = ("interpretune.analysis.backends.impls",)
 ALLOWED_THIRD_PARTY = {"torch", "transformers", "jaxtyping", "transformer_lens"}
 STDLIB = set(sys.stdlib_module_names)
+
+
+def _is_unsanctioned_it_module(module_name: str) -> bool:
+    """Whether an interpretune module is explicitly denied to op implementations."""
+    return any(module_name == p or module_name.startswith(p + ".") for p in UNSANCTIONED_IT_PREFIXES)
 
 
 def _family_impl_modules() -> list[Path]:
@@ -129,6 +144,11 @@ def test_bundled_family_module_imports_are_sanctioned(module_path: Path):
                 if not is_function_level:
                     violations.append("module-level 'import interpretune' (must be function-level)")
                 continue
+            if _is_unsanctioned_it_module(module_name):
+                # Denied explicitly, and checked BEFORE the prefix allow: these live *under* a
+                # sanctioned prefix, so the allow below would otherwise pass them.
+                violations.append(f"{module_name} (concrete backend; use the backends seam instead)")
+                continue
             if module_name.startswith(family_prefix) or any(
                 module_name == p or module_name.startswith(p + ".") for p in SANCTIONED_IT_PREFIXES
             ):
@@ -170,6 +190,63 @@ def test_bundled_family_imports_no_private_names(module_path: Path):
     )
 
 
+class TestConcreteBackendsAreDenied:
+    """The ``backends.impls`` deny must actually bite, since a prefix match would otherwise allow it.
+
+    ``interpretune.analysis.backends`` is sanctioned, and ``SANCTIONED_IT_PREFIXES`` matches by prefix, so every
+    submodule of it is sanctioned by default -- including the concrete per-library backends that an op must never
+    import. Without an explicit exclusion the reorg that moved them under ``impls/`` would be inert against this
+    contract, so these tests drive the real check with synthetic family modules rather than asserting the constant.
+    """
+
+    @staticmethod
+    def _family_module(tmp_path, source: str):
+        family_dir = tmp_path / "synthetic_family"
+        family_dir.mkdir()
+        module_path = family_dir / "synthetic_ops.py"
+        module_path.write_text(source)
+        return module_path
+
+    def test_importing_a_concrete_backend_is_rejected(self, tmp_path):
+        module_path = self._family_module(
+            tmp_path,
+            "from interpretune.analysis.backends.impls.nnsight import NNsightModelBackend\n",
+        )
+        with pytest.raises(AssertionError, match="concrete backend"):
+            test_bundled_family_module_imports_are_sanctioned(module_path)
+
+    def test_importing_the_seam_is_still_allowed(self, tmp_path):
+        module_path = self._family_module(
+            tmp_path,
+            "from interpretune.analysis.backends import require_analysis_backend, FeatureSelectionSpec\n"
+            "from interpretune.analysis.backends.protocols import AnalysisBackend\n",
+        )
+        test_bundled_family_module_imports_are_sanctioned(module_path)
+
+    def test_private_names_from_impls_are_also_rejected(self, tmp_path):
+        """The private-name rule spans all interpretune modules, so it covers impls without its own deny."""
+        module_path = self._family_module(
+            tmp_path,
+            "from interpretune.analysis.backends.impls.nnsight import _navigate_envoy\n",
+        )
+        with pytest.raises(AssertionError, match="private names"):
+            test_bundled_family_imports_no_private_names(module_path)
+
+    @pytest.mark.parametrize(
+        "module_name, denied",
+        [
+            ("interpretune.analysis.backends.impls", True),
+            ("interpretune.analysis.backends.impls.circuit_tracer", True),
+            ("interpretune.analysis.backends", False),
+            ("interpretune.analysis.backends.protocols", False),
+            # Guards against expressing the deny as a substring or narrowed prefix.
+            ("interpretune.analysis.backends.implicit_thing", False),
+        ],
+    )
+    def test_deny_matches_on_path_boundaries(self, module_name, denied):
+        assert _is_unsanctioned_it_module(module_name) is denied
+
+
 @pytest.mark.parametrize("yaml_path", _family_yamls(), ids=lambda p: f"{p.parent.name}/{p.name}")
 def test_bundled_family_yaml_references_are_sanctioned(yaml_path: Path):
     if yaml_path.name == "composites.yaml":
@@ -178,7 +255,7 @@ def test_bundled_family_yaml_references_are_sanctioned(yaml_path: Path):
     content = yaml.safe_load(yaml_path.read_text()) or {}
     violations: list[str] = []
     for op_name, op_def in content.items():
-        if op_name == "composite_operations" or not isinstance(op_def, dict):
+        if op_name in (COLLECTION_HEADER_KEY, "composite_operations") or not isinstance(op_def, dict):
             continue
         refs = [op_def.get("implementation", "")]
         refs.extend((op_def.get("importable_params") or {}).values())
@@ -199,7 +276,9 @@ def test_bundled_yaml_op_names_are_globally_unique():
     for yaml_path in _family_yamls():
         content = yaml.safe_load(yaml_path.read_text()) or {}
         for op_name in content:
-            if op_name == "composite_operations":
+            # `collection:` is family metadata, not an op; every family declares one, so treating it as an
+            # op name made this fail on the second family with a misleading duplicate-op message.
+            if op_name in (COLLECTION_HEADER_KEY, "composite_operations"):
                 continue
             assert op_name not in seen, f"op '{op_name}' defined in both {seen[op_name]} and {yaml_path}"
             seen[op_name] = yaml_path

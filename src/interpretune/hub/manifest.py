@@ -53,6 +53,20 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
         raise ComponentManifestError(f"{source}: `kinds` must be a non-empty subset of {KNOWN_KINDS}, got {kinds!r}")
     if "module" in kinds and "configs" not in (manifest.get("module") or {}):
         raise ComponentManifestError(f"{source}: kind `module` requires a `module.configs` index")
+    if "ops" in kinds:
+        ops = manifest.get("ops") or {}
+        files = ops.get("files")
+        if not files or not isinstance(files, list) or not all(isinstance(f, str) and f for f in files):
+            raise ComponentManifestError(
+                f"{source}: kind `ops` requires a non-empty `ops.files` list of repo-relative op-definition "
+                "YAML paths. Op discovery is manifest-routed: a collection declares which YAMLs are op "
+                "definitions rather than having every YAML in the repo treated as one."
+            )
+        if IT_COMPONENT_MANIFEST in files:
+            raise ComponentManifestError(
+                f"{source}: `ops.files` must not list {IT_COMPONENT_MANIFEST} itself. The manifest declares "
+                "the op definitions; it is not one of them, and parsing it as one fails on its scalar keys."
+            )
     if "promptconfigs" in kinds:
         pc = manifest.get("promptconfigs") or {}
         if not pc.get("entrypoint") or not isinstance(pc.get("definitions"), dict) or not pc["definitions"]:

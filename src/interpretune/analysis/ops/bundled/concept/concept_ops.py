@@ -3,7 +3,7 @@
 Latent-state extraction, concept-example selection, concept-direction aggregation (streaming and
 in-memory), and generalized hook-point interventions. Self-contained modulo the sanctioned
 op-authoring surfaces (:mod:`interpretune.analysis.optools`, :mod:`interpretune.analysis.backends`);
-see the custom ops composition guide. This family is also the source of the flagship hub seed
+see the custom ops composition guide. This family is also the source of the first published hub seed
 collection, so it must remain publishable as a standalone ``kinds: [ops]`` repo.
 """
 

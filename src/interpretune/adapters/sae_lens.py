@@ -124,7 +124,7 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
     """
 
     def __init__(self, *args, **kwargs):
-        from interpretune.analysis.backends.transformer_lens import TLModelBackend
+        from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
 
         self._model_backend = TLModelBackend()
         super().__init__(*args, **kwargs)
@@ -286,7 +286,7 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
         from nnsight import LanguageModel
 
         from interpretune.analysis.backends.hook_mapping import HookNameResolver
-        from interpretune.analysis.backends.nnsight import NNsightModelBackend, get_default_configs_per_pass
+        from interpretune.analysis.backends.impls.nnsight import NNsightModelBackend, get_default_configs_per_pass
         from interpretune.utils import rank_zero_debug
 
         nnsight_cfg = self.nnsight_cfg  # type: ignore[attr-defined]  # from NNsightAttributeMixin

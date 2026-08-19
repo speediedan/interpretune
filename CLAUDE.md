@@ -34,6 +34,34 @@ Interpretune is a flexible framework for collaborative AI world model analysis a
 
 ## Build & Dev Environment
 
+### Three install flows, and only three (read this before creating any venv)
+
+| Flow | Command | Who it is for | Honors the uv overrides? |
+| --- | --- | --- | --- |
+| **User / README** | `uv venv` then `uv pip install -e ".[test,examples,lightning,profiling]" --group git-deps dev` | anyone following `README.md` | **yes** (uv reads `[tool.uv]`) |
+| **Dev / CI** | `scripts/build_it_env.sh` | this repo's dev envs, CI, and **pins-only validation** (no `--from-source` directives) | **yes** |
+| **Bare pip** | `pip install .` | **nobody. Not supported.** | **NO** |
+
+**`pip install .` is not a supported way to install interpretune, and it fails in a way that looks
+like an application bug.** The `transformer-lens==3.5.1` / `nnsight==0.7.0` pins live in
+`[tool.uv] override-dependencies`, a **uv** mechanism that pip ignores. They exist precisely to force
+the TL v3 line over sae-dashboard's `^2.2.0` cap, so pip happily resolves TL **2.16.1**, and every
+failure downstream of that (a `sae_dashboard` import error, `BertForPreTraining` from a sae_lens /
+transformers mismatch) is a symptom of the wrong resolution rather than a defect worth filing. One
+session lost time filing exactly those before the version table explained them. If you catch yourself
+reaching for `pip install`, you want `uv pip install` or `build_it_env.sh`.
+
+**"Validate in an env built FROM the pins" means `build_it_env.sh` with NO `--from-source`
+directives.** That is the only flow that gets both the uv overrides and the `git-deps` group without
+any editable checkout sneaking ahead of them.
+
+**Prove which code you actually ran, with `__file__` and not a version string.** A version can match
+while the file comes from somewhere else entirely; see the isolation trap in `CLAUDE.local.md`.
+
+```bash
+python -c "import interpretune, torch, transformer_lens as tl; print(interpretune.__file__, torch.__file__, tl.__file__)"
+```
+
 Uses `uv` for dependency management. For Venvs, use `/mnt/cache/$USER/.venvs/` (preferred for hardlink perf), fall back to `~/.venvs/` if that path isn't available.
 
 Place the venv on the same filesystem as the UV cache when possible. `--venv-dir=/mnt/cache/$USER/.venvs` is the preferred build-script pattern because it avoids UV hardlink warnings and matches the standalone-process wrappers used in this repo.
@@ -60,6 +88,16 @@ source ${IT_VENV_BASE:-~/.venvs}/${IT_TARGET_VENV}/bin/activate
 
 # CPU-only (CI)
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --torch-backend=cpu
+
+# NOTE: --torch-backend selects a WHEEL VARIANT, not just an index, and the whole torch ecosystem
+# must share it. torchvision ships a separate wheel per backend while `requirements/ci/overrides.txt`
+# pins only its VERSION, so a torchvision resolved from the default index is CUDA-linked on Linux and
+# its `_C.so` cannot load against a `--torch-backend=cpu` torch. Nothing fails at install time; it
+# surfaces later, only once something touches a torchvision C++ op, as
+# `RuntimeError: operator torchvision::nms does not exist`. `build_it_env.sh` therefore installs the
+# paired torchvision pin alongside torch under the same backend. If you ever install a torch-ecosystem
+# package by hand into one of these envs, pass the same --torch-backend and verify with
+# `ldd .../torchvision/_C.so | grep cuda` (expect no matches in a CPU env).
 
 # From-source packages
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest \

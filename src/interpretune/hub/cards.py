@@ -82,6 +82,16 @@ def generate_component_card(manifest: dict, repo_id: str, summary: str | None = 
             "",
             "Resolution is manifest-first: fetch `it_component.yaml`, then only the configuration you need.",
         ]
+    op_files = (manifest.get("ops") or {}).get("files") or []
+    if op_files:
+        lines += ["", "## Operations", ""]
+        lines += [f"- declared in `{rel}`" for rel in op_files]
+        lines += [
+            "",
+            'Fetch with `interpretune.hub.pull_ops("<org>/<repo>")` (manifest-first, revision-pinned). The',
+            "collection's ops are then addressable by their namespaced names; `interpretune.hub.prefer_ops`",
+            "opts into resolving their BARE names here instead of interpretune's bundled ops.",
+        ]
     definitions = (manifest.get("promptconfigs") or {}).get("definitions") or {}
     if definitions:
         lines += ["", "## Prompt-config definitions", ""]

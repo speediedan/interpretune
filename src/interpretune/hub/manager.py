@@ -26,7 +26,10 @@ class HubResourceKind:
     cache_dir: Path
     discovery_filter: str  # card tag queried by list_available_collections (written by generated cards)
     payload_suffixes: tuple[str, ...] = (".yaml", ".yml")
-    delete_patterns: tuple[str, ...] = ("*.py", "*.yaml")
+    # `fnmatch`'s `*` spans `/`, so these are depth-agnostic. `*.yml` and `*.pyc` are here because their
+    # absence was observable: a `.yml` op collection was never cleaned, and a `__pycache__` blob staged once
+    # by a demo notebook stayed in the published repo across every subsequent clean_existing publish.
+    delete_patterns: tuple[str, ...] = ("*.py", "*.pyc", "*.yaml", "*.yml")
 
 
 OPS_KIND = HubResourceKind(name="ops", cache_dir=IT_ANALYSIS_HUB_CACHE, discovery_filter="interpretune-ops")

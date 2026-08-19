@@ -50,6 +50,37 @@ def pull(
     return _hydrate_component_body(canonical, body)
 
 
+def pull_ops(
+    repo_id: str,
+    *,
+    revision: str | None = None,
+    cache_dir: Path | None = None,
+    token: str | None = None,
+    reload: bool = True,
+) -> tuple[list[Path], str]:
+    """Explicitly fetch an op collection from the Hub (network; manifest-first, revision-pinned).
+
+    Returns ``(op_yaml_paths, resolved_commit)``. The ops kind needs its own verb rather than a ``key``-less
+    :func:`pull`: op collections live in their own cache (``IT_ANALYSIS_HUB_CACHE``, which is what op
+    discovery scans), so a collection fetched through the component verb would land where the dispatcher
+    never looks.
+
+    With ``reload`` (default), the dispatcher re-reads its op sources so the fetched collection is usable
+    immediately. Without it the ops are on disk but a session that already loaded definitions will not see
+    them, and using one raises ``Unknown operation`` -- pass ``reload=False`` only when fetching several
+    collections before paying for one reload. Reloading re-runs the trust gate and every collection's
+    compatibility window; it does not import any op implementation, which still happens lazily.
+    """
+    from interpretune.hub.opcollections import pull_op_collection
+
+    result = pull_op_collection(repo_id, revision=revision, cache_dir=cache_dir, token=token)
+    if reload:
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        DISPATCHER.reload_definitions()
+    return result
+
+
 def load(repo_id: str, key: str, *, cache_dir: Path | None = None) -> RegisteredCfg:
     """Cache-only hydration of one configuration — never touches the network.
 
@@ -61,6 +92,36 @@ def load(repo_id: str, key: str, *, cache_dir: Path | None = None) -> Registered
 
     canonical, body = resolve_component_config(repo_id, key, cache_dir=cache_dir)
     return _hydrate_component_body(canonical, body)
+
+
+def prefer_ops(*repo_ids: str, replace: bool = False) -> list[str]:
+    """Resolve BARE op names to these collections' ops; returns the active precedence list.
+
+    Bundled ops win bare names by default, which is what makes a session work offline and identically for
+    everyone. Opting into a hub collection's copy of an op is therefore explicit and per-namespace, never a
+    side effect of pulling one::
+
+        it.hub.pull_ops("speediedan/concept_direction_ops")   # fetch (network)
+        it.hub.prefer_ops("speediedan/concept_direction_ops") # and now `concept_direction` means theirs
+
+    Fully-qualified names are unaffected: they always address exactly what they name, in both directions.
+    Call with no arguments to clear the opt-in. ``IT_OP_PRECEDENCE`` is the env parity for scripted runs.
+    """
+    from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+    return DISPATCHER.prefer_ops(*repo_ids, replace=replace)
+
+
+def op_info(op_name: str):
+    """Report which collection an op name resolves to now, and what the alternatives are.
+
+    Returns an :class:`~interpretune.analysis.ops.dispatcher.OpResolution` -- provenance, declared collection
+    identity, cached revision for hub collections, the other definitions sharing the bare name, and the
+    precedence that decided between them. Printing it is the intended use.
+    """
+    from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+    return DISPATCHER.op_info(op_name)
 
 
 def push(

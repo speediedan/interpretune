@@ -33,6 +33,12 @@ def categorize_operations(operation_definitions: dict) -> tuple:
     Args:
         operation_definitions: Dictionary of operation definitions from DISPATCHER.registered_ops
 
+    Categorization keys on each op's DECLARED provenance (``OpDef.source``: ``bundled`` | ``local`` |
+    ``hub:<user.repo>``) rather than on the shape of its name. The previous version counted dots to find hub ops
+    and subtracted a hardcoded list of bundled names to find local ones, which had gone stale: every bundled op
+    added after that list was written -- the whole concept and circuit-tracer families -- was reported as a LOCAL
+    operation, so the summary printed 9 local ops on a clean install with no collections loaded at all.
+
     Returns:
         Tuple of (canonical_ops, alias_map, hub_ops, local_ops, composed_ops, builtin_ops)
     """
@@ -47,33 +53,18 @@ def categorize_operations(operation_definitions: dict) -> tuple:
         if op_name != canonical_name:
             alias_map[canonical_name].append(op_name)
 
-    # Count hub operations (those with dots in their canonical names indicating namespacing)
-    hub_ops = {name: op_def for name, op_def in canonical_ops.items() if "." in name}
+    def _source(op_def) -> str:
+        # getattr keeps this working against an older cached OpDef that predates the field.
+        return str(getattr(op_def, "source", "bundled") or "bundled")
 
-    # Count local operations (those without dots but not in the built-in list)
-    builtin_ops = {
-        "labels_to_ids",
-        "get_answer_indices",
-        "get_alive_latents",
-        "model_fwd",
-        "model_fwd_w_cache",
-        "model_fwd_w_cache_latent_models",
-        "model_ablation",
-        "model_gradient",
-        "logit_diffs",
-        "logit_diffs_cache",
-        "sae_correct_acts",
-        "gradient_attribution",
-        "ablation_attribution",
-    }
+    # A dotted name means "namespaced", which is how hub ops are addressed, but provenance is the actual
+    # question -- and only the declared source answers it.
+    hub_ops = {name: op_def for name, op_def in canonical_ops.items() if _source(op_def).startswith("hub")}
+    local_ops = {name: op_def for name, op_def in canonical_ops.items() if _source(op_def) == "local"}
+    # "Built-in" is the notebook's word for the ops shipped in the wheel, i.e. bundled provenance.
+    builtin_ops = {name for name, op_def in canonical_ops.items() if _source(op_def) == "bundled"}
 
-    local_ops = {
-        name: op_def
-        for name, op_def in canonical_ops.items()
-        if "." not in name and name not in builtin_ops and op_def.composition is None
-    }
-
-    # Count composed operations
+    # Composites are reported separately, whatever their provenance.
     composed_ops = {name: op_def for name, op_def in canonical_ops.items() if op_def.composition is not None}
 
     return canonical_ops, alias_map, hub_ops, local_ops, composed_ops, builtin_ops
@@ -280,8 +271,10 @@ def setup_hub_op_collection(
         rank_zero_warn(f"Destination folder {tmp_op_collection} already exists and will be overwritten!")
         shutil.rmtree(tmp_op_collection)
 
-    # Copy the folder
-    shutil.copytree(source_op_collection, tmp_op_collection)
+    # Copy the folder. `__pycache__` is excluded because whatever is staged here is what gets published:
+    # a stray .pyc reaches the repo and then survives re-publishes, since the ops kind's delete patterns
+    # (`*.py`, `*.yaml`) do not match it.
+    shutil.copytree(source_op_collection, tmp_op_collection, ignore=shutil.ignore_patterns("__pycache__"))
     print(f"✓ Successfully copied hub op_collection to {tmp_op_collection}")
 
     # Verify contents

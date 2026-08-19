@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 from typing import Dict, NamedTuple, Iterator, Callable, Any
+from dataclasses import dataclass
 from pathlib import Path
 from functools import wraps
 from collections import defaultdict
 import importlib
+import os
 import yaml
 
 import torch
 from transformers import BatchEncoding
 
 from interpretune.analysis import IT_ANALYSIS_CACHE, IT_ANALYSIS_OP_PATHS, IT_ANALYSIS_HUB_CACHE
+from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
 from interpretune.analysis.inputs import OpStateSpec
 from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg, OpWrapper
+from interpretune.analysis.ops.collection import COLLECTION_HEADER_KEY, CollectionSpec
 from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
-from interpretune.analysis.ops.compiler.load_policy import op_load_failure
+from interpretune.analysis.ops.compiler.load_policy import OpLoadError, op_load_failure, strict_op_load
 from interpretune.analysis.ops.dynamic_module_utils import ensure_op_paths_in_syspath, get_function_from_dynamic_module
 from interpretune.protocol import BaseAnalysisBatchProtocol
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
@@ -38,6 +42,73 @@ class DispatchContext(NamedTuple):
     """Context for dispatching operations."""
 
     pass  # We don't use context keys yet but may in the future
+
+
+# Ordered, comma-separated namespaces whose ops win bare-name resolution. The env parity for
+# `it.hub.prefer_ops`, for CLI and scripted runs where there is no place to call it.
+IT_OP_PRECEDENCE_ENV_VAR = "IT_OP_PRECEDENCE"
+
+
+def _cached_op_revision(source: str) -> str | None:
+    """Cached commit a hub op collection currently resolves to (``None`` for bundled/local ops).
+
+    Read from the ops hub cache, never the network: this answers "which revision am I running", and a lookup that could
+    silently fetch would change the answer while reporting it.
+    """
+    if not source.startswith("hub:"):
+        return None
+    namespace = source.split(":", 1)[1]
+    user, _, repo = namespace.partition(".")
+    ref = Path(IT_ANALYSIS_HUB_CACHE) / f"models--{user}--{repo}" / "refs" / "main"
+    try:
+        return ref.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+@dataclass(frozen=True)
+class OpCandidate:
+    """One definition a bare op name could reach, with its provenance and declared collection identity."""
+
+    name: str
+    source: str
+    collection: str | None
+    version: str | None
+    revision: str | None
+
+    def __str__(self) -> str:
+        detail = [self.source]
+        if self.collection:
+            detail.append(f"collection {self.collection} {self.version or '(unversioned)'}")
+        if self.revision:
+            detail.append(f"revision {self.revision[:12]}")
+        return f"{self.name} [{', '.join(detail)}]"
+
+
+@dataclass(frozen=True)
+class OpResolution:
+    """What a name resolves to right now, the alternatives, and the precedence that chose between them."""
+
+    requested: str
+    resolved: str
+    active: OpCandidate
+    alternatives: tuple[OpCandidate, ...] = ()
+    precedence: tuple[str, ...] = ()
+
+    @property
+    def is_shadowing_bundled(self) -> bool:
+        """Whether a non-bundled definition is currently winning a name a bundled op also defines."""
+        return not self.active.source.startswith("bundled") and any(
+            candidate.source == "bundled" for candidate in self.alternatives
+        )
+
+    def __str__(self) -> str:
+        lines = [f"{self.requested!r} resolves to {self.active}"]
+        if self.alternatives:
+            lines.append("  also available:")
+            lines += [f"    {candidate}" for candidate in self.alternatives]
+        lines.append(f"  precedence: {list(self.precedence) or 'none (bundled ops win bare names)'}")
+        return "\n".join(lines)
 
 
 class AnalysisOpDispatcher:
@@ -73,6 +144,17 @@ class AnalysisOpDispatcher:
 
         self.enable_hub_ops = enable_hub_ops
         self._op_definitions: dict[str, OpDef] = {}
+        # Declared-name -> originating YAML, for diagnostics only. Deliberately NOT a field on OpDef:
+        # OpDef is serialized into the generated cache, so adding one would force a
+        # CACHE_FORMAT_VERSION bump and invalidate every user's cache for a string used only in error
+        # messages. If a source path is ever needed at RUNTIME rather than at load, promote it then.
+        self._op_declaration_sites: dict[str, str] = {}
+        # Originating YAML -> its declared `collection:` header, for compatibility enforcement at load and
+        # for op_info attribution. Load-time only, like the declaration sites above.
+        self._op_collections: dict[str, CollectionSpec] = {}
+        # Namespaces (`user.repo`) whose ops win BARE-name resolution, highest precedence first. Empty by
+        # default: bundled ops win bare names, and opting into a newer hub copy is explicit (D8 item 2).
+        self._preferred_op_namespaces: list[str] = []
         self._dispatch_table = {}  # {op_name: {context: instantiated_op}}
         self._aliases = {}  # {alias: op_name}
         self._op_to_aliases = defaultdict(list)  # {op_name: [aliases]}
@@ -91,7 +173,14 @@ class AnalysisOpDispatcher:
         return name.replace("/", ".").replace("-", "_").lower()
 
     def _discover_yaml_files(self, paths: list[Path]) -> list[Path]:
-        """Discover all YAML files from the given paths (files or directories)."""
+        """Discover all YAML files from the given paths (files or directories).
+
+        A component manifest is never an op-definitions file. It shares the ``.yaml`` suffix and sits at the root of
+        every interpretune component repo, including op collections, so a directory holding both a manifest and its op
+        YAMLs (the ordinary shape when authoring a collection locally) would otherwise feed the manifest through the op
+        compiler, where its scalar keys (``it_schema_version: 1``) raise on ``op_def.get(...)`` and take down the whole
+        load -- every bundled op included.
+        """
         yaml_files = []
         for path in paths:
             if path.is_file() and path.suffix.lower() in (".yaml", ".yml"):
@@ -100,7 +189,7 @@ class AnalysisOpDispatcher:
                 # Recursively find all YAML files in the directory
                 yaml_files.extend(path.glob("**/*.yaml"))
                 yaml_files.extend(path.glob("**/*.yml"))
-        return sorted(set(yaml_files))  # Remove duplicates and sort for consistency
+        return sorted({p for p in yaml_files if p.name != IT_COMPONENT_MANIFEST})
 
     def load_definitions(self) -> None:
         """Load operation definitions from YAML files."""
@@ -128,8 +217,13 @@ class AnalysisOpDispatcher:
                     self._cache_manager.add_yaml_file(yaml_file)
 
             rank_zero_debug("[DISPATCHER] Attempting to load from cache")
-            # Try to load from cache first
-            cached_definitions = self._cache_manager.load_cache()
+            # Strict loading vetoes the cache. Every check `op_load_failure` guards -- failed compiles,
+            # unresolvable importable_params, invalid op_state, unsanctioned hub params, name collisions --
+            # runs while definitions are COMPILED, so reading a precompiled artifact skips all of them and
+            # `IT_STRICT_OP_LOAD=1` silently becomes a no-op against a warm cache. Measured before fixing:
+            # a non-strict load warned once and cached; the next load with strict enabled reused that cache
+            # and reported nothing. Verifying is the whole point of the flag, so it recompiles.
+            cached_definitions = None if strict_op_load() else self._cache_manager.load_cache()
             if cached_definitions is not None:
                 rank_zero_debug(f"[DISPATCHER] Cache HIT: Loaded {len(cached_definitions)} definitions from cache")
                 self._op_definitions = cached_definitions
@@ -152,6 +246,25 @@ class AnalysisOpDispatcher:
         finally:
             self._loading_in_progress = False
 
+    def reload_definitions(self) -> None:
+        """Re-discover and reload every op definition, picking up collections cached since the last load.
+
+        Needed because a session loads definitions once. Without this, fetching a collection and then using
+        one of its ops in the SAME process raises ``Unknown operation`` -- the ops are on disk, and nothing
+        looks at the disk again -- so the fetch appeared to do nothing until the next process. Discovery
+        re-runs the trust gate and every collection's compatibility window, exactly as the first load did.
+        """
+        self._op_definitions = {}
+        self._op_declaration_sites = {}
+        self._op_collections = {}
+        self._aliases = {}
+        self._op_to_aliases = defaultdict(list)
+        self._dispatch_table = {}
+        self._cache_manager._yaml_files = []
+        self._cache_manager._fingerprint = None
+        self._loaded = False
+        self.load_definitions()
+
     def _load_from_yaml_and_compile(self, yaml_files: list[Path]):
         """Load from YAML files and compile to cache."""
         # Load and merge all YAML files
@@ -171,21 +284,63 @@ class AnalysisOpDispatcher:
                     rank_zero_debug(f"Skipping non-dictionary YAML file: {yaml_file}")
                     continue
 
-                # Apply namespace prefixes for hub operations
-                namespaced_content = self._apply_hub_namespacing(yaml_content, yaml_file)
+                collection = self._collection_for(yaml_file, yaml_content)
+                if collection is not None and (incompatible := collection.incompatibility()) is not None:
+                    # Skip the WHOLE collection, not individual ops: the compatibility window is declared
+                    # per collection, so a partial load would present half a contract set.
+                    op_load_failure(
+                        f"Skipping op collection {collection.name!r} (version {collection.version}) from "
+                        f"{yaml_file}: {incompatible}"
+                    )
+                    continue
+
+                # Drop the header BEFORE namespacing. Namespacing rewrites every top-level key, so a
+                # hub collection's header arrived as `<user>.<repo>.collection` and no longer matched the
+                # header key -- it was then registered as an op, giving every hub collection a junk
+                # `collection` op with the header's mapping as its definition. Bundled files are not
+                # namespaced, which is why the equality check held there and hid this.
+                op_content = {key: value for key, value in yaml_content.items() if key != COLLECTION_HEADER_KEY}
+                namespaced_content = self._apply_hub_namespacing(op_content, yaml_file)
 
                 source = self._op_source_for(yaml_file)
+
+                # Stamped onto every definition from this file so the identity survives the cache: the
+                # `collection:` header is parsed at compile time only, and `op_info` needs it at runtime.
+                provenance = {
+                    "source": source,
+                    "collection_name": collection.name if collection else None,
+                    "collection_version": collection.version if collection else None,
+                }
 
                 # Separate composite operations from regular operations
                 for key, value in namespaced_content.items():
                     if key == "composite_operations":
                         for comp_name, comp_def in value.items():
-                            composite_operations[comp_name] = {**comp_def, "source": source}
+                            composite_operations[comp_name] = {**comp_def, **provenance}
+                            self._op_declaration_sites[comp_name] = str(yaml_file)
                     else:
+                        if not isinstance(value, dict):
+                            # Reject at INGEST, not at conversion: `_compile_required_ops_schemas` runs
+                            # first and catches only ValueError, so a scalar reaching it raised
+                            # AttributeError from `op_def.get(...)` and took down every op in the process,
+                            # bundled included. The usual cause is a non-op YAML being read as op
+                            # definitions, where scalar top-level values are perfectly normal.
+                            op_load_failure(
+                                f"Skipping '{key}' in {yaml_file}: an op definition must be a mapping, got "
+                                f"{type(value).__name__}. Is this file an op-definitions YAML?"
+                            )
+                            continue
                         if key in raw_definitions:
                             rank_zero_debug(f"Operation '{key}' redefined in {yaml_file}, using latest definition")
-                        raw_definitions[key] = {**value, "source": source} if isinstance(value, dict) else value
+                        raw_definitions[key] = {**value, **provenance}
+                        self._op_declaration_sites[key] = str(yaml_file)
 
+            except OpLoadError:
+                # Strict loading must not be swallowed by the per-file fail-soft handler: the whole point
+                # of IT_STRICT_OP_LOAD is that a definition problem stops the run, and a broad `except
+                # Exception` here would quietly downgrade it to a debug line -- the same way a warm cache
+                # used to skip these checks entirely.
+                raise
             except Exception as e:
                 rank_zero_debug(f"Failed to load YAML file {yaml_file}: {e}")
                 # Continue processing other files rather than failing completely
@@ -245,9 +400,54 @@ class AnalysisOpDispatcher:
                 definitions_to_compile.pop(op_name, None)
                 op_load_failure(f"Failed to compile operation '{op_name}': {e}")
 
+    def _collection_for(self, yaml_file: Path, yaml_content: dict[str, Any]) -> CollectionSpec | None:
+        """Parse a YAML's ``collection:`` header, recording it per file for later attribution.
+
+        Fail-soft on a malformed header, matching the surrounding load paths: the ops still load, just without
+        collection identity, which surfaces as a missing version in ``op_info`` rather than a dead session.
+        """
+        try:
+            collection = CollectionSpec.from_raw(yaml_content.get(COLLECTION_HEADER_KEY))
+        except (ValueError, TypeError) as bad_header:
+            op_load_failure(f"Ignoring invalid `{COLLECTION_HEADER_KEY}` header in {yaml_file}: {bad_header}")
+            return None
+        if collection is not None:
+            self._op_collections[str(yaml_file)] = collection
+        return collection
+
+    def _declaration_site(self, declared_name: str) -> str:
+        """Where a declared op name came from, for diagnostics ("<unknown source>" if untracked)."""
+        return self._op_declaration_sites.get(declared_name, "<unknown source>")
+
+    def _check_normalization_collision(self, declared_name: str, normalized: str, claimed_by: dict[str, str]) -> None:
+        """Report when two distinct declared names normalize to the same op name.
+
+        Distinct declared names collapse to one key because :meth:`_normalize_op_name` case-folds and maps ``-``/``/``
+        (``my-collide-op`` and ``my_collide_op`` both become ``my_collide_op``). Undetected, the later definition
+        silently replaces the earlier one and lookup returns whichever won: a wrong answer rather than an error, and
+        invisible when the two come from different collections. The check spans the whole merged definition set, not a
+        single file, because that cross-collection case is the realistic one and no per-file check can see it.
+
+        ``OpDef.source`` cannot name the sources here: it is a category (``bundled`` | ``local`` | ``hub:<user.repo>``),
+        so two local collections both report ``local``. The declared-name -> YAML side map supplies the actual files.
+        """
+        prior = claimed_by.get(normalized)
+        if prior is None or prior == declared_name:
+            return
+        op_load_failure(
+            f"Operation name collision: '{declared_name}' (declared in {self._declaration_site(declared_name)}) "
+            f"normalizes to '{normalized}', which is already declared as '{prior}' in "
+            f"{self._declaration_site(prior)}. Op names are matched case-insensitively with '-' and '/' normalized, "
+            f"so these are the same operation. Rename one of them; the later definition currently wins."
+        )
+
     def _convert_raw_definitions_to_opdefs(self, raw_definitions: dict[str, Dict]):
         """Convert raw dictionary definitions to OpDef objects."""
+        # normalized name -> the declared name that claimed it, so a collision can name both sides.
+        claimed_by: dict[str, str] = {}
         for op_name, op_def in raw_definitions.items():
+            self._check_normalization_collision(op_name, self._normalize_op_name(op_name), claimed_by)
+            claimed_by[self._normalize_op_name(op_name)] = op_name
             op_name = self._normalize_op_name(op_name)
             # Convert schemas to OpSchema objects
             input_schema = self._convert_to_op_schema(op_def.get("input_schema", {}))
@@ -270,6 +470,8 @@ class AnalysisOpDispatcher:
                 composition=op_def.get("composition", None),
                 op_state=self._resolve_op_state_spec(op_name, op_def.get("op_state")),
                 source=str(op_def.get("source", "bundled")),
+                collection_name=op_def.get("collection_name"),
+                collection_version=op_def.get("collection_version"),
                 uses_default_hooks=bool(op_def.get("uses_default_hooks", False)),
                 requires_grad=bool(op_def.get("requires_grad", False)),
                 per_latent_preds=bool(op_def.get("per_latent_preds", False)),
@@ -405,11 +607,16 @@ class AnalysisOpDispatcher:
                     if original_alias in self._aliases:
                         # If the original alias already exists, ensure it points to the same op_name
                         if self._aliases[original_alias] != op_name_norm:
-                            rank_zero_warn(
+                            incumbent = self._op_definitions.get(self._aliases[original_alias])
+                            message = (
                                 f"The name '{original_alias}' already exists for a different operation. "
                                 f"The fully-qualified alias name ({alias_norm}) has been added as an alias "
                                 f"for {op_name_norm}."
                             )
+                            if incumbent is None:
+                                rank_zero_warn(message)
+                            else:
+                                self._report_bare_name_contest(incumbent, op_def, message)
                     else:
                         if self._aliases and original_alias != op_name_norm:
                             self._aliases[original_alias] = op_name_norm
@@ -446,9 +653,21 @@ class AnalysisOpDispatcher:
             yield (alias, op_name)
 
     def _resolve_name_safe(self, op_name: str, visited: set | None = None) -> str:
-        """Safely resolve names with cycle detection."""
+        """Safely resolve names with cycle detection, normalizing the way storage does.
+
+        Normalizing here is what makes lookup symmetric with registration. Definitions are stored under
+        :meth:`_normalize_op_name` of their declared name (case-folded, ``-``->``_``, ``/``->``.``), and this is the
+        single choke point every external lookup passes through, so without it an op declared ``my-hyphen-op`` or
+        ``MyCasedOp`` registered under a name its own author could not use -- ``get_op`` raised ``Unknown operation``
+        with no warning at load. The docstring on ``_normalize_op_name`` always claimed normalization was "for
+        consistent lookup"; only the storage half implemented it.
+        """
         if visited is None:
             visited = set()
+        op_name = self._normalize_op_name(op_name)
+
+        if (preferred := self._preferred_name(op_name)) is not None and preferred not in visited:
+            op_name = preferred
 
         if op_name in visited:
             # Cycle detected, return the original name
@@ -462,6 +681,127 @@ class AnalysisOpDispatcher:
         visited.remove(op_name)
 
         return resolved
+
+    @property
+    def op_precedence(self) -> list[str]:
+        """Namespaces whose ops win bare-name resolution, highest precedence first.
+
+        In-process :meth:`prefer_ops` declarations come first, then any from ``IT_OP_PRECEDENCE`` (comma
+        separated, ordered) that they do not already name. The env var is read on every access rather than
+        cached at construction because the dispatcher is a module-level singleton built at import: a value
+        exported after that would otherwise never be seen.
+        """
+        from_env = [
+            namespace
+            for entry in os.environ.get(IT_OP_PRECEDENCE_ENV_VAR, "").split(",")
+            if (namespace := self._normalize_op_name(entry.strip()))
+        ]
+        ordered = list(self._preferred_op_namespaces)
+        ordered += [namespace for namespace in from_env if namespace not in ordered]
+        return ordered
+
+    def prefer_ops(self, *repo_ids: str, replace: bool = False) -> list[str]:
+        """Opt into resolving bare op names to a collection's ops; returns the active precedence list.
+
+        Ops are addressed by bare name throughout examples and notebooks, and bundled ops win those names by
+        default. This is how a caller opts into a hub collection's copy of an op instead -- per namespace and
+        explicitly, never as a side effect of pulling. Fully-qualified names are unaffected in both
+        directions: they always address exactly what they name.
+
+        Called with no arguments it clears the in-process opt-in (``IT_OP_PRECEDENCE`` still applies).
+        """
+        namespaces = [self._normalize_op_name(repo_id) for repo_id in repo_ids]
+        if replace or not repo_ids:
+            self._preferred_op_namespaces = namespaces
+        else:
+            for namespace in namespaces:
+                if namespace in self._preferred_op_namespaces:
+                    self._preferred_op_namespaces.remove(namespace)
+                self._preferred_op_namespaces.append(namespace)
+        # Bare names may already be bound in the dispatch table; drop those so the flip takes effect for ops
+        # that have been called earlier in the session.
+        self._dispatch_table.clear()
+        return self.op_precedence
+
+    def _preferred_name(self, op_name: str) -> str | None:
+        """The namespaced name a BARE op name resolves to under an explicit precedence opt-in, if any.
+
+        Re-ranking happens at lookup rather than by rewriting ``_op_definitions``, for two reasons: a bundled
+        op's only name IS its bare name (nothing else addresses it), so rebinding that key would make the
+        bundled copy unreachable rather than merely lower-priority; and precedence stays reversible within a
+        session, which is what the opt-in demo notebook shows.
+        """
+        if "." in op_name:
+            return None  # explicit beats implicit: a fully-qualified name is never re-ranked
+        for namespace in self.op_precedence:
+            candidate = f"{namespace}.{op_name}"
+            if candidate in self._op_definitions:
+                return candidate
+        return None
+
+    @_ensure_loaded
+    def op_info(self, op_name: str) -> "OpResolution":
+        """Report which collection a name currently resolves to, and what the alternatives are.
+
+        The question "am I running the bundled ``concept_direction`` or the one I pulled" has no answer from
+        the op object itself, so this reports the resolution: the definition a name reaches now, its
+        provenance and declared collection identity, every other definition sharing that bare name, and the
+        precedence that decided between them.
+        """
+        normalized = self._normalize_op_name(op_name)
+        resolved = self._resolve_name_safe(normalized)
+        reached = self._op_definitions.get(resolved)
+        if reached is None:
+            # Raising rather than reporting an empty resolution: "what does this name resolve to" has no
+            # useful answer for a name that resolves to nothing, and a typo must not read as a finding.
+            raise ValueError(f"Unknown operation: {op_name}")
+        # Bare-name aliasing registers a second `_op_definitions` key pointing at the SAME OpDef, so report
+        # the canonical name; otherwise a namespaced op's own bare entry shows up as an alternative to itself.
+        resolved = reached.name if reached.name in self._op_definitions else resolved
+        bare = resolved.split(".")[-1]
+        candidates = [
+            name
+            for name, op_def in self._op_definitions.items()
+            if name.split(".")[-1] == bare and op_def.name == name  # canonical entries only, not aliases
+        ]
+        return OpResolution(
+            requested=normalized,
+            resolved=resolved,
+            active=self._describe_candidate(self._op_definitions[resolved], resolved),
+            alternatives=tuple(
+                self._describe_candidate(self._op_definitions[name], name)
+                for name in sorted(candidates)
+                if name != resolved
+            ),
+            precedence=tuple(self.op_precedence),
+        )
+
+    @staticmethod
+    def _describe_candidate(op_def: OpDef, name: str) -> "OpCandidate":
+        """Provenance, collection identity and cached revision for one definition."""
+        return OpCandidate(
+            name=name,
+            source=op_def.source,
+            collection=op_def.collection_name,
+            version=op_def.collection_version,
+            revision=_cached_op_revision(op_def.source),
+        )
+
+    def _report_bare_name_contest(self, incumbent: OpDef, challenger: OpDef, message: str) -> None:
+        """Report a contested bare name at the volume the contest actually warrants.
+
+        A hub op losing a bare name to a BUNDLED op is the documented default rather than an anomaly: bundled
+        ops win bare names so a session behaves identically with and without hub access, and
+        :func:`interpretune.hub.prefer_ops` is the supported way to change that. Warning on it is actively
+        harmful once collections mirror bundled families -- pulling the published concept mirror emitted nine
+        warnings about working-as-designed behavior, which is how a warning channel stops being read. A
+        contest whose incumbent is NOT bundled is genuinely ambiguous and still warns.
+        """
+        by_design = incumbent.source == "bundled" and challenger.source.startswith("hub:")
+        if by_design:
+            rank_zero_debug(f"[ANALYSIS_OPS] {message}")
+        else:
+            rank_zero_warn(message)
 
     def _set_default_hub_op_aliases(self) -> dict[str, "OpDef"]:
         """Ensure operations are accessible both with and without namespaces."""
@@ -480,10 +820,13 @@ class AnalysisOpDispatcher:
                 if base_name in target_ops:
                     # If the base name already exists, ensure it points to the same OpDef
                     if target_ops[base_name] != target_ops[op_name]:
-                        rank_zero_warn(
+                        self._report_bare_name_contest(
+                            target_ops[base_name],
+                            target_ops[op_name],
                             f"Base name '{base_name}' already has an assigned op or alias so '{op_name}' "
-                            "cannot be mapped to it. The fully-qualified name will need to be "
-                            "used unless another alias is provided."
+                            f"cannot be mapped to it. Address it by its fully-qualified name, or opt into "
+                            f"resolving the bare name to this collection with "
+                            f"it.hub.prefer_ops('{op_name.rsplit('.', 1)[0].replace('.', '/', 1)}').",
                         )
                 else:
                     if base_name != op_name:
@@ -498,9 +841,11 @@ class AnalysisOpDispatcher:
                 if alias in target_ops:
                     # If alias already exists, ensure it points to the same OpDef
                     if target_ops[alias] != target_ops[op_name]:
-                        rank_zero_warn(
+                        self._report_bare_name_contest(
+                            target_ops[alias],
+                            target_ops[op_name],
                             f"Alias '{alias}' already has an assigned op or alias so the "
-                            f"alias specified by '{op_name}' cannot be mapped to it"
+                            f"alias specified by '{op_name}' cannot be mapped to it",
                         )
                 else:
                     target_ops[alias] = target_ops[op_name]
@@ -512,10 +857,12 @@ class AnalysisOpDispatcher:
                     if base_alias in target_ops:
                         # If base alias already exists, ensure it points to the same OpDef
                         if target_ops[base_alias] != target_ops[op_name]:
-                            rank_zero_warn(
-                                f"Base alias '{base_alias}' already has an assigned op or alias so the alias"
-                                f" specified by '{alias}' cannot be mapped to it. The fully-qualified "
-                                " name will need to be used unless another alias is provided."
+                            self._report_bare_name_contest(
+                                target_ops[base_alias],
+                                target_ops[op_name],
+                                f"Base alias '{base_alias}' already has an assigned op or alias so the alias "
+                                f"specified by '{alias}' cannot be mapped to it. Address it by its "
+                                f"fully-qualified name, or opt into the bare name with it.hub.prefer_ops().",
                             )
                     else:
                         if base_alias != op_name and base_alias != alias:

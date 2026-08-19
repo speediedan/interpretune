@@ -59,17 +59,26 @@ test_op:
             dispatcher.load_definitions()
             mock_add_hub.assert_called_once()
 
-    def test_apply_hub_namespacing_native_file(self):
-        """Test namespacing is not applied to native files."""
+    def test_apply_hub_namespacing_bundled_file(self):
+        """Test namespacing is not applied to bundled files."""
         dispatcher = AnalysisOpDispatcher(yaml_paths=[self.test_yaml])
 
         raw_definitions = {"test_op": {"description": "Test operation", "aliases": ["test_alias"]}}
 
-        # Mock native file path
-        native_file = Path(__file__).parent.parent / "src" / "interpretune" / "analysis" / "ops" / "native.yaml"
+        # A bundled family YAML: namespacing keys on the empty namespace, not on this path existing.
+        bundled_file = (
+            Path(__file__).parent.parent
+            / "src"
+            / "interpretune"
+            / "analysis"
+            / "ops"
+            / "bundled"
+            / "core"
+            / "core_ops.yaml"
+        )
 
         with patch.object(dispatcher._cache_manager, "get_hub_namespace", return_value=""):
-            result = dispatcher._apply_hub_namespacing(raw_definitions, native_file)
+            result = dispatcher._apply_hub_namespacing(raw_definitions, bundled_file)
 
         assert "test_op" in result
 
@@ -136,17 +145,18 @@ class TestOpDefinitionsCacheManagerHub:
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_discover_hub_yaml_files_hub_cache(self):
-        """Test discovering YAML files from hub cache."""
-        # Create fake hub cache structure
+        """Test discovering YAML files from hub cache.
+
+        Discovery is manifest-routed, so the cached snapshot carries an ``it_component.yaml`` declaring its op
+        YAMLs; a snapshot without one contributes nothing (asserted in ``test_op_collection_manifest_routing``).
+        """
         hub_cache = self.temp_dir / "hub"
-        hub_cache.mkdir()
-        repo_dir = hub_cache / "models--username--repo"
-        repo_dir.mkdir(parents=True)
-        snapshots_dir = repo_dir / "snapshots"
-        snapshots_dir.mkdir()
-        snapshot_dir = snapshots_dir / "abc123"
-        snapshot_dir.mkdir()
+        snapshot_dir = hub_cache / "models--username--repo" / "snapshots" / "abc123"
+        snapshot_dir.mkdir(parents=True)
         (snapshot_dir / "ops.yaml").write_text("test: {}")
+        (snapshot_dir / "it_component.yaml").write_text(
+            "it_schema_version: 1\nkinds: [ops]\nops:\n  files: [ops.yaml]\n"
+        )
 
         cache_manager = OpDefinitionsCacheManager(self.temp_dir)
 

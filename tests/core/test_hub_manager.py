@@ -339,26 +339,29 @@ class TestHubAnalysisOpManagerIntegration:
 
     @patch.dict(os.environ, {"IT_ANALYSIS_OP_PATHS": "/path1:/path2"})
     def test_environment_variable_parsing(self):
-        """Test that environment variables are properly parsed."""
-        import sys
+        """Test that environment variables are properly parsed.
+
+        Reimporting ``interpretune.analysis`` leaves TWO things pointing at a module, and restoring only one
+        of them silently breaks later tests. Importing a submodule sets it as an attribute of the parent
+        package, so a reimport rebinds ``interpretune.analysis`` on the ``interpretune`` package object as
+        well as ``sys.modules["interpretune.analysis"]``. This test previously restored only ``sys.modules``,
+        which left the two disagreeing for the rest of the session -- and the two are read by DIFFERENT
+        mechanisms: ``monkeypatch.setattr("interpretune.analysis.X", ...)`` walks the parent attribute, while
+        a call-time ``from interpretune.analysis import X`` reads ``sys.modules``. So a patch landed on a
+        module nothing read, and every later test that patched a value through that path silently saw the
+        unpatched original. Measured 2026-08-18: it took 41 op-collection tests red in the full suite while
+        every one of them passed in isolation.
+
+        Both are restored by ``purged_modules`` (``tests/module_identity.py``), which is also
+        exception-safe: the hand-rolled version skipped the restore entirely if the assertion failed.
+        """
         import importlib
 
-        # Backup existing module
-        original_mod = sys.modules.get("interpretune.analysis", None)
+        from tests.module_identity import purged_modules
 
-        # Remove interpretune.analysis from sys.modules to force reload
-        sys.modules.pop("interpretune.analysis", None)
-        # Now import and check the variable
-        analysis_mod = importlib.import_module("interpretune.analysis")
-        IT_ANALYSIS_OP_PATHS = getattr(analysis_mod, "IT_ANALYSIS_OP_PATHS", None)
-
-        assert IT_ANALYSIS_OP_PATHS == ["/path1", "/path2"]
-
-        # Restore original module
-        if original_mod is not None:
-            sys.modules["interpretune.analysis"] = original_mod
-        else:
-            sys.modules.pop("interpretune.analysis", None)
+        with purged_modules("interpretune.analysis"):
+            analysis_mod = importlib.import_module("interpretune.analysis")
+            assert getattr(analysis_mod, "IT_ANALYSIS_OP_PATHS", None) == ["/path1", "/path2"]
 
 
 class TestDynamicModuleUtils:

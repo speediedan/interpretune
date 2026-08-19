@@ -1,4 +1,14 @@
 ---
+# Collection header (#266 Phase 3, D8): versions this family's op CONTRACT SET -- the names, schemas and
+# traits its ops present to callers -- not the interpretune package. Bundled families deliberately declare NO
+# `requires:` window: they ship inside the wheel, so a compatibility window against the installed package is
+# vacuous by construction, and a naive one is actively harmful (a `>=0.1` floor does not match the
+# `0.1.0.devN+g<sha>` versions setuptools_scm produces between tags, so every bundled op would be skipped in a
+# source checkout). Hub collections are the ones that can be out of step, so they declare windows.
+collection:
+  name: core
+  version: 0.1.0
+
 # TODO: we need to more elegantly account for global wrap_summary behavior. For example, any
 # batch with an `input` could also serialize `tokens` and `prompts` columns if configured to do so which we
 # explicitly define currently but should be introspected during compilation.

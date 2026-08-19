@@ -132,12 +132,19 @@ def register_analysis_backend(name: str, backend: "AnalysisBackend") -> None:
 
 
 def resolve_analysis_backend(name: str) -> "AnalysisBackend":
-    """Resolve a backend NAME to its registered instance, lazily importing the in-tree module."""
+    """Resolve a backend NAME to its registered instance, lazily importing the in-tree module.
+
+    In-tree backends register themselves at import time, so a name that is not in the registry yet may simply not have
+    been imported. The lazy import targets ``backends.impls.<name>``, where the concrete backends live. Note this
+    resolution is by module PATH built from the name, which is why moving those modules is not a pure-motion change even
+    though nothing imports them by name from here: the ``ImportError`` below is swallowed, so a stale path degrades into
+    "no backend registered" rather than an import failure that would point at the cause.
+    """
     if name not in ANALYSIS_BACKEND_REGISTRY:
         import importlib
 
         try:
-            importlib.import_module(f"interpretune.analysis.backends.{name}")
+            importlib.import_module(f"interpretune.analysis.backends.impls.{name}")
         except ImportError:
             pass
     if name not in ANALYSIS_BACKEND_REGISTRY:

@@ -3,8 +3,8 @@
 Kind-agnostic machinery for every interpretune Hub resource: cache roots and cache-scan discovery
 (`.cache`), the ``it_component.yaml`` manifest schema and configuration-key derivation (`.manifest`),
 generated discovery-sentinel cards (`.cards`), the generalized resource manager (`.manager`, relocated from
-``interpretune.analysis.ops.hub_manager``), manifest-first component fetch (`.components`), and component
-publishing (`.publish`).
+``interpretune.analysis.ops.hub_manager``), manifest-first component fetch (`.components`), manifest-routed op
+collections (`.opcollections`), and component publishing (`.publish`).
 
 Attribute access is lazy (PEP 562) so importing ``interpretune.hub`` stays cheap.
 """
@@ -45,6 +45,10 @@ _LAZY_ATTRS = {
     "RemoteCodeNotTrustedError": "interpretune.hub.trust",
     "remote_code_trust": "interpretune.hub.trust",
     "ensure_remote_code_trusted": "interpretune.hub.trust",
+    "OpCollectionManifestError": "interpretune.hub.opcollections",
+    "declared_op_files": "interpretune.hub.opcollections",
+    "pull_op_collection": "interpretune.hub.opcollections",
+    "resolve_cached_op_files": "interpretune.hub.opcollections",
     "import_cached_entrypoint": "interpretune.hub.promptconfigs",
     "resolve_prompt_config_class": "interpretune.hub.promptconfigs",
     "compose_prompt_config_class": "interpretune.hub.promptconfigs",
@@ -62,8 +66,11 @@ _LAZY_ATTRS = {
     "publish_component": "interpretune.hub.publish",
     # the ratified verb surface (design 5e): it.hub.pull / it.hub.load / it.hub.push
     "pull": "interpretune.hub.api",
+    "pull_ops": "interpretune.hub.api",
     "load": "interpretune.hub.api",
     "push": "interpretune.hub.api",
+    "prefer_ops": "interpretune.hub.api",
+    "op_info": "interpretune.hub.api",
 }
 
 __all__ = sorted(_LAZY_ATTRS)

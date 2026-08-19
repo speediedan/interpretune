@@ -12,6 +12,7 @@ from huggingface_hub import scan_cache_dir
 
 from interpretune.hub.cache import _get_latest_revision, parse_hub_cache_path
 from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR, remote_code_trust, remote_code_trusted
+from interpretune.analysis.ops.compiler.load_policy import OpLoadError, op_load_failure
 
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 from interpretune.analysis.inputs import OpStateSpec
@@ -19,7 +20,8 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 
 
 # 3: adds the `op_state` trait (declared cross-batch state) to OpDef.
-CACHE_FORMAT_VERSION = "3"
+# 4: adds declared collection identity (`collection_name`/`collection_version`).
+CACHE_FORMAT_VERSION = "4"
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,12 @@ class OpDef:
     # shape: a dotted name means namespaced, which is how hub ops are addressed, but only provenance
     # answers "should this load dynamically from the hub cache".
     source: str = "bundled"
+    # Declared collection identity (the `collection:` header). Serialized into the cache -- and worth its
+    # CACHE_FORMAT_VERSION bump -- because unlike the declaration-site path this is wanted at RUNTIME:
+    # `op_info` reports which collection and version a bare name resolves to, and the cache path would
+    # otherwise leave it empty on every warm load.
+    collection_name: str | None = None
+    collection_version: str | None = None
     # Behavioral traits. These replace name-based special cases: framework code asks what an op
     # NEEDS, so hub and local ops can declare the same things bundled ops do.
     uses_default_hooks: bool = False  # install the default activation-cache fwd/bwd hooks
@@ -64,11 +72,20 @@ class OpDef:
             "composition": self.composition,
             "op_state": self.op_state.to_dict() if self.op_state is not None else None,
             "source": self.source,
+            "collection_name": self.collection_name,
+            "collection_version": self.collection_version,
             "uses_default_hooks": self.uses_default_hooks,
             "requires_grad": self.requires_grad,
             "per_latent_preds": self.per_latent_preds,
         }
         return result
+
+
+def _interpretune_version() -> str:
+    """The installed interpretune version, for the cache key ("unknown" when undeterminable)."""
+    from interpretune.hub.components import _installed_version
+
+    return str(_installed_version("interpretune") or "unknown")
 
 
 class YamlFileInfo:
@@ -134,6 +151,8 @@ class OpDefinitionsCacheManager:
                 rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Adding YAML file: {yaml_file}")
                 self.add_yaml_file(yaml_file)
 
+        except OpLoadError:
+            raise  # strict loading must not be swallowed by the fail-soft discovery wrapper
         except Exception as e:
             rank_zero_warn(f"Error discovering hub YAML files: {e}")
             rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Exception details: {type(e).__name__}: {str(e)}")
@@ -145,13 +164,16 @@ class OpDefinitionsCacheManager:
         return hub_yaml_files  # type: ignore[return-value]
 
     def discover_hub_yaml_files(self) -> list[Path]:
-        """Discover YAML files from the most recent revision of each hub repository.
+        """Discover op-definition YAMLs from the latest cached revision of each hub op collection.
 
-        Uses HuggingFace's cache manager to efficiently find YAML files only from
-        the latest revision (preferring 'main' ref) of each cached model repository.
+        MANIFEST-ROUTED (not a glob): each cached repo's ``it_component.yaml`` is read first and its
+        ``ops.files`` list says which YAMLs are op definitions. A repo carrying no manifest is reported
+        through ``op_load_failure`` and contributes nothing -- that is the well-formed-ops-repo contract, and
+        reporting it is the point, since under the old glob such a repo appeared to work until one of its
+        non-op YAMLs reached the compiler and dropped every op in the process.
 
         Returns:
-            List of Path objects pointing to YAML files from latest revisions only.
+            List of Path objects pointing to declared op YAMLs, from one revision per collection.
         """
         from interpretune.analysis import IT_ANALYSIS_HUB_CACHE
 
@@ -191,22 +213,34 @@ class OpDefinitionsCacheManager:
                 if latest_revision is None:
                     continue
 
-                # Check for YAML files in this revision
-                for file_info in latest_revision.files:
-                    if file_info.file_name.endswith((".yaml", ".yml")):
-                        # use file_path if available, otherwise construct path
-                        if hasattr(file_info, "file_path") and file_info.file_path is not None:
-                            yaml_path = Path(file_info.file_path)
-                        else:
-                            yaml_path = latest_revision.snapshot_path / file_info.file_name
+                # The manifest declares which of this snapshot's YAMLs are op definitions. Every path
+                # therefore comes from one revision by construction, and the manifest is never itself fed
+                # to the op compiler (it raises on its scalar keys, dropping every op including bundled).
+                yaml_files.extend(self._declared_op_files(repo.repo_id, latest_revision.snapshot_path))
 
-                        if yaml_path.exists():
-                            yaml_files.append(yaml_path)
-
+        except OpLoadError:
+            raise  # strict loading must not be swallowed by the fail-soft discovery wrapper
         except Exception as e:
             rank_zero_warn(f"Failed to discover hub YAML files: {e}")
 
         return sorted(yaml_files)  # Sort for deterministic results
+
+    def _declared_op_files(self, repo_id: str, snapshot_path: Path) -> list[Path]:
+        """Manifest-routed op YAMLs for one cached collection, with load failures reported not raised.
+
+        ``OpLoadError`` propagates so strict loading still fails the session; every other manifest problem
+        is scoped to this one collection, because a malformed third-party collection must not be able to
+        deny a session the ops it does have.
+        """
+        from interpretune.hub.opcollections import resolve_cached_op_files
+
+        try:
+            return resolve_cached_op_files(snapshot_path, source=f"op collection {repo_id!r}")
+        except OpLoadError:
+            raise
+        except Exception as failure:
+            op_load_failure(f"Skipping op collection {repo_id!r}: {failure}")
+            return []
 
     def _parse_hub_file_path(self, yaml_file: Path) -> tuple[bool, str]:
         """Parse a file path to determine if it's a hub ops file and extract namespace.
@@ -247,8 +281,11 @@ class OpDefinitionsCacheManager:
             if not self._yaml_files:
                 self._fingerprint = f"empty_v{CACHE_FORMAT_VERSION}"
             else:
-                # Create a combined hash of all file information
-                combined_info = [f"cache_format:{CACHE_FORMAT_VERSION}"]
+                # Create a combined hash of all file information. The installed interpretune version is part
+                # of the key because compiled definitions depend on it: a collection's `requires:` window is
+                # enforced at COMPILE time, so without this an upgrade would keep serving definitions from a
+                # collection that the new version no longer satisfies, never re-running the check.
+                combined_info = [f"cache_format:{CACHE_FORMAT_VERSION}", f"interpretune:{_interpretune_version()}"]
                 for file_info in self._yaml_files:
                     # Include path, mtime, and content hash
                     combined_info.append(f"{file_info.path}:{file_info.mtime}:{file_info.content_hash}")
@@ -366,6 +403,9 @@ class OpDefinitionsCacheManager:
             fields.append(f"op_state={self._serialize_op_state(op_def.op_state)}")
         if op_def.source != "bundled":
             fields.append(f"source={op_def.source!r}")
+        for collection_field in ("collection_name", "collection_version"):
+            if (value := getattr(op_def, collection_field)) is not None:
+                fields.append(f"{collection_field}={value!r}")
         for trait in ("uses_default_hooks", "requires_grad", "per_latent_preds"):
             if getattr(op_def, trait):
                 fields.append(f"{trait}=True")

@@ -8,7 +8,7 @@ benchmarks:
       - lightning
       backends: []
       description: Gemma2-2b-IT baseline zero-shot RTE with Lightning adapter (HF generation)
-      last_validated: '20260726_141522'
+      last_validated: '20260819_092050'
       notes: 'Config uses do_sample=true with top_k=50 so results vary across runs. Observed 80.87% post batch-collapse fix.
         Wider tolerance accounts for sampling variance.
 
@@ -18,13 +18,12 @@ benchmarks:
       - lightning
       - hf_generation
       debug_utils_module: rte_boolq
-      commit_sha: ce708bc
+      commit_sha: 4160d1b
       salient_pkg_versions:
-        interpretune: 0.1.0.dev321+gf9025b517.d20260726 (fork:speediedan/interpretune, branch:streamlined-streamable-dashboard-generation-phase-1,
-          sha:ce708bc)
+        interpretune: 0.1.0.dev357+gb76f0197d (fork:speediedan/interpretune, branch:refactor/hub-op-parity, sha:4160d1b)
         lightning: 2.6.5
         transformer_lens: 3.5.1
-        sae_lens: 6.45.3 (fork:speediedan/SAELens, branch:streamlined-streamable-dashboard-generation-phase-1, sha:990b6b3)
+        sae_lens: 6.49.0
         circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:3fde7e2)
         nnsight: 0.7.0
         transformers: 5.12.1
@@ -40,7 +39,7 @@ benchmarks:
       backends:
       - transformer_lens
       description: Gemma2-2b-IT with SAE-Lens + HookedTransformer zero-shot RTE
-      last_validated: '20260726_141719'
+      last_validated: '20260819_092246'
       notes: 'HookedTransformer mode (use_bridge=False). SAE reconstruction loss drops accuracy ~6pp from baseline (0.809).
         Uses do_sample=true with top_k=50.
 
@@ -51,13 +50,12 @@ benchmarks:
       - hooked_transformer
       - sae_lens
       debug_utils_module: rte_boolq
-      commit_sha: ce708bc
+      commit_sha: 4160d1b
       salient_pkg_versions:
-        interpretune: 0.1.0.dev321+gf9025b517.d20260726 (fork:speediedan/interpretune, branch:streamlined-streamable-dashboard-generation-phase-1,
-          sha:ce708bc)
+        interpretune: 0.1.0.dev357+gb76f0197d (fork:speediedan/interpretune, branch:refactor/hub-op-parity, sha:4160d1b)
         lightning: 2.6.5
         transformer_lens: 3.5.1
-        sae_lens: 6.45.3 (fork:speediedan/SAELens, branch:streamlined-streamable-dashboard-generation-phase-1, sha:990b6b3)
+        sae_lens: 6.49.0
         circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:3fde7e2)
         nnsight: 0.7.0
         transformers: 5.12.1
@@ -73,7 +71,7 @@ benchmarks:
       backends:
       - transformer_lens
       description: Gemma2-2b-IT with SAE-Lens + TransformerBridge (SAETransformerBridge) zero-shot RTE
-      last_validated: '20260726_141908'
+      last_validated: '20260819_092433'
       notes: 'TransformerBridge mode using ITLensBridgeConfig with enable_compatibility_mode (fold_ln + fold_value_biases).
         SAE reconstruction loss drops accuracy ~6pp from baseline (0.809). Uses do_sample=true with top_k=50.
 
@@ -84,13 +82,12 @@ benchmarks:
       - bridge
       - sae_lens
       debug_utils_module: rte_boolq
-      commit_sha: ce708bc
+      commit_sha: 4160d1b
       salient_pkg_versions:
-        interpretune: 0.1.0.dev321+gf9025b517.d20260726 (fork:speediedan/interpretune, branch:streamlined-streamable-dashboard-generation-phase-1,
-          sha:ce708bc)
+        interpretune: 0.1.0.dev357+gb76f0197d (fork:speediedan/interpretune, branch:refactor/hub-op-parity, sha:4160d1b)
         lightning: 2.6.5
         transformer_lens: 3.5.1
-        sae_lens: 6.45.3 (fork:speediedan/SAELens, branch:streamlined-streamable-dashboard-generation-phase-1, sha:990b6b3)
+        sae_lens: 6.49.0
         circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:3fde7e2)
         nnsight: 0.7.0
         transformers: 5.12.1
@@ -107,7 +104,7 @@ benchmarks:
       backends:
       - nnsight
       description: Gemma3-1b-IT with Circuit Tracer (NNsight backend) zero-shot RTE via Lightning
-      last_validated: '20260726_142017'
+      last_validated: '20260819_092540'
       notes: 'Circuit Tracer with NNsight backend using gemma-scope-2-1b-it transcoders. Uses do_sample=true with top_k=50
         via CoreGenerationConfig. Previous greedy result was 0.7184.
 
@@ -118,13 +115,12 @@ benchmarks:
       - lightning
       - gemma3
       debug_utils_module: rte_boolq
-      commit_sha: ce708bc
+      commit_sha: 4160d1b
       salient_pkg_versions:
-        interpretune: 0.1.0.dev321+gf9025b517.d20260726 (fork:speediedan/interpretune, branch:streamlined-streamable-dashboard-generation-phase-1,
-          sha:ce708bc)
+        interpretune: 0.1.0.dev357+gb76f0197d (fork:speediedan/interpretune, branch:refactor/hub-op-parity, sha:4160d1b)
         lightning: 2.6.5
         transformer_lens: 3.5.1
-        sae_lens: 6.45.3 (fork:speediedan/SAELens, branch:streamlined-streamable-dashboard-generation-phase-1, sha:990b6b3)
+        sae_lens: 6.49.0
         circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:3fde7e2)
         nnsight: 0.7.0
         transformers: 5.12.1
@@ -142,7 +138,7 @@ benchmarks:
       backends:
       - nnsight
       description: Gemma3-4b-IT with Circuit Tracer (NNsight backend) zero-shot RTE via core CLI
-      last_validated: '20260726_142136'
+      last_validated: '20260819_092700'
       notes: 'Bootstrap registry entry for Gemma3-4b-IT multimodal text-only CT benchmark. Validate with --debug first, then
         refresh via --update-registry once the measured accuracy is acceptable.
 
@@ -154,13 +150,12 @@ benchmarks:
       - gemma3
       - 4b
       debug_utils_module: rte_boolq
-      commit_sha: ce708bc
+      commit_sha: 4160d1b
       salient_pkg_versions:
-        interpretune: 0.1.0.dev321+gf9025b517.d20260726 (fork:speediedan/interpretune, branch:streamlined-streamable-dashboard-generation-phase-1,
-          sha:ce708bc)
+        interpretune: 0.1.0.dev357+gb76f0197d (fork:speediedan/interpretune, branch:refactor/hub-op-parity, sha:4160d1b)
         lightning: 2.6.5
         transformer_lens: 3.5.1
-        sae_lens: 6.45.3 (fork:speediedan/SAELens, branch:streamlined-streamable-dashboard-generation-phase-1, sha:990b6b3)
+        sae_lens: 6.49.0
         circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:3fde7e2)
         nnsight: 0.7.0
         transformers: 5.12.1
@@ -178,7 +173,7 @@ benchmarks:
       backends:
       - nnsight
       description: Gemma3-4b-IT (262k width transcoders) with Circuit Tracer (NNsight backend) zero-shot RTE via core CLI
-      last_validated: '20260726_142250'
+      last_validated: '20260819_092812'
       notes: 'Bootstrap registry entry for Gemma3-4b-IT multimodal text-only CT benchmark with 262k width transcoders. Validate
         with --debug first, then refresh via --update-registry once the measured accuracy is acceptable.
 
@@ -190,13 +185,12 @@ benchmarks:
       - gemma3
       - 4b
       debug_utils_module: rte_boolq
-      commit_sha: ce708bc
+      commit_sha: 4160d1b
       salient_pkg_versions:
-        interpretune: 0.1.0.dev321+gf9025b517.d20260726 (fork:speediedan/interpretune, branch:streamlined-streamable-dashboard-generation-phase-1,
-          sha:ce708bc)
+        interpretune: 0.1.0.dev357+gb76f0197d (fork:speediedan/interpretune, branch:refactor/hub-op-parity, sha:4160d1b)
         lightning: 2.6.5
         transformer_lens: 3.5.1
-        sae_lens: 6.45.3 (fork:speediedan/SAELens, branch:streamlined-streamable-dashboard-generation-phase-1, sha:990b6b3)
+        sae_lens: 6.49.0
         circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:3fde7e2)
         nnsight: 0.7.0
         transformers: 5.12.1
@@ -212,7 +206,7 @@ benchmarks:
       backends:
       - nnsight
       description: Gemma3-1b-IT with NNsight adapter zero-shot RTE via Lightning
-      last_validated: '20260726_142410'
+      last_validated: '20260819_092932'
       notes: 'NNsight adapter only (no circuit tracer or SAE). Uses do_sample=true with top_k=50 via CoreGenerationConfig.
         Previous greedy result was 0.722.
 
@@ -222,13 +216,12 @@ benchmarks:
       - lightning
       - gemma3
       debug_utils_module: rte_boolq
-      commit_sha: ce708bc
+      commit_sha: 4160d1b
       salient_pkg_versions:
-        interpretune: 0.1.0.dev321+gf9025b517.d20260726 (fork:speediedan/interpretune, branch:streamlined-streamable-dashboard-generation-phase-1,
-          sha:ce708bc)
+        interpretune: 0.1.0.dev357+gb76f0197d (fork:speediedan/interpretune, branch:refactor/hub-op-parity, sha:4160d1b)
         lightning: 2.6.5
         transformer_lens: 3.5.1
-        sae_lens: 6.45.3 (fork:speediedan/SAELens, branch:streamlined-streamable-dashboard-generation-phase-1, sha:990b6b3)
+        sae_lens: 6.49.0
         circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:3fde7e2)
         nnsight: 0.7.0
         transformers: 5.12.1
@@ -246,7 +239,7 @@ benchmarks:
       backends:
       - nnsight
       description: Gemma2-2b-IT with Circuit Tracer (NNsight backend, gemma transcoders) zero-shot RTE via core CLI
-      last_validated: '20260726_142514'
+      last_validated: '20260819_093033'
       notes: 'Core (non-Lightning) CLI mode. Circuit Tracer with NNsight backend using gemma-scope-transcoders. Uses do_sample=true
         with top_k=50 via HFGenerationConfig. Gemma2-specific: eager attention, use_cache=false (bfloat16 dtype issue), eos_token_id=1.
 
@@ -257,13 +250,12 @@ benchmarks:
       - core
       - gemma2
       debug_utils_module: rte_boolq
-      commit_sha: ce708bc
+      commit_sha: 4160d1b
       salient_pkg_versions:
-        interpretune: 0.1.0.dev321+gf9025b517.d20260726 (fork:speediedan/interpretune, branch:streamlined-streamable-dashboard-generation-phase-1,
-          sha:ce708bc)
+        interpretune: 0.1.0.dev357+gb76f0197d (fork:speediedan/interpretune, branch:refactor/hub-op-parity, sha:4160d1b)
         lightning: 2.6.5
         transformer_lens: 3.5.1
-        sae_lens: 6.45.3 (fork:speediedan/SAELens, branch:streamlined-streamable-dashboard-generation-phase-1, sha:990b6b3)
+        sae_lens: 6.49.0
         circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:3fde7e2)
         nnsight: 0.7.0
         transformers: 5.12.1
@@ -281,7 +273,7 @@ benchmarks:
       backends:
       - nnsight
       description: Gemma3-1b-IT with Circuit Tracer (NNsight backend) zero-shot RTE via core CLI
-      last_validated: '20260726_142620'
+      last_validated: '20260819_093139'
       notes: 'Core (non-Lightning) CLI mode. Circuit Tracer with NNsight backend using gemma-scope-2-1b-it transcoders. Uses
         do_sample=true with top_k=50 via CoreGenerationConfig.
 
@@ -292,13 +284,12 @@ benchmarks:
       - core
       - gemma3
       debug_utils_module: rte_boolq
-      commit_sha: ce708bc
+      commit_sha: 4160d1b
       salient_pkg_versions:
-        interpretune: 0.1.0.dev321+gf9025b517.d20260726 (fork:speediedan/interpretune, branch:streamlined-streamable-dashboard-generation-phase-1,
-          sha:ce708bc)
+        interpretune: 0.1.0.dev357+gb76f0197d (fork:speediedan/interpretune, branch:refactor/hub-op-parity, sha:4160d1b)
         lightning: 2.6.5
         transformer_lens: 3.5.1
-        sae_lens: 6.45.3 (fork:speediedan/SAELens, branch:streamlined-streamable-dashboard-generation-phase-1, sha:990b6b3)
+        sae_lens: 6.49.0
         circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:3fde7e2)
         nnsight: 0.7.0
         transformers: 5.12.1
@@ -315,7 +306,7 @@ benchmarks:
       backends:
       - nnsight
       description: Gemma3-1b-IT with NNsight adapter zero-shot RTE via core CLI
-      last_validated: '20260726_142740'
+      last_validated: '20260819_093258'
       notes: 'Core (non-Lightning) CLI mode. NNsight adapter only (no circuit tracer or SAE). Uses do_sample=true with top_k=50
         via CoreGenerationConfig.
 
@@ -325,13 +316,12 @@ benchmarks:
       - core
       - gemma3
       debug_utils_module: rte_boolq
-      commit_sha: ce708bc
+      commit_sha: 4160d1b
       salient_pkg_versions:
-        interpretune: 0.1.0.dev321+gf9025b517.d20260726 (fork:speediedan/interpretune, branch:streamlined-streamable-dashboard-generation-phase-1,
-          sha:ce708bc)
+        interpretune: 0.1.0.dev357+gb76f0197d (fork:speediedan/interpretune, branch:refactor/hub-op-parity, sha:4160d1b)
         lightning: 2.6.5
         transformer_lens: 3.5.1
-        sae_lens: 6.45.3 (fork:speediedan/SAELens, branch:streamlined-streamable-dashboard-generation-phase-1, sha:990b6b3)
+        sae_lens: 6.49.0
         circuit_tracer: 0.4.0 (fork:speediedan/circuit-tracer, sha:3fde7e2)
         nnsight: 0.7.0
         transformers: 5.12.1

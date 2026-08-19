@@ -12,6 +12,8 @@ from typing import Dict, Any, Callable, List, Union
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from interpretune.analysis.ops.collection import COLLECTION_HEADER_KEY  # noqa: E402  (needs project_root)
+
 
 def import_callable(callable_path: str) -> Callable:
     """Import a callable from a path."""
@@ -57,19 +59,29 @@ def format_type_annotation(annotation):
 
 
 def format_schema_doc(schema_dict: Dict) -> str:
-    """Format schema dictionary into a readable docstring section."""
+    """Format schema dictionary into a readable docstring section.
+
+    Accepts both the raw YAML shape (field -> mapping) and the compiled shape (``OpSchema`` of ``ColCfg``).
+    The collection-stub path sources definitions from the dispatcher, so its fields arrive as ``ColCfg``
+    dataclasses; reading only mappings silently emitted every schema section empty.
+    """
     if not schema_dict:
         return ""
 
     lines = []
     for field_name, field_def in schema_dict.items():
         if isinstance(field_def, dict):
-            field_str = f"{field_name}"
-            if "datasets_dtype" in field_def:
-                field_str += f" ({field_def['datasets_dtype']})"
-            if "required" in field_def and field_def["required"]:
-                field_str += " (required)"
-            lines.append(field_str)
+            dtype, required = field_def.get("datasets_dtype"), field_def.get("required")
+        elif hasattr(field_def, "datasets_dtype"):
+            dtype, required = field_def.datasets_dtype, getattr(field_def, "required", None)
+        else:
+            continue
+        field_str = f"{field_name}"
+        if dtype:
+            field_str += f" ({dtype})"
+        if required:
+            field_str += " (required)"
+        lines.append(field_str)
 
     return "\n".join(lines)
 
@@ -129,12 +141,81 @@ def format_docstring(
     return "\n".join(doc_lines)
 
 
-def generate_operation_stub(op_name: str, op_def: Dict[str, Any], yaml_content: Dict[str, Any]) -> str:
-    """Generate type stub for a single analysis operation."""
+def alias_assignments(op_name: str, op_def: Dict[str, Any]) -> List[str]:
+    """Alias lines for an op, always under a BARE name.
+
+    A hub op's aliases are namespaced, and ``user.repo.alias = op`` is not valid Python -- it reads as an
+    attribute assignment on ``user``. Shared by the introspected and YAML-derived paths so a collection whose
+    implementation cannot be imported does not silently lose its aliases too.
+    """
+    aliases = []
+    for alias in op_def.get("aliases") or []:
+        bare_alias = alias.split(".")[-1]
+        if bare_alias != op_name:
+            aliases.append(f"{bare_alias} = {op_name}")
+    single = op_def.get("alias")
+    if single and single.split(".")[-1] != op_name:
+        aliases.append(f"{single.split('.')[-1]} = {op_name}")
+    return aliases
+
+
+def yaml_derived_stub(op_name: str, op_def: Dict[str, Any], reason: str) -> str:
+    """Stub for an op whose implementation could not be imported, derived from its YAML declaration.
+
+    Replaces a fallback that emitted a bare untyped signature with no docstring beyond the failure text, which
+    degraded silently: the op still appeared in the stub, so nothing downstream could tell a YAML-derived stub
+    from a real one, and the schema documentation was lost precisely when introspection was least available.
+
+    The signature stays the canonical op-protocol shape rather than being invented from ``input_schema``. The
+    schema names an op's DATA contract, not its Python parameters, so synthesizing parameters from it would
+    produce a stub that type-checks calls the runtime rejects -- worse than a conservative one.
+    """
+    docstring = format_docstring(
+        op_def.get("description", ""),
+        op_def.get("input_schema", {}),
+        op_def.get("output_schema", {}),
+        op_def.get("importable_params") or None,
+    )
+    signature = wrap_signature(
+        op_name,
+        ["module", "analysis_batch: Optional[BaseAnalysisBatchProtocol]", "batch", "batch_idx: int", "**kwargs"],
+        "BaseAnalysisBatchProtocol",
+    )
+    annotated = docstring.replace(
+        '"""',
+        f'"""[YAML-derived stub: {reason}] ',
+        1,
+    )
+    stub = f"{signature}:\n    {annotated}\n    ...\n\n"
+    if aliases := alias_assignments(op_name, op_def):
+        stub += "\n".join(aliases) + "\n\n"
+    return stub
+
+
+def generate_operation_stub(
+    op_name: str,
+    op_def: Dict[str, Any],
+    yaml_content: Dict[str, Any],
+    require_importable: bool = True,
+    resolve_impl: Callable | None = None,
+) -> str:
+    """Generate type stub for a single analysis operation.
+
+    ``require_importable`` distinguishes the two callers. For the committed bundled stub an unimportable
+    implementation is a genuine defect (the module ships in the wheel), so it raises rather than quietly
+    emitting a degraded stub that the stale-stubs check would then happily accept. For local and hub
+    collections the impl legitimately may not be importable in the generating environment, so those fall back
+    to a YAML-derived stub that says so.
+
+    ``resolve_impl`` overrides how the implementation is imported. A hub op's ``implementation`` is a
+    repo-relative ``<module>.<function>`` pair resolved through the dynamic-module machinery, so a plain
+    ``import_callable`` cannot find it and EVERY hub op would degrade to a YAML-derived stub -- which is
+    exactly the silent degradation this pass exists to remove.
+    """
     try:
         # Import the implementation function
         impl_path = op_def["implementation"]
-        func = import_callable(impl_path)
+        func = resolve_impl(op_name, op_def) if resolve_impl is not None else import_callable(impl_path)
 
         # Get function signature
         sig = inspect.signature(func)
@@ -189,29 +270,22 @@ def generate_operation_stub(op_name: str, op_def: Dict[str, Any], yaml_content: 
         # Build the complete stub
         stub = f"{signature}:\n    {docstring}\n    ...\n\n"
 
-        # Add aliases
-        aliases = []
-        if "aliases" in op_def:
-            for alias in op_def["aliases"]:
-                aliases.append(f"{alias} = {op_name}")
-
-        if "alias" in op_def and op_def["alias"] != op_name:
-            aliases.append(f"{op_def['alias']} = {op_name}")
-
+        aliases = alias_assignments(op_name, op_def)
         if aliases:
             stub += "\n".join(aliases) + "\n\n"
 
         return stub
 
-    except (ImportError, AttributeError) as e:
-        print(f"Error generating stub for {op_name}: {e}")
-        # Fallback to a basic stub
-        return (
-            f"def {op_name}(module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, "
-            f"batch_idx: int) -> BaseAnalysisBatchProtocol:\n"
-            f'    """Operation {op_name} (import failed: {e})"""\n'
-            f"    ...\n\n"
-        )
+    except (ImportError, AttributeError, ValueError) as e:
+        if require_importable:
+            raise RuntimeError(
+                f"Cannot generate a stub for bundled op {op_name!r}: its implementation "
+                f"{op_def.get('implementation')!r} could not be imported ({type(e).__name__}: {e}). A bundled "
+                "implementation ships in the wheel, so this is a defect rather than a degraded environment; "
+                "emitting a fallback stub here would let the stale-stubs check pass over it."
+            ) from e
+        print(f"Falling back to a YAML-derived stub for {op_name}: {type(e).__name__}: {e}")
+        return yaml_derived_stub(op_name, op_def, f"{op_def.get('implementation')} not importable: {e}")
 
 
 def generate_composition_stub(op_name: str, op_def: Dict[str, Any]) -> str:
@@ -241,12 +315,20 @@ def generate_composition_stub(op_name: str, op_def: Dict[str, Any]) -> str:
 
 
 def load_bundled_definitions(yaml_paths: List[Path]) -> Dict[str, Any]:
-    """Load and merge the bundled op-family YAMLs into a single definitions mapping."""
+    """Load and merge the bundled op-family YAMLs into a single definitions mapping.
+
+    Non-op top-level keys are skipped. Every family declares a ``collection:`` header, and treating it as an
+    op made the generator fail on its second family with a misleading "Duplicate bundled op definition
+    'collection'" -- the same shape of bug the header caused in the op compiler.
+    """
+    non_op_keys = {COLLECTION_HEADER_KEY}
     merged: Dict[str, Any] = {}
     for yaml_path in yaml_paths:
         with open(yaml_path, "r", encoding="utf-8") as f:
             content = yaml.safe_load(f) or {}
         for op_name, op_def in content.items():
+            if op_name in non_op_keys:
+                continue
             if op_name == "composite_operations":
                 merged.setdefault("composite_operations", {}).update(op_def)
             else:
@@ -364,9 +446,135 @@ def generate_stubs(yaml_paths: Union[Path, List[Path]], output_path: Path) -> No
         print(f"Warning: Could not apply formatting: {e}")
 
 
-if __name__ == "__main__":
-    bundled_dir = project_root / "src" / "interpretune" / "analysis" / "ops" / "bundled"
-    yaml_paths = sorted(bundled_dir.glob("**/*.yaml"))
-    output_path = project_root / "src" / "interpretune" / "__init__.pyi"
+def stub_module_name(collection_key: str) -> str:
+    """Sanitize a collection key into a module name a type checker can import.
 
-    generate_stubs(yaml_paths, output_path)
+    ``speediedan.concept_direction_ops`` -> ``speediedan__concept_direction_ops``. A namespaced op name is not
+    a Python identifier, so a stub cannot declare it directly; each collection gets its own stub module whose
+    ops are declared under their BARE names, which is how the collection's ops are called once
+    ``it.hub.prefer_ops`` is in effect.
+    """
+    return collection_key.replace("/", "__").replace(".", "__").replace("-", "_")
+
+
+def group_definitions_by_collection(definitions: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Group non-bundled op definitions by the collection they came from.
+
+    Keyed by hub namespace (or ``local``) rather than the declared collection name: the namespace is what
+    addresses the ops and what ``prefer_ops`` takes, and a collection is free to declare any handle it likes
+    -- including one that collides with another collection's.
+    """
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for name, op_def in definitions.items():
+        source = getattr(op_def, "source", "bundled")
+        if source == "bundled":
+            continue
+        if name != getattr(op_def, "name", name):
+            continue  # alias entry pointing at the same OpDef
+        key = source.split(":", 1)[1] if source.startswith("hub:") else "local"
+        grouped.setdefault(key, {})[name] = op_def
+    return grouped
+
+
+def _resolve_through_dispatcher(op_name: str, op_def: Any) -> Callable:
+    """Import a collection op's implementation the way the dispatcher does at runtime.
+
+    Hub ops resolve through the dynamic-module machinery (their ``implementation`` is repo-relative), and local
+    collection ops resolve as ordinary imports because their directory is on ``sys.path``. Using the
+    dispatcher's own resolution means a generated stub reflects the signature that will actually be called.
+    """
+    from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+    source = getattr(op_def, "source", "")
+    if source.startswith("hub:"):
+        return DISPATCHER._import_hub_callable(op_name, op_def)
+    return import_callable(op_def.implementation if hasattr(op_def, "implementation") else op_def["implementation"])
+
+
+def generate_collection_stubs(output_dir: Path) -> List[Path]:
+    """Generate one ``.pyi`` per local/hub op collection into ``output_dir``; returns the files written.
+
+    Deliberately NOT part of the committed stub (#58/#60, §3.10). The committed
+    ``src/interpretune/__init__.pyi`` stays bundled-only and offline-derivable so the stale-stubs CI check
+    never depends on a network fetch or a trust decision; collection stubs are generated on demand into the
+    analysis cache, where an IDE can be pointed at them.
+    """
+    from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+    DISPATCHER.load_definitions()
+    grouped = group_definitions_by_collection(DISPATCHER.registered_ops)
+    if not grouped:
+        print("No local or hub op collections found; nothing to generate (bundled ops live in the committed stub).")
+        return []
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    written: List[Path] = []
+    for key, ops in sorted(grouped.items()):
+        lines = [
+            f'"""Type stubs for the {key!r} interpretune op collection."""',
+            "# This file is auto-generated. Do not modify directly.",
+            "",
+            "from typing import Callable, Optional",
+            "import torch",
+            "from transformers import BatchEncoding",
+            "from interpretune.analysis.ops import AnalysisBatch as AnalysisBatch",
+            "from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatchProtocol",
+            "",
+        ]
+        for name, op_def in sorted(ops.items()):
+            bare = name.split(".")[-1]
+            as_dict = op_def.to_dict() if hasattr(op_def, "to_dict") else dict(op_def)
+            lines.append(f"# {name}")
+            lines.append(
+                generate_operation_stub(
+                    bare,
+                    as_dict,
+                    {},
+                    require_importable=False,
+                    resolve_impl=lambda _bare, _def, _name=name, _od=op_def: _resolve_through_dispatcher(_name, _od),
+                )
+            )
+        path = output_dir / f"{stub_module_name(key)}.pyi"
+        path.write_text("\n".join(lines), encoding="utf-8")
+        written.append(path)
+        print(f"Generated {len(ops)} op stubs for {key} at {path}")
+    print(
+        "\nPoint your IDE's stub path at this directory to pick these up "
+        "(e.g. pyright `stubPath`, or add it to `extraPaths`)."
+    )
+    return written
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Generate type stubs for interpretune analysis operations.")
+    parser.add_argument(
+        "--include-collections",
+        action="store_true",
+        help="also generate per-collection stubs for local/hub collections into the analysis cache",
+    )
+    parser.add_argument(
+        "--collections-only",
+        action="store_true",
+        help="generate ONLY the per-collection stubs, leaving the committed bundled stub untouched",
+    )
+    parser.add_argument("--collection-stub-dir", type=Path, help="where to write collection stubs")
+    args = parser.parse_args()
+
+    if not args.collections_only:
+        bundled_dir = project_root / "src" / "interpretune" / "analysis" / "ops" / "bundled"
+        generate_stubs(sorted(bundled_dir.glob("**/*.yaml")), project_root / "src" / "interpretune" / "__init__.pyi")
+
+    if args.include_collections or args.collections_only:
+        stub_dir = args.collection_stub_dir
+        if stub_dir is None:
+            from interpretune.analysis import IT_ANALYSIS_CACHE
+
+            stub_dir = Path(IT_ANALYSIS_CACHE) / "op_stubs"
+        generate_collection_stubs(stub_dir)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
