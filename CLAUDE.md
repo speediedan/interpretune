@@ -55,6 +55,32 @@ reaching for `pip install`, you want `uv pip install` or `build_it_env.sh`.
 directives.** That is the only flow that gets both the uv overrides and the `git-deps` group without
 any editable checkout sneaking ahead of them.
 
+**NEVER `pip install` into a dev venv, not even for a one-off repair.** The dev envs (`it_latest`,
+`it_release`, the scratch envs) are uv-built, and a `pip` install into one is not a harmless shortcut:
+
+- **pip ignores `[tool.uv] override-dependencies`**, so it can quietly resolve a dependency the
+  overrides exist to prevent, and the version string will not show it.
+- **It can leave TWO `.dist-info` directories for the same package** (one uv, one pip), so two owners
+  disagree about what is on disk while the import system uses whichever files landed last. That
+  happened here and cost a session's worth of misdiagnosis.
+- **It silently detaches a `--from-source` package from its checkout.** A pip-installed `sae_lens`
+  replaced the local SAELens checkout in `it_latest` and went unnoticed until a benchmark refresh
+  recorded the changed provenance.
+
+Audit any dev venv before trusting it for something that gates a release, an upstream PR, or a
+benchmark artifact. Expect `uv` throughout:
+
+```bash
+SP=$VIRTUAL_ENV/lib/python3.13/site-packages
+for f in "$SP"/*.dist-info/INSTALLER; do
+  [ "$(cat "$f")" = "pip" ] && echo "pip-installed: $(basename "$(dirname "$f")")"
+done
+```
+
+**Remediate by rebuilding, not by patching.** `uv pip install --reinstall-package <pkg>` fixes the one
+package but not the resolution that produced it; `build_it_env.sh` is the supported repair. If a
+one-off really is needed, it is `uv pip install`, never `pip install`.
+
 **Prove which code you actually ran, with `__file__` and not a version string.** A version can match
 while the file comes from somewhere else entirely; see the isolation trap in `CLAUDE.local.md`.
 
@@ -481,6 +507,24 @@ Serialization details matter here:
 ## Pre-MVP Backwards Compatibility
 
 Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeline composition may change without deprecation notices. Do not add backwards-compatibility shims (fallback code paths, silent coercions, etc.) to preserve caller assumptions that predate the current design. If an op's contract changes, update all in-tree callers and tests to match the new contract directly.
+
+## Shipped docs must not reference agent workstreams
+
+Anything under `docs/`, `README.md`, or a docstring is read by users and outlives the work that
+produced it. **Never park an open decision in shipped documentation by pointing at a private agent
+workstream** ("an open decision on the X workstream", "to be settled by the Y session"). Those
+workstreams close, get renamed, or are simply invisible to a reader, and the decision is then lost in
+a document that still implies someone is holding it.
+
+**File an issue and reference the issue number.** An issue survives the session, carries the
+pros/cons, and shows its own resolution. A workstream reference does none of that.
+
+The same applies to an issue that has since closed: `#124` closed while a doc still cited it as the
+home of an unsettled default, which is how that decision nearly went missing. If a doc must record an
+open question, it points at an OPEN issue or it states the question and the current behavior plainly.
+
+Private plan/log pairs in the admin repo are the right place for workstream-scoped detail. Shipped
+docs are not.
 
 ## Commit & PR Requirements
 
