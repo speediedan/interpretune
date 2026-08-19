@@ -245,14 +245,49 @@ def test_dirty_tree_fails_without_a_bypass(monkeypatch, tmp_path):
     assert _clean_tree_check(monkeypatch, tmp_path / "absent.allow", porcelain_stdout=" M some/file.py") is False
 
 
+def _assert_path_is_gitignored(path, cwd):
+    """Assert git itself considers `path` ignored, distinguishing "not ignored" from "git would not answer".
+
+    `git check-ignore` documents three exit codes: 0 ignored, 1 not ignored, 128 fatal error. Collapsing 128 into the
+    failure branch produces a confidently wrong message, which is exactly how this pin first failed in CI: an Azure job
+    container runs as a uid that does not own the checkout, git refused with `detected dubious ownership` and exit 128,
+    and an assertion that only checked `== 0` reported "is not gitignored" -- a claim git never made. `safe.directory`
+    is set for this one invocation rather than in global config, so the real matching semantics are still what is
+    tested; reading `.gitignore` and grepping for the line would remove the environment dependency but would stop
+    testing git's actual matching, so a mis-scoped pattern would pass.
+    """
+    result = subprocess.run(
+        ["git", "-c", "safe.directory=*", "check-ignore", str(path)],
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+    )
+    assert result.returncode in (0, 1), (
+        f"git check-ignore could not answer (exit {result.returncode}), so this says nothing about "
+        f"whether {path.name} is ignored: {result.stderr.strip()}"
+    )
+    assert result.returncode == 0, f"{path.name} is not gitignored; it could be committed"
+
+
 def test_bypass_file_is_gitignored():
     """A committed bypass would disarm the guard in every checkout that pulled it, not just its author's."""
     from tests.benchmarks import run_benchmarks
 
-    result = subprocess.run(
-        ["git", "check-ignore", str(run_benchmarks.ALLOW_FILE)],
-        capture_output=True,
-        text=True,
-        cwd=str(run_benchmarks.REPO_ROOT),
+    _assert_path_is_gitignored(run_benchmarks.ALLOW_FILE, run_benchmarks.REPO_ROOT)
+
+
+def test_gitignore_check_does_not_read_a_refusing_git_as_not_ignored(monkeypatch, tmp_path):
+    """Exit 128 must surface git's error, not be reported as a .gitignore claim.
+
+    Pinned against the observed CI failure rather than a hypothetical: without this, any environment that makes git
+    refuse turns into a confident, wrong statement about `.gitignore` contents.
+    """
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            args=[], returncode=128, stdout="", stderr="fatal: detected dubious ownership in repository at '/__w/2/s'"
+        ),
     )
-    assert result.returncode == 0, f"{run_benchmarks.ALLOW_FILE.name} is not gitignored; it could be committed"
+    with pytest.raises(AssertionError, match="could not answer"):
+        _assert_path_is_gitignored(tmp_path / "benchmark_update.allow", tmp_path)
