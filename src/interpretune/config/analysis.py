@@ -589,7 +589,13 @@ class AnalysisCfg(ITSerializableCfg):
         a guess.
         """
         if self.op is None:
-            return
+            return  # no op, no dispatcher call at all -- see the loading note below
+        # `DISPATCHER.op_provenance` is `@_ensure_loaded`, so in principle this could force definition
+        # loading from `apply`. It cannot in practice, and the reason is worth stating rather than
+        # re-derived: `__init__` calls `resolve_op()` whenever an op is set, which loads. Measured both
+        # ways -- passing a name AND passing an already-resolved op object each leave `_loaded` True before
+        # `apply` runs. With the `self.op is None` early return above, the two branches are: no op, so the
+        # dispatcher is never touched; or an op, so loading already happened. Neither reaches a cold load.
         from interpretune.analysis.ops.dispatcher import DISPATCHER
 
         try:
