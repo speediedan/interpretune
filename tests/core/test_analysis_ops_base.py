@@ -1994,3 +1994,57 @@ class TestOpIdentityComparison:
     def test_wrapper_is_hashable_by_name(self):
         assert hash(OpWrapper("cmp_op")) == hash(OpWrapper("cmp_op"))
         assert len({OpWrapper("cmp_op"), OpWrapper("cmp_op")}) == 1
+
+
+class TestInheritedInputsAreNotObligations:
+    """End-to-end pins for issue #161 against the REAL shipped op definitions.
+
+    `tests/core/test_schema_compiler.py::TestInheritedInputRequiredness` pins the compiler rule on synthetic
+    definitions. These pin that the rule produces the right outcome for the ops that actually ship, which is
+    what the issue reported: `get_alive_latents` could not be validated without `input` present in the batch,
+    while `get_alive_latents_impl(module, analysis_batch, batch_idx)` has no `batch` parameter to receive it.
+    """
+
+    @staticmethod
+    def _op(name):
+        import interpretune.analysis  # noqa: F401  (registers the bundled ops)
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        DISPATCHER.load_definitions()
+        return DISPATCHER.get_op(name)
+
+    def test_op_without_batch_param_validates_without_a_batch(self):
+        """The reported defect.
+
+        `get_alive_latents` consumes only `analysis_batch`, so a batch is not its
+        obligation and must not gate it.
+        """
+        op = self._op("get_alive_latents")
+        analysis_batch = AnalysisBatch()
+        analysis_batch.answer_indices = torch.tensor([0])
+        analysis_batch.cache = {}
+
+        op._validate_input_schema(analysis_batch, None, module=None, batch_idx=0)
+
+    def test_inherited_field_is_present_but_not_required(self):
+        """`input` remains in the schema (column derivation still wants it) but is not enforced.
+
+        Asserting presence as well as requiredness matters: dropping the field entirely would also make the
+        test above pass, while silently changing what columns the op is associated with.
+        """
+        schema = self._op("get_alive_latents").input_schema
+        assert "input" in schema
+        assert schema["input"].required is False
+
+    def test_directly_declared_requirement_is_still_enforced(self):
+        """The regression guard.
+
+        `model_fwd` declares `input` itself, so relaxing INHERITED fields must not
+        relax it -- otherwise this fix would silently disable validation across the ops that do consume a
+        batch.
+        """
+        op = self._op("model_fwd")
+
+        assert op.input_schema["input"].required is True
+        with pytest.raises(ValueError, match="Missing required input 'input'"):
+            op._validate_input_schema(AnalysisBatch(), None, module=None, batch_idx=0)
