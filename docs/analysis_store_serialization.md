@@ -225,8 +225,24 @@ it.hub.push_analysis_store(
 )
 ```
 
-Whether interpretune should record this **by default** — and therefore make every published store
-carry the resolved identity of every collection that contributed a column — is an open decision on
-the AnalysisStore hub workstream (#124), deliberately not settled here. The pieces it would need now
-exist: collection identity survives the op cache, and `op_info` reports the resolved revision without
-touching the network.
+**Interpretune now records this for you**, so the explicit form above is an override rather than the
+only route. When an `AnalysisCfg` builds or adopts an output store it stamps that store with what its
+op resolved to *at write time*, and the envelope reads the stamp:
+
+- one entry per contributing definition, so a composition that mixes a bundled op with a pulled one
+  reports both rather than picking one;
+- the op name **as written**, bare or fully qualified, alongside the name it resolved to;
+- `source`, plus collection name, version and cached revision where the source has them.
+
+A caller-supplied `provenance` still wins, which is what a store loaded from disk needs — such a store
+carries no stamp of its own, because nothing observed it being written.
+
+**Provenance is recorded at write time and never reconstructed at push time**, and the distinction is
+not fussiness. Precedence is session-mutable (`prefer_ops` / `IT_OP_PRECEDENCE`, the latter re-read on
+every access), so a bare name can resolve to a different collection by the time a store is published.
+Reconstruction would be silently right or silently wrong on the same inputs, and the store keeps no
+record of which naming form a column came from to tell the two apart.
+
+Where there is nothing to record — a store assembled outside the op path, or an op with no registered
+definition — the key is **omitted entirely**. Absence reads as absence rather than defaulting to
+`bundled`.

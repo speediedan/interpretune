@@ -86,6 +86,45 @@ class OpCandidate:
 
 
 @dataclass(frozen=True)
+class OpProvenance:
+    """What produced a set of analysis-store columns, recorded at WRITE time.
+
+    Distinct from :class:`OpCandidate`, which answers "what would this name reach now". This answers "what
+    did reach it, then" -- a recorded fact rather than a resolution, which is the whole point: precedence is
+    session-mutable (:attr:`AnalysisOpDispatcher.op_precedence` re-reads ``IT_OP_PRECEDENCE`` on every
+    access), so the same name can resolve elsewhere by the time a store is published.
+
+    ``requested_name`` preserves the name AS WRITTEN, bare or fully qualified. That distinction is
+    load-bearing rather than cosmetic: ``_preferred_name`` re-ranks bare names only, so it is exactly the
+    discriminator whose absence makes reconstructing provenance after the fact unsound.
+    """
+
+    requested_name: str
+    resolved_name: str
+    source: str
+    collection: str | None = None
+    version: str | None = None
+    revision: str | None = None
+
+    def to_dict(self) -> dict[str, str]:
+        """JSON-native form for the artifact envelope; keys with nothing to say are omitted.
+
+        Omitted rather than emitted as ``null`` so absence reads as absence: a bundled op HAS no collection
+        revision, and recording ``"revision": null`` invites a reader to treat it as an unresolved lookup.
+        """
+        record = {
+            "requested_name": self.requested_name,
+            "resolved_name": self.resolved_name,
+            "source": self.source,
+        }
+        for key in ("collection", "version", "revision"):
+            value = getattr(self, key)
+            if value is not None:
+                record[key] = value
+        return record
+
+
+@dataclass(frozen=True)
 class OpResolution:
     """What a name resolves to right now, the alternatives, and the precedence that chose between them."""
 
@@ -775,6 +814,51 @@ class AnalysisOpDispatcher:
             ),
             precedence=tuple(self.op_precedence),
         )
+
+    @_ensure_loaded
+    def op_provenance(self, op) -> tuple["OpProvenance", ...]:
+        """Record what an op resolves to NOW, for stamping onto a store at write time.
+
+        Returns one entry per contributing definition: a composite contributes its constituents, because a
+        composition can mix collections (a bundled op composed with a pulled one) and a single record would
+        have to pick one and lie about the rest.
+
+        Returns an EMPTY tuple when there is nothing to record -- an op object with no registered definition,
+        or a store assembled outside the op path. Absence must read as absence: defaulting an unresolvable op
+        to ``bundled`` would fabricate exactly the provenance this exists to make trustworthy.
+        """
+        records: list[OpProvenance] = []
+        for member in self._provenance_members(op):
+            requested = getattr(member, "name", None) or str(member)
+            resolved = self._resolve_name_safe(self._normalize_op_name(requested))
+            op_def = self._op_definitions.get(resolved) if resolved else None
+            if op_def is None:
+                continue  # unregistered: record nothing rather than guess
+            canonical = op_def.name if op_def.name in self._op_definitions else resolved
+            records.append(
+                OpProvenance(
+                    requested_name=requested,
+                    resolved_name=canonical,
+                    source=op_def.source,
+                    collection=op_def.collection_name,
+                    version=op_def.collection_version,
+                    revision=_cached_op_revision(op_def.source),
+                )
+            )
+        return tuple(records)
+
+    @staticmethod
+    def _provenance_members(op) -> tuple:
+        """The definitions that contribute columns: a composite's constituents, else the op itself."""
+        composition = getattr(op, "composition", None)
+        if composition:
+            # flatten one level per member so a composite of composites still reports leaf definitions
+            members: list = []
+            for member in composition:
+                nested = getattr(member, "composition", None)
+                members.extend(nested if nested else [member])
+            return tuple(members)
+        return (op,) if op is not None else ()
 
     @staticmethod
     def _describe_candidate(op_def: OpDef, name: str) -> "OpCandidate":

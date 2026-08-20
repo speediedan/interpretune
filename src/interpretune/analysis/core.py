@@ -453,6 +453,10 @@ class AnalysisStore:
         self.split = split
         self.it_format_kwargs = it_format_kwargs
         self._protocol_cls = protocol_cls
+        # What produced this store's columns, stamped at WRITE time by `AnalysisCfg.apply`. Empty when there
+        # is nothing to record (a store loaded from disk, or assembled outside the op path) -- deliberately
+        # empty rather than inferred, since provenance reconstructed after the fact cannot be trusted (#284).
+        self.op_provenance: tuple = ()
 
         load_dataset_kwargs = dict(split=split, streaming=streaming)
 

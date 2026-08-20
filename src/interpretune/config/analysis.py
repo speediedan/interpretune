@@ -576,6 +576,27 @@ class AnalysisCfg(ITSerializableCfg):
             # Reset for all modules
             self._applied_to.clear()
 
+    def _stamp_op_provenance(self, store) -> None:
+        """Record which op collection produced this store's columns, at the moment the store is created.
+
+        Write time is the only place this can be recorded truthfully. Reconstructing it later by matching
+        column names against op output schemas would consult `DISPATCHER.op_precedence`, which is
+        session-mutable and re-read from `IT_OP_PRECEDENCE` on every access -- so a bare name can resolve to
+        a different collection by the time a store is published, and the store keeps no trace of which
+        naming form was used to tell the safe case from the unsafe one (#284).
+
+        Leaves the store's empty default in place when there is nothing to record, rather than substituting
+        a guess.
+        """
+        if self.op is None:
+            return
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        try:
+            store.op_provenance = DISPATCHER.op_provenance(self.op)
+        except Exception as e:  # provenance is descriptive: never fail a run to record it
+            rank_zero_warn(f"Could not record op provenance for {getattr(self.op, 'name', self.op)}: {e}")
+
     def apply(
         self,
         module,
@@ -652,6 +673,10 @@ class AnalysisCfg(ITSerializableCfg):
                 f"(cache_dir={self.output_store.cache_dir}, "
                 f" op_output_dataset_path={self.output_store.op_output_dataset_path})"
             )
+
+        # Stamp whichever store we ended up with, including one the caller supplied: this cfg's op is what
+        # writes it, so it is the op whose provenance that store carries (#284).
+        self._stamp_op_provenance(self.output_store)
 
         # Always prepare the model context to ensure names_filter is materialized
         self.prepare_model_ctx(module, fallback_sae_targets)

@@ -164,6 +164,15 @@ def build_analysis_store_envelope(
         "interpretune_version": _installed_version("interpretune"),
         "content_fingerprint": content_fingerprint(store),
     }
+    # Op-collection provenance is READ from the store's write-time stamp, not reconstructed here (#284).
+    # `interpretune_version` alone identifies a BUNDLED op's contract, because the package that shipped the
+    # op is the package that pinned it; a hub op's contract lives in its own collection at its own revision,
+    # so without this the envelope cannot say what produced its columns.
+    op_collections = [record.to_dict() for record in getattr(store, "op_provenance", ()) or ()]
+    if op_collections:
+        prov["op_collections"] = op_collections
+    # caller-supplied provenance still wins: an explicit record beats a derived one, and a store loaded from
+    # disk carries no stamp of its own to lose
     prov.update(provenance or {})
     artifacts: dict[str, Any] = {
         "split": store.split,
