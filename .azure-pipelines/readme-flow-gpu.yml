@@ -1,0 +1,178 @@
+# Tier 2 of the user-install validation lane (issue #270). Tier 1 is
+# .github/workflows/readme-flow-smoke.yml.
+#
+# WHAT THIS ADDS OVER TIER 1: the GPU-gated half. Tier 1 is hosted and CPU-only, so it validates config
+# PARSING (all 15 shipped configs through their real argv surface) while config INSTANTIATION skips --
+# `test_cli_unit_configs` and `test_cli_configs` are both `RunIf(min_cuda_gpus=1)`, and the four
+# `bf16_cuda` notebooks skip too. Instantiation is where a resolver-shaped defect would surface, so
+# leaving it uncovered was the known gap in Tier 1 rather than an oversight.
+#
+# WHY A SEPARATE PIPELINE rather than a fifth task in gpu-tests.yml: Azure path filters and triggers are
+# per-pipeline, not per-task. gpu-tests.yml runs on every PR touching src/**; this must run only on
+# releases and manual dispatch, and the two cannot coexist in one definition. Same reason Tier 1 is its
+# own workflow rather than a job in env-build-smoke.yml.
+#
+# CRITICAL, AND THE WHOLE POINT: this pipeline installs the README way. It must NOT install from
+# requirements/ci/requirements.txt (what gpu-tests.yml does) nor via build_it_env.sh --from-source (what
+# env-build-smoke does). Those resolve supersets of what a user gets -- the from-source path pulls the
+# vendored SAELens Poetry export, which is how pytest-timeout, docstr-coverage and ruff reach
+# environments while being declared in neither pyproject.toml nor the CI lock. A Tier 2 that installed
+# either way would pass while blind to the thing it exists to detect, so the absence of that residue is
+# ASSERTED below rather than merely intended.
+
+# Releases, pre-release and manual dispatch only. No `pr:` trigger by design: this is a release gate,
+# not a per-PR check, and it consumes a GPU slot on the shared self-hosted agent.
+trigger:
+  branches:
+    include:
+      - refs/tags/*
+      - release/*
+pr: none
+
+jobs:
+  - job: readme_flow_gpu
+    displayName: 'README flow (GPU)'
+    timeoutInMinutes: 100
+    cancelTimeoutInMinutes: 2
+
+    # `default` is the self-hosted pool. The approval gate is attached to the POOL rather than to any
+    # pipeline, so a GPU pipeline structurally cannot ship ungated -- registering this definition
+    # inherits the gate automatically, with nothing to configure.
+    pool:
+      name: default
+
+    container:
+      image: speediedan/interpretune:py3.13-pt2.13.0-azpl-init
+      mapDockerSocket: false
+      volumes:
+        - /var/run/user/998/docker.sock:/var/run/docker.sock
+        - /opt/az_pipeline_agent/_work/hf_cache/$(Agent.Name):/opt/interpretune/hf_cache:rw
+        # Host GPU-lease rendezvous. `flock` works on the inode, so a bind-mounted lock interlocks
+        # between this container and host processes, which is what serializes against local multi-GPU
+        # runs and the other pipeline. Fails open if absent.
+        - /tmp/di_leases:/gpu_leases
+      options: --gpus all --shm-size=512m
+      env:
+        HF_HOME: /opt/interpretune/hf_cache
+        HF_DATASETS_CACHE: /opt/interpretune/hf_cache/datasets
+        HF_HUB_CACHE: /opt/interpretune/hf_cache/hub
+        XDG_CACHE_HOME: /opt/interpretune/hf_cache
+        APPLY_POST_UPGRADES: "false"
+
+    workspace:
+      clean: outputs
+
+    steps:
+      - bash: |
+          source scripts/gpu_lease_wrap.sh
+          ci_gpu_lease_acquire /gpu_leases /tmp/azp_gpu_lease.pid 2400 "azure-it-readme-$(Build.BuildId)"
+        displayName: 'Acquire host GPU lease'
+
+      - bash: |
+          set -euo pipefail
+          # Extracted, never duplicated. A hardcoded copy would let README.md drift while this pipeline
+          # kept testing the previous command and stayed green -- the exact failure class this lane
+          # exists to catch. Asserting exactly one match means a reshaped install section fails loudly
+          # rather than silently testing nothing.
+          CMD="$(grep -E '^uv pip install -e ' README.md || true)"
+          COUNT="$(printf '%s\n' "${CMD}" | grep -c . || true)"
+          if [ "${COUNT}" != "1" ]; then
+            echo "ERROR: expected exactly one 'uv pip install -e' line in README.md, found ${COUNT}." >&2
+            echo "The install recipe moved or was reshaped; update this extraction deliberately." >&2
+            exit 1
+          fi
+          echo "Extracted: ${CMD}"
+          echo "##vso[task.setvariable variable=readme_install_cmd]${CMD}"
+        displayName: 'Extract the install command from README.md'
+
+      - bash: |
+          set -euo pipefail
+          # `env -u PYTHONPATH` on BOTH install and run: this repo's .env puts the integrated dev env
+          # ahead of any venv, so without it a fresh env silently resolves from it_latest and reports
+          # success.
+          env -u PYTHONPATH uv venv "$(Build.Repository.LocalPath)/.readme-venv" --python 3.13
+          env -u PYTHONPATH VIRTUAL_ENV="$(Build.Repository.LocalPath)/.readme-venv" \
+            $(readme_install_cmd)
+        displayName: 'Install exactly what README.md says'
+
+      - bash: |
+          set -euo pipefail
+          # A version string matches whether or not the package came from the env under test; only the
+          # resolved path proves which code would run.
+          env -u PYTHONPATH "$(Build.Repository.LocalPath)/.readme-venv/bin/python" - <<'PY'
+          import sys, pathlib, importlib
+          venv = pathlib.Path(sys.prefix).resolve()
+          failures = []
+          for name in ("torch", "transformer_lens", "nnsight", "lightning", "sae_lens",
+                       "circuit_tracer", "jsonargparse", "papermill"):
+              path = pathlib.Path(importlib.import_module(name).__file__ or "").resolve()
+              ok = venv in path.parents
+              print(f"{'ok ' if ok else 'BAD'} {name:18} {path}")
+              if not ok:
+                  failures.append(f"{name} resolved outside the README venv: {path}")
+          import torch
+          print(f"    cuda_available={torch.cuda.is_available()} device_count={torch.cuda.device_count()}")
+          if not torch.cuda.is_available():
+              failures.append("CUDA unavailable; the GPU-gated tests would silently SKIP and this "
+                              "pipeline would pass while validating nothing")
+          if failures:
+              raise SystemExit("provenance failures:\n  " + "\n  ".join(failures))
+          PY
+        displayName: 'Assert provenance and that CUDA is actually present'
+
+      - bash: |
+          set -euo pipefail
+          # Positive guard, not an omission. If these appear, this pipeline has drifted into a dev flow
+          # and is no longer testing what a user gets.
+          env -u PYTHONPATH "$(Build.Repository.LocalPath)/.readme-venv/bin/python" - <<'PY'
+          from importlib.metadata import distributions
+          installed = {(d.metadata["Name"] or "").lower().replace("_", "-") for d in distributions()}
+          leaked = sorted(installed & {"pytest-timeout", "docstr-coverage"})
+          if leaked:
+              raise SystemExit(
+                  f"dev-flow residue in a README-resolved env: {leaked}. These reach environments only "
+                  "via requirements/ci/sl_uv_requirements.txt, so this pipeline is testing the dev flow "
+                  "rather than the documented user flow."
+              )
+          print("no dev-flow residue; the env is what README.md produces")
+          PY
+        displayName: 'Assert no dev-flow residue'
+
+      - bash: |
+          set -euo pipefail
+          # NOTE: IT_RUN_CUDA_TESTS is deliberately NOT set. `tests/conftest.py` does `items[:] = [...]`
+          # for it, so it SELECTS the cuda-marked set rather than adding to it, and setting it here would
+          # silently drop everything else from the run. `RunIf(min_cuda_gpus=1)` is a runtime skipif on
+          # GPU availability, so simply having a GPU un-skips these.
+          export PATH="$(Build.Repository.LocalPath)/.readme-venv/bin:${PATH}"
+          env -u PYTHONPATH \
+            PYTHONPATH="$(Build.Repository.LocalPath)/src:$(Build.Repository.LocalPath)" \
+            "$(Build.Repository.LocalPath)/.readme-venv/bin/python" -m pytest \
+              tests/core/test_components_cli.py tests/parity_acceptance/test_it_cli.py \
+              -v -rs --durations=25
+        env:
+          # Secrets must be mapped explicitly; without this they fail with KeyError (build 575).
+          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+          HF_TOKEN: $(HF_TOKEN)
+        displayName: 'CLI instantiation (GPU-gated, the Tier 1 gap)'
+
+      - bash: |
+          set -euo pipefail
+          export PATH="$(Build.Repository.LocalPath)/.readme-venv/bin:${PATH}"
+          env -u PYTHONPATH \
+            PYTHONPATH="$(Build.Repository.LocalPath)/src:$(Build.Repository.LocalPath)" \
+            "$(Build.Repository.LocalPath)/.readme-venv/bin/python" -m pytest \
+              src/it_examples/tests/test_notebooks.py -v -rs --durations=25
+        env:
+          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+          HF_TOKEN: $(HF_TOKEN)
+        displayName: 'Published notebooks (bf16_cuda)'
+
+      - bash: |
+          # Release the host GPU lease. condition: always() so a failed or cancelled run does not strand
+          # it; belt-and-braces because container teardown frees it anyway.
+          source scripts/gpu_lease_wrap.sh 2>/dev/null && \
+            ci_gpu_lease_release /gpu_leases /tmp/azp_gpu_lease.pid || true
+          echo 'GPU lease released'
+        condition: always()
+        displayName: 'Release host GPU lease'
