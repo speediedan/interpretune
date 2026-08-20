@@ -95,9 +95,13 @@ export VENV_BASE=${HOME}/.venvs
 export IT_TARGET_VENV=it_latest
 uv venv ${VENV_BASE}/${IT_TARGET_VENV} --python 3.13 && source ${VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 
-# Install the package with all necessary development dependencies
+# Install the package with all necessary development dependencies.
+# `lightning` and `examples` are EXTRAS; `git-deps`, `test` and `profiling` are PEP 735
+# dependency-groups, so each needs its own `--group`. Requesting a group as an extra is only a
+# warning, not an error, and silently drops it (dropping `test` takes papermill/nbmake with it,
+# so the notebook tests then cannot run at all). `test` includes the `dev` group transitively.
 # Note: the git-deps group is optional once circuit-tracer is published on PyPI
-uv pip install -e ".[test,examples,lightning,profiling]" --group git-deps dev
+uv pip install -e ".[examples,lightning]" --group git-deps --group test --group profiling
 
 # Optional: only if you will run the Neuronpedia dashboard local-DB import/benchmark lanes —
 # installs the pinned neuronpedia-utils (--no-deps: its unused autointerp/cloud dependency
