@@ -149,7 +149,9 @@ jobs:
             PYTHONPATH="$(Build.Repository.LocalPath)/src:$(Build.Repository.LocalPath)" \
             "$(Build.Repository.LocalPath)/.readme-venv/bin/python" -m pytest \
               tests/core/test_components_cli.py tests/parity_acceptance/test_it_cli.py \
-              -v -rs --durations=25
+              -v -rs --durations=25 2>&1 | tee /tmp/cli_out.txt
+          bash .azure-pipelines/assert_surface.sh /tmp/cli_out.txt 45 0 \
+            "CLI instantiation" "${PIPESTATUS[0]}"
         env:
           # Secrets must be mapped explicitly; without this they fail with KeyError (build 575).
           HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
@@ -162,7 +164,11 @@ jobs:
           env -u PYTHONPATH \
             PYTHONPATH="$(Build.Repository.LocalPath)/src:$(Build.Repository.LocalPath)" \
             "$(Build.Repository.LocalPath)/.readme-venv/bin/python" -m pytest \
-              src/it_examples/tests/test_notebooks.py -v -rs --durations=25
+              src/it_examples/tests/test_notebooks.py -v -rs --durations=25 2>&1 | tee /tmp/nb_out.txt
+          # 4 expected skips: two `Optional/extended test execution`, two `Standalone execution`.
+          # Neither is GPU-gated, so they skip on a GPU host too and are part of the pinned shape.
+          bash .azure-pipelines/assert_surface.sh /tmp/nb_out.txt 16 4 \
+            "published notebooks" "${PIPESTATUS[0]}"
         env:
           HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
           HF_TOKEN: $(HF_TOKEN)
