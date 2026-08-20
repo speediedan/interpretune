@@ -543,3 +543,89 @@ class TestCompileOpSchemaIntegration:
             mock_warn.assert_called_once()
             warning_msg = mock_warn.call_args[0][0]
             assert "multiple matching operations found" in warning_msg
+
+
+class TestInheritedInputRequiredness:
+    """`required_ops` inheritance must not manufacture obligations (issue #161).
+
+    NOTE [Inherited Inputs Are Not Obligations] in `schema_compiler.py` states the contract: `required_ops`
+    declares "the fields I consume are produced by that op", not "I need what it needs". It is a compile-time
+    declaration that never executes -- an implementation needing a required op's output invokes it through the
+    public op surface, passing `batch` itself -- so the required op validates its own inputs at the point of
+    invocation, and an inherited field must not gate the inheriting op.
+
+    Concretely, before this was fixed `get_alive_latents` could not run without `input` in the batch, while
+    `get_alive_latents_impl(module, analysis_batch, batch_idx)` has no `batch` parameter to receive it.
+    """
+
+    def test_inherited_input_is_not_required(self):
+        """A field merged in from a required op is known to the op but is not its obligation."""
+        op_definitions = {
+            "producer": {
+                "input_schema": {"needed_by_producer": {"datasets_dtype": "float32", "required": True}},
+                "output_schema": {"produced": {"datasets_dtype": "float32"}},
+            },
+            "consumer": {
+                "required_ops": ["producer"],
+                "input_schema": {"produced": {"datasets_dtype": "float32", "required": True}},
+                "output_schema": {},
+            },
+        }
+
+        compiled = compile_op_schema("consumer", op_definitions)
+
+        # present, because column derivation and availability still want to see it
+        assert "needed_by_producer" in compiled["input_schema"]
+        # but not enforced against `consumer`, which never receives it
+        assert compiled["input_schema"]["needed_by_producer"]["required"] is False
+
+    def test_direct_declaration_wins_over_inheritance(self):
+        """An op that genuinely needs the field declares it, and the declaration must survive the merge.
+
+        This is the regression that would matter most: relaxing inherited fields must not relax a field the op
+        declared for itself, or ops like `model_fwd` would silently stop enforcing `input`.
+        """
+        op_definitions = {
+            "producer": {
+                "input_schema": {"shared_field": {"datasets_dtype": "float32", "required": True}},
+                "output_schema": {},
+            },
+            "consumer": {
+                "required_ops": ["producer"],
+                # consumer declares the SAME field for itself, as a genuine requirement
+                "input_schema": {"shared_field": {"datasets_dtype": "float32", "required": True}},
+                "output_schema": {},
+            },
+        }
+
+        compiled = compile_op_schema("consumer", op_definitions)
+
+        assert compiled["input_schema"]["shared_field"]["required"] is True
+
+    def test_producer_schema_is_not_mutated_by_inheritance(self):
+        """The relaxation applies to the inheriting op's copy only; the producer keeps its own obligation."""
+        op_definitions = {
+            "producer": {
+                "input_schema": {"needed_by_producer": {"datasets_dtype": "float32", "required": True}},
+                "output_schema": {},
+            },
+            "consumer": {"required_ops": ["producer"], "input_schema": {}, "output_schema": {}},
+        }
+
+        compile_op_schema("consumer", op_definitions)
+
+        assert op_definitions["producer"]["input_schema"]["needed_by_producer"]["required"] is True
+
+    def test_inherited_output_still_marked_not_required(self):
+        """Guard the pre-existing output-side behavior, which this fix mirrors rather than changes."""
+        op_definitions = {
+            "producer": {
+                "input_schema": {},
+                "output_schema": {"produced": {"datasets_dtype": "float32", "required": True}},
+            },
+            "consumer": {"required_ops": ["producer"], "input_schema": {}, "output_schema": {}},
+        }
+
+        compiled = compile_op_schema("consumer", op_definitions)
+
+        assert compiled["output_schema"]["produced"]["required"] is False

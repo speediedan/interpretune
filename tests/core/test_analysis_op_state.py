@@ -527,8 +527,13 @@ class TestOpDefCacheRoundTrip:
         )
         assert "source=" not in plain_serialized and "requires_grad" not in plain_serialized
         assert "collection_name" not in plain_serialized
-        # Adding fields to OpDef without bumping this makes stale caches deserialize silently wrong.
-        assert CACHE_FORMAT_VERSION == "4"
+        # Deliberately a LITERAL, unlike the derived assertion in test_analysis_ops_compiler.py: the point is
+        # to fail when the format changes without someone deciding it should, since adding an OpDef field (or
+        # otherwise changing compiled output) without a bump makes stale caches deserialize silently wrong.
+        # Updating it is the acknowledgement, so it should move only alongside a new `# N:` rationale line on
+        # CACHE_FORMAT_VERSION itself. Note this only guards fields reaching THIS test; the compiler source is
+        # not part of the cache fingerprint at all, which is #290.
+        assert CACHE_FORMAT_VERSION == "5"
 
 
 class TestOpStateIsNotSerialized:

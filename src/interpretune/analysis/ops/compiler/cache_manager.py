@@ -21,7 +21,11 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 
 # 3: adds the `op_state` trait (declared cross-batch state) to OpDef.
 # 4: adds declared collection identity (`collection_name`/`collection_version`).
-CACHE_FORMAT_VERSION = "4"
+# 5: inputs inherited via `required_ops` compile to `required=False` (see NOTE [Inherited Inputs Are Not
+#    Obligations] in schema_compiler.py). The cache key covers YAML content and the interpretune version but
+#    NOT the compiler source, so without this bump an existing cache keeps serving the previous requiredness
+#    and the change would silently not take effect.
+CACHE_FORMAT_VERSION = "5"
 
 
 @dataclass(frozen=True)

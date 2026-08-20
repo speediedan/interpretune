@@ -536,19 +536,20 @@ class AnalysisOp:
         if self.input_schema is None:
             return
 
-        # NOTE: [Op-Driven Transitive Dependency Atomicity]
-        # https://github.com/speediedan/interpretune/issues/161
-        # The transitive dependencies of one op on another are currently atomic, i.e., if one op requires
-        # another op, then all the dependencies of the required op are included in the compiled schema. We should
-        # introduce a more granular op-driven inheritance scheme that distinguishes between:
-        # 1. Dependencies actually used by the implementation (direct dependencies)
-        # 2. Dependencies inherited through required_ops (transitive dependencies)
-
-        # As a concrete example, get_alive_latents requires get_answer_indices, but when inspecting the compiled
-        # schema, it requires the indirect batch/input column (which is not actually required for the
-        # get_alive_latents_impl function) in addition to the actually used/required answer_indices column.
-        # This creates a signature mismatch where the runtime operation expects more parameters than the
-        # implementation can handle, requiring workarounds in both validation logic and stub generation.
+        # NOTE [Op-Driven Transitive Dependency Atomicity]
+        # An op's compiled `input_schema` holds two kinds of field, and only one of them is this op's
+        # obligation:
+        #   1. DECLARED    -- named in the op's own YAML `input_schema`; this op's implementation consumes it,
+        #                     so it is enforced here.
+        #   2. INHERITED   -- merged from a `required_ops` entry's input schema. `required_ops` declares "the
+        #                     fields I consume are produced by that op", NOT "I need what it needs", so these
+        #                     are marked `required=False` at compile time and skipped by the loop below.
+        #
+        # Inherited inputs belong in the schema (column derivation, availability) but must not gate this op:
+        # `required_ops` never executes, and an implementation needing a required op's output invokes it via
+        # the public op surface passing `batch` itself, so the required op validates its own inputs at the
+        # point of invocation. See NOTE [Inherited Inputs Are Not Obligations] in
+        # `compiler/schema_compiler.py`, which is where the distinction is applied.
         for key, col_cfg in self.input_schema.items():
             if not col_cfg.required:
                 continue

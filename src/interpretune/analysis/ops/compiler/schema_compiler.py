@@ -428,12 +428,29 @@ def compile_op_schema(
             # Recursively compile the required operation first
             compiled_req_def = compile_op_schema(req_op_name, op_definitions, _processing)
 
-            # Merge input schemas (required op schemas have lower precedence)
+            # Merge input schemas (required op schemas have lower precedence).
+            #
+            # NOTE [Inherited Inputs Are Not Obligations]: `required_ops` declares "the fields I consume are
+            # produced by that op" -- NOT "I need what it needs". It is a COMPILE-TIME declaration: nothing at
+            # runtime iterates it, and an implementation that needs a required op's output invokes it through
+            # the public op surface, passing `batch` itself (see the `it.get_answer_indices(...)` call sites).
+            # The required op therefore validates its own inputs at the point of invocation, which is the only
+            # place they can be satisfied.
+            #
+            # So an inherited input field is *known* to this op (it belongs in the schema, for column
+            # derivation and availability) but is not this op's obligation, and must not be enforced against
+            # it. Enforcing it manufactured a requirement no declaration asked for: `get_alive_latents` was
+            # unable to run without `input` in the batch, while `get_alive_latents_impl(module, analysis_batch,
+            # batch_idx)` has no `batch` parameter to receive it.
+            #
+            # Ops that genuinely need such a field declare it directly, and a direct declaration always wins
+            # here because merged fields never overwrite an existing key.
             req_input_schema = compiled_req_def.get("input_schema", {})
             for field_name, field_config in req_input_schema.items():
                 if field_name not in compiled_def["input_schema"]:
-                    compiled_def["input_schema"][field_name] = deepcopy(field_config)
-                    # TODO: Mark as potentially available output for this operation?
+                    inherited_input = deepcopy(field_config)
+                    inherited_input["required"] = False
+                    compiled_def["input_schema"][field_name] = inherited_input
                     if field_name not in compiled_def["output_schema"]:
                         compiled_def["output_schema"][field_name] = field_config.copy()
                         # Mark as not required since it comes from a required op
