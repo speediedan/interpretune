@@ -79,6 +79,13 @@ extract_top_features:
   description: Extract top-N influential features from an attribution graph
   implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.extract_top_features_impl
   aliases: [ct_top_features]
+  # `top_n` is a tunable the implementation accepts that nothing declared, so it was invisible to
+  # anything reading op definitions and could only be changed by editing Python. Declared here at its
+  # existing effective default (`null`, meaning no limit), so this is behavior-preserving. Call-time
+  # kwargs still take precedence over declared params, so a caller passing `top_n=` is unaffected.
+  # This is also `normal_params`' first in-tree user; see issue #61.
+  normal_params:
+    top_n: null
   input_schema:
     active_features:
       datasets_dtype: int64

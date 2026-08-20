@@ -2736,3 +2736,59 @@ class TestUserDefinedBatchProtocols:
         assert (
             dispatcher._op_definitions["proto_op"].protocol_cls == "interpretune.protocol.DefaultAnalysisBatchProtocol"
         )
+
+
+class TestNormalParamsChannel:
+    """`normal_params` carries non-importable implementation params from a definition to the impl (#61).
+
+    Ops declare implementation params through two channels, both merged into `impl_params` at
+    instantiation: `importable_params` for dotted paths resolved at load, and `normal_params` for
+    arbitrary values that cannot be imported. The second was wired end to end but had **no in-tree
+    user**, so nothing exercised it and a regression would have gone unnoticed until the first op tried
+    to use it.
+
+    `extract_top_features` is now that user. Its implementation accepts `top_n`, which nothing declared,
+    so the knob was invisible to anything reading op definitions and could only be changed by editing
+    Python. It is declared at its existing effective default (`None`), which makes this
+    behavior-preserving rather than a tuning change.
+
+    #61's other half -- ignoring framework args an implementation does not accept -- is covered by
+    `TestResolveCallParams` and was already implemented; see the issue for the measurements.
+    """
+
+    def test_declared_normal_param_reaches_the_implementation(self):
+        op = DISPATCHER.get_op("extract_top_features")
+
+        assert op.impl_params.get("top_n", "<missing>") is None
+        resolved = op._resolve_call_params(op._impl, module=None, analysis_batch=None, batch=None, batch_idx=0)
+        assert "top_n" in resolved, "declared normal_param did not reach the implementation call"
+        assert resolved["top_n"] is None
+
+    def test_alias_sees_the_same_declaration(self):
+        """`ct_top_features` is an alias, not a second definition, so it must carry the same params."""
+        canonical = DISPATCHER.get_op("extract_top_features")
+        alias = DISPATCHER.get_op("ct_top_features")
+
+        assert alias.impl_params == canonical.impl_params
+
+    def test_call_time_kwarg_overrides_a_declared_param(self):
+        """A declared value is a DEFAULT, not a lock.
+
+        `build_call_args` applies `impl_params` and then `kwargs`, so a caller always wins. Pinning this
+        because the inverse -- a declaration silently overriding what a caller passed -- would be a
+        surprising and near-invisible failure: the call would succeed with the wrong value.
+        """
+        op = DISPATCHER.get_op("extract_top_features")
+
+        resolved = op._resolve_call_params(op._impl, module=None, analysis_batch=None, batch=None, batch_idx=0, top_n=7)
+        assert resolved["top_n"] == 7
+
+    def test_declaration_is_behavior_preserving(self):
+        """The declared value must equal the implementation's own default, or this was a tuning change wearing a
+        declaration's clothes."""
+        import inspect
+
+        op = DISPATCHER.get_op("extract_top_features")
+        impl_default = inspect.signature(op._impl).parameters["top_n"].default
+
+        assert op.impl_params["top_n"] == impl_default
