@@ -504,6 +504,7 @@ class TestOpDefCacheRoundTrip:
             uses_default_hooks=True,
             requires_grad=True,
             per_latent_preds=True,
+            protocol_cls="interpretune.protocol.DefaultAnalysisBatchProtocol",
         )
         serialized = OpDefinitionsCacheManager.__dict__["_serialize_op_def"](
             OpDefinitionsCacheManager.__new__(OpDefinitionsCacheManager), op_def
@@ -518,6 +519,9 @@ class TestOpDefCacheRoundTrip:
         # (op_info reports it), which is what earned it a place on OpDef and a cache-format bump.
         assert (restored.collection_name, restored.collection_version) == ("user/repo", "2.1.0")
         assert (restored.uses_default_hooks, restored.requires_grad, restored.per_latent_preds) == (True, True, True)
+        # A declared protocol must survive too, or a CACHED op silently falls back to the default while an
+        # identical cold load honours the declaration -- a divergence only a warm cache would show.
+        assert restored.protocol_cls == "interpretune.protocol.DefaultAnalysisBatchProtocol"
         # Defaults stay out of the serialized form so the cache does not grow for every new trait.
         plain = OpDef(
             name="y", description="", implementation="m.f", input_schema=OpSchema({}), output_schema=OpSchema({})
@@ -526,6 +530,7 @@ class TestOpDefCacheRoundTrip:
             OpDefinitionsCacheManager.__new__(OpDefinitionsCacheManager), plain
         )
         assert "source=" not in plain_serialized and "requires_grad" not in plain_serialized
+        assert "protocol_cls" not in plain_serialized
         assert "collection_name" not in plain_serialized
         # Deliberately a LITERAL, unlike the derived assertion in test_analysis_ops_compiler.py: the point is
         # to fail when the format changes without someone deciding it should, since adding an OpDef field (or
