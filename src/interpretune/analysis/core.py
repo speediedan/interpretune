@@ -433,6 +433,57 @@ def analysis_store_from_batches(
     return AnalysisStore(dataset=dataset, split=split, it_format_kwargs=it_format_kwargs)
 
 
+def _identity(value):
+    """Named rather than a lambda so `LazyTensorColumn`'s repr is legible and the transform is picklable."""
+    return value
+
+
+class LazyTensorColumn(Sequence):
+    """A per-element transform applied lazily over a `datasets` column.
+
+    #175 slice B. `Column` carries no lazy-transform primitive of its own -- `map`, `with_transform` and
+    `set_transform` are all absent from its public API -- so applying a transform without materializing the
+    column requires a wrapper that applies it in `__getitem__` / `__iter__`. That is what this is.
+
+    Deliberately NOT a `Column` subclass. `Column.__init__` binds to a (source, column_name) pair, which a
+    transformed view does not have; inheriting would mean carrying a constructor contract this cannot honour.
+    A `Sequence` gives the protocol callers actually use -- iteration, indexing, length, `in`, `reversed` --
+    without claiming to be something it is not.
+
+    Positional access is offered only when the underlying column supports it. A streaming `IterableColumn`
+    has no `__len__`, and its `__getitem__` takes a COLUMN NAME rather than a position (it returns a nested
+    `IterableColumn`), so indexing it positionally would silently mean something else entirely. For those,
+    iteration is the only positional access and `__len__` / `__getitem__` raise rather than mislead.
+    """
+
+    __slots__ = ("_column", "_transform")
+
+    def __init__(self, column, transform) -> None:
+        self._column = column
+        self._transform = transform
+
+    def __iter__(self):
+        return (self._transform(x) for x in self._column)
+
+    def __len__(self) -> int:
+        try:
+            return len(self._column)
+        except TypeError as e:  # streaming column: no length without consuming it
+            raise TypeError(f"{type(self._column).__name__} has no len(); iterate instead") from e
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [self._transform(x) for x in list(self._column)[index]]
+        try:
+            return self._transform(self._column[index])
+        except TypeError as e:
+            raise TypeError(f"{type(self._column).__name__} does not support positional indexing") from e
+
+    def __repr__(self) -> str:
+        transform = getattr(self._transform, "__name__", self._transform)
+        return f"{type(self).__name__}({type(self._column).__name__}, {transform})"
+
+
 class AnalysisStore:
     def __init__(
         self,
@@ -572,6 +623,20 @@ class AnalysisStore:
         except TypeError:  # unsized/non-indexable, i.e. an IterableColumn
             return next(iter(data), None)
 
+    def _lazy_tensor_column(self, data) -> "LazyTensorColumn":
+        """A lazy view over a tensor column, applying the same per-element transform the eager path did.
+
+        The eager path chose ONE branch for the whole column from the first element's `dim()`, then applied
+        it to every element. That choice is made here, once, for the same reason -- it is a property of the
+        column's schema rather than of any individual row -- and only its APPLICATION is deferred. Keeping
+        the decision eager is what makes this behaviour-preserving: a per-element decision would classify
+        rows independently and could disagree with the eager path on a ragged column.
+        """
+        first = self._first_element(data)
+        if first is not None and getattr(first, "dim", lambda: 0)() > 1:
+            return LazyTensorColumn(data, _identity)  # >1D rows pass through unchanged
+        return LazyTensorColumn(data, torch.tensor)  # 1D column split into scalar tensors
+
     def _is_tensor_seq(self, data) -> bool:
         """Whether `data` is a torch.Tensor, or a sequence whose elements are torch.Tensors.
 
@@ -618,12 +683,10 @@ class AnalysisStore:
             # a future refactor (or subclass of Column) that allows our stacking behavior might make more sense
             if self._is_tensor_seq(data):
                 if self.stack_batches:
+                    # NOT deferred, and it cannot be: `torch.stack` needs every tensor simultaneously by
+                    # definition. Stacking is eager because stacking is eager (#175 slice B non-goal).
                     return torch.stack([t for t in data])  # type: ignore[return-value]  # stacked tensor is valid return for tensor sequences
-                first = self._first_element(data)
-                if first is not None and getattr(first, "dim", lambda: 0)() > 1:
-                    return [t for t in data]  # type: ignore[return-value]  # list of tensors is valid return
-                # Split 1D tensors into scalar tensors
-                return [torch.tensor(x) for x in data]  # type: ignore[return-value]  # list of tensors is valid return
+                return self._lazy_tensor_column(data)  # type: ignore[return-value]  # lazy sequence of tensors
             return data  # type: ignore[return-value]  # raw data return is valid
         elif isinstance(key, list) and all(isinstance(k, str) for k in key):
             # Multiple column access
@@ -635,11 +698,8 @@ class AnalysisStore:
                 if self._is_tensor_seq(data):
                     if self.stack_batches:
                         result[col] = torch.stack([t for t in data])  # type: ignore[misc]  # torch.stack accepts tensor sequences
-                    elif (first := self._first_element(data)) is not None and getattr(first, "dim", lambda: 0)() > 1:
-                        result[col] = [t for t in data]
                     else:
-                        # Split 1D tensors into scalar tensors
-                        result[col] = [torch.tensor(x) for x in data]
+                        result[col] = self._lazy_tensor_column(data)  # type: ignore[assignment]  # lazy sequence
                 else:
                     result[col] = data
             return result
