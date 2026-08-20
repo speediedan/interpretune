@@ -553,3 +553,36 @@ class TestWriteTimeOpProvenance:
 
         assert store.op_provenance == ()
         assert any("Could not record op provenance" in str(w.message) for w in recwarn.list)
+
+    def test_local_source_records_a_label_not_an_address(self):
+        """`source` is a CATEGORY.
+
+        Local entries stay distinguishable by collection name but carry no revision and no locator -- documented as a
+        limit rather than papered over.
+        """
+        from interpretune.analysis.ops.base import OpSchema
+        from interpretune.analysis.ops.compiler.cache_manager import OpDef
+        from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+        def local_def(name, collection):
+            return OpDef(
+                name=name,
+                description="",
+                implementation="m.f",
+                input_schema=OpSchema({}),
+                output_schema=OpSchema({}),
+                source="local",
+                collection_name=collection,
+                collection_version="0.1.0",
+            )
+
+        dispatcher = AnalysisOpDispatcher()
+        dispatcher._op_definitions = {"a_op": local_def("a_op", "coll_a"), "b_op": local_def("b_op", "coll_b")}
+        dispatcher._loaded = True
+
+        records = [dispatcher.op_provenance(type("Op", (), {"name": n})())[0] for n in ("a_op", "b_op")]
+        assert {r.source for r in records} == {"local"}
+        # distinguishable from each other...
+        assert [r.collection for r in records] == ["coll_a", "coll_b"]
+        # ...but carrying no revision, so the key is omitted rather than emitted as null
+        assert all(r.revision is None and "revision" not in r.to_dict() for r in records)

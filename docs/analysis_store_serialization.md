@@ -246,3 +246,19 @@ record of which naming form a column came from to tell the two apart.
 Where there is nothing to record — a store assembled outside the op path, or an op with no registered
 definition — the key is **omitted entirely**. Absence reads as absence rather than defaulting to
 `bundled`.
+
+### What a recorded entry does and does not identify
+
+`source` is a **category**, not a locator, so how far an entry gets you depends on which category it is:
+
+| `source` | What the entry identifies | Can a reader resolve it? |
+| --- | --- | --- |
+| `bundled` | the op shipped in the wheel; its contract is pinned by `interpretune_version` in the same envelope | yes, from the version alone |
+| `hub:<user.repo>` | collection name, declared version, and the cached revision it was fetched at | yes, it is fetchable |
+| `local` | the collection *name* as declared, and nothing more | **no** |
+
+The `local` row is the honest limit. A local collection has no revision to record and its name is not
+globally unique, so two unrelated collections may both record `local` / `my_ops`. Entries do stay
+distinguishable *from each other* by collection name, but a `local` entry is a **label, not an address**:
+it tells a reader that the columns did not come from the wheel or from a fetchable collection, which is
+useful, and does not tell them where to find it, which no amount of recording could.
