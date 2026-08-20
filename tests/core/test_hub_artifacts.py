@@ -371,3 +371,218 @@ def test_artifact_surface_resolves_in_fresh_process():
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stderr[-2000:]
+
+
+class TestWriteTimeOpProvenance:
+    """#284: op-collection provenance is RECORDED at write time, never reconstructed at push time.
+
+    The reconstruction path these tests exist to foreclose is not merely inaccurate, it is undetectably so:
+    `op_precedence` is session-mutable and re-read from the environment on every access, and the store keeps
+    no record of whether a column came from a bare or a fully-qualified name -- which is the only thing that
+    would distinguish a safely-derivable case from an unsafe one.
+    """
+
+    @staticmethod
+    def _hub_def(name: str, **overrides):
+        from interpretune.analysis.ops.compiler.cache_manager import OpDef
+        from interpretune.analysis.ops.base import OpSchema
+
+        kwargs = dict(
+            name=name,
+            description="hub op",
+            implementation="module.fn",
+            input_schema=OpSchema({}),
+            output_schema=OpSchema({}),
+            source="hub:testuser.repo",
+            collection_name="testrepo",
+            collection_version="2.1.0",
+        )
+        kwargs.update(overrides)
+        return OpDef(**kwargs)
+
+    def test_bundled_op_records_collection_without_a_revision(self):
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        (record,) = DISPATCHER.op_provenance(DISPATCHER.get_op("labels_to_ids"))
+        assert record.source == "bundled"
+        assert record.resolved_name == "labels_to_ids"
+        # a bundled op has no fetched revision; the key is OMITTED rather than emitted as null so a reader
+        # cannot mistake "nothing to fetch" for "lookup failed"
+        assert record.revision is None
+        assert "revision" not in record.to_dict()
+
+    def test_composite_records_every_constituent(self):
+        """A composition can mix collections, so one record per constituent -- a single record would lie."""
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        composite = DISPATCHER.get_op("logit_diffs_base")
+        records = DISPATCHER.op_provenance(composite)
+        assert [r.resolved_name for r in records] == [op.name for op in composite.composition]
+
+    @pytest.mark.parametrize("op", [None, "unregistered"])
+    def test_nothing_to_record_reads_as_absence_not_as_bundled(self, op):
+        """The failure mode this guards is a fabricated `bundled`, which is worse than recording nothing."""
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        if op == "unregistered":
+            op = type("Unregistered", (), {"name": "definitely_not_a_registered_op"})()
+        assert DISPATCHER.op_provenance(op) == ()
+
+    def test_hub_op_records_collection_identity_and_revision(self, monkeypatch):
+        from interpretune.analysis.ops import dispatcher as dispatcher_mod
+        from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+        dispatcher = AnalysisOpDispatcher()
+        dispatcher._op_definitions = {"testuser.repo.hub_op": self._hub_def("testuser.repo.hub_op")}
+        dispatcher._loaded = True
+        monkeypatch.setattr(dispatcher_mod, "_cached_op_revision", lambda source: "abc123def456")
+
+        (record,) = dispatcher.op_provenance(type("Op", (), {"name": "testuser.repo.hub_op"})())
+        assert record.source == "hub:testuser.repo"
+        assert (record.collection, record.version) == ("testrepo", "2.1.0")
+        assert record.revision == "abc123def456"
+
+    def test_bare_and_qualified_requests_are_distinguishable_after_the_fact(self, monkeypatch):
+        """The discriminator whose ABSENCE makes push-time derivation unsound must survive into the record.
+
+        `_preferred_name` re-ranks bare names only, so a qualified name is immune to precedence while a bare
+        one is not. Recording the name as written is what lets a reader tell which case a column was.
+        """
+        from interpretune.analysis.ops import dispatcher as dispatcher_mod
+        from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+        dispatcher = AnalysisOpDispatcher()
+        hub_def = self._hub_def("testuser.repo.hub_op")
+        # bare-name aliasing registers a second key pointing at the SAME OpDef
+        dispatcher._op_definitions = {"testuser.repo.hub_op": hub_def, "hub_op": hub_def}
+        dispatcher._loaded = True
+        monkeypatch.setattr(dispatcher_mod, "_cached_op_revision", lambda source: None)
+
+        by_bare = dispatcher.op_provenance(type("Op", (), {"name": "hub_op"})())[0]
+        by_qualified = dispatcher.op_provenance(type("Op", (), {"name": "testuser.repo.hub_op"})())[0]
+
+        assert by_bare.requested_name == "hub_op"
+        assert by_qualified.requested_name == "testuser.repo.hub_op"
+        # both reach the same definition; only the REQUEST distinguishes them
+        assert by_bare.resolved_name == by_qualified.resolved_name == "testuser.repo.hub_op"
+
+    def test_envelope_omits_the_key_entirely_when_the_store_is_unstamped(self, small_store):
+        assert small_store.op_provenance == ()
+        assert "op_collections" not in build_analysis_store_envelope(small_store)["provenance"]
+
+    def test_envelope_reads_the_stamp_rather_than_a_caller_supplied_dict(self, small_store):
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        small_store.op_provenance = DISPATCHER.op_provenance(DISPATCHER.get_op("labels_to_ids"))
+        recorded = build_analysis_store_envelope(small_store)["provenance"]["op_collections"]
+        assert recorded == [
+            {
+                "requested_name": "labels_to_ids",
+                "resolved_name": "labels_to_ids",
+                "source": "bundled",
+                "collection": "core",
+                "version": "0.1.0",
+            }
+        ]
+
+    def test_caller_supplied_provenance_still_wins(self, small_store):
+        """A store loaded from disk carries no stamp, so the explicit escape hatch must keep working."""
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        small_store.op_provenance = DISPATCHER.op_provenance(DISPATCHER.get_op("labels_to_ids"))
+        override = [{"requested_name": "explicit", "resolved_name": "explicit", "source": "local"}]
+        envelope = build_analysis_store_envelope(small_store, provenance={"op_collections": override})
+        assert envelope["provenance"]["op_collections"] == override
+
+    def test_stamped_envelope_still_validates(self, small_store):
+        """Additive key: it must not push the envelope outside what this build can read back."""
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        small_store.op_provenance = DISPATCHER.op_provenance(DISPATCHER.get_op("logit_diffs_base"))
+        envelope = build_analysis_store_envelope(small_store)
+        assert validate_artifact_envelope(envelope, source="<test>") == envelope
+        assert envelope["schema"] == ARTIFACT_SCHEMA_VERSION
+
+    def test_apply_stamps_the_store_it_creates(self):
+        """Pins the WIRING, not just the helper: a resolver nothing calls records nothing."""
+        from unittest.mock import MagicMock
+
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+        from interpretune.config.analysis import AnalysisCfg
+
+        cfg = AnalysisCfg(target_op=DISPATCHER.get_op("logit_diffs_base"))
+        module = MagicMock()
+        module.analysis_cfg = cfg
+        cfg.apply(module)
+
+        assert [r.resolved_name for r in cfg.output_store.op_provenance] == [
+            "labels_to_ids",
+            "model_fwd",
+            "logit_diffs",
+        ]
+
+    def test_apply_stamps_a_caller_supplied_store_too(self):
+        """The op writes that store either way, so it is that store's provenance."""
+        from unittest.mock import MagicMock
+
+        from interpretune.analysis import AnalysisStore
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+        from interpretune.config.analysis import AnalysisCfg
+
+        supplied = AnalysisStore()
+        assert supplied.op_provenance == ()
+        cfg = AnalysisCfg(target_op=DISPATCHER.get_op("labels_to_ids"), output_store=supplied)
+        module = MagicMock()
+        module.analysis_cfg = cfg
+        cfg.apply(module)
+
+        assert [r.resolved_name for r in supplied.op_provenance] == ["labels_to_ids"]
+
+    def test_recording_provenance_never_fails_a_run(self, recwarn):
+        """Provenance is descriptive; a resolver failure must warn, not abort the analysis."""
+        from unittest.mock import patch
+
+        from interpretune.analysis import AnalysisStore
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+        from interpretune.config.analysis import AnalysisCfg
+
+        cfg = AnalysisCfg(target_op=DISPATCHER.get_op("labels_to_ids"))
+        store = AnalysisStore()
+        with patch.object(type(DISPATCHER), "op_provenance", side_effect=RuntimeError("boom")):
+            cfg._stamp_op_provenance(store)
+
+        assert store.op_provenance == ()
+        assert any("Could not record op provenance" in str(w.message) for w in recwarn.list)
+
+    def test_local_source_records_a_label_not_an_address(self):
+        """`source` is a CATEGORY.
+
+        Local entries stay distinguishable by collection name but carry no revision and no locator -- documented as a
+        limit rather than papered over.
+        """
+        from interpretune.analysis.ops.base import OpSchema
+        from interpretune.analysis.ops.compiler.cache_manager import OpDef
+        from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+        def local_def(name, collection):
+            return OpDef(
+                name=name,
+                description="",
+                implementation="m.f",
+                input_schema=OpSchema({}),
+                output_schema=OpSchema({}),
+                source="local",
+                collection_name=collection,
+                collection_version="0.1.0",
+            )
+
+        dispatcher = AnalysisOpDispatcher()
+        dispatcher._op_definitions = {"a_op": local_def("a_op", "coll_a"), "b_op": local_def("b_op", "coll_b")}
+        dispatcher._loaded = True
+
+        records = [dispatcher.op_provenance(type("Op", (), {"name": n})())[0] for n in ("a_op", "b_op")]
+        assert {r.source for r in records} == {"local"}
+        # distinguishable from each other...
+        assert [r.collection for r in records] == ["coll_a", "coll_b"]
+        # ...but carrying no revision, so the key is omitted rather than emitted as null
+        assert all(r.revision is None and "revision" not in r.to_dict() for r in records)
