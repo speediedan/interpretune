@@ -557,13 +557,44 @@ class AnalysisStore:
             except Exception:
                 self.dataset = None
 
+    @staticmethod
+    def _first_element(data):
+        """The first element of a sized sequence, or None when there is not one to take.
+
+        `Column` may be an `IterableColumn`, which has no `__len__` and cannot be indexed. Every caller here
+        wants "the first element, if any" rather than "element zero", so ask that question once instead of
+        re-deriving it from `hasattr` chains at each site.
+        """
+        try:
+            if len(data) == 0:  # type: ignore[arg-type]  # guarded by the except below
+                return None
+            return data[0]  # type: ignore[index]  # guarded by the except below
+        except TypeError:  # unsized/non-indexable, i.e. an IterableColumn
+            return next(iter(data), None)
+
     def _is_tensor_seq(self, data) -> bool:
-        """Check if data is a Datasets Column, sequence of torch.Tensors or a single torch.Tensor."""
-        return (
-            (isinstance(data, Column) and isinstance(data[0], torch.Tensor))
-            or isinstance(data, torch.Tensor)
-            or (isinstance(data, list) and all(isinstance(x, torch.Tensor) for x in data))
-        )
+        """Whether `data` is a torch.Tensor, or a sequence whose elements are torch.Tensors.
+
+        The `Column` and `list` arms deliberately ask the SAME question. They previously did not: the
+        `Column` arm tested element 0 while the `list` arm tested every element, so a heterogeneous input
+        classified differently depending only on its container type.
+
+        First-element rather than all-elements, because that is what the callers rely on: each inspects
+        the first element's `dim()` to choose a branch and then applies that choice to the whole column.
+        An `all()` predicate would be stricter than its own consumers, which is a different inconsistency
+        rather than a fix.
+
+        Scope of the change, stated precisely because it is narrower than it looks: both call sites pass
+        `self.dataset[...]`, which is always a `Column`, so the `list` arm is not reachable from
+        production today and datasets' typed schema makes a heterogeneous column impossible anyway. This
+        is therefore a latent-symmetry fix rather than a live bug fix -- it matters when something else
+        starts calling this, which is exactly what deferring materialization would do.
+        """
+        if isinstance(data, torch.Tensor):
+            return True
+        if isinstance(data, (Column, list)):
+            return isinstance(self._first_element(data), torch.Tensor)
+        return False
 
     def __getitem__(self, key: str | list[str] | int | slice) -> List | Dict:
         """Enable direct column/row access similar to HF Dataset.
@@ -588,13 +619,8 @@ class AnalysisStore:
             if self._is_tensor_seq(data):
                 if self.stack_batches:
                     return torch.stack([t for t in data])  # type: ignore[return-value]  # stacked tensor is valid return for tensor sequences
-                if (
-                    hasattr(data, "__getitem__")
-                    and hasattr(data, "__len__")
-                    and len(data) > 0  # type: ignore[arg-type]  # datasets Column may be IterableColumn
-                    and hasattr(data[0], "dim")  # type: ignore[index]  # datasets Column supports indexing
-                    and data[0].dim() > 1  # type: ignore[attr-defined]  # tensor has dim attribute
-                ):
+                first = self._first_element(data)
+                if first is not None and getattr(first, "dim", lambda: 0)() > 1:
                     return [t for t in data]  # type: ignore[return-value]  # list of tensors is valid return
                 # Split 1D tensors into scalar tensors
                 return [torch.tensor(x) for x in data]  # type: ignore[return-value]  # list of tensors is valid return
@@ -609,13 +635,7 @@ class AnalysisStore:
                 if self._is_tensor_seq(data):
                     if self.stack_batches:
                         result[col] = torch.stack([t for t in data])  # type: ignore[misc]  # torch.stack accepts tensor sequences
-                    elif (
-                        hasattr(data, "__getitem__")
-                        and hasattr(data, "__len__")
-                        and len(data) > 0  # type: ignore[arg-type]  # datasets Column may be IterableColumn
-                        and hasattr(data[0], "dim")  # type: ignore[index]  # datasets Column supports indexing
-                        and data[0].dim() > 1  # type: ignore[attr-defined]  # tensor has dim attribute
-                    ):
+                    elif (first := self._first_element(data)) is not None and getattr(first, "dim", lambda: 0)() > 1:
                         result[col] = [t for t in data]
                     else:
                         # Split 1D tensors into scalar tensors

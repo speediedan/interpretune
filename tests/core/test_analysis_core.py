@@ -1808,3 +1808,100 @@ class TestSAEAnalysisDict:
         assert analysis_dict["sae2"][1] is None
         assert torch.equal(analysis_dict["sae2"][0], torch.tensor([1.0]))
         assert torch.equal(analysis_dict["sae2"][2], torch.tensor([2.0]))
+
+
+class TestColumnHandlingConsistency:
+    """#175 slice A: consistent `Column` handling with IDENTICAL return types.
+
+    A's safety claim is that it is behaviour-preserving, and a preservation claim is only as good as the
+    inputs it was tested against. These fixtures span all FOUR outcomes of the `_is_tensor_seq` branch
+    rather than the numeric ones alone -- a suite of only tensor columns would validate the branch this
+    slice changed and silently skip the branch it did not, while being internally consistent about it.
+    """
+
+    @staticmethod
+    def _store(stack_batches: bool = False):
+        from datasets import Dataset
+
+        from interpretune.analysis import AnalysisStore
+
+        dataset = Dataset.from_dict(
+            {
+                "strings": ["a", "b", "c"],  # fails the check -> Column passes through untouched
+                "ints": [1, 2, 3],  # passes -> 1D split into scalar tensors
+                "seq2d": [[1, 2], [3, 4], [5, 6]],  # passes -> >1D list passthrough
+            }
+        )
+        return AnalysisStore(dataset=dataset, split="validation", stack_batches=stack_batches)
+
+    @pytest.mark.parametrize("access", ["single", "multi"])
+    def test_four_outcomes_unstacked(self, access):
+        from datasets import Column
+
+        store = self._store(stack_batches=False)
+        got = (
+            store[["strings", "ints", "seq2d"]]
+            if access == "multi"
+            else {c: store[c] for c in ("strings", "ints", "seq2d")}
+        )
+        # non-tensor: the Column survives, which is the branch a numeric-only fixture never reaches
+        assert isinstance(got["strings"], Column)
+        # tensor: materialized to a list of tensors in both the 1D and >1D shapes
+        assert isinstance(got["ints"], list) and all(isinstance(t, torch.Tensor) for t in got["ints"])
+        assert isinstance(got["seq2d"], list) and all(isinstance(t, torch.Tensor) for t in got["seq2d"])
+        assert got["ints"][0].dim() == 0  # 1D column split into scalars
+        assert got["seq2d"][0].dim() == 1  # >1D rows passed through
+
+    @pytest.mark.parametrize("access", ["single", "multi"])
+    def test_four_outcomes_stacked(self, access):
+        from datasets import Column
+
+        store = self._store(stack_batches=True)
+        got = (
+            store[["strings", "ints", "seq2d"]]
+            if access == "multi"
+            else {c: store[c] for c in ("strings", "ints", "seq2d")}
+        )
+        assert isinstance(got["strings"], Column)  # stack_batches does not reach the non-tensor branch
+        assert isinstance(got["ints"], torch.Tensor) and tuple(got["ints"].shape) == (3,)
+        assert isinstance(got["seq2d"], torch.Tensor) and tuple(got["seq2d"].shape) == (3, 2)
+
+    def test_column_and_list_arms_agree(self):
+        """The asymmetry this slice removes: the arms differed only by container type."""
+        store = self._store()
+        heterogeneous = [torch.tensor(1), "not a tensor", torch.tensor(3)]
+
+        class ColumnLike(list):  # Column is list-like; stands in without a live dataset
+            pass
+
+        assert store._is_tensor_seq(heterogeneous) == store._is_tensor_seq(ColumnLike(heterogeneous))
+
+    @pytest.mark.parametrize(
+        "data, expected",
+        [
+            ([], None),
+            ([torch.tensor(7)], torch.tensor(7)),
+        ],
+    )
+    def test_first_element_of_sized_sequences(self, data, expected):
+        store = self._store()
+        got = store._first_element(data)
+        assert got is None if expected is None else torch.equal(got, expected)
+
+    def test_first_element_handles_unsized_iterables(self):
+        """`Column` may be an `IterableColumn`: no `__len__`, no indexing.
+
+        The retired `hasattr` chains
+        acknowledged this in `type: ignore` comments; this asserts it instead.
+        """
+        store = self._store()
+
+        class IterableOnly:
+            def __init__(self, items):
+                self._items = items
+
+            def __iter__(self):
+                return iter(self._items)
+
+        assert torch.equal(store._first_element(IterableOnly([torch.tensor(1)])), torch.tensor(1))
+        assert store._first_element(IterableOnly([])) is None
