@@ -1892,7 +1892,12 @@ class TestCacheFormatVersionCoversCompilerChanges:
         from interpretune.analysis.ops.compiler import cache_manager
 
         path = Path(cache_manager.__file__).parent / filename
-        return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+        # Normalize line endings before hashing. Without this the digest is a property of the CHECKOUT
+        # rather than of the content: the repo has no `.gitattributes`, so GitHub's Windows runners check
+        # out with `core.autocrlf=true` and every guarded file hashes differently there. Observed on
+        # #293's first run -- ubuntu and macos passed, windows-2022 failed with BOTH files "drifted",
+        # which is the tell: real content drift shows on every platform, checkout drift on one.
+        return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:12]
 
     def test_compiler_changes_are_acknowledged_by_a_version_bump(self):
         """Fail when compiler source moves, so the bump decision is made rather than skipped.
