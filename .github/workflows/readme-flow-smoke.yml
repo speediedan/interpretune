@@ -1,0 +1,149 @@
+name: README flow smoke
+
+# Tier 1 of the user-install validation lane (issue #270).
+#
+# WHY THIS IS A SEPARATE WORKFLOW rather than a job in env-build-smoke.yml: GitHub `paths:` filters are
+# WORKFLOW-level, not job-level. Sharing a file would trigger that workflow's from-source `build-smoke`
+# matrix (two runners, 45-minute timeout, clones SAELens + SAEDashboard) on every README.md edit. It is
+# the same reason Tier 2 needs its own Azure pipeline: path filters are per-pipeline, not per-task.
+#
+# WHAT IT ADDS OVER ci_test-full: the ENVIRONMENT, not the code. `ci_test-full` resolves from
+# requirements/ci/requirements.txt; env-build-smoke resolves through build_it_env.sh --from-source. A
+# user following README.md gets neither, and that path had never been exercised end to end -- it was
+# broken at the first command until #285.
+#
+# CRITICAL: this job must NOT touch requirements/ci/sl_uv_requirements.txt. That vendored Poetry export
+# is how pytest-timeout, docstr-coverage and ruff reach dev environments while being declared in neither
+# pyproject.toml nor the CI lock. Using it here would reproduce the very superset this lane exists to
+# detect, and the job would pass while blind to its own purpose. The "no dev-flow residue" step below
+# asserts their ABSENCE rather than trusting that we merely refrained.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main, "release/*", "bugfix/*", "feature/*"]
+    types: [opened, reopened, ready_for_review, synchronize]
+    # Triggers are scoped to what changes the ENVIRONMENT: a src/** change that breaks a notebook is
+    # already caught by ci_test-full. What nothing else covers is the same code against a
+    # README-resolved env.
+    paths:
+      - "pyproject.toml"                          # deps, the extras/groups split, [tool.uv] overrides
+      - "README.md"                               # the command itself, which this job extracts
+      - "requirements/**"                         # floors, pins, overrides
+      - ".github/workflows/readme-flow-smoke.yml" # this workflow
+      - "src/it_examples/notebooks/publish/**"    # notebook tests run against PUBLISHED copies
+  schedule:
+    # Weekly. The schedule is not redundant with the path triggers: a README-resolved env resolves
+    # FRESH, so upstream drift can break it with zero commits here, which path triggers structurally
+    # cannot catch. Weekly bounds that exposure at seven days. If a scheduled run ever catches a break
+    # that had been live for days, that is the signal to shorten the interval -- on evidence, not
+    # instinct.
+    - cron: "0 7 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  readme-flow:
+    name: README install flow (CPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      IT_VENV: ${{ github.workspace }}/.readme-venv
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv and set Python version
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          activate-environment: false
+          enable-cache: true
+
+      - name: Extract the install command from README.md
+        id: extract
+        run: |
+          # Extracted, never duplicated. A hardcoded copy would let README.md drift while this job kept
+          # testing the old command and stayed green -- the exact failure class this lane exists to catch.
+          CMD="$(grep -E '^uv pip install -e ' README.md || true)"
+          COUNT="$(printf '%s\n' "${CMD}" | grep -c . || true)"
+          if [ "${COUNT}" != "1" ]; then
+            echo "ERROR: expected exactly one 'uv pip install -e' line in README.md, found ${COUNT}." >&2
+            echo "The install recipe moved or was reshaped; update this extraction deliberately." >&2
+            printf '%s\n' "${CMD}" >&2
+            exit 1
+          fi
+          echo "Extracted: ${CMD}"
+          echo "cmd=${CMD}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create the venv and install exactly what README.md says
+        run: |
+          # `env -u PYTHONPATH` on BOTH install and run: this repo's .env puts the integrated dev env's
+          # site-packages ahead of any venv, so without it a fresh env silently resolves packages from
+          # it_latest and reports success.
+          env -u PYTHONPATH uv venv "${IT_VENV}" --python 3.13
+          env -u PYTHONPATH VIRTUAL_ENV="${IT_VENV}" ${{ steps.extract.outputs.cmd }}
+
+      - name: Assert provenance by __file__, not version strings
+        run: |
+          # A version string matches whether or not the package came from the env under test. Only the
+          # resolved path proves which code would actually run.
+          env -u PYTHONPATH "${IT_VENV}/bin/python" - <<'PY'
+          import sys, pathlib, importlib
+          # sys.prefix IS the README venv, because this runs as ${IT_VENV}/bin/python
+          venv = pathlib.Path(sys.prefix).resolve()
+          failures = []
+          for name in ("torch", "transformer_lens", "nnsight", "lightning", "sae_lens", "circuit_tracer",
+                       "jsonargparse", "papermill"):
+              mod = importlib.import_module(name)
+              path = pathlib.Path(mod.__file__ or "").resolve()
+              ok = venv in path.parents
+              print(f"{'ok ' if ok else 'BAD'} {name:18} {path}")
+              if not ok:
+                  failures.append(f"{name} resolved outside the README venv: {path}")
+          import interpretune
+          print(f"    interpretune       {interpretune.__file__}  (editable -> repo src, expected)")
+          if failures:
+              raise SystemExit("provenance failures:\n  " + "\n  ".join(failures))
+          PY
+
+      - name: Assert no dev-flow residue
+        run: |
+          # Positive guard, not an omission. requirements/ci/sl_uv_requirements.txt (the vendored SAELens
+          # Poetry export, used by build_it_env.sh --from-source) carries packages declared in neither
+          # pyproject.toml nor the CI lock. If any appear here, this job has drifted into the dev flow and
+          # is no longer testing what a user gets.
+          env -u PYTHONPATH "${IT_VENV}/bin/python" - <<'PY'
+          from importlib.metadata import distributions
+          installed = {(d.metadata["Name"] or "").lower().replace("_", "-") for d in distributions()}
+          leaked = sorted(installed & {"pytest-timeout", "docstr-coverage"})
+          if leaked:
+              raise SystemExit(
+                  "dev-flow residue present in a README-resolved env: "
+                  f"{leaked}. These reach environments only via requirements/ci/sl_uv_requirements.txt, "
+                  "so this job is testing the dev flow rather than the documented user flow."
+              )
+          print("no dev-flow residue; the env is what README.md produces")
+          PY
+
+      - name: Parse surface (all shipped configs, ungated)
+        run: |
+          # Every shipped experiment config through its real argv surface. Ungated and CPU-only; the
+          # instantiation half is GPU-gated and belongs to Tier 2.
+          env -u PYTHONPATH PYTHONPATH="${{ github.workspace }}/src:${{ github.workspace }}" \
+            PATH="${IT_VENV}/bin:${PATH}" \
+            "${IT_VENV}/bin/python" -m pytest tests/core/test_components_cli.py -v
+
+      - name: Published notebook (non-GPU)
+        env:
+          HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY: ${{ secrets.HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY }}
+        run: |
+          # op_collection_example.ipynb is gated on a token rather than bf16_cuda, so it runs on a CPU
+          # runner, and it is what #261's reviewers are pointed at. PATH carries the venv because
+          # notebook tests spawn console scripts; PYTHONPATH carries src AND the repo root because
+          # subprocesses resolve `tests.*` from PYTHONPATH alone.
+          env -u PYTHONPATH PYTHONPATH="${{ github.workspace }}/src:${{ github.workspace }}" \
+            PATH="${IT_VENV}/bin:${PATH}" \
+            "${IT_VENV}/bin/python" -m pytest \
+              "src/it_examples/tests/test_notebooks.py::test_op_collection_notebooks" -v -rs
