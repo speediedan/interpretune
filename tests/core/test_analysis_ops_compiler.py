@@ -1848,3 +1848,97 @@ class TestParseCompositionString:
         result = _parse_composition_string(nested_str)
         assert "inner" not in result  # The inner content won't be properly extracted
         assert "namespace" in result[1]  # The outer parenthesized content will be extracted
+
+
+class TestCacheFormatVersionCoversCompilerChanges:
+    """The op cache fingerprint omits the compiler source, so `CACHE_FORMAT_VERSION` needs a manual bump that
+    nothing enforced (#290).
+
+    `OpDefinitionsCacheManager.fingerprint` hashes the YAML **declarations** plus `CACHE_FORMAT_VERSION`
+    and the interpretune version. It does not hash the **code that interprets those declarations**. So
+    editing compilation semantics leaves every existing cache valid, and it keeps serving definitions
+    compiled by the previous rules. The interpretune version is not a sufficient proxy: it moves on
+    release and on commit, but not on a working-tree edit, which is exactly when someone is changing
+    compilation semantics and running tests against the result.
+
+    This is not hypothetical. #289 changed inherited inputs to compile as `required=False`; without its
+    bump the fix silently would not have taken effect for anyone holding a cache, and the presenting
+    symptom would have been "the fix didn't work", which points nowhere near caching. Its own end-to-end
+    tests passed against a stale cache until the bump landed.
+
+    This widens a mechanism the repo already accepted rather than introducing one. The sibling tripwire
+    in `test_analysis_op_state.py` pins `CACHE_FORMAT_VERSION` as a literal for changes to `OpDef`'s
+    serialized **shape**; a compiler change alters compiled **content** while leaving that shape
+    untouched, so it structurally cannot fire there.
+    """
+
+    # Raw byte hashes, deliberately. An AST-based digest would ignore comments and formatting, which is
+    # more precise and was the first design -- but it is NOT stable across interpreters, and this project
+    # supports 3.10+ while CI runs 3.13. Measured on the real files: `ast.dump` yielded three distinct
+    # values across 3.10/3.11/3.12/3.13, and `ast.unparse` skewed between 3.10 and 3.11+. Either would
+    # fire on a machine difference with nothing in the diff to point at, which is worse than firing on a
+    # comment: a comment-triggered failure is at least explicable by looking at what you just changed.
+    # Raw bytes hash identically on all four.
+    GUARDED = ("schema_compiler.py", "cache_manager.py")
+    EXPECTED_VERSION = "4"
+    EXPECTED_DIGESTS = {
+        "schema_compiler.py": "6d35f7df7cfe",
+        "cache_manager.py": "a6831325f95b",
+    }
+
+    @staticmethod
+    def _digest(filename: str) -> str:
+        import hashlib
+        from interpretune.analysis.ops.compiler import cache_manager
+
+        path = Path(cache_manager.__file__).parent / filename
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+
+    def test_compiler_changes_are_acknowledged_by_a_version_bump(self):
+        """Fail when compiler source moves, so the bump decision is made rather than skipped.
+
+        **Do not "fix" a failure here by deriving the expected values from the source.** Deriving would make
+        this pass unconditionally and silently delete the guard -- the same trap the sibling literal in
+        `test_analysis_op_state.py` carries a warning about. Updating the pins IS the acknowledgement.
+
+        On failure, decide which case you are in:
+
+        * **compiled output changed** -- bump `CACHE_FORMAT_VERSION`, add a `# N:` rationale line beside it
+          in the existing style, then update `EXPECTED_VERSION` and the digest here.
+        * **comments, docstrings or formatting only** -- no bump is needed; update the digest alone.
+
+        The judgement is deliberately left to a person. A hash cannot distinguish a semantic change from a
+        reworded comment, and the `# N:` convention exists to capture *why* a bump happened, which only an
+        author can write.
+        """
+        actual = {name: self._digest(name) for name in self.GUARDED}
+        drifted = {
+            n: (self.EXPECTED_DIGESTS[n], actual[n]) for n in self.GUARDED if self.EXPECTED_DIGESTS[n] != actual[n]
+        }
+
+        assert not drifted or CACHE_FORMAT_VERSION != self.EXPECTED_VERSION, (
+            "Compiler source changed while CACHE_FORMAT_VERSION stayed at "
+            f"{CACHE_FORMAT_VERSION!r}: {drifted}. The op cache fingerprint does not cover these files, so "
+            "an existing cache keeps serving definitions compiled by the previous rules and the change "
+            "silently does not take effect. If compiled OUTPUT changed, bump CACHE_FORMAT_VERSION and add a "
+            "`# N:` rationale line; if only comments or formatting changed, no bump is needed. Then update "
+            "EXPECTED_DIGESTS / EXPECTED_VERSION in this test. Do NOT derive them from the source."
+        )
+        assert actual == self.EXPECTED_DIGESTS and CACHE_FORMAT_VERSION == self.EXPECTED_VERSION, (
+            f"Update the pins in this test: version={CACHE_FORMAT_VERSION!r}, digests={actual}."
+        )
+
+    def test_the_fingerprint_still_omits_the_compiler(self):
+        """Pin the premise.
+
+        If the fingerprint ever grows to cover compiler source, the tripwire above is redundant and should be removed
+        rather than left as unexplained ceremony.
+        """
+        manager = OpDefinitionsCacheManager(Path("/tmp/it-cache-probe"))
+        manager._yaml_files = [YamlFileInfo(Path("/tmp/a.yaml"), 1.0, "deadbeef")]
+        manager._fingerprint = None
+        first = manager.fingerprint
+
+        # Same declarations, same versions -> same fingerprint, regardless of compiler source.
+        manager._fingerprint = None
+        assert manager.fingerprint == first
