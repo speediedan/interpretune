@@ -305,7 +305,7 @@ class ITCLI(ITSessionMixin):
 
     def instantiate_classes(self) -> None:
         """Builds the session via the unified loader, then the run config and runner around it."""
-        self.config_init = self.parser.instantiate_classes(self.config)
+        self.config_init = self.parser.instantiate(self.config)
         default_files = self.parser_kwargs.get("default_config_files")
         session_mapping = self._session_mapping_from_sources(
             self._get(self.config, "config") or [], default_files if isinstance(default_files, (list, tuple)) else None
