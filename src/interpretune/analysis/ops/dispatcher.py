@@ -514,6 +514,7 @@ class AnalysisOpDispatcher:
                 uses_default_hooks=bool(op_def.get("uses_default_hooks", False)),
                 requires_grad=bool(op_def.get("requires_grad", False)),
                 per_latent_preds=bool(op_def.get("per_latent_preds", False)),
+                protocol_cls=op_def.get("protocol_cls"),
             )
 
             self._op_definitions[op_name] = op_def_obj
@@ -1024,6 +1025,42 @@ class AnalysisOpDispatcher:
     # installed dotted path, which is the one privilege leak #266 left open on the hub side.
     _SANCTIONED_HUB_PARAM_NAMESPACE = "interpretune.analysis.optools"
 
+    def _resolve_protocol_cls(self, op_name: str, op_def: OpDef):
+        """Import an op's declared `BaseAnalysisBatchProtocol` subclass, or None to use the default (#56).
+
+        Trust-gated for hub ops on the SAME footing as `importable_params`, and for the same reason: a
+        declared protocol is an arbitrary class import, so a hub collection pointing one at an
+        interpretune-internal module would resolve our code on its behalf. Its own repo modules and
+        third-party targets are unchanged -- those carry the trust the op itself already carries.
+
+        Fails SOFT. A protocol is descriptive of a batch's shape, so an unresolvable one degrades to the
+        default rather than taking down a load: the op still runs, it just does not get its richer
+        attribute surface. Reported through the load policy, so it warns by default and raises under
+        IT_STRICT_OP_LOAD.
+        """
+        path = op_def.protocol_cls
+        if not path:
+            return None
+        if op_def.source.startswith("hub") and not self._hub_param_target_is_sanctioned(op_name, "protocol_cls", path):
+            return None
+        try:
+            protocol_cls = self._import_callable(path)
+        except Exception as e:
+            op_load_failure(f"Could not import protocol_cls '{path}' for operation '{op_name}': {e}")
+            return None
+        # NOT `issubclass(..., BaseAnalysisBatchProtocol)`: that base is a `Protocol` and is not
+        # `@runtime_checkable`, so issubclass against it raises TypeError rather than returning False.
+        # Walking the MRO asks the question we actually mean -- "does this declare the base in its
+        # ancestry" -- without depending on protocol runtime semantics or forcing a decorator onto a
+        # type that has no other reason to carry one.
+        if not isinstance(protocol_cls, type) or BaseAnalysisBatchProtocol not in protocol_cls.__mro__:
+            op_load_failure(
+                f"protocol_cls '{path}' for operation '{op_name}' is not a BaseAnalysisBatchProtocol "
+                f"subclass; falling back to the default protocol."
+            )
+            return None
+        return protocol_cls
+
     def _hub_param_target_is_sanctioned(self, op_name: str, param_name: str, param_path: str) -> bool:
         """Whether a hub op may bind ``param_name`` to ``param_path`` outside its own repo modules.
 
@@ -1118,6 +1155,7 @@ class AnalysisOpDispatcher:
             uses_default_hooks=op_def.uses_default_hooks,
             requires_grad=op_def.requires_grad,
             per_latent_preds=op_def.per_latent_preds,
+            protocol_cls=self._resolve_protocol_cls(op_name, op_def),
         )
 
         # Set the implementation

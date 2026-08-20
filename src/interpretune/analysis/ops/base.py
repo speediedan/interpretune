@@ -475,8 +475,13 @@ class AnalysisOp:
         uses_default_hooks: bool = False,
         requires_grad: bool = False,
         per_latent_preds: bool = False,
+        protocol_cls: Any = None,
     ) -> None:
         self.name = name
+        # The RESOLVED BaseAnalysisBatchProtocol subclass this op's batches conform to, or None for the
+        # default (#56). Resolved by the dispatcher rather than here: OpDef carries an import path so it
+        # stays serializable, and importing it is trust-gated for hub ops.
+        self.protocol_cls = protocol_cls
         self.description = description
         self.output_schema = output_schema
         self.input_schema = input_schema
