@@ -43,7 +43,21 @@ dependencies = [
     # 4.49.0, so spanning both needs the migration tracked in #278 before this can move to <5.0. The previous
     # <4.42.0 cap cited an unverified "regression w/ 4.42"; 4.42.0 is in fact clean (89 CLI-surface tests and
     # 15/15 shipped configs), and nothing in the dependency graph ever asked for that bound.
-    "jsonargparse[signatures] >= 4.35.0,<4.49.0",
+    # FLOOR >=4.49.0: `ArgumentParser.instantiate_classes` was deprecated in 4.49.0 (removed in 5.0.0)
+    # and its replacement `instantiate` does not exist below 4.49.0, so the two cannot both be satisfied.
+    # Deliberately drops 4.35-4.48: pre-MVP, and a commonly used interface is being deprecated, so we take
+    # the cleaner end state over the wider window (#278).
+    # CEILING <5.0 IS GATED ON LIGHTNING, NOT ON US. lightning <= 2.6.5 itself calls TWO jsonargparse
+    # APIs that 5.0.0 REMOVES -- those are breaks, not warnings:
+    #   1. `ArgumentParser.instantiate_classes`, from `LightningCLI.instantiate_classes` (cli.py:612)
+    #   2. `skip_none=`, from `SaveConfigCallback`'s parser.save/dump          (cli.py:291, 307, 590)
+    #   3. `ArgumentParser.add_instantiator`, from `_add_instantiators`             (cli.py:596, 601)
+    # `LightningArgumentParser` overrides none of them, so all resolve to jsonargparse's deprecated
+    # implementations. Our own call site already uses `instantiate`, so interpretune's code being clean
+    # does NOT permit this ceiling to move. Moving past `<5.0` requires a Lightning release that migrates
+    # all three -- a routine Lightning bump is the unblocking event, which nobody would connect to a
+    # jsonargparse ceiling without this note. Verified against lightning 2.6.5 (latest) on 2026-08-19.
+    "jsonargparse[signatures] >= 4.49.0,<5.0",
     # "finetuning-scheduler[possible_future_it_plugin] >= 2.5.0",
 ]
 

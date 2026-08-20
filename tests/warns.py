@@ -41,6 +41,25 @@ LIGHTING_CTX_WARNS = (
         "GPU available but",
         "treespec, LeafSpec",
         "is smaller than the logging interval",
+        # UPSTREAM, not ours: TWO jsonargparse deprecations that lightning <= 2.6.5 triggers itself.
+        # Both were REMOVED in jsonargparse 5.0.0, which is what gates the `<5.0` ceiling (see
+        # pyproject.toml). `LightningArgumentParser` overrides neither, so both MRO-resolve to
+        # jsonargparse's deprecated implementations:
+        #   1. `LightningCLI.instantiate_classes` -> `ArgumentParser.instantiate_classes`  (cli.py:612)
+        #   2. `SaveConfigCallback` -> `parser.save/dump(..., skip_none=...)`        (cli.py:291, 307, 590)
+        #   3. `LightningCLI._add_instantiators` -> `parser.add_instantiator`             (cli.py:596, 601)
+        # Enumerated by grepping jsonargparse._deprecated's message set against lightning/pytorch/cli.py
+        # rather than discovered one test failure at a time, so this list is the complete surface.
+        # Our own call site migrated to `parser.instantiate` in #278; this residue is Lightning's and no
+        # change here can remove it. Deliberately scoped to the LIGHTNING contexts ONLY -- every Lightning
+        # key derives from this list while the core keys do not, so a regression in our own call site
+        # still fails the suite. Remove these when Lightning migrates.
+        "``instantiate_classes`` was deprecated",
+        "skip_none parameter was deprecated",
+        "``ArgumentParser.add_instantiator`` was deprecated",
+        # jsonargparse emits this alongside the first deprecation of each type, so it is a consequence of
+        # the two above rather than an independent signal.
+        "By default only one JsonargparseDeprecationWarning per type is shown",
     ]
 )
 

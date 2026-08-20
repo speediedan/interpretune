@@ -16,7 +16,11 @@ import torch
 from transformers import logging as transformers_logging
 
 # `ActionConfigFile` is public jsonargparse API but is absent from its `__all__` and imported without the
-# redundant-alias form, so pyright reports it as private from 4.42.0 onward. Upstream oversight, not ours.
+# redundant-alias form, so pyright reports it as private from 4.48.0 onward. Upstream oversight, not ours.
+# The boundary is 4.48.0, not 4.42.0: `jsonargparse/__init__.py` extends `__all__` via
+# `__all__ += _actions.__all__`, and 4.48.0 is the release that dropped the symbol from `_actions.__all__`
+# in favour of a plain re-export carrying an unused-import suppression. Verified against published wheels:
+# present through 4.47.0, absent from 4.48.0 onward.
 from jsonargparse import ActionConfigFile, ArgumentParser, Namespace  # pyright: ignore[reportPrivateImportUsage]
 
 from interpretune.config import SessionRunnerCfg
@@ -305,7 +309,7 @@ class ITCLI(ITSessionMixin):
 
     def instantiate_classes(self) -> None:
         """Builds the session via the unified loader, then the run config and runner around it."""
-        self.config_init = self.parser.instantiate_classes(self.config)
+        self.config_init = self.parser.instantiate(self.config)
         default_files = self.parser_kwargs.get("default_config_files")
         session_mapping = self._session_mapping_from_sources(
             self._get(self.config, "config") or [], default_files if isinstance(default_files, (list, tuple)) else None
