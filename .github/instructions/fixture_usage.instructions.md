@@ -680,8 +680,8 @@ The NNsight adapter introduces dual-backend analysis fixtures used for Bridge â†
 
 | NNsight Fixture Key | Bridge Fixture Key | Operation |
 |---|---|---|
-| `sl_ns_gpt2_logit_diffs_base` | `sl_br_gpt2_logit_diffs_base` | Base forward (no SAE) |
-| `sl_ns_gpt2_logit_diffs_latent` | `sl_br_gpt2_logit_diffs_latent` | SAE-spliced forward |
+| `sl_ns_gpt2_logit_diffs_base` | `sl_br_gpt2_logit_diffs_base` | Base forward (no latent model) |
+| `sl_ns_gpt2_logit_diffs_latent` | `sl_br_gpt2_logit_diffs_latent` | Latent-model-spliced forward |
 | `sl_ns_gpt2_logit_diffs_attr_grad` | `sl_br_gpt2_logit_diffs_attr_grad` | Gradient attribution |
 | `sl_ns_gpt2_logit_diffs_attr_ablation` | `sl_br_gpt2_logit_diffs_attr_ablation` | Ablation attribution |
 

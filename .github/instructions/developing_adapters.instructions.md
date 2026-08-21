@@ -100,11 +100,11 @@ The `HookNameResolver` translates between TransformerLens hook names and NNsight
 - TL hook: `blocks.0.hook_resid_pre` → NNsight path: `model.transformer.h.0` (resolved via architecture mapping)
 - The resolver uses `_TL_HOOK_NNSIGHT_MAP` with regex patterns for standard HookedTransformer hooks
 
-### Dual-Backend SAE Analysis
+### Dual-Backend Latent-Model Analysis
 
 Latent-model analysis operations (`logit_diffs_latent`, `logit_diffs_attr_grad`, `logit_diffs_attr_ablation`) support both:
-- **TransformerBridge backend**: SAE splicing via TL hook-based injection
-- **NNsight backend**: SAE splicing via thread-interleaved tracing
+- **TransformerBridge backend**: latent-model splicing via TL hook-based injection
+- **NNsight backend**: latent-model splicing via thread-interleaved tracing
 
 Backend selection is automatic via `get_backend_for_module()` — if the module has `nnsight_cfg`, NNsight backend is used.
 

@@ -44,7 +44,7 @@ An op should define:
 - optional behavioral traits, which let your op ask the framework for what it needs instead of the
   framework special-casing op names: `requires_grad` (run the analysis loop with grad enabled),
   `uses_default_hooks` (install the default activation-cache forward/backward hooks), and
-  `per_latent_preds` (predictions are emitted per latent model and must be joined across SAEs before
+  `per_latent_preds` (predictions are emitted per latent model and must be joined across them before
   scoring). All default to `false`, and hub and local ops declare them exactly as bundled ops do.
 - one implementation function
 
