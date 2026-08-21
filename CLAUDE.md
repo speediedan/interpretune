@@ -340,9 +340,10 @@ flags used by `tests/conftest.py`, `tests/analysis_resource_utils.py`, and the c
 parser for per-test / per-fixture / per-GPU logging.
 
 If semantic concept-direction intervention parity drifts unexpectedly, use the normal gate in
-`tests/core/test_analysis_backend_parity.py`. The deeper three-way upstream/native/op reference
-snapshot that used to live under `tests/upstream_parity/` is gone from the tree and nothing replaced
-it, so the normal gate is the whole story here now.
+`tests/core/test_analysis_backend_parity.py`. The manual upstream sanity-check workflow that used to
+live under `tests/upstream_parity/` (`extract_upstream_ct_semantic_reference.py` +
+`UPSTREAM_CT_PARITY_DEBUG.md`) was archived to private notes 2026-07-07, superseded by that automated
+suite. Consult the archived notes if a manual three-way upstream/native/op replay is ever needed.
 
 ## Serializing GPU work on a shared host
 
