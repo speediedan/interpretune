@@ -335,7 +335,7 @@ class CoreSLBridgeGPT2LogitDiffsSAE(BaseCfg):
             model_name="gpt2-small", default_padding_side="left", use_bridge=True  # Bridge for parity testing
         )
     )
-    analysis_cfg: AnalysisConfig = field(default_factory=lambda: AnalysisConfig(ops=["logit_diffs_sae"]))
+    analysis_cfg: AnalysisConfig = field(default_factory=lambda: AnalysisConfig(ops=["logit_diffs_latent"]))
 ```
 
 ### NNsight SAE Analysis Config
@@ -350,7 +350,7 @@ class CoreSLNNsightGPT2LogitDiffsSAE(BaseCfg):
     nnsight_cfg: NNsightConfig | None = field(
         default_factory=lambda: NNsightConfig(model_name="openai-community/gpt2", ...)
     )
-    analysis_cfg: AnalysisConfig = field(default_factory=lambda: AnalysisConfig(ops=["logit_diffs_sae"]))
+    analysis_cfg: AnalysisConfig = field(default_factory=lambda: AnalysisConfig(ops=["logit_diffs_latent"]))
 ```
 
 Both resolve to the same `gpt2.rte` registry entry but use different adapter stacks. The registry entry must list both `[core, sae_lens, transformer_lens]` and `[core, sae_lens, nnsight]` in `adapter_combinations`.

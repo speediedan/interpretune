@@ -857,7 +857,9 @@ class TestCoreFunctionality:
         base_fixture = request.getfixturevalue(
             "get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis"
         )
-        sae_fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis")
+        sae_fixture = request.getfixturevalue(
+            "get_analysis_session__sl_ht_gpt2_logit_diffs_latent__initonly_runanalysis"
+        )
         base_analysis_store = deepcopy(base_fixture.result)
         sae_analysis_store = deepcopy(sae_fixture.result)
         # Patch tabulate to avoid printing
@@ -1083,11 +1085,11 @@ class TestMetricsAndTargets:
         mock_analysis_cfg.output_store.logit_diffs = [torch.tensor([0.5, -0.3]), torch.tensor([-0.1, 0.7])]
         mock_analysis_cfg.output_store.orig_labels = [torch.tensor([0, 1]), torch.tensor([1, 0])]
         mock_analysis_cfg.output_store.preds = [torch.tensor([0, 1]), torch.tensor([1, 0])]
-        mock_analysis_cfg.op = MagicMock(autospec=it.logit_diffs_sae)
+        mock_analysis_cfg.op = MagicMock(autospec=it.logit_diffs_latent)
         mock_analysis_cfg.op.aliases = ["test_alias"]
         # Behavioral traits must be set explicitly: a bare MagicMock auto-creates every attribute as
         # a truthy Mock, so `per_latent_preds` would read as True and send compute_correct down the
-        # join-across-SAEs path this store does not model. logit_diffs_sae declares none of them.
+        # join-across-SAEs path this store does not model. logit_diffs_latent declares none of them.
         mock_analysis_cfg.op.per_latent_preds = False
         mock_analysis_cfg.op.uses_default_hooks = False
         mock_analysis_cfg.op.requires_grad = False
@@ -1358,7 +1360,7 @@ class TestMetricsAndTargets:
             "get_analysis_session__sl_ht_gpt2_logit_diffs_attr_grad__initonly_runanalysis"
         )
         base_sae_fixture = request.getfixturevalue(
-            "get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis"
+            "get_analysis_session__sl_ht_gpt2_logit_diffs_latent__initonly_runanalysis"
         )
 
         attr_store = deepcopy(attr_fixture.result)
@@ -1409,9 +1411,9 @@ class TestSAEAnalysisDict:
     @pytest.mark.parametrize(
         "session_fixture, analysis_cfgs",
         [
-            pytest.param("get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis", None),
+            pytest.param("get_analysis_session__sl_ht_gpt2_logit_diffs_latent__initonly_runanalysis", None),
         ],
-        ids=["sl_ht_gpt2_logit_diffs_sae"],
+        ids=["sl_ht_gpt2_logit_diffs_latent"],
     )
     def test_core_sae_analysis_dict(self, request, session_fixture, analysis_cfgs):
         fixture = request.getfixturevalue(session_fixture)
@@ -1744,7 +1746,7 @@ class TestSAEAnalysisDict:
         # Use a real AnalysisStore fixture for fidelity
         attr_fixture = request.getfixturevalue(attr_fixture_name)
         base_sae_fixture = request.getfixturevalue(
-            "get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis"
+            "get_analysis_session__sl_ht_gpt2_logit_diffs_latent__initonly_runanalysis"
         )
         attr_analysis_store = deepcopy(attr_fixture.result)
         base_sae_analysis_store = deepcopy(base_sae_fixture.result)

@@ -31,7 +31,7 @@ class TestAnalysisRunner:
                 "get_it_session__sl_ht_gpt2_analysis__setup",
                 {"analysis_cfgs": [AnalysisCfg(target_op=it.model_forward, ignore_manual=True)], "ignore_manual": True},
             ),
-            pytest.param("get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis", {}),
+            pytest.param("get_analysis_session__sl_ht_gpt2_logit_diffs_latent__initonly_runanalysis", {}),
         ],
         ids=["manual_step", "api_generated_step_with_op", "analysis_store_fixt"],
     )

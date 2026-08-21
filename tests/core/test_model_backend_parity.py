@@ -24,7 +24,7 @@ whether the TransformerBridge or NNsight model backend is used for SAE analysis.
 
 Fixture mapping (NNsight → Bridge):
     sl_ns_gpt2_logit_diffs_base          → sl_br_gpt2_logit_diffs_base
-    sl_ns_gpt2_logit_diffs_sae           → sl_br_gpt2_logit_diffs_sae
+    sl_ns_gpt2_logit_diffs_latent           → sl_br_gpt2_logit_diffs_latent
     sl_ns_gpt2_logit_diffs_attr_grad     → sl_br_gpt2_logit_diffs_attr_grad
     sl_ns_gpt2_logit_diffs_attr_ablation → sl_br_gpt2_logit_diffs_attr_ablation
 """
@@ -53,12 +53,12 @@ from tests.analysis_resource_utils import (
 # Fixture key constants
 # ---------------------------------------------------------------------------
 _NS_BASE = "get_analysis_session__sl_ns_gpt2_logit_diffs_base__initonly_runanalysis"
-_NS_SAE = "get_analysis_session__sl_ns_gpt2_logit_diffs_sae__initonly_runanalysis"
+_NS_SAE = "get_analysis_session__sl_ns_gpt2_logit_diffs_latent__initonly_runanalysis"
 _NS_GRAD = "get_analysis_session__sl_ns_gpt2_logit_diffs_attr_grad__initonly_runanalysis"
 _NS_ABLATION = "get_analysis_session__sl_ns_gpt2_logit_diffs_attr_ablation__initonly_runanalysis"
 
 _BR_BASE = "get_analysis_session__sl_br_gpt2_logit_diffs_base__initonly_runanalysis"
-_BR_SAE = "get_analysis_session__sl_br_gpt2_logit_diffs_sae__initonly_runanalysis"
+_BR_SAE = "get_analysis_session__sl_br_gpt2_logit_diffs_latent__initonly_runanalysis"
 _BR_GRAD = "get_analysis_session__sl_br_gpt2_logit_diffs_attr_grad__initonly_runanalysis"
 _BR_ABLATION = "get_analysis_session__sl_br_gpt2_logit_diffs_attr_ablation__initonly_runanalysis"
 
@@ -145,7 +145,7 @@ class TestLogitDiffsBaseBackendParity(AnalysisExtractionMixin):
 
 
 class TestLogitDiffsSAEBackendParity(AnalysisExtractionMixin):
-    """logit_diffs_sae: TransformerBridge ↔ NNsight SAE-spliced forward (``model_fwd_w_cache_latent_models``).
+    """logit_diffs_latent: TransformerBridge ↔ NNsight SAE-spliced forward (``model_fwd_w_cache_latent_models``).
 
     Compares SAE-spliced forward pass results including cached activations,
     alive latents, and logit diffs.  Bridge uses TL hook-based SAE splicing;
@@ -409,7 +409,7 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
         ("br_key", "ns_key", "op_name"),
         [
             pytest.param("base_br", "base_ns", "logit_diffs_base", id="base"),
-            pytest.param("sae_br", "sae_ns", "logit_diffs_sae", id="sae"),
+            pytest.param("sae_br", "sae_ns", "logit_diffs_latent", id="sae"),
         ],
     )
     def test_result_column_names_match(self, request, br_key, ns_key, op_name):
@@ -424,7 +424,7 @@ class TestBackendParityEdgeCases(AnalysisExtractionMixin):
         ("br_key", "ns_key", "op_name"),
         [
             pytest.param("base_br", "base_ns", "logit_diffs_base", id="base"),
-            pytest.param("sae_br", "sae_ns", "logit_diffs_sae", id="sae"),
+            pytest.param("sae_br", "sae_ns", "logit_diffs_latent", id="sae"),
         ],
     )
     def test_result_row_counts_match(self, request, br_key, ns_key, op_name):

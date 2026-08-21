@@ -1321,12 +1321,12 @@ def _make_simple_cache_hook(cache_dict: dict, is_backward: bool = False) -> Call
 #     # Check if ablation analysis is requested
 #     if it.logit_diffs_attr_ablation in self.analysis_ops:
 #         # Ensure logit_diffs.sae is included and comes before ablation
-#         if it.logit_diffs_sae not in self.analysis_ops:
+#         if it.logit_diffs_latent not in self.analysis_ops:
 #             print("Note: Adding logit_diffs.sae op since it is required for ablation")
-#             self.analysis_ops = tuple([it.logit_diffs_sae] + list(self.analysis_ops))
+#             self.analysis_ops = tuple([it.logit_diffs_latent] + list(self.analysis_ops))
 #         # Sort ops to ensure logit_diffs.sae comes before ablation
 #         sorted_ops = sorted(self.analysis_ops,
-#                           key=lambda x: (x != it.logit_diffs_sae,
+#                           key=lambda x: (x != it.logit_diffs_latent,
 #                                        x != it.logit_diffs_attr_ablation))
 #         if sorted_ops != list(self.analysis_ops):
 #             print("Note: Re-ordering analysis ops to ensure logit_diffs.sae runs before ablation")

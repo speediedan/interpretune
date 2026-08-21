@@ -748,7 +748,7 @@ class CoreSLHTGPT2LogitDiffsBase(CoreSLHTGPT2Analysis):
 @dataclass(kw_only=True)
 class CoreSLHTGPT2LogitDiffsSAE(CoreSLHTGPT2Analysis):
     analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
-        AnalysisCfg(target_op=it.logit_diffs_sae, save_prompts=True, save_tokens=True, ignore_manual=True),
+        AnalysisCfg(target_op=it.logit_diffs_latent, save_prompts=True, save_tokens=True, ignore_manual=True),
     )
 
 
@@ -848,7 +848,7 @@ class CoreSLNNsightGPT2LogitDiffsBase(CoreSLNNsightGPT2Analysis):
 @dataclass(kw_only=True)
 class CoreSLNNsightGPT2LogitDiffsSAE(CoreSLNNsightGPT2Analysis):
     analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
-        AnalysisCfg(target_op=it.logit_diffs_sae, save_prompts=True, save_tokens=True, ignore_manual=True),
+        AnalysisCfg(target_op=it.logit_diffs_latent, save_prompts=True, save_tokens=True, ignore_manual=True),
     )
 
 
@@ -951,7 +951,7 @@ class CoreSLBridgeGPT2LogitDiffsBase(CoreSLBridgeGPT2Analysis):
 @dataclass(kw_only=True)
 class CoreSLBridgeGPT2LogitDiffsSAE(CoreSLBridgeGPT2Analysis):
     analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
-        AnalysisCfg(target_op=it.logit_diffs_sae, save_prompts=True, save_tokens=True, ignore_manual=True),
+        AnalysisCfg(target_op=it.logit_diffs_latent, save_prompts=True, save_tokens=True, ignore_manual=True),
     )
 
 
