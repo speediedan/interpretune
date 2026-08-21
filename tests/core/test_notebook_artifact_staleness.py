@@ -68,7 +68,7 @@ class TestOutputOnlyDrift:
             "cells": [{"cell_type": "code", "outputs": [{"data": {"text/plain": ["sae_correct_acts\n"]}}]}],
             "metadata": {"interpretune_op_surface": ["sae_correct_acts"]},
         }
-        assert renderer.stale_output_references(artifact, set()) == ["sae_correct_acts"]
+        assert renderer.stale_output_references(artifact, {"labels_to_ids"}) == ["sae_correct_acts"]
 
 
 class TestOpSurfaceSource:
@@ -84,3 +84,40 @@ class TestOpSurfaceSource:
         first = notebook["metadata"]["interpretune_op_surface"]
         renderer.stamp_op_surface(notebook, {"b", "a"})
         assert first == notebook["metadata"]["interpretune_op_surface"] == ["a", "b"]
+
+
+def test_bundled_op_names_degrades_when_yaml_is_absent(renderer, monkeypatch):
+    """The op surface must degrade to unavailable, not raise, when pyyaml is missing.
+
+    `docs-build.yml` runs `--check-stale` TWICE, and the first run happens deliberately BEFORE the
+    requirements install so it fails fast; the step is commented "cheap, stdlib-only". A third-party
+    import there is not a missing dependency to add, it breaks that contract -- which is exactly how
+    this surfaced, as a `ModuleNotFoundError` the workflow then reported as "an artifact has drifted".
+
+    `sys.modules["yaml"] = None` is the documented way to force `import yaml` to raise ImportError
+    without touching the filesystem or the real module.
+    """
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    assert renderer.bundled_op_names() == set()
+
+
+def test_yaml_absence_degrades_output_drift_but_keeps_source_drift(renderer, monkeypatch):
+    """Degrading must cost ONLY the output-drift half, never the source-drift half.
+
+    Losing source drift too would turn the fail-fast pre-install step into one that passes
+    unconditionally -- worse than removing it, because it would still report success.
+    """
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    # An artifact whose OUTPUT names a since-removed op: detectable only via the recorded op surface.
+    artifact = {
+        "metadata": {renderer.OP_SURFACE_KEY: ["zzz_removed_op"]},
+        "cells": [{"cell_type": "code", "source": ["x = 1\n"], "outputs": [{"text": ["ran zzz_removed_op\n"]}]}],
+    }
+    # With no surface available the comparison cannot be made, so it must report nothing rather than
+    # guess. `current_ops` empty is precisely the "unavailable" signal bundled_op_names returns.
+    assert renderer.stale_output_references(artifact, set()) == []
+    # ...while the source comparator is pure stdlib and stays fully functional.
+    assert renderer.artifact_matches_source(artifact, artifact)
+    assert not renderer.artifact_matches_source(
+        artifact, {"cells": [{"cell_type": "code", "source": ["x = 2\n"]}], "metadata": {}}
+    )

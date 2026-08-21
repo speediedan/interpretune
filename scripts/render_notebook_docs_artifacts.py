@@ -92,7 +92,15 @@ def bundled_op_names() -> set[str]:
     different people. The bundled YAML is the same for everyone with the same checkout, which is the
     property a CI gate needs.
     """
-    import yaml
+    try:
+        import yaml
+    except ImportError:
+        # docs-build runs this check ONCE BEFORE installing requirements, deliberately: the comment there
+        # calls it "cheap, stdlib-only, and BEFORE the heavy install so it fails fast". Requiring a
+        # third-party import would break that contract, so the op-surface half degrades to unavailable and
+        # the source-drift half still runs. The same workflow runs the check again after the install,
+        # where yaml is present and the full check happens.
+        return set()
 
     names: set[str] = set()
     for path in sorted(BUNDLED_OPS_DIR.rglob("*.yaml")):
@@ -142,6 +150,14 @@ def stale_output_references(artifact: dict[str, Any], current_ops: set[str]) -> 
     of freshness, and `unstamped_artifacts` reports those separately rather than letting them read as
     clean.
     """
+    if not current_ops:
+        # Empty means the surface could not be READ (pyyaml absent pre-install), not that zero ops exist.
+        # Without this, "recorded minus current" is the whole recorded surface, so every stamped artifact
+        # is reported stale at once -- a failure mode that looks like catastrophic drift and is really a
+        # missing import. The caller also gates on this, deliberately: the caller decides what to REPORT,
+        # while this keeps the comparison itself from producing a confidently wrong answer.
+        return []
+
     recorded = artifact.get("metadata", {}).get(OP_SURFACE_KEY)
     if not recorded:
         return []
@@ -223,6 +239,9 @@ def main() -> int:
         output_stale: list[str] = []
         unstamped: list[str] = []
         current_ops = bundled_op_names()
+        # An empty surface means yaml was unavailable (see bundled_op_names), not that there are no ops.
+        # Reporting the difference matters: silently skipping would read as "checked and clean".
+        op_check_available = bool(current_ops)
         for source in notebooks:
             rel = source.relative_to(PUBLISH_DIR)
             artifact = ARTIFACT_DIR / rel
@@ -232,6 +251,8 @@ def main() -> int:
             if not artifact_matches_source(artifact_nb, load_notebook(source)):
                 stale.append(str(rel))
                 continue  # a source-drifted artifact needs a rebuild regardless of its outputs
+            if not op_check_available:
+                continue
             if dead := stale_output_references(artifact_nb, current_ops):
                 output_stale.append(f"{rel}: outputs reference {', '.join(dead)}")
             elif not artifact_nb.get("metadata", {}).get(OP_SURFACE_KEY):
@@ -245,6 +266,8 @@ def main() -> int:
         # as "checked and clean" when it is "not checkable".
         for rel_str in unstamped:
             print(f"note: no recorded op surface, output drift not checkable: {rel_str}", file=sys.stderr)
+        if not op_check_available:
+            print("note: pyyaml unavailable, output-drift check skipped (source drift still checked)", file=sys.stderr)
         total = len(stale) + len(output_stale)
         print(f"{total} stale artifact(s); {len(unstamped)} unstamped")
         return 1 if total else 0
