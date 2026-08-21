@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Report `collected` beside `passed`, and FAIL when the surface is not the one we meant to cover.
 #
-# Policy (CLAUDE.local.md): a green pytest summary answers "did the tests I selected pass" and reads as
+# Why this exists: a green pytest summary answers "did the tests I selected pass" and reads as
 # "did the tests pass". Those differ whenever anything narrowed the selection, and the summary does not
 # say so. This pipeline is where that bites hardest: every test it exists to run is gated on a runtime
 # GPU check, so a `RunIf` added upstream, a changed parametrization, or a renamed file all shrink the
