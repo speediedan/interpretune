@@ -1,6 +1,6 @@
 # HookedTransformer, TransformerBridge, and the Current Parity Model
 
-This document explains how Interpretune currently understands the behavioral relationship between HookedTransformer, TransformerBridge, and the NNsight backend in the SAE analysis stack.
+This document explains how Interpretune currently understands the behavioral relationship between HookedTransformer, TransformerBridge, and the NNsight backend in the latent-model analysis stack.
 
 ## Why This Matters
 
@@ -80,7 +80,7 @@ TransformerBridge ↔ NNsight is the main backend parity contract.
 - differences come primarily from hook and tracing mechanisms rather than model semantics
 - tight tolerances are appropriate here
 
-This is the parity signal that now protects the generalized SAE analysis ops.
+This is the parity signal that now protects the generalized latent-model analysis ops.
 
 ### Separate HookedTransformer validation
 
