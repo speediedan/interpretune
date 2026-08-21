@@ -41,6 +41,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_DIR = REPO_ROOT / "src" / "it_examples" / "notebooks" / "publish"
 ARTIFACT_DIR = REPO_ROOT / "docs" / "notebook_artifacts"
 
+BUNDLED_OPS_DIR = REPO_ROOT / "src" / "interpretune" / "analysis" / "ops" / "bundled"
+
+# Where the rendered op surface is stamped, so `--check-stale` can tell whether an artifact's captured
+# OUTPUTS have gone stale even when its sources have not.
+OP_SURFACE_KEY = "interpretune_op_surface"
+
 # Cells removed from the docs artifact, matched on `metadata.id` set by publish_notebooks.py.
 DOCS_EXCLUDED_CELL_IDS = {"install-deps"}
 
@@ -76,6 +82,71 @@ def strip_docs_excluded_cells(notebook: dict[str, Any]) -> tuple[dict[str, Any],
 
 def has_outputs(notebook: dict[str, Any]) -> bool:
     return any(c.get("outputs") for c in notebook.get("cells", []) if c.get("cell_type") == "code")
+
+
+def bundled_op_names() -> set[str]:
+    """Live bundled op names, read from YAML rather than the dispatcher.
+
+    Deliberately NOT `DISPATCHER._op_definitions`: that reflects whatever the current session has loaded,
+    including any hub collection pulled at the time, so a gate built on it would give different answers to
+    different people. The bundled YAML is the same for everyone with the same checkout, which is the
+    property a CI gate needs.
+    """
+    import yaml
+
+    names: set[str] = set()
+    for path in sorted(BUNDLED_OPS_DIR.rglob("*.yaml")):
+        content = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for key, value in content.items():
+            if key == "composite_operations" and isinstance(value, dict):
+                names |= set(value)
+            elif key != "collection" and isinstance(value, dict):
+                names.add(key)
+    return names
+
+
+def stamp_op_surface(notebook: dict[str, Any], op_names: set[str]) -> None:
+    """Record the op surface an artifact was rendered against, in notebook metadata."""
+    notebook.setdefault("metadata", {})[OP_SURFACE_KEY] = sorted(op_names)
+
+
+def captured_output_text(notebook: dict[str, Any]) -> str:
+    """All captured output text in one blob, which is the half `artifact_matches_source` cannot see."""
+    chunks: list[str] = []
+    for cell in notebook.get("cells", []):
+        for output in cell.get("outputs", []) or []:
+            for key in ("text",):
+                chunks.append("".join(output.get(key, []) or []))
+            data = output.get("data") or {}
+            for mime, payload in data.items():
+                if mime.startswith("text/"):
+                    chunks.append("".join(payload if isinstance(payload, list) else [payload]))
+    return "".join(chunks)
+
+
+def stale_output_references(artifact: dict[str, Any], current_ops: set[str]) -> list[str]:
+    """Op names an artifact's OUTPUTS mention that the current op surface no longer has.
+
+    This is the gap `artifact_matches_source` structurally cannot close: its signature is built from
+    ``(cell_type, source)``, so output drift is not merely unchecked, it is unrepresentable. A renamed op
+    appearing only in captured output therefore passes every CPU job and leaves the docs site rendering a
+    symbol that no longer exists.
+
+    Comparing outputs directly would fix that at the cost of needing a rendering environment -- and a
+    re-render rewrites thousands of lines of timings and object ids for a one-symbol rename, so the diff
+    is close to unreviewable. This compares the recorded op SURFACE instead: names the artifact was
+    rendered against, minus names that exist now, intersected with what its outputs actually mention.
+    No execution, no GPU, and it only fires when a specific dead name is really present.
+
+    Returns an empty list for an artifact with no recorded surface -- absence of a stamp is not evidence
+    of freshness, and `unstamped_artifacts` reports those separately rather than letting them read as
+    clean.
+    """
+    recorded = artifact.get("metadata", {}).get(OP_SURFACE_KEY)
+    if not recorded:
+        return []
+    text = captured_output_text(artifact)
+    return sorted(name for name in set(recorded) - current_ops if name in text)
 
 
 def artifact_matches_source(artifact: dict[str, Any], source: dict[str, Any]) -> bool:
@@ -135,8 +206,9 @@ def main() -> int:
     parser.add_argument(
         "--check-stale",
         action="store_true",
-        help="Exit non-zero if any artifact's content has drifted from its publish source (outputs ignored). "
-        "The docs render artifacts, so drift means the site is showing stale text with no build error.",
+        help="Exit non-zero if any artifact has drifted from its publish source, or if its captured outputs "
+        "reference an op name the current bundled surface no longer has. The docs render artifacts, so "
+        "either kind of drift means the site is showing something stale with no build error.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Report what would happen; write nothing.")
     args = parser.parse_args()
@@ -148,15 +220,34 @@ def main() -> int:
 
     if args.check_stale:
         stale: list[str] = []
+        output_stale: list[str] = []
+        unstamped: list[str] = []
+        current_ops = bundled_op_names()
         for source in notebooks:
             rel = source.relative_to(PUBLISH_DIR)
             artifact = ARTIFACT_DIR / rel
-            if artifact.exists() and not artifact_matches_source(load_notebook(artifact), load_notebook(source)):
+            if not artifact.exists():
+                continue
+            artifact_nb = load_notebook(artifact)
+            if not artifact_matches_source(artifact_nb, load_notebook(source)):
                 stale.append(str(rel))
+                continue  # a source-drifted artifact needs a rebuild regardless of its outputs
+            if dead := stale_output_references(artifact_nb, current_ops):
+                output_stale.append(f"{rel}: outputs reference {', '.join(dead)}")
+            elif not artifact_nb.get("metadata", {}).get(OP_SURFACE_KEY):
+                unstamped.append(str(rel))
         for rel_str in stale:
             print(f"STALE artifact (rebuild it): {rel_str}", file=sys.stderr)
-        print(f"{len(stale)} stale artifact(s)")
-        return 1 if stale else 0
+        for entry in output_stale:
+            print(f"STALE artifact OUTPUT (re-execute it): {entry}", file=sys.stderr)
+        # Reported, not failed: an artifact predating the stamp cannot be checked, and failing on that
+        # would make adopting the stamp a wall rather than a ramp. Silence would be worse -- it would read
+        # as "checked and clean" when it is "not checkable".
+        for rel_str in unstamped:
+            print(f"note: no recorded op surface, output drift not checkable: {rel_str}", file=sys.stderr)
+        total = len(stale) + len(output_stale)
+        print(f"{total} stale artifact(s); {len(unstamped)} unstamped")
+        return 1 if total else 0
 
     if args.list:
         for source in notebooks:
@@ -190,6 +281,10 @@ def main() -> int:
                     shutil.copy2(source, artifact)
 
             notebook, removed = strip_docs_excluded_cells(load_notebook(artifact))
+            # Stamp on EVERY write, including --no-execute. A strip-only pass does not change outputs, so
+            # the surface those outputs were produced against is still the one recorded here; refusing to
+            # stamp then would leave artifacts permanently unstampable without a GPU re-render.
+            stamp_op_surface(notebook, bundled_op_names())
             save_notebook(notebook, artifact)
             outputs = "with outputs" if has_outputs(notebook) else "NO outputs"
             print(f"  wrote {rel} ({outputs}, {removed} cell(s) removed)")
