@@ -30,9 +30,14 @@ jobs:
       # perfectly green build and no error anywhere. This is the only thing that catches that.
       - name: Check notebook artifacts are not stale
         run: |
-          python scripts/render_notebook_docs_artifacts.py --check-stale \
-            || { echo "::error::A docs notebook artifact has drifted from its publish source. \
-          Rebuild it with: python scripts/render_notebook_docs_artifacts.py --notebook <name>"; exit 1; }
+          python scripts/render_notebook_docs_artifacts.py --check-stale && rc=0 || rc=$?
+          case $rc in
+            0) ;;
+            3) echo "::error::A docs notebook artifact has drifted from its publish source. \
+          Rebuild it with: python scripts/render_notebook_docs_artifacts.py --notebook <name>"; exit 1 ;;
+            *) echo "::error::The notebook-artifact staleness check FAILED TO RUN (exit $rc). \
+          This is NOT a drift report -- see the log above for the real error."; exit 1 ;;
+          esac
       - name: Install docs requirements
         run: |
           pip install -r requirements/docs.txt

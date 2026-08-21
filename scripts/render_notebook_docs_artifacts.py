@@ -47,6 +47,17 @@ BUNDLED_OPS_DIR = REPO_ROOT / "src" / "interpretune" / "analysis" / "ops" / "bun
 # OUTPUTS have gone stale even when its sources have not.
 OP_SURFACE_KEY = "interpretune_op_surface"
 
+# Drift gets its own exit code so a caller can tell it from this script FAILING TO RUN, which also exits
+# non-zero. docs-build previously mapped every non-zero exit to "an artifact has drifted", so when a missing
+# import made the script crash it reported drift -- a cause that was not merely unproven but false. No
+# amount of rewording fixes that; only a distinct code lets the caller say WHICH happened.
+#
+# 3, NOT 2, and the difference is load-bearing: argparse exits 2 on a usage error, which is not something
+# this script chooses. Measured here -- an unrecognized flag exits 2 before main() is ever entered. Using 2
+# for drift would therefore report a mistyped or renamed flag as "an artifact has drifted", which is the
+# original defect wearing a new hat. The taken codes are 0 success, 1 uncaught exception, 2 argparse usage.
+DRIFT_EXIT_CODE = 3
+
 # Cells removed from the docs artifact, matched on `metadata.id` set by publish_notebooks.py.
 DOCS_EXCLUDED_CELL_IDS = {"install-deps"}
 
@@ -270,7 +281,7 @@ def main() -> int:
             print("note: pyyaml unavailable, output-drift check skipped (source drift still checked)", file=sys.stderr)
         total = len(stale) + len(output_stale)
         print(f"{total} stale artifact(s); {len(unstamped)} unstamped")
-        return 1 if total else 0
+        return DRIFT_EXIT_CODE if total else 0
 
     if args.list:
         for source in notebooks:
