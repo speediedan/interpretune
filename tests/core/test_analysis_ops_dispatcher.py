@@ -163,12 +163,12 @@ test_op:
         assert op.name == "model_forward"
 
         # Test instantiating a composite operation
-        op = DISPATCHER._instantiate_op("logit_diffs_sae")
+        op = DISPATCHER._instantiate_op("logit_diffs_latent")
         assert isinstance(op, CompositeAnalysisOp)
-        assert op.name == "logit_diffs_sae"
+        assert op.name == "logit_diffs_latent"
         expected_composition = "labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.latent_correct_acts"
         assert op.composition_name == expected_composition
-        assert op.ctx_key == "logit_diffs_sae"
+        assert op.ctx_key == "logit_diffs_latent"
         assert len(op.composition) == 4
 
         # Test with unknown operation
@@ -183,9 +183,9 @@ test_op:
         assert op.name == "model_fwd"
 
         # Test with composite op
-        op = DISPATCHER.get_op("logit_diffs_sae")
+        op = DISPATCHER.get_op("logit_diffs_latent")
         assert isinstance(op, CompositeAnalysisOp)
-        assert op.ctx_key == "logit_diffs_sae"
+        assert op.ctx_key == "logit_diffs_latent"
 
         # Test with unknown op
         with pytest.raises(ValueError, match="Unknown operation:"):
@@ -377,10 +377,10 @@ test_op:
         assert it.model_forward.name == "model_fwd"
 
         # Test composite operations
-        assert hasattr(it, "logit_diffs_sae")
+        assert hasattr(it, "logit_diffs_latent")
 
         # Access an attribute to trigger instantiation
-        assert it.logit_diffs_sae.name == "logit_diffs_sae"
+        assert it.logit_diffs_latent.name == "logit_diffs_latent"
 
     @pytest.mark.parametrize(
         "op_name",
@@ -389,7 +389,7 @@ test_op:
             "model_fwd_w_cache_latent_models",
             "logit_diffs",
             "latent_correct_acts",
-            "logit_diffs_sae",
+            "logit_diffs_latent",
             "logit_diffs_attr_grad",
         ],
     )
@@ -414,7 +414,9 @@ test_op:
         """Test dispatcher integration with an analysis session."""
         try:
             # Use existing analysis session fixture if available
-            fixture = request.getfixturevalue("get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis")
+            fixture = request.getfixturevalue(
+                "get_analysis_session__sl_ht_gpt2_logit_diffs_latent__initonly_runanalysis"
+            )
 
             # Verify the fixture contains expected data
             assert fixture.result is not None
@@ -424,7 +426,7 @@ test_op:
             test_cfg = fixture.test_cfg()
             assert hasattr(test_cfg, "analysis_cfgs")
             assert hasattr(test_cfg.analysis_cfgs[0], "op")
-            assert test_cfg.analysis_cfgs[0].op == it.logit_diffs_sae
+            assert test_cfg.analysis_cfgs[0].op == it.logit_diffs_latent
 
         except (LookupError, AttributeError):
             pytest.skip("Required fixture not available, skipping integration test")

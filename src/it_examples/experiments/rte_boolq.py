@@ -283,7 +283,7 @@ class RTEBoolqSteps:
         analysis_batch = it.latent_correct_acts(analysis_batch=analysis_batch, **op_kwargs)  # type: ignore[assignment]  # protocol compatibility
 
         # note, there is an equivalent existing composite op for the decomposed version above:
-        # analysis_batch = it.logit_diffs_sae(**op_kwargs)
+        # analysis_batch = it.logit_diffs_latent(**op_kwargs)
         yield from self.analysis_cfg.save_batch(analysis_batch, batch, tokenizer=self.datamodule.tokenizer)
 
 

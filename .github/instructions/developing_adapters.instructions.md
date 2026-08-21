@@ -102,7 +102,7 @@ The `HookNameResolver` translates between TransformerLens hook names and NNsight
 
 ### Dual-Backend SAE Analysis
 
-SAE analysis operations (`logit_diffs_sae`, `logit_diffs_attr_grad`, `logit_diffs_attr_ablation`) support both:
+Latent-model analysis operations (`logit_diffs_latent`, `logit_diffs_attr_grad`, `logit_diffs_attr_ablation`) support both:
 - **TransformerBridge backend**: SAE splicing via TL hook-based injection
 - **NNsight backend**: SAE splicing via thread-interleaved tracing
 

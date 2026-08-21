@@ -3,7 +3,7 @@ composite_operations:
   logit_diffs_base:
     composition: labels_to_ids.model_fwd.logit_diffs
 
-  logit_diffs_sae:
+  logit_diffs_latent:
     composition: labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.latent_correct_acts
 
   logit_diffs_attr_grad:

@@ -395,7 +395,7 @@ FIXTURE_CFGS = {
         scope="session",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
-    "sl_ht_gpt2_logit_diffs_sae": FixtureCfg(
+    "sl_ht_gpt2_logit_diffs_latent": FixtureCfg(
         test_cfg=CoreSLHTGPT2LogitDiffsSAE,
         scope="session",
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
@@ -417,7 +417,7 @@ FIXTURE_CFGS = {
         scope=analysis_fixture_scope(),
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
-    "sl_ns_gpt2_logit_diffs_sae": FixtureCfg(
+    "sl_ns_gpt2_logit_diffs_latent": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2LogitDiffsSAE,
         scope=analysis_fixture_scope(),
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
@@ -438,7 +438,7 @@ FIXTURE_CFGS = {
         scope=analysis_fixture_scope(),
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},
     ),
-    "sl_br_gpt2_logit_diffs_sae": FixtureCfg(
+    "sl_br_gpt2_logit_diffs_latent": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2LogitDiffsSAE,
         scope=analysis_fixture_scope(),
         variants={"analysis_session": [FixtRunPhase(FixtPhase.initonly, RunPhase.runanalysis)]},

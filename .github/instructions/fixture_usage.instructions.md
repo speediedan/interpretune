@@ -92,7 +92,7 @@ FIXTURE_CFGS = {
 4. **AnalysisSession Fixtures** - Session with analysis runner and results:
    - Pattern: `get_analysis_session__{config_key}__{phase}_{runphase}`
    - Returns: `AnalysisSessionFixture(result, it_session, runner, run_config, test_cfg)`
-   - Example: `get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis`
+   - Example: `get_analysis_session__sl_ht_gpt2_logit_diffs_latent__initonly_runanalysis`
 
 5. **Fine-Tuning Schedule Fixtures** - Fine-tuning schedules:
    - Pattern: `get_ft_schedule__{config_key}__setup`
@@ -681,7 +681,7 @@ The NNsight adapter introduces dual-backend analysis fixtures used for Bridge â†
 | NNsight Fixture Key | Bridge Fixture Key | Operation |
 |---|---|---|
 | `sl_ns_gpt2_logit_diffs_base` | `sl_br_gpt2_logit_diffs_base` | Base forward (no SAE) |
-| `sl_ns_gpt2_logit_diffs_sae` | `sl_br_gpt2_logit_diffs_sae` | SAE-spliced forward |
+| `sl_ns_gpt2_logit_diffs_latent` | `sl_br_gpt2_logit_diffs_latent` | SAE-spliced forward |
 | `sl_ns_gpt2_logit_diffs_attr_grad` | `sl_br_gpt2_logit_diffs_attr_grad` | Gradient attribution |
 | `sl_ns_gpt2_logit_diffs_attr_ablation` | `sl_br_gpt2_logit_diffs_attr_ablation` | Ablation attribution |
 

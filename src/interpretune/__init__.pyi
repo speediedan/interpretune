@@ -616,7 +616,7 @@ def logit_diffs_base(
     """
     ...
 
-def logit_diffs_sae(
+def logit_diffs_latent(
     module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
 ) -> BaseAnalysisBatchProtocol:
     """Composition of operations:

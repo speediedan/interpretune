@@ -38,15 +38,15 @@
 | get_analysis_session__sl_br_gpt2_logit_diffs_attr_ablation__initonly_runanalysis | dynamic | class | Real Model | N/A | N/A | N/A | ❌ Timeout (>2min)... |
 | get_analysis_session__sl_br_gpt2_logit_diffs_attr_grad__initonly_runanalysis | dynamic | session | Real Model | 32.7 | 2792.3 | 0.0 | ✅ Success |
 | get_analysis_session__sl_br_gpt2_logit_diffs_base__initonly_runanalysis | dynamic | session | Real Model | 33.3 | 1066.8 | 0.0 | ✅ Success |
-| get_analysis_session__sl_br_gpt2_logit_diffs_sae__initonly_runanalysis | dynamic | session | Real Model | 37.2 | 1170.5 | 0.0 | ✅ Success |
+| get_analysis_session__sl_br_gpt2_logit_diffs_latent__initonly_runanalysis | dynamic | session | Real Model | 37.2 | 1170.5 | 0.0 | ✅ Success |
 | get_analysis_session__sl_ht_gpt2_logit_diffs_attr_ablation__initonly_runanalysis | dynamic | class | Real Model | 93.7 | 1196.6 | 0.0 | ✅ Success |
 | get_analysis_session__sl_ht_gpt2_logit_diffs_attr_grad__initonly_runanalysis | dynamic | session | Real Model | 34.9 | 3191.9 | 0.0 | ✅ Success |
 | get_analysis_session__sl_ht_gpt2_logit_diffs_base__initonly_runanalysis | dynamic | session | Real Model | 44.7 | 1141.5 | 0.0 | ✅ Success |
-| get_analysis_session__sl_ht_gpt2_logit_diffs_sae__initonly_runanalysis | dynamic | session | Real Model | 42.1 | 1179.4 | 0.0 | ✅ Success |
+| get_analysis_session__sl_ht_gpt2_logit_diffs_latent__initonly_runanalysis | dynamic | session | Real Model | 42.1 | 1179.4 | 0.0 | ✅ Success |
 | get_analysis_session__sl_ns_gpt2_logit_diffs_attr_ablation__initonly_runanalysis | dynamic | class | Real Model | N/A | N/A | N/A | ❌ Timeout (>2min)... |
 | get_analysis_session__sl_ns_gpt2_logit_diffs_attr_grad__initonly_runanalysis | dynamic | session | Real Model | 51.7 | 2545.4 | 0.0 | ✅ Success |
 | get_analysis_session__sl_ns_gpt2_logit_diffs_base__initonly_runanalysis | dynamic | session | Real Model | 37.3 | 1083.2 | 0.0 | ✅ Success |
-| get_analysis_session__sl_ns_gpt2_logit_diffs_sae__initonly_runanalysis | dynamic | session | Real Model | 40.4 | 1131.7 | 0.0 | ✅ Success |
+| get_analysis_session__sl_ns_gpt2_logit_diffs_latent__initonly_runanalysis | dynamic | session | Real Model | 40.4 | 1131.7 | 0.0 | ✅ Success |
 | get_it_session__core_gpt2_peft__initonly | dynamic | class | Real Model | 5.2 | 286.6 | 202.1 | ✅ Success |
 | get_it_session__core_gpt2_peft_seq__initonly | dynamic | class | Real Model | 5.0 | 290.8 | 201.8 | ✅ Success |
 | get_it_session__l_llama3_debug__setup | dynamic | class | Real Model | 10.7 | 885.4 | 2900.5 | ✅ Success |
