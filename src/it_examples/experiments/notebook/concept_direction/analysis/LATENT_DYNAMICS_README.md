@@ -12,7 +12,7 @@ Current policy:
 Implementation guardrail:
 
 - The latent-dynamics helpers intentionally mirror parts of the production concept-direction op logic in
-  `src/interpretune/analysis/ops/definitions.py`. In particular, keep
+  `src/interpretune/analysis/ops/bundled/concept/concept_ops.py`. In particular, keep
   `concept_direction_impl` aligned with the local `concept_direction_latent_dynamics.py` direction builders,
   including `_paired_rejection_payload`. If this module remains as a long-lived analysis surface, add and
   maintain rigorous parity tests so exploratory reporting code does not drift away from the op contract.
