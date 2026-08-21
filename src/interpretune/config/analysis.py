@@ -673,7 +673,7 @@ class AnalysisCfg(ITSerializableCfg):
 
             # An op that declares a protocol (#56) gets stores whose attribute surface matches it. Passing
             # None would override the constructor default with nothing, so only pass what was declared.
-            store_kwargs = {"cache_dir": cache_dir, "op_output_dataset_path": op_output_dataset_path}
+            store_kwargs: dict[str, Any] = {"cache_dir": cache_dir, "op_output_dataset_path": op_output_dataset_path}
             if (declared := getattr(self.op, "protocol_cls", None)) is not None:
                 store_kwargs["protocol_cls"] = declared
             self.output_store = AnalysisStore(**store_kwargs)
