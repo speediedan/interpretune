@@ -306,7 +306,7 @@ ops:
 ```
 
 Discovery is manifest-routed, so anything else the repo carries (a card, a config sample, a notebook)
-is never fed to the op compiler. Publish with `interpretune.hub.publish_op_collection`, or generate a
+is never fed to the op compiler. Publish with `interpretune.hub.publish.publish_op_collection`, or generate a
 collection from an in-tree op family with `scripts/publish_op_collection.py`, which also handles the
 one transformation publishing requires: bundled YAMLs address implementations by installed package
 path, while the hub loader resolves a repo-relative `<module>.<function>` pair. A family published

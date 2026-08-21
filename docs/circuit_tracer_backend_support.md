@@ -123,6 +123,6 @@ history (`48f371b`) if a runnable reference is needed before that demo lands.
 | `src/interpretune/adapters/circuit_tracer.py` | Adapter implementation |
 | `src/interpretune/config/circuit_tracer.py` | `CircuitTracerConfig` dataclass |
 | `src/interpretune/analysis/ops/bundled/circuit_tracer/ct_ops.py` | Op definitions (backend-agnostic) |
-| `src/interpretune/analysis/backends/circuit_tracer.py` | CT backend implementation |
+| `src/interpretune/analysis/backends/impls/circuit_tracer.py` | CT backend implementation |
 | `src/it_examples/notebooks/dev/circuit_tracer_examples/` | Demo notebooks (dev) |
-| `tests/examples/test_notebooks.py` | Notebook tests |
+| `src/it_examples/tests/test_notebooks.py` | Notebook tests |

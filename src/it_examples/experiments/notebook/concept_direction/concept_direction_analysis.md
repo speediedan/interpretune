@@ -5,7 +5,7 @@ extraction approaches, using Neuronpedia feature interpretations and direction-p
 separations as diagnostic tools.
 
 > **Implementation guardrail:** The analysis notebooks and helper modules should not become an
-> independent fork of the production op behavior. Keep `src/interpretune/analysis/ops/definitions.py`
+> independent fork of the production op behavior. Keep `src/interpretune/analysis/ops/bundled/concept/concept_ops.py`
 > and `src/it_examples/experiments/notebook/concept_direction/analysis/concept_direction_latent_dynamics.py` aligned,
 > especially `concept_direction_impl` and `_paired_rejection_payload`. If the latent-dynamics module
 > remains in tree, it needs rigorous parity tests so report-only changes cannot silently drift from the
