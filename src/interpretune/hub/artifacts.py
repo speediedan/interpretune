@@ -15,6 +15,7 @@ refreshed freely.
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 from typing import Any
@@ -97,6 +98,42 @@ def _serialize_col_cfg(store) -> dict[str, dict]:
     for name, cfg in col_cfg.items():
         out[name] = cfg.to_dict() if hasattr(cfg, "to_dict") else dict(cfg)
     return out
+
+
+def _resolve_protocol_path(path: str):
+    """Import a protocol recorded in an envelope, or None to fall back to the default."""
+    from interpretune.protocol import BaseAnalysisBatchProtocol
+    from interpretune.utils import rank_zero_warn
+
+    module_path, _, attr = path.rpartition(".")
+    try:
+        protocol_cls = getattr(importlib.import_module(module_path), attr)
+    except Exception as e:
+        rank_zero_warn(f"Could not import protocol_cls {path!r} from the artifact envelope: {e}")
+        return None
+    # MRO rather than issubclass: the base is a non-runtime_checkable Protocol, so issubclass raises.
+    if not isinstance(protocol_cls, type) or BaseAnalysisBatchProtocol not in protocol_cls.__mro__:
+        rank_zero_warn(f"Envelope protocol_cls {path!r} is not a BaseAnalysisBatchProtocol subclass.")
+        return None
+    return protocol_cls
+
+
+def _protocol_cls_entry(store) -> dict[str, str]:
+    """The store's batch protocol as a PORTABLE import path, omitted when it is the default (#62).
+
+    Recorded at write time rather than reconstructed on pull, for the reason #284 settled for op
+    provenance: what a name resolves to later is not what produced the store. Mirrors
+    `_analysis_backend_name` -- a portable reference rather than an instance, resolved on the way back.
+
+    Omitted for the default, so an envelope only carries the key when it says something. A reader seeing
+    no key gets the default, which is what they would have got anyway.
+    """
+    from interpretune.protocol import DefaultAnalysisBatchProtocol
+
+    protocol_cls = getattr(store, "_protocol_cls", None)
+    if protocol_cls is None or protocol_cls is DefaultAnalysisBatchProtocol:
+        return {}
+    return {"protocol_cls": f"{protocol_cls.__module__}.{protocol_cls.__qualname__}"}
 
 
 def _analysis_backend_name(store) -> str | None:
@@ -189,7 +226,11 @@ def build_analysis_store_envelope(
         "identity": identity,
         "provenance": prov,
         "artifacts": artifacts,
-        "interpretune": {"col_cfg": _serialize_col_cfg(store), "analysis_backend": _analysis_backend_name(store)},
+        "interpretune": {
+            "col_cfg": _serialize_col_cfg(store),
+            "analysis_backend": _analysis_backend_name(store),
+            **_protocol_cls_entry(store),
+        },
     }
     # writer-side guard: never emit an envelope this build could not itself read back. Catches a
     # schema bumped past the reader's window and a caller-supplied `identity` that would publish
@@ -304,7 +345,15 @@ def pull_analysis_store(
         from interpretune.analysis.backends import resolve_analysis_backend
 
         format_kwargs["analysis_backend"] = resolve_analysis_backend(it_block["analysis_backend"])
-    store = AnalysisStore(dataset=dataset, split=split, it_format_kwargs=format_kwargs or None)
+    store_kwargs: dict[str, Any] = {}
+    if (declared := it_block.get("protocol_cls")) is not None:
+        # Falls back to the default rather than raising: the columns are still readable without the
+        # richer attribute surface, so an unresolvable protocol degrades the store rather than losing it.
+        # Warned rather than silent, because silently serving the default is exactly the failure this
+        # records the protocol to prevent.
+        if (resolved := _resolve_protocol_path(declared)) is not None:
+            store_kwargs["protocol_cls"] = resolved
+    store = AnalysisStore(dataset=dataset, split=split, it_format_kwargs=format_kwargs or None, **store_kwargs)
     return store
 
 
