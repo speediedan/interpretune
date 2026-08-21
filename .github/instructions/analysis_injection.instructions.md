@@ -170,11 +170,11 @@ The patcher inserts imports after finding a valid insertion point. Current logic
 ```bash
 # Run specific notebook test
 IT_RUN_STANDALONE_TESTS=1 python -m pytest \
-  "tests/examples/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]" -v
+  "src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]" -v
 
 # Run all circuit-tracer notebook tests
 IT_RUN_STANDALONE_TESTS=1 python -m pytest \
-  "tests/examples/test_notebooks.py" -k "circuit_tracer or attribution_analysis" -v
+  "src/it_examples/tests/test_notebooks.py" -k "circuit_tracer or attribution_analysis" -v
 ```
 
 ## Checklist for Analysis Injection Updates

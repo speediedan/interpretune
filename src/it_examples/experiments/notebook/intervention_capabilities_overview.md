@@ -78,7 +78,7 @@ All are callable as `it.<name>(...)` via the lazy op dispatcher.
 
 ## Verified steering anchors (expected vs realized effects)
 
-- `src/it_examples/experiments/notebook/concept_direction/test_concept_direction_backend_parity.py::`
+- `src/it_examples/tests/notebook/concept_direction/test_concept_direction_backend_parity.py::`
   `test_analysis_backend_parity_feature_intervention_wrapper_sign_aware_top5_any_scaling` — pins
   the sign-aware/max-norm scaling formula AND the realized steering outcome (post-intervention gap
   > pre-gap; post-intervention argmax lands in the target-token variant set) on the orange

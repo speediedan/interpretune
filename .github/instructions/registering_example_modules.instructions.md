@@ -1,12 +1,12 @@
 ---
-applyTo: "**/example_module_registry.yaml"
+applyTo: "**/{it_component.yaml,test_module_registry.yaml}"
 ---
 
 # Registering Example Modules in Interpretune
 
 ## Overview
 
-Registry entries live in TWO places split by consumer: shipping example entries live in decomposed component trees under `src/it_examples/examples/<task>/` (an `it_component.yaml` manifest + self-contained `configs/<key>.yaml` files with derived keys `<task_variant>.<model>.<composition>[.<descriptor>]`, composition `+`-joined in canonical order; hydrated per-key by `MODULE_EXAMPLE_REGISTRY`, no `tests` dependencies allowed), while `tests/module_registry.yaml` holds the pytest-scale entries whose classes live in `tests.modules` (hydrated — together with the example entries — by `TEST_MODULE_REGISTRY` in `tests/module_registry.py`). Session fixtures resolve base configurations through `TEST_MODULE_REGISTRY`, so both families remain addressable in tests. Register test-only entries in the tests YAML; add a new example configuration file (plus its manifest `configs:` row) only if every `class_path` it references ships — the loader parity-checks filename == manifest key == key derived from the config's structured fields.
+Registry entries live in TWO places split by consumer: shipping example entries live in decomposed component trees under `src/it_examples/examples/<task>/` (an `it_component.yaml` manifest + self-contained `configs/<key>.yaml` files with derived keys `<task_variant>.<model>.<composition>[.<descriptor>]`, composition `+`-joined in canonical order; hydrated per-key by `MODULE_EXAMPLE_REGISTRY`, no `tests` dependencies allowed), while `tests/test_module_registry.yaml` holds the pytest-scale entries whose classes live in `tests.modules` (hydrated — together with the example entries — by `TEST_MODULE_REGISTRY` in `tests/module_registry.py`). Session fixtures resolve base configurations through `TEST_MODULE_REGISTRY`, so both families remain addressable in tests. Register test-only entries in the tests YAML; add a new example configuration file (plus its manifest `configs:` row) only if every `class_path` it references ships — the loader parity-checks filename == manifest key == key derived from the config's structured fields.
 
 ## Why Register Example Modules?
 
@@ -18,7 +18,7 @@ Registry entries live in TWO places split by consumer: shipping example entries 
 
 ## Registry Entry Structure
 
-Each entry in `example_module_registry.yaml` follows this structure:
+Each entry follows this structure (in a component tree's `configs/<key>.yaml`, or in `tests/test_module_registry.yaml` for test-only entries):
 
 ```yaml
 # this key nomenclature isn't strictly enforced, can deviate where sensible
@@ -149,7 +149,7 @@ from tests.base_defaults import BaseCfg
 class CoreNNsightGPT2(BaseCfg):
     """Core NNsight adapter with GPT-2 for unit testing.
 
-    Registered in example_module_registry.yaml as gpt2.rte.nnsight.
+    Registered in tests/test_module_registry.yaml as gpt2.rte.nnsight.
     """
 
     phase: str = "test"
@@ -216,7 +216,7 @@ print(f'Registry lookup succeeded: {result is not None}')
 
 ## Complete Example: NNsight Adapter Registration
 
-### Registry Entry (`example_module_registry.yaml`)
+### Registry Entry (component-tree `configs/<key>.yaml`, or `tests/test_module_registry.yaml`)
 
 ```yaml
 gpt2.rte.nnsight:
@@ -289,7 +289,7 @@ KeyError: "A module registered with `('gpt2', 'rte', 'test', (<Adapter.core: 'co
 ```
 
 **Check:**
-1. The registry entry exists in `example_module_registry.yaml`
+1. The registry entry exists in its component tree or in `tests/test_module_registry.yaml`
 2. The `model_src_key`, `model_cfg_key`, and `adapter_combinations` match your test config
 3. YAML syntax is correct (indentation, colons, etc.)
 
@@ -309,8 +309,9 @@ If tests require `@RunIf(standalone=True)` despite registry entry:
 
 ## Related Files
 
-- `src/it_examples/example_module_registry.yaml` - Main registry file
-- `src/it_examples/example_module_registry.py` - Registry loader
+- `src/it_examples/examples/<task>/` - Component trees (`it_component.yaml` manifest + `configs/<key>.yaml`)
+- `tests/test_module_registry.yaml` - Test-only registry entries
+- `tests/module_registry.py` - Hydrates both families into `TEST_MODULE_REGISTRY`
 - `tests/configuration.py` - `gen_session_cfg()` function
 - `tests/conftest.py` - `FIXTURE_CFGS` dictionary
 - `tests/core/cfg_aliases.py` - Test configuration classes

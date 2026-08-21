@@ -4,7 +4,7 @@ This note covers the manual workflow for debugging graph/intervention mismatches
 
 ## Primary Tools
 
-- `src/it_examples/experiments/notebook/concept_direction/analysis/oqi_debug_session_ablation.py`: runs the notebook-side debug validation under targeted session-surface overrides and compares the result against preserved standalone artifacts.
+- `src/it_examples/tests/notebook/_harness/oqi_debug_session_ablation.py`: runs the notebook-side debug validation under targeted session-surface overrides and compares the result against preserved standalone artifacts.
 - `src/it_examples/experiments/notebook/concept_direction/analysis/intervention_drift_analysis.py`: fingerprints tensors and summarizes adjacency, baseline-logit, and activation-cache drift.
 - `src/it_examples/experiments/notebook/concept_direction/analysis/intervention_drift_analysis.ipynb`: interactive follow-up notebook for inspecting preserved artifacts.
 
@@ -44,4 +44,4 @@ python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
 
 `_build_notebook_cfg()` in `oqi_debug_session_ablation.py` now forwards `DEBUG_SESSION_SURFACE_PRESET` into `NotebookHarnessConfig`.
 That prevents manual ablation runs from silently reverting to `notebook_default` or reintroducing the old notebook-only CPU override.
-The focused regression test lives in `src/it_examples/experiments/notebook/concept_direction/analysis/test_oqi_debug_session_ablation.py`.
+The focused regression test lives in `src/it_examples/tests/notebook/concept_direction/analysis/test_oqi_debug_session_ablation.py`.

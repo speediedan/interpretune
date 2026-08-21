@@ -120,7 +120,7 @@ These are configured in `.github/workflows/ci_test-full.yml` under the `env:` se
 
 ### Affected Tests
 
-- **`test_op_collection_notebooks`** (`tests/examples/test_notebooks.py`): Executes the
+- **`test_op_collection_notebooks`** (`src/it_examples/tests/test_notebooks.py`): Executes the
   `op_collection_example.ipynb` published notebook via papermill. The notebook uploads/downloads
   analysis op collections to a private HuggingFace repo. Requires `HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY`
   or `HF_TOKEN` to be set. **Skipped automatically** when neither token is available.
@@ -145,7 +145,7 @@ export HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY="hf_your_token_here"
 export HF_TOKEN="hf_your_token_here"
 
 # Then run the test
-python -m pytest tests/examples/test_notebooks.py::test_op_collection_notebooks -v
+python -m pytest src/it_examples/tests/test_notebooks.py::test_op_collection_notebooks -v
 ```
 
 The token requires **write** permissions since the notebook creates and uploads to a private HuggingFace

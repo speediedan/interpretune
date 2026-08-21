@@ -33,10 +33,10 @@ Notebook tests are marked as `standalone` and most require `bf16_cuda` capabilit
 pytest tests/examples/ -v
 
 # Run a specific notebook test
-pytest tests/examples/test_notebooks.py::test_gradient_flow_analysis_notebook -v
+pytest src/it_examples/tests/test_notebooks.py::test_gradient_flow_analysis_notebook -v
 
 # Run with specific parameterization
-pytest tests/examples/test_notebooks.py::test_gradient_flow_analysis_notebook[baseline_salient_logits=True_analysis=True_transcoder=SLT] -v
+pytest src/it_examples/tests/test_notebooks.py::test_gradient_flow_analysis_notebook[baseline_salient_logits=True_analysis=True_transcoder=SLT] -v
 ```
 
 ## Adding New Notebook Tests

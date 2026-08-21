@@ -95,6 +95,13 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
     sae_cfgs: (
         SAELensFromPretrainedConfig | SAELensCustomConfig | Sequence[SAELensFromPretrainedConfig | SAELensCustomConfig]
     )
+    # REQUIRED FOR OPTIMIZATION (#68): SAE parameters only reach the optimizer when the SAE is a
+    # persistent submodule, which is what `add_saes_on_init=True` does -- it calls `model.add_sae(handle)`
+    # during module init, BEFORE the optimizer is constructed over `model.parameters()`. SAEs spliced in
+    # temporarily for a forward pass (the `model.saes(...)` context manager on the TL path, `_splice_sae`
+    # on the NNsight path) are attached and detached around a single call, so their parameters are absent
+    # when the optimizer is built and never receive gradients. Leaving this False is correct for analysis
+    # and inference; set it True to TRAIN SAE parameters.
     add_saes_on_init: bool = False  # TODO: may push this down to SAE config level instead of setting for all saes
     # use_error_term: bool = False  # TODO: add support for use_error_term with on_init stateful SAEs
 

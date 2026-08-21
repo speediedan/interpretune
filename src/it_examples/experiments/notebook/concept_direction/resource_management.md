@@ -44,7 +44,7 @@ flows through `NotebookHarnessConfig.session_kwargs` → `experiment_session()`
 
 1. Add a `ModelSpec` entry in `src/it_examples/experiments/notebook/configs/model_specs.yaml`.
 2. Add a cfg_aliases class in `tests/core/cfg_aliases.py`.
-3. Register the example module in `src/it_examples/example_module_registry.yaml`
+3. Register the example module in its component tree under `src/it_examples/examples/<task>/` (or `tests/test_module_registry.yaml` for a test-only entry)
    if the adapter combination is new.
 4. Create a YAML config under `src/it_examples/experiments/notebook/concept_direction/configs/`.
 5. Set `BATCH_SIZE` conservatively for the model size and prompt style:

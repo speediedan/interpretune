@@ -73,9 +73,8 @@ runs unchanged under a different adapter context — that portability is the poi
 
 ```python
 import interpretune as it
-from it_examples.example_module_registry import MODULE_EXAMPLE_REGISTRY
 
-dm_cfg, m_cfg, dm_cls, m_cls = MODULE_EXAMPLE_REGISTRY.get("rte_demo.gemma2.circuit_tracer")
+dm_cfg, m_cfg, dm_cls, m_cls = it.hub.load("speediedan/rte", "rte_demo.gemma2.circuit_tracer")
 session = it.ITSession(it.ITSessionConfig(
     adapter_ctx=(it.Adapter.core, it.Adapter.nnsight, it.Adapter.circuit_tracer),
     datamodule_cfg=dm_cfg, module_cfg=m_cfg, datamodule_cls=dm_cls, module_cls=m_cls,

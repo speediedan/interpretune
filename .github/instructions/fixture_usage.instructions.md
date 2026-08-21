@@ -17,7 +17,7 @@ Interpretune uses a sophisticated fixture generation system that creates test fi
 
 ## Critical: TEST_MODULE_REGISTRY Dependency
 
-**IMPORTANT**: Most session fixtures (`it_session`, `it_session_cfg`, `analysis_session`) depend on the `TEST_MODULE_REGISTRY` (`tests/module_registry.py`), which registers the pytest-scale entries from `tests/module_registry.yaml` plus the shipping example entries from the component trees under `src/it_examples/examples/` — so test parametrization sees both key families. (`MODULE_EXAMPLE_REGISTRY` remains the user-facing registry of the example entries, hydrating per-key from those trees, and does not depend on the `tests` package.)
+**IMPORTANT**: Most session fixtures (`it_session`, `it_session_cfg`, `analysis_session`) depend on the `TEST_MODULE_REGISTRY` (`tests/module_registry.py`), which registers the pytest-scale entries from `tests/test_module_registry.yaml` plus the shipping example entries from the component trees under `src/it_examples/examples/` — so test parametrization sees both key families. (`MODULE_EXAMPLE_REGISTRY` remains the user-facing registry of the example entries, hydrating per-key from those trees, and does not depend on the `tests` package.)
 
 ### How Fixture Resolution Works
  - session fixture factory example
@@ -47,7 +47,7 @@ The registry lookup uses the test configuration's attributes to form a lookup ke
 
 ### Implications for New Adapters
 
-**If your adapter combination is not registered in `example_module_registry.yaml`:**
+**If your adapter combination is not registered (component tree or `tests/test_module_registry.yaml`):**
 1. Session fixtures (`it_session`, `it_session_cfg`) will fail with `KeyError`
 2. You must register the adapter combination in the registry YAML
 
@@ -198,7 +198,7 @@ Preferred workflow:
 
 Create a test configuration class in `tests/core/cfg_aliases.py` or similar.
 
-**Pattern 1: Registry-Based Configuration (for configs registered in `example_module_registry.yaml`):**
+**Pattern 1: Registry-Based Configuration (for configs registered in a component tree or `tests/test_module_registry.yaml`):**
 
 Registry entries are looked up using `ModuleRegistry.get()` which accepts:
 - **Tuple**: `(model_src_key, model_cfg_key, phase, adapter_ctx)` - e.g., `("gemma2", "rte_base_test", "test", (Adapter.core, Adapter.circuit_tracer))`
@@ -386,7 +386,7 @@ class TestClassSAELens:
 
 ### Adding example module config registry entries
 
-Below we add an rte task example that composes transformer_lens and circuit_tracer adapters update `example_module_registry.yaml`:
+Below we add an rte task example that composes transformer_lens and circuit_tracer adapters, updating `tests/test_module_registry.yaml`:
 
 ```yaml
 gemma2.rte.circuit_tracer_tl:
@@ -666,7 +666,7 @@ class TestSAELensAdapters:
 ## Summary
 
 1. **Leverage Existing Fixtures**: Check `conftest.py` before creating new fixtures
-2. **Use Module Registry**: Define backend variants in `example_module_registry.yaml`
+2. **Use Module Registry**: Define backend variants in `tests/test_module_registry.yaml`
 3. **Follow Patterns**: Reference existing adapter tests for proven approaches
 4. **Test Appropriately**: Unit tests for logic, integration tests for workflows
 5. **Scope Wisely**: Balance performance (session/module) vs isolation (function)

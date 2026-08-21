@@ -256,6 +256,28 @@ cfg = SAELensConfig(
 )
 ```
 
+**Training SAE parameters requires ``add_saes_on_init=True``.**
+
+``SAELensConfig.add_saes_on_init`` defaults to ``False``, which is correct for analysis and inference.
+If you intend to *optimize* SAE parameters, you must set it to ``True``:
+
+```python
+cfg = SAELensConfig(
+    tl_cfg=ITLensBridgeConfig(model_name="gpt2-small"),
+    sae_cfgs=[SAELensFromPretrainedConfig(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre")],
+    add_saes_on_init=True,   # without this, SAE parameters never reach the optimizer
+)
+```
+
+An optimizer is built over ``model.parameters()`` once, at setup. ``add_saes_on_init=True`` calls
+``model.add_sae(handle)`` during module init — *before* that happens — so the SAE is a persistent
+submodule and its parameters are included. SAEs spliced in temporarily for a forward pass are attached
+and detached around a single call (the ``model.saes(...)`` context manager on the TransformerLens path,
+``_splice_sae`` on the NNsight path), so they are simply absent when the optimizer is constructed.
+
+This fails **silently**: training runs, loss moves because the base model is still learning, and the SAE
+parameters are unchanged at the end. There is no error to notice.
+
 ## Light Registration
 
 Adapters must be registered for light import in `_light_register.py`:
