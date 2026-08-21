@@ -138,6 +138,35 @@ Do:
 Avoid:
 
 - hiding large structured outputs in JSON strings unless there is no better short-term option
+- marking a field `required` when your implementation does not consume it (see below)
+
+#### `required` means "must be present", not "my source code names it"
+
+Only `required: true` fields are enforced, by `AnalysisOp._validate_input_schema` before the
+implementation runs. Fields merged in from a `required_ops` entry are compiled `required: false` and
+skipped -- see NOTE [Inherited Inputs Are Not Obligations].
+
+Enforcement checks **presence on the batch**, never that your code textually references the field.
+That distinction matters, because implementations reach batch fields six different ways and only the
+first is visible to a reader skimming the function:
+
+```
+analysis_batch.field                                   direct attribute
+getattr(analysis_batch, key)                           dynamic key
+resolve_aggregate_input(module, analysis_batch, "...")  scoped by string
+backend.hydrate_graph_from_batch(analysis_batch)       whole batch to a backend
+get_batch_input(batch)                                 helper reads the BatchEncoding
+get_loss_preds_diffs(module, analysis_batch, ...)      helper reads the analysis batch
+```
+
+The last two are the common ones and the easiest to miss: `get_loss_preds_diffs` alone accounts for
+every `label_ids` / `orig_labels` declaration in the bundled ops, and `get_batch_input` for most
+`input` declarations. **Do not conclude a declaration is spurious because the field name does not
+appear in the function body** -- follow anything the implementation hands the batch to.
+
+A detector that scanned only for direct attribute access once reported 22 of ~40 bundled ops as
+over-declaring; a full audit of all 41 `required: true` declarations found exactly one
+(#299). Declare what your op needs present, and let the enforcement be about presence.
 
 ### 2. Keep implementation logic small and composable
 

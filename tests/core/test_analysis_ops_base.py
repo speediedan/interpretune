@@ -2048,3 +2048,50 @@ class TestInheritedInputsAreNotObligations:
         assert op.input_schema["input"].required is True
         with pytest.raises(ValueError, match="Missing required input 'input'"):
             op._validate_input_schema(AnalysisBatch(), None, module=None, batch_idx=0)
+
+
+class TestDeclaredInputsAreConsumed:
+    """Pins for issue #299: a `required: true` input must be one the implementation actually consumes.
+
+    The audit behind these tests checked all 41 `required: true` declarations across the bundled ops and found exactly
+    one that no code path reads. The number matters: an earlier detector that scanned only for direct attribute access
+    reported 22 of ~40 ops as over-declaring, because implementations reach batch fields six different ways and five of
+    them are invisible to a scan (see "Make schemas explicit" in `docs/custom_ops_composition_guide.md`). These pin the
+    outcome, not the detector.
+    """
+
+    @staticmethod
+    def _op(name):
+        import interpretune.analysis  # noqa: F401  (registers the bundled ops)
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        DISPATCHER.load_definitions()
+        return DISPATCHER.get_op(name)
+
+    def test_ablation_attribution_does_not_gate_on_answer_indices(self):
+        """The one real finding.
+
+        `ablation_attribution_impl` reads `answer_logits`, `alive_latents` and `logit_diffs`, and the only
+        helper it hands the batch to (`get_loss_preds_diffs`) reads `label_ids` / `orig_labels`. Nothing reads
+        `answer_indices`, so requiring it gated the op on a field it never uses.
+        """
+        schema = self._op("ablation_attribution").input_schema
+        assert "answer_indices" in schema, "dropping the field would also pass, while changing column derivation"
+        assert schema["answer_indices"].required is False
+
+    def test_fields_reached_only_through_helpers_stay_required(self):
+        """The regression guard, and the reason a scan cannot drive this.
+
+        None of these field names appear in their implementation's body -- each is read by a helper the implementation
+        passes the batch to. Relaxing them because a scan could not see them is precisely the error this issue exists to
+        prevent.
+        """
+        for op_name, field in (
+            ("logit_diffs", "label_ids"),  # via get_loss_preds_diffs
+            ("logit_diffs", "orig_labels"),  # via get_loss_preds_diffs
+            ("model_gradient", "input"),  # via get_batch_input(batch)
+            ("extract_concept_latent_state", "answer_indices"),  # via extract_concept_latent_state_from_cache
+            ("graph_prune", "adjacency_matrix"),  # via backend.hydrate_graph_from_batch
+        ):
+            schema = self._op(op_name).input_schema
+            assert schema[field].required is True, f"{op_name}.{field} is consumed via a helper; keep it required"
