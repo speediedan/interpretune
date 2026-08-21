@@ -449,7 +449,23 @@ def generate_stubs(yaml_paths: Union[Path, List[Path]], output_path: Path) -> No
     # Write to output file
     output_path.parent.mkdir(exist_ok=True, parents=True)
     with open(output_path, "w") as f:
-        f.write("\n".join(stubs))
+        # Emit the protocol import line to match what the stub body actually references. The generator
+        # runs `ruff-format`, which does NOT remove unused imports, but the repo's pre-commit runs
+        # `ruff-check --fix`, which does. Emitting an unused `BaseAnalysisBatchProtocol` therefore
+        # oscillates: the generator adds it, pre-commit strips it on commit, and CI's regeneration adds it
+        # back and reports the committed stub stale. Deciding it here makes generator output identical to
+        # post-pre-commit output, so the freshness check is stable. Since #60, most composites resolve to
+        # `Default`, and `Base` appears only when something genuinely falls back to it.
+        rendered = "\n".join(stubs)
+        # Count rather than search-after-the-import: the import LINE itself contains the name, so any
+        # "does the rest mention it" test is trivially true. One occurrence means only the import has it.
+        if rendered.count("BaseAnalysisBatchProtocol") == 1:
+            rendered = rendered.replace(
+                "from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatchProtocol",
+                "from interpretune.protocol import DefaultAnalysisBatchProtocol",
+                1,
+            )
+        f.write(rendered)
 
     print(f"Stubs generated at {output_path}")
 
