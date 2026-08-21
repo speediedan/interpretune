@@ -88,8 +88,14 @@ ablation_attribution:
     input:
       datasets_dtype: float32
       connected_obj: datamodule
+    # Not consumed by ablation_attribution_impl (#299 audit): the impl reads answer_logits,
+    # alive_latents and logit_diffs, and the only helper it hands the batch to
+    # (get_loss_preds_diffs) reads label_ids/orig_labels. Declared for column derivation, so
+    # `required: false` per NOTE [Inherited Inputs Are Not Obligations] -- keeping it required
+    # gated the op on a field it never reads.
     answer_indices:
       datasets_dtype: int64
+      required: false
     alive_latents:
       datasets_dtype: int64
       per_latent_model_hook: true
