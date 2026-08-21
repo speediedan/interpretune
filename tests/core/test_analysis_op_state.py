@@ -482,6 +482,65 @@ class TestHubImportableParamRestriction:
 class TestOpDefCacheRoundTrip:
     """The generated cache module is Python source, so every new OpDef field needs serializing."""
 
+    # Fields this round-trip deliberately does not exercise, each with the reason it is exempt. An
+    # exemption is a decision someone made; the enumeration below turns forgetting into a failure and
+    # leaves deliberate omission as an explicit entry here (#296).
+    ROUND_TRIP_EXEMPT = {
+        # identity//structural fields the constructor requires, exercised by every other assertion here
+        "name",
+        "description",
+        "implementation",
+        "input_schema",
+        "output_schema",
+        # declaration-site only: aliases are registered as separate dispatcher keys rather than read back
+        # off a restored OpDef, and the params are consumed at instantiation
+        "aliases",
+        "importable_params",
+        "normal_params",
+        "required_ops",
+        "required_capabilities",
+        "composition",
+    }
+
+    def test_opdef_fields_are_enumerated_not_hand_listed(self):
+        """Fail when `OpDef` gains a field this round-trip does not exercise (#296).
+
+        The sibling assertion below pins `CACHE_FORMAT_VERSION` as a literal, which is an ACKNOWLEDGEMENT
+        gate: it fires when someone bumps the version. It does not fire when someone adds a field and
+        forgets to, which is the case the bump exists to prevent -- measured, an unserialized new field
+        with no bump passes every assertion in this file.
+
+        Enumerating from the dataclass closes that: the test names the field you added rather than
+        silently not covering it. Adding a field therefore forces a choice -- serialize it and bump, or
+        exempt it here with a reason -- instead of allowing the default of neither.
+        """
+        from dataclasses import fields
+
+        from interpretune.analysis.ops.compiler.cache_manager import OpDef
+
+        declared = {f.name for f in fields(OpDef)}
+        uncovered = declared - self.ROUND_TRIP_EXEMPT - self._round_trip_covered()
+        assert not uncovered, (
+            f"OpDef gained {sorted(uncovered)} without round-trip coverage. Serialize the field and bump "
+            f"CACHE_FORMAT_VERSION with a `# N:` rationale line, or add it to ROUND_TRIP_EXEMPT with the "
+            f"reason it does not need to survive the cache. Do not simply add it to the exempt set to get "
+            f"green -- a field that is serialized but untested is how a stale cache deserializes wrong."
+        )
+
+    @staticmethod
+    def _round_trip_covered() -> set[str]:
+        """Fields `test_all_new_fields_survive_serialization` actually asserts on, kept beside it."""
+        return {
+            "op_state",
+            "source",
+            "collection_name",
+            "collection_version",
+            "uses_default_hooks",
+            "requires_grad",
+            "per_latent_preds",
+            "protocol_cls",
+        }
+
     def test_all_new_fields_survive_serialization(self):
         from interpretune.analysis.ops.base import ColCfg, OpSchema
         from interpretune.analysis.ops.compiler.cache_manager import (
