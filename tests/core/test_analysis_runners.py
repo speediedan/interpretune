@@ -22,7 +22,7 @@ class TestAnalysisRunner:
         [
             pytest.param(
                 "get_it_session__sl_ht_gpt2_analysis__setup",
-                {"analysis_cfgs": [AnalysisCfg(output_schema=it.sae_correct_acts)]},
+                {"analysis_cfgs": [AnalysisCfg(output_schema=it.latent_correct_acts)]},
             ),
             # we need to set ignore_manual=True at both the analysis_cfg and the test_cfg levels since we always want
             # test_cfg to override nested configs (analysis_cfg here) but also want to leverage an existing

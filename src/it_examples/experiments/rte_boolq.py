@@ -280,7 +280,7 @@ class RTEBoolqSteps:
         op_kwargs = {"module": self, "batch": batch, "batch_idx": batch_idx}
         analysis_batch = it.model_fwd_w_cache_latent_models(analysis_batch=analysis_batch, **op_kwargs)  # type: ignore[assignment]  # protocol compatibility
         analysis_batch = it.logit_diffs_cache(analysis_batch=analysis_batch, **op_kwargs)  # type: ignore[assignment]  # protocol compatibility
-        analysis_batch = it.sae_correct_acts(analysis_batch=analysis_batch, **op_kwargs)  # type: ignore[assignment]  # protocol compatibility
+        analysis_batch = it.latent_correct_acts(analysis_batch=analysis_batch, **op_kwargs)  # type: ignore[assignment]  # protocol compatibility
 
         # note, there is an equivalent existing composite op for the decomposed version above:
         # analysis_batch = it.logit_diffs_sae(**op_kwargs)
