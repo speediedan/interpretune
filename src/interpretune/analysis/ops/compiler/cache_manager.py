@@ -25,7 +25,10 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 #    Obligations] in schema_compiler.py). The cache key covers YAML content and the interpretune version but
 #    NOT the compiler source, so without this bump an existing cache keeps serving the previous requiredness
 #    and the change would silently not take effect.
-CACHE_FORMAT_VERSION = "5"
+# 6: adds `protocol_cls` (a user-defined BaseAnalysisBatchProtocol subclass, declared as an import path)
+#    to OpDef. A serialized-shape change, so an existing cache would otherwise keep serving OpDefs without
+#    the field and a declaring op would silently fall back to the default protocol.
+CACHE_FORMAT_VERSION = "6"
 
 
 @dataclass(frozen=True)
@@ -56,6 +59,11 @@ class OpDef:
     collection_version: str | None = None
     # Behavioral traits. These replace name-based special cases: framework code asks what an op
     # NEEDS, so hub and local ops can declare the same things bundled ops do.
+    # Import path of a BaseAnalysisBatchProtocol subclass this op's batches conform to (#56). A STRING
+    # rather than a class so an OpDef stays serializable into the generated cache module and a YAML author
+    # can declare one without importing it; resolution is the dispatcher's job, and is trust-gated for hub
+    # ops exactly as `importable_params` is.
+    protocol_cls: str | None = None
     uses_default_hooks: bool = False  # install the default activation-cache fwd/bwd hooks
     requires_grad: bool = False  # run the analysis loop with grad enabled
     per_latent_preds: bool = False  # preds are per-latent-model and join across SAEs before scoring
@@ -78,6 +86,7 @@ class OpDef:
             "source": self.source,
             "collection_name": self.collection_name,
             "collection_version": self.collection_version,
+            "protocol_cls": self.protocol_cls,
             "uses_default_hooks": self.uses_default_hooks,
             "requires_grad": self.requires_grad,
             "per_latent_preds": self.per_latent_preds,
@@ -407,6 +416,8 @@ class OpDefinitionsCacheManager:
             fields.append(f"op_state={self._serialize_op_state(op_def.op_state)}")
         if op_def.source != "bundled":
             fields.append(f"source={op_def.source!r}")
+        if op_def.protocol_cls is not None:
+            fields.append(f"protocol_cls={op_def.protocol_cls!r}")
         for collection_field in ("collection_name", "collection_version"):
             if (value := getattr(op_def, collection_field)) is not None:
                 fields.append(f"{collection_field}={value!r}")

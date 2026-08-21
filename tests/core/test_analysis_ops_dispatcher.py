@@ -2636,3 +2636,102 @@ dependent_op:
             # Verify the helper function was added to impl_params
             assert "helper_func" in op.impl_params
             assert op.impl_params["helper_func"] is mock_helper
+
+
+class TestUserDefinedBatchProtocols:
+    """#56: an op may declare a `BaseAnalysisBatchProtocol` subclass its batches conform to.
+
+    Declared as an IMPORT PATH on `OpDef` rather than a class, so a definition stays serializable into the
+    generated cache module and a YAML author can name one without importing it. Resolution is the
+    dispatcher's job and is trust-gated for hub ops on the same footing as `importable_params`.
+    """
+
+    @staticmethod
+    def _op_def(**overrides):
+        from interpretune.analysis.ops.base import OpSchema
+        from interpretune.analysis.ops.compiler.cache_manager import OpDef
+
+        kwargs = dict(
+            name="proto_op",
+            description="",
+            implementation="module.fn",
+            input_schema=OpSchema({}),
+            output_schema=OpSchema({}),
+        )
+        kwargs.update(overrides)
+        return OpDef(**kwargs)
+
+    def test_declared_protocol_resolves(self):
+        from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+        from interpretune.protocol import DefaultAnalysisBatchProtocol
+
+        dispatcher = AnalysisOpDispatcher()
+        resolved = dispatcher._resolve_protocol_cls(
+            "proto_op", self._op_def(protocol_cls="interpretune.protocol.DefaultAnalysisBatchProtocol")
+        )
+        assert resolved is DefaultAnalysisBatchProtocol
+
+    def test_undeclared_resolves_to_none_meaning_the_default(self):
+        from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+        assert AnalysisOpDispatcher()._resolve_protocol_cls("proto_op", self._op_def()) is None
+
+    def test_non_protocol_target_fails_soft(self, recwarn):
+        """A protocol describes a batch's shape, so an unusable one degrades to the default rather than taking down
+        the load.
+
+        Uses an MRO check because the base is a non-runtime_checkable `Protocol`:
+        `issubclass` against it raises TypeError rather than returning False.
+        """
+        from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+        resolved = AnalysisOpDispatcher()._resolve_protocol_cls("proto_op", self._op_def(protocol_cls="builtins.str"))
+        assert resolved is None
+        assert any("not a BaseAnalysisBatchProtocol" in str(w.message) for w in recwarn.list)
+
+    def test_unimportable_target_fails_soft(self, recwarn):
+        from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+        resolved = AnalysisOpDispatcher()._resolve_protocol_cls(
+            "proto_op", self._op_def(protocol_cls="no_such_module.NotReal")
+        )
+        assert resolved is None
+        assert any("Could not import protocol_cls" in str(w.message) for w in recwarn.list)
+
+    def test_hub_op_may_not_bind_a_protocol_to_interpretune_internals(self, recwarn):
+        """Same gate as `importable_params`, for the same reason: a declared protocol is an arbitrary class import,
+        so a hub collection pointing one at our internals would resolve our code on its behalf."""
+        from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+        resolved = AnalysisOpDispatcher()._resolve_protocol_cls(
+            "proto_op",
+            self._op_def(protocol_cls="interpretune.protocol.DefaultAnalysisBatchProtocol", source="hub:u.r"),
+        )
+        assert resolved is None
+        assert any("interpretune-internal" in str(w.message) for w in recwarn.list)
+
+    def test_declaration_survives_serialization_both_ways(self):
+        """It must reach the generated cache module, or a cached op silently loses its protocol."""
+        op_def = self._op_def(protocol_cls="interpretune.protocol.DefaultAnalysisBatchProtocol")
+        # to_dict is the metadata path; repr is what is written into the generated cache MODULE
+        assert op_def.to_dict()["protocol_cls"] == "interpretune.protocol.DefaultAnalysisBatchProtocol"
+        assert "protocol_cls='interpretune.protocol.DefaultAnalysisBatchProtocol'" in repr(op_def)
+
+    def test_yaml_declaration_reaches_the_op_def(self, tmp_path):
+        """The YAML key is what an op author actually writes."""
+        from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+
+        dispatcher = AnalysisOpDispatcher()
+        raw = {
+            "proto_op": {
+                "description": "declares a protocol",
+                "implementation": "module.fn",
+                "input_schema": {},
+                "output_schema": {},
+                "protocol_cls": "interpretune.protocol.DefaultAnalysisBatchProtocol",
+            }
+        }
+        dispatcher._convert_raw_definitions_to_opdefs(raw)
+        assert (
+            dispatcher._op_definitions["proto_op"].protocol_cls == "interpretune.protocol.DefaultAnalysisBatchProtocol"
+        )
