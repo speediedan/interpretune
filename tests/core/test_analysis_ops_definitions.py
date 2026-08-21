@@ -596,8 +596,8 @@ class TestGradientOperations:
             with pytest.raises(AssertionError, match="alive_latents required for ablation op"):
                 model_ablation_impl(mock_module, analysis_batch_error, mock_batch, 0)
 
-    def test_sae_correct_acts_impl_scalar_and_error_cases(self, mock_module_base):
-        """Test sae_correct_acts_impl function with scalar logit_diffs and required input validation.
+    def test_latent_correct_acts_impl_scalar_and_error_cases(self, mock_module_base):
+        """Test latent_correct_acts_impl function with scalar logit_diffs and required input validation.
 
         This test specifically targets:
         1. The case where logit_diffs is a scalar (dim=0) and needs to be unsqueezed
@@ -610,7 +610,7 @@ class TestGradientOperations:
         mock_batch = {"input": torch.ones(1, 5)}
 
         # Import the function to be tested
-        from interpretune.analysis.ops.bundled.sae.sae_ops import sae_correct_acts_impl
+        from interpretune.analysis.ops.bundled.sae.sae_ops import latent_correct_acts_impl
 
         # Test missing required inputs (ValueError case)
         incomplete_batch = AnalysisBatch(
@@ -618,8 +618,9 @@ class TestGradientOperations:
             logit_diffs=torch.tensor(0.5)  # Only provide logit_diffs
         )
 
-        with pytest.raises(ValueError, match="Missing required input 'answer_indices' for TestModule.sae_correct_acts"):
-            sae_correct_acts_impl(mock_module, incomplete_batch, mock_batch, 0)
+        expected_msg = "Missing required input 'answer_indices' for TestModule.latent_correct_acts"
+        with pytest.raises(ValueError, match=expected_msg):
+            latent_correct_acts_impl(mock_module, incomplete_batch, mock_batch, 0)
 
         incomplete_batch_2 = AnalysisBatch(
             # Missing cache
@@ -627,8 +628,8 @@ class TestGradientOperations:
             answer_indices=torch.tensor([2]),
         )
 
-        with pytest.raises(ValueError, match="Missing required input 'cache' for TestModule.sae_correct_acts"):
-            sae_correct_acts_impl(mock_module, incomplete_batch_2, mock_batch, 0)
+        with pytest.raises(ValueError, match="Missing required input 'cache' for TestModule.latent_correct_acts"):
+            latent_correct_acts_impl(mock_module, incomplete_batch_2, mock_batch, 0)
 
         # Now test the scalar case - prepare a complete batch with scalar logit_diffs
         # Create a scalar tensor (dimension 0)
@@ -655,7 +656,7 @@ class TestGradientOperations:
         # mock_module.analysis_cfg.names_filter = lambda x: True
         mock_module.analysis_cfg.names_filter = lambda x: True if x != "no_match" else False
         # Run the function
-        result_batch = sae_correct_acts_impl(mock_module, analysis_batch, mock_batch, 0)
+        result_batch = latent_correct_acts_impl(mock_module, analysis_batch, mock_batch, 0)
 
         # Verify the scalar logit_diffs was properly handled
         # The function should have created correct_activations for hook1 since logit_diff is positive
@@ -672,7 +673,7 @@ class TestGradientOperations:
         assert negative_scalar_logit_diff.dim() == 0, "Test setup requires a scalar tensor"
 
         analysis_batch.logit_diffs = negative_scalar_logit_diff
-        result_batch = sae_correct_acts_impl(mock_module, analysis_batch, mock_batch, 0)
+        result_batch = latent_correct_acts_impl(mock_module, analysis_batch, mock_batch, 0)
 
         # Should still have correct_activations field but the tensors should be empty
         assert hasattr(result_batch, "correct_activations")
@@ -943,7 +944,7 @@ SERIALIZATION_TEST_CONFIGS = (
         alias="model_fwd_w_cache_latent_models.logit_diffs_cache",
         cfg=OpTestConfig(target_op=[it.model_fwd_w_cache_latent_models, it.logit_diffs_cache]),
     ),
-    BaseAugTest(alias="sae_correct_acts", cfg=OpTestConfig(target_op=it.sae_correct_acts)),
+    BaseAugTest(alias="latent_correct_acts", cfg=OpTestConfig(target_op=it.latent_correct_acts)),
     BaseAugTest(alias="ablation_attribution", cfg=OpTestConfig(target_op=it.ablation_attribution)),
     BaseAugTest(alias="gradient_attribution", cfg=OpTestConfig(target_op=it.gradient_attribution)),
     BaseAugTest(alias="logit_diffs_attr_ablation", cfg=OpTestConfig(target_op=it.logit_diffs_attr_ablation)),

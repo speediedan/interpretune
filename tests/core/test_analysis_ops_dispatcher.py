@@ -166,7 +166,8 @@ test_op:
         op = DISPATCHER._instantiate_op("logit_diffs_sae")
         assert isinstance(op, CompositeAnalysisOp)
         assert op.name == "logit_diffs_sae"
-        assert op.composition_name == "labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.sae_correct_acts"
+        expected_composition = "labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.latent_correct_acts"
+        assert op.composition_name == expected_composition
         assert op.ctx_key == "logit_diffs_sae"
         assert len(op.composition) == 4
 
@@ -387,7 +388,7 @@ test_op:
             "model_forward",
             "model_fwd_w_cache_latent_models",
             "logit_diffs",
-            "sae_correct_acts",
+            "latent_correct_acts",
             "logit_diffs_sae",
             "logit_diffs_attr_grad",
         ],

@@ -157,15 +157,21 @@ def model_ablation_impl(
     return analysis_batch
 
 
-def sae_correct_acts_impl(
+def latent_correct_acts_impl(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:
-    """Implementation for computing correct activations from SAE outputs."""
+    """Implementation for computing correct activations from latent-model activations.
+
+    Latent-model-agnostic despite living in the `sae` op family: it reads the activation `cache`,
+    `alive_latents`, `answer_indices` and `logit_diffs` off the batch and filters by
+    `analysis_cfg.names_filter`. Nothing here is SAE-specific, which is why it was renamed from
+    `sae_correct_acts` (latent-model terminology normalization, #227).
+    """
     # Validate required inputs # TODO: refactor all required input checks to use shared AnalysisOp or Dispatcher logic
     required_inputs = ["logit_diffs", "answer_indices", "cache"]
     for key in required_inputs:
         if not hasattr(analysis_batch, key) or getattr(analysis_batch, key) is None:
-            raise ValueError(f"Missing required input '{key}' for {module.__class__.__name__}.sae_correct_acts")
+            raise ValueError(f"Missing required input '{key}' for {module.__class__.__name__}.latent_correct_acts")
 
     # Extract required data from analysis_batch
     cache = analysis_batch.cache

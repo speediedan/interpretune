@@ -359,6 +359,21 @@ def labels_to_ids(
     """
     ...
 
+def latent_correct_acts(
+    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
+    """Compute correct activations from the latent-model activation cache
+
+    Input Schema:
+        logit_diffs (float32)
+        answer_indices (int64)
+        cache (object)
+
+    Output Schema:
+        correct_activations (float32)
+    """
+    ...
+
 def logit_diffs(
     module: torch.nn.Module,
     analysis_batch: DefaultAnalysisBatchProtocol,
@@ -545,21 +560,6 @@ def model_gradient(
     """
     ...
 
-def sae_correct_acts(
-    module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
-) -> DefaultAnalysisBatchProtocol:
-    """Compute correct activations from SAE cache
-
-    Input Schema:
-        logit_diffs (float32)
-        answer_indices (int64)
-        cache (object)
-
-    Output Schema:
-        correct_activations (float32)
-    """
-    ...
-
 # Composite operations
 
 def attribution_from_concept(
@@ -620,6 +620,6 @@ def logit_diffs_sae(
     module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
 ) -> BaseAnalysisBatchProtocol:
     """Composition of operations:
-    labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.sae_correct_acts
+    labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.latent_correct_acts
     """
     ...

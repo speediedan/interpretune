@@ -79,9 +79,9 @@ model_ablation:
       sequence_type: false
       array_shape: [batch_size, vocab_size]
 
-sae_correct_acts:
-  description: Compute correct activations from SAE cache
-  implementation: interpretune.analysis.ops.bundled.sae.sae_ops.sae_correct_acts_impl
+latent_correct_acts:
+  description: Compute correct activations from the latent-model activation cache
+  implementation: interpretune.analysis.ops.bundled.sae.sae_ops.latent_correct_acts_impl
   required_ops: [get_alive_latents]
   aliases: []
   input_schema:
