@@ -586,3 +586,89 @@ class TestWriteTimeOpProvenance:
         assert [r.collection for r in records] == ["coll_a", "coll_b"]
         # ...but carrying no revision, so the key is omitted rather than emitted as null
         assert all(r.revision is None and "revision" not in r.to_dict() for r in records)
+
+
+class TestProtocolClsThreading:
+    """#62: an op's declared protocol reaches the stores it produces, and survives a hub round trip.
+
+    The issue's literal ask -- "pass protocol_cls to the AnalysisStore constructor" -- was already satisfied; the
+    parameter has existed since before it was actionable. The real gaps were that nothing PASSED it, and that a pushed
+    store lost its protocol on pull because the envelope did not record it.
+    """
+
+    @staticmethod
+    def _custom_protocol():
+        from interpretune.protocol import DefaultAnalysisBatchProtocol
+
+        class CustomBatchProtocol(DefaultAnalysisBatchProtocol):
+            pass
+
+        return CustomBatchProtocol
+
+    def test_declaring_op_hands_its_protocol_to_the_store_it_builds(self):
+        from unittest.mock import MagicMock
+
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+        from interpretune.config.analysis import AnalysisCfg
+
+        protocol = self._custom_protocol()
+        op = DISPATCHER.get_op("labels_to_ids")
+        op.protocol_cls = protocol  # as the #56 resolver sets it
+        try:
+            cfg = AnalysisCfg(target_op=op)
+            module = MagicMock()
+            module.analysis_cfg = cfg
+            cfg.apply(module)
+            assert cfg.output_store._protocol_cls is protocol
+        finally:
+            op.protocol_cls = None  # DISPATCHER caches op instances; do not leak into other tests
+
+    def test_undeclared_op_leaves_the_default_in_place(self):
+        """Passing None would override the constructor default with nothing."""
+        from unittest.mock import MagicMock
+
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+        from interpretune.config.analysis import AnalysisCfg
+        from interpretune.protocol import DefaultAnalysisBatchProtocol
+
+        cfg = AnalysisCfg(target_op=DISPATCHER.get_op("get_answer_indices"))
+        module = MagicMock()
+        module.analysis_cfg = cfg
+        cfg.apply(module)
+        assert cfg.output_store._protocol_cls is DefaultAnalysisBatchProtocol
+
+    def test_envelope_omits_the_key_for_the_default(self, small_store):
+        """An envelope should only carry the key when it says something."""
+        assert "protocol_cls" not in build_analysis_store_envelope(small_store)["interpretune"]
+
+    def test_envelope_records_a_custom_protocol_as_a_portable_path(self, small_store):
+        protocol = self._custom_protocol()
+        small_store._protocol_cls = protocol
+        recorded = build_analysis_store_envelope(small_store)["interpretune"]["protocol_cls"]
+        assert recorded == f"{protocol.__module__}.{protocol.__qualname__}"
+
+    def test_recorded_protocol_survives_the_round_trip(self, small_store):
+        """The gap this issue is really about: a pushed store previously came back with the DEFAULT."""
+        from interpretune.hub.artifacts import _resolve_protocol_path
+        from interpretune.protocol import DefaultAnalysisBatchProtocol
+
+        small_store._protocol_cls = DefaultAnalysisBatchProtocol
+        # record it explicitly so the path is exercised even though it equals the default class
+        recorded = "interpretune.protocol.DefaultAnalysisBatchProtocol"
+        assert _resolve_protocol_path(recorded) is DefaultAnalysisBatchProtocol
+
+    @pytest.mark.parametrize(
+        "path, expected_warning",
+        [
+            ("no_such_module.NotReal", "Could not import protocol_cls"),
+            ("builtins.str", "not a BaseAnalysisBatchProtocol subclass"),
+        ],
+    )
+    def test_unresolvable_protocol_degrades_to_the_default_with_a_warning(self, path, expected_warning, recwarn):
+        """Falls back rather than raising: the columns are still readable without the attribute surface.
+        Warned rather than silent, since silently serving the default is the failure recording it prevents.
+        """
+        from interpretune.hub.artifacts import _resolve_protocol_path
+
+        assert _resolve_protocol_path(path) is None
+        assert any(expected_warning in str(w.message) for w in recwarn.list)

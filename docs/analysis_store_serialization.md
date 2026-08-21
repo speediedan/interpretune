@@ -138,6 +138,26 @@ Two blocks with opposite rules:
 - `provenance` (including `content_fingerprint`) is refreshed freely, so consumers get change
   detection without identity churn.
 
+### What the `interpretune` block re-attaches
+
+Alongside those two, the `interpretune` block carries what a reader needs to rebuild the store's
+*reading* surface rather than its identity:
+
+| key | purpose | omitted when |
+| --- | --- | --- |
+| `col_cfg` | the serialized per-column config the formatter is re-attached from | never |
+| `analysis_backend` | a registered backend **name**, not an instance | no backend attached |
+| `protocol_cls` | the batch protocol's import path, when an op declared a non-default one | it is the default |
+
+All three record a **portable reference resolved on the way back**, never a live object. And all three
+are recorded at write time rather than reconstructed at read time, for the reason op-collection
+provenance is: what a name resolves to later is not necessarily what produced the store.
+
+`protocol_cls` closes a gap where a store pushed with a custom protocol came back with the default —
+the columns were intact, but the attribute surface the protocol exists to provide was silently absent.
+An unresolvable protocol now falls back to the default **with a warning** rather than silently, since
+silently serving the default is exactly the failure recording it is meant to prevent.
+
 ### Schema versioning policy
 
 Hub artifacts outlive the code that wrote them, and the publisher is usually not the reader. That
