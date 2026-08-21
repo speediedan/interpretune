@@ -340,10 +340,9 @@ flags used by `tests/conftest.py`, `tests/analysis_resource_utils.py`, and the c
 parser for per-test / per-fixture / per-GPU logging.
 
 If semantic concept-direction intervention parity drifts unexpectedly, use the normal gate in
-`tests/core/test_analysis_backend_parity.py` first. For deeper upstream sanity checking, run
-`tests/upstream_parity/extract_upstream_ct_semantic_reference.py` and consult `tests/upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md`
-for the current three-way upstream/native/op reference snapshot. Keep this as a manual debugging
-tool rather than part of the regular test suite.
+`tests/core/test_analysis_backend_parity.py`. The deeper three-way upstream/native/op reference
+snapshot that used to live under `tests/upstream_parity/` is gone from the tree and nothing replaced
+it, so the normal gate is the whole story here now.
 
 ## Serializing GPU work on a shared host
 
@@ -641,5 +640,5 @@ The following files in `.github/instructions/` provide in-depth guidance for spe
 | `analysis_injection.instructions.md` | `src/it_examples/**` | Modifying runtime hook injection for upstream package analysis (config YAML, analysis points, patcher logic) |
 | `developing_adapters.instructions.md` | `src/interpretune/adapters/**` | Creating or modifying adapters — covers protocol enum, config, MRO composition order, registration checklist |
 | `fixture_usage.instructions.md` | `tests/**` | Writing or debugging test fixtures — covers fixture types/phases, MODULE_EXAMPLE_REGISTRY dependency, parameterization patterns |
-| `registering_example_modules.instructions.md` | `example_module_registry.yaml` | Adding adapter combinations to the central registry — registry key patterns, config structure, verification steps |
+| `registering_example_modules.instructions.md` | `src/it_examples/examples/*/it_component.yaml`, `tests/test_module_registry.yaml` | Adding adapter combinations to the central registry — registry key patterns, config structure, verification steps |
 | `updating_expected_results.instructions.md` | `tests/parity_acceptance/**` | Updating expected test baselines — state logging, memory footprint YAML, profiling update script |
