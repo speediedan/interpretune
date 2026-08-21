@@ -330,10 +330,11 @@ flags used by `tests/conftest.py`, `tests/analysis_resource_utils.py`, and the c
 parser for per-test / per-fixture / per-GPU logging.
 
 For semantic concept-direction intervention drift debugging, use the regular parity gate in
-`tests/core/test_analysis_backend_parity.py`. The older manual upstream workflow
-(`extract_upstream_ct_semantic_reference.py` + `UPSTREAM_CT_PARITY_DEBUG.md`) was archived to private
-notes 2026-07-07, superseded by that automated suite; see `tests/README.md` for the three-anchor
-pattern that replaced it.
+`tests/core/test_analysis_backend_parity.py`. The manual upstream sanity-check workflow that used to
+live under `tests/upstream_parity/` (`extract_upstream_ct_semantic_reference.py` +
+`UPSTREAM_CT_PARITY_DEBUG.md`) was archived to private notes 2026-07-07, superseded by that automated
+suite. Consult the archived notes if a manual three-way upstream/native/op replay is ever needed; see
+`tests/README.md` for the three-anchor pattern that replaced it.
 
 **Test timing:** Most tests run quickly (<30s), but some integration tests may take 1-2 minutes.
 
