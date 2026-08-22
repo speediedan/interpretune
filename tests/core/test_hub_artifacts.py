@@ -142,6 +142,34 @@ class TestSchemaVersionPolicy:
         envelope["identity"]["future_identity_field"] = "tolerated"
         validate_artifact_envelope(envelope)
 
+    @pytest.mark.parametrize("version", range(ARTIFACT_SCHEMA_MIN_READABLE, ARTIFACT_SCHEMA_VERSION + 1))
+    def test_every_readable_version_has_a_frozen_fixture(self, version):
+        """Make #283's deferred work fire at the bump instead of relying on someone reading the issue.
+
+        #283 says the per-version fixtures and reader-behavior matrix should land IN the change that bumps
+        `ARTIFACT_SCHEMA_VERSION`, "not after it". Nothing enforced that. The sibling test below pins
+        schema 1 by name, so a bump to 2 leaves it passing untouched -- schema 1 is still inside the
+        window -- while no schema-2 fixture is ever created and the deferred work silently does not happen.
+
+        Deriving the cases from the window closes it structurally rather than by acknowledgement: bumping
+        adds a case that fails until its fixture exists, and unlike a pinned literal it cannot be satisfied
+        by editing a number. Every version a reader must accept therefore has one artifact that cannot
+        drift with the writer.
+
+        Today the window is [1, 1] and this is a single passing case. That is the point -- it costs nothing
+        now and cannot be forgotten later.
+        """
+        fixture = Path(__file__).parent / "fixtures" / f"it_artifact_schema{version}.json"
+        assert fixture.is_file(), (
+            f"schema {version} is inside the readable window [{ARTIFACT_SCHEMA_MIN_READABLE}, "
+            f"{ARTIFACT_SCHEMA_VERSION}] but has no frozen fixture at tests/core/fixtures/{fixture.name}. "
+            "Freeze one PRODUCED BY THE WRITER at that version (not hand-written -- a hand-written envelope "
+            "tests the validator against a string, which is the drift the fixture exists to prevent), and "
+            "do the rest of the deferred work in the same change. See interpretune#283."
+        )
+        envelope = validate_artifact_envelope(json.loads(fixture.read_text(encoding="utf-8")), source=str(fixture))
+        assert envelope["schema"] == version
+
     def test_frozen_schema1_envelope_still_reads(self):
         """A literal v1 envelope pinned in-tree: what actually stops a silent mandatory-field change.
 
