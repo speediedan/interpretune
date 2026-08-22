@@ -32,12 +32,13 @@ These artifacts make it possible to compare:
 4. Compare the pre-intervention surface first: input tokens, graph targets, selected feature set, adjacency matrix, baseline logits, and baseline activation cache.
 5. Only inspect intervention deltas after the pre-intervention surface matches closely enough to rule out session-construction drift.
 
-The current OQI GPU validation command is:
+The OQI GPU validation run uses the standard launcher against a maintainer-local single-feature
+debug config (not carried in this tree):
 
 ```bash
 python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
 	--notebook src/it_examples/experiments/notebook/concept_direction/concept_direction_template.ipynb \
-	src/it_examples/experiments/notebook/concept_direction/archived_cfgs/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60.yaml
+	<path-to-your-single-feature-debug-config>.yaml
 ```
 
 ## Current Regression Guard
