@@ -146,3 +146,60 @@ class TestCollectionStubs:
         registry = {"u.r.op": canonical, "op": canonical, "u.r.some_alias": canonical}
         grouped = stub_script.group_definitions_by_collection(registry)
         assert grouped == {"u.r": {"u.r.op": canonical}}
+
+
+class TestCompositeProtocolResolution:
+    """#60: a composite's stub names the protocol it can actually justify.
+
+    Composites had no implementation to introspect, so the generator hardcoded the BASE protocol while
+    simple ops were introspected into the richer `Default`. Two better answers exist now: a declared
+    `protocol_cls` (#56), or the protocol every constituent agrees on.
+    """
+
+    @staticmethod
+    def _defs(**protocol_by_op):
+        """Constituent definitions; a value of None means the op declares no protocol."""
+        return {
+            name: ({"protocol_cls": declared} if declared else {"description": "x"})
+            for name, declared in protocol_by_op.items()
+        }
+
+    def test_declared_protocol_wins_over_inference(self, stub_script):
+        """An explicit answer beats an inferred one, even when constituents would agree on another."""
+        op_def = {"composition": ["a", "b"], "protocol_cls": "pkg.mod.MyProtocol"}
+        defs = self._defs(a=None, b=None)  # both would infer Default
+        assert stub_script.composite_protocol_name(op_def, defs) == "MyProtocol"
+
+    def test_constituents_that_all_declare_nothing_infer_default(self, stub_script):
+        op_def = {"composition": ["a", "b", "c"]}
+        assert stub_script.composite_protocol_name(op_def, self._defs(a=None, b=None, c=None)) == (
+            "DefaultAnalysisBatchProtocol"
+        )
+
+    def test_constituents_agreeing_on_a_declared_protocol(self, stub_script):
+        op_def = {"composition": ["a", "b"]}
+        defs = self._defs(a="pkg.mod.Shared", b="other.mod.Shared")
+        assert stub_script.composite_protocol_name(op_def, defs) == "Shared"
+
+    def test_disagreeing_constituents_fall_back_to_base(self, stub_script):
+        """Naming a protocol the batch may not satisfy is worse than naming the weaker one it does."""
+        op_def = {"composition": ["a", "b"]}
+        defs = self._defs(a="pkg.mod.One", b=None)  # One vs Default
+        assert stub_script.composite_protocol_name(op_def, defs) == "BaseAnalysisBatchProtocol"
+
+    def test_unresolvable_constituent_falls_back_rather_than_guessing_for_the_rest(self, stub_script):
+        op_def = {"composition": ["a", "missing"]}
+        assert stub_script.composite_protocol_name(op_def, self._defs(a=None)) == "BaseAnalysisBatchProtocol"
+
+    @pytest.mark.parametrize("definitions", [None, {}])
+    def test_no_definitions_available_falls_back(self, stub_script, definitions):
+        op_def = {"composition": ["a"]}
+        expected = "BaseAnalysisBatchProtocol"
+        assert stub_script.composite_protocol_name(op_def, definitions) == expected
+
+    def test_dotted_composition_string_is_accepted(self, stub_script):
+        """`composition` may arrive as a dotted string rather than a list."""
+        op_def = {"composition": "a.b"}
+        assert stub_script.composite_protocol_name(op_def, self._defs(a=None, b=None)) == (
+            "DefaultAnalysisBatchProtocol"
+        )

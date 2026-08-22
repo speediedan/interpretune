@@ -288,23 +288,64 @@ def generate_operation_stub(
         return yaml_derived_stub(op_name, op_def, f"{op_def.get('implementation')} not importable: {e}")
 
 
-def generate_composition_stub(op_name: str, op_def: Dict[str, Any]) -> str:
+def composite_protocol_name(op_def: Dict[str, Any], definitions: Dict[str, Any] | None = None) -> str:
+    """The protocol a composite's stub should name, in descending order of what is actually known (#60).
+
+    A composite has no single implementation to introspect, which is why this was hardcoded to the base
+    protocol. Two better answers exist now:
+
+    1. a **declared** ``protocol_cls`` (#56) -- an explicit answer beats an inferred one;
+    2. the protocol its constituents agree on -- they are the ops that actually populate the batch, so if
+       every one of them names the same protocol the composite returns that too.
+
+    Falls back to ``BaseAnalysisBatchProtocol`` when the constituents disagree or cannot be resolved.
+    Deliberately does NOT assert ``Default`` everywhere: naming a protocol the batch may not satisfy is
+    worse than naming the weaker one that it certainly does.
+    """
+    if declared := op_def.get("protocol_cls"):
+        return str(declared).rpartition(".")[2]
+
+    composition = op_def.get("composition") or []
+    if isinstance(composition, str):
+        composition = composition.split(".")
+    if not composition or definitions is None:
+        return "BaseAnalysisBatchProtocol"
+
+    named = set()
+    for member in composition:
+        member_def = definitions.get(member)
+        if member_def is None:
+            return "BaseAnalysisBatchProtocol"  # unresolvable constituent: do not guess for the whole
+        if member_declared := member_def.get("protocol_cls"):
+            named.add(str(member_declared).rpartition(".")[2])
+        else:
+            named.add("DefaultAnalysisBatchProtocol")
+    return named.pop() if len(named) == 1 else "BaseAnalysisBatchProtocol"
+
+
+def generate_composition_stub(op_name: str, op_def: Dict[str, Any], definitions: Dict[str, Any] | None = None) -> str:
     """Generate type stub for a composite operation."""
     composition = op_def.get("composition", "")
     composition_str = composition if isinstance(composition, str) else ".".join(composition)
+    protocol = composite_protocol_name(op_def, definitions)
 
-    # Create a standardized signature for composite operations
     signature = wrap_signature(
         op_name,
-        ["module", "analysis_batch: Optional[BaseAnalysisBatchProtocol]", "batch", "batch_idx: int"],
-        "BaseAnalysisBatchProtocol",
+        ["module", f"analysis_batch: Optional[{protocol}]", "batch", "batch_idx: int"],
+        protocol,
     )
 
-    # Create docstring
-    doc = f'    """Composition of operations:\n    {composition_str}'
+    # A composite's compiled schemas are already merged onto its OpDef, so it can document the same
+    # Input/Output sections a simple op gets rather than only naming its constituents. `format_docstring`
+    # is the same renderer the introspected path uses, so the two stay consistent by construction.
+    description = f"Composition of operations:\n    {composition_str}"
     if "description" in op_def:
-        doc += f"\n\n    {op_def['description']}"
-    doc += '\n    """'
+        description += f"\n\n    {op_def['description']}"
+    doc = "    " + format_docstring(
+        description,
+        op_def.get("input_schema", {}) or {},
+        op_def.get("output_schema", {}) or {},
+    )
 
     stub = f"{signature}:\n{doc}\n    ...\n\n"
 
@@ -402,13 +443,29 @@ def generate_stubs(yaml_paths: Union[Path, List[Path]], output_path: Path) -> No
         stubs.append("# Composite operations\n")
         comp_ops = yaml_content["composite_operations"]
         for op_name, op_def in sorted(comp_ops.items()):
-            op_stub = generate_composition_stub(op_name, op_def)
+            op_stub = generate_composition_stub(op_name, op_def, yaml_content)
             stubs.append(op_stub)
 
     # Write to output file
     output_path.parent.mkdir(exist_ok=True, parents=True)
     with open(output_path, "w") as f:
-        f.write("\n".join(stubs))
+        # Emit the protocol import line to match what the stub body actually references. The generator
+        # runs `ruff-format`, which does NOT remove unused imports, but the repo's pre-commit runs
+        # `ruff-check --fix`, which does. Emitting an unused `BaseAnalysisBatchProtocol` therefore
+        # oscillates: the generator adds it, pre-commit strips it on commit, and CI's regeneration adds it
+        # back and reports the committed stub stale. Deciding it here makes generator output identical to
+        # post-pre-commit output, so the freshness check is stable. Since #60, most composites resolve to
+        # `Default`, and `Base` appears only when something genuinely falls back to it.
+        rendered = "\n".join(stubs)
+        # Count rather than search-after-the-import: the import LINE itself contains the name, so any
+        # "does the rest mention it" test is trivially true. One occurrence means only the import has it.
+        if rendered.count("BaseAnalysisBatchProtocol") == 1:
+            rendered = rendered.replace(
+                "from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatchProtocol",
+                "from interpretune.protocol import DefaultAnalysisBatchProtocol",
+                1,
+            )
+        f.write(rendered)
 
     print(f"Stubs generated at {output_path}")
 

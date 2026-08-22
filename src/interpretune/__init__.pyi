@@ -4,7 +4,7 @@
 from typing import Callable, Optional
 import torch
 from transformers import BatchEncoding
-from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatchProtocol
+from interpretune.protocol import DefaultAnalysisBatchProtocol
 
 # Main module exports - added for static analysis
 # These imports resolve pyright 'unknown import symbol' errors caused by the complex import hook
@@ -563,8 +563,8 @@ def model_gradient(
 # Composite operations
 
 def attribution_from_concept(
-    module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
-) -> BaseAnalysisBatchProtocol:
+    module, analysis_batch: Optional[DefaultAnalysisBatchProtocol], batch, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Composition of operations:
     concept_direction.compute_attribution_graph.graph_node_influence.extract_top_features
 
@@ -573,8 +573,8 @@ def attribution_from_concept(
     ...
 
 def intervention_from_concept(
-    module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
-) -> BaseAnalysisBatchProtocol:
+    module, analysis_batch: Optional[DefaultAnalysisBatchProtocol], batch, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Composition of operations:
     concept_direction.compute_attribution_graph.graph_node_influence.extract_top_features.feature_intervention_forward
 
@@ -583,8 +583,8 @@ def intervention_from_concept(
     ...
 
 def intervention_from_features(
-    module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
-) -> BaseAnalysisBatchProtocol:
+    module, analysis_batch: Optional[DefaultAnalysisBatchProtocol], batch, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Composition of operations:
     feature_intervention_forward
 
@@ -593,32 +593,32 @@ def intervention_from_features(
     ...
 
 def logit_diffs_attr_ablation(
-    module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
-) -> BaseAnalysisBatchProtocol:
+    module, analysis_batch: Optional[DefaultAnalysisBatchProtocol], batch, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Composition of operations:
     labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.model_ablation.ablation_attribution
     """
     ...
 
 def logit_diffs_attr_grad(
-    module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
-) -> BaseAnalysisBatchProtocol:
+    module, analysis_batch: Optional[DefaultAnalysisBatchProtocol], batch, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Composition of operations:
     labels_to_ids.model_gradient.gradient_attribution
     """
     ...
 
 def logit_diffs_base(
-    module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
-) -> BaseAnalysisBatchProtocol:
+    module, analysis_batch: Optional[DefaultAnalysisBatchProtocol], batch, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Composition of operations:
     labels_to_ids.model_fwd.logit_diffs
     """
     ...
 
 def logit_diffs_latent(
-    module, analysis_batch: Optional[BaseAnalysisBatchProtocol], batch, batch_idx: int
-) -> BaseAnalysisBatchProtocol:
+    module, analysis_batch: Optional[DefaultAnalysisBatchProtocol], batch, batch_idx: int
+) -> DefaultAnalysisBatchProtocol:
     """Composition of operations:
     labels_to_ids.model_fwd_w_cache_latent_models.logit_diffs_cache.latent_correct_acts
     """
