@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -176,6 +177,39 @@ def stale_output_references(artifact: dict[str, Any], current_ops: set[str]) -> 
     return sorted(name for name in set(recorded) - current_ops if name in text)
 
 
+def unstamped_output_references(artifact: dict[str, Any], current_ops: set[str]) -> list[str]:
+    """Current op names an artifact's OUTPUTS mention that its recorded surface does NOT (#318).
+
+    The inverse of `stale_output_references`, and the guard for a failure neither PR in a pair can see:
+    an artifact re-rendered while the stamping machinery changed under it carries CURRENT outputs with a
+    STALE stamp. `stale_output_references` stays silent -- the outputs are genuinely current -- but every
+    op the stamp fails to record is invisible to the next rename's drift check, so the gate is silently
+    weakened for exactly the files most recently touched.
+
+    Matching is deliberately asymmetric with `stale_output_references`. The dead-name direction wants
+    maximal sensitivity, so it uses plain substring: `sae_correct_acts` surviving inside
+    `sae_correct_acts_impl` is still a dead reference on the page. This direction wants precision -- it
+    accuses a STAMP, not the page -- so it matches on word boundaries: an output mentioning only
+    `logit_diffs_latent` must not read as mentioning `logit_diffs`, or every artifact accuses its stamp
+    of missing ops it never printed. Scanning only names in `current_ops` bounds false positives to real
+    op names appearing in prose.
+
+    The remedy also differs, and the caller's messages say so: a dead name in outputs needs a
+    RE-EXECUTE; a current name missing from the stamp needs only a RE-STAMP (`--restamp`), because the
+    outputs already describe the current world.
+    """
+    if not current_ops:
+        # Same contract as stale_output_references: an unreadable surface must not read as "no ops".
+        return []
+
+    recorded = set(artifact.get("metadata", {}).get(OP_SURFACE_KEY) or [])
+    if not recorded:
+        # No stamp at all is `unstamped_artifacts`' report, not a stamp-gap.
+        return []
+    text = captured_output_text(artifact)
+    return sorted(name for name in current_ops - recorded if re.search(rf"\b{re.escape(name)}\b", text))
+
+
 def artifact_matches_source(artifact: dict[str, Any], source: dict[str, Any]) -> bool:
     """Do artifact and publish source agree on everything except outputs?
 
@@ -237,6 +271,14 @@ def main() -> int:
         "reference an op name the current bundled surface no longer has. The docs render artifacts, so "
         "either kind of drift means the site is showing something stale with no build error.",
     )
+    parser.add_argument(
+        "--restamp",
+        action="store_true",
+        help="Rewrite the recorded op surface on existing artifacts to the current bundled surface, "
+        "WITHOUT executing anything. The remedy for a stamp that under-records (#318): outputs already "
+        "describe the current world, only the metadata is behind. Never use this to silence a "
+        "'STALE artifact OUTPUT' report -- that one needs a real re-execute.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Report what would happen; write nothing.")
     args = parser.parse_args()
 
@@ -249,6 +291,7 @@ def main() -> int:
         stale: list[str] = []
         output_stale: list[str] = []
         unstamped: list[str] = []
+        stamp_stale: list[str] = []
         current_ops = bundled_op_names()
         # An empty surface means yaml was unavailable (see bundled_op_names), not that there are no ops.
         # Reporting the difference matters: silently skipping would read as "checked and clean".
@@ -268,10 +311,20 @@ def main() -> int:
                 output_stale.append(f"{rel}: outputs reference {', '.join(dead)}")
             elif not artifact_nb.get("metadata", {}).get(OP_SURFACE_KEY):
                 unstamped.append(str(rel))
+            elif gaps := unstamped_output_references(artifact_nb, current_ops):
+                # Outputs are current; the STAMP under-records (#318). Without this, every op missing
+                # from the stamp is invisible to the next rename's drift check for this artifact.
+                stamp_stale.append(f"{rel}: outputs mention {', '.join(gaps)} absent from the recorded surface")
         for rel_str in stale:
             print(f"STALE artifact (rebuild it): {rel_str}", file=sys.stderr)
         for entry in output_stale:
             print(f"STALE artifact OUTPUT (re-execute it): {entry}", file=sys.stderr)
+        for entry in stamp_stale:
+            print(
+                f"STALE artifact STAMP (re-stamp it, no execution needed: "
+                f"python scripts/render_notebook_docs_artifacts.py --restamp --notebook <name>): {entry}",
+                file=sys.stderr,
+            )
         # Reported, not failed: an artifact predating the stamp cannot be checked, and failing on that
         # would make adopting the stamp a wall rather than a ramp. Silence would be worse -- it would read
         # as "checked and clean" when it is "not checkable".
@@ -279,9 +332,47 @@ def main() -> int:
             print(f"note: no recorded op surface, output drift not checkable: {rel_str}", file=sys.stderr)
         if not op_check_available:
             print("note: pyyaml unavailable, output-drift check skipped (source drift still checked)", file=sys.stderr)
-        total = len(stale) + len(output_stale)
+        total = len(stale) + len(output_stale) + len(stamp_stale)
         print(f"{total} stale artifact(s); {len(unstamped)} unstamped")
         return DRIFT_EXIT_CODE if total else 0
+
+    if args.restamp:
+        current_ops = bundled_op_names()
+        if not current_ops:
+            # Refuse rather than stamp an empty surface: pyyaml being absent means the surface could not
+            # be READ, and an empty stamp would turn every later drift check into a no-op for that file.
+            print("error: cannot restamp, op surface unreadable (pyyaml unavailable)", file=sys.stderr)
+            return 1
+        restamped = 0
+        refused = 0
+        for source in notebooks:
+            rel = source.relative_to(PUBLISH_DIR)
+            artifact = ARTIFACT_DIR / rel
+            if not artifact.exists():
+                continue
+            artifact_nb = load_notebook(artifact)
+            if sorted(current_ops) == (artifact_nb.get("metadata", {}).get(OP_SURFACE_KEY) or []):
+                continue
+            if dead := stale_output_references(artifact_nb, current_ops):
+                # MECHANICAL refusal, not an advisory one: restamping sets recorded == current, after
+                # which `recorded - current` is empty forever and the dead-name check can never fire
+                # again for this artifact. A warning in --help does not prevent that; this does.
+                print(
+                    f"REFUSED {rel}: outputs still reference {', '.join(dead)} -- "
+                    f"re-execute this artifact instead of restamping it",
+                    file=sys.stderr,
+                )
+                refused += 1
+                continue
+            if args.dry_run:
+                print(f"[dry-run] restamp {rel}")
+                continue
+            stamp_op_surface(artifact_nb, current_ops)
+            save_notebook(artifact_nb, artifact)
+            print(f"restamped {rel}")
+            restamped += 1
+        print(f"{restamped} artifact(s) restamped; {refused} refused")
+        return 1 if refused else 0
 
     if args.list:
         for source in notebooks:
