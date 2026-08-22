@@ -82,20 +82,20 @@ class LatentAnalysisDict(dict):
         return shapes
 
     def batch_join(
-        self, across_saes: bool = False, join_fn: Callable = torch.cat
+        self, across_latent_models: bool = False, join_fn: Callable = torch.cat
     ) -> LatentAnalysisDict | list[torch.Tensor]:
-        """Join field values either by SAE or across SAEs.
+        """Join field values either by latent model or across latent models.
 
         Args:
-            join_across_saes: If True, joins values across SAEs for each batch.
-                                If False, joins batches for each SAE separately.
+            across_latent_models: If True, joins values across latent models for each batch.
+                                If False, joins batches for each latent model separately.
             join_fn: Function to use for joining (default: torch.cat)
 
         Returns:
-            If join_across_saes=True: List of tensors, one per batch, with values joined across SAEs
-            If join_across_saes=False: LatentAnalysisDict with batches joined for each SAE
+            If across_latent_models=True: List of tensors, one per batch, joined across latent models
+            If across_latent_models=False: LatentAnalysisDict with batches joined for each latent model
         """
-        if across_saes:
+        if across_latent_models:
             # Get number of batches from first SAE's values
             num_batches = len(next(iter(self.values())))
 
@@ -1192,7 +1192,7 @@ def base_vs_sae_logit_diffs(
 
     Args:
         sae: Analysis cache from clean with SAE run
-        no_sae_ref: Analysis cache from clean without SAE reference run
+        base_ref: Analysis cache from the base (no latent model) reference run
         tokenizer: Tokenizer for decoding labels
         top_k: Number of top samples to show
         max_prompt_width: Maximum width for prompt column
@@ -1257,7 +1257,7 @@ def compute_correct(
     if per_latent_preds:
         batch_preds = [
             b.mode(dim=0).values.cpu()
-            for b in analysis_store.by_latent_model("preds").batch_join(across_saes=True)  # type: ignore[attr-defined]  # analysis_store has by_latent_model method
+            for b in analysis_store.by_latent_model("preds").batch_join(across_latent_models=True)  # type: ignore[attr-defined]  # analysis_store has by_latent_model method
         ]
     else:
         batch_preds = analysis_store.preds  # type: ignore[attr-defined]  # analysis_store has preds attribute

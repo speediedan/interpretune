@@ -326,7 +326,7 @@ Analysis operations can run on multiple backends (TransformerBridge, NNsight). F
 
 ```python
 @dataclass(kw_only=True)
-class CoreSLBridgeGPT2LogitDiffsSAE(BaseCfg):
+class CoreSLBridgeGPT2LogitDiffsLatent(BaseCfg):
     """TransformerBridge backend for latent-model logit_diffs analysis."""
     model_src_key: str | None = "gpt2"
     model_cfg_key: str = "rte"
@@ -343,7 +343,7 @@ class CoreSLBridgeGPT2LogitDiffsSAE(BaseCfg):
 
 ```python
 @dataclass(kw_only=True)
-class CoreSLNNsightGPT2LogitDiffsSAE(BaseCfg):
+class CoreSLNNsightGPT2LogitDiffsLatent(BaseCfg):
     """NNsight backend for latent-model logit_diffs analysis."""
     model_src_key: str | None = "gpt2"
     model_cfg_key: str = "rte"

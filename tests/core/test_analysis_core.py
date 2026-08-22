@@ -1492,25 +1492,25 @@ class TestSAEAnalysisDict:
         assert shapes["sae2"] == torch.Size([7, 3])
         assert shapes["sae3"] == [torch.Size([8, 4]), torch.Size([6, 2])]
 
-    def test_batch_join_across_saes_false(self):
-        """Test batch_join with across_saes=False."""
+    def test_batch_join_across_latent_models_false(self):
+        """Test batch_join with across_latent_models=False."""
         analysis_dict = LatentAnalysisDict()
         analysis_dict["sae1"] = [torch.tensor([1, 2]), torch.tensor([3, 4])]
         analysis_dict["sae2"] = [torch.tensor([5, 6]), torch.tensor([7, 8])]
 
-        result = analysis_dict.batch_join(across_saes=False)
+        result = analysis_dict.batch_join(across_latent_models=False)
 
         assert isinstance(result, LatentAnalysisDict)
         assert torch.equal(result["sae1"], torch.tensor([1, 2, 3, 4]))
         assert torch.equal(result["sae2"], torch.tensor([5, 6, 7, 8]))
 
-    def test_batch_join_across_saes_true(self):
-        """Test batch_join with across_saes=True."""
+    def test_batch_join_across_latent_models_true(self):
+        """Test batch_join with across_latent_models=True."""
         analysis_dict = LatentAnalysisDict()
         analysis_dict["sae1"] = [torch.tensor([1, 2]), torch.tensor([3, 4])]
         analysis_dict["sae2"] = [torch.tensor([5, 6]), torch.tensor([7, 8])]
 
-        result = analysis_dict.batch_join(across_saes=True)
+        result = analysis_dict.batch_join(across_latent_models=True)
 
         assert isinstance(result, list)
         assert len(result) == 2
@@ -1523,13 +1523,13 @@ class TestSAEAnalysisDict:
         analysis_dict["sae1"] = [torch.tensor([1, 2]), None, torch.tensor([3, 4])]
         analysis_dict["sae2"] = [torch.tensor([5, 6]), torch.tensor([7, 8]), None]
 
-        # Test across_saes=False
-        result1 = analysis_dict.batch_join(across_saes=False)
+        # Test across_latent_models=False
+        result1 = analysis_dict.batch_join(across_latent_models=False)
         assert torch.equal(result1["sae1"], torch.tensor([1, 2, 3, 4]))
         assert torch.equal(result1["sae2"], torch.tensor([5, 6, 7, 8]))
 
-        # Test across_saes=True
-        result2 = analysis_dict.batch_join(across_saes=True)
+        # Test across_latent_models=True
+        result2 = analysis_dict.batch_join(across_latent_models=True)
         assert len(result2) == 3
         assert torch.equal(result2[0], torch.tensor([1, 2, 5, 6]))
         assert result2[1] is not None  # Second batch has only one valid tensor
@@ -1635,8 +1635,8 @@ class TestSAEAnalysisDict:
         analysis_dict["sae1"] = [None, None]
         analysis_dict["sae2"] = [torch.tensor([5, 6]), None]
 
-        # Test across_saes=True with some None values
-        result = analysis_dict.batch_join(across_saes=True)
+        # Test across_latent_models=True with some None values
+        result = analysis_dict.batch_join(across_latent_models=True)
         assert len(result) == 2
         assert result[0] is not None  # First batch has one valid tensor
         assert result[1] is None  # Second batch has all None tensors
@@ -1646,15 +1646,15 @@ class TestSAEAnalysisDict:
         all_none_dict["sae1"] = [None, None]
         all_none_dict["sae2"] = [None, None]
 
-        # Test across_saes=False with all None values
-        result = all_none_dict.batch_join(across_saes=False)
+        # Test across_latent_models=False with all None values
+        result = all_none_dict.batch_join(across_latent_models=False)
         assert "sae1" in result
         assert "sae2" in result
         assert result["sae1"] is None
         assert result["sae2"] is None
 
-        # Test across_saes=True with all None values
-        result = all_none_dict.batch_join(across_saes=True)
+        # Test across_latent_models=True with all None values
+        result = all_none_dict.batch_join(across_latent_models=True)
         assert len(result) == 2
         assert result[0] is None
         assert result[1] is None

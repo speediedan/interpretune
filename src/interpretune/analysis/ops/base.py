@@ -342,6 +342,33 @@ class ColCfg:
     per_latent: bool = False
     per_latent_model_hook: bool = False  # For fields that have per-latent-model hook subfields
     intermediate_only: bool = False  # Indicates column used in processing but not written to output
+    # NOTE [Two Requirement Axes, Deliberately Separate]
+    # `ColCfg.connected_obj` and `OpDef.required_capabilities` are the only two requirement axes on the
+    # op-declaration surface, and interpretune#303 decided to keep them separate, widen neither, and add
+    # no third. #51 proposed a third (declare the module METHODS an op calls, so a missing one fails as a
+    # named-op error rather than a bare AttributeError mid-run) and was closed as too expensive for the
+    # benefit. Recorded here rather than only in the issue because it has already been re-litigated once.
+    #
+    # Why `required_capabilities` cannot simply absorb #51's case: the blocker is the AVAILABILITY side,
+    # not the vocabulary. `get_module_capabilities()` derives what a module has exclusively from attached
+    # backends (`backend.capabilities`, `analysis_backend.capabilities`, legacy `module.analysis_capabilities`).
+    # A "module provides method X" requirement has no backend to ask; satisfying it means `hasattr(module, X)`,
+    # a different resolution mechanism. Widening the enum alone therefore achieves nothing -- the derivation
+    # would need a branch that ignores backends entirely, which is what would make "capability" mean two
+    # unrelated things.
+    #
+    # Why the two do not unify: `connected_obj` does not merely assert provenance, it ROUTES. "datamodule"
+    # means "look in the batch first, expanding cross-backend key aliases, and fall through to the analysis
+    # batch if absent" (see `_validate_input_schema`). A unified (subject, kind, name) declaration would need
+    # `subject=datamodule` to trigger exactly that two-stage lookup, reproducing today's split inside one
+    # field. They also differ in subject and granularity: op-level collaborator abilities versus per-column
+    # value origin.
+    #
+    # A weaker supporting point, correct only about what is POSSIBLE: capabilities are hoistable (they depend
+    # only on the module, so they could be validated once and cached) while provenance is not (it depends on
+    # per-invocation values). Both are in fact validated on EVERY invocation today, in `_validate_call`, which
+    # calls `_validate_capabilities` and then `_validate_input_schema`. Do not restate this as "checked at
+    # different times" -- that was measured and is false.
     connected_obj: Literal["analysis_store", "datamodule"] = "analysis_store"
     array_shape: tuple[int | DIM_VAR | None, ...] | None = None  # Shape with optional dimension variables
     sequence_type: bool = True  # Default to sequence type for most fields
