@@ -234,7 +234,9 @@ class TestStampUnderRecording:
 
         assert renderer.main() == 1
         err = capsys.readouterr().err
-        assert "REFUSED demo/dead.ipynb" in err and "re-execute" in err
+        # `rel` is a native Path, so the separator differs by OS -- assert the native rendering,
+        # not a hardcoded POSIX one (this exact assertion failed on windows-2022 with `demo\\dead.ipynb`).
+        assert f"REFUSED {Path('demo') / 'dead.ipynb'}" in err and "re-execute" in err
         # The fixable one was restamped; the refused one kept its (accusable) stamp.
         restamped = json.loads((artifacts / "demo" / "fixable.ipynb").read_text())
         kept = json.loads((artifacts / "demo" / "dead.ipynb").read_text())
