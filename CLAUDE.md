@@ -210,7 +210,7 @@ python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_
 python -m coverage report
 
 # Standalone tests (use inline env vars, NOT export, to avoid marker conflicts)
-IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_transformer_lens.py::TestGemma2ParameterMapping -v
+IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_adapters_transformer_lens.py::TestGemma2ParameterMapping -v
 unset IT_RUN_STANDALONE_TESTS
 
 # Standalone test harness
@@ -426,7 +426,7 @@ pre-commit run --all-files
 ### Source Layout
 
 ```
-src/interpretune/           # Main package (version from src/__about__.py)
+src/interpretune/           # Main package (version from src/interpretune/__about__.py)
 ├── adapters/               # Framework integrations (TL, SAE, Lightning, CircuitTracer, NNsight)
 ├── analysis/               # Analysis tools with ops system and dispatcher
 ├── base/components/cli.py  # CLI entry point
@@ -450,7 +450,7 @@ tests/                      # 744 test functions
 - **Lazy imports:** Heavy deps (transformer_lens, lightning, neuronpedia) loaded lazily via `_light_register.py` and PEP 562 `__getattr__`. Import-time optimization is critical.
 - **Protocol-based:** ITModuleProtocol, ITDataModuleProtocol, AnalysisOpProtocol
 - **Composition:** `CompositionRegistry` manages adapter combinations (core, lightning, transformer_lens, sae_lens, circuit_tracer, nnsight)
-- **Backend-agnostic analysis ops:** Keep backend-specific imports out of `src/interpretune/analysis/ops/definitions.py`. If an op needs backend-specific behavior, extend the `AnalysisBackend` seam rather than importing backend code directly into the op definition.
+- **Backend-agnostic analysis ops:** Keep backend-specific imports out of the bundled op definitions (`src/interpretune/analysis/ops/bundled/<family>/<family>_ops.py`). If an op needs backend-specific behavior, extend the `AnalysisBackend` seam rather than importing backend code directly into the op definition.
 - **Framework agnosticism:** Module definitions (e.g. `RTEBoolqSteps`) should NOT contain framework-specific hooks or accumulation logic. Use `ClassificationMixin` for prediction accumulation and metric reporting. Hook dispatch via `_call_itmodule_hook(..., optional=True)` handles missing hooks gracefully.
 - **Framework-agnostic logging:** `CoreHelperAttributes` provides real `log()` / `log_dict()` methods that accumulate metrics in `_logged_metrics`. The core runner prints averaged metrics at test epoch end. Lightning modules use `LightningModule.log()` / `log_dict()` instead. User code calls `self.log()` / `self.log_dict()` regardless of context.
 - **ClassificationMixin.setup():** Cooperatively calls `super().setup()` then initializes `classification_mapping` if configured. `collect_answers()` computes metrics and calls `self.log_dict()` — no custom accumulation logic needed.
@@ -479,7 +479,7 @@ Serialization details matter here:
 - `tl_model_cfg` is the actual TL config from `self.model.cfg`
 - `it_tl_cfg` is the Interpretune-specific TL config from `self.it_cfg.tl_cfg`
 
-`ITLensCustomConfig` with `use_bridge=True` is ignored; config-based initialization remains HookedTransformer-only because TransformerBridge requires an HF model instance. See `docs/config_hierarchy_analysis.md` when working on this area.
+`ITLensCustomConfig` with `use_bridge=True` is ignored; config-based initialization remains HookedTransformer-only because TransformerBridge requires an HF model instance. See `docs/tl_config_hierarchy_overview.md` when working on this area.
 
 ## CI/CD
 

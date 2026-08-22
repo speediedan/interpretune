@@ -104,21 +104,14 @@ Additional references:
 - `intervention_pipeline_debugging_mode.md` documents the debug-mode config surface and the `parity_surface` preset.
 - `analysis/intervention_graph_parity_testing.md` documents the preserved-artifact parity workflow and the manual ablation tooling.
 
-The new config
-`src/it_examples/experiments/notebook/concept_direction/archived_cfgs/gemma3_4b_it_local_oqi_reasoning_single_fs_di.yaml`
-is the historical single-feature debug entry point for the local OQI reasoning prompt. That
-config still targets the originally requested `23/2313` feature, which is inactive for the
-current prompt.
+The single-feature debug configs for the local OQI reasoning prompt are maintainer-local and are
+not carried in this tree. Two findings from that work are worth keeping:
 
-The current active high-layer debug configs are:
-
-- `src/it_examples/experiments/notebook/concept_direction/archived_cfgs/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60.yaml`
-- `src/it_examples/experiments/notebook/concept_direction/archived_cfgs/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60_full_graph.yaml`
-- `src/it_examples/experiments/notebook/concept_direction/archived_cfgs/gemma3_4b_it_local_oqi_reasoning_single_fs_di_60_no_softcap.yaml`
-
-These follow-up configs target `gemma-3-4b-it/25-gemmascope-2-transcoder-16k/60`, chosen from
-the normal non-debug OQI run because it is the highest-ranked active feature above layer 20 in
-the embed pipeline.
+- The originally requested `23/2313` feature is **inactive** for the current prompt, so the
+  historical single-feature entry point no longer exercises what it was built for.
+- The follow-up runs target `gemma-3-4b-it/25-gemmascope-2-transcoder-16k/60`, chosen from the
+  normal non-debug OQI run because it is the highest-ranked active feature above layer 20 in the
+  embed pipeline. Variants covered the full graph and a no-softcap comparison.
 
 ### Latest Debug Investigation: Gemma 3 4B IT OQI Feature 25/60 (2026-04-10)
 
@@ -492,16 +485,16 @@ source <your-venv>/bin/activate  # any env with interpretune + notebook extras i
 # Run a single config
 python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
    --notebook src/it_examples/experiments/notebook/concept_direction/concept_direction_template.ipynb \
-   src/it_examples/experiments/notebook/concept_direction/configs/gemma3_1b_it_local_capitals_states.yaml
+   src/it_examples/experiments/notebook/concept_direction/configs/gemma3_1b_it_local_color_fruit_orange.yaml
 
 # Run all configs in the configs/ directory
 python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
    --notebook src/it_examples/experiments/notebook/concept_direction/concept_direction_template.ipynb --all-configs
 
-# Run only the PT capitals/states wave
+# Run only a matching wave (any regex over the configs/ filenames)
 python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
    --notebook src/it_examples/experiments/notebook/concept_direction/concept_direction_template.ipynb \
-   --config-pattern '.*pt_capitals_states\\.yaml'
+   --config-pattern '.*color_fruit_orange.*\\.yaml'
 
 # Prepare only (copy notebook + archive config, don't execute)
 python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
@@ -510,7 +503,7 @@ python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
 # Custom timeout and kernel
 python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
    --notebook src/it_examples/experiments/notebook/concept_direction/concept_direction_template.ipynb \
-    src/it_examples/experiments/notebook/concept_direction/configs/gemma3_1b_it_local_capitals_states.yaml \
+    src/it_examples/experiments/notebook/concept_direction/configs/gemma3_1b_it_local_color_fruit_orange.yaml \
   --timeout 3600 --kernel-name it_latest
 ```
 

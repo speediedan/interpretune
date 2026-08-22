@@ -38,8 +38,8 @@ That report compares:
 
 ## Guardrails
 
-- `src/it_examples/experiments/notebook/concept_direction/analysis/oqi_debug_session_ablation.py` is the manual parity probe for session-surface debugging.
-- `src/it_examples/experiments/notebook/concept_direction/analysis/test_oqi_debug_session_ablation.py` verifies that the ablation helper preserves `DEBUG_SESSION_SURFACE_PRESET` without silently reintroducing a notebook-only CPU override.
+- `src/it_examples/tests/notebook/_harness/oqi_debug_session_ablation.py` is the manual parity probe for session-surface debugging.
+- `src/it_examples/tests/notebook/concept_direction/analysis/test_oqi_debug_session_ablation.py` verifies that the ablation helper preserves `DEBUG_SESSION_SURFACE_PRESET` without silently reintroducing a notebook-only CPU override.
 - Historical large validation errors such as `activation_max_abs_error=34.5` and `logit_max_abs_error=0.1855621337890625` came from runs that resolved to `notebook_default`, not from the corrected helper path.
 
 ## Operational Note

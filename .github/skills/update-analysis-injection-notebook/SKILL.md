@@ -36,7 +36,7 @@ Before running this skill, gather the following:
 2. **Target package name** — The upstream package being updated (e.g., `circuit-tracer`)
 3. **Old version/SHA** — The previous package version and git commit SHA (e.g., `0.1.0` / `fe1743f`)
 4. **New version/SHA** — The new package version and git commit SHA (e.g., `0.4.0` / `14cc3e8`)
-5. **Test path and parameterization** — The pytest path to the notebook test (e.g., `tests/examples/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]`)
+5. **Test path and parameterization** — The pytest path to the notebook test (e.g., `src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]`)
 6. **Venv name** — The development environment to use (e.g., `it_latest`)
 7. **Local package repo path** — Path to the local clone of the target package (e.g., `~/repos/circuit-tracer`)
 8. **[Optional] Report output location** — Defaults to `~/repos/distributed-insight/project_admin/interpretune/handoff_docs/` or `/tmp/`
@@ -284,7 +284,7 @@ Before running this skill, gather the following:
 
    ```bash
    IT_RUN_STANDALONE_TESTS=1 python -m pytest \
-     "tests/examples/test_notebooks.py::test_attribution_analysis_notebook" -v
+     "src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook" -v
    ```
 
 2. **Run the basic test suite** to ensure no regressions:
@@ -333,7 +333,7 @@ This section documents a concrete application of this skill.
 | Target package | `circuit-tracer` |
 | Old version/SHA | `0.1.0` / `fe1743f` |
 | New version/SHA | `0.4.0` / `14cc3e8` |
-| Test path | `tests/examples/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]` |
+| Test path | `src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]` |
 | Venv | `it_latest` |
 | Local repo | `~/repos/circuit-tracer` |
 

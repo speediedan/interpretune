@@ -54,7 +54,7 @@ Three types of configs are serialized by `_capture_hyperparameters()`:
 - TransformerBridge requires HF model, cannot be initialized from config alone
 - Config-based path (`ITLensCustomConfig`) only supports HookedTransformer
 
-See `docs/config_hierarchy_analysis.md` for detailed configuration relationship analysis.
+See `docs/tl_config_hierarchy_overview.md` for detailed configuration relationship analysis.
 
 ## Code Standards
 
@@ -85,7 +85,7 @@ cd /home/runner/work/interpretune/interpretune && python -m pytest tests src/it_
 - Instead, fix the problem in the test infrastructure or use an app-level registry pattern (like `CT_BACKEND_REGISTRY` in `circuit_tracer.py`) that validates by class name without `isinstance()`.
 
 ### Keep Analysis Op Definitions Backend-Agnostic
-- Do not add backend-specific imports inside `src/interpretune/analysis/ops/definitions.py` op implementations.
+- Do not add backend-specific imports inside the bundled op implementations (`src/interpretune/analysis/ops/bundled/<family>/<family>_ops.py`).
 - If an op needs a backend-specific construct, extend the `AnalysisBackend` interface and let the backend implementation own that dependency.
 - Treat any new import inside an analysis op definition as a design smell that should usually be resolved by pushing that behavior behind the backend seam.
 
@@ -329,11 +329,12 @@ When debugging fixture or CUDA memory growth locally, add `--resource-debug` to 
 flags used by `tests/conftest.py`, `tests/analysis_resource_utils.py`, and the coverage harness summary
 parser for per-test / per-fixture / per-GPU logging.
 
-For semantic concept-direction intervention drift debugging, prefer the regular parity gate in
-`tests/core/test_analysis_backend_parity.py` first. If you need an upstream sanity check, run
-`tests/upstream_parity/extract_upstream_ct_semantic_reference.py` and consult `tests/upstream_parity/UPSTREAM_CT_PARITY_DEBUG.md`
-for the current three-way upstream/native/op reference values. This remains a manual debugging flow,
-not a regular CI requirement.
+For semantic concept-direction intervention drift debugging, use the regular parity gate in
+`tests/core/test_analysis_backend_parity.py`. The manual upstream sanity-check workflow that used to
+live under `tests/upstream_parity/` (`extract_upstream_ct_semantic_reference.py` +
+`UPSTREAM_CT_PARITY_DEBUG.md`) was archived to private notes 2026-07-07, superseded by that automated
+suite. Consult the archived notes if a manual three-way upstream/native/op replay is ever needed; see
+`tests/README.md` for the three-anchor pattern that replaced it.
 
 **Test timing:** Most tests run quickly (<30s), but some integration tests may take 1-2 minutes.
 
@@ -347,7 +348,7 @@ not a regular CI requirement.
 ### Source Code Structure
 ```
 src/interpretune/           # Main package
-├── (version metadata forwarded from top-level `src/__about__.py`)
+├── (version metadata forwarded from top-level `src/interpretune/__about__.py`)
 ├── adapters/               # Integration adapters
 │   ├── transformer_lens.py
 │   ├── sae_lens.py
@@ -672,13 +673,13 @@ Then run specific tests using **inline environment variables** (not export) to a
 # This prevents marker conflicts when multiple test environment variables are set
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
-IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/examples/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT] -v
+IT_RUN_STANDALONE_TESTS=1 python -m pytest src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT] -v
 
 # another example using inline variable assignment with multiple standalone tests invoked separately
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
-IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_transformer_lens.py::TestGemma2ParameterMapping::test_gemma2_tl_param_structure -v
-IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_transformer_lens.py::TestLlama3ParameterMapping::test_llama3_tl_param_structure -v
+IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_adapters_transformer_lens.py::TestGemma2ParameterMapping::test_gemma2_tl_param_structure -v
+IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_adapters_transformer_lens.py::TestLlama3ParameterMapping::test_llama3_tl_param_structure -v
 unset IT_RUN_STANDALONE_TESTS
 
 # Run specific profiling ci test
