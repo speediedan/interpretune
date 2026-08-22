@@ -28,7 +28,9 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 # 6: adds `protocol_cls` (a user-defined BaseAnalysisBatchProtocol subclass, declared as an import path)
 #    to OpDef. A serialized-shape change, so an existing cache would otherwise keep serving OpDefs without
 #    the field and a declaring op would silently fall back to the default protocol.
-CACHE_FORMAT_VERSION = "6"
+# 7: name/description/implementation emit via repr() -- a description containing a double quote
+#    previously rendered an unparseable module (silent full recompile on every load).
+CACHE_FORMAT_VERSION = "7"
 
 
 @dataclass(frozen=True)
@@ -392,10 +394,14 @@ class OpDefinitionsCacheManager:
         """Serialize an OpDef to Python code."""
         fields = []
 
-        # Always include required fields
-        fields.append(f'name="{op_def.name}"')
-        fields.append(f'description="{op_def.description}"')
-        fields.append(f'implementation="{op_def.implementation}"')
+        # Always include required fields. `!r` rather than hand-quoting: a description containing a
+        # double quote (a hub collection wrote `a lens-coordinate "patch" intervention`) rendered an
+        # unparseable module, and the failure mode was maximally quiet -- a "Failed to load cache"
+        # warning plus a full recompile on EVERY subsequent load, in every session, for as long as the
+        # collection stayed cached. repr() escapes everything Python source needs escaped.
+        fields.append(f"name={op_def.name!r}")
+        fields.append(f"description={op_def.description!r}")
+        fields.append(f"implementation={op_def.implementation!r}")
         fields.append(f"input_schema={self._serialize_op_schema(op_def.input_schema)}")
         fields.append(f"output_schema={self._serialize_op_schema(op_def.output_schema)}")
 
