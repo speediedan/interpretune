@@ -415,6 +415,30 @@ CT_CONCEPT_STEERING_LOCAL_PARAMS = [
 ]
 
 
+def _assert_jspace_section_ran(output_notebook: Path) -> None:
+    """When the env carries an HF token, the J-space section must have RUN, not skipped.
+
+    The section skips cleanly (by design) when the private jlens collection is unreachable, and the notebook's own
+    assertions only fire on the run branch -- so "test passed" alone cannot distinguish the two. That mattered once
+    already: the TL variant passed and only re-running with a kept basetemp showed WHICH branch executed. With CI's
+    HF_TOKEN now sourced from a token that can read the collection (until the #261 flip), a skip in a token-bearing
+    environment is a failure worth failing on. Checked in the papermill OUTPUT rather than by editing the notebook,
+    which would invalidate the executed docs artifacts for a test-only concern.
+    """
+    import json
+
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    for cell in nb.get("cells", []):
+        if "4b: J-space" not in "".join(cell.get("source", []))[:80]:
+            continue
+        text = "".join("".join(out.get("text", [])) for out in cell.get("outputs", []) if isinstance(out, dict))
+        assert "pulled " in text, "the J-space section SKIPPED despite HF_TOKEN being available: " + (
+            text.strip().splitlines()[-1] if text.strip() else "(no output captured)"
+        )
+        return
+    raise AssertionError("no J-space section found in the executed notebook")
+
+
 def _run_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path, notebook: str) -> None:
     notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / notebook
 
@@ -431,6 +455,9 @@ def _run_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path, no
 
     # Verify output
     assert output_notebook.exists(), f"Output notebook not created at {output_notebook}"
+
+    if os.environ.get("HF_TOKEN"):
+        _assert_jspace_section_ran(output_notebook)
 
     # Clean up
     _cleanup_notebook_artifacts()
