@@ -144,7 +144,7 @@ class TestLogitDiffsBaseBackendParity(AnalysisExtractionMixin):
         _compare_tensor_lists(br_store.label_ids, ns_store.label_ids, label="label_ids", rtol=0, atol=0)
 
 
-class TestLogitDiffsSAEBackendParity(AnalysisExtractionMixin):
+class TestLogitDiffsLatentBackendParity(AnalysisExtractionMixin):
     """logit_diffs_latent: TransformerBridge ↔ NNsight SAE-spliced forward (``model_fwd_w_cache_latent_models``).
 
     Compares SAE-spliced forward pass results including cached activations,
