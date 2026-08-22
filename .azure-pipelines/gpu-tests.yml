@@ -237,7 +237,10 @@ jobs:
           # gated-model tests (llama3/gemma) and the notebook/example tests run in this phase and
           # read these secrets; without the mapping they fail with KeyError (see build 575)
           HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
-          HF_TOKEN: $(HF_TOKEN)
+          # HF_TOKEN feeds from HF_MCP_TOKEN_RW so the J-space steering section can pull the PRIVATE
+          # speediedan/jlens_steering_ops collection (#273). The gated key cannot read it (probed).
+          # Revert to a read-scoped token at the #261 public flip.
+          HF_TOKEN: $(HF_MCP_TOKEN_RW)
 
       - bash: |
           source /tmp/venvs/it_dev/bin/activate
@@ -247,7 +250,7 @@ jobs:
         displayName: 'Testing: standalone gpu'
         env:
           HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
-          HF_TOKEN: $(HF_TOKEN)
+          HF_TOKEN: $(HF_MCP_TOKEN_RW)  # private jlens collection until #261; see cuda-marked phase note
 
       - bash: |
           source /tmp/venvs/it_dev/bin/activate

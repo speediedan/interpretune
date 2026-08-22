@@ -137,6 +137,10 @@ jobs:
       # jlens collection (speediedan/jlens_steering_ops). Env var NAME is unchanged so no
       # test changes; revert the source to HF_GATED_PUBLIC_REPO_AUTH_KEY at the flip.
       HF_GATED_PUBLIC_REPO_AUTH_KEY: ${{ secrets.HF_MCP_TOKEN_RW }}
+      # HF_TOKEN feeds from the same RW secret: huggingface_hub reads it natively, and the J-space
+      # steering guard tests key off HF_TOKEN specifically (they assert the section did NOT skip
+      # when a token is present). Both lines revert together at the #261 flip.
+      HF_TOKEN: ${{ secrets.HF_MCP_TOKEN_RW }}
       HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY: ${{ secrets.HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY }}
       # sysmon coverage core (coverage>=7.4, py>=3.12): immune to nnsight's sys.settrace(None)
       # trace-teardown wipe of the default settrace-based core (see gen_it_coverage.sh)
