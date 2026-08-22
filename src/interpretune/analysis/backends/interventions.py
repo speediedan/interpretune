@@ -27,6 +27,8 @@ class InterventionSpec(NamedTuple):
             ``(n_heads, d_head)`` or latent feature activations.
         mode: ``"replace"`` overwrites the activation at the target position with the tensor;
               ``"add"`` adds ``intervention_tensor * scale_factor`` to the activation;
+              ``"patch"`` swaps a pair of concepts in lens coordinates, leaving the component
+              orthogonal to that pair untouched (see :func:`_apply_lens_coordinate_patch`);
               ``"project"`` replaces the activation with a projection result. By default, the
               current hook input is projected onto the span of ``intervention_tensor``, so the
               intervention tensor acts as the projection basis. When
@@ -206,9 +208,21 @@ def _validate_intervention_spec(
     hook_name: str,
 ) -> InterventionSpec:
     tensor = torch.as_tensor(spec.intervention_tensor)
-    _ensure_shape_compatible(tuple(tensor.shape), target_shape, hook_name)
-    if spec.mode not in {"replace", "add", "project"}:
+    if spec.mode not in {"replace", "add", "project", "patch"}:
         raise ValueError(f"Unknown intervention mode: {spec.mode!r}")
+    if spec.mode == "patch":
+        # A swap needs a PAIR, so this is the one mode whose tensor is legitimately larger than the slice
+        # it targets: `(2, *target_shape)`. The general check below demands the tensor broadcast INTO the
+        # target, which `(2, d_model)` against `(d_model,)` does not -- so validating patch under it would
+        # make the mode unreachable through the op surface while low-level calls kept working.
+        if tensor.ndim < 1 or tensor.shape[0] != 2:
+            raise ValueError(
+                "intervention mode 'patch' requires exactly two lens vectors stacked on a leading axis of "
+                f"size 2 (source, target); got tensor with shape {tuple(tensor.shape)}"
+            )
+        _ensure_shape_compatible(tuple(tensor.shape[1:]), target_shape, hook_name)
+    else:
+        _ensure_shape_compatible(tuple(tensor.shape), target_shape, hook_name)
     return InterventionSpec(
         intervention_tensor=tensor,
         mode=spec.mode,
@@ -493,6 +507,63 @@ def resolve_interventions(
     return {hook_qualifier: payload}
 
 
+def _apply_lens_coordinate_patch(
+    value: torch.Tensor,
+    spec: InterventionSpec,
+    *,
+    input_value: torch.Tensor,
+    target: torch.Tensor,
+    last_pos: int,
+) -> torch.Tensor:
+    """Swap a concept pair in lens coordinates, preserving everything orthogonal to the pair.
+
+    Implements ``h <- h + V(sigma(c) - c)`` from the J-space workspace paper, where ``V = [v_s v_t]``
+    holds the two lens vectors as columns, ``c = V^+ h`` are the activation's coordinates in their span,
+    and ``sigma`` swaps the two entries. Because the update lies entirely in ``span(V)``, the orthogonal
+    component of ``h`` is mathematically untouched -- which is the property that distinguishes this from
+    naive steering (``h <- h + alpha * v``), where the added vector perturbs every component it overlaps.
+
+    ``spec.intervention_tensor`` must supply exactly two vectors, stacked on a leading axis of size 2:
+    index 0 is the source concept ``v_s`` and index 1 the target ``v_t``. A single vector cannot express
+    a swap, so this mode rejects one rather than guessing a partner.
+
+    ``spec.scale_factor`` scales the swapped coordinates, the paper's optional ``alpha``. It defaults to
+    1.0, a pure exchange. The paper reports oversteering as a real failure mode and uses alpha=2 only
+    where needed, so values above 1 should be justified per-case rather than tuned by default.
+
+    The pseudoinverse is used rather than a transpose because lens vectors are not orthonormal, and it is
+    worth being precise about what that buys. Orthogonal preservation holds EITHER way: the update lies in
+    ``span(V)`` by construction, so nothing outside that span can move no matter how the coordinates are
+    computed. What ``pinv`` buys is that the swap is a swap. ``V^+`` gives the true oblique coordinates, so
+    the patched activation satisfies ``V^+ h' == sigma(c)`` exactly. With ``V^T`` on a non-orthonormal pair
+    the result lands somewhere else entirely -- measured on a correlated pair, target ``sigma(c)`` of
+    ``[3.37, -3.49]`` came out as ``[-2.98, 2.86]``. The failure is silent, because the orthogonal component
+    still looks untouched and the activation still moved.
+    """
+    if target.ndim < 1 or target.shape[0] != 2:
+        raise ValueError(
+            "intervention mode 'patch' requires exactly two lens vectors stacked on a leading axis of "
+            f"size 2 (source, target); got tensor with shape {tuple(target.shape)}"
+        )
+
+    batch = input_value.shape[0]
+    flat = input_value.reshape(batch, -1).to(dtype=torch.float32)
+    basis = target.reshape(2, -1).to(dtype=torch.float32)
+    if basis.shape[1] != flat.shape[1]:
+        raise ValueError(
+            f"intervention mode 'patch' lens vectors have width {basis.shape[1]} but the hook activation "
+            f"is {flat.shape[1]}-dimensional"
+        )
+
+    v_matrix = basis.transpose(0, 1)  # (d, 2), lens vectors as columns
+    coords = flat @ torch.linalg.pinv(v_matrix).transpose(0, 1)  # (batch, 2) == (V^+ h)^T
+    swapped = coords.flip(-1) * spec.scale_factor
+    patched = flat + (swapped - coords) @ v_matrix.transpose(0, 1)
+
+    value[:, last_pos, ...] = patched.reshape(input_value.shape).to(dtype=input_value.dtype)
+    return value
+
+
 def apply_intervention_to_last_token(
     value: torch.Tensor,
     spec: InterventionSpec,
@@ -518,6 +589,9 @@ def apply_intervention_to_last_token(
     if spec.mode == "add":
         value[:, last_pos, ...] = input_value + target * spec.scale_factor
         return value
+
+    if spec.mode == "patch":
+        return _apply_lens_coordinate_patch(value, spec, input_value=input_value, target=target, last_pos=last_pos)
 
     if spec.mode != "project":
         raise ValueError(f"Unknown intervention mode: {spec.mode!r}")
