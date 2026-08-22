@@ -44,7 +44,13 @@ def scratch_collection(tmp_path):
 
 
 def test_reload_makes_new_collection_reachable_as_top_level_attr(scratch_collection, monkeypatch):
-    """The notebook runtime order: import first, fetch later, use `it.<op>` immediately."""
+    """The notebook runtime order: import first, fetch later, use `it.<op>` immediately.
+
+    Running INSIDE the suite is part of the test: earlier tests purge and reimport interpretune, which
+    strands `OpWrapper._target_module` on an orphaned module object. The first version of the fix
+    registered onto that orphan -- every wrapper-side invariant held while `it.<op>` still raised --
+    and only this test's placement deep in the suite caught it. Do not make this hermetic.
+    """
     import interpretune as it
     import interpretune.analysis  # -- installs the wrapper surface (the snapshot)
     from interpretune.analysis.ops.dispatcher import DISPATCHER
