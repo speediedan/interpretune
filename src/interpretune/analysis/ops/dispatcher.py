@@ -303,6 +303,14 @@ class AnalysisOpDispatcher:
         self._cache_manager._fingerprint = None
         self._loaded = False
         self.load_definitions()
+        # Re-sync the top-level `it.<op>` wrappers with the reloaded registry. `OpWrapper.register_operations`
+        # runs once when `interpretune.analysis` is imported and SNAPSHOTS the op names as module attributes,
+        # so without this a collection fetched mid-session is "usable immediately" at the dispatcher layer
+        # (as pull_ops documents) while `it.<its_op>` still raises AttributeError -- and the top-level wrapper
+        # is precisely the surface the composition guide tells notebook authors to use. `_target_module` is
+        # None only when the wrapper surface was never installed, in which case there is nothing to sync.
+        if OpWrapper._target_module is not None:
+            OpWrapper.register_operations(OpWrapper._target_module, self)
 
     def _load_from_yaml_and_compile(self, yaml_files: list[Path]):
         """Load from YAML files and compile to cache."""
