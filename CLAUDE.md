@@ -570,6 +570,15 @@ docs are not.
   `IT_RUN_CUDA_TESTS=1 python -m pytest tests -v` (inline env var; these tests SKIP silently without it —
   they hide inside the "skipped" count) with `HF_GATED_PUBLIC_REPO_AUTH_KEY`/`HF_TOKEN` available, and
   check stub freshness with `python scripts/generate_op_stubs.py` + a clean `git diff` before any merge.
+- **A PR that does not close its issue must say so ON THE ISSUE, not only in the PR body.** When a PR
+  delivers part of an issue's scope, comment on the **issue** recording what landed and what remains,
+  and keep the checklist there current. A PR body is the right place for reviewer-facing rationale,
+  but it is the wrong place for the surviving scope: once merged, that text sits behind a link nobody
+  follows, and an issue reading as though nothing has happened is indistinguishable from one where
+  the remaining work is invisible. Users and future sessions read the issue.
+  Include: what the PR landed, anything the work **obviated** (with why), and the remaining items as a
+  checklist. State plainly when an item is blocked and what unblocks it, rather than dropping it.
+
 - **No AI-attribution trailers** (`Co-Authored-By: Claude ...`, "Generated with ..." lines) in commit
   messages or PR bodies — they are commit noise (and `.claude/settings.json` no longer adds them). When
   rebasing the long-lived multi-repo workstream branches (interpretune, SAEDashboard, SAELens,
