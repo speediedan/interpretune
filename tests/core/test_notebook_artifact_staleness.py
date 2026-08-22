@@ -170,3 +170,75 @@ class TestDriftExitCodeContract:
         )
         # The wildcard arm must say plainly that it is NOT a drift report; that sentence is the fix.
         assert "NOT a drift report" in workflow
+
+
+class TestStampUnderRecording:
+    """#318: an artifact re-rendered while the stamping machinery changed under it carries CURRENT outputs with a
+    STALE stamp.
+
+    `stale_output_references` stays silent -- the outputs are genuinely current -- but every op the stamp
+    fails to record is invisible to the next rename's drift check. Two correct PRs composed into this on
+    main (#308 re-rendered, #310 stamped; merged in either order the result is the same), so neither
+    PR's CI could have caught it.
+    """
+
+    def test_current_op_in_output_missing_from_stamp_is_detected(self, renderer):
+        """The defect observed on main: outputs mention `logit_diffs_latent`, the stamp predates it."""
+        artifact = _artifact(recorded=["labels_to_ids", "logit_diffs_sae"], output_text="ran logit_diffs_latent\n")
+        assert renderer.unstamped_output_references(artifact, {"labels_to_ids", "logit_diffs_latent"}) == [
+            "logit_diffs_latent"
+        ]
+
+    def test_word_boundary_blocks_substring_accusations(self, renderer):
+        """An output mentioning only `logit_diffs_latent` must not read as mentioning `logit_diffs`.
+
+        This direction accuses a STAMP, not the page, so it wants precision where the dead-name direction wants
+        sensitivity -- with plain substring matching, every artifact would accuse its stamp of missing ops it never
+        printed.
+        """
+        artifact = _artifact(recorded=["labels_to_ids"], output_text="ran logit_diffs_latent\n")
+        assert renderer.unstamped_output_references(artifact, {"labels_to_ids", "logit_diffs"}) == []
+        # ...while the same name printed standalone IS a gap.
+        artifact = _artifact(recorded=["labels_to_ids"], output_text="ran logit_diffs alone\n")
+        assert renderer.unstamped_output_references(artifact, {"labels_to_ids", "logit_diffs"}) == ["logit_diffs"]
+
+    def test_missing_stamp_is_not_a_stamp_gap(self, renderer):
+        """No stamp at all is `unstamped_artifacts`' report; accusing an absent stamp would double-count."""
+        artifact = _artifact(recorded=None, output_text="ran logit_diffs_latent\n")
+        assert renderer.unstamped_output_references(artifact, {"logit_diffs_latent"}) == []
+
+    def test_unreadable_surface_reports_nothing(self, renderer):
+        """Same contract as the dead-name direction: an unreadable surface must not read as `no ops`."""
+        artifact = _artifact(recorded=["labels_to_ids"], output_text="ran labels_to_ids\n")
+        assert renderer.unstamped_output_references(artifact, set()) == []
+
+    def test_restamp_refuses_an_artifact_with_dead_output_references(self, renderer, tmp_path, monkeypatch, capsys):
+        """The refusal is MECHANICAL, not advisory: restamping sets recorded == current, after which
+        `recorded - current` is empty forever and the dead-name check can never fire again for that
+        artifact. A --help warning does not prevent that; the refusal does."""
+        import json
+
+        publish = tmp_path / "publish"
+        artifacts = tmp_path / "artifacts"
+        (publish / "demo").mkdir(parents=True)
+        (artifacts / "demo").mkdir(parents=True)
+        dead = _artifact(recorded=["dead_op", "live_op"], output_text="ran dead_op\n")
+        fixable = _artifact(recorded=["dead_op", "live_op"], output_text="ran live_op\n")
+        for name, nb in (("dead.ipynb", dead), ("fixable.ipynb", fixable)):
+            (publish / "demo" / name).write_text(json.dumps(nb))
+            (artifacts / "demo" / name).write_text(json.dumps(nb))
+        monkeypatch.setattr(renderer, "PUBLISH_DIR", publish)
+        monkeypatch.setattr(renderer, "ARTIFACT_DIR", artifacts)
+        monkeypatch.setattr(renderer, "bundled_op_names", lambda: {"live_op"})
+        monkeypatch.setattr(sys, "argv", ["render_notebook_docs_artifacts.py", "--restamp"])
+
+        assert renderer.main() == 1
+        err = capsys.readouterr().err
+        # `rel` is a native Path, so the separator differs by OS -- assert the native rendering,
+        # not a hardcoded POSIX one (this exact assertion failed on windows-2022 with `demo\\dead.ipynb`).
+        assert f"REFUSED {Path('demo') / 'dead.ipynb'}" in err and "re-execute" in err
+        # The fixable one was restamped; the refused one kept its (accusable) stamp.
+        restamped = json.loads((artifacts / "demo" / "fixable.ipynb").read_text())
+        kept = json.loads((artifacts / "demo" / "dead.ipynb").read_text())
+        assert restamped["metadata"][renderer.OP_SURFACE_KEY] == ["live_op"]
+        assert "dead_op" in kept["metadata"][renderer.OP_SURFACE_KEY]
