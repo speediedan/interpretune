@@ -377,10 +377,27 @@ class NNsightModelBackend:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _ensure_tuple_calibration(self, model: Any) -> None:
+        """Calibrate the resolver's output tuple-ness against THIS model+transformers combo, once.
+
+        The static `tuple_output` flags in the hook map describe the transformers version the map was
+        written against. transformers 5.x decoder blocks return plain tensors, against which
+        `envoy.output[0]` silently reads -- and on the write path, overwrites -- batch row 0. One tiny
+        eager forward measures the truth per output hook; idempotent per backend instance.
+        """
+        if getattr(self, "_tuple_calibration_done", False):
+            return
+        try:
+            self._resolver.calibrate_tuple_outputs(self._get_hf_model(model))
+        finally:
+            # a failed probe leaves static flags in force; do not retry per call
+            self._tuple_calibration_done = True
+
     def register_model_hooks(self, model: Any) -> None:
         """Register forward pre-hooks needed for correct model execution.
 
-        Currently a **no-op**.  Reserved for future backend-specific hooks.
+        Calibrates the resolver's output tuple-ness (see `_ensure_tuple_calibration`); otherwise
+        reserved for future backend-specific hooks.
 
         .. note:: Position IDs
 
@@ -404,9 +421,9 @@ class NNsightModelBackend:
             embeddings.
 
         Args:
-            model: NNsight ``LanguageModel`` (unused, retained for API
-                compatibility).
+            model: NNsight ``LanguageModel``.
         """
+        self._ensure_tuple_calibration(model)
 
     def _splice_sae(
         self,
@@ -610,6 +627,7 @@ class NNsightModelBackend:
         Returns:
             Tuple of ``(logits, NNsightActivationCacheAdapter)``.
         """
+        self._ensure_tuple_calibration(model)
         saved_cache: dict[str, Any] = {}
         saved_logits: Any = None
         requested_base_hooks = [
@@ -645,6 +663,7 @@ class NNsightModelBackend:
         names_filter: NamesFilter,
     ) -> tuple[torch.Tensor, Any]:
         """Run a forward pass with activation caching but without latent model hooks."""
+        self._ensure_tuple_calibration(model)
         requested_hooks = _iter_requested_hook_names(model, self._resolver, names_filter, include_subhooks=False)
         saved_cache: dict[str, Any] = {}
         saved_logits: Any = None
@@ -690,6 +709,7 @@ class NNsightModelBackend:
         Returns:
             Model output logits.
         """
+        self._ensure_tuple_calibration(model)
         saved_logits: Any = None
         with model.trace() as tracer:
             with _invoke_trace(tracer, batch):
@@ -771,6 +791,7 @@ class NNsightModelBackend:
         Returns:
             List of logits tensors, one per element in ``hook_configs``.
         """
+        self._ensure_tuple_calibration(model)
         if not hook_configs:
             return []
 
@@ -863,6 +884,7 @@ class NNsightModelBackend:
         Returns:
             Raw model output logits (real tensor, after trace materialisation).
         """
+        self._ensure_tuple_calibration(model)
         # Collectors for saved proxies, keyed by TL-style sub-hook name
         saved_fwd: dict[str, Any] = {}  # name -> SaveProxy (fwd activations)
         saved_grad: dict[str, Any] = {}  # name -> SaveProxy (gradients)
@@ -951,6 +973,7 @@ class NNsightModelBackend:
            resolves the envoy (expanding ``*`` wildcards to matching hooks), reads the
            activation proxy, applies the spec, and writes back.
         """
+        self._ensure_tuple_calibration(model)
         if isinstance(interventions, InterventionDict):
             expanded_matches = {hook_name: [hook_name] for hook_name in interventions.keys()}
             hook_names = list(interventions.keys())
