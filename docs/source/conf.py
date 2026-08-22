@@ -85,6 +85,16 @@ myst_heading_anchors = 3
 nb_execution_mode = "off"
 nb_merge_streams = True
 
+# linkcheck (scheduled, non-blocking -- see .github/workflows/docs-linkcheck.yml). Ignores are for
+# hosts that reject non-browser clients, not for links we doubt: Colab 403s bot traffic outright,
+# and the local-Neuronpedia walkthrough necessarily names endpoints that only exist on that host.
+linkcheck_ignore = [
+    r"https://colab\.research\.google\.com/.*",
+    r"https?://(localhost|127\.0\.0\.1)[:/].*",
+]
+linkcheck_timeout = 15
+linkcheck_workers = 8
+
 # The notebooks live outside `docs/source`, so they are STAGED into it at build time (the target
 # `docs/source/notebooks/` is gitignored). Two sources, in priority order:
 #   1. `docs/notebook_artifacts/` — executed copies WITH outputs, regenerated on a GPU host. These

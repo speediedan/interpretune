@@ -38,6 +38,13 @@ jobs:
             *) echo "::error::The notebook-artifact staleness check FAILED TO RUN (exit $rc). \
           This is NOT a drift report -- see the log above for the real error."; exit 1 ;;
           esac
+      # Also stdlib-only (argparse/hashlib/json only), so it shares the fail-fast slot. The publish
+      # lane is the STAGING FALLBACK for any notebook without an executed artifact (see conf.py), so
+      # a stale published copy renders on the site just as invisibly as a stale artifact. Exit 1
+      # names the offending notebooks; rerun `python scripts/publish_notebooks.py` to republish.
+      - name: Check published notebooks are in sync with dev
+        run: |
+          python scripts/publish_notebooks.py --check-only
       - name: Install docs requirements
         run: |
           pip install -r requirements/docs.txt
