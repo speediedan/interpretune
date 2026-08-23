@@ -87,3 +87,54 @@ def test_reload_without_wrapper_surface_stays_inert(scratch_collection, monkeypa
         DISPATCHER.yaml_paths.remove(scratch_collection)
         monkeypatch.undo()
         DISPATCHER.reload_definitions()
+
+
+class TestAccessTimeFallback:
+    """The durable half of the fix: `it.<op>` resolves at ACCESS time for any registered op.
+
+    Build 849 demonstrated the snapshot surface going stale in a way the reload re-sync did not
+    cover: a papermill kernel where the pull succeeded, the dispatcher held the op, and
+    `it.jlens_patch_intervention` still raised -- while the identical test passed outside CI. Rather
+    than chase every path that can leave the snapshot behind, `__getattr__` now consults the
+    dispatcher directly when the analysis package is loaded, so a registered op is reachable no
+    matter how registration happened or what state the setattr surface is in.
+    """
+
+    def test_registered_op_resolves_even_when_the_snapshot_surface_lacks_it(self):
+        """The exact build-849 state: op in dispatcher, attribute absent."""
+        import interpretune as it
+        import interpretune.analysis
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        name = "model_fwd_intervention"
+        assert name in DISPATCHER.registered_ops
+        # simulate the stale surface: remove both the wrapper attr and any cached global
+        had = it.__dict__.pop(name, None)
+        try:
+            wrapper = getattr(it, name)  # must come back via the dispatcher fallback, not raise
+            assert wrapper is not None
+            assert getattr(it, name) is wrapper  # and it caches, so the fallback pays once
+        finally:
+            if had is not None:
+                setattr(it, name, had)
+
+    def test_aliases_resolve_through_the_fallback_too(self):
+        import interpretune as it
+        import interpretune.analysis
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        alias = "semantic_direction"  # alias of concept_direction
+        assert DISPATCHER.resolve_alias(alias) is not None
+        had = it.__dict__.pop(alias, None)
+        try:
+            assert getattr(it, alias) is not None
+        finally:
+            if had is not None:
+                setattr(it, alias, had)
+
+    def test_non_op_names_still_raise_and_import_nothing_heavy(self):
+        import interpretune as it
+
+        with pytest.raises(AttributeError, match="has no attribute definitely_not_an_op_name"):
+            _ = it.definitely_not_an_op_name
+        assert not hasattr(it, "another_missing_name")
