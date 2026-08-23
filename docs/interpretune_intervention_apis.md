@@ -38,6 +38,16 @@ leading axis and swaps the activation's coordinates along that pair, leaving the
 to the pair untouched. Mechanically it is basis-agnostic: any pair of directions can serve as the
 patch pair, so embed-basis concept poles are as valid a source as Jacobian lens rows.
 
+> **The pair and the model must share a residual basis — and TransformerLens weight processing
+> changes it.** `HookedTransformer.from_pretrained` defaults to folding LayerNorm and centering
+> weights, which rewrites the residual stream's geometry at every `hook_resid_*` point: a patch
+> pair built from unprocessed weights (which is what lens artifacts and the circuit-tracer
+> `ReplacementModel` path use) then swaps in the wrong plane. Measured on gpt2: the same pair's
+> intervention delta disagrees between backends by a **0.948 relative gap** under default
+> processing, versus <10% with `from_pretrained_no_processing`. Load unprocessed when applying
+> patch pairs on TL, or build the pair from the processed model's own weights — never mix.
+> (Pinned by `tests/core/test_jlens_patch_validation.py`.)
+
 ## Op-level entry points and composites
 
 The registered analysis ops (all callable as `it.<name>(...)`):
