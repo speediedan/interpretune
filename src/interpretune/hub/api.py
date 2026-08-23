@@ -106,11 +106,15 @@ def load_datamodule(repo_id: str, name: str, *, cache_dir: Path | None = None) -
     """
     from interpretune.config.loading import load_datamodule_cfg
     from interpretune.hub.components import resolve_datamodule_config
-    from interpretune.registry import DEFAULT_DATAMODULE, RegisteredDataModuleCfg
+    from interpretune.registry import RegisteredDataModuleCfg
 
     body = resolve_datamodule_config(repo_id, name, cache_dir=cache_dir)
     dm_cfg, dm_cls = load_datamodule_cfg(body)
-    return RegisteredDataModuleCfg(dm_cfg, dm_cls or DEFAULT_DATAMODULE)
+    if dm_cls is None:
+        # lean on the NamedTuple's DEFAULT_DATAMODULE field default (which carries the one sanctioned
+        # type-ignore) rather than re-passing it positionally and re-triggering the same mismatch here
+        return RegisteredDataModuleCfg(dm_cfg)
+    return RegisteredDataModuleCfg(dm_cfg, dm_cls)
 
 
 def prefer_ops(*repo_ids: str, replace: bool = False) -> list[str]:
