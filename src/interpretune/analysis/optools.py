@@ -432,6 +432,8 @@ __all__ = [
     "require_model_backend",
     "resolve_aggregate_input",
     "resolve_embedding_weight",
+    "resolve_unembed_and_norm_scale",
+    "UnembedNormInfo",
     "resolve_feature_score_source",
     "resolve_tokenizer",
     "stack_column_tensors",
