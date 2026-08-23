@@ -67,6 +67,21 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
                 f"{source}: `ops.files` must not list {IT_COMPONENT_MANIFEST} itself. The manifest declares "
                 "the op definitions; it is not one of them, and parsing it as one fails on its scalar keys."
             )
+    if "datamodule" in kinds:
+        dms = manifest.get("datamodules")
+        if not dms or not isinstance(dms, dict):
+            raise ComponentManifestError(
+                f"{source}: kind `datamodule` requires a non-empty `datamodules` index "
+                "(datamodule name -> entry). The manifest names entries; there are no reserved filenames."
+            )
+        for name, entry in dms.items():
+            if not isinstance(entry, dict) or not entry.get("config") or not isinstance(entry["config"], str):
+                raise ComponentManifestError(
+                    f"{source}: datamodule entry {name!r} requires a repo-relative `config` path (its "
+                    "standalone-consumption payload). Module configurations inline their own datamodule "
+                    "configuration and never read this payload -- consumption is strictly two-path with "
+                    "no merge semantics (#128)."
+                )
     if "promptconfigs" in kinds:
         pc = manifest.get("promptconfigs") or {}
         if not pc.get("entrypoint") or not isinstance(pc.get("definitions"), dict) or not pc["definitions"]:

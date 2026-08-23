@@ -73,7 +73,7 @@ def load_session_cfg(
     """
     import copy
 
-    from interpretune.registry import it_cfg_factory, itdm_cfg_factory
+    from interpretune.registry import it_cfg_factory
     from interpretune.session import ITSessionConfig
 
     # the factories mutate nested nodes in place (class_path dicts become instances); a loader that
@@ -104,19 +104,24 @@ def load_session_cfg(
     shared = dict(body.get("shared_config") or {})
 
     dm_cfg_body = dict(registered.get("datamodule_cfg") or {})
-    if "class_path" in dm_cfg_body:
-        # config-subclass form (the CLI dialect's shape): same class_path/init_args grammar; nested
-        # class_path nodes (prompt_cfg, collator cfgs, ...) instantiate recursively exactly as
-        # instantiate_nested does for module configs — one grammar, one instantiaton behavior
-        from interpretune.registry import instantiate_nested
-
-        init_args = dict(dm_cfg_body.get("init_args") or {})
-        dm_cfg = cast(
-            "ITDataModuleConfig",
-            instantiate_nested({"class_path": dm_cfg_body["class_path"], "init_args": {**shared, **init_args}}),
-        )
+    if set(dm_cfg_body) >= {"ref"}:
+        if set(dm_cfg_body) != {"ref"}:
+            raise ValueError(
+                "datamodule_cfg with `ref` must contain ONLY `ref` -- a datamodule reference is a "
+                f"REPLACEMENT, not a base to layer onto (no merge semantics, #128). Got extra keys: "
+                f"{sorted(set(dm_cfg_body) - {'ref'})}"
+            )
+        if registered.get("datamodule_cls") is not None:
+            raise ValueError(
+                "a body whose datamodule_cfg is a `ref` must not also declare `datamodule_cls` -- the "
+                "reference supplies BOTH the configuration and the class, wholesale. Declaring one half "
+                "locally would be a partial merge by the back door (#128)."
+            )
+        dm_cfg, ref_dm_cls = _resolve_datamodule_ref(dm_cfg_body["ref"])
+        if ref_dm_cls is not None:
+            datamodule_cls = ref_dm_cls
     else:
-        dm_cfg = itdm_cfg_factory(dm_cfg_body, shared)
+        dm_cfg = _hydrate_datamodule_cfg(dm_cfg_body, shared)
 
     m_cfg_body = dict(registered.get("module_cfg") or {})
     m_cfg = it_cfg_factory(m_cfg_body, shared)
@@ -137,6 +142,75 @@ def load_session_cfg(
         datamodule_cls=_resolve_cls(registered.get("datamodule_cls"), datamodule_cls),
         module_cls=_resolve_cls(registered.get("module_cls"), module_cls),
     )
+
+
+def _hydrate_datamodule_cfg(dm_cfg_body: dict[str, Any], shared: dict[str, Any]) -> "ITDataModuleConfig":
+    """The ONE datamodule-hydration path, shared by inline bodies and standalone payloads (#128)."""
+    from interpretune.registry import itdm_cfg_factory
+
+    if "class_path" in dm_cfg_body:
+        # config-subclass form (the CLI dialect's shape): same class_path/init_args grammar; nested
+        # class_path nodes (prompt_cfg, collator cfgs, ...) instantiate recursively exactly as
+        # instantiate_nested does for module configs — one grammar, one instantiaton behavior
+        from interpretune.registry import instantiate_nested
+
+        init_args = dict(dm_cfg_body.get("init_args") or {})
+        return cast(
+            "ITDataModuleConfig",
+            instantiate_nested({"class_path": dm_cfg_body["class_path"], "init_args": {**shared, **init_args}}),
+        )
+    return itdm_cfg_factory(dm_cfg_body, shared)
+
+
+def parse_datamodule_ref(ref: str) -> tuple[str, str]:
+    """Split ``<org>/<repo>#<name>`` into ``(repo_id, name)``, rejecting anything else loudly."""
+    if not isinstance(ref, str) or ref.count("#") != 1:
+        raise ValueError(f"datamodule ref must be `<org>/<repo>#<name>`, got {ref!r}")
+    repo_id, _, name = ref.partition("#")
+    if repo_id.count("/") != 1 or not all(repo_id.split("/")) or not name:
+        raise ValueError(f"datamodule ref must be `<org>/<repo>#<name>`, got {ref!r}")
+    return repo_id, name
+
+
+def _resolve_datamodule_ref(ref: str) -> tuple["ITDataModuleConfig", Any]:
+    """Resolve a REPLACEMENT datamodule reference through the hub layer (cache-only, #128).
+
+    The referenced payload is used WHOLESALE: its own ``shared_config`` applies to it (through the same
+    one-merge-site factory path), and the referring body's ``shared_config`` does NOT leak in. That is
+    the two-path contract -- a ref is a replacement, not a base for layered overrides, so whether the
+    referenced datamodule's tokenizer settings agree with the referring module's is the author's
+    responsibility and is visible in one place (the referenced payload) rather than emergent from a
+    merge.
+    """
+    from interpretune.hub.components import resolve_datamodule_config
+
+    repo_id, name = parse_datamodule_ref(ref)
+    body = resolve_datamodule_config(repo_id, name)
+    dm_cfg = _hydrate_datamodule_cfg(dict(body.get("datamodule_cfg") or {}), dict(body.get("shared_config") or {}))
+    dm_cls = body.get("datamodule_cls")
+    if dm_cls is not None:
+        if isinstance(dm_cls, dict) and "class_path" in dm_cls:
+            dm_cls = instantiate_class(init=dm_cls, import_only=True)
+        elif isinstance(dm_cls, str):
+            dm_cls = instantiate_class(init={"class_path": dm_cls}, import_only=True)
+    return dm_cfg, dm_cls
+
+
+def load_datamodule_cfg(body: dict[str, Any], *, datamodule_cls: Any = None) -> tuple["ITDataModuleConfig", Any]:
+    """Hydrate a STANDALONE datamodule payload (#128): ``datamodule_cfg`` + optional ``shared_config``.
+
+    Same one-merge-site semantics as :func:`load_session_cfg` -- ``shared_config`` applies through the
+    registry factories, nothing else merges. The payload must be module-free (the resolver enforces
+    that for hub payloads; this loader simply never reads module keys).
+    """
+    dm_cfg = _hydrate_datamodule_cfg(dict(body.get("datamodule_cfg") or {}), dict(body.get("shared_config") or {}))
+    cls_entry = body.get("datamodule_cls")
+    if cls_entry is not None:
+        if isinstance(cls_entry, dict) and "class_path" in cls_entry:
+            datamodule_cls = instantiate_class(init=cls_entry, import_only=True)
+        elif isinstance(cls_entry, str):
+            datamodule_cls = instantiate_class(init={"class_path": cls_entry}, import_only=True)
+    return dm_cfg, datamodule_cls
 
 
 def session_body_from_cli_mapping(session_cfg_mapping: dict[str, Any]) -> dict[str, Any]:

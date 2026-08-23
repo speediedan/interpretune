@@ -18,6 +18,8 @@ Registry entries live in TWO places split by consumer: shipping example entries 
 
 ## Registry Entry Structure
 
+A component tree may also declare **standalone datamodule entries** (#128): a `datamodules:` index in `it_component.yaml` maps a plain name (not a derived key) to `{entrypoint, config}`, where `config` is the datamodule's standalone-consumption payload (`datamodule_cfg` + optional `shared_config` + optional `datamodule_cls`). Consumption is strictly two-path with no merge semantics: module configurations inline their own `datamodule_cfg` wholesale and never read the standalone payload, while `it.hub.load_datamodule("<org>/<repo>", "<name>")` hydrates the payload alone (no module coupling). A module configuration may instead declare `datamodule_cfg: {ref: "<org>/<repo>#<name>"}` — a REPLACEMENT reference resolved cache-only through the hub layer, which supplies both the configuration and the class wholesale (declaring `ref` alongside any other key, or alongside a local `datamodule_cls`, is an error).
+
 Each entry follows this structure (in a component tree's `configs/<key>.yaml`, or in `tests/test_module_registry.yaml` for test-only entries):
 
 ```yaml

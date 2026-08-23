@@ -9,9 +9,12 @@ unpack directly. ``pull`` is the ONLY verb here that touches the network; ``load
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from interpretune.registry import RegisteredCfg
+
+if TYPE_CHECKING:
+    from interpretune.registry import RegisteredDataModuleCfg
 
 
 def _hydrate_component_body(key: str, body: dict) -> RegisteredCfg:
@@ -92,6 +95,26 @@ def load(repo_id: str, key: str, *, cache_dir: Path | None = None) -> Registered
 
     canonical, body = resolve_component_config(repo_id, key, cache_dir=cache_dir)
     return _hydrate_component_body(canonical, body)
+
+
+def load_datamodule(repo_id: str, name: str, *, cache_dir: Path | None = None) -> "RegisteredDataModuleCfg":
+    """Cache-only hydration of one STANDALONE datamodule entry (#128) — never touches the network.
+
+    The datamodule-only half of the two-path contract: the returned pair has no module coupling, and the
+    payload's own ``shared_config`` is the only shared configuration applied. Same cache discipline as
+    :func:`load` — an uncached component raises with the exact fetch command.
+    """
+    from interpretune.config.loading import load_datamodule_cfg
+    from interpretune.hub.components import resolve_datamodule_config
+    from interpretune.registry import RegisteredDataModuleCfg
+
+    body = resolve_datamodule_config(repo_id, name, cache_dir=cache_dir)
+    dm_cfg, dm_cls = load_datamodule_cfg(body)
+    if dm_cls is None:
+        # lean on the NamedTuple's DEFAULT_DATAMODULE field default (which carries the one sanctioned
+        # type-ignore) rather than re-passing it positionally and re-triggering the same mismatch here
+        return RegisteredDataModuleCfg(dm_cfg)
+    return RegisteredDataModuleCfg(dm_cfg, dm_cls)
 
 
 def prefer_ops(*repo_ids: str, replace: bool = False) -> list[str]:

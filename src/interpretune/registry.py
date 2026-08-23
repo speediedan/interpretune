@@ -50,6 +50,19 @@ class RegisteredCfg(NamedTuple):
     module_cls: Type[ModuleSteppable] = DEFAULT_MODULE  # type: ignore[assignment]
 
 
+class RegisteredDataModuleCfg(NamedTuple):
+    """The datamodule-only half of the two-path contract (#128).
+
+    ``RegisteredCfg`` binds datamodule and module inseparably, which is right for task components. A
+    standalone datamodule entry hydrates to this instead: no module coupling, so a datamodule can be
+    addressed, fetched, and instantiated on its own (``ITSessionConfig`` accepts a pre-built
+    datamodule, and datamodules instantiate before modules -- the tokenizer handshake).
+    """
+
+    datamodule_cfg: ITDataModuleConfig
+    datamodule_cls: Type[DataModuleInitable] = DEFAULT_DATAMODULE  # type: ignore[assignment]
+
+
 @runtime_checkable
 class RegKeyQueryable(Protocol):
     model_src_key: str
