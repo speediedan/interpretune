@@ -19,7 +19,7 @@ from transformers.utils import ModelOutput
 
 from interpretune.protocol import ITModuleProtocol, STEP_OUTPUT
 from interpretune.config import ITDataModuleConfig, ITConfig
-from interpretune.utils import rank_zero_only, rank_zero_debug, rank_zero_warn
+from interpretune.utils import rank_zero_only, rank_zero_debug
 from interpretune import MemProfilerHooks
 from it_examples.experiments.rte_boolq import RTEBoolqDataModule, RTEBoolqModuleMixin, RTEBoolqSteps
 from tests import FinetuningScheduler
@@ -101,7 +101,11 @@ class BaseTestDataModule:
             # OSError(EINVAL) from the writer open (#326: 18 stderr tracebacks per CI run from a
             # swallowed exception here, loud enough to misdirect unrelated failure diagnosis, while
             # force_prepare silently degraded to keeping the stale copy). Build beside the target and
-            # swap; when live maps block the swap, keep the existing copy and say so in ONE line.
+            # swap; when live maps block the swap, keep the existing copy and say so in ONE debug
+            # line. Debug, not warn: on Windows live maps block the swap on effectively every
+            # mid-suite rebuild, so a warning here fires routinely and trips the parity tests'
+            # unexpected-warnings assertion (5 failures the noise this block used to emit had been
+            # burying).
             if dataset_path.exists():
                 rebuild_path = dataset_path.with_name(dataset_path.name + ".rebuild")
                 shutil.rmtree(rebuild_path, ignore_errors=True)
@@ -112,7 +116,7 @@ class BaseTestDataModule:
                     rank_zero_debug(f"[PREPARE_DATA] rebuilt dataset swapped into {dataset_path}")
                 except OSError as e:
                     shutil.rmtree(rebuild_path, ignore_errors=True)
-                    rank_zero_warn(
+                    rank_zero_debug(
                         f"[PREPARE_DATA] kept existing dataset at {dataset_path}: in-place rebuild "
                         f"blocked by live memory-maps ({type(e).__name__}: {e})"
                     )
