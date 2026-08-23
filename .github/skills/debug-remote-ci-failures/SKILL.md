@@ -434,6 +434,23 @@ When dependency versions are wrong, failures cascade. A single wrong Transformer
 
 ### 3. Unicode in Test Output is a Windows Landmine
 
+### Read the failure summary line FIRST; the log's loudest region lies
+
+Three measured traps, each of which has misdirected a real diagnosis in this repo:
+
+1. **Noise near a failure is not the failure.** The authoritative signal is the short test summary
+   (`N failed, M passed`); locate the named test, then read only that test's span. A failed-log tail
+   dominated by dozens of passing-test tracebacks once produced the read "nowhere near my change"
+   for a single-test failure that was exactly the change.
+2. **A log can contain the literal error text of a check that did not fire.** CI step scaffolding
+   echoes its failure message as template text in every run (e.g. "Type stubs are stale and need to
+   be regenerated..." appears even when the stub check passes). Only STEP status distinguishes a
+   fired check from its echo; grep within the failing step's span, not across the whole log.
+3. **Historical instance, fixed:** Windows runs used to emit ~18 swallowed-exception tracebacks
+   (`OSError: [Errno 22] ... .arrow`) from a test fixture overwriting memory-mapped Arrow files in
+   place (#326). If similar Arrow noise reappears, suspect an in-place rewrite of files a live
+   `datasets` object still maps, not a storage fault.
+
 Even when tests pass on Linux and macOS, Windows CI runners use `cp1252` encoding by default. Any Unicode characters in test assertion messages, logging output, or summary strings will cause `UnicodeEncodeError`. Use ASCII-only characters in all test output.
 
 ### 4. Type Checking is a Separate CI Job
