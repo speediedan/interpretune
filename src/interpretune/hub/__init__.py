@@ -65,6 +65,8 @@ _LAZY_ATTRS = {
     "build_component_tree": "interpretune.hub.publish",
     "publish_component": "interpretune.hub.publish",
     # the ratified verb surface (design 5e): it.hub.pull / it.hub.load / it.hub.push
+    "load_datamodule": "interpretune.hub.api",
+    "resolve_datamodule_config": "interpretune.hub.components",
     "pull": "interpretune.hub.api",
     "pull_ops": "interpretune.hub.api",
     "load": "interpretune.hub.api",

@@ -1,4 +1,6 @@
 # Standalone-consumption default for the rte_boolq datamodule (#128 path; module configs inline their own)
+datamodule_cls:
+  class_path: it_examples.experiments.rte_boolq.RTEBoolqDataModule
 datamodule_cfg:
   prompt_cfg:
     class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig

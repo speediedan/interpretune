@@ -134,6 +134,7 @@ _LAZY_MODULE_ATTRS = {
     "it_session_end": "interpretune.base.it_session_end",
     "ModuleRegistry": "interpretune.registry.ModuleRegistry",
     "RegisteredCfg": "interpretune.registry.RegisteredCfg",
+    "RegisteredDataModuleCfg": "interpretune.registry.RegisteredDataModuleCfg",
     "RegKeyType": "interpretune.registry.RegKeyType",
     "it_cfg_factory": "interpretune.registry.it_cfg_factory",
     "gen_module_registry": "interpretune.registry.gen_module_registry",

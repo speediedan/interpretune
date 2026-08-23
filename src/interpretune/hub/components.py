@@ -17,7 +17,12 @@ import yaml
 from huggingface_hub import hf_hub_download
 
 from interpretune.hub.cache import IT_COMPONENTS_HUB_CACHE
-from interpretune.hub.manifest import IT_COMPONENT_MANIFEST, check_config_key_parity, validate_component_manifest
+from interpretune.hub.manifest import (
+    IT_COMPONENT_MANIFEST,
+    ComponentManifestError,
+    check_config_key_parity,
+    validate_component_manifest,
+)
 
 
 def _installed_version(dist_name: str) -> str | None:
@@ -205,6 +210,32 @@ def resolve_component_config(repo_id: str, key: str, cache_dir: Path | None = No
     cfg_path = snapshot / configs[key]
     body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     return check_config_key_parity(cfg_path, body, expected_key=key), body
+
+
+def resolve_datamodule_config(repo_id: str, name: str, cache_dir: Path | None = None) -> dict:
+    """CACHE-ONLY resolution of one datamodule entry's standalone payload (#128).
+
+    Datamodule entries are named by the manifest's ``datamodules`` index rather than by derived
+    configuration keys, so there is no key-parity check here -- the name IS the address. The returned
+    body is the standalone-consumption payload only: module configurations inline their own
+    ``datamodule_cfg`` wholesale and never read this payload (strictly two-path, no merge semantics).
+    """
+    manifest, snapshot, _ = resolve_component_manifest(repo_id, cache_dir=cache_dir)
+    enforce_component_requires(manifest, source=f"{repo_id}@cache")
+    entries = manifest.get("datamodules") or {}
+    if name not in entries:
+        raise KeyError(f"{repo_id} (cached) declares no datamodule {name!r}. Available: {sorted(entries)}")
+    body = yaml.safe_load((snapshot / entries[name]["config"]).read_text(encoding="utf-8"))
+    if not isinstance(body, dict) or "datamodule_cfg" not in body:
+        raise ComponentManifestError(
+            f"{repo_id}#{name}: standalone datamodule payload must carry a `datamodule_cfg` mapping."
+        )
+    if "module_cfg" in body or "registered_cfg" in body:
+        raise ComponentManifestError(
+            f"{repo_id}#{name}: a standalone datamodule payload must not carry module configuration "
+            "(`module_cfg`/`registered_cfg`) -- it is the datamodule-only half of the two-path contract."
+        )
+    return body
 
 
 def local_publish(
