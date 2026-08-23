@@ -131,7 +131,34 @@ def pull_op_collection(
     # An op collection's YAMLs name Python implementations inside the repo; the impl modules have to be
     # local before the compiler resolves them, and they are not enumerated by the manifest.
     _pull_collection_impl_modules(repo_id, commit, root, token, paths)
+    _record_or_report_pin(repo_id, revision, commit, root)
     return paths, commit
+
+
+def _record_or_report_pin(repo_id: str, revision: str | None, commit: str, cache_root: str) -> None:
+    """Make a pinned pull durable, or say when an unpinned pull will not move what discovery loads.
+
+    ``revision=None`` and ``revision="main"`` both mean "the moving default" and record nothing —
+    freezing a user who explicitly asked for ``main`` would be the opposite surprise. Every other
+    explicit revision (commit, tag, branch) pins the RESOLVED commit: op discovery loads that
+    revision from now on, beating ``refs/main``, until the pin is moved (re-pull at another
+    revision) or released (``it.hub.unpin_ops``). See ``interpretune.hub.pins`` (#334).
+    """
+    from interpretune.hub.pins import read_op_pin, record_op_pin
+
+    if revision is not None and revision != "main":
+        record_op_pin(repo_id, commit, requested_revision=revision, cache_root=cache_root)
+        return
+    pin = read_op_pin(repo_id, cache_root=cache_root)
+    if pin is not None and pin["commit"] != commit:
+        from interpretune.utils.logging import rank_zero_warn
+
+        rank_zero_warn(
+            f"{repo_id!r} resolved `main` to {commit[:12]}, but the collection is pinned to "
+            f"{pin['commit'][:12]} and op discovery keeps loading the pin. Move the pin with "
+            f"it.hub.pull_ops({repo_id!r}, revision={commit!r}) or release it with "
+            f"it.hub.unpin_ops({repo_id!r})."
+        )
 
 
 def _pull_collection_impl_modules(

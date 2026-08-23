@@ -12,6 +12,7 @@ from huggingface_hub import scan_cache_dir
 
 from interpretune.hub.cache import _get_latest_revision, parse_hub_cache_path
 from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
+from interpretune.hub.pins import read_op_pin
 from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR, remote_code_trust, remote_code_trusted
 from interpretune.analysis.ops.compiler.load_policy import OpLoadError, op_load_failure
 
@@ -188,6 +189,9 @@ class OpDefinitionsCacheManager:
         reporting it is the point, since under the old glob such a repo appeared to work until one of its
         non-op YAMLs reached the compiler and dropped every op in the process.
 
+        PIN-FIRST (#334): a repo pinned by a revision-pinned pull loads exactly the pinned revision,
+        beating ``refs/main``; an unpinned repo keeps the refs-based selection below.
+
         Returns:
             List of Path objects pointing to declared op YAMLs, from one revision per collection.
         """
@@ -227,6 +231,29 @@ class OpDefinitionsCacheManager:
                 # Find the latest revision for this repo (preferring 'main' ref)
                 latest_revision = _get_latest_revision(repo)
                 if latest_revision is None:
+                    continue
+
+                # A durable pin (written by a revision-pinned pull; interpretune.hub.pins, #334)
+                # beats every ref: the trust posture promises that pinning a revision means trusted
+                # code cannot change under you, and discovery is where that promise is either kept
+                # or broken. Binding is STRICT -- a pinned revision that is no longer cached (or
+                # cached without its manifest) is refused with the restore/release gesture, never
+                # silently substituted with whatever `main` moved to.
+                pin = read_op_pin(repo.repo_id, cache_root=hub_cache_path)
+                if pin is not None:
+                    pinned = next((rev for rev in repo.revisions if rev.commit_hash == pin["commit"]), None)
+                    if pinned is not None and (pinned.snapshot_path / IT_COMPONENT_MANIFEST).is_file():
+                        rank_zero_debug(f"[ANALYSIS_HUB_CACHE] {repo.repo_id}: honoring pin {pin['commit'][:12]}")
+                        yaml_files.extend(self._declared_op_files(repo.repo_id, pinned.snapshot_path))
+                    else:
+                        state = "cached without its manifest" if pinned is not None else "no longer cached"
+                        op_load_failure(
+                            f"op collection {repo.repo_id!r} is pinned to revision "
+                            f"{pin['commit'][:12]}, which is {state}; refusing to substitute another "
+                            f"revision for a pinned one. Restore it with "
+                            f"it.hub.pull_ops({repo.repo_id!r}, revision={pin['commit']!r}) or "
+                            f"release the pin with it.hub.unpin_ops({repo.repo_id!r})."
+                        )
                     continue
 
                 # The refs/main snapshot can be PARTIAL: huggingface_hub materializes a snapshot dir per
@@ -307,6 +334,24 @@ class OpDefinitionsCacheManager:
         if not is_hub_file:
             rank_zero_debug("[ANALYSIS_HUB_CACHE] NOT A HUB FILE - returning (False, '')")
         return is_hub_file, namespace
+
+    def hub_commit_for_namespace(self, namespace: str) -> str | None:
+        """The snapshot commit the monitored YAMLs for one hub namespace were ACTUALLY loaded from.
+
+        The exact provenance answer: discovery may choose a pinned revision or a manifest-complete
+        fallback over ``refs/main``, and only the monitored paths record which snapshot won. Returns
+        ``None`` when no monitored file belongs to the namespace (e.g. before discovery has run in
+        this process), letting the caller fall back to a filesystem read.
+        """
+        for info in self._yaml_files:
+            is_hub_file, ns = self._parse_hub_file_path(info.path)
+            if is_hub_file and ns == namespace:
+                parts = info.path.parts
+                if "snapshots" in parts:
+                    commit = parts[parts.index("snapshots") + 1]
+                    if commit:
+                        return commit
+        return None
 
     def get_hub_namespace(self, yaml_file: Path) -> str:
         """Extract namespace from hub file path."""

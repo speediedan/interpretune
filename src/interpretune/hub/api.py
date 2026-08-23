@@ -73,6 +73,12 @@ def pull_ops(
     them, and using one raises ``Unknown operation`` -- pass ``reload=False`` only when fetching several
     collections before paying for one reload. Reloading re-runs the trust gate and every collection's
     compatibility window; it does not import any op implementation, which still happens lazily.
+
+    An explicit ``revision`` (other than ``"main"``) is a durable PIN (#334): op discovery loads that
+    revision from now on, beating ``refs/main``, so a republish cannot change what a pinned environment
+    executes. Move the pin by pulling at another revision; release it with :func:`unpin_ops`; inspect it
+    with :func:`op_pins`. A pinned revision evicted from the cache is refused at discovery (with the
+    restore/release gesture), never silently substituted.
     """
     from interpretune.hub.opcollections import pull_op_collection
 
@@ -82,6 +88,41 @@ def pull_ops(
 
         DISPATCHER.reload_definitions()
     return result
+
+
+def unpin_ops(repo_id: str, *, cache_dir: Path | None = None, reload: bool = True) -> bool:
+    """Release an op collection's revision pin; returns whether a pin existed.
+
+    Discovery reverts to the cached ``refs/main`` (with the manifest-complete fallback) on the next
+    load; with ``reload`` (default) that happens immediately. Releasing a pin is a trust decision --
+    it re-exposes the environment to whatever the publisher pushes next -- which is why it is an
+    explicit verb rather than a side effect of any pull.
+    """
+    from interpretune.hub.pins import clear_op_pin
+
+    existed = clear_op_pin(repo_id, cache_root=cache_dir)
+    if existed and reload:
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        DISPATCHER.reload_definitions()
+    return existed
+
+
+def op_pins(*, cache_dir: Path | None = None) -> dict[str, dict]:
+    """The active op-collection pins, keyed by repo id, each annotated with whether its revision is cached.
+
+    ``cached: False`` means discovery is currently REFUSING that collection (a pinned revision is never
+    silently substituted); restore it with ``pull_ops(repo_id, revision=<commit>)`` or release it with
+    :func:`unpin_ops`.
+    """
+    from interpretune.hub.pins import _default_cache_root, list_op_pins
+
+    root = Path(cache_dir) if cache_dir is not None else _default_cache_root()
+    pins = list_op_pins(cache_root=root)
+    for repo_id, record in pins.items():
+        user, _, repo = repo_id.partition("/")
+        record["cached"] = (root / f"models--{user}--{repo}" / "snapshots" / record["commit"]).is_dir()
+    return pins
 
 
 def load(repo_id: str, key: str, *, cache_dir: Path | None = None) -> RegisteredCfg:
