@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Literal, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 
 # Known SAE sub-hook suffixes that should be stripped when resolving to the base model hook
@@ -271,6 +271,11 @@ class HookNameResolver:
             )
         self._architecture = model_architecture
         self._mapping = _ARCHITECTURE_REGISTRY[model_architecture]
+        # Measured per-base-hook tuple-ness, filled by calibrate_tuple_outputs(). The static
+        # `tuple_output` flags describe a transformers version, not a law: transformers 5.x decoder
+        # blocks return plain tensors where 4.x returned tuples, and against a plain tensor
+        # `envoy.output[0]` silently reads (and on the write path, OVERWRITES) batch row 0.
+        self._measured_tuple_outputs: dict[str, bool] = {}
 
     @property
     def architecture(self) -> str:
@@ -310,6 +315,47 @@ class HookNameResolver:
         resolved_path = hook_mapping.envoy_path.format(layer=layer)
         return resolved_path, hook_mapping.io_type
 
+    def calibrate_tuple_outputs(self, hf_model: Any) -> dict[str, bool]:
+        """Measure, per output-io base hook, whether its module returns a tuple in THIS environment.
+
+        One tiny eager forward with hooks on layer-0 modules. The static ``tuple_output`` flags encode
+        the transformers version the mapping was written against; decoder blocks stopped returning
+        tuples in the 5.x line, which turns ``envoy.output[0]`` from tuple-unwrapping into silently
+        reading -- and on the write path, overwriting -- batch row 0. Measuring per hook rather than
+        version-gating keeps this true across forks and future changes; a hook the probe cannot reach
+        keeps its static flag.
+        """
+        import torch
+
+        hooks = []
+        measured: dict[str, bool] = {}
+        for base_name, mapping in self._mapping.hook_mappings.items():
+            if mapping.io_type != "output":
+                continue
+            try:
+                module = hf_model.get_submodule(mapping.envoy_path.format(layer=0))
+            except AttributeError:
+                continue
+
+            def _make(base: str):
+                def _record(_mod: Any, _args: Any, out: Any) -> None:
+                    measured[base] = isinstance(out, tuple)
+
+                return _record
+
+            hooks.append(module.register_forward_hook(_make(base_name)))
+        try:
+            device = next(hf_model.parameters()).device
+            with torch.no_grad():
+                hf_model(torch.zeros(1, 2, dtype=torch.long, device=device))
+        except Exception:  # probe failure leaves the static flags in force rather than guessing
+            measured = {}
+        finally:
+            for handle in hooks:
+                handle.remove()
+        self._measured_tuple_outputs = measured
+        return dict(measured)
+
     def resolve_for_envoy(self, tl_hook_name: str) -> ResolvedHook:
         """Resolve a TL hook name to full NNsight envoy navigation information.
 
@@ -333,10 +379,14 @@ class HookNameResolver:
             )
         hook_mapping = self._mapping.hook_mappings[base_name]
         resolved_path = hook_mapping.envoy_path.format(layer=layer)
+        # A measured flag (calibrate_tuple_outputs) beats the static default: the static value
+        # describes a transformers version, and against a plain-tensor output `envoy.output[0]`
+        # reads -- and on the write path overwrites -- batch row 0 instead of unwrapping a tuple.
+        tuple_output = self._measured_tuple_outputs.get(base_name, hook_mapping.tuple_output)
         return ResolvedHook(
             module_path=resolved_path,
             io_type=hook_mapping.io_type,
-            tuple_output=hook_mapping.tuple_output,
+            tuple_output=tuple_output,
         )
 
     def resolve_transcoder_hooks(

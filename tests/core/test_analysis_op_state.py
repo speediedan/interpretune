@@ -597,7 +597,7 @@ class TestOpDefCacheRoundTrip:
         # Updating it is the acknowledgement, so it should move only alongside a new `# N:` rationale line on
         # CACHE_FORMAT_VERSION itself. Note this only guards fields reaching THIS test; the compiler source is
         # not part of the cache fingerprint at all, which is #290.
-        assert CACHE_FORMAT_VERSION == "6"
+        assert CACHE_FORMAT_VERSION == "7"
 
 
 class TestOpStateIsNotSerialized:

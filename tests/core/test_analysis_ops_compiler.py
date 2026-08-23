@@ -570,10 +570,11 @@ class TestOpDef:
         cache_manager = OpDefinitionsCacheManager(Path("/tmp"))
         serialized = cache_manager._serialize_op_def(op_def)
 
-        # Check that the serialized string contains the expected fields
-        assert 'name="test_op"' in serialized
-        assert 'description="Test operation"' in serialized
-        assert 'implementation="my.module.func"' in serialized
+        # These fields emit via repr(), so the quote character is repr's choice (single here);
+        # the escaping fix exists because hand-quoting broke on descriptions containing '"'.
+        assert "name='test_op'" in serialized
+        assert "description='Test operation'" in serialized
+        assert "implementation='my.module.func'" in serialized
         assert "importable_params=" in serialized
         assert "normal_params=" in serialized
         assert "OpDef(" in serialized
@@ -594,10 +595,11 @@ class TestOpDef:
         cache_manager = OpDefinitionsCacheManager(Path("/tmp"))
         serialized = cache_manager._serialize_op_def(op_def)
 
-        # Check that the serialized string contains the expected fields
-        assert 'name="test_op_minimal"' in serialized
-        assert 'description="Test operation with minimal fields"' in serialized
-        assert 'implementation="my.module.func"' in serialized
+        # These fields emit via repr(), so the quote character is repr's choice (single here);
+        # the escaping fix exists because hand-quoting broke on descriptions containing '"'.
+        assert "name='test_op_minimal'" in serialized
+        assert "description='Test operation with minimal fields'" in serialized
+        assert "implementation='my.module.func'" in serialized
         assert "OpDef(" in serialized
 
 
@@ -770,9 +772,9 @@ test_op:
         serialized = cache_manager._serialize_op_def(op_def)
 
         # Check that the serialized string contains the expected fields
-        assert 'name="test_op"' in serialized
-        assert 'description="Test operation"' in serialized
-        assert 'implementation="my.module.func"' in serialized
+        assert "name='test_op'" in serialized
+        assert "description='Test operation'" in serialized
+        assert "implementation='my.module.func'" in serialized
         assert "importable_params=" in serialized
         assert "normal_params=" in serialized
         assert "OpDef(" in serialized
@@ -794,9 +796,9 @@ test_op:
         serialized = cache_manager._serialize_op_def(op_def)
 
         # Check that the serialized string contains the expected fields
-        assert 'name="test_op_minimal"' in serialized
-        assert 'description="Test operation with minimal fields"' in serialized
-        assert 'implementation="my.module.func"' in serialized
+        assert "name='test_op_minimal'" in serialized
+        assert "description='Test operation with minimal fields'" in serialized
+        assert "implementation='my.module.func'" in serialized
         assert "OpDef(" in serialized
 
     def test_generate_module_content(self, cache_manager, sample_yaml_file):
@@ -1880,10 +1882,10 @@ class TestCacheFormatVersionCoversCompilerChanges:
     # comment: a comment-triggered failure is at least explicable by looking at what you just changed.
     # Raw bytes hash identically on all four.
     GUARDED = ("schema_compiler.py", "cache_manager.py")
-    EXPECTED_VERSION = "6"
+    EXPECTED_VERSION = "7"
     EXPECTED_DIGESTS = {
         "schema_compiler.py": "33d733fd865c",
-        "cache_manager.py": "debec4a5ef68",
+        "cache_manager.py": "818e62a55950",
     }
 
     @staticmethod
@@ -1947,3 +1949,42 @@ class TestCacheFormatVersionCoversCompilerChanges:
         # Same declarations, same versions -> same fingerprint, regardless of compiler source.
         manager._fingerprint = None
         assert manager.fingerprint == first
+
+
+class TestGeneratedCacheSurvivesHostileStrings:
+    """The generated op cache is Python SOURCE, so string fields must be escaped like source.
+
+    Found in the wild by the first genuinely non-bundled hub collection (#273): a description containing `a lens-
+    coordinate "patch" intervention` rendered a module that failed to parse. The failure mode was maximally quiet -- a
+    "Failed to load cache" warning plus a full recompile on EVERY load, in every session, for as long as the collection
+    stayed cached. Nothing was functionally wrong, so nothing ever escalated it.
+    """
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            'stage a lens-coordinate "patch" intervention',  # the in-the-wild case
+            "an op's description with an apostrophe",
+            "both \"double\" and 'single' quotes",
+            "a backslash \\ and a\nnewline",
+        ],
+        ids=["double-quotes", "apostrophe", "mixed-quotes", "backslash-newline"],
+    )
+    def test_hostile_description_round_trips_through_a_parseable_module(self, description, tmp_path):
+        import ast
+
+        op_def = OpDef(
+            name="hostile_desc_op",
+            description=description,
+            implementation="my.module.func",
+            input_schema=OpSchema({"input_field": ColCfg(datasets_dtype="int64")}),
+            output_schema=OpSchema({"output_field": ColCfg(datasets_dtype="float32")}),
+        )
+        manager = OpDefinitionsCacheManager(tmp_path)
+        content = manager._generate_module_content({"hostile_desc_op": op_def})
+        # 1. the module must PARSE -- the property the wild case violated
+        ast.parse(content)
+        # 2. and evaluating it must reproduce the description byte-for-byte
+        namespace: dict = {}
+        exec(compile(content, "<generated-op-cache>", "exec"), namespace)
+        assert namespace["OP_DEFINITIONS"]["hostile_desc_op"].description == description

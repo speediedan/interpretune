@@ -303,6 +303,25 @@ class AnalysisOpDispatcher:
         self._cache_manager._fingerprint = None
         self._loaded = False
         self.load_definitions()
+        # Re-sync the top-level `it.<op>` wrappers with the reloaded registry. `OpWrapper.register_operations`
+        # runs once when `interpretune.analysis` is imported and SNAPSHOTS the op names as module attributes,
+        # so without this a collection fetched mid-session is "usable immediately" at the dispatcher layer
+        # (as pull_ops documents) while `it.<its_op>` still raises AttributeError -- and the top-level wrapper
+        # is precisely the surface the composition guide tells notebook authors to use. `_target_module` is
+        # None only when the wrapper surface was never installed, in which case there is nothing to sync.
+        if OpWrapper._target_module is not None:
+            # `_target_module is not None` proves the wrapper surface was installed in this process;
+            # it does NOT prove the stored object is still the module readers see. A test or notebook
+            # that purges and reimports `interpretune` (the op-collection example does exactly this)
+            # leaves `_target_module` pointing at the ORPHANED module object, and registering onto it
+            # satisfies every wrapper-side invariant while `it.<op>` -- which resolves through
+            # sys.modules -- still raises. Measured: op_in_dispatcher=True, attr_on_target=True,
+            # target_module_is_it=False. So sync onto the CANONICAL module, falling back to the
+            # stored one only when interpretune is somehow absent from sys.modules.
+            import sys as _sys
+
+            target_module = _sys.modules.get("interpretune", OpWrapper._target_module)
+            OpWrapper.register_operations(target_module, self)
 
     def _load_from_yaml_and_compile(self, yaml_files: list[Path]):
         """Load from YAML files and compile to cache."""

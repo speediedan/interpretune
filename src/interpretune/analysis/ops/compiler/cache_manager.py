@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from huggingface_hub import scan_cache_dir
 
 from interpretune.hub.cache import _get_latest_revision, parse_hub_cache_path
+from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
 from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR, remote_code_trust, remote_code_trusted
 from interpretune.analysis.ops.compiler.load_policy import OpLoadError, op_load_failure
 
@@ -28,7 +29,9 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 # 6: adds `protocol_cls` (a user-defined BaseAnalysisBatchProtocol subclass, declared as an import path)
 #    to OpDef. A serialized-shape change, so an existing cache would otherwise keep serving OpDefs without
 #    the field and a declaring op would silently fall back to the default protocol.
-CACHE_FORMAT_VERSION = "6"
+# 7: name/description/implementation emit via repr() -- a description containing a double quote
+#    previously rendered an unparseable module (silent full recompile on every load).
+CACHE_FORMAT_VERSION = "7"
 
 
 @dataclass(frozen=True)
@@ -226,10 +229,39 @@ class OpDefinitionsCacheManager:
                 if latest_revision is None:
                     continue
 
+                # The refs/main snapshot can be PARTIAL: huggingface_hub materializes a snapshot dir per
+                # resolved revision containing only the files actually fetched at it, so any single-file
+                # fetch at `main` (a card read, a trust inspection) after a REVISION-PINNED pull leaves
+                # refs/main pointing at a snapshot without the manifest while the complete pinned
+                # snapshot sits beside it. Routing discovery through the partial one skips the whole
+                # collection with "no it_component.yaml in the cached snapshot" -- measured as build
+                # 849's failure (#327): pull succeeded, ops never loaded. Prefer main only when its
+                # snapshot is manifest-complete; otherwise fall back to the newest revision that is,
+                # and say which mismatch happened rather than silently choosing.
+                candidates = [latest_revision] + sorted(
+                    (rev for rev in repo.revisions if rev is not latest_revision),
+                    key=lambda rev: rev.last_modified,
+                    reverse=True,
+                )
+                chosen = next(
+                    (rev for rev in candidates if (rev.snapshot_path / IT_COMPONENT_MANIFEST).is_file()),
+                    None,
+                )
+                if chosen is None:
+                    # no cached revision has a manifest: report once via the normal per-collection path
+                    self._declared_op_files(repo.repo_id, latest_revision.snapshot_path)
+                    continue
+                if chosen is not latest_revision:
+                    rank_zero_warn(
+                        f"op collection {repo.repo_id!r}: refs/main snapshot "
+                        f"{latest_revision.commit_hash[:12]} has no {IT_COMPONENT_MANIFEST} (partial "
+                        f"fetch); using cached revision {chosen.commit_hash[:12]} instead"
+                    )
+
                 # The manifest declares which of this snapshot's YAMLs are op definitions. Every path
                 # therefore comes from one revision by construction, and the manifest is never itself fed
                 # to the op compiler (it raises on its scalar keys, dropping every op including bundled).
-                yaml_files.extend(self._declared_op_files(repo.repo_id, latest_revision.snapshot_path))
+                yaml_files.extend(self._declared_op_files(repo.repo_id, chosen.snapshot_path))
 
         except OpLoadError:
             raise  # strict loading must not be swallowed by the fail-soft discovery wrapper
@@ -392,10 +424,14 @@ class OpDefinitionsCacheManager:
         """Serialize an OpDef to Python code."""
         fields = []
 
-        # Always include required fields
-        fields.append(f'name="{op_def.name}"')
-        fields.append(f'description="{op_def.description}"')
-        fields.append(f'implementation="{op_def.implementation}"')
+        # Always include required fields. `!r` rather than hand-quoting: a description containing a
+        # double quote (a hub collection wrote `a lens-coordinate "patch" intervention`) rendered an
+        # unparseable module, and the failure mode was maximally quiet -- a "Failed to load cache"
+        # warning plus a full recompile on EVERY subsequent load, in every session, for as long as the
+        # collection stayed cached. repr() escapes everything Python source needs escaped.
+        fields.append(f"name={op_def.name!r}")
+        fields.append(f"description={op_def.description!r}")
+        fields.append(f"implementation={op_def.implementation!r}")
         fields.append(f"input_schema={self._serialize_op_schema(op_def.input_schema)}")
         fields.append(f"output_schema={self._serialize_op_schema(op_def.output_schema)}")
 
