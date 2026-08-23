@@ -13,7 +13,7 @@ caveats); anything not exported is internal. Backend-specific behavior stays beh
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, NamedTuple
 
 import torch
 from jaxtyping import Float
@@ -203,6 +203,81 @@ def resolve_tokenizer(module: Any) -> Any:
     raise ValueError("A tokenizer is required for this analysis operation")
 
 
+class UnembedNormInfo(NamedTuple):
+    """Unembed matrix plus the final norm's elementwise scale, in readout orientation.
+
+    Attributes:
+        w_u: The unembed/LM-head matrix as ``(vocab, d_model)`` regardless of backend (TL's
+            ``W_U`` is stored transposed and is normalized here).
+        norm_scale: The final norm's effective elementwise scale in the convention the model
+            APPLIES it -- ``(1 + weight)`` for HF gemma RMSNorms, ``weight`` for other HF RMSNorms
+            and for TL models (TL's gemma conversion folds the ``+1`` at load), ``weight`` for
+            LayerNorms. ``None`` when no final-norm weight is resolvable.
+        norm_kind: ``"rmsnorm"``, ``"layernorm"``, or ``"none"`` -- callers constructing readout
+            DIRECTIONS need this because LayerNorm additionally centers (the correct folded
+            direction applies the centering projector), while RMSNorm does not. The centering
+            decision is deliberately left to the caller: interpretune#330 is validating it.
+    """
+
+    w_u: torch.Tensor
+    norm_scale: torch.Tensor | None
+    norm_kind: str
+
+
+def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
+    """Resolve the unembed matrix and final-norm scale a READOUT-faithful direction needs.
+
+    The J-lens readout is ``softmax(W_U . norm(J h))``: pushing the norm's elementwise scale
+    through the dot product gives token directions ``(W_U[c] * scale) @ J``, and dropping the scale
+    is not cosmetic -- measured on gemma-3-1b-it, unfolded vectors fail to steer at all where folded
+    ones flip the answer at scale 1.0 (interpretune#330 carries the derivation and evidence). This
+    is the single sanctioned home for the per-family conventions; the jlens op collection's private
+    copy migrates here (interpretune#273 residual scope).
+
+    Resolution order mirrors :func:`resolve_embedding_weight`: HF-style models first
+    (``lm_head.weight`` or GPT-NeoX's ``embed_out.weight``, shape ``(vocab, d)``), then
+    TransformerLens (``W_U``, stored ``(d, vocab)`` and transposed here). Raises when no unembed
+    surface is found, because silently returning an embedding matrix would only be correct for
+    tied-weight models and wrong without warning everywhere else.
+    """
+    for attr_name in ("model", "replacement_model"):
+        model = getattr(module, attr_name, None)
+        if model is None:
+            continue
+        for head_attr in ("lm_head", "embed_out"):
+            head = getattr(model, head_attr, None)
+            if head is not None and isinstance(getattr(head, "weight", None), torch.Tensor):
+                w_u = head.weight
+                inner = (
+                    getattr(model, "model", None)
+                    or getattr(model, "transformer", None)
+                    or getattr(model, "gpt_neox", None)
+                    or model
+                )
+                for norm_attr in ("norm", "ln_f", "final_layer_norm"):
+                    norm = getattr(inner, norm_attr, None)
+                    weight = getattr(norm, "weight", None) if norm is not None else None
+                    if isinstance(weight, torch.Tensor):
+                        kind = "layernorm" if "LayerNorm" in type(norm).__name__ else "rmsnorm"
+                        model_type = str(getattr(getattr(model, "config", None), "model_type", ""))
+                        # HF gemma RMSNorm applies (1 + weight); other families apply weight directly
+                        scale = (1.0 + weight) if (kind == "rmsnorm" and model_type.startswith("gemma")) else weight
+                        return UnembedNormInfo(w_u=w_u, norm_scale=scale, norm_kind=kind)
+                return UnembedNormInfo(w_u=w_u, norm_scale=None, norm_kind="none")
+        w_u = getattr(model, "W_U", None)
+        if isinstance(w_u, torch.Tensor):
+            ln_final = getattr(model, "ln_final", None)
+            weight = getattr(ln_final, "w", None) if ln_final is not None else None
+            if isinstance(weight, torch.Tensor):
+                kind = "layernorm" if hasattr(ln_final, "b") else "rmsnorm"
+                return UnembedNormInfo(w_u=w_u.transpose(0, 1), norm_scale=weight, norm_kind=kind)
+            return UnembedNormInfo(w_u=w_u.transpose(0, 1), norm_scale=None, norm_kind="none")
+    raise ValueError(
+        "resolve_unembed_and_norm_scale: module exposes neither an HF-style `.model.lm_head/.embed_out` "
+        "nor a TransformerLens-style `.model.W_U`"
+    )
+
+
 def resolve_embedding_weight(module: Any) -> torch.Tensor:
     """Resolve an embedding weight matrix from a generic module or its analysis backend."""
     analysis_backend = get_analysis_backend(module)
@@ -357,6 +432,8 @@ __all__ = [
     "require_model_backend",
     "resolve_aggregate_input",
     "resolve_embedding_weight",
+    "resolve_unembed_and_norm_scale",
+    "UnembedNormInfo",
     "resolve_feature_score_source",
     "resolve_tokenizer",
     "stack_column_tensors",
