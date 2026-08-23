@@ -1,4 +1,4 @@
-"""#329: expected-vs-actual validation for J-lens patch interventions at fixed magnitude.
+"""#329: expected-vs-actual validation for J-lens patch interventions (+ the #337 magnitude sweep).
 
 THE FREEZE-SET DECISION (the deliverable this issue names). The circuit-tracer validation
 (`_verify_feature_edges_direct`) freezes components because its EXPECTED values come from attribution
@@ -209,6 +209,144 @@ class TestFirstOrderAgainstTrueJacobian:
             f"first-order convergence failed: residuals {residuals} -- the measured effect of a small "
             "patch displacement is not approaching the true Jacobian-vector product"
         )
+
+
+class TestMagnitudeSweepMonotonicity:
+    """#337: characterize monotonicity across a wide magnitude grid, and PIN where it stops being linear.
+
+    The patch displacement is AFFINE in the scale: ``Delta(s) = V(s*sigma(c) - c) = -Vc + s*V*sigma(c)``,
+    so the entire first-order prediction across the sweep costs two JVPs (one along ``-Vc``, one along
+    ``V*sigma(c)``) and is ``lin(s) = jvp0 + s*jvpu`` -- affine, hence monotone along any fixed readout.
+    The sweep measures where the real model honors that prediction and asserts the DEPARTURE where it
+    does not, rather than pretending linearity extends: "patch at scale s" stops meaning "s times the
+    effect" exactly where the curvature term (quadratic in the displacement) catches up.
+
+    Measured on the seeded tiny model (float64, projection ``m`` onto the unit ``jvpu`` direction)::
+
+        s=0.25: m=-0.129 (lin -0.124)  R=0.024  rel=0.148
+        s=0.50: m=-0.072 (lin -0.070)  R=0.014  rel=0.115
+        s=1.00: m= 0.038 (lin  0.038)  R=0.008  rel=0.075
+        s=2.00: m= 0.230 (lin  0.255)  R=0.047  rel=0.171
+        s=4.00: m= 0.472 (lin  0.687)  R=0.273  rel=0.393
+        s=8.00: m= 0.650 (lin  1.552)  R=0.973  rel=0.626
+
+    (``R`` is the absolute residual ``|measured - lin|``, ``rel`` divides by ``|lin|``.) Two shapes worth
+    naming: the residual is minimized near ``s=1`` because ``|Delta(s)|`` is V-shaped in ``s`` (the pure
+    swap happens to be this pair's smallest displacement -- seed-dependent, so observed but not asserted);
+    and the measured effect SATURATES below the affine extrapolation at large ``s`` (0.650 vs 1.552 at
+    ``s=8``), which is the concrete cash value of "linearity does not extend".
+    """
+
+    SWEEP_SCALES = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
+    # measured min adjacent gap in m(s) is 0.057; a small positive margin keeps "strictly increasing"
+    # from passing on float noise alone
+    MONOTONE_MARGIN = 0.01
+    # first-order regime: measured max rel residual through s=2.0 is 0.171
+    FIRST_ORDER_REGIME_MAX = 2.0
+    FIRST_ORDER_REL_TOL = 0.25
+    # departure regime: rel residual worsens monotonically past s=1 and exceeds half the prediction
+    # by s=8 (measured 0.626); the measured effect lands under 3/4 of the affine extrapolation
+    # (measured ratio 0.42)
+    DEPARTURE_REL_FLOOR = 0.5
+    SATURATION_FACTOR = 0.75
+    # curvature shape: quadratic-in-displacement residual growth gives ~4-6x per scale doubling here
+    # (measured R(4)/R(2)=5.8, R(8)/R(4)=3.6); 2x per doubling is margin while still failing on any
+    # merely-linear error source (which would track |lin| instead)
+    RESIDUAL_DOUBLING_FACTOR = 2.0
+
+    @pytest.fixture(scope="class")
+    def sweep(self, tiny_gpt2_dir):
+        """One float64 sweep shared by the assertions below (fresh load, same rationale as the JVP test)."""
+        from transformers import GPT2LMHeadModel
+
+        hf_model = GPT2LMHeadModel.from_pretrained(tiny_gpt2_dir).double().eval()
+        ids = torch.tensor([PROMPT_IDS])
+        v_matrix = _patch_pair().T.double()
+        captured: dict[str, torch.Tensor] = {}
+
+        def capture(_m, _a, out):
+            hidden = out[0] if isinstance(out, tuple) else out
+            captured["h"] = hidden[0, -1].detach().double()
+            return out
+
+        handle = hf_model.transformer.h[HOOK_LAYER].register_forward_hook(capture)
+        with torch.no_grad():
+            clean = hf_model(ids).logits[0, -1].double()
+        handle.remove()
+        coords = torch.linalg.pinv(v_matrix) @ captured["h"]
+        d0 = v_matrix @ (-coords)  # Delta(0): concept removal
+        du = v_matrix @ coords.flip(-1)  # dDelta/ds: the swapped-concept restoration
+
+        def logits_with(disp: torch.Tensor) -> torch.Tensor:
+            def hook(_m, _a, out):
+                hidden = out[0] if isinstance(out, tuple) else out
+                hidden[0, -1] = hidden[0, -1] + disp.to(hidden.dtype)
+                return out
+
+            h = hf_model.transformer.h[HOOK_LAYER].register_forward_hook(hook)
+            try:
+                with torch.no_grad():
+                    return hf_model(ids).logits[0, -1].double()
+            finally:
+                h.remove()
+
+        ref_eps = 1e-4
+        jvp0 = (logits_with(ref_eps * d0) - logits_with(-ref_eps * d0)) / (2 * ref_eps)
+        jvpu = (logits_with(ref_eps * du) - logits_with(-ref_eps * du)) / (2 * ref_eps)
+        readout = jvpu / torch.linalg.norm(jvpu)
+
+        rows = {}
+        for s in self.SWEEP_SCALES:
+            delta = logits_with(d0 + s * du) - clean
+            lin = jvp0 + s * jvpu
+            rows[s] = {
+                "m": (delta @ readout).item(),
+                "m_lin": (lin @ readout).item(),
+                "residual": torch.linalg.norm(delta - lin).item(),
+                "rel": (torch.linalg.norm(delta - lin) / torch.linalg.norm(lin)).item(),
+            }
+        return rows
+
+    def test_effect_is_monotone_along_the_predicted_direction(self, sweep):
+        """First-order predicts an affine (hence monotone) readout in s; the model honors the ORDER across the
+        whole grid even where it no longer honors the magnitude."""
+        readouts = [sweep[s]["m"] for s in self.SWEEP_SCALES]
+        gaps = [b - a for a, b in zip(readouts, readouts[1:])]
+        assert all(gap > self.MONOTONE_MARGIN for gap in gaps), (
+            f"effect direction is not monotone across the sweep: readouts {readouts}"
+        )
+
+    def test_first_order_predicts_through_the_small_scale_regime(self, sweep):
+        for s in (s for s in self.SWEEP_SCALES if s <= self.FIRST_ORDER_REGIME_MAX):
+            assert sweep[s]["rel"] < self.FIRST_ORDER_REL_TOL, (
+                f"s={s}: relative residual {sweep[s]['rel']:.3f} -- the affine prediction should still "
+                "hold in the small-scale regime"
+            )
+
+    def test_departure_regime_is_pinned_not_papered_over(self, sweep):
+        """Beyond the linear regime, ASSERT the breakdown: relative residual worsens monotonically and the measured
+        effect saturates below the affine extrapolation."""
+        rels = [sweep[s]["rel"] for s in (2.0, 4.0, 8.0)]
+        assert rels[0] < rels[1] < rels[2], f"departure should worsen with scale: {rels}"
+        assert rels[-1] > self.DEPARTURE_REL_FLOOR, (
+            f"s=8 relative residual {rels[-1]:.3f}: expected first-order prediction to have genuinely "
+            "broken down at the sweep's top end -- if it now holds, the departure regime moved and these "
+            "pins should be re-measured, not deleted"
+        )
+        top = self.SWEEP_SCALES[-1]
+        assert sweep[top]["m"] < self.SATURATION_FACTOR * sweep[top]["m_lin"], (
+            f"s={top}: measured {sweep[top]['m']:.3f} vs affine extrapolation {sweep[top]['m_lin']:.3f} "
+            "-- 'patch at scale s' should have stopped meaning 's times the effect' here"
+        )
+
+    def test_residual_grows_superlinearly_with_scale(self, sweep):
+        """The JVP bridge's expected departure shape: curvature is quadratic in the displacement, so the absolute
+        residual should at least double per scale doubling (a merely-linear error would not)."""
+        for lo, hi in ((2.0, 4.0), (4.0, 8.0)):
+            ratio = sweep[hi]["residual"] / sweep[lo]["residual"]
+            assert ratio > self.RESIDUAL_DOUBLING_FACTOR, (
+                f"residual grew only {ratio:.2f}x from s={lo} to s={hi}; expected superlinear growth"
+            )
 
 
 class TestCrossBackendAgreement:
