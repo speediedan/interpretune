@@ -10,7 +10,19 @@ if TYPE_CHECKING:
 
 
 class BaseITHooks:
-    """ " IT Protocol hooks implemented by BaseITModule."""
+    """IT protocol hooks implemented by ``BaseITModule``.
+
+    Every hook here is COOPERATIVE: the base implementations do real work (datamodule wiring,
+    optimizer instantiation from ``it_cfg``, session-completion bookkeeping), so an override that
+    does not call ``super()`` silently drops that behavior rather than failing loudly.
+
+    Step methods (``training_step``/``validation_step``/``test_step``/``predict_step``) are
+    deliberately NOT defined here even though ``ITModuleProtocol`` mandates at least one: a default
+    empty implementation would satisfy the structural check while giving the phase no execution
+    semantics, hiding exactly the omission the protocol exists to surface. They are documented in
+    ``docs/module_contract_and_limitations.md`` and must come from the user module, a mixin, or an
+    adapter.
+    """
 
     # if you override these in your module, ensure you cooperatively call super() if you want to retain
     # the relevant BaseITModule hook functionality
@@ -66,6 +78,3 @@ class BaseITHooks:
 
     def forward(self, *args, **kwargs) -> STEP_OUTPUT:
         return self.model(*args, **kwargs, **self.it_cfg.cust_fwd_kwargs)
-
-    # TODO: since we mandate the existence of at least one of {training,validation,test,predict}_step methods via our
-    # protocol, we should define them in documentation but not provide default empty implementations here
