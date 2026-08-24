@@ -383,17 +383,7 @@ output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff
 "src/interpretune/extensions/debug_generation.py" = ["D101", "D102", "D103"]  # 10
 "src/interpretune/extensions/memprofiler.py" = ["D101", "D102", "D103"]  # 20
 
-# --- slice D (#344) -- utils/ + residue; emptying this block closes #139  (10 files, 45 violations)
-"src/interpretune/hub/manager.py" = ["D101", "D102", "D103"]  # 5
-"src/interpretune/utils/import_utils.py" = ["D101", "D102", "D103"]  # 1
-"src/interpretune/utils/logging.py" = ["D101", "D102", "D103"]  # 2
-"src/interpretune/utils/neuronpedia_dashboard_hub.py" = ["D101", "D102", "D103"]  # 10
-"src/interpretune/utils/neuronpedia_dashboard_pipeline.py" = ["D101", "D102", "D103"]  # 12
-"src/interpretune/utils/neuronpedia_explanations.py" = ["D101", "D102", "D103"]  # 7
-"src/interpretune/utils/neuronpedia_source_conflicts.py" = ["D101", "D102", "D103"]  # 2
-"src/interpretune/utils/repr_helpers.py" = ["D101", "D102", "D103"]  # 4
-"src/interpretune/utils/schema_validation.py" = ["D101", "D102", "D103"]  # 1
-"src/interpretune/utils/tokenization.py" = ["D101", "D102", "D103"]  # 1
+# --- slice D (#344) -- utils/ + residue: DONE (was 10 files, 45 violations)
 
 [tool.ruff.lint.isort]
 known-first-party = ["docs", "interpretune","tests"]

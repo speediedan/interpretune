@@ -7,10 +7,16 @@ import os
 
 
 def summarize_tensor(t: torch.Tensor) -> str:
+    """Describe a tensor by shape/dtype/device without touching its values.
+
+    Deliberately reads no elements: these summaries run inside ``__repr__`` paths, where materializing
+    a lazy or device-resident tensor would make printing an object an expensive (or failing) operation.
+    """
     return f"Tensor(shape={tuple(t.shape)}, dtype={getattr(t, 'dtype', None)}, device={getattr(t, 'device', None)})"
 
 
 def summarize_primitive(obj: Any, max_len: int = 20) -> str:
+    """Return ``repr(obj)`` truncated to ``max_len`` characters, ellipsis included in the budget."""
     s = repr(obj)
     if len(s) > max_len:
         return s[: max_len - 3] + "..."
@@ -18,6 +24,11 @@ def summarize_primitive(obj: Any, max_len: int = 20) -> str:
 
 
 def summarize_container(obj: Any) -> str:
+    """Describe a container as ``ClassName(len=N)``, falling back to the class name alone.
+
+    The fallback is load-bearing: objects that are container-like but whose ``__len__`` raises (lazy
+    datasets, partially-initialized state) must still be summarizable, because the caller is a repr.
+    """
     try:
         return f"{obj.__class__.__name__}(len={len(obj)})"
     except Exception:
@@ -25,6 +36,7 @@ def summarize_container(obj: Any) -> str:
 
 
 def summarize_dict_keys(d: Dict, max_keys: int = 8) -> Dict:
+    """Summarize a mapping as its total length plus the first ``max_keys`` keys (values untouched)."""
     keys = list(d.keys())
     return {"len": len(keys), "keys": keys[:max_keys]}
 

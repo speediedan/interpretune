@@ -178,18 +178,29 @@ class DashboardPublishPlan:
 
     @property
     def upload_bytes(self) -> int:
+        """Total on-disk size of the files this plan would upload (stat-ed on access, not cached)."""
         return sum(p.stat().st_size for p in self.upload)
 
     @property
     def skip_bytes(self) -> int:
+        """Total on-disk size of the files this plan would skip -- the bytes the plan avoids re-sending."""
         return sum(p.stat().st_size for p in self.skip)
 
     @property
     def copy_rows_skipped(self) -> list[Path]:
+        """Skipped copy-rows files specifically, which are the ones worth reporting to a human.
+
+        A skipped copy-rows file usually means that table's data is already present upstream, so it is the signal that
+        distinguishes "nothing to do" from "nothing was found to do".
+        """
         return [p for p in self.skip if p.stem == COPY_ROWS_STEM]
 
     @property
     def largest(self) -> Path | None:
+        """The biggest file in the upload set, or None when nothing would be uploaded.
+
+        Used to predict which single transfer is most likely to hit a timeout or size limit.
+        """
         return max(self.upload, key=lambda p: p.stat().st_size) if self.upload else None
 
 
@@ -458,6 +469,10 @@ class HubDatasetStore:
     requires_explicit_prefix: bool = False
 
     def ensure(self, target: str, *, private: bool = False, token: str | None = None) -> None:
+        """Create the dataset repo if absent.
+
+        Idempotent (``exist_ok``), so publishing is re-runnable.
+        """
         from huggingface_hub import HfApi
 
         HfApi(token=token).create_repo(repo_id=target, repo_type="dataset", private=private, exist_ok=True)
@@ -473,6 +488,12 @@ class HubDatasetStore:
         commit_message: str = "Publish columnar dashboard artifacts",
         token: str | None = None,
     ) -> None:
+        """Upload the plan's run root as ONE COMMIT on ``revision``, applying the plan's exclusions.
+
+        Being a commit is the point of this backend: the push is atomic and the result is addressable
+        afterwards, which is what makes a published corpus citable. ``revision`` may be omitted, since a
+        dataset repo defaults to a branch and omitting one destroys nothing.
+        """
         from huggingface_hub import HfApi
 
         HfApi(token=token).upload_folder(
@@ -486,6 +507,7 @@ class HubDatasetStore:
         )
 
     def pull(self, target: str, dest: Path, *, revision: str | None = None, token: str | None = None) -> Path:
+        """Download a snapshot of the corpus at ``revision`` (a branch, tag, or commit) into ``dest``."""
         from huggingface_hub import snapshot_download
 
         return Path(
@@ -521,6 +543,10 @@ class HubBucketStore:
         return f"{base}/{prefix}" if prefix else base
 
     def ensure(self, target: str, *, private: bool = False, token: str | None = None) -> None:
+        """Create the bucket if absent.
+
+        Idempotent (``exist_ok``), so publishing is re-runnable.
+        """
         from huggingface_hub import HfApi
 
         HfApi(token=token).create_bucket(target, private=private, exist_ok=True)
@@ -537,6 +563,14 @@ class HubBucketStore:
         token: str | None = None,
         delete: bool = False,
     ) -> None:
+        """Sync the plan's run root into the bucket, ADDITIVELY unless ``delete=True``.
+
+        Two departures from the dataset backend, both consequences of buckets having no history:
+        ``revision`` is folded into the destination path prefix rather than naming a commit, and
+        ``commit_message`` is accepted only for interface parity and ignored. The sync is additive by
+        default because bucket deletions are immediate and unrecoverable -- ``delete=True`` mirrors,
+        removing anything absent from the source, and should be passed only when that is the intent.
+        """
         from huggingface_hub import HfApi
 
         prefix = "/".join(p for p in (revision or "", path_in_repo or "") if p)
@@ -556,6 +590,11 @@ class HubBucketStore:
         token: str | None = None,
         path_in_repo: str = "",
     ) -> Path:
+        """Sync the corpus down into ``dest``, creating it if needed, and return it.
+
+        ``revision`` is a path prefix here rather than a version (see the class docstring), so pulling
+        "a revision" means pulling whatever currently lives under that prefix.
+        """
         from huggingface_hub import HfApi
 
         prefix = "/".join(p for p in (revision or "", path_in_repo or "") if p)

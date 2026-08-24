@@ -283,24 +283,33 @@ class NeuronpediaFeatureRef:
 
     @property
     def feature_url(self) -> str:
+        """The human-facing Neuronpedia page for this feature."""
         return f"{self.base_url}/{self.model_id}/{self.layer}/{self.index}"
 
     @property
     def api_url(self) -> str:
+        """The JSON API endpoint for this feature (the machine-readable counterpart of :attr:`feature_url`)."""
         return f"{self.base_url}/api/feature/{self.model_id}/{self.layer}/{self.index}"
 
     @property
     def layer_number(self) -> str:
+        """The numeric layer portion of ``layer``, which Neuronpedia encodes as ``<number>-<source_set>``."""
         layer_number, _ = split_layer_identifier(self.layer)
         return layer_number
 
     @property
     def source_set(self) -> str:
+        """The source-set portion of ``layer`` (the latent model that produced the feature)."""
         _, source_set = split_layer_identifier(self.layer)
         return source_set
 
     @property
     def artifact_slug(self) -> str:
+        """A filesystem-safe identifier for this feature, used to name cached artifacts.
+
+        Each component is slugified independently so a separator inside any one of them cannot shift the field
+        boundaries and alias two different features onto the same filename.
+        """
         return "_".join(
             [
                 slugify(self.model_id),
@@ -463,6 +472,7 @@ class NeuronpediaLocalExplanationStatus:
 
     @property
     def has_local_explanation(self) -> bool:
+        """Whether this feature route already has at least one locally-stored explanation."""
         return self.explanation_count > 0
 
 
@@ -484,6 +494,7 @@ class NeuronpediaLocalExplanationCoverage:
 
     @property
     def missing_feature_refs(self) -> list[NeuronpediaFeatureRef]:
+        """The feature routes still without a local explanation -- i.e. what a backfill would target."""
         return [status.feature_ref for status in self.statuses if not status.has_local_explanation]
 
 

@@ -389,6 +389,11 @@ class NeuronpediaDashboardPipelineConfig:
 
     @property
     def run_name(self) -> str:
+        """``<model>_<source_set>`` plus the optional suffix -- the run directory's name.
+
+        Built from :attr:`neuronpedia_source_set_id`, NOT :attr:`import_source_set_id`, so a rename
+        conflict resolution cannot move an in-progress run's directory out from under its resume markers.
+        """
         base_name = f"{self.model_name}_{self.neuronpedia_source_set_id}"
         if self.run_name_suffix:
             return f"{base_name}_{self.run_name_suffix}"
@@ -396,27 +401,43 @@ class NeuronpediaDashboardPipelineConfig:
 
     @property
     def run_directory(self) -> Path:
+        """This run's root directory: where layer outputs, locks and resume markers live."""
         return self.run_root / self.run_name
 
     def sae_path_for_layer(self, layer_num: int) -> str:
+        """Resolve the configured SAE path template for one layer."""
         return self.sae_path_template.format(layer=layer_num)
 
     def hf_weights_path_for_layer(self, layer_num: int) -> str:
+        """Resolve the configured HuggingFace weights path template for one layer."""
         return self.hf_weights_path_template.format(layer=layer_num)
 
     def output_dir_for_layer(self, layer_num: int) -> Path:
+        """Where one layer's generated artifacts are written, under :attr:`run_directory`."""
         return self.run_directory / f"layer_{layer_num}"
 
     def layer_lock_path(self, layer_num: int) -> Path:
+        """The lock file claiming one layer, which is how concurrent workers avoid duplicating it."""
         return self.run_directory / "layer_locks" / f"layer_{layer_num}.lock"
 
     def requested_layer_numbers(self) -> list[int]:
+        """The layers this run should process: an explicit ``layer_list`` wins over the start/end range.
+
+        The explicit list is de-duplicated while preserving order, so a repeated layer is processed once
+        rather than racing itself for the same lock.
+        """
         if self.layer_list:
             return list(dict.fromkeys(self.layer_list))
         return list(range(self.start_layer, self.end_layer + 1))
 
     @property
     def shared_prompt_tokens_file(self) -> Path | None:
+        """The pre-tokenized prompt tensor shared across layers, or None when there is none.
+
+        An explicit ``prompts_shared_tokens_file`` wins; otherwise it is derived from the pretokenized
+        dataset path and the prompt count, since the token file is only valid for the count it was built
+        for. Returns None when no pretokenized dataset is configured at all.
+        """
         if self.prompts_shared_tokens_file is not None:
             return self.prompts_shared_tokens_file
         if self.prompts_pretokenized_dataset_path is None:
@@ -425,6 +446,11 @@ class NeuronpediaDashboardPipelineConfig:
 
     @property
     def prompts_dataset_identifier(self) -> str:
+        """The prompt dataset as one provenance string: ``path[:config][\\[split\\]]``.
+
+        Config and split are folded in only when set, so the identifier distinguishes runs that differ
+        solely by which slice of a dataset they used.
+        """
         dataset_id = self.prompts_huggingface_dataset_path
         if self.prompts_huggingface_dataset_config_name:
             dataset_id = f"{dataset_id}:{self.prompts_huggingface_dataset_config_name}"
@@ -1957,6 +1983,7 @@ def _run_root_for(output_dir: Path, layer_num: int) -> Path | None:
 
 
 def source_ids_sidecar_path(run_root: Path) -> Path:
+    """Where a corpus records the source ids it was generated under (see :func:`read_source_ids_sidecar`)."""
     return Path(run_root) / SOURCE_IDS_SIDECAR
 
 
@@ -2346,6 +2373,7 @@ _MANIFEST_TRACKED_DISTRIBUTIONS = ("interpretune", "sae-dashboard", "pyarrow", "
 
 
 def dashboard_manifest_path(run_root: Path) -> Path:
+    """Where a corpus records what it is (see :func:`read_dashboard_manifest`)."""
     return Path(run_root) / DASHBOARD_MANIFEST_FILE
 
 
@@ -3272,6 +3300,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main() -> int:
+    """CLI entry point for the dashboard pipeline. Returns a process exit code.
+
+    Two modes: ``--write-source-ids`` resolves and writes the provenance sidecar and manifest, then
+    exits; otherwise the full generation pipeline runs. Configuration errors are routed through
+    ``parser.error`` so they surface as usage failures rather than tracebacks.
+    """
     parser = _create_argument_parser()
     args = parser.parse_args()
     try:

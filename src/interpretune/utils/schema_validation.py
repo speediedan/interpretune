@@ -10,6 +10,12 @@ from jsonschema import Draft202012Validator, validators
 
 
 def extend_validator(validator_class):
+    """Build a jsonschema validator class that DELETES properties absent from the schema.
+
+    Note the mutation: unlike ordinary validation, which only reports, the returned class strips
+    unknown keys from the instance as a side effect of validating it, then reports any remaining
+    property errors. Callers get a filtered object rather than a rejection.
+    """
     validate_properties = validator_class.VALIDATORS["properties"]
 
     def remove_additional_properties(validator, properties, instance, schema):

@@ -245,17 +245,33 @@ class HubAnalysisOpManager(ITHubResourceManager):
 
     # historical public surface, preserved as thin delegations
     def download_ops(self, repo_id: str, revision: str = "main", force_download: bool = False) -> HubOpCollection:
+        """Download an op collection.
+
+        Historical name, kept as a thin delegation to :meth:`download`.
+        """
         return self.download(repo_id, revision=revision, force_download=force_download)
 
     def upload_ops(self, local_dir: Path, repo_id: str, commit_message: str = "Upload analysis operations", **kwargs):
+        """Upload an op collection.
+
+        Historical name, kept as a thin delegation to :meth:`upload`.
+        """
         return self.upload(local_dir, repo_id, commit_message=commit_message, **kwargs)
 
     def list_available_collections(self, username: str | None = None) -> list[str]:
+        """List discoverable op-collection repo ids.
+
+        Thin delegation to :meth:`list_available`.
+        """
         return self.list_available(username=username)
 
     def discover_hub_ops(self, search_patterns: list[str] | None = None) -> list[HubOpCollection]:
-        # routes through the preset's own public methods (not the generalized internals) so callers/tests
-        # composing over `download_ops`/`list_available_collections` observe every fetch
+        """Download every discoverable op collection, skipping (with a warning) any that fail.
+
+        Routes through this preset's own public methods rather than the generalized internals, so
+        callers and tests composing over ``download_ops`` / ``list_available_collections`` observe every
+        fetch. A repo that fails to download is warned about and omitted rather than aborting discovery.
+        """
         collections = []
         for repo_id in search_patterns if search_patterns else self.list_available_collections():
             try:
@@ -266,4 +282,8 @@ class HubAnalysisOpManager(ITHubResourceManager):
         return collections
 
     def get_cached_collections(self) -> list[HubOpCollection]:
+        """Return already-cached op collections without network access.
+
+        Delegates to :meth:`get_cached`.
+        """
         return self.get_cached()

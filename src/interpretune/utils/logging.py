@@ -21,6 +21,13 @@ CUDA_MAY_BE_INIT_MSG = "Unable to patch `get_cuda_module_loading_config`, CUDA m
 # generalizing this context manager in case we need to patch other env logging functions
 @contextmanager
 def patch_torch_env_logging_fn(module_name: str, fn_name: str, warn_msg: str):
+    """Temporarily replace a torch env-collection function with a stub that returns "not inspected".
+
+    Some of torch's environment-reporting helpers INITIALIZE CUDA as a side effect of being called.
+    Collecting env details should not change the process it is describing, so the offending function is
+    swapped out for the duration and restored in a ``finally``. Generalized over module/function name
+    because more than one such helper may need this treatment.
+    """
     orig_fn = None
     try:
         orig_fn = sys.modules[module_name].__dict__.pop(fn_name, None)
@@ -32,6 +39,12 @@ def patch_torch_env_logging_fn(module_name: str, fn_name: str, warn_msg: str):
 
 
 def maybe_patched_get_env_info(module_name: str, fn_name: str, warn_msg: str):
+    """Collect torch env info under :func:`patch_torch_env_logging_fn`, degrading to unpatched on failure.
+
+    Patching reaches into another package's module dict, so it can break on a torch upgrade. When it
+    does, env collection still returns -- with ``warn_msg`` emitted, since the unpatched path may
+    initialize CUDA. Losing the env report entirely would be the worse outcome.
+    """
     try:
         with patch_torch_env_logging_fn(module_name, fn_name, warn_msg):
             sys_info = get_env_info()
