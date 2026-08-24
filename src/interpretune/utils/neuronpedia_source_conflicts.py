@@ -91,8 +91,12 @@ class SourceSetOccupancy:
 
     @property
     def occupied(self) -> bool:
-        # Sources alone count as occupancy: a partially-imported set still collides, and reporting it
-        # as empty would send the caller into the silent ON CONFLICT DO NOTHING no-op.
+        """Whether this (model, source set) already holds data that a fresh import would collide with.
+
+        Sources alone count as occupancy: a partially-imported set still collides, and reporting it as
+        empty would send the caller into the silent ``ON CONFLICT DO NOTHING`` no-op -- an import that
+        appears to succeed while writing nothing.
+        """
         return bool(self.source_count or self.neuron_count)
 
 
@@ -109,6 +113,7 @@ class ConflictResolution:
 
     @property
     def renamed(self) -> bool:
+        """Whether resolution diverted the import to a different source-set id than the one requested."""
         return self.effective_source_set_id != self.occupancy.source_set_id
 
 

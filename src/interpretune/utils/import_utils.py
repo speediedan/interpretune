@@ -50,6 +50,17 @@ def instantiate_class(
 
 
 def resolve_funcs(cfg_obj: Any, func_type: str) -> list[Callable[..., Any]]:
+    """Resolve a config attribute into a list of callables, accepting callables or dotted qualnames.
+
+    Configuration may name a hook either as an already-imported callable or as an importable
+    ``module.attr`` string (the form a YAML/CLI config can express), and either as one value or a
+    list. This normalizes all four shapes to a list of callables, importing where needed.
+
+    Raises:
+        MisconfigurationException: a qualname resolves to something non-callable, or its module or
+            attribute cannot be imported -- surfaced here rather than at first call, so a typo in a
+            config fails at setup instead of mid-run.
+    """
     resolved_funcs = []
     funcs_to_resolve = getattr(cfg_obj, func_type)
     if not isinstance(funcs_to_resolve, list):
