@@ -10,6 +10,15 @@ from interpretune.protocol import Adapter
 
 
 class CompositionRegistry(dict):
+    """Maps an adapter combination to the classes composed for it, per component.
+
+    Interpretune builds a datamodule/module by MRO composition rather than inheritance from a fixed
+    base, so the registry is what answers "given adapters (core, sae_lens, transformer_lens), which
+    classes compose, in what order". Adapters register into it at import time via
+    :meth:`AdapterProtocol.register_adapter_ctx`; keys are canonicalized so combinations written in any
+    order resolve identically.
+    """
+
     # TODO: if this experimental compositional utility and protocol gains traction with external users:
     #         - change Adapter enum to a separate AdapterRegistry that can be loaded externally similar to extensions
     #           using the relevant entrypoint API config https://setuptools.pypa.io/en/latest/userguide/entry_point.html
@@ -41,6 +50,11 @@ class CompositionRegistry(dict):
     def resolve_adapter_filter(
         adapter_filter: Sequence[Adapter | str] | Adapter | str | None = None,
     ) -> list[Adapter]:
+        """Normalize a filter (None, a single adapter, a string, or a sequence) to a list of adapters.
+
+        None means "no filtering" and returns an empty list, which callers read as match-everything -- distinct from an
+        empty filter matching nothing.
+        """
         unresolved_filters = []
         if adapter_filter is None:
             return []
@@ -62,6 +76,12 @@ class CompositionRegistry(dict):
 
     @staticmethod
     def sanitize_adapter(adapter: Adapter | str) -> Adapter:
+        """Coerce an adapter name to its :class:`Adapter` member.
+
+        Raises:
+            ValueError: the string names no known adapter -- surfaced here, where the offending name is
+                still in hand, rather than as a later composition miss.
+        """
         if isinstance(adapter, str):
             try:
                 adapter = Adapter[adapter]
@@ -70,6 +90,12 @@ class CompositionRegistry(dict):
         return adapter
 
     def canonicalize_composition(self, adapter_ctx: Sequence[Adapter | str]) -> Tuple:
+        """Reduce an adapter context to its canonical form: de-duplicated, coerced, and value-sorted.
+
+        This is what makes composition keys order-independent -- ``(sae_lens, core)`` and
+        ``(core, sae_lens)`` must name the same registered composition, or callers would have to know
+        the registration order to look one up.
+        """
         resolved_adapter_ctx: set[Adapter] = set()
         for adapter in adapter_ctx:
             resolved_adapter_ctx.add(CompositionRegistry.sanitize_adapter(adapter))
@@ -112,8 +138,12 @@ class CompositionRegistry(dict):
 
 @runtime_checkable
 class AdapterProtocol(Protocol):
+    """What a class must implement to participate in adapter composition."""
+
     @classmethod
-    def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None: ...
+    def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
+        """Register this adapter's supported combinations and their composition classes."""
+        ...
 
 
 def _register_adapters(registry: Any, method: str, module: ModuleType, parent: Type[object]) -> None:

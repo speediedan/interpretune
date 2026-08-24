@@ -9,6 +9,8 @@ if _LIGHTNING_AVAILABLE:
     from lightning.pytorch import LightningDataModule, LightningModule
 
     class LightningAdapter:
+        """Adapter composing interpretune modules with Lightning's ``LightningModule``/``DataModule``."""
+
         from interpretune.metadata import ITClassMetadata  # local import to avoid cycles
 
         _it_cls_metadata = ITClassMetadata(
@@ -39,12 +41,18 @@ if _LIGHTNING_AVAILABLE:
         )
 
         def on_train_start(self) -> None:
+            """Force the model into training mode before training starts, then defer to Lightning.
+
+            Lightning normally handles this, but a run that skips sanity checking can reach training with the model
+            still in eval mode; setting it explicitly closes that edge case.
+            """
             # ensure model is in training mode (e.g. needed for some edge cases w/ skipped sanity checking)
             self.model.train()  # type: ignore[attr-defined]  # provided by LightningModule when mixed in
             return super().on_train_start()  # type: ignore[misc]  # LightningModule method when mixed in
 
         @classmethod
         def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
+            """Register the Lightning datamodule and module compositions."""
             adapter_ctx_registry.register(
                 Adapter.lightning,
                 component_key="datamodule",

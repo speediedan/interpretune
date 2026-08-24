@@ -16,6 +16,8 @@ from interpretune.config import ITSerializableCfg
 
 
 class DefaultMemHooks(AutoStrEnum):
+    """Import paths of the built-in memory hooks, used as defaults in :class:`MemProfilerHooks`."""
+
     pre_forward = "interpretune.extensions.memprofiler._hook_npp_pre_forward"
     post_forward = "interpretune.extensions.memprofiler._hook_npp_post_forward"
     reset_state = "interpretune.extensions.memprofiler._reset_memory_hooks_state"
@@ -23,6 +25,13 @@ class DefaultMemHooks(AutoStrEnum):
 
 @dataclass(kw_only=True)
 class MemProfilerHooks(ITSerializableCfg):
+    """Hooks the profiler installs, each given as an import path or a callable.
+
+    ``reset_state_hooks`` differ in signature from the forward hooks: they are called with the model
+    and the configured ``save_hook_attrs`` list, so they can clear exactly the attributes collection
+    reads.
+    """
+
     pre_forward_hooks: list[str | Callable] = field(default_factory=lambda: [DefaultMemHooks.pre_forward.value])
     post_forward_hooks: list[str | Callable] = field(default_factory=lambda: [DefaultMemHooks.post_forward.value])
     # the provided reset_state_hooks will be called with the model and the `save_hook_attrs` list
@@ -30,7 +39,14 @@ class MemProfilerHooks(ITSerializableCfg):
 
 
 @dataclass(kw_only=True)
-class MemProfilerFuncs(ITSerializableCfg):  # can specify arbitrary list of `memprofilable` decorated function names
+class MemProfilerFuncs(ITSerializableCfg):
+    """Which ``memprofilable``-decorated functions to profile, per collection type.
+
+    Defaults to every core step. The three lists are independent so, for instance, CUDA allocator history (which is
+    expensive) can be narrowed without also narrowing cheap CPU sampling.
+    """
+
+    # can specify arbitrary list of `memprofilable` decorated function names
     cuda: list[str | Enum] = field(default_factory=lambda: list(step.name for step in CoreSteps))
     cpu: list[str | Enum] = field(default_factory=lambda: list(step.name for step in CoreSteps))
     cuda_allocator_history: list[str | Enum] = field(default_factory=lambda: list(step.name for step in CoreSteps))
@@ -38,6 +54,8 @@ class MemProfilerFuncs(ITSerializableCfg):  # can specify arbitrary list of `mem
 
 @dataclass(kw_only=True)
 class MemProfilerSchedule(ITSerializableCfg):
+    """When profiling is active: skip ``warmup_steps``, then collect until ``max_step``."""
+
     # keeping schedule simple as possible for now, may expand to accommodate more flexible schedules in the future
     warmup_steps: int = 0
     max_step: int | None = None
@@ -45,6 +63,8 @@ class MemProfilerSchedule(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class MemProfilerCfg(ITSerializableCfg):
+    """Configuration for the memory profiler extension."""
+
     enabled: bool = False
     cuda_allocator_history: bool = False
     schedule: MemProfilerSchedule = field(default_factory=MemProfilerSchedule)
@@ -132,6 +152,13 @@ def _npp_hook(x):
 
 
 class MemProfiler:
+    """Collects per-step memory statistics via forward hooks and CUDA allocator snapshots.
+
+    Attaches to a module (:meth:`connect`), installs hooks lazily on first collection, and keys every
+    sample by ``rank.phase.epoch_idx.step_idx.step_ctx`` so samples from different phases and steps
+    remain distinguishable in one flat store.
+    """
+
     MODEL_MISSING_MSG = "Module or model is not available"
 
     def __init__(self, *args, **kwargs) -> None:
@@ -149,6 +176,7 @@ class MemProfiler:
         self._done_prof_funcs = []
 
     def connect(self, obj_ref: Any) -> None:
+        """Bind the profiler to a module and capture the current process handle."""
         self._module = obj_ref
         self._curr_pid = Process(os.getpid())
         if self.memprofiler_cfg.enable_saved_tensors_hooks:
@@ -156,11 +184,17 @@ class MemProfiler:
 
     @property
     def memprofiler_cfg(self) -> MemProfilerCfg:
+        """The connected module's profiler configuration.
+
+        Raises:
+            AssertionError: :meth:`connect` has not run, so there is no configuration to read.
+        """
         assert self._module is not None and self._module.it_cfg is not None, "Module or IT config is not available"
         return self._module.it_cfg.memprofiler_cfg
 
     @property
     def schedule(self) -> MemProfilerSchedule:
+        """The configured warmup/max-step schedule."""
         assert self._module is not None and self._module.it_cfg is not None, "Module or IT config is not available"
         return self._module.it_cfg.memprofiler_cfg.schedule
 
@@ -180,15 +214,22 @@ class MemProfiler:
         return model
 
     def remove_memprofiler_hooks(self) -> None:
+        """Remove every installed forward hook."""
         for handle_list in self._hook_handles.values():
             for handle in handle_list:
                 handle.remove()
 
     def exec_reset_state_hooks(self) -> None:
+        """Run the reset-state hooks, clearing the per-module attributes collection reads."""
         for hook in self._configured_hooks["reset_state_hooks"]:
             hook(self._get_pytorch_model(), self.memprofiler_cfg.save_hook_attrs)
 
     def add_memprofiler_hooks(self) -> None:
+        """Resolve configured hooks and register them on every submodule, then reset hook state.
+
+        Each submodule also gets a ``mem_info_handle`` so a hook can sample process memory without
+        reaching back through the profiler.
+        """
         # TODO: extend supported hook points (e.g. backward, etc.) and if/once supporting additional hook points,
         # use a hook_type to registration function mapping
         memory_hooks_cfg = self.memprofiler_cfg.memory_hooks
@@ -211,6 +252,7 @@ class MemProfiler:
         self.exec_reset_state_hooks()
 
     def init_cuda_snapshots_dir(self) -> None:
+        """Create the snapshot directory: the configured ``save_dir``, else ``<core_log_dir>/memprofiler``."""
         assert self._module is not None and self._module.core_log_dir is not None, (
             "Module or core log directory is not available"
         )
@@ -224,12 +266,17 @@ class MemProfiler:
         self._cuda_snapshot_dir.mkdir(exist_ok=True, parents=True)
 
     def cuda_allocator_history_snap(self, snap_key: str) -> dict:
+        """Dump the CUDA allocator history for ``snap_key`` and return the file it was written to."""
         assert self._cuda_snapshot_dir is not None, "CUDA snapshot directory not initialized"
         cuda_snapshot_file = self._cuda_snapshot_dir / f"cuda_alloc_{snap_key}.pickle"
         torch.cuda.memory._dump_snapshot(str(cuda_snapshot_file))
         return {"cuda_snapshot_file": str(cuda_snapshot_file)}
 
     def done(self, step_idx: int) -> bool:
+        """Whether profiling has passed ``max_step``.
+
+        Always False when no max step is configured.
+        """
         return bool(self.schedule.max_step and step_idx >= self.schedule.max_step)
 
     def _process_hooks(self, snap_key) -> None:
@@ -261,6 +308,11 @@ class MemProfiler:
         return all(func in self._done_prof_funcs for func in self.memprofiler_cfg.retain_hooks_for_funcs)
 
     def teardown_prof(self, phase: str, step_ctx: str) -> None:
+        """Disable profiling for one (phase, step context), removing hooks once both ends are done.
+
+        Hooks are only removed once neither the start nor the end of the phase is still collecting, since removing them
+        early would silently truncate the other half of the pair.
+        """
         self._enabled[(phase, step_ctx)] = False
         if not any(self._enabled[(phase, step_ctx)] for step_ctx in ["start", "end"]):
             self._done_prof_funcs.append(CoreSteps[phase])
@@ -271,6 +323,12 @@ class MemProfiler:
     def gen_snap_keys(
         self, phase: str, step_ctx: str, epoch_idx: int | None = None, step_idx: int | None = None
     ) -> tuple[int, int, tuple]:
+        """Resolve the epoch/step indices and build this sample's key.
+
+        Key format is ``rank.phase.epoch_idx.step_idx.step_ctx`` (see NOTE [Memprofiler Key Format]),
+        which is what keeps samples from different ranks, phases and steps distinct in one flat store.
+        Indices default to the module's current epoch and the profiler's own per-phase counter.
+        """
         # NOTE [Memprofiler Key Format]:
         # snap key format is rank.phase.epoch_idx.step_idx.step_ctx
         # e.g. 0.training_step.0.0.end keys hook output for the end of training step 0, epoch 0 for rank 0
@@ -286,6 +344,7 @@ class MemProfiler:
         return epoch_idx, step_idx, (self._rank, phase, epoch_idx, step_idx, step_ctx)
 
     def maybe_init_phase(self, phase: str, step_ctx: str) -> None:
+        """Start tracking a (phase, step context) pair if it is not already being tracked."""
         if not self._snap_indices.get((phase, step_ctx), None):
             self._snap_indices[(phase, step_ctx)] = 0
             self._enabled[(phase, step_ctx)] = True
@@ -298,6 +357,11 @@ class MemProfiler:
         step_idx: int | None = None,
         reset_mem_hooks: bool = False,
     ) -> None:
+        """Take one memory sample, honoring warmup and the max-step schedule.
+
+        Samples before ``warmup_steps`` are skipped but still counted, so step indices stay aligned with
+        the run; reaching ``max_step`` tears the phase down rather than continuing to collect.
+        """
         self.maybe_init_phase(phase, step_ctx)
         if not self._enabled[(phase, step_ctx)]:
             return
@@ -312,6 +376,10 @@ class MemProfiler:
 
     @rank_zero_only
     def dump_memory_stats(self) -> None:
+        """Pickle collected statistics to the snapshot directory.
+
+        Rank zero only.
+        """
         # TODO: all gather memory stats in the future if/when multiple ranks are supported
         assert self._cuda_snapshot_dir is not None, "CUDA snapshot directory not initialized"
         filename = self._cuda_snapshot_dir / "memory_stats.pickle"

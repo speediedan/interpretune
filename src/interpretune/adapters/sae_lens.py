@@ -35,6 +35,13 @@ if TYPE_CHECKING:
 
 @dataclass(kw_only=True)
 class InstantiatedSAE:
+    """A live SAE plus the metadata it was loaded with.
+
+    ``original_cfg`` and ``sparsity`` are retained because a pretrained SAE's own config and sparsity
+    statistics are provenance the handle alone does not carry -- and are needed to describe results
+    after the fact.
+    """
+
     handle: SAE
     original_cfg: dict[str, Any] = field(default_factory=dict)
     sparsity: dict[str, Any] = field(default_factory=dict)
@@ -53,6 +60,7 @@ class SAELensAttributeMixin:
 
     @property
     def sae_cfgs(self) -> SAEConfig | None:
+        """The configured SAE definitions, or None (with a warning) before config is attached."""
         try:
             # TODO: probably will need to add a separate sae_cfg property here as well that points to the configured
             #       SAEConfig
@@ -64,6 +72,7 @@ class SAELensAttributeMixin:
 
     @property
     def sae_handles(self) -> list[SAE]:
+        """The live SAE objects, unwrapped from their :class:`InstantiatedSAE` records."""
         return [sae.handle for sae in self.saes]  # type: ignore[attr-defined]  # provided by mixing class
 
 
@@ -84,10 +93,23 @@ class BaseSAELensModule(BaseITModule):
 
     @property
     def model_backend(self) -> ModelBackend:
+        """The composed model backend.
+
+        Raises:
+            AssertionError: no backend mixin was composed -- an SAE module needs an execution backend
+                (TransformerLens or NNsight) and cannot supply one itself.
+        """
         assert self._model_backend is not None, "model_backend not set — ensure a backend mixin is composed"
         return self._model_backend
 
     def instantiate_saes(self) -> None:
+        """Instantiate every configured SAE, optionally splicing each into the model at init.
+
+        Pretrained configs load through sae_lens (None-valued fields are dropped so sae_lens' own
+        defaults apply); custom configs construct a ``StandardSAE`` directly. When
+        ``add_saes_on_init`` is set, each SAE is attached to the model here -- which is what makes its
+        parameters visible to an optimizer built later (see the note on that config field).
+        """
         for sae_cfg in self.it_cfg.sae_cfgs:
             assert isinstance(sae_cfg, (SAELensFromPretrainedConfig, SAELensCustomConfig))
             original_cfg, sparsity = None, None
@@ -109,6 +131,7 @@ class BaseSAELensModule(BaseITModule):
         super()._capture_hyperparameters()
 
     def set_input_require_grads(self) -> None:
+        """Not supported for SAE modules; logs and returns rather than raising."""
         rank_zero_info("Setting input require grads not currently supported by BaseSAELensModule.")
 
 
@@ -375,6 +398,8 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
 
 
 class SAELensAdapter(SAELensAttributeMixin):
+    """Adapter composing interpretune modules with SAELens sparse autoencoders."""
+
     @property
     def has_sae_analysis_cfg(self) -> bool:
         """Return True if this object has an analysis_run_cfg and implements construct_names_filter.
@@ -415,6 +440,12 @@ class SAELensAdapter(SAELensAttributeMixin):
 
     @classmethod
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
+        """Register the SAELens compositions, one per supported execution backend.
+
+        SAELens does not execute models itself, so every combination it registers pairs it with a
+        backend rather than standing alone; the backend-agnostic ``(core, sae_lens)`` entries default
+        to the TransformerLens backend.
+        """
         # ======================================================================
         # Backend-agnostic registrations: (core, sae_lens) — defaults to TL backend
         # ======================================================================
@@ -591,9 +622,16 @@ class SAELensAdapter(SAELensAttributeMixin):
 
 
 class SAELensAnalysisMixin:
+    """Analysis helpers shared by every SAE module composition, regardless of execution backend."""
+
     def construct_names_filter(
         self, target_layers: int | list[int] | None, sae_hook_match_fn: Callable[[str, int | list[int] | None], bool]
     ) -> NamesFilter:
+        """Build a names filter selecting the SAE hooks on the requested layers.
+
+        Derived from the hooks the loaded SAEs actually expose rather than from a naming convention, so a filter cannot
+        silently select nothing when an SAE names its hooks unexpectedly.
+        """
         available_hooks = {
             f"{handle.cfg.metadata.hook_name}.{key}"
             for handle in self.sae_handles  # type: ignore[attr-defined]  # provided by mixing class
@@ -637,6 +675,11 @@ class SAELensAnalysisMixin:
         width: int = 800,
         height: int = 600,
     ) -> None:
+        """Render a Neuronpedia dashboard for one latent inline (notebook convenience).
+
+        Resolves the Neuronpedia id from the pretrained-SAE directory, so the caller names an SAE release and hook
+        rather than a Neuronpedia-specific identifier.
+        """
         release = get_pretrained_saes_directory()[sae_release]
         neuronpedia_id = release.neuronpedia_id[sae_id]
         embed_cfg = "embed=true&embedexplanation=true&embedplots=true&embedtest=true"
@@ -652,7 +695,8 @@ class SAELensTLModule(
     CoreHelperAttributes,
     BaseSAELensModule,
     BaseITLensModule,
-): ...
+):
+    """SAE composition over the TransformerLens execution backend."""
 
 
 class SAELensNNsightModule(
@@ -662,4 +706,5 @@ class SAELensNNsightModule(
     CoreHelperAttributes,
     BaseSAELensModule,
     BaseNNsightModule,
-): ...
+):
+    """SAE composition over the NNsight execution backend."""
