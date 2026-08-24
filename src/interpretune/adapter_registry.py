@@ -45,6 +45,12 @@ class LazyCompositionRegistry:
 
     @property
     def registry(self) -> CompositionRegistry:
+        """The composition registry, populating it on first access.
+
+        Lazy and lock-guarded because registration imports adapter modules, and doing that at import
+        time would pull heavy optional dependencies (TransformerLens, SAELens, ...) into every process
+        that merely imports interpretune.
+        """
         self._ensure_initialized()
         assert self._registry is not None
         return self._registry
