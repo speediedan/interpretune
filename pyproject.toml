@@ -294,6 +294,12 @@ line-length = 120
 lint.select = [
     "E", "W",  # see: https://pypi.org/project/pycodestyle
     "F",  # see: https://pypi.org/project/pyflakes
+    # Public-API docstrings (#139). RATCHET, not a sweep: currently-failing files under
+    # src/interpretune are baselined in per-file-ignores below and each authoring slice deletes its
+    # own lines. The point is that NEW code cannot add to the debt while the debt is worked down.
+    # Deliberately only D101/D102/D103 (missing docstring on public class/method/function) -- style
+    # rules like D2xx/D4xx would reformat 694 existing docstrings, which is not what #139 asked for.
+    "D101", "D102", "D103",
 ]
 lint.ignore = [
     "E731", # Do not assign a lambda expression, use a def
@@ -317,6 +323,77 @@ output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff
 #"src/fts_examples/stable/ipynb_src/fts_superglue_nb.py" = ["E501","F401","F821"]
 #"src/fts_examples/legacy/ipynb_src/fts_superglue_nb.py" = ["E501","F401","F821"]
 "src/it_examples/notebooks/publish/**/*.ipynb" = ["E501"]
+
+# ==== #139 docstring rules: PERMANENT scope exemptions ====================================
+# Not debt and not baselined -- these surfaces are deliberately outside the public-API docstring
+# contract, so they carry no ratchet lines to delete. `src/interpretune` is the whole scope of #139.
+"tests/**" = ["D101", "D102", "D103"]            # test code; CLAUDE.md already exempts tests from type checks
+"scripts/**" = ["D101", "D102", "D103"]          # maintainer tooling, not a published API
+"requirements/utils/**" = ["D101", "D102", "D103"]  # env-collection tooling; same class as scripts/
+"src/it_examples/**" = ["D101", "D102", "D103"]  # examples/research trees (type-exempt for the same reason)
+
+# ==== #139 docstring ratchet BASELINE (src/interpretune only) =============================
+# Generated from ruff 0.12.10 (the pre-commit pin) at the time of the ratchet PR. Each entry is a
+# file that already failed; the trailing count is its violation count when baselined. Slices delete
+# their own lines as they author, so this block SHRINKS monotonically and never grows -- a new file
+# under src/interpretune is enforced from birth because it is not listed here.
+# DONE-CRITERION for #139: this block is empty.
+# --- slice A (#341) -- base/, runners/, top-level  (13 files, 166 violations)
+"src/interpretune/adapter_registry.py" = ["D101", "D102", "D103"]  # 1
+"src/interpretune/base/call.py" = ["D101", "D102", "D103"]  # 2
+"src/interpretune/base/components/cli.py" = ["D101", "D102", "D103"]  # 12
+"src/interpretune/base/components/core.py" = ["D101", "D102", "D103"]  # 12
+"src/interpretune/base/components/mixins.py" = ["D101", "D102", "D103"]  # 26
+"src/interpretune/base/datamodules.py" = ["D101", "D102", "D103"]  # 3
+"src/interpretune/base/hooks.py" = ["D101", "D102", "D103"]  # 2
+"src/interpretune/base/modules.py" = ["D101", "D102", "D103"]  # 1
+"src/interpretune/protocol.py" = ["D101", "D102", "D103"]  # 66
+"src/interpretune/registry.py" = ["D101", "D102", "D103"]  # 26
+"src/interpretune/runners/analysis.py" = ["D101", "D102", "D103"]  # 2
+"src/interpretune/runners/core.py" = ["D101", "D102", "D103"]  # 5
+"src/interpretune/session.py" = ["D101", "D102", "D103"]  # 8
+
+# --- slice B (#342) -- config/, analysis/  (18 files, 109 violations)
+"src/interpretune/analysis/backends/capabilities.py" = ["D101", "D102", "D103"]  # 4
+"src/interpretune/analysis/backends/feature_selection.py" = ["D101", "D102", "D103"]  # 3
+"src/interpretune/analysis/backends/impls/circuit_tracer.py" = ["D101", "D102", "D103"]  # 22
+"src/interpretune/analysis/backends/interventions.py" = ["D101", "D102", "D103"]  # 4
+"src/interpretune/analysis/backends/protocols.py" = ["D101", "D102", "D103"]  # 14
+"src/interpretune/analysis/core.py" = ["D101", "D102", "D103"]  # 6
+"src/interpretune/analysis/inputs.py" = ["D101", "D102", "D103"]  # 5
+"src/interpretune/analysis/ops/base.py" = ["D101", "D102", "D103"]  # 4
+"src/interpretune/analysis/ops/dispatcher.py" = ["D101", "D102", "D103"]  # 2
+"src/interpretune/config/analysis.py" = ["D101", "D102", "D103"]  # 3
+"src/interpretune/config/datamodule.py" = ["D101", "D102", "D103"]  # 7
+"src/interpretune/config/extensions.py" = ["D101", "D102", "D103"]  # 2
+"src/interpretune/config/mixins.py" = ["D101", "D102", "D103"]  # 4
+"src/interpretune/config/module.py" = ["D101", "D102", "D103"]  # 8
+"src/interpretune/config/runner.py" = ["D101", "D102", "D103"]  # 2
+"src/interpretune/config/sae_lens.py" = ["D101", "D102", "D103"]  # 3
+"src/interpretune/config/shared.py" = ["D101", "D102", "D103"]  # 13
+"src/interpretune/config/transformer_lens.py" = ["D101", "D102", "D103"]  # 3
+
+# --- slice C (#343) -- adapters/, extensions/  (8 files, 76 violations)
+"src/interpretune/adapters/circuit_tracer.py" = ["D101", "D102", "D103"]  # 5
+"src/interpretune/adapters/core.py" = ["D101", "D102", "D103"]  # 4
+"src/interpretune/adapters/lightning.py" = ["D101", "D102", "D103"]  # 3
+"src/interpretune/adapters/registration.py" = ["D101", "D102", "D103"]  # 6
+"src/interpretune/adapters/sae_lens.py" = ["D101", "D102", "D103"]  # 13
+"src/interpretune/adapters/transformer_lens.py" = ["D101", "D102", "D103"]  # 15
+"src/interpretune/extensions/debug_generation.py" = ["D101", "D102", "D103"]  # 10
+"src/interpretune/extensions/memprofiler.py" = ["D101", "D102", "D103"]  # 20
+
+# --- slice D (#344) -- utils/ + residue; emptying this block closes #139  (10 files, 45 violations)
+"src/interpretune/hub/manager.py" = ["D101", "D102", "D103"]  # 5
+"src/interpretune/utils/import_utils.py" = ["D101", "D102", "D103"]  # 1
+"src/interpretune/utils/logging.py" = ["D101", "D102", "D103"]  # 2
+"src/interpretune/utils/neuronpedia_dashboard_hub.py" = ["D101", "D102", "D103"]  # 10
+"src/interpretune/utils/neuronpedia_dashboard_pipeline.py" = ["D101", "D102", "D103"]  # 12
+"src/interpretune/utils/neuronpedia_explanations.py" = ["D101", "D102", "D103"]  # 7
+"src/interpretune/utils/neuronpedia_source_conflicts.py" = ["D101", "D102", "D103"]  # 2
+"src/interpretune/utils/repr_helpers.py" = ["D101", "D102", "D103"]  # 4
+"src/interpretune/utils/schema_validation.py" = ["D101", "D102", "D103"]  # 1
+"src/interpretune/utils/tokenization.py" = ["D101", "D102", "D103"]  # 1
 
 [tool.ruff.lint.isort]
 known-first-party = ["docs", "interpretune","tests"]
