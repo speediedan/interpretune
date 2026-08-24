@@ -26,7 +26,6 @@ from interpretune.utils import ITInstantiationFeedbackWarning, rank_zero_debug, 
 from interpretune.config import ITDataModuleConfig, ITConfig
 from interpretune.base import ITDataModule
 from interpretune.adapters import ITModule
-from interpretune.protocol import AllPhases
 from interpretune.protocol import Adapter, ModuleSteppable, DataModuleInitable
 from interpretune.adapter_registry import ADAPTER_REGISTRY
 
@@ -67,14 +66,12 @@ class RegisteredDataModuleCfg(NamedTuple):
 class RegKeyQueryable(Protocol):
     model_src_key: str
     model_cfg_key: str
-    phase: str
     adapter_ctx: Tuple
 
 
 class ModuleRegistry(dict):  # type: ignore[type-arg]
     def register(
         self,
-        phase: str,
         model_src_key: str,
         model_cfg_key: str,
         adapter_combinations: tuple[Adapter] | tuple[tuple[Adapter]],
@@ -86,14 +83,12 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
         """Registers valid component + adapter compositions mapped to composition keys with required metadata.
 
         Args:
-            lead_adapter: The adapter registering this set of valid compositions (e.g. LightningAdapter)
-            phase:
-            model_src_key:
-            model_cfg_key:
-            adapter_combination: tuple identifying the valid adapter composition
+            model_src_key: model source key (e.g. ``gpt2``)
+            model_cfg_key: task/configuration key (e.g. ``rte``)
+            adapter_combinations: tuple(s) identifying the valid adapter composition(s)
             reg_key: The canonical key of the test/example module.
-            registered_cfg: tuple[Callable],
-            description : composition description
+            registered_cfg: the hydrated :class:`RegisteredCfg` for this entry
+            description: composition description
             cfg_dict: optionally save original configuration dictionary
         """
         supported_composition: dict[str | Adapter | tuple[Adapter | str], Any] = {}
@@ -103,7 +98,7 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
         self[reg_key] = supported_composition
         for a_combo in adapter_combinations:
             a_combo = (a_combo,) if not isinstance(a_combo, tuple) else a_combo
-            composition_key = (model_src_key, model_cfg_key, phase, self.canonicalize_composition(a_combo))
+            composition_key = (model_src_key, model_cfg_key, self.canonicalize_composition(a_combo))
             supported_composition[composition_key] = registered_cfg  # type: ignore[assignment]
             self[composition_key] = supported_composition  # type: ignore[assignment]
 
@@ -137,7 +132,7 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
         if isinstance(target_key, str):
             return tabulate(entries, headers=["Key", "Description"])
         else:
-            return tabulate(entries, headers=["(Model Src, Task Name, Phase, Adapter Ctx)", "Description"])
+            return tabulate(entries, headers=["(Model Src, Task Name, Adapter Ctx)", "Description"])
 
     def composition_keys(self) -> Set:
         return {key for key in self.keys() if isinstance(key, tuple)}
@@ -147,10 +142,10 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
         if not isinstance(target, (tuple, str)):
             assert isinstance(target, RegKeyQueryable), (
                 f"Non-string/non-tuple keys must be `RegKeyQueryable` (i.e. an object "
-                "with at least these 4 attributes: `model_src_key`, `model_cfg_key`, `phase`, `adapter_ctx`): but got "
+                "with at least these 3 attributes: `model_src_key`, `model_cfg_key`, `adapter_ctx`): but got "
                 f"{type(target)}."
             )
-            target = (target.model_src_key, target.model_cfg_key, target.phase, target.adapter_ctx)
+            target = (target.model_src_key, target.model_cfg_key, target.adapter_ctx)
         try:
             if target in self:
                 supported_composition = self[target]
@@ -178,7 +173,7 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
         adapters."""
         if adapter_filter is not None:
             adapter_filter = ADAPTER_REGISTRY.resolve_adapter_filter(adapter_filter)
-            return {key for key in self.composition_keys() for subkey in key[3] if subkey in adapter_filter}
+            return {key for key in self.composition_keys() for subkey in key[2] if subkey in adapter_filter}
         return set(self.composition_keys())
 
     def __str__(self) -> str:
@@ -209,9 +204,7 @@ def instantiate_and_register(
         datamodule_cls=datamodule_cls,  # type: ignore[arg-type]
         module_cls=module_cls,  # type: ignore[arg-type]
     )
-    for supported_p in AllPhases:
-        reg_info["phase"] = supported_p.value
-        target_registry.register(**reg_info, reg_key=reg_key, registered_cfg=registered_cfg, cfg_dict=cfg_dict)
+    target_registry.register(**reg_info, reg_key=reg_key, registered_cfg=registered_cfg, cfg_dict=cfg_dict)
 
 
 def instantiate_or_import(

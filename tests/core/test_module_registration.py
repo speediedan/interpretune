@@ -24,7 +24,6 @@ from base_defaults import BaseCfg
 class TestClassModuleRegistration:
     @dataclass(kw_only=True)
     class DegenRegKeyObj:
-        phase: str = "train"
         device_type: str = "cpu"
         model_cfg_key: str = "rte"
 
@@ -42,7 +41,6 @@ class TestClassModuleRegistration:
         registry = ModuleRegistry()
         registry.register(
             reg_key="cust.test_example",
-            phase="train",
             model_src_key="cust",
             model_cfg_key=default_test_task,
             adapter_combinations=(Adapter.core,),
@@ -51,7 +49,6 @@ class TestClassModuleRegistration:
         )
         registry.register(
             reg_key="cust.test_example.transformer_lens",
-            phase="test",
             model_src_key="cust",
             model_cfg_key=default_test_task,
             adapter_combinations=[
@@ -63,34 +60,34 @@ class TestClassModuleRegistration:
             description="Testing example registration",
         )
 
-        registry.get(("cust", default_test_task, "train", (Adapter.core,)))
+        registry.get(("cust", default_test_task, (Adapter.core,)))
         registry.get("cust.test_example.transformer_lens")
 
         available_set = registry.available_compositions(adapter_filter="core")
         assert available_set == {
-            ("cust", "rte", "train", (Adapter.core,)),
-            ("cust", "rte", "test", (Adapter.core, Adapter.transformer_lens)),
+            ("cust", "rte", (Adapter.core,)),
+            ("cust", "rte", (Adapter.core, Adapter.transformer_lens)),
         }
         assert registry["cust.test_example.transformer_lens"]["cfg_dict"] == {"orig": "cfg"}
 
         assert str(registry).startswith("Registered Modules: dict_keys(['cust.test_example', ('c")
         superset = registry.available_compositions()
-        assert superset == available_set | {("cust", "rte", "test", (Adapter.lightning, Adapter.transformer_lens))}
+        assert superset == available_set | {("cust", "rte", (Adapter.lightning, Adapter.transformer_lens))}
 
-        registry.get(BaseCfg(model_src_key="cust", model_cfg_key="rte", phase="train", adapter_ctx=(Adapter.core,)))
+        registry.get(BaseCfg(model_src_key="cust", model_cfg_key="rte", adapter_ctx=(Adapter.core,)))
 
         with pytest.raises(AssertionError, match="Non-string/non-tuple keys must be `RegKeyQueryable`"):
-            registry.get(TestClassModuleRegistration.DegenRegKeyObj(model_cfg_key="rte", phase="train"))
+            registry.get(TestClassModuleRegistration.DegenRegKeyObj(model_cfg_key="rte"))
 
         with pytest.raises(KeyError, match="was not found in the registry"):
-            registry.get(("cust", default_test_task, "train", (Adapter.lightning, Adapter.sae_lens)))
+            registry.get(("cust", default_test_task, (Adapter.lightning, Adapter.sae_lens)))
 
         with pytest.raises(KeyError, match="was not found in the registry"):
             registry.get("cust.oops_dont_exist.transformer_lens")
 
         expected_composed_available = {
             RegKeyType.STRING: "cust.test_example                   Testing",
-            RegKeyType.TUPLE: "('cust', 'rte', 'train', (<Adapter.core: 'core'>,)) ",
+            RegKeyType.TUPLE: "('cust', 'rte', (<Adapter.core: 'core'>,)) ",
             RegKeyType.COMBO: "e'>, <Adapter.transformer_lens: 'transformer_lens'>))            Testing",
         }
 
@@ -103,9 +100,9 @@ class TestClassModuleRegistration:
         captured = capsys.readouterr()
         assert expected_composed_available[RegKeyType.STRING] in captured.out.strip()
 
-        registry.remove(("cust", default_test_task, "train", (Adapter.core,)))
+        registry.remove(("cust", default_test_task, (Adapter.core,)))
         with pytest.raises(KeyError, match="was not found in the registry"):
-            registry.get(("cust", default_test_task, "train", (Adapter.core,)))
+            registry.get(("cust", default_test_task, (Adapter.core,)))
 
 
 class TestComponentTreeRegistryLaziness:
