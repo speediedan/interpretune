@@ -38,11 +38,11 @@ Returns: (base_itdm_cfg, base_it_cfg, dm_cls, m_cls)
 ### Registry Lookup Keys
 
 The registry lookup uses the test configuration's attributes to form a lookup key:
-- `(model_src_key, model_cfg_key, phase, adapter_ctx)` tuple
+- `(model_src_key, model_cfg_key, adapter_ctx)` tuple (`phase` governs execution only, not registration)
 
-**Example**: A config with `model_src_key="gpt2"`, `model_cfg_key="rte"`, `phase="test"`, `adapter_ctx=(Adapter.core, Adapter.nnsight)` looks up:
+**Example**: A config with `model_src_key="gpt2"`, `model_cfg_key="rte"`, `adapter_ctx=(Adapter.core, Adapter.nnsight)` looks up:
 ```
-('gpt2', 'rte', 'test', (<Adapter.core: 'core'>, <Adapter.nnsight: 'nnsight'>))
+('gpt2', 'rte', (<Adapter.core: 'core'>, <Adapter.nnsight: 'nnsight'>))
 ```
 
 ### Implications for New Adapters
@@ -201,9 +201,9 @@ Create a test configuration class in `tests/core/cfg_aliases.py` or similar.
 **Pattern 1: Registry-Based Configuration (for configs registered in a component tree or `tests/test_module_registry.yaml`):**
 
 Registry entries are looked up using `ModuleRegistry.get()` which accepts:
-- **Tuple**: `(model_src_key, model_cfg_key, phase, adapter_ctx)` - e.g., `("gemma2", "rte_base_test", "test", (Adapter.core, Adapter.circuit_tracer))`
+- **Tuple**: `(model_src_key, model_cfg_key, adapter_ctx)` - e.g., `("gemma2", "rte_base_test", (Adapter.core, Adapter.circuit_tracer))`
 - **String**: Registry key like `"rte_demo.gemma2.circuit_tracer"`
-- **RegKeyQueryable**: Object with `model_src_key`, `model_cfg_key`, `phase`, `adapter_ctx` attributes (like BaseCfg)
+- **RegKeyQueryable**: Object with `model_src_key`, `model_cfg_key`, `adapter_ctx` attributes (like BaseCfg)
 
 ```python
 from tests.base_defaults import BaseCfg

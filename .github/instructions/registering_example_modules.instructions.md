@@ -168,7 +168,8 @@ class CoreNNsightGPT2(BaseCfg):
     )
 ```
 
-**Critical**: The `(model_src_key, model_cfg_key, phase, adapter_ctx)` tuple must match an entry in the registry.
+**Critical**: The `(model_src_key, model_cfg_key, adapter_ctx)` tuple must match an entry in the registry
+(`phase` selects which runner phase executes; it is not part of the registration key).
 
 ### Step 5: Register Fixture in conftest.py
 
