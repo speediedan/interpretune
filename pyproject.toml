@@ -353,16 +353,8 @@ output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff
 "src/interpretune/runners/core.py" = ["D101", "D102", "D103"]  # 5
 "src/interpretune/session.py" = ["D101", "D102", "D103"]  # 8
 
-# --- slice B (#342) -- config/, analysis/  (18 files, 109 violations)
-"src/interpretune/analysis/backends/capabilities.py" = ["D101", "D102", "D103"]  # 4
-"src/interpretune/analysis/backends/feature_selection.py" = ["D101", "D102", "D103"]  # 3
-"src/interpretune/analysis/backends/impls/circuit_tracer.py" = ["D101", "D102", "D103"]  # 22
-"src/interpretune/analysis/backends/interventions.py" = ["D101", "D102", "D103"]  # 4
-"src/interpretune/analysis/backends/protocols.py" = ["D101", "D102", "D103"]  # 14
-"src/interpretune/analysis/core.py" = ["D101", "D102", "D103"]  # 6
-"src/interpretune/analysis/inputs.py" = ["D101", "D102", "D103"]  # 5
-"src/interpretune/analysis/ops/base.py" = ["D101", "D102", "D103"]  # 4
-"src/interpretune/analysis/ops/dispatcher.py" = ["D101", "D102", "D103"]  # 2
+# --- slice B (#342) -- config/ only; analysis/ half DONE (was 9 files, 64 violations).
+#     Split because config/ overlaps an in-flight registry refactor; see the note on #342.
 "src/interpretune/config/analysis.py" = ["D101", "D102", "D103"]  # 3
 "src/interpretune/config/datamodule.py" = ["D101", "D102", "D103"]  # 7
 "src/interpretune/config/extensions.py" = ["D101", "D102", "D103"]  # 2

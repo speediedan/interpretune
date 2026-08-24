@@ -107,6 +107,13 @@ def build_call_args(module, analysis_batch, batch, batch_idx, impl_params=None, 
 
 
 class AttrDict(dict):
+    """A dict whose keys are also reachable as attributes.
+
+    ``KeyError`` is re-raised as ``AttributeError`` on attribute access so the object behaves like an
+    object to code that probes it with ``getattr``/``hasattr`` -- which is what makes a missing analysis
+    field degrade to "absent" rather than exploding inside an unrelated ``try``.
+    """
+
     def __init__(self, *args, **kwargs):
         super(AttrDict, self).__init__(*args, **kwargs)
 
@@ -127,6 +134,13 @@ class AttrDict(dict):
 
 
 class AnalysisBatch(AttrDict):
+    """The unit of data flowing between analysis ops: named fields, schema-aware resolution.
+
+    An :class:`AttrDict` that additionally knows the op ``input_schema`` bound to it, so a field the
+    batch does not carry can still resolve to its declared default instead of raising. That is what
+    lets ops compose without every op defending against every other op's optional outputs.
+    """
+
     def _schema_default(self, key: str) -> Any:
         """Return a bound schema default for ``key`` when one is available."""
         input_schema = getattr(self, "_analysis_input_schema", None)
@@ -305,6 +319,11 @@ class AnalysisBatch(AttrDict):
         return True
 
     def update(self, **kwargs):  # type: ignore[override]
+        """Set fields from keyword arguments (keyword-only, unlike ``dict.update``).
+
+        Narrowed deliberately: analysis fields are named, so accepting a positional mapping would invite
+        writing a whole batch's worth of unvalidated keys in one call.
+        """
         for key, value in kwargs.items():
             self[key] = value
 
@@ -453,6 +472,11 @@ def wrap_summary(
     save_tokens: bool = False,
     decode_kwargs: dict[str, Any] | None = None,
 ) -> BaseAnalysisBatchProtocol:
+    """Attach human-readable prompts and/or tokens to an analysis batch, if requested.
+
+    Both are opt-in because they are the expensive fields to persist: decoded text and per-token ids
+    dominate a stored analysis dataset's size, and most ops never read them back.
+    """
     decode_kwargs = decode_kwargs or {}
     if save_prompts:
         batch_input = get_batch_input(batch)

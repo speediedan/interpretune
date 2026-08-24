@@ -434,6 +434,22 @@ def analysis_store_from_batches(
 
 
 class AnalysisStore:
+    """A schema-described dataset of analysis artifacts -- the framework's sharing abstraction.
+
+    Wraps a HuggingFace dataset (a path, a loaded dataset, or nothing yet) with the op schema that
+    describes its columns, so analysis results are an exchangeable artifact rather than one-off
+    notebook state. Rows carry activations, attributions, graphs and intervention results; the schema
+    is what lets another process decode them without the code that produced them.
+
+    Args:
+        dataset: an existing dataset or a path to one; None to build a store incrementally.
+        op_output_dataset_path: where op outputs are written when the store is being produced.
+        streaming: iterate the dataset lazily instead of materializing it.
+        stack_batches: stack per-batch tensors into a single tensor on access rather than returning
+            them per batch -- convenient for analysis, wrong when batches have ragged shapes.
+        protocol_cls: the batch protocol describing the columns, which fixes how rows decode.
+    """
+
     def __init__(
         self,
         # dataset: can be a path or a loaded Hugging Face dataset
@@ -899,6 +915,7 @@ class AnalysisStore:
 
 
 def default_sae_id_factory_fn(layer: int, prefix_pat: str = "blocks", suffix_pat: str = "hook_z") -> str:
+    """Build the conventional SAE id for a layer: ``<prefix>.<layer>.<suffix>``."""
     return ".".join([prefix_pat, str(layer), suffix_pat])
 
 
@@ -908,6 +925,11 @@ def default_sae_hook_match_fn(
     hook_point_suffix: str = "hook_sae_acts_post",
     hook_point_prefix: str = "blocks",
 ) -> bool:
+    """Whether a hook name is an SAE activation hook, optionally restricted to given layers.
+
+    Matches on the suffix first so it works across naming conventions, then narrows by layer only when
+    ``layers`` is given -- omitting it matches every layer rather than none.
+    """
     suffix_matched = in_name.endswith(f"{hook_point_suffix}")
     if suffix_matched and layers is not None:
         if isinstance(layers, int):
@@ -933,6 +955,11 @@ class LatentAnalysisTargets:
         self.validate_latent_model_fqns()
 
     def validate_latent_model_fqns(self):
+        """Validate declared latent-model FQNs, or derive them from target SAE ids / layers.
+
+        Called from ``__post_init__``, so a configuration is either coherent by the time it is
+        constructed or fails there rather than at first use.
+        """
         # Validate provided latent_model_fqns or generate them based on target_sae_ids or target_layers
         if self.latent_model_fqns:
             new_latent_model_fqns = []
@@ -1122,6 +1149,8 @@ class LatentMetrics(ActivationSumm):
 
 
 class PredSumm(NamedTuple):
+    """Prediction totals for one evaluation: the counts a metric report is derived from."""
+
     total_correct: int
     percentage_correct: float
     batch_predictions: list | None
@@ -1275,6 +1304,12 @@ def compute_correct(
 
 
 def resolve_names_filter(names_filter: NamesFilter | None) -> Callable[[str], bool]:
+    """Normalize the several accepted names-filter forms into one predicate.
+
+    None matches everything, a string matches by prefix, a sequence matches membership, and a callable
+    passes through. Mirrors ``transformer_lens.hook_points.get_caching_hooks`` logic, lifted out so
+    non-TL code paths can share it.
+    """
     # similar to logic in `transformer_lens.hook_points.get_caching_hooks` but accessible to other functions
     if names_filter is None:
         names_filter = lambda name: True
