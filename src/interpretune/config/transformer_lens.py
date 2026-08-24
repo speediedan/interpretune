@@ -109,6 +109,8 @@ class ITLensBridgeConfig(ITLensSharedConfig):
 # TODO: open a PR to have TL `from_pretrained` config encapsulated in a dataclass for improved external compatibility
 @dataclass(kw_only=True)
 class ITLensFromPretrainedConfig(ITLensSharedConfig):
+    """TransformerLens initialization from pretrained weights, with TL's standard preprocessing."""
+
     model_name: str = "gpt2-small"
     fold_ln: bool | None = True
     center_writing_weights: bool | None = True
@@ -135,6 +137,12 @@ class ITLensFromPretrainedConfig(ITLensSharedConfig):
 # rather than use from_pretrained_no_processing wrapper, we can specify the simplified config defaults we want directly
 @dataclass(kw_only=True)
 class ITLensFromPretrainedNoProcessingConfig(ITLensFromPretrainedConfig):
+    """Pretrained TL initialization with weight PROCESSING DISABLED.
+
+    Folding LayerNorm and centering weights change the parameters, which is fine for behavioral work and wrong when the
+    analysis is about the weights themselves -- this variant leaves them untouched.
+    """
+
     fold_ln: bool | None = False
     center_writing_weights: bool | None = False
     center_unembed: bool | None = False
@@ -356,6 +364,8 @@ class ITLensConfig(ITConfig, TLConfigInitMixin):
 #       once (if) TL migrates away from HookedTransformer.generate method to using the HF generate interface
 @dataclass(kw_only=True)
 class TLensGenerationConfig(CoreGenerationConfig):
+    """Generation settings for TL models, which take explicit kwargs rather than an HF config."""
+
     stop_at_eos: bool = True
     eos_token_id: int | None = None
     freq_penalty: float = 0.0

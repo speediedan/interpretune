@@ -35,6 +35,8 @@ _VALID_SAE_BACKENDS = ("transformerlens", "nnsight")
 
 @dataclass(kw_only=True)
 class SAELensFromPretrainedConfig(ITSerializableCfg):
+    """Load a pretrained SAE from a SAELens release, by release id and hook name."""
+
     release: str
     sae_id: str
     device: str | None = None
@@ -47,6 +49,8 @@ class SAELensFromPretrainedConfig(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class SAELensCustomConfig(ITSerializableCfg):
+    """Construct an SAE from an explicit config rather than loading pretrained weights."""
+
     cfg: SAEConfig | dict[str, Any]
 
     # TODO: may add additional custom behavior handling attributes here
@@ -107,6 +111,7 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
 
     @property
     def normalized_sae_cfg_refs(self) -> list[str]:
+        """Normalized reference strings for the configured SAEs, one per SAE, for logging and provenance."""
         normalized_names = []
         # Handle both single config and list of configs
         if isinstance(self.sae_cfgs, (SAELensFromPretrainedConfig, SAELensCustomConfig)):

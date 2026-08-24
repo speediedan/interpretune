@@ -157,6 +157,8 @@ def init_analysis_cfgs(
 
 @dataclass(kw_only=True)
 class SessionRunnerCfg:
+    """What a session runner needs: the session to drive, the phase to run, and batch limits."""
+
     it_session: ITSession | None = None
     module: ITModuleProtocol | None = None
     datamodule: ITDataModuleProtocol | None = None
@@ -188,6 +190,8 @@ class SessionRunnerCfg:
 
 @dataclass(kw_only=True)
 class AnalysisRunnerCfg(SessionRunnerCfg):
+    """A session-runner configuration extended with the analysis-specific settings."""
+
     # Change the field to a private attribute that will store the raw value
     analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] | None = None
     limit_analysis_batches: int = -1

@@ -38,6 +38,8 @@ if TYPE_CHECKING:
 
 @dataclass(kw_only=True)
 class ModelConf(ITSerializableCfg):
+    """Model identity and loading options."""
+
     model_class: Type[torch.nn.Module] | None = None
     model_cfg: dict[str, Any] = field(default_factory=dict)
     cust_fwd_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -45,6 +47,8 @@ class ModelConf(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class OptimizerSchedulerConf(ITSerializableCfg):
+    """Optimizer and LR-scheduler construction, given as class paths plus init args."""
+
     optimizer_init: dict[str, Any] = field(default_factory=dict)
     lr_scheduler_init: dict[str, Any] = field(default_factory=dict)
     pl_lrs_cfg: dict[str, Any] = field(default_factory=dict)
@@ -52,12 +56,16 @@ class OptimizerSchedulerConf(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class ClassificationConf(ITSerializableCfg):
+    """Classification setup: the label mapping and how predictions are derived."""
+
     classification_mapping: Tuple | None = None
     classification_mapping_indices: torch.Tensor | None = None
 
 
 @dataclass(kw_only=True)
 class MixinsConf(ITSerializableCfg):
+    """Which optional mixins the composed module should include."""
+
     analysis_cfg: "AnalysisCfgProtocol | None" = None
     generative_step_cfg: GenerativeClassificationConfig = field(default_factory=GenerativeClassificationConfig)
     hf_from_pretrained_cfg: HFFromPretrainedConfig | None = None
@@ -65,6 +73,8 @@ class MixinsConf(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class LoggingConf(ITSerializableCfg):
+    """Logging destinations and verbosity for a run."""
+
     experiment_tag: str | None = "default"
     log_env_details: bool | None = True
     core_log_dir: StrOrPath | None = None
@@ -75,12 +85,16 @@ class LoggingConf(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class AutoCompatConfig(ITSerializableCfg):
+    """Declares the auto-composition target so a config subclass is synthesized to match its fields."""
+
     ret_callable: bool | None = False
     ret_val: Any | None = None
 
 
 @dataclass(kw_only=True)
 class CompatConf(ITSerializableCfg):
+    """Compatibility toggles for behaviors that differ across supported backend versions."""
+
     compatibility_attrs: dict[str, AutoCompatConfig] = field(default_factory=dict)
 
 
@@ -96,6 +110,12 @@ class ITConfig(
     AutoCompConf,
     ExtensionConf,
 ):
+    """The module-side configuration: model, optimization, classification, logging and mixins.
+
+    Composed from the grouped configs above rather than declaring every field flat, so an adapter can
+    extend one group without widening the whole surface.
+    """
+
     # """Dataclass to encapsulate the ITModule internal state."""
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
     # dynamic fields added via ExtensionConf contingent on supported extension availability

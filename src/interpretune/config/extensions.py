@@ -6,6 +6,8 @@ from interpretune.utils import MisconfigurationException, _import_class, _NEURON
 
 
 class ITExtension(NamedTuple):
+    """One registered extension: the attribute it binds to and the class providing it."""
+
     ext_attr: str
     ext_cls_fqn: str
     ext_cfg_fqn: str
@@ -49,6 +51,8 @@ class ExtensionsContext:
 
 
 class ITExtensionsConfigMixin:
+    """Mixin resolving configured extensions onto a module during config construction."""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.extensions_context = ExtensionsContext()

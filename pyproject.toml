@@ -350,17 +350,7 @@ output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff
 "src/interpretune/base/modules.py" = ["D101", "D102", "D103"]  # 1
 "src/interpretune/registry.py" = ["D101", "D102", "D103"]  # 26
 
-# --- slice B (#342) -- config/ only; analysis/ half DONE (was 9 files, 64 violations).
-#     Split because config/ overlaps an in-flight registry refactor; see the note on #342.
-"src/interpretune/config/analysis.py" = ["D101", "D102", "D103"]  # 3
-"src/interpretune/config/datamodule.py" = ["D101", "D102", "D103"]  # 7
-"src/interpretune/config/extensions.py" = ["D101", "D102", "D103"]  # 2
-"src/interpretune/config/mixins.py" = ["D101", "D102", "D103"]  # 4
-"src/interpretune/config/module.py" = ["D101", "D102", "D103"]  # 8
-"src/interpretune/config/runner.py" = ["D101", "D102", "D103"]  # 2
-"src/interpretune/config/sae_lens.py" = ["D101", "D102", "D103"]  # 3
-"src/interpretune/config/shared.py" = ["D101", "D102", "D103"]  # 13
-"src/interpretune/config/transformer_lens.py" = ["D101", "D102", "D103"]  # 3
+# --- slice B (#342) -- DONE, both halves (analysis/ 64 + config/ 45 = 109 violations)
 
 # --- slice C (#343) -- adapters/, extensions/: DONE (was 8 files, 76 violations)
 
