@@ -22,6 +22,7 @@ AdapterSeq: TypeAlias = Sequence[Adapter | str] | Adapter | str
 
 
 def adapter_seq_to_list(adapter_seq: AdapterSeq):
+    """Normalize an adapter sequence to a list, accepting a bare string as a one-element sequence."""
     if isinstance(adapter_seq, str):
         adapter_seq = [adapter_seq]
     elif isinstance(adapter_seq, Adapter):
@@ -39,6 +40,12 @@ def adapter_seq_to_list(adapter_seq: AdapterSeq):
 
 
 class ComposedCfgWrapper:
+    """Base of auto-composed config classes, giving them a repr naming what they were composed from.
+
+    Auto-composition synthesizes a dataclass at runtime, so the default repr would name a class the user
+    never wrote. The counterpart of :class:`~interpretune.session.NamedWrapper` on the config side.
+    """
+
     def __repr__(self) -> str:
         orig_module = getattr(
             self, "_orig_module_cfg_name", "Original module config attribute not set, instantiation incomplete."
@@ -76,6 +83,8 @@ class ITSerializableCfg(yaml.YAMLObject):
 
 @dataclass(kw_only=True)
 class AutoCompConfig(ITSerializableCfg):
+    """Declares an auto-composition: the synthesized class's name, its mixins, and the adapters to search."""
+
     module_cfg_name: str
     module_cfg_mixin: list[Any] | Any
     target_adapters: AdapterSeq | None = None
@@ -90,9 +99,17 @@ class AutoCompConfig(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class AutoCompConf(ITSerializableCfg):
+    """Base for configs that may auto-compose themselves at construction time.
+
+    When ``auto_comp_cfg`` is supplied, ``__new__`` synthesizes a subclass carrying the extra fields
+    before instantiation -- so a config can accept adapter-specific kwargs it does not itself declare.
+    """
+
     auto_comp_cfg: AutoCompConfig | None = None
 
     def __new__(cls, **kwargs):
+        """Synthesize and instantiate a composed subclass when ``auto_comp_cfg`` is present, else the class
+        itself."""
         if kwargs.get("auto_comp_cfg", None) is not None:
             built_class = AutoCompConf.compose_cfg_dataclass(cls, kwargs)
             return super().__new__(built_class)
@@ -101,6 +118,11 @@ class AutoCompConf(ITSerializableCfg):
 
     @staticmethod
     def compose_cfg_dataclass(target_cls, kwargs):
+        """Build a dataclass composing ``target_cls`` with the resolved adapter config classes.
+
+        Returns ``target_cls`` unchanged when no composition is needed, so the caller can always use the
+        result without checking whether anything was synthesized.
+        """
         setattr(kwargs["auto_comp_cfg"], "_orig_cfg_cls", target_cls)
         auto_comp_cfg = kwargs.pop("auto_comp_cfg")
         assert getattr(auto_comp_cfg, "_orig_cfg_cls", None) is not None, "`auto_comp_cfg` missing `_orig_cfg_cls`"
@@ -116,6 +138,7 @@ class AutoCompConf(ITSerializableCfg):
 
 
 def collect_exhaustive_attr_set(target_type: type) -> set[str]:
+    """All public attribute names on a type, including inherited ones."""
     target_type_attrs = {attr for attr in dir(target_type) if not attr.startswith("__")}
     parent_attrs = set()
     for parent_cls in inspect.getmro(target_type)[1:]:
@@ -168,6 +191,11 @@ def find_adapter_subclasses(
 def search_candidate_subclass_attrs(
     candidate_modules: dict[Adapter, type], kwargs_not_in_target_type: dict
 ) -> tuple[type, ...] | None:
+    """Find the candidate classes covering the unmatched kwargs, preferring the least over-broad.
+
+    Minimizing EXTRA attributes matters: several adapter configs may accept the given kwargs, and picking
+    the narrowest avoids silently composing in a surface the caller never asked for.
+    """
     valid_subclasses = []
     min_extra_attrs = float("inf")
     for _, module_class in candidate_modules.items():
@@ -187,6 +215,7 @@ def search_candidate_subclass_attrs(
 
 
 def check_non_subclasses(target_class: type, candidate_classes: list[type]) -> tuple[type, ...] | None:
+    """Return the candidates ``target_class`` does NOT already subclass, or None when it subclasses all."""
     unfullfilled_subclasses = []
     for cls in candidate_classes:
         if not issubclass(target_class, cls):
@@ -197,6 +226,11 @@ def check_non_subclasses(target_class: type, candidate_classes: list[type]) -> t
 
 
 def issue_noncomposition_feedback(auto_comp_cfg, superclasses, subclasses):
+    """Explain why no composition happened, at a severity matching whether the caller likely expected one.
+
+    Debug when the config already satisfies everything asked of it; a warning when ``target_adapters``
+    were given but nothing composable was found -- that case is usually a misconfiguration.
+    """
     is_ready = f"already supports all of the provided kwargs, is already a subclass of {auto_comp_cfg.module_cfg_mixin}"
     base_message = f"No auto-composition needed for {auto_comp_cfg._orig_cfg_cls} as it {is_ready}"
     if not auto_comp_cfg.target_adapters:
@@ -214,6 +248,11 @@ def issue_noncomposition_feedback(auto_comp_cfg, superclasses, subclasses):
 def issue_incomplete_composition_feedback(
     auto_comp_cfg: AutoCompConfig, kwargs_not_in_target_type: dict, nonsubcls_mixins: tuple[type, ...] | None
 ):
+    """Warn that no composition covers all supplied kwargs, naming which kwargs went unmatched.
+
+    Instantiation still proceeds with a partial composition where one exists, so the warning is the only signal that a
+    kwarg may be silently unsupported -- it names them rather than saying composition failed.
+    """
     no_auto_prefix = (
         f"Could not find an auto-composition for {auto_comp_cfg._orig_cfg_cls} that supports all of"
         f" the following kwargs: {kwargs_not_in_target_type}."
@@ -235,6 +274,11 @@ def issue_incomplete_composition_feedback(
 
 
 def resolve_composition_classes(auto_comp_cfg: AutoCompConfig, kwargs: dict) -> tuple[type, ...] | None:
+    """Decide which classes to compose for this config, or None when none are needed.
+
+    Emits the feedback above rather than failing silently, since "nothing composed" is indistinguishable from
+    "composition not needed" at the call site.
+    """
     adapter_composition_classes = None
     assert auto_comp_cfg._orig_cfg_cls is not None
     subclasses, superclasses = find_adapter_subclasses(auto_comp_cfg._orig_cfg_cls, auto_comp_cfg.target_adapters)
@@ -276,6 +320,12 @@ def resolve_composition_classes(auto_comp_cfg: AutoCompConfig, kwargs: dict) -> 
 
 @dataclass(kw_only=True)
 class ITSharedConfig(ITSerializableCfg):
+    """Configuration shared by the datamodule and module halves: model, task, and tokenizer identity.
+
+    These are the fields a ``shared_config`` block populates on both sides through the one merge site,
+    so the two halves cannot disagree about which model or tokenizer a session is using.
+    """
+
     model_name_or_path: str = ""
     task_name: str = ""
     tokenizer_name: str | None = None

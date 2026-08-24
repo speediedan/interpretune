@@ -97,6 +97,12 @@ def _extend_names_for_bridge(module, names_list: list[str]) -> tuple[list[str], 
 
 @dataclass(kw_only=True)
 class AnalysisCfg(ITSerializableCfg):
+    """Configuration for one analysis invocation: which op runs, over what inputs, into which store.
+
+    The op and its schemas may be given as objects, names, or a list to compose, and are resolved to
+    concrete forms during setup -- so a config can be written before the dispatcher has loaded.
+    """
+
     output_store: AnalysisStoreProtocol | None = None  # usually constructed on setup()
     input_store: AnalysisStoreProtocol | None = None  # store containing input data from previous op
     batch_inputs: dict[str, Any] = field(default_factory=dict)  # batch-scoped inputs for the active invocation
@@ -214,6 +220,7 @@ class AnalysisCfg(ITSerializableCfg):
                 setattr(self, key, value)
 
     def resolve_output_schema(self) -> None:
+        """Resolve ``output_schema`` from an op, an op name, or an already-concrete schema."""
         assert self.output_schema is not None, "Output schema to resolve must be set"
         # Accept either AnalysisOp or OpWrapper-like objects that will resolve to AnalysisOp when instantiated
         if isinstance(self.output_schema, AnalysisOpLike):
@@ -226,6 +233,7 @@ class AnalysisCfg(ITSerializableCfg):
             self.output_schema = getattr(resolved_op, "output_schema")
 
     def resolve_op(self) -> None:
+        """Resolve ``target_op`` to a concrete op, composing a list into a single composite op."""
         # Handle list inputs (composition)
         # TODO: this resolution still needs to be both refactored (we haven't fully refined excessively defensive
         # AI written conditions) and enhanced to handle additional not officially supported but possible to support

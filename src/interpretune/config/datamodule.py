@@ -18,9 +18,18 @@ log = logging.getLogger(__name__)
 
 @dataclass(kw_only=True)
 class PromptConfig(ITSerializableCfg):
+    """Base prompt construction: the task prompt is used as-is.
+
+    Subclasses override :meth:`model_chat_template_fn` to wrap it for models that expect a chat format.
+    """
+
     cust_task_prompt: dict[str, Any] = field(default_factory=dict)
 
     def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: str | None = None) -> str:
+        """Return the prompt unchanged (stripped).
+
+        The identity case for non-chat models.
+        """
         return task_prompt.strip()
 
 
@@ -45,6 +54,10 @@ class ChatTemplatePromptConfig(PromptConfig):
         self._tokenizer = tokenizer
 
     def build_messages(self, task_prompt: str) -> list[dict[str, str]]:
+        """Wrap the task prompt as a single user message.
+
+        Override for multi-turn or system prompts.
+        """
         return [{"role": "user", "content": task_prompt.strip()}]
 
     def apply_chat_template_fn(
@@ -65,6 +78,11 @@ class ChatTemplatePromptConfig(PromptConfig):
         )
 
     def model_chat_template_fn(self, task_prompt: str, tokenization_pattern: str | None = None) -> str:
+        """Apply the tokenizer's native chat template, falling back to the bare prompt if it has none.
+
+        The fallback matters: a model without a chat template must still produce a usable prompt rather
+        than an error, so the same config works across chat and non-chat checkpoints.
+        """
         if self._tokenizer is None or not getattr(self._tokenizer, "chat_template", None):
             return task_prompt.strip()
         return self._tokenizer.apply_chat_template(
@@ -74,6 +92,8 @@ class ChatTemplatePromptConfig(PromptConfig):
 
 @dataclass(kw_only=True)
 class TokenizationConfig(ITSerializableCfg):
+    """Tokenizer selection and behavior: parallelism, special tokens, sequence length."""
+
     tokenizers_parallelism: bool = True
     local_fast_tokenizer_path: str | None = None
     cust_tokenization_pattern: str | None = None
@@ -83,6 +103,12 @@ class TokenizationConfig(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class DatasetProcessingConfig(ITSerializableCfg):
+    """Dataset loading and preprocessing: source, text fields, collation, and caching.
+
+    Caching defaults to DISABLED for reproducibility -- a cached mapped dataset silently survives a
+    change to the preprocessing that produced it.
+    """
+
     remove_unused_columns: bool = True
     text_fields: Tuple | None = None
     dataset_path: StrOrPath | None = None
@@ -94,6 +120,12 @@ class DatasetProcessingConfig(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingConfig):
+    """The datamodule-side configuration: batch sizes and dataloading, over tokenization and dataset processing.
+
+    Composed from the grouped configs rather than declared flat -- see NOTE [Interpretune
+    Dataclass-Oriented Configuration].
+    """
+
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
     train_batch_size: int = 32
     eval_batch_size: int = 32

@@ -14,6 +14,8 @@ from interpretune.utils import rank_zero_warn, _resolve_dtype
 
 @dataclass(kw_only=True)
 class BaseGenerationConfig(ITSerializableCfg):
+    """Base for generation configuration: kwargs passed straight through to ``model.generate``."""
+
     # kwargs passed directly to the model.generate method
     generate_kwargs: dict = field(default_factory=dict)
 
@@ -22,6 +24,12 @@ class BaseGenerationConfig(ITSerializableCfg):
 #       (if) TL migrates away from HookedTransformer.generate method to using the HF generate interface
 @dataclass(kw_only=True)
 class CoreGenerationConfig(BaseGenerationConfig):
+    """Generation settings passed as explicit kwargs, for backends without an HF generation config.
+
+    Used for ``HookedTransformer``, whose ``generate`` does not read an HF ``GenerationConfig``. HF dict
+    flags are deliberately left unset so callers state them rather than inheriting a silent default.
+    """
+
     max_new_tokens: int = 5  # nb maxing logits over multiple tokens (n<=5) will yield a very slight perf gain versus 1
     do_sample: bool = True
     top_p: float = 1.0
@@ -43,6 +51,12 @@ class CoreGenerationConfig(BaseGenerationConfig):
 
 @dataclass(kw_only=True)
 class HFGenerationConfig(BaseGenerationConfig):
+    """Generation settings applied to the HF model's own ``generation_config``.
+
+    Prefer this for HF-backed models: the settings live where the model looks for them, rather than
+    being re-passed at each call site.
+    """
+
     # generation kwargs to be added to the HF model config (which in turn override the model.generation_config)
     model_config: dict = field(default_factory=dict)
     default_overrides: dict = field(default_factory=lambda: {})
@@ -69,6 +83,8 @@ class HFGenerationConfig(BaseGenerationConfig):
 
 @dataclass(kw_only=True)
 class GenerativeClassificationConfig(ITSerializableCfg):
+    """Configuration for classification performed by generating tokens rather than reading logits."""
+
     enabled: bool = False
     lm_generation_cfg: BaseGenerationConfig = field(default_factory=HFGenerationConfig)
     # for generate methods that don't also perform data preparation, filter out inputs that the model's generate
