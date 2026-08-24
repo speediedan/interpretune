@@ -1,6 +1,8 @@
 name: README flow smoke
 
-# Tier 1 of the user-install validation lane (issue #270).
+# Tier 1 of the user-install validation lane (issue #270). The weekly scheduled run additionally
+# executes the tokenless tests/core slice (the outsider profile) per the #270 cadence approved
+# 2026-08-24; the pre-release full-suite half of that cadence lives in #259's release checklist.
 #
 # WHY THIS IS A SEPARATE WORKFLOW rather than a job in env-build-smoke.yml: GitHub `paths:` filters are
 # WORKFLOW-level, not job-level. Sharing a file would trigger that workflow's from-source `build-smoke`
@@ -48,7 +50,9 @@ jobs:
   readme-flow:
     name: README install flow (CPU)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # PR runs stay the fast smoke; scheduled/dispatch runs add the core slice (see below) and need
+    # the longer ceiling.
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 60 || 150 }}
     env:
       IT_VENV: ${{ github.workspace }}/.readme-venv
     steps:
@@ -108,6 +112,31 @@ jobs:
               raise SystemExit("provenance failures:\n  " + "\n  ".join(failures))
           PY
 
+      - name: Assert the uv override pins actually governed resolution
+        run: |
+          # The transformer-lens/nnsight release pins live in [tool.uv] override-dependencies, a uv
+          # mechanism pip ignores. Their whole purpose is forcing the TL v3 line over downstream v2
+          # caps, and a resolver change that stopped honoring them would be invisible to the path
+          # checks above (the wrong version resolves from the RIGHT venv). Extracted from
+          # pyproject.toml, never duplicated, same policy as the README command extraction.
+          env -u PYTHONPATH "${IT_VENV}/bin/python" - <<'PY'
+          import re, tomllib
+          from importlib.metadata import version
+          with open("pyproject.toml", "rb") as f:
+              overrides = tomllib.load(f)["tool"]["uv"]["override-dependencies"]
+          pins = dict(m.groups() for o in overrides if (m := re.fullmatch(r"([A-Za-z0-9_-]+)==([\w.]+)", o)))
+          if not pins:
+              raise SystemExit("no exact pins found in [tool.uv] override-dependencies; update this check deliberately")
+          failures = []
+          for name, pinned in pins.items():
+              got = version(name)
+              print(f"{'ok ' if got == pinned else 'BAD'} {name:18} pinned {pinned}, resolved {got}")
+              if got != pinned:
+                  failures.append(f"{name}: pinned {pinned}, resolved {got}")
+          if failures:
+              raise SystemExit("override pins did not govern resolution:\n  " + "\n  ".join(failures))
+          PY
+
       - name: Assert no dev-flow residue
         run: |
           # Positive guard, not an omission. requirements/ci/sl_uv_requirements.txt (the vendored SAELens
@@ -134,6 +163,21 @@ jobs:
           env -u PYTHONPATH PYTHONPATH="${{ github.workspace }}/src:${{ github.workspace }}" \
             PATH="${IT_VENV}/bin:${PATH}" \
             "${IT_VENV}/bin/python" -m pytest tests/core/test_components_cli.py -v
+
+      - name: Core test slice, outsider profile (scheduled/dispatch only)
+        if: github.event_name != 'pull_request'
+        run: |
+          # The weekly half of the #270 cadence (USER-approved 2026-08-24): tests/core in the
+          # README-resolved env, DELIBERATELY TOKENLESS. No HF_GATED_PUBLIC_REPO_AUTH_KEY, no
+          # HF_TOKEN — this is the outsider profile, and post-#354 the gated params must SKIP, not
+          # fail. Running it with secrets would reproduce the blind spot #354 documented: CI green
+          # with the token was never evidence about the tokenless path. Scheduled-only because the
+          # slice costs tens of minutes on a hosted runner; PR runs keep the fast smoke above.
+          # First measured run of this profile (local, 2026-08-24, post-#357): see issue #270.
+          env -u PYTHONPATH -u HF_TOKEN -u HF_GATED_PUBLIC_REPO_AUTH_KEY \
+            PYTHONPATH="${{ github.workspace }}/src:${{ github.workspace }}" \
+            PATH="${IT_VENV}/bin:${PATH}" \
+            "${IT_VENV}/bin/python" -m pytest tests/core -v --durations=20
 
       - name: Published notebook (non-GPU)
         env:
