@@ -64,10 +64,18 @@ def _select_seed_randomly(min_seed_value: int = min_seed_value, max_seed_value: 
 
 
 class ITSessionMixin:
+    """Mixin adding interpretune session configuration to a CLI parser."""
+
     def add_base_args(self, parser: ArgumentParser) -> None:
         """Add base args to the parser (session construction happens via the unified loader, not the parser)."""
 
     def add_arguments_to_parser(self, parser: ArgumentParser) -> None:
+        """Register the session subtree as a PLAIN MAPPING rather than a typed subparser.
+
+        See NOTE [Interpretune One-Door Session Configuration]: jsonargparse acts as an argv/config-file shim here, and
+        the mapping is handed to the unified loader, so the CLI and programmatic paths build a session through exactly
+        one door.
+        """
         # NOTE [Interpretune One-Door Session Configuration]:
         # The session subtree is parsed as a PLAIN MAPPING: jsonargparse is an argv/config-file shim
         # here, and session construction goes through the one door
@@ -214,6 +222,7 @@ class ITCLI(ITSessionMixin):
         return parser
 
     def sanitize_seed(self, seed_in: int | str | float) -> int:
+        """Coerce a seed to int, falling back to a random seed when the value is not usable."""
         try:
             seed = int(seed_in)
         except ValueError:
@@ -329,6 +338,7 @@ class ITCLI(ITSessionMixin):
 
 
 def env_setup() -> None:
+    """Load environment configuration from a ``.env`` file when python-dotenv is available."""
     if _DOTENV_AVAILABLE:
         from dotenv import load_dotenv
 
@@ -346,6 +356,12 @@ def env_setup() -> None:
 
 
 def enumerate_config_files(folder: Path | str) -> list:
+    """Return the YAML config files in a directory.
+
+    Raises:
+        ValueError: the directory contains non-YAML files -- treated as a configuration error rather
+            than silently ignored, since a stray file usually means a config was misplaced.
+    """
     if not isinstance(folder, Path):
         folder = Path(folder)
     files = [fp for fp in folder.glob("*.yaml") if fp.is_file()]
@@ -356,6 +372,7 @@ def enumerate_config_files(folder: Path | str) -> list:
 
 
 def compose_config(config_files: Sequence[str]) -> list:
+    """Assemble CLI args from a sequence of config files."""
     # TODO: consider deprecating `compose_config` for simplicity and subsequently removing this path if not widely used
     args = []
     config_file_paths = []
@@ -392,12 +409,14 @@ def compose_config(config_files: Sequence[str]) -> list:
 
 
 def configure_cli(shared_config_dir: Path | str) -> list:
+    """Prepare the CLI: load environment configuration, then collect the shared config files."""
     env_setup()
     shared_config_files = enumerate_config_files(shared_config_dir)
     return shared_config_files
 
 
 def core_cli_main(run_mode: str | bool | None = None, args: ArgsType = None) -> ITCLI | None:
+    """Entry point for the core (framework-free) CLI."""
     # note deferred resolution
     default_config_dir = os.environ.get("IT_CONFIG_DEFAULTS", IT_CONFIG_GLOBAL / "defaults")
     default_config_files = configure_cli(default_config_dir)
@@ -421,9 +440,16 @@ if _LIGHTNING_AVAILABLE:
     from lightning.pytorch.cli import LightningCLI, LightningArgumentParser
 
     class LightningCLIAdapter:
+        """Adapts the Lightning CLI to build its data and model from an interpretune session."""
+
         core_to_lightning_cli_map = {"data": "it_session.datamodule", "model": "it_session.module"}
 
         def instantiate_classes(self) -> None:
+            """Build the session FIRST via the unified loader, then let Lightning resolve data/model from it.
+
+            The ordering is what preserves the one-door invariant under Lightning: the trainer is instantiated
+            around an already-built session rather than Lightning constructing the two halves independently.
+            """
             # the session is built FIRST via the unified loader (one door); Lightning then instantiates
             # the trainer and resolves data/model from the built session through `_get`'s mapping
             sub_config = self.config.get(str(self.subcommand), self.config)  # type: ignore[attr-defined]
@@ -468,6 +494,7 @@ if _LIGHTNING_AVAILABLE:
             parser.set_defaults(trainer_defaults)
 
     def l_cli_main(run_mode: bool = True, args: ArgsType = None) -> LightningITCLI | None:
+        """Entry point for the Lightning-backed CLI."""
         # note deferred resolution
         default_config_dir = os.environ.get("IT_CONFIG_DEFAULTS", IT_CONFIG_GLOBAL / "defaults")
         default_config_files = configure_cli(default_config_dir)
@@ -522,6 +549,7 @@ def _parse_run_option(lightning_cli: bool = False) -> bool | str | None:
 
 
 def bootstrap_cli() -> Callable:
+    """Select and return the CLI entry point -- the Lightning CLI when requested, else the core CLI."""
     # TODO: consider adding an env var option to control CLI selection
     # dispatch the relevant CLI, right now only `--lightning_cli` is supported beyond the default core CLI.
     # TODO: note in the interpretune cli documentation that we provide the --no_run flag to allow configuring the

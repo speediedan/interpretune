@@ -246,6 +246,13 @@ class BaseConfigImpl:
 
 
 class PropertyDispatcher:
+    """Resolves attributes that a framework may override, falling back to interpretune's own state.
+
+    A module composed with Lightning should report Lightning's ``current_epoch``, ``device`` and so on,
+    while a core (framework-free) module reports interpretune's. Every property below routes through
+    the same core-or-framework dispatch so the two never diverge per-attribute.
+    """
+
     _it_state: ITState
     # These attributes are provided by the composed BaseITModule at runtime.
     it_cfg: "ITConfig"
@@ -310,24 +317,33 @@ class PropertyDispatcher:
 
     @property
     def core_log_dir(self) -> StrOrPath | None:
+        """The run's log directory: the framework's if one owns it, else interpretune's."""
         result = self._core_or_framework(c2f_map_key="_log_dir")
         return cast(StrOrPath | None, result)
 
     @property
     def datamodule(self) -> ITDataModule | None:
+        """The paired datamodule: the framework's if one owns it, else interpretune's."""
         result = self._core_or_framework(c2f_map_key="_datamodule")
         return cast(ITDataModule | None, result)
 
     @property
     def session_complete(self) -> bool:
+        """Whether the session has finished, so end hooks are not dispatched twice."""
         return self._it_state._session_complete
 
     @property
     def cuda_allocator_history(self) -> bool:
+        """Whether CUDA allocator history capture is active -- requires profiling enabled AND that option."""
         return self.it_cfg.memprofiler_cfg.enabled and self.it_cfg.memprofiler_cfg.cuda_allocator_history
 
     @property
     def dtype(self) -> "torch.dtype | str | None":
+        """The model's dtype, or None when it cannot be determined.
+
+        Returns None rather than raising when ``it_cfg`` is absent entirely, since this is read from repr
+        and setup paths where a partially-constructed object is an ordinary state.
+        """
         try:
             # If `it_cfg` is not present on the object at all, treat this as an unexpected context and return None
             if not hasattr(self, "it_cfg"):
@@ -350,6 +366,7 @@ class PropertyDispatcher:
 
     @property
     def device(self) -> torch.device | None:
+        """The device the model is on, dispatching to the framework's notion where one exists."""
         try:
             if self._it_state._device is not None:
                 # dispatch a framework's property implementation if appropriate, otherwise use `self._it_state._device`
@@ -433,14 +450,17 @@ class CoreHelperAttributes:
 
     @property
     def current_epoch(self) -> int:
+        """The current epoch: the framework's if one owns it, else interpretune's."""
         return self._core_or_framework(c2f_map_key="_current_epoch")
 
     @property
     def optimizers(self) -> list[Optimizable] | None:
+        """The configured optimizers, or None when the session builds none."""
         return self._core_or_framework(c2f_map_key="_it_optimizers")
 
     @property
     def lr_scheduler_configs(self) -> list[LRSchedulerConfig]:
+        """The LR-scheduler configurations paired with the optimizers."""
         return self._core_or_framework(c2f_map_key="_it_lr_scheduler_configs")
 
     @property
@@ -470,6 +490,7 @@ class CoreHelperAttributes:
 
     @property
     def global_step(self) -> int:
+        """The global step count: the framework's if one owns it, else interpretune's."""
         return self._core_or_framework(c2f_map_key="_global_step")
 
     @global_step.setter
@@ -566,4 +587,6 @@ class OptimizerScheduler:
 
 
 class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler):  # type: ignore[misc]
+    """The composed base component surface: configuration, property dispatch, and optimization."""
+
     ...

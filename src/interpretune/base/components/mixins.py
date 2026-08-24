@@ -26,6 +26,12 @@ if TYPE_CHECKING:
 
 
 class ITStateMixin:
+    """Initializes the module's interpretune state, also exposed statically for early composition.
+
+    Some compositions must initialize state before this ``__init__`` runs in the MRO, which is why the
+    initialization is available as a staticmethod rather than only through construction.
+    """
+
     def __init__(self, *args, **kwargs) -> None:
         # TODO: explore whether there is an initialization reorganization that can avoid this
         # some class compositions may need to initialize internal state before this __init__ is invoked, hence we also
@@ -40,9 +46,17 @@ class ITStateMixin:
 
 
 class MemProfilerHooks:
+    """Memory-profiling hooks a module composes in when profiling is enabled."""
+
     @contextmanager
     @staticmethod
     def memprofile_ctx(memprofiler, phase: str, epoch_idx: int | None = None, step_idx: int | None = None):
+        """Snapshot memory around a phase, taking a start and an end sample.
+
+        The end sample resets the memory hooks, so per-step hook attributes do not accumulate across steps.
+        A ``finally`` guarantees the end snapshot even when the wrapped phase raises -- an aborted step is
+        exactly when the memory picture matters most.
+        """
         try:
             memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="start")
             yield
@@ -51,6 +65,12 @@ class MemProfilerHooks:
 
     @staticmethod
     def memprofilable(func):
+        """Decorator profiling a step method, a no-op when no profiler is attached.
+
+        Derives the step index from the profiler's own counter rather than parsing ``args`` for a
+        ``batch_idx``, so it works across step signatures that differ between frameworks.
+        """
+
         @wraps(func)
         def wrapper(self, *args, **kwargs):
             if not self.memprofiler:
@@ -73,8 +93,11 @@ class MemProfilerHooks:
 
 
 class AnalysisStepMixin:
+    """Analysis-phase step logic: op dispatch, per-op grad mode, and analysis-store accumulation."""
+
     @property
     def analysis_cfg(self) -> AnalysisCfgProtocol | None:
+        """The analysis configuration, or None (with a warning) when none has been set."""
         if not hasattr(self.it_cfg, "analysis_cfg") or self.it_cfg.analysis_cfg is None:  # type: ignore[attr-defined]  # mixin provides it_cfg
             rank_zero_warn("Analysis configuration has not been set.")
             return
@@ -103,6 +126,7 @@ class AnalysisStepMixin:
         torch.set_grad_enabled(bool(getattr(active_op, "requires_grad", False)))
 
     def on_analysis_epoch_end(self) -> Any | None:
+        """Hook at the end of an analysis epoch. Currently a no-op; kept as the extension point."""
         pass
         # TODO: maybe reintroduce logic here if we decide to keep per-epoch versions or perform other caching
         # Create a shallow copy from the current analysis cache
@@ -131,6 +155,7 @@ class AnalysisStepMixin:
             self.on_session_end()  # type: ignore[attr-defined]  # mixin provides on_session_end
 
     def model_sig_keys(self, target_method: str) -> list:
+        """The parameter names a model method accepts, used to filter what may be passed to it."""
         sig = inspect.signature(getattr(self.model, target_method))  # type: ignore[attr-defined]  # mixin provides model
         params = list(sig.parameters.values())
         concrete = [
@@ -153,6 +178,11 @@ class AnalysisStepMixin:
         return [p.name for p in params]
 
     def auto_prune_batch(self, batch: BatchEncoding, target_method: str) -> dict[str, Any]:
+        """Drop batch entries the target method does not accept.
+
+        Needed because the same classification logic runs across frameworks whose methods do not all accept
+        variadic kwargs -- passing an unsupported key is a TypeError rather than an ignored argument.
+        """
         # since we're abstracting the same generative classification logic to be used with different frameworks, models
         # and datasets we use a mapping function to provide only data inputs a given generate function supports (for
         # frameworks that don't handle variadic kwargs). This currently requires the user provides
@@ -175,6 +205,8 @@ class AnalysisStepMixin:
 
 
 class GenerativeStepMixin:
+    """Generation-based step logic, commonly used for n-shot classification."""
+
     # Often used for n-shot classification, those contexts are only a subset of generative classification use cases
 
     _gen_sig_keys: list | None = None
@@ -187,10 +219,12 @@ class GenerativeStepMixin:
 
     @property
     def generation_cfg(self) -> BaseGenerationConfig | None:
+        """The configured generation settings."""
         return self.it_cfg.generative_step_cfg.lm_generation_cfg  # type: ignore[attr-defined]  # mixin provides it_cfg
 
     @property
     def gen_sig_keys(self) -> list:
+        """The parameter names the model's ``generate`` accepts, computed once and cached."""
         if not self._gen_sig_keys:
             generate_signature = inspect.signature(self.model.generate)  # type: ignore[attr-defined]  # mixin provides model
             self._gen_sig_keys = list(generate_signature.parameters.keys())
@@ -209,6 +243,7 @@ class GenerativeStepMixin:
         return False
 
     def map_gen_inputs(self, batch) -> dict[str, Any]:
+        """Select the batch entries the model's ``generate`` accepts. See :meth:`auto_prune_batch`."""
         # since we're abstracting the same generative classification logic to be used with different frameworks, models
         # and datasets we use a mapping function to provide only data inputs a given generate function supports (for
         # frameworks that don't handle variadic kwargs). This currently requires the user provides
@@ -218,6 +253,7 @@ class GenerativeStepMixin:
         return {bk: batch[bk] for bk in list(batch.data) if bk in self.gen_sig_keys}
 
     def map_gen_kwargs(self, kwargs: dict) -> dict[str, Any]:
+        """Filter generation kwargs to those ``generate`` accepts, passing everything when it takes **kwargs."""
         # we use a mapping function to provide only generate kwargs a given generate function supports (for
         # frameworks that don't support variadic kwargs).
         # For models whose generate accepts arbitrary kwargs (via **kwargs), pass-through everything.
@@ -239,6 +275,7 @@ class GenerativeStepMixin:
         return any(hasattr(self.model, prep_method) for prep_method in sigs)  # type: ignore[attr-defined]  # mixin provides model
 
     def it_generate(self, batch: BatchEncoding | torch.Tensor, **kwargs) -> Any:
+        """Generate from a batch, filtering inputs and kwargs to what this model's ``generate`` supports."""
         try:
             # If the generate method does not accept arbitrary kwargs, inspect kwargs and use only those supported
             if not self._generate_accepts_kwargs():
@@ -269,6 +306,8 @@ class GenerativeStepMixin:
 
 
 class ClassificationMixin:
+    """Classification helpers: label/token mapping, logit standardization, and metric accumulation."""
+
     # Default classification helper methods
 
     def setup(self, *args, **kwargs) -> None:
@@ -279,12 +318,18 @@ class ClassificationMixin:
             self.init_classification_mapping()
 
     def init_classification_mapping(self) -> None:
+        """Resolve the configured label strings to token ids on the model's device."""
         it_cfg, tokenizer = self.it_cfg, self.datamodule.tokenizer  # type: ignore[attr-defined]  # mixin provides it_cfg and datamodule
         token_ids = tokenizer.convert_tokens_to_ids(it_cfg.classification_mapping)
         device = self.device if isinstance(self.device, torch.device) else self.output_device  # type: ignore[attr-defined]  # mixin provides device/output_device
         it_cfg.classification_mapping_indices = torch.tensor(token_ids, device=device)
 
     def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        """Reshape logits to the invariant ``[batch, positions, answers]``.
+
+        One shape for every supported combination of generative/non-generative configuration and LM or
+        sequence-classification head, so downstream metric code never branches on model type.
+        """
         # to support genclassif/non-genclassif configs and LM/SeqClassification heads we adhere to the following logits
         # logical shape invariant: [batch size, positions to consider, answers to consider]
         if isinstance(logits, tuple):
@@ -306,9 +351,11 @@ class ClassificationMixin:
         return logits
 
     def labels_to_ids(self, labels: list[str]) -> tuple[torch.Tensor, list[str]]:
+        """Map label strings to their token ids via the classification mapping."""
         return torch.take(self.it_cfg.classification_mapping_indices, labels), labels  # type: ignore[attr-defined]  # mixin provides it_cfg
 
     def logits_and_labels(self, batch: BatchEncoding, batch_idx: int) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
+        """Run a forward pass and return standardized logits alongside label ids and label strings."""
         label_ids, labels = self.labels_to_ids(batch.pop("labels"))
         logits = self(**batch)  # type: ignore[misc]  # mixin provides __call__ through composition
         # TODO: add another layer of abstraction here to handle different model output types? Tradeoffs to consider...
@@ -318,6 +365,7 @@ class ClassificationMixin:
         return torch.squeeze(logits[:, -1, :], dim=1), label_ids, labels
 
     def collect_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor, mode: str = "log") -> Dict | None:
+        """Compute metrics from logits and labels, logging them or returning them per ``mode``."""
         logits = self.standardize_logits(logits)  # type: ignore[arg-type]  # standardize_logits handles tuple case
         per_example_answers, _ = torch.max(logits, dim=-2)
         preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
@@ -341,9 +389,11 @@ class HFFromPretrainedMixin:
 
     @property
     def hf_cfg(self) -> HFFromPretrainedConfig | None:
+        """The HuggingFace ``from_pretrained`` configuration, or None when the model is not HF-backed."""
         return self.it_cfg.hf_from_pretrained_cfg  # type: ignore[attr-defined]  # mixin provides it_cfg
 
     def hf_pretrained_model_init(self) -> None:
+        """Initialize the model from HF pretrained weights, applying quantization and token configuration."""
         access_token = (
             os.environ[self.it_cfg.os_env_model_auth_key.upper()] if self.it_cfg.os_env_model_auth_key else None  # type: ignore[attr-defined]  # mixin provides it_cfg
         )
@@ -357,6 +407,7 @@ class HFFromPretrainedMixin:
 
     # TODO: move this and other hooks that may be overridden for non-HF contexts into a separate class
     def set_input_require_grads(self) -> None:
+        """Enable input gradients when configured -- required for gradient attribution through embeddings."""
         if self.hf_cfg and self.hf_cfg.enable_input_require_grads:
             self.model.enable_input_require_grads()  # type: ignore[attr-defined]  # mixin provides model
 
@@ -414,6 +465,7 @@ class HFFromPretrainedMixin:
     def hf_configured_model_init(
         self, cust_config: PretrainedConfig, access_token: str | None = None
     ) -> torch.nn.Module:
+        """Instantiate the HF model from a customized config, applying the configured label count."""
         cust_config.num_labels = self.it_cfg.num_labels  # type: ignore[attr-defined]  # mixin provides it_cfg
         assert self.hf_cfg is not None, "hf_cfg should be set when calling hf_configured_model_init"
         head_configured = self.hf_cfg.model_head or self.hf_cfg.dynamic_module_cfg
@@ -487,4 +539,5 @@ class BaseITMixins(
     AnalysisStepMixin,
     GenerativeStepMixin,
     MemProfilerHooks,
-): ...
+):
+    """The composed mixin surface every interpretune module carries."""
