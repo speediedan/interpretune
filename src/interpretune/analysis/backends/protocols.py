@@ -30,13 +30,34 @@ class AnalysisBackend(Protocol):
         """Check whether this backend supports a given analysis capability."""
         ...
 
-    def get_tokenizer(self, module: Any) -> Any: ...
+    def get_tokenizer(self, module: Any) -> Any:
+        """Resolve the tokenizer for ``module``, wherever this backend keeps it."""
+        ...
 
-    def get_embedding_weight(self, module: Any) -> torch.Tensor: ...
+    def get_embedding_weight(self, module: Any) -> torch.Tensor:
+        """Return the weight matrix used to map between token ids and the residual stream.
 
-    def token_strings_to_ids(self, tokenizer: Any, token_strings: list[str]) -> list[int]: ...
+        Implementations may return the UNEMBED matrix where the backend exposes one; callers use this for
+        direction/token projection and must not assume it is the input embedding specifically.
+        """
+        ...
 
-    def resolve_prompt(self, module: Any, analysis_batch: Any, batch: Any) -> str: ...
+    def token_strings_to_ids(self, tokenizer: Any, token_strings: list[str]) -> list[int]:
+        """Map literal token strings to ids, honoring this backend's tokenization conventions.
+
+        Concept work names tokens as they appear in a vocabulary (leading-space markers included), so
+        this is deliberately not ``tokenizer.encode`` -- a string that is one vocabulary entry must map
+        to exactly one id rather than being re-segmented.
+        """
+        ...
+
+    def resolve_prompt(self, module: Any, analysis_batch: Any, batch: Any) -> str:
+        """Recover the single prompt string an analysis is operating on.
+
+        The prompt may have been carried on the analysis batch or only survive as token ids in the encoding, so
+        implementations resolve from whichever source is populated (decoding if needed).
+        """
+        ...
 
     def build_concept_attribution_targets(
         self,
@@ -48,33 +69,81 @@ class AnalysisBackend(Protocol):
         concept_group_a_token_ids: Any = None,
         concept_group_b_token_ids: Any = None,
         concept_direction_mode: Any = None,
-    ) -> list[Any] | None: ...
+    ) -> list[Any] | None:
+        """Build backend-native attribution targets for a concept direction, or None if unsupported.
+
+        Returning None is a valid answer: a backend that cannot express concept-directed attribution
+        targets says so here rather than raising, and the caller falls back.
+        """
+        ...
 
     def resolve_feature_intervention_settings(
         self,
         module: Any,
         overrides: dict[str, Any] | None = None,
-    ) -> dict[str, Any]: ...
+    ) -> dict[str, Any]:
+        """Resolve the effective feature-intervention settings, applying ``overrides`` over config."""
+        ...
 
     def build_feature_interventions(
         self,
         analysis_batch: Any,
         settings: dict[str, Any],
-    ) -> tuple[list[tuple[int, int, int, float]], dict[str, Any]]: ...
+    ) -> tuple[list[tuple[int, int, int, float]], dict[str, Any]]:
+        """Build concrete interventions from a batch plus resolved settings.
 
-    def feature_intervention_call_kwargs(self, settings: dict[str, Any]) -> dict[str, Any]: ...
+        Returns the intervention tuples the backend will apply, alongside metadata describing what was
+        selected -- the second element is what makes an intervention auditable after the fact.
+        """
+        ...
 
-    def decompose_graph(self, graph: Any, extra_metadata: dict[str, Any] | None = None) -> dict[str, Any]: ...
+    def feature_intervention_call_kwargs(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """Translate resolved settings into this backend's forward-call keyword arguments.
 
-    def hydrate_graph_from_batch(self, analysis_batch: Any) -> Any: ...
+        Optional settings are omitted rather than passed as None, so a backend whose signature does not accept them
+        still works.
+        """
+        ...
 
-    def build_pruned_graph(self, graph: Any, node_threshold: float, edge_threshold: float) -> Any: ...
+    def decompose_graph(self, graph: Any, extra_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Flatten a backend-native attribution graph into serializable, storable components.
 
-    def select_feature_rows(self, active_features: torch.Tensor, selected_features: torch.Tensor) -> torch.Tensor: ...
+        The inverse of :meth:`hydrate_graph_from_batch`. Tensors are detached and moved to CPU so the
+        result can cross a process or land in an ``AnalysisStore`` without carrying device state.
+        """
+        ...
 
-    def compute_node_influence_scores(self, graph: Any) -> tuple[torch.Tensor, torch.Tensor]: ...
+    def hydrate_graph_from_batch(self, analysis_batch: Any) -> Any:
+        """Rebuild a backend-native graph from components previously stored on an analysis batch.
 
-    def compute_signed_node_influence_scores(self, graph: Any) -> torch.Tensor: ...
+        The inverse of :meth:`decompose_graph`, and the reason graph-consuming ops can run against a
+        replayed store rather than only against a live attribution pass.
+        """
+        ...
+
+    def build_pruned_graph(self, graph: Any, node_threshold: float, edge_threshold: float) -> Any:
+        """Return a copy of ``graph`` with nodes and edges below the given thresholds removed."""
+        ...
+
+    def select_feature_rows(self, active_features: torch.Tensor, selected_features: torch.Tensor) -> torch.Tensor:
+        """Index the active-feature table by selected feature indices, preserving its column layout.
+
+        Must return an empty tensor of the same column shape when nothing is selected, so callers can treat the result
+        uniformly instead of special-casing the empty selection.
+        """
+        ...
+
+    def compute_node_influence_scores(self, graph: Any) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute per-node influence over the graph, returning the influence and logit-gradient scores."""
+        ...
+
+    def compute_signed_node_influence_scores(self, graph: Any) -> torch.Tensor:
+        """Compute per-node influence that RETAINS sign, so promoting and suppressing nodes are distinguishable.
+
+        The unsigned counterpart is :meth:`compute_node_influence_scores`; sign-aware steering needs this
+        one, since magnitude alone cannot tell which direction a node pushes.
+        """
+        ...
 
 
 @runtime_checkable

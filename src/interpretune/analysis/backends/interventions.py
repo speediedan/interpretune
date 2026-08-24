@@ -95,12 +95,15 @@ class InterventionDict(Mapping[str, tuple[InterventionSpec, ...]]):
         return len(self.hook_map)
 
     def items(self):
+        """Mapping-style access to the underlying hook map."""
         return self.hook_map.items()
 
     def keys(self):
+        """The hook names carrying interventions."""
         return self.hook_map.keys()
 
     def values(self):
+        """The intervention specs, per hook."""
         return self.hook_map.values()
 
     @classmethod
@@ -108,6 +111,11 @@ class InterventionDict(Mapping[str, tuple[InterventionSpec, ...]]):
         cls,
         hook_map: Mapping[str, InterventionSpec | Sequence[InterventionSpec]],
     ) -> InterventionDict:
+        """Build from a plain mapping, normalizing single specs to sequences.
+
+        Callers may write one spec per hook or several; normalizing at construction means every consumer downstream
+        iterates uniformly instead of re-checking the shape.
+        """
         return cls(
             {
                 hook_name: (

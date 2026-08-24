@@ -707,10 +707,12 @@ class AnalysisOpDispatcher:
 
     @_ensure_loaded
     def resolve_alias(self, op_alias: str) -> str | None:
+        """Resolve an alias to its canonical op name, or None when it is not an alias."""
         return self._aliases.get(op_alias, None)
 
     @_ensure_loaded
     def get_op_aliases(self, op_name: str) -> list[str]:
+        """The aliases registered for a canonical op name (the inverse of :meth:`resolve_alias`)."""
         return self._op_to_aliases[op_name]
 
     @_ensure_loaded

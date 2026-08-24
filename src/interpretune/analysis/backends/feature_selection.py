@@ -179,6 +179,12 @@ def augment_feature_rows_for_selection(
     activation_values: torch.Tensor | None,
     feature_selection: FeatureSelectionSpec,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    """Ensure explicitly requested (layer, feature) pairs are present in the selectable rows.
+
+    A pair the caller named but which attribution did not surface would otherwise be unselectable. This appends the
+    missing ones (de-duplicated, order preserved) so an explicit request is honored rather than silently dropped,
+    returning the rows, scores and activations aligned.
+    """
     requested_pairs = list(dict.fromkeys(feature_selection.layer_feature_pairs))
     if not requested_pairs:
         return (
@@ -249,6 +255,11 @@ def select_top_feature_indices(
     *,
     rank_scores: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    """Return the indices of the top ``top_n`` features, honoring any explicit selection spec.
+
+    ``rank_scores`` lets ranking be driven by a different quantity than the one reported -- signed
+    influence ranks while unsigned magnitude is surfaced, for instance. Defaults to ``scores``.
+    """
     if scores.numel() == 0:
         return torch.empty((0,), dtype=torch.long)
 
@@ -306,6 +317,11 @@ def apply_optional_feature_sign_filter(
     activation_values: torch.Tensor | None,
     feature_selection: FeatureSelectionSpec,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    """Filter rows by score sign when the spec asks for it; a no-op under ``score_sign="any"``.
+
+    Sign-aware steering needs to keep only promoting or only suppressing features, which magnitude alone cannot express.
+    Rows, scores and activations stay index-aligned.
+    """
     score_mask = apply_feature_score_sign_filter(scores, feature_selection.score_sign)
     if feature_selection.score_sign == "any":
         return feature_rows, scores, activation_values

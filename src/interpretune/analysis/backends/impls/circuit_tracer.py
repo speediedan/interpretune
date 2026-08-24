@@ -22,12 +22,19 @@ class CircuitTracerAnalysisBackend:
 
     @property
     def capabilities(self) -> frozenset[AnalysisBackendCapability]:
+        """Attribution graphs and feature interventions; no other analysis capabilities."""
         return frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH, AnalysisBackendCapability.FEATURE_INTERVENTION})
 
     def supports(self, capability: AnalysisBackendCapability) -> bool:
+        """Whether ``capability`` is in :attr:`capabilities`."""
         return capability in self.capabilities
 
     def get_tokenizer(self, module: Any) -> Any:
+        """Resolve the tokenizer, preferring ``replacement_model`` over ``model``, then the datamodule.
+
+        The replacement model is checked first because circuit-tracer swaps in its own transcoder-backed model, whose
+        tokenizer is the one its graphs are indexed against.
+        """
         for attr_name in ("replacement_model", "model"):
             model = getattr(module, attr_name, None)
             tokenizer = getattr(model, "tokenizer", None)
@@ -40,6 +47,12 @@ class CircuitTracerAnalysisBackend:
         raise ValueError("A tokenizer is required for this analysis operation")
 
     def get_embedding_weight(self, module: Any) -> torch.Tensor:
+        """Return the unembed matrix if the model exposes one, else the input embedding.
+
+        Same preference order as :meth:`get_tokenizer`. The unembed is preferred because concept work
+        projects INTO logit space; falling back to the embedding keeps models lacking a separate unembed
+        usable rather than failing.
+        """
         for attr_name in ("replacement_model", "model"):
             model = getattr(module, attr_name, None)
             unembed_weight = getattr(model, "unembed_weight", None)
@@ -66,6 +79,11 @@ class CircuitTracerAnalysisBackend:
         raise ValueError("An embedding weight matrix is required for concept_direction")
 
     def flatten_token_ids(self, tokenized: Any) -> list[int]:
+        """Flatten any tokenization output shape into a flat list of int ids.
+
+        Accepts scalars, nested batch tensors and list-of-lists, because upstream tokenizers differ in whether a single
+        prompt comes back batched. Normalizing here keeps every caller from re-deciding.
+        """
         if isinstance(tokenized, torch.Tensor):
             if tokenized.dim() == 0:
                 return [int(tokenized.item())]
@@ -83,6 +101,11 @@ class CircuitTracerAnalysisBackend:
         return [int(tokenized)]
 
     def token_strings_to_ids(self, tokenizer: Any, token_strings: list[str]) -> list[int]:
+        """Map token strings to ids by exact vocabulary lookup, falling back to encoding per string.
+
+        The vocabulary is consulted FIRST so a string that is one vocabulary entry maps to one id; only strings absent
+        from the vocabulary get re-encoded, where re-segmentation is unavoidable anyway.
+        """
         vocab = tokenizer.get_vocab() if hasattr(tokenizer, "get_vocab") else {}
         token_ids: list[int] = []
         for token_str in token_strings:
@@ -96,6 +119,7 @@ class CircuitTracerAnalysisBackend:
         return token_ids
 
     def resolve_prompt(self, module: Any, analysis_batch: AnalysisBatch, batch: BatchEncoding | None) -> str:
+        """Recover the prompt from the analysis batch if present, else decode it back from the encoding."""
         prompts = getattr(analysis_batch, "prompts", None)
         if isinstance(prompts, str):
             return prompts
@@ -119,6 +143,7 @@ class CircuitTracerAnalysisBackend:
         concept_group_b_token_ids: Any = None,
         concept_direction_mode: Any = None,
     ) -> list[Any] | None:
+        """Build circuit-tracer ``LogitTarget``s expressing a concept direction, or None if unavailable."""
         from circuit_tracer.attribution.targets import CustomTarget
 
         group_a_token_ids = [int(token_id) for token_id in (concept_group_a_token_ids or [])]
@@ -147,6 +172,7 @@ class CircuitTracerAnalysisBackend:
         module: Any,
         overrides: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Resolve intervention settings from the circuit-tracer config, applying ``overrides`` on top."""
         cfg = getattr(module, "circuit_tracer_cfg", None)
         override_dict = dict(overrides or {})
 
@@ -236,6 +262,8 @@ class CircuitTracerAnalysisBackend:
         analysis_batch: AnalysisBatch | Mapping[str, Any],
         settings: Mapping[str, Any],
     ) -> tuple[list[tuple[int, int, int, float]], dict[str, Any]]:
+        """Build circuit-tracer feature interventions plus the metadata describing what was selected."""
+
         def _value(name: str, default: Any) -> Any:
             if isinstance(analysis_batch, Mapping):
                 return analysis_batch.get(name, default)
@@ -340,6 +368,7 @@ class CircuitTracerAnalysisBackend:
         return interventions, payload
 
     def feature_intervention_call_kwargs(self, settings: Mapping[str, Any]) -> dict[str, Any]:
+        """Translate settings into circuit-tracer forward kwargs, omitting optional ones left unset."""
         kwargs = {
             "sparse": settings["sparse"],
             "return_activations": settings["return_activations"],
@@ -384,18 +413,25 @@ class CircuitTracerAnalysisBackend:
         )
 
     def graph_cfg_dict(self, graph: Any) -> dict[str, Any]:
+        """The graph's config as a plain dict, whether or not it exposes ``to_dict``."""
         return graph.cfg.to_dict() if hasattr(graph.cfg, "to_dict") else vars(graph.cfg)
 
     def graph_scan_json(self, graph: Any) -> str:
+        """The graph's scan metadata as JSON, coercing non-serializable values to strings."""
         return json.dumps(graph.scan, default=str)
 
     def select_feature_rows(self, active_features: torch.Tensor, selected_features: torch.Tensor) -> torch.Tensor:
+        """Index the active-feature table by selected indices, returning an empty (0, 3) table when none."""
         if len(selected_features) == 0:
             return torch.empty((0, 3), dtype=torch.long)
         selected = selected_features.long().detach().cpu()
         return active_features.detach().cpu().index_select(0, selected)
 
     def graph_metadata(self, graph: Any, extra: dict[str, Any] | None = None) -> str:
+        """Serialize the graph's identifying metadata (input, scan, vocab size, config) as JSON.
+
+        ``extra`` is merged in for caller-supplied provenance, so a stored graph carries what produced it.
+        """
         metadata = {
             "input_string": graph.input_string,
             "scan": graph.scan,
@@ -407,6 +443,7 @@ class CircuitTracerAnalysisBackend:
         return json.dumps(metadata, default=str)
 
     def decompose_graph(self, graph: Any, extra_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Flatten a circuit-tracer graph into CPU tensors and JSON strings for storage."""
         return {
             "input_string": graph.input_string,
             "adjacency_matrix": graph.adjacency_matrix.detach().cpu(),
@@ -424,6 +461,15 @@ class CircuitTracerAnalysisBackend:
         }
 
     def graph_components_from_batch(self, analysis_batch: AnalysisBatch | Mapping[str, Any]) -> GraphComponentPayload:
+        """Collect the stored components a graph can be rebuilt from, off a batch or a plain mapping.
+
+        Accepts both because the same components arrive as an ``AnalysisBatch`` in-process and as a plain
+        row when replayed from a store.
+
+        Raises:
+            ValueError: ``graph_cfg_json`` is absent -- without the config a graph cannot be reconstructed,
+                and the failure is raised here rather than surfacing later as a shape mismatch.
+        """
         graph_cfg_json = getattr(analysis_batch, "graph_cfg_json", None)
         if graph_cfg_json is None and isinstance(analysis_batch, Mapping):
             graph_cfg_json = analysis_batch.get("graph_cfg_json")
@@ -466,6 +512,7 @@ class CircuitTracerAnalysisBackend:
         }
 
     def hydrate_graph(self, components: GraphComponentPayload):
+        """Reconstruct a circuit-tracer ``Graph`` from decomposed components."""
         from circuit_tracer.attribution.targets import LogitTarget
         from circuit_tracer.graph import Graph
         from circuit_tracer.utils.tl_nnsight_mapping import UnifiedConfig
@@ -490,9 +537,16 @@ class CircuitTracerAnalysisBackend:
         )
 
     def hydrate_graph_from_batch(self, analysis_batch: AnalysisBatch | Mapping[str, Any]):
+        """Rebuild a graph directly from a batch (:meth:`graph_components_from_batch` then
+        :meth:`hydrate_graph`)."""
         return self.hydrate_graph(self.graph_components_from_batch(analysis_batch))
 
     def maybe_hydrate_row(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        """Hydrate one stored row in place, filling graph and intervention objects only where absent.
+
+        Idempotent by construction: each field is rebuilt only when its hydrated counterpart is missing, so
+        a row that has already been hydrated passes through unchanged.
+        """
         hydrated = dict(row)
         if "graph_cfg_json" in hydrated and "adjacency_matrix" in hydrated and "attribution_graph" not in hydrated:
             hydrated["attribution_graph"] = self.hydrate_graph_from_batch(hydrated)
@@ -505,6 +559,11 @@ class CircuitTracerAnalysisBackend:
         return hydrated
 
     def maybe_hydrate_batch(self, batch: Mapping[str, Any]) -> dict[str, Any]:
+        """Hydrate a COLUMNAR batch of stored rows into per-row objects.
+
+        The batch arrives column-oriented (each key holding one value per row), so this transposes to rows before
+        hydrating, using only the keys whose length matches the row count.
+        """
         hydrated = dict(batch)
         required_keys = {"graph_cfg_json", "adjacency_matrix"}
         if required_keys.issubset(hydrated.keys()) and "attribution_graph" not in hydrated:
@@ -525,6 +584,7 @@ class CircuitTracerAnalysisBackend:
         return hydrated
 
     def build_pruned_graph(self, graph: Any, node_threshold: float, edge_threshold: float):
+        """Return a pruned copy of the graph under the given node and edge thresholds."""
         from circuit_tracer.graph import Graph, prune_graph
 
         prune_result = prune_graph(graph, node_threshold=node_threshold, edge_threshold=edge_threshold)

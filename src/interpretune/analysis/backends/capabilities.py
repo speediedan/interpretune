@@ -53,13 +53,20 @@ class ModuleCapabilities:
 
     @property
     def all(self) -> frozenset[Capability]:
+        """Model and analysis capabilities as one set, for checks that do not care which layer supplies them."""
         return frozenset({*self.model, *self.analysis})
 
     @property
     def values(self) -> frozenset[str]:
+        """The capability names as plain strings, for logging and serialization."""
         return frozenset(cap.value for cap in self.all)
 
     def supports(self, capability: Capability) -> bool:
+        """Whether ``capability`` is present, checked against the set its TYPE identifies.
+
+        A model capability is looked up only among model capabilities and an analysis capability only among analysis
+        ones, so the two namespaces cannot satisfy each other by coincidence.
+        """
         if isinstance(capability, BackendCapability):
             return capability in self.model
         return capability in self.analysis
@@ -109,6 +116,12 @@ def get_model_backend(module: Any) -> ModelBackend | None:
 
 
 def get_analysis_backend(module: Any) -> AnalysisBackend | None:
+    """Return the module's analysis backend, or None when it has none.
+
+    Reads ``__dict__`` directly before touching the ``analysis_backend`` property, because the property
+    may assert on a module that is not fully set up -- and "not set up yet" must answer None here rather
+    than raising out of a capability probe.
+    """
     module_dict = getattr(module, "__dict__", None)
     backend = module_dict.get("_analysis_backend") if isinstance(module_dict, dict) else None
     if backend is None and hasattr(module, "analysis_backend"):

@@ -104,10 +104,15 @@ class OpStateStore:
 
     @property
     def spec(self) -> OpStateSpec:
+        """The spec declaring which cross-batch state fields this store accepts."""
         return self._spec
 
     @property
     def declared(self) -> tuple[str, ...]:
+        """The declared field names.
+
+        Anything outside this tuple is rejected rather than silently stored.
+        """
         return self._spec.fields
 
     def _validate(self, name: str) -> None:
@@ -253,6 +258,11 @@ class AnalysisInputs:
     op_state: "OpStateStore | None" = None
 
     def merged(self, other: "AnalysisInputs | Mapping[str, Any] | None") -> "AnalysisInputs":
+        """Return a new inputs object with ``other`` layered over this one, per scope.
+
+        Non-destructive: neither operand is mutated. A scope present in ``other`` replaces this one's
+        entirely rather than deep-merging, so a caller can reason about which object supplied a value.
+        """
         other_inputs = coerce_analysis_inputs(other)
         if other_inputs is None:
             return AnalysisInputs(
@@ -276,6 +286,17 @@ class AnalysisInputs:
         )
 
     def resolve_scope(self, scope: AnalysisScope, field_name: str, batch_idx: int | None = None) -> Any:
+        """Look ``field_name`` up in exactly ONE scope, without falling back to any other.
+
+        Single-scope by design: precedence across scopes belongs to
+        :meth:`AnalysisValueResolver.resolve`, so having this method fall back too would make the
+        effective precedence depend on which entry point a caller happened to use. The ``row`` scope is
+        the one exception, and it is a lookup rather than a fallback -- a row value may live on the
+        passed row or in the store's row at ``batch_idx``, and both are the same scope.
+
+        Raises:
+            ValueError: ``scope`` is not a recognized analysis scope.
+        """
         if scope == "row":
             value = _lookup_mapping_or_attr(self.row, field_name)
             if value is not _MISSING:
@@ -305,6 +326,12 @@ class AnalysisValueResolver:
         default: Any = None,
         scopes: tuple[AnalysisScope, ...] = DEFAULT_ANALYSIS_SCOPES,
     ) -> Any:
+        """Resolve ``field_name`` across ``scopes`` in order, returning the first value found.
+
+        This is the one place analysis-input precedence is expressed. ``op_state`` is deliberately not
+        among the default scopes: it is read-write cross-batch working state, not a resolved input, and
+        including it would let accumulator state satisfy an input lookup by accident.
+        """
         for scope in scopes:
             if scope == "analysis_batch":
                 value = _lookup_mapping_or_attr(self.analysis_batch, field_name)
