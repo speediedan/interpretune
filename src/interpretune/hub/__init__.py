@@ -69,6 +69,8 @@ _LAZY_ATTRS = {
     "resolve_datamodule_config": "interpretune.hub.components",
     "pull": "interpretune.hub.api",
     "pull_ops": "interpretune.hub.api",
+    "unpin_ops": "interpretune.hub.api",
+    "op_pins": "interpretune.hub.api",
     "load": "interpretune.hub.api",
     "push": "interpretune.hub.api",
     "prefer_ops": "interpretune.hub.api",

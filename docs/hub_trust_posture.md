@@ -101,7 +101,13 @@ print(snapshot)
 
 **Pin a revision** so trusted code cannot change under you. Trust granted to a publisher is not
 trust granted to every future commit they push; a pinned revision is the difference between
-auditing something once and re-auditing it silently on every pull.
+auditing something once and re-auditing it silently on every pull. For op collections the pin is
+durable and binds execution, not just the download: `it.hub.pull_ops(repo, revision=...)` records
+the resolved commit, and op discovery loads exactly that revision from then on, beating whatever
+`main` has moved to. A pinned revision evicted from the cache is refused with the restore gesture,
+never silently substituted. Inspect pins with `it.hub.op_pins()`; move one by pulling at another
+revision; release one, explicitly, with `it.hub.unpin_ops(repo)`. (`revision="main"` is not a pin:
+it means the moving default, exactly like omitting the argument.)
 
 **Run without remote code at all.** Set `IT_TRUST_REMOTE_CODE=0`. Everything that does not require
 executing publisher code keeps working: local modules and datamodules, hub-resident configurations

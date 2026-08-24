@@ -53,12 +53,20 @@ def _cached_op_revision(source: str) -> str | None:
     """Cached commit a hub op collection currently resolves to (``None`` for bundled/local ops).
 
     Read from the ops hub cache, never the network: this answers "which revision am I running", and a lookup that could
-    silently fetch would change the answer while reporting it.
+    silently fetch would change the answer while reporting it. A durable pin (#334) beats ``refs/main`` here exactly as
+    it does in discovery, so a pinned session reports the revision it actually loads rather than wherever ``main``
+    moved; the loaded-path lookup (``hub_commit_for_namespace``) is still consulted first by dispatcher methods, this
+    is the filesystem fallback.
     """
     if not source.startswith("hub:"):
         return None
     namespace = source.split(":", 1)[1]
     user, _, repo = namespace.partition(".")
+    from interpretune.hub.pins import read_op_pin
+
+    pin = read_op_pin(f"{user}/{repo}", cache_root=IT_ANALYSIS_HUB_CACHE)
+    if pin is not None:
+        return pin["commit"]
     ref = Path(IT_ANALYSIS_HUB_CACHE) / f"models--{user}--{repo}" / "refs" / "main"
     try:
         return ref.read_text(encoding="utf-8").strip() or None
@@ -862,7 +870,7 @@ class AnalysisOpDispatcher:
                     source=op_def.source,
                     collection=op_def.collection_name,
                     version=op_def.collection_version,
-                    revision=_cached_op_revision(op_def.source),
+                    revision=self._revision_for(op_def),
                 )
             )
         return tuple(records)
@@ -880,15 +888,26 @@ class AnalysisOpDispatcher:
             return tuple(members)
         return (op,) if op is not None else ()
 
-    @staticmethod
-    def _describe_candidate(op_def: OpDef, name: str) -> "OpCandidate":
+    def _revision_for(self, op_def: OpDef) -> str | None:
+        """The revision a hub definition was ACTUALLY loaded from, falling back to the filesystem answer.
+
+        The monitored-YAML paths record which snapshot discovery chose (pin, ``refs/main``, or the
+        manifest-complete fallback), which is exact; ``_cached_op_revision`` (pin-then-``refs/main``)
+        covers definitions reported before discovery ran in this process.
+        """
+        if not op_def.source.startswith("hub:"):
+            return None
+        namespace = op_def.source.split(":", 1)[1]
+        return self._cache_manager.hub_commit_for_namespace(namespace) or _cached_op_revision(op_def.source)
+
+    def _describe_candidate(self, op_def: OpDef, name: str) -> "OpCandidate":
         """Provenance, collection identity and cached revision for one definition."""
         return OpCandidate(
             name=name,
             source=op_def.source,
             collection=op_def.collection_name,
             version=op_def.collection_version,
-            revision=_cached_op_revision(op_def.source),
+            revision=self._revision_for(op_def),
         )
 
     def _report_bare_name_contest(self, incumbent: OpDef, challenger: OpDef, message: str) -> None:

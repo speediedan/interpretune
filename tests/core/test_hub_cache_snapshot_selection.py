@@ -9,7 +9,8 @@ the demo pulled the collection and `it.jlens_patch_intervention` raised one line
 
 The fixture fabricates exactly that cache state; huggingface_hub's scanner works on any conforming
 layout, so no network and no real repo is involved. The SILENT half (a complete newer main snapshot
-winning over the revision a user pinned) is #334, deliberately not solved here.
+winning over the revision a user pinned) was #334, solved by durable pins -- see
+tests/core/test_hub_op_pins.py; the tests here cover the UNPINNED path, which keeps the fallback.
 """
 
 from __future__ import annotations
