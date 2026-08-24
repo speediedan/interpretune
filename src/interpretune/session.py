@@ -11,6 +11,12 @@ from interpretune.metadata import ITClassMetadata
 
 
 class NamedWrapper:
+    """Base of every composed class, giving it a repr that shows what it was composed FROM.
+
+    Composition produces dynamically-built types, so the default repr would name a synthesized class the user never
+    wrote. This reports the original module plus the classes mixed into it.
+    """
+
     def __repr__(self) -> str:
         orig_module = getattr(self, "_orig_module_name", "Original module attribute not set, instantiation incomplete.")
         composed_classes = getattr(self, "_composed_classes", "N/A")
@@ -22,9 +28,21 @@ class NamedWrapper:
 
 
 class ITMeta(type):
+    """Metaclass that builds a datamodule/module class for a given adapter context.
+
+    Resolves the adapter context through ``ADAPTER_REGISTRY`` and constructs a new type whose bases are
+    the registered composition classes, with :class:`NamedWrapper` first so the result reprs
+    informatively. This is where "compose by MRO rather than inheritance" physically happens.
+    """
+
     supported_component_keys = ("datamodule", "dm", "module", "m")
 
     def __new__(mcs, name, bases, classdict, **kwargs):
+        """Build the composed class, recording its origin for repr and introspection.
+
+        The declared ``bases`` are replaced rather than extended: the registry decides the composition,
+        so honoring a caller-supplied base list here would let the two disagree silently.
+        """
         component, input_cls, ctx = mcs._validate_build_ctx(kwargs)
         # TODO: add runtime checks for adherence to IT protocol here?
         composition_classes = mcs._map_composition_target(component, ctx)
@@ -62,6 +80,12 @@ class ITMeta(type):
 
 @dataclass(kw_only=True)
 class UnencapsulatedArgs(ITSerializableCfg):
+    """Escape hatch for args/kwargs passed straight through to the datamodule or module.
+
+    Most experiments encapsulate configuration by subclassing the config dataclasses; these fields exist for the cases
+    where a constructor argument has no config home yet.
+    """
+
     # Most use cases will encapsulate datamodule/module config by subclassing the relevant dataclasses for a given
     # experiment/application but we also allow unencapsulated args/kwargs to be passed to the datamodule and module
     dm_args: tuple = ()
@@ -72,6 +96,12 @@ class UnencapsulatedArgs(ITSerializableCfg):
 
 @dataclass(kw_only=True)
 class ITSessionConfig(UnencapsulatedArgs):
+    """Everything needed to build a session: adapter context, configs, and optional explicit classes.
+
+    ``datamodule_cls`` / ``module_cls`` may be omitted, in which case the classes are composed from the
+    adapter context; supplying them skips composition for that component.
+    """
+
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core,)
     datamodule_cfg: ITDataModuleConfig
     module_cfg: ITConfig
@@ -102,6 +132,13 @@ class ITSessionConfig(UnencapsulatedArgs):
 
 
 class ITSession(Mapping):
+    """A composed datamodule and module, ready to run.
+
+    Behaves as a mapping so a session can be splatted straight into the entry points
+    (``it.it_init(**session)``), which is why the component keys are adapter-dependent: Lightning names
+    the module ``model``, core names it ``module``.
+    """
+
     # Consolidated class-level metadata to reduce attribute clutter
     _it_cls_metadata = ITClassMetadata(
         base_attrs={Adapter.core: ("datamodule", "module"), Adapter.lightning: ("datamodule", "model")},
@@ -164,6 +201,7 @@ class ITSession(Mapping):
         return len(self.to_dict())
 
     def to_dict(self) -> dict[str, Any]:
+        """The session as a plain dict, keyed by this adapter context's component names."""
         return {self._ctx[0]: self.datamodule, self._ctx[1]: self.module}
 
     def __repr__(self) -> str:
@@ -196,6 +234,12 @@ class ITSession(Mapping):
                 setattr(session_cfg, tocompose, None)
 
     def compose_interpretunable(self, session_cfg: ITSessionConfig) -> None:
+        """Compose the datamodule and module classes for this session, skipping what is already ready.
+
+        A component whose supplied class already satisfies the relevant protocol is left alone -- composing it again
+        would wrap an already-conforming class for no gain, and would change its MRO out from under a caller who
+        deliberately supplied it.
+        """
         dm_cls, m_cls = None, None
         # 1. We first check to see if the datamodule and module classes are already defined and adhere to the relevant
         #    protocol.

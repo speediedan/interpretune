@@ -35,6 +35,11 @@ def analysis_store_generator(
     *args,
     **kwargs,
 ):
+    """Yield analysis results batch by batch, so a store can be written incrementally.
+
+    A generator rather than a list: analysis outputs (caches, graphs, attributions) are large enough
+    that materializing every batch before writing is what exhausts memory on a long run.
+    """
     # TODO: should we create separate dataset phase subsplits (per epoch)?
     # TODO: allow for custom dataloader associations
     dataloader = datamodule.test_dataloader()  # type: ignore[attr-defined]  # ITDataModule provides test_dataloader
@@ -222,6 +227,11 @@ class AnalysisRunner(SessionRunner):
         self.analysis_results = {}
 
     def it_init(self):
+        """Initialize the session, then verify the module can serve the requested phase.
+
+        Analysis needs an ``analysis_step``, which a module composed for training alone will not have;
+        checking at init makes that a setup error rather than a failure several batches in.
+        """
         super().it_init()
         module = self.run_cfg.module
         # Check if running analysis and the module needs an analysis_step

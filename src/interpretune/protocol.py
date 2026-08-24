@@ -71,7 +71,9 @@ class GraphComponentFactoryProtocol(Protocol):
     """Protocol for graph-like objects that can be hydrated from primitive components."""
 
     @classmethod
-    def from_graph_components(cls, components: GraphComponentPayload) -> Any: ...
+    def from_graph_components(cls, components: GraphComponentPayload) -> Any:
+        """Rebuild the native object from stored components (the inverse of decomposition)."""
+        ...
 
 
 ################################################################################
@@ -80,6 +82,8 @@ class GraphComponentFactoryProtocol(Protocol):
 
 
 class AutoStrEnum(Enum):
+    """Enum whose auto() members take their own name as value, so members serialize as their names."""
+
     @staticmethod
     def _generate_next_value_(name, _start, _count, _last_values) -> str:  # type: ignore
         return name
@@ -87,6 +91,11 @@ class AutoStrEnum(Enum):
 
 # NOTE [Interpretability Adapters]:
 class Adapter(AutoStrEnum):
+    """The interpretability adapters a session can compose.
+
+    See NOTE [Interpretability Adapters].
+    """
+
     # CORE: The provided module and datamodule will be prepared for use with core PyTorch. The default
     #       trainer, a custom trainer or no trainer all can be used in combination with any supported and specified
     #       adapter.
@@ -113,16 +122,30 @@ class Adapter(AutoStrEnum):
 
 # DerivedEnumMeta is a custom metaclass that adds enum members from an input set.
 class DerivedEnumMeta(EnumMeta):  # change EnumMeta alias to EnumType when 3.11 python is minimum
+    """Metaclass generating enum members from a set, optionally transformed.
+
+    Lets the phase and step enums be DERIVED from one source-of-truth set rather than hand-listed, so a
+    phase cannot be added to one and forgotten in the other. Reads ``_input_set`` and ``_transform``
+    off the class body and removes them so they do not become members themselves.
+    """
+
     _derived_enum_internal = ("_input_set", "_transform")
 
     @classmethod
     def __prepare__(metacls, clsname, bases, **kwargs):
+        """Metaclass that generates enum members from a set, optionally transformed.
+
+        Lets phase and step enums be DERIVED from one source-of-truth set rather than hand-listed, so a new
+        phase cannot be added to one enum and forgotten in the other. Reads ``_input_set`` and
+        ``_transform`` off the class body and removes them so they do not become members themselves.
+        """
         enum_dict = super().__prepare__(clsname, bases, **kwargs)
         enum_dict._ignore = list(metacls._derived_enum_internal)  # type: ignore
 
         return enum_dict
 
     def __new__(mcls, clsname, bases, classdict):
+        """Build the enum, materializing members from ``_input_set`` before delegating to EnumMeta."""
         # Pop and remove temporary keys so they don't become enum members.
         # While we could use '_ignore_', as we need these variables anyway, we go ahead and proactively pop them here
         input_set = classdict.pop("_input_set", None)
@@ -136,7 +159,8 @@ class DerivedEnumMeta(EnumMeta):  # change EnumMeta alias to EnumType when 3.11 
         return super().__new__(mcls, clsname, bases, classdict)
 
 
-class SetDerivedEnum(AutoStrEnum, metaclass=DerivedEnumMeta): ...
+class SetDerivedEnum(AutoStrEnum, metaclass=DerivedEnumMeta):
+    """Base for enums whose members are derived from a ``_input_set`` by :class:`DerivedEnumMeta`."""
 
 
 ################################################################################
@@ -152,20 +176,28 @@ ALL_PHASES = CORE_PHASES.union(EXT_PHASES)
 
 
 class CorePhases(SetDerivedEnum):
+    """The core execution phases, derived from ``CORE_PHASES``."""
+
     # The _input_set class attribute is used by DerivedEnumMeta to generate enum members.
     _input_set = CORE_PHASES
 
 
 class CoreSteps(SetDerivedEnum):
+    """The core step-method names, derived from ``CORE_PHASES`` (``train`` -> ``training_step``)."""
+
     _input_set = CORE_PHASES
     _transform = lambda x: "training_step" if x == "train" else f"{x}_step"
 
 
 class AllPhases(SetDerivedEnum):
+    """Every execution phase, core and extended, derived from ``ALL_PHASES``."""
+
     _input_set = ALL_PHASES
 
 
 class AllSteps(SetDerivedEnum):
+    """Every step-method name, derived from ``ALL_PHASES``."""
+
     _input_set = ALL_PHASES
     _transform = lambda x: "training_step" if x == "train" else f"{x}_step"
 
@@ -183,7 +215,9 @@ class Steppable(Protocol):
     """To structurally type ``optimizer.step()``"""
 
     # Inferred from `torch.optim.optimizer.pyi`
-    def step(self, closure: Callable[[], float] | None = ...) -> float | None: ...
+    def step(self, closure: Callable[[], float] | None = ...) -> float | None:
+        """Perform one optimization step; ``closure`` re-evaluates the loss for optimizers that need it."""
+        ...
 
 
 @runtime_checkable
@@ -194,11 +228,17 @@ class Optimizable(Steppable, Protocol):
     defaults: dict[Any, Any]
     state: dict[Any, Any]
 
-    def zero_grad(self) -> None: ...
+    def zero_grad(self) -> None:
+        """Zero accumulated gradients."""
+        ...
 
-    def state_dict(self) -> dict[str, dict[Any, Any]]: ...
+    def state_dict(self) -> dict[str, dict[Any, Any]]:
+        """Optimizer state for checkpointing."""
+        ...
 
-    def load_state_dict(self, state_dict: dict[str, dict[Any, Any]]) -> None: ...
+    def load_state_dict(self, state_dict: dict[str, dict[Any, Any]]) -> None:
+        """Restore optimizer state from a checkpoint."""
+        ...
 
 
 @runtime_checkable
@@ -212,18 +252,27 @@ class _Stateful(Protocol[_DictKey]):
 
 @runtime_checkable
 class LRScheduler(_Stateful[str], Protocol):
+    """The LR-scheduler surface interpretune relies on.
+
+    Satisfied by torch schedulers structurally.
+    """
+
     optimizer: Optimizer
     base_lrs: list[float]
 
     def __init__(self, optimizer: Optimizer, *args: Any, **kwargs: Any) -> None: ...
 
-    def step(self, epoch: int | None = None) -> None: ...
+    def step(self, epoch: int | None = None) -> None:
+        """Advance the schedule by one step."""
+        ...
 
 
 # Inferred from `torch.optim.lr_scheduler.pyi`
 # Missing attributes were added to improve typing
 @runtime_checkable
 class ReduceLROnPlateau(_Stateful[str], Protocol):
+    """``ReduceLROnPlateau``'s surface, which differs from :class:`LRScheduler` in requiring a metric."""
+
     in_cooldown: bool
     optimizer: Optimizer
 
@@ -241,7 +290,10 @@ class ReduceLROnPlateau(_Stateful[str], Protocol):
         eps: float = ...,
     ) -> None: ...
 
-    def step(self, metrics: float | int | Tensor, epoch: int | None = None) -> None: ...
+    def step(self, metrics: float | int | Tensor, epoch: int | None = None) -> None:
+        """Advance the schedule using the monitored metric -- this is what distinguishes it from a plain
+        scheduler."""
+        ...
 
 
 STEP_OUTPUT = Tensor | Mapping[str, Any] | None
@@ -254,6 +306,8 @@ LRSchedulerProtocolUnion: TypeAlias = LRScheduler | ReduceLROnPlateau
 
 @dataclass
 class LRSchedulerConfig:
+    """A scheduler plus the settings a runner needs to drive it (interval, frequency, monitored metric)."""
+
     scheduler: torch.optim.lr_scheduler.LRScheduler | torch.optim.lr_scheduler.ReduceLROnPlateau
     # no custom name
     name: str | None = None
@@ -270,6 +324,8 @@ class LRSchedulerConfig:
 
 
 class LRSchedulerConfigType(TypedDict, total=False):
+    """The scheduler-config mapping form, all keys optional -- the shape accepted from configuration."""
+
     scheduler: Required[LRSchedulerTypeUnion]
     name: str | None
     interval: str
@@ -280,6 +336,8 @@ class LRSchedulerConfigType(TypedDict, total=False):
 
 
 class OptimizerLRSchedulerConfig(TypedDict):
+    """The optimizer/scheduler pair a module returns from its optimizer-configuration hook."""
+
     optimizer: Optimizer
     lr_scheduler: NotRequired[LRSchedulerTypeUnion | LRSchedulerConfigType]
 
@@ -307,7 +365,9 @@ class DataPrepable(Protocol):
     """Minimum requirement for an Interpretunable DataModule is to have a prepare_data method and a valid
     datamodule config."""
 
-    def prepare_data(self, target_model: torch.nn.Module | None = None) -> None: ...
+    def prepare_data(self, target_model: torch.nn.Module | None = None) -> None:
+        """Prepare data once, before any dataloader is requested (download, tokenize, cache)."""
+        ...
 
 
 @runtime_checkable
@@ -318,66 +378,112 @@ class SaveHyperparametersProtocol(Protocol):
     implementation. The method is expected to return None.
     """
 
-    def save_hyperparameters(self, *args: Any, **kwargs: Any) -> None: ...
+    def save_hyperparameters(self, *args: Any, **kwargs: Any) -> None:
+        """Record hyperparameters for logging and checkpoint provenance."""
+        ...
 
 
 @runtime_checkable
 class TrainLoadable(DataPrepable, Protocol):
-    def train_dataloader(self) -> torch.utils.data.DataLoader: ...
+    """Datamodule capability: can supply a training dataloader. Checked structurally at session setup."""
+
+    def train_dataloader(self) -> torch.utils.data.DataLoader:
+        """Return the training dataloader."""
+        ...
 
 
 @runtime_checkable
 class ValLoadable(DataPrepable, Protocol):
-    def val_dataloader(self) -> torch.utils.data.DataLoader: ...
+    """Datamodule capability: can supply a validation dataloader. Checked structurally at session setup."""
+
+    def val_dataloader(self) -> torch.utils.data.DataLoader:
+        """Return the validation dataloader."""
+        ...
 
 
 @runtime_checkable
 class TestLoadable(DataPrepable, Protocol):
-    def test_dataloader(self) -> torch.utils.data.DataLoader: ...
+    """Datamodule capability: can supply a test dataloader. Checked structurally at session setup."""
+
+    def test_dataloader(self) -> torch.utils.data.DataLoader:
+        """Return the test dataloader."""
+        ...
 
 
 @runtime_checkable
 class PredictLoadable(DataPrepable, Protocol):
-    def predict_dataloader(self) -> torch.utils.data.DataLoader: ...
+    """Datamodule capability: can supply a prediction dataloader. Checked structurally at session setup."""
+
+    def predict_dataloader(self) -> torch.utils.data.DataLoader:
+        """Return the prediction dataloader."""
+        ...
 
 
 @runtime_checkable
 class DataModuleInvariants(Protocol):
+    """Structural invariants every interpretune datamodule satisfies, whatever adapters it composes."""
+
     itdm_cfg: ITDataModuleConfig
 
-    def setup(self, *args, **kwargs) -> None: ...
+    def setup(self, *args, **kwargs) -> None:
+        """Prepare the datamodule for a phase (called after ``prepare_data``)."""
+        ...
 
 
 @runtime_checkable
 class TrainSteppable(Protocol):
-    def training_step(self, *args, **kwargs) -> STEP_OUTPUT: ...
+    """Module capability: implements the training step. Checked structurally at session setup."""
+
+    def training_step(self, *args, **kwargs) -> STEP_OUTPUT:
+        """Execute one training step and return its output."""
+        ...
 
 
 @runtime_checkable
 class ValidationSteppable(Protocol):
-    def validation_step(self, *args, **kwargs) -> STEP_OUTPUT: ...
+    """Module capability: implements the validation step. Checked structurally at session setup."""
+
+    def validation_step(self, *args, **kwargs) -> STEP_OUTPUT:
+        """Execute one validation step and return its output."""
+        ...
 
 
 @runtime_checkable
 class TestSteppable(Protocol):
-    def test_step(self, *args, **kwargs) -> STEP_OUTPUT: ...
+    """Module capability: implements the test step. Checked structurally at session setup."""
+
+    def test_step(self, *args, **kwargs) -> STEP_OUTPUT:
+        """Execute one test step and return its output."""
+        ...
 
 
 @runtime_checkable
 class PredictSteppable(Protocol):
-    def predict_step(self, *args, **kwargs) -> STEP_OUTPUT: ...
+    """Module capability: implements the prediction step. Checked structurally at session setup."""
+
+    def predict_step(self, *args, **kwargs) -> STEP_OUTPUT:
+        """Execute one prediction step and return its output."""
+        ...
 
 
 @runtime_checkable
 class ModuleInvariants(Protocol):
+    """Structural invariants every interpretune module satisfies, whatever adapters it composes."""
+
     it_cfg: ITConfig
 
     @property
-    def analysis_backend(self) -> Any | None: ...
+    def analysis_backend(self) -> Any | None:
+        """The analysis backend, or None when the module composes no analysis adapter."""
+        ...
 
-    def setup(self, *args, **kwargs) -> None: ...
+    def setup(self, *args, **kwargs) -> None:
+        """Prepare the module for a phase."""
+        ...
 
-    def configure_optimizers(self) -> OptimizerLRScheduler | None: ...
+    def configure_optimizers(self) -> OptimizerLRScheduler | None:
+        """Return the optimizer(s) and scheduler(s), or None when the module is not being trained."""
+        ...
 
 
 # N.B. runtime protocol validation will check for attribute presence but not validate signatures etc. With this
@@ -389,6 +495,12 @@ DataModuleInitable: TypeAlias = TrainLoadable | ValLoadable | TestLoadable | Pre
 def gen_protocol_variants(
     supported_sub_protocols: UnionType, base_protocols: _ProtocolMeta | tuple[_ProtocolMeta]
 ) -> UnionType:
+    """Build runtime-checkable protocol variants by crossing sub-protocols with base protocols.
+
+    Each generated variant is marked runtime-checkable so ``isinstance`` can verify a composed class
+    satisfies a specific combination -- which is what session setup checks rather than naming every
+    combination by hand.
+    """
     protocol_components = []
     if not isinstance(base_protocols, tuple):
         base_protocols = (base_protocols,)
@@ -417,6 +529,8 @@ InterpretunableType: TypeAlias = ITDataModuleProtocol | ITModuleProtocol
 
 
 class InterpretunableTuple(NamedTuple):
+    """A composed (datamodule, module) pair, named so callers can splat or index it interchangeably."""
+
     datamodule: ITDataModuleProtocol | None = None
     module: ITModuleProtocol | None = None
 
@@ -433,17 +547,27 @@ class GenerativeStepProtocol(Protocol):
     This is intentionally small: it only includes the methods/properties the debug generation code relies on.
     """
 
-    def it_generate(self, batch: Any, **kwargs: Any) -> Any: ...
+    def it_generate(self, batch: Any, **kwargs: Any) -> Any:
+        """Generate from a batch using the module's configured generation settings."""
+        ...
 
     @property
-    def generation_cfg(self) -> Any: ...
+    def generation_cfg(self) -> Any:
+        """The resolved generation configuration."""
+        ...
 
     @property
-    def gen_sig_keys(self) -> list: ...
+    def gen_sig_keys(self) -> list:
+        """The keys the underlying generate signature accepts, used to filter what is passed through."""
+        ...
 
-    def map_gen_inputs(self, batch: Any) -> dict[str, Any]: ...
+    def map_gen_inputs(self, batch: Any) -> dict[str, Any]:
+        """Map an interpretune batch onto the generate call's expected input names."""
+        ...
 
-    def map_gen_kwargs(self, kwargs: dict) -> dict[str, Any]: ...
+    def map_gen_kwargs(self, kwargs: dict) -> dict[str, Any]:
+        """Filter/rename generation kwargs to those the underlying generate accepts."""
+        ...
 
 
 @runtime_checkable
@@ -484,6 +608,8 @@ NamesFilter = Callable[[str], bool] | Sequence[str] | str | None
 
 
 class LatentModelFqn(NamedTuple):
+    """Fully-qualified name of one latent model (e.g. an SAE) as (layer, hook) coordinates."""
+
     release: str
     sae_id: str
 
@@ -504,20 +630,28 @@ class AnalysisOpProtocol(Protocol):
         save_prompts: bool = False,
         save_tokens: bool = False,
         decode_kwargs: dict | None = None,
-    ) -> BaseAnalysisBatchProtocol: ...
+    ) -> BaseAnalysisBatchProtocol:
+        """Persist one analysis batch, optionally including decoded prompts and tokens."""
+        ...
 
 
 class LatentDictProtocol(Protocol):
     """Protocol for latent model analysis dictionary operations."""
 
     @property
-    def shapes(self) -> dict[str, torch.Size | list[torch.Size]]: ...
+    def shapes(self) -> dict[str, torch.Size | list[torch.Size]]:
+        """Per-field tensor shapes, one entry per latent model where they differ."""
+        ...
 
     def batch_join(
         self, across_latent_models: bool = False, join_fn: Callable = torch.cat
-    ) -> "LatentDictProtocol" | list[torch.Tensor]: ...
+    ) -> "LatentDictProtocol" | list[torch.Tensor]:
+        """Join batched fields, optionally across latent models rather than within each."""
+        ...
 
-    def apply_op_by_latent_model(self, operation: Callable | str, *args, **kwargs) -> "LatentDictProtocol": ...
+    def apply_op_by_latent_model(self, operation: Callable | str, *args, **kwargs) -> "LatentDictProtocol":
+        """Apply an operation to every latent model's entry, returning a dict of the same shape."""
+        ...
 
 
 class AnalysisStoreProtocol(Protocol):
@@ -530,7 +664,9 @@ class AnalysisStoreProtocol(Protocol):
     # save_dir on AnalysisStore is exposed as a property (getter returns Path, setter accepts str/PathLike).
     # Model it as a property in the protocol so static checkers consider the descriptor instead of a plain attribute.
     @property
-    def save_dir(self) -> Path: ...
+    def save_dir(self) -> Path:
+        """Directory this store persists to."""
+        ...
 
     @save_dir.setter
     def save_dir(self, path: StrOrPath) -> None: ...
@@ -540,10 +676,15 @@ class AnalysisStoreProtocol(Protocol):
     # op_output_dataset_path may be a string path, a pathlib.Path, or None at runtime
     op_output_dataset_path: str | Path | None
 
-    def by_latent_model(self, field_name: str, stack_latents: bool = True) -> LatentDictProtocol: ...
+    def by_latent_model(self, field_name: str, stack_latents: bool = True) -> LatentDictProtocol:
+        """Regroup a field by latent model, stacking each model's batches unless ``stack_latents`` is False."""
+        ...
+
     # __getattr__ may return dataset columns (lists/tensors), callables, or other attributes — accept Any
     def __getattr__(self, name: str) -> Any: ...
-    def reset_dataset(self) -> None: ...
+    def reset_dataset(self) -> None:
+        """Drop the loaded dataset so it is re-read on next access."""
+        ...
 
 
 class AnalysisCfgProtocol(Protocol):
@@ -563,7 +704,9 @@ class AnalysisCfgProtocol(Protocol):
 
     def check_add_default_hooks(
         self, op: AnalysisOpProtocol, names_filter: str | Callable | None, cache_dict: dict | None
-    ) -> tuple[list[tuple], list[tuple]]: ...
+    ) -> tuple[list[tuple], list[tuple]]:
+        """Resolve the forward/backward hooks an op needs, adding defaults where the op declares none."""
+        ...
 
 
 class LatentAnalysisProtocol(Protocol):
@@ -571,7 +714,9 @@ class LatentAnalysisProtocol(Protocol):
 
     def construct_names_filter(
         self, target_layers: list[int], sae_hook_match_fn: Callable[[str, list[int] | None], bool]
-    ) -> NamesFilter: ...
+    ) -> NamesFilter:
+        """Build the names filter selecting this analysis's hooks on the requested layers."""
+        ...
 
 
 class LatentAnalysisModuleProtocol(ITModuleBase, LatentAnalysisProtocol, Protocol):
@@ -628,10 +773,13 @@ class ActivationCacheProtocol(Protocol):
     has_pos_embed: bool
 
     def __getitem__(self, key: str | tuple) -> torch.Tensor: ...
-    def stack_activation(
-        self, activation_name: str, layer: int = -1, sublayer_type: str | None = None
-    ) -> torch.Tensor: ...
-    def items(self) -> Iterable[tuple[str, torch.Tensor]]: ...
+    def stack_activation(self, activation_name: str, layer: int = -1, sublayer_type: str | None = None) -> torch.Tensor:
+        """Stack a field's per-batch activations into one tensor."""
+        ...
+
+    def items(self) -> Iterable[tuple[str, torch.Tensor]]:
+        """Iterate (field name, tensor) pairs."""
+        ...
 
 
 class BaseAnalysisBatchProtocol(Protocol):
@@ -641,8 +789,13 @@ class BaseAnalysisBatchProtocol(Protocol):
     objects.
     """
 
-    def update(self, **kwargs) -> None: ...
-    def to_cpu(self) -> None: ...
+    def update(self, **kwargs) -> None:
+        """Set fields from keyword arguments."""
+        ...
+
+    def to_cpu(self) -> None:
+        """Detach and move all field tensors to CPU."""
+        ...
 
 
 class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):

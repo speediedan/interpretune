@@ -24,6 +24,7 @@ def core_train_loop(
     *args,
     **kwargs,
 ):
+    """Run the core (framework-free) training loop, with optional interleaved validation."""
     assert hasattr(datamodule, "train_dataloader"), "Datamodule is expected to have a train dataloader"
     train_dataloader = datamodule.train_dataloader()  # type: ignore[attr-defined]
     val_dataloader = datamodule.val_dataloader() if hasattr(datamodule, "val_dataloader") else None  # type: ignore[attr-defined]  # duck typing
@@ -52,6 +53,11 @@ def core_train_loop(
 
 
 def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batches: int, *args, **kwargs):
+    """Run the test loop over the datamodule's test dataloader.
+
+    Raises:
+        AssertionError: the datamodule exposes no ``test_dataloader``.
+    """
     if not hasattr(datamodule, "test_dataloader"):
         raise AssertionError("Datamodule is expected to have a test dataloader")
     dataloader = datamodule.test_dataloader()  # type: ignore[attr-defined]  # duck typing, checked above
@@ -74,6 +80,11 @@ def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batche
 
 
 def run_step(step_fn, module, batch, batch_idx, optimizer: Optimizable | None = None, as_generator: bool = False):
+    """Run one step: move the batch to device, dispatch the step function, optionally optimize.
+
+    ``as_generator`` yields the step output instead of returning it, which is what lets the analysis
+    runner stream results rather than accumulate them.
+    """
     batch = module.batch_to_device(batch)
     step_func = getattr(module, step_fn)
     if module.global_step == 0 and step_fn == "test_step":
@@ -137,6 +148,7 @@ class SessionRunner:
 
     @property
     def phase(self) -> CorePhases | None:
+        """The phase currently executing, or None before a phase starts."""
         return self._current_phase
 
     @phase.setter
@@ -144,6 +156,7 @@ class SessionRunner:
         self._current_phase = phase
 
     def it_init(self):
+        """Dispatch the framework-independent session init unless a subclass overrides it."""
         # Unless overridden we dispatch the trainer-independent `it_init`
         assert self.run_cfg.it_session is not None, "Expected ITSession object"
         it_init(**self.run_cfg.it_session)
