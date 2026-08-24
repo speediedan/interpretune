@@ -11,7 +11,7 @@ from transformers import AutoConfig, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
 
-from interpretune.utils import rank_zero_warn, _import_class, _BNB_AVAILABLE
+from interpretune.utils import rank_zero_warn, _import_class, _BNB_AVAILABLE, _resolve_env_auth_token
 from interpretune.config import (
     HFFromPretrainedConfig,
     HFGenerationConfig,
@@ -395,7 +395,7 @@ class HFFromPretrainedMixin:
     def hf_pretrained_model_init(self) -> None:
         """Initialize the model from HF pretrained weights, applying quantization and token configuration."""
         access_token = (
-            os.environ[self.it_cfg.os_env_model_auth_key.upper()] if self.it_cfg.os_env_model_auth_key else None  # type: ignore[attr-defined]  # mixin provides it_cfg
+            _resolve_env_auth_token(self.it_cfg.os_env_model_auth_key)  # type: ignore[attr-defined]  # mixin provides it_cfg
         )
         quantization_config = self._hf_configure_quantization()
         self._update_hf_pretrained_cfg(quantization_config)

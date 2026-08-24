@@ -9,7 +9,7 @@ import datasets
 from datasets import Dataset
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
-from interpretune.utils import rank_zero_info, rank_zero_warn, _import_class, rank_zero_debug
+from interpretune.utils import rank_zero_info, rank_zero_warn, _import_class, rank_zero_debug, _resolve_env_auth_token
 from interpretune.config import ITDataModuleConfig
 from interpretune.protocol import SaveHyperparametersProtocol, ITModuleProtocol
 
@@ -96,9 +96,7 @@ class ITDataModule:
         The precedence exists so a config can override the tokenizer independently of the model -- needed wherever a
         model is used with a tokenizer other than its own default.
         """
-        access_token = (
-            os.environ[self.itdm_cfg.os_env_model_auth_key.upper()] if self.itdm_cfg.os_env_model_auth_key else None
-        )
+        access_token = _resolve_env_auth_token(self.itdm_cfg.os_env_model_auth_key)
         ### tokenizer config precedence: pre-configured > pretrained tokenizer name -> model name
         if self.itdm_cfg.tokenizer:
             tokenizer = self.itdm_cfg.tokenizer
