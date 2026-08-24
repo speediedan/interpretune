@@ -138,7 +138,7 @@ class TestCircuitTracerTLBackend:
     transformer_lens, circuit_tracer) adapter combination. Requires CUDA with bf16 support (Gemma2 model).
     """
 
-    @RunIf(bf16_cuda=True)
+    @RunIf(bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY")
     def test_tl_backend_integration(self, get_it_session__ct_tl_gemma2__setup):
         """Verify TL backend initialization: property access, model loading, typing, and config preservation."""
         it_session = get_it_session__ct_tl_gemma2__setup.it_session
@@ -164,7 +164,7 @@ class TestCircuitTracerLightningTLBackendInitialization:
     Requires CUDA with bf16 support (Gemma2 model) and Lightning.
     """
 
-    @RunIf(lightning=True, bf16_cuda=True)
+    @RunIf(lightning=True, bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY")
     @pytest.mark.parametrize(
         "session_fixture",
         [
@@ -196,7 +196,7 @@ class TestCircuitTracerNNsightBackend:
     (core, circuit_tracer) adapter combination with backend="nnsight". Requires CUDA with bf16 support (Gemma2 model).
     """
 
-    @RunIf(bf16_cuda=True)
+    @RunIf(bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY")
     def test_nnsight_backend_integration(self, get_it_session__ct_nnsight_gemma2__setup):
         """Verify NNsight backend initialization: property access, model loading, typing, and local mode config."""
         it_session = get_it_session__ct_nnsight_gemma2__setup.it_session

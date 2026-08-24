@@ -13,6 +13,7 @@
 import os
 import re
 import sys
+from collections.abc import Sequence
 from functools import lru_cache
 
 import psutil
@@ -114,6 +115,7 @@ class RunIf:
         min_python: str | None = None,
         max_python: str | None = None,
         env_mask: str | None = None,
+        requires_env: str | Sequence[str] | None = None,
         bf16_cuda: bool = False,
         skip_windows: bool = False,
         skip_mac_os: bool = False,
@@ -142,6 +144,10 @@ class RunIf:
             skip_windows: Skip for Windows platform.
             skip_mac_os: Skip Mac OS platform.
             env_mask: Skip test if the specified environment variable is set.
+            requires_env: Skip test if the named environment variable(s) are ABSENT or empty. The inverse of
+                ``env_mask``, for tests that need a credential or path the machine may not have -- notably gated-model
+                tokens. Without it such a test can only FAIL where the value is missing, which is indistinguishable
+                from a real defect (interpretune#354).
             standalone: Mark the test as standalone, our CI will run it in a separate process.
                 This requires that the ``IT_RUN_STANDALONE_TESTS=1`` environment variable is set.
             profiling: Mark the test as profiling. It will run as a separate process and only be included in CI
@@ -281,6 +287,14 @@ class RunIf:
             total_ram_gb = get_runner_ram_gb()
             conditions.append(total_ram_gb < min_ram_gb)
             reasons.append(f"at least {min_ram_gb} GB RAM (found {total_ram_gb:.1f} GB)")
+
+        if requires_env:
+            required = (requires_env,) if isinstance(requires_env, str) else tuple(requires_env)
+            missing = [name for name in required if not os.getenv(name)]
+            conditions.append(bool(missing))
+            # name the variables rather than the count: the reason line is the only place a contributor
+            # learns WHICH credential their environment lacks
+            reasons.append(f"environment variable(s) set: {', '.join(missing)}")
 
         reasons = [rs for cond, rs in zip(conditions, reasons) if cond]
         return pytest.mark.skipif(

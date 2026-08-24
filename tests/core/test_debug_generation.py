@@ -142,7 +142,7 @@ class TestClassDebugGen:
                 },
                 True,
                 (2, True),
-                marks=RunIf(lightning=True, bf16_cuda=True),
+                marks=RunIf(lightning=True, bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
             ),
             pytest.param(
                 "get_it_session__l_llama3_debug__setup",
@@ -154,7 +154,7 @@ class TestClassDebugGen:
                 },
                 True,
                 (2, True),
-                marks=RunIf(lightning=True, bf16_cuda=True),
+                marks=RunIf(lightning=True, bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
             ),
             pytest.param(
                 "get_it_session__l_gemma3_debug__setup",
@@ -163,7 +163,9 @@ class TestClassDebugGen:
                 {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 0}},
                 False,
                 (2, False),
-                marks=RunIf(optional=True, lightning=True, bf16_cuda=True),
+                marks=RunIf(
+                    optional=True, lightning=True, bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"
+                ),
             ),
             pytest.param(
                 "get_it_session__l_llama3_debug__setup",
@@ -172,7 +174,9 @@ class TestClassDebugGen:
                 {"gen_config_override": {"max_new_tokens": 4, "pad_token_id": 128004}},
                 False,
                 (2, False),
-                marks=RunIf(optional=True, lightning=True, bf16_cuda=True),
+                marks=RunIf(
+                    optional=True, lightning=True, bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"
+                ),
             ),
         ],
         ids=[

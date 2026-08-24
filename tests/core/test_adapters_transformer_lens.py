@@ -696,13 +696,13 @@ class TestArchitectureParameterMapping:
             pytest.param(
                 "get_it_session__l_tl_bridge_llama3__setup",
                 LLAMA3_EXPECTATIONS,
-                marks=RunIf(bf16_cuda=True),
+                marks=RunIf(bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
                 id="llama3",
             ),
             pytest.param(
                 "get_it_session__l_tl_bridge_gemma2__setup",
                 GEMMA2_EXPECTATIONS,
-                marks=RunIf(bf16_cuda=True),
+                marks=RunIf(bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
                 id="gemma2",
             ),
         ],

@@ -22,7 +22,14 @@ from interpretune.adapters import CompositionRegistry, LightningDataModule, Ligh
 from interpretune.adapters.model_view import ModelView, CanonicalModelView
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.base.components.mixins import _import_class
-from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_info, rank_zero_debug, _FTS_AVAILABLE
+from interpretune.utils import (
+    move_data_to_device,
+    rank_zero_warn,
+    rank_zero_info,
+    rank_zero_debug,
+    _FTS_AVAILABLE,
+    _resolve_env_auth_token,
+)
 from interpretune.utils.import_utils import _resolve_dtype
 from interpretune.protocol import Adapter
 
@@ -174,9 +181,7 @@ class BaseITLensModule(BaseITModule):
         """
         # for TL, only a subset of the HF pretrained init flow used since the model is replaced with
         # HookedTransformer or TransformerBridge
-        access_token = (
-            os.environ[self.it_cfg.os_env_model_auth_key.upper()] if self.it_cfg.os_env_model_auth_key else None
-        )
+        access_token = _resolve_env_auth_token(self.it_cfg.os_env_model_auth_key)
         quantization_config = super()._hf_configure_quantization()
         super()._update_hf_pretrained_cfg(quantization_config)
         cust_config, _ = super()._hf_gen_cust_config(access_token)

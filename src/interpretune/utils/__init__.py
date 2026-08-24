@@ -27,7 +27,13 @@ from interpretune.utils.schema_validation import RemoveAdditionalPropertiesValid
 from interpretune.utils.tokenization import DEFAULT_DECODE_KWARGS, sanitize_input_name
 from interpretune.utils.warnings import unexpected_state_msg_suffix, tl_invalid_dmap, dummy_method_warn_fingerprint
 from interpretune.utils.data_movement import to_device, move_data_to_device
-from interpretune.utils.import_utils import _import_class, instantiate_class, _resolve_dtype, resolve_funcs
+from interpretune.utils.import_utils import (
+    _import_class,
+    instantiate_class,
+    _resolve_dtype,
+    resolve_funcs,
+    _resolve_env_auth_token,
+)
 from interpretune.utils.neuronpedia_db_utils import (
     DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL,
     LocalNeuronpediaServiceStatus,
@@ -111,6 +117,7 @@ from interpretune.utils.neuronpedia_dashboard_hub import (
 )
 
 __all__ = [
+    "_resolve_env_auth_token",
     # exceptions
     "MisconfigurationException",
     # import_utils

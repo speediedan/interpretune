@@ -1,9 +1,12 @@
 from typing import Any, Callable
 import importlib
+import os
 from functools import lru_cache
 from importlib.util import find_spec
 from importlib.metadata import version as get_version, PackageNotFoundError
 import operator
+
+from interpretune.utils.logging import rank_zero_warn
 import torch
 from packaging.version import InvalidVersion, Version
 
@@ -192,3 +195,29 @@ _SL_AVAILABLE = module_available("sae_lens")
 _NNSIGHT_AVAILABLE = package_available("nnsight")
 # local-checkout package (neuronpedia repo, utils/neuronpedia-utils) — not installable from PyPI
 _NEURONPEDIA_UTILS_AVAILABLE = module_available("neuronpedia_utils")
+
+
+def _resolve_env_auth_token(os_env_model_auth_key: str | None) -> str | None:
+    """Resolve a configured auth-token environment variable, warning rather than raising when unset.
+
+    Returns None when no variable is configured, and None WITH A WARNING when one is configured but
+    absent from the environment. Deliberately not ``os.environ[...]`` (#354): a bare ``KeyError`` from
+    deep inside model init names a variable and nothing else, and a user who followed the README and
+    forgot to export a token gets no actionable message.
+
+    Returning None is also the correct behavior rather than merely the gentler one: huggingface_hub
+    falls back to the ambient cached credential (``huggingface-cli login``), so a gated-public repo the
+    user already has access to keeps working. The warning exists because the config NAMED a variable
+    that does not exist, which is worth knowing even when the fallback succeeds.
+    """
+    if not os_env_model_auth_key:
+        return None
+    env_var = os_env_model_auth_key.upper()
+    token = os.environ.get(env_var)
+    if token is None:
+        rank_zero_warn(
+            f"Configured auth-token environment variable {env_var!r} is not set. Proceeding without an explicit "
+            "token: any ambient Hugging Face credential (e.g. from `huggingface-cli login`) still applies, but "
+            f"access to gated resources will fail later if none exists. Export {env_var} to use an explicit token."
+        )
+    return token
