@@ -13,11 +13,12 @@
 default_language_version:
   python: python3
 
-ci:
-  autofix_prs: true
-  autoupdate_commit_msg: '[pre-commit.ci] pre-commit suggestions'
-  autoupdate_schedule: quarterly
-  # submodules: true
+# NOTE: there is deliberately no `ci:` block here. That block configures pre-commit.ci, a hosted app
+# that was never installed on this repo -- so it configured a service that did not run, while reading
+# as though a remote gate existed when none did (#359). Remote enforcement lives in
+# .github/workflows/lint.yml, which runs `pre-commit run --all-files` in this repo's own CI.
+# Re-adding a `ci:` block is only correct alongside actually installing the app, and note that
+# `autofix_prs: true` would push commits onto contributor branches.
 
 # benchmark_baseline_patches: vendored .patch files must stay byte-exact (hooks would corrupt hunks)
 exclude: 'tests/(ioi_parity|mech_interp_parity|concept_direction_approach_parity)/.*|scripts/benchmark_baseline_patches/.*\.patch'
