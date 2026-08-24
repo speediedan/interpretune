@@ -7,8 +7,26 @@ from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
 
 
 class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):  # type: ignore[misc]
+    """Base composition target for interpretune modules; supplies the ``ITModuleProtocol`` invariants.
+
+    The module contract is structural, not inheritance-based: a composed module must expose the
+    ``ModuleInvariants`` surface (``it_cfg``, ``analysis_backend``, ``setup``,
+    ``configure_optimizers``) plus AT LEAST ONE ``*_step`` method. This class provides the
+    invariants and the model-initialization lifecycle; it deliberately provides NO default step
+    implementations — a silently inherited no-op step would turn a missing implementation into a
+    run that "succeeds" while doing nothing. Step methods come from your subclass, a mixin (e.g.
+    ``ClassificationMixin``), or an adapter, and ``ITSession`` warns (rather than raises) when the
+    composed result still fails the protocol check.
+
+    Method roles: ``_before_it_cfg_init``, ``auto_model_init``, ``post_auto_model_init``,
+    ``model_init`` and ``load_metric`` are template hooks (override freely; no ``super()``
+    required), while the hooks defined on ``BaseITHooks`` are cooperative (call ``super()`` to
+    retain their behavior). ``_dispatch_model_init`` defines the lifecycle and should not be
+    overridden. See ``docs/module_contract_and_limitations.md`` for the full contract and its
+    documented limitations.
+    """
+
     def __init__(self, it_cfg: ITConfig, *args, **kwargs):
-        """"""
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__(*args, **kwargs)
         self.model: torch.nn.Module = None  # type: ignore[assignment]  # initialized later in lifecycle
