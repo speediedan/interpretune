@@ -42,6 +42,8 @@ CT_BACKEND_REGISTRY: dict[str, str] = {
 
 @dataclass(kw_only=True)
 class InstantiatedGraph:
+    """A computed attribution graph plus where it was persisted and what produced it."""
+
     handle: Graph
     graph_path: Path | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -386,6 +388,8 @@ class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
 
 
 class CircuitTracerAdapter(CircuitTracerAttributeMixin):
+    """Adapter composing interpretune modules with circuit-tracer attribution."""
+
     def initialize_graph_output_dir(self, core_log_dir: Path) -> None:
         """Initialize graph_output_dir based on configuration or default to core_log_dir/graph_data."""
         if not self.it_cfg.circuit_tracer_cfg.graph_output_dir:
@@ -394,6 +398,7 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
 
     @classmethod
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
+        """Register the circuit-tracer compositions across supported execution backends."""
         # ======================================================================
         # Backend-agnostic registrations: (core, circuit_tracer)
         # ======================================================================
@@ -567,6 +572,11 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         )
 
     def setup(self, *args, **kwargs) -> None:
+        """Run normal setup, then resolve the graph output directory from the run's log directory.
+
+        Deferred to setup because the log directory is not known at construction, and graphs must have somewhere to land
+        before the first attribution runs.
+        """
         super().setup(*args, **kwargs)  # type: ignore[misc]  # mixin call to super
         self.initialize_graph_output_dir(self.core_log_dir)  # type: ignore[attr-defined]  # mixin provides core_log_dir
 
@@ -681,7 +691,8 @@ class CircuitTracerAnalysisMixin:
 # Backend-agnostic Circuit Tracer module (for NNsight backend or other non-TL backends)
 class CircuitTracerModule(
     CircuitTracerAnalysisMixin, CircuitTracerAdapter, CoreHelperAttributes, BaseCircuitTracerModule
-): ...
+):
+    """Backend-agnostic circuit-tracer composition (NNsight or other non-TL backends)."""
 
 
 # TransformerLens-specific Circuit Tracer module

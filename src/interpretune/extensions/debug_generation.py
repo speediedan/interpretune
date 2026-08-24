@@ -16,6 +16,8 @@ from interpretune.protocol import ITModuleGenDebuggable
 
 @dataclass(kw_only=True)
 class DebugLMConfig(ITSerializableCfg):
+    """Configuration for the generation-debugging extension."""
+
     enabled: bool = False
     debug_raw_preds: np.ndarray | None = None
     debug_raw_labels: np.ndarray | None = None
@@ -61,6 +63,7 @@ class DebugGeneration:
         self.phandle = None
 
     def connect(self, obj_ref: ITModuleGenDebuggable) -> None:
+        """Bind the extension to the module it will debug."""
         self.phandle = obj_ref
 
     def _check_phandle(self) -> ITModuleGenDebuggable:
@@ -264,6 +267,11 @@ class DebugGeneration:
         stride: int | None = None,
         limit_chars: int | None = None,
     ) -> torch.Tensor:
+        """Compute perplexity on a corpus, defaulting to a small built-in sample when none is given.
+
+        A convenience wrapper over :meth:`naive_perplexity` that handles corpus loading and truncation, so
+        a sanity check needs no dataset plumbing.
+        """
         ph = self._check_phandle()
 
         if not corpus:
@@ -281,6 +289,11 @@ class DebugGeneration:
         return self.naive_perplexity(encoded_corpus, **perplexity_kwargs)
 
     def top1_token_accuracy_on_sample(self, sample: str) -> tuple[float, list[str]]:
+        """Fraction of next-token predictions that are exactly right, plus the tokens got right.
+
+        A coarser but more legible signal than perplexity: it answers "is the model predicting this text at
+        all" in a form you can read.
+        """
         ph = self._check_phandle()
 
         sample_input_ids = ph.datamodule.tokenizer.encode(sample)  # type: ignore[attr-defined]  # protocol provides datamodule
@@ -301,6 +314,12 @@ class DebugGeneration:
         return num_correct / len(true_tokens), correct_tokens
 
     def naive_perplexity(self, encoded_corpus, stride: int = 512) -> torch.Tensor:
+        """Sliding-window perplexity over a tokenized corpus.
+
+        Named "naive" deliberately: windows advance by ``stride`` and context preceding each window is not
+        carried across, so tokens early in a window are scored with less context than a single full-length
+        pass would give. Adequate for debugging, not for reporting a headline number.
+        """
         ph = self._check_phandle()
 
         max_length = ph.datamodule.tokenizer.model_max_length  # type: ignore[attr-defined]  # protocol provides datamodule
@@ -337,6 +356,7 @@ class DebugGeneration:
     def sanitize_gen_output(
         self, outputs: Any, gen_output_attr: str | None = None, decode_cfg_override: Dict | None = None
     ) -> tuple[Any, Dict]:
+        """Extract the decodable part of a generation output and the decode kwargs to use with it."""
         decode_target = self.sanitize_model_output(outputs, gen_output_attr)
         decode_kwargs = deepcopy(DEFAULT_DECODE_KWARGS)
         if decode_cfg_override:
@@ -344,6 +364,11 @@ class DebugGeneration:
         return decode_target, decode_kwargs
 
     def sanitize_model_output(self, output: Any, gen_output_attr: str | None = None) -> Any:
+        """Return the named attribute of a model output, or the output unchanged when none is named.
+
+        Deliberately does not coerce further: backends return different output types, and guessing which
+        field is "the" output is how a debugging helper starts lying about what the model produced.
+        """
         # TODO: revisit this logic after getting TL generate PR ready
         # For simplification, sanitization returns the requested attribute if
         # specified. Otherwise, return the output directly (e.g. raw tensor or
@@ -365,6 +390,7 @@ class DebugGeneration:
 
     @property
     def model_input_names(self) -> list[str]:
+        """The tokenizer's configured input names, via the connected module's datamodule."""
         ph = self._check_phandle()
         return ph.datamodule.tokenizer.model_input_names  # type: ignore[attr-defined]  # protocol provides datamodule
 
@@ -376,6 +402,7 @@ class DebugGeneration:
         gen_kwargs_override: Dict | None = None,
         decode_cfg_override: Dict | None = None,
     ) -> tuple[List, List]:
+        """Generate for all sequences in ONE batched call; returns decoded answers and raw outputs."""
         ph = self._check_phandle()
 
         test_input_ids = ph.datamodule.tokenizer(sequences)  # type: ignore[attr-defined]  # protocol provides datamodule
@@ -407,6 +434,11 @@ class DebugGeneration:
         gen_kwargs_override: Dict | None = None,
         decode_cfg_override: Dict | None = None,
     ) -> tuple[List, List]:
+        """Generate one sequence at a time; returns decoded answers and raw outputs.
+
+        The serial counterpart to :meth:`debug_generate_batch`. Slower, but it isolates each sequence --
+        which is what you want when batching itself is the suspect (padding, attention masking).
+        """
         ph = self._check_phandle()
 
         answers = []

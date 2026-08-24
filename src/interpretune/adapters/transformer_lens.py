@@ -67,8 +67,15 @@ def _ensure_bridge_processed_weight_device_patch() -> None:
 
 
 class TLensAttributeMixin:
+    """TransformerLens-aware attribute access: config and device resolution off the wrapped TL model."""
+
     @property
     def tl_cfg(self) -> HookedTransformerConfig | TransformerBridgeConfig | None:
+        """The wrapped model's TL config, or None (with a warning) before the model exists.
+
+        Returns None rather than raising because this is read during setup and repr paths, where "not constructed yet"
+        is an ordinary state rather than an error.
+        """
         try:
             cfg = reduce(getattr, "model.cfg".split("."), self)
         except AttributeError as ae:
@@ -79,6 +86,7 @@ class TLensAttributeMixin:
     # TODO: we aren't using IT's Property Composition feature for TLens yet, but might be worth enabling it
     @property
     def device(self) -> torch.device | None:
+        """The wrapped TL model's device, or None when it cannot be determined yet."""
         device: torch.device | None = None
         try:
             device = (
@@ -112,10 +120,12 @@ class TLensAttributeMixin:
 
     @property
     def output_device(self) -> torch.device | None:
+        """Device model outputs land on -- for TL, the same device as inputs."""
         return self.get_tl_device()  # type: ignore[attr-defined]  # provided by mixing class
 
     @property
     def input_device(self) -> torch.device | None:
+        """Device batches must be moved to before a forward pass."""
         return self.get_tl_device()
 
     def batch_to_device(self, batch) -> BatchEncoding:
@@ -156,6 +166,12 @@ class BaseITLensModule(BaseITModule):
             self.tl_config_model_init()
 
     def hf_pretrained_model_init(self) -> None:
+        """Initialize from HF pretrained weights, then replace the model with its TL equivalent.
+
+        Only a subset of the usual HF init flow runs, because the HF model is a means to an end here:
+        it is converted to a ``TransformerBridge`` (v3 default) or a legacy ``HookedTransformer``
+        depending on ``tl_cfg.use_bridge``, and the HF module itself is not what ends up on ``self``.
+        """
         # for TL, only a subset of the HF pretrained init flow used since the model is replaced with
         # HookedTransformer or TransformerBridge
         access_token = (
@@ -175,6 +191,11 @@ class BaseITLensModule(BaseITModule):
     def hf_configured_model_init(
         self, cust_config: HFPretrainedConfig, access_token: str | None = None
     ) -> torch.nn.Module:
+        """Instantiate the HF model that TL conversion will consume.
+
+        Kept on CPU rather than the target device: both the HF weights and the TL model would otherwise
+        be resident simultaneously, doubling peak memory for a model that is about to be replaced.
+        """
         # usually makes sense to init the HookedTransfomer (empty) and pretrained HF model weights on cpu
         # versus moving them both to GPU (may make sense to explore meta device usage for model definition
         # in the future, only materializing parameter by parameter during loading from pretrained weights
@@ -222,6 +243,11 @@ class BaseITLensModule(BaseITModule):
         return model
 
     def tl_config_model_init(self) -> None:
+        """Initialize a TL model from config alone, with no HF pretrained weights.
+
+        Always produces a ``HookedTransformer``: ``TransformerBridge`` wraps an existing HF model and so
+        cannot be built config-only, and ``use_bridge=True`` is warned about and ignored on this path.
+        """
         # TODO: add note to documentation that we currently require tl_cfg to be not None (either from pretrained or
         #       custom config) based, so model_init will not be used. To fully customize TL behavior, override this
         #       method and init config-based HookedTransformer as desired
@@ -383,6 +409,7 @@ class BaseITLensModule(BaseITModule):
         super()._capture_hyperparameters()
 
     def set_input_require_grads(self) -> None:
+        """Not supported for TL modules; logs and returns rather than raising."""
         # not currently supported by ITLensModule
         rank_zero_info("Setting input require grads not currently supported by ITLensModule.")
 
@@ -393,8 +420,11 @@ class BaseITLensModule(BaseITModule):
 
 
 class TransformerLensAdapter(TLensAttributeMixin):
+    """Adapter composing interpretune modules with TransformerLens execution."""
+
     @classmethod
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
+        """Register the TransformerLens datamodule and module compositions."""
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="datamodule",
@@ -431,13 +461,15 @@ class TransformerLensAdapter(TLensAttributeMixin):
         )
 
     def batch_to_device(self, batch) -> BatchEncoding:
+        """Move a batch to the TL input device when one is resolvable; a no-op otherwise."""
         device = self.input_device
         if device is not None:
             move_data_to_device(batch, device)
         return batch
 
 
-class ITLensModule(TransformerLensAdapter, CoreHelperAttributes, BaseITLensModule): ...
+class ITLensModule(TransformerLensAdapter, CoreHelperAttributes, BaseITLensModule):
+    """The TransformerLens module composition."""
 
 
 if _FTS_AVAILABLE:
@@ -530,6 +562,12 @@ if _FTS_AVAILABLE:
             self.model_view.build_param_mapping()
 
         def on_before_init_fts(self) -> None:
+            """Redirect the module's state-dict methods to the TransformerBridge's before FTS init.
+
+            The bridge owns the key translation between TL-style and HF-style parameter names, so
+            fine-tuning-scheduler must see the bridge's ``state_dict``/``load_state_dict`` rather than
+            the wrapper's -- otherwise schedule keys and checkpoint keys disagree.
+            """
             # we patch our wrapped TransformerBridge module to use the TransformerBridge's state_dict and
             # load_state_dict methods to handle the specialized key translation logic
             assert self.pl_module is not None
@@ -628,6 +666,7 @@ if _FTS_AVAILABLE:
             return self.pl_module.model.state_dict()  # type: ignore[attr-defined,no-any-return]
 
         def load_model_state_dict(self, checkpoint: Mapping[str, Any], strict: bool = True) -> None:
+            """Load a checkpoint through the wrapped model, so TL key translation applies."""
             assert self.pl_module is not None
             self.pl_module.model.load_state_dict(checkpoint["state_dict"], strict=strict)  # type: ignore[attr-defined]
 

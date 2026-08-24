@@ -365,15 +365,7 @@ output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff
 "src/interpretune/config/shared.py" = ["D101", "D102", "D103"]  # 13
 "src/interpretune/config/transformer_lens.py" = ["D101", "D102", "D103"]  # 3
 
-# --- slice C (#343) -- adapters/, extensions/  (8 files, 76 violations)
-"src/interpretune/adapters/circuit_tracer.py" = ["D101", "D102", "D103"]  # 5
-"src/interpretune/adapters/core.py" = ["D101", "D102", "D103"]  # 4
-"src/interpretune/adapters/lightning.py" = ["D101", "D102", "D103"]  # 3
-"src/interpretune/adapters/registration.py" = ["D101", "D102", "D103"]  # 6
-"src/interpretune/adapters/sae_lens.py" = ["D101", "D102", "D103"]  # 13
-"src/interpretune/adapters/transformer_lens.py" = ["D101", "D102", "D103"]  # 15
-"src/interpretune/extensions/debug_generation.py" = ["D101", "D102", "D103"]  # 10
-"src/interpretune/extensions/memprofiler.py" = ["D101", "D102", "D103"]  # 20
+# --- slice C (#343) -- adapters/, extensions/: DONE (was 8 files, 76 violations)
 
 # --- slice D (#344) -- utils/ + residue: DONE (was 10 files, 45 violations)
 
