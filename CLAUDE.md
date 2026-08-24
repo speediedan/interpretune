@@ -579,6 +579,13 @@ docs are not.
   Include: what the PR landed, anything the work **obviated** (with why), and the remaining items as a
   checklist. State plainly when an item is blocked and what unblocks it, rather than dropping it.
 
+- **No ephemeral CI references (build numbers, run URLs, approval ids) in comments or commit
+  messages meant for future readers.** A pipeline build number identifies a log that expires and a
+  context the reader will not have; "fix build 849" tells them nothing once the log is gone. Outline
+  the circumstances generally instead: what environment shape triggered the defect, what the
+  observable symptom was, and why the fix addresses it. Ephemeral ids belong in PR discussion
+  threads and workstream logs, which carry their own context, not in the tree.
+
 - **No AI-attribution trailers** (`Co-Authored-By: Claude ...`, "Generated with ..." lines) in commit
   messages or PR bodies — they are commit noise (and `.claude/settings.json` no longer adds them). When
   rebasing the long-lived multi-repo workstream branches (interpretune, SAEDashboard, SAELens,

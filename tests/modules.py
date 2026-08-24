@@ -1,4 +1,5 @@
 import os
+import shutil
 from pathlib import Path
 from jaxtyping import Float, Int
 from typing import Any, Dict, Callable, List, Tuple
@@ -95,17 +96,32 @@ class BaseTestDataModule:
                 dataset[split] = dataset[split].select(range(10))
                 dataset[split] = dataset[split].map(tokenization_func, **self.itdm_cfg.prepare_data_map_cfg)
                 dataset[split] = self._remove_unused_columns(dataset[split])
-            rank_zero_debug(f"[PREPARE_DATA] Final dataset_path before save_to_disk: {dataset_path}")
-            rank_zero_debug(f"[PREPARE_DATA] Calling save_to_disk with: {dataset_path}")
-            import traceback
-
-            try:
+            # Overwriting the dataset in place rewrites Arrow files that earlier tests in this
+            # process may still hold memory-mapped. POSIX allows that silently; Windows refuses with
+            # OSError(EINVAL) from the writer open (#326: 18 stderr tracebacks per CI run from a
+            # swallowed exception here, loud enough to misdirect unrelated failure diagnosis, while
+            # force_prepare silently degraded to keeping the stale copy). Build beside the target and
+            # swap; when live maps block the swap, keep the existing copy and say so in ONE debug
+            # line. Debug, not warn: on Windows live maps block the swap on effectively every
+            # mid-suite rebuild, so a warning here fires routinely and trips the parity tests'
+            # unexpected-warnings assertion (5 failures the noise this block used to emit had been
+            # burying).
+            if dataset_path.exists():
+                rebuild_path = dataset_path.with_name(dataset_path.name + ".rebuild")
+                shutil.rmtree(rebuild_path, ignore_errors=True)
+                dataset.save_to_disk(rebuild_path)
+                try:
+                    shutil.rmtree(dataset_path)
+                    rebuild_path.rename(dataset_path)
+                    rank_zero_debug(f"[PREPARE_DATA] rebuilt dataset swapped into {dataset_path}")
+                except OSError as e:
+                    shutil.rmtree(rebuild_path, ignore_errors=True)
+                    rank_zero_debug(
+                        f"[PREPARE_DATA] kept existing dataset at {dataset_path}: in-place rebuild "
+                        f"blocked by live memory-maps ({type(e).__name__}: {e})"
+                    )
+            else:
                 dataset.save_to_disk(dataset_path)
-                rank_zero_debug("[PREPARE_DATA] save_to_disk: SUCCESS")
-            except Exception as e:
-                rank_zero_debug(f"[PREPARE_DATA] save_to_disk: FAILED ({e})")
-                rank_zero_debug(f"[PREPARE_DATA] Exception type: {type(e).__name__}")
-                traceback.print_exc()
 
 
 class TestITDataModule(BaseTestDataModule, RTEBoolqDataModule): ...
