@@ -338,17 +338,8 @@ output-format = "pylint"  # `format` was deprecated to prepare for upcoming ruff
 # their own lines as they author, so this block SHRINKS monotonically and never grows -- a new file
 # under src/interpretune is enforced from birth because it is not listed here.
 # DONE-CRITERION for #139: this block is empty.
-# --- slice A (#341) -- base/ + registry.py only; protocol.py, runners/, session.py and
-#     adapter_registry.py are DONE (82 of the original 166). The remainder waits on the
-#     in-flight base-contract and registry refactors; see the note on #341.
-"src/interpretune/base/call.py" = ["D101", "D102", "D103"]  # 2
-"src/interpretune/base/components/cli.py" = ["D101", "D102", "D103"]  # 12
-"src/interpretune/base/components/core.py" = ["D101", "D102", "D103"]  # 12
-"src/interpretune/base/components/mixins.py" = ["D101", "D102", "D103"]  # 26
-"src/interpretune/base/datamodules.py" = ["D101", "D102", "D103"]  # 3
-"src/interpretune/base/hooks.py" = ["D101", "D102", "D103"]  # 2
-"src/interpretune/base/modules.py" = ["D101", "D102", "D103"]  # 1
-"src/interpretune/registry.py" = ["D101", "D102", "D103"]  # 26
+# --- slice A (#341) -- DONE (was 13 files; 166 recorded, 165 actual once a merged
+#     base/ docstring made one baseline count stale -- see the note on #340)
 
 # --- slice B (#342) -- DONE, both halves (analysis/ 64 + config/ 45 = 109 violations)
 

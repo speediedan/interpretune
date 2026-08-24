@@ -11,6 +11,12 @@ HOOKABLE_ITMODULE = ITDataModule | BaseITModule
 
 
 def it_init(module, datamodule, *args, **kwargs):
+    """Initialize a session: prepare data, set up both halves, then optimizers if configured.
+
+    Order is the contract, not a convenience: the datamodule prepares and sets up BEFORE the module,
+    because the module's setup reads the tokenizer the datamodule configures. Optimizers are built last
+    and only when an optimizer configuration exists, so an analysis-only session skips them entirely.
+    """
     _call_itmodule_hook(datamodule, hook_name="prepare_data", hook_msg="Preparing data", target_model=module.model)
     _call_itmodule_hook(datamodule, hook_name="setup", hook_msg="Setting up datamodule")
     _call_itmodule_hook(module, hook_name="setup", hook_msg="Setting up model", datamodule=datamodule)
@@ -24,6 +30,7 @@ def it_init(module, datamodule, *args, **kwargs):
 
 
 def it_session_end(module, datamodule, session_type: AllPhases | CorePhases = CorePhases.train, *args, **kwargs):  # type: ignore[attr-defined]  # enum metaclass pattern
+    """Dispatch the phase-appropriate ``on_<phase>_end`` hook to the module and datamodule."""
     # dispatch the appropriate stage-specific `end` hook upon completion of the session
     hook_name = f"on_{session_type.name}_end"
     _call_itmodule_hook(module, hook_name=hook_name, hook_msg="Running stage end hooks on IT module")

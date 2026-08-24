@@ -33,6 +33,11 @@ class BaseITHooks:
     _it_state: ITState
 
     def setup(self, *args, **kwargs) -> None:
+        """Attach the datamodule if provided and create the session's output directories.
+
+        The datamodule arrives via kwargs rather than being assumed present: under some adapters it is
+        reachable only through the trainer at this point, so setup must tolerate its absence here.
+        """
         # for some adapters, datamodule access is not provided in setup and will be accessed via Trainer
         if datamodule := kwargs.get("datamodule", None):
             self._it_state._datamodule = datamodule
@@ -77,4 +82,5 @@ class BaseITHooks:
             self.on_session_end()
 
     def forward(self, *args, **kwargs) -> STEP_OUTPUT:
+        """Forward to the wrapped model, merging in any configured custom forward kwargs."""
         return self.model(*args, **kwargs, **self.it_cfg.cust_fwd_kwargs)

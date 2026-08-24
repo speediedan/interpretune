@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 # TODO: move core datamodule logic to a separate mixin and compose it with supported hooks analogous to BaseITModule
 #       and ITModule
 class ITDataModule:
+    """Base datamodule: owns the dataset, the tokenizer, and the dataloaders a session runs over."""
+
     def __init__(self, itdm_cfg: ITDataModuleConfig, *args, **kwargs):
         r"""
 
@@ -55,6 +57,7 @@ class ITDataModule:
 
     @property
     def module(self) -> "ITModuleProtocol | None":
+        """The module this datamodule is paired with, resolved via the trainer when not directly attached."""
         try:
             module = getattr(self, "_module", None) or reduce(getattr, "trainer.model".split("."), self)
             # Ensure we return the correct type. If a module-like object is attached but isn't a
@@ -88,6 +91,11 @@ class ITDataModule:
             self._module = module
 
     def configure_tokenizer(self) -> PreTrainedTokenizerBase:
+        """Build the tokenizer, applying precedence: pre-configured, then tokenizer name, then model name.
+
+        The precedence exists so a config can override the tokenizer independently of the model -- needed wherever a
+        model is used with a tokenizer other than its own default.
+        """
         access_token = (
             os.environ[self.itdm_cfg.os_env_model_auth_key.upper()] if self.itdm_cfg.os_env_model_auth_key else None
         )

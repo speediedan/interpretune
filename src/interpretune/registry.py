@@ -37,12 +37,16 @@ DEFAULT_MODULE_REGISTRY_PATH = Path(__file__).parent / "module_registry.yaml"
 
 
 class RegKeyType(Enum):
+    """How a registry key is expressed: as a display string, as a tuple, or as an adapter combination."""
+
     STRING = ""
     TUPLE = tuple()
     COMBO = tuple()
 
 
 class RegisteredCfg(NamedTuple):
+    """A registered configuration: the datamodule and module configs plus the classes to build them with."""
+
     datamodule_cfg: ITDataModuleConfig
     module_cfg: ITConfig
     datamodule_cls: Type[DataModuleInitable] = DEFAULT_DATAMODULE  # type: ignore[assignment]
@@ -64,12 +68,20 @@ class RegisteredDataModuleCfg(NamedTuple):
 
 @runtime_checkable
 class RegKeyQueryable(Protocol):
+    """What an object must expose to be resolved into a registry key.
+
+    Composition identity is ``(model_src, task, adapter_ctx)`` -- phase is deliberately absent, since a
+    registered composition is the same object whichever phase runs it.
+    """
+
     model_src_key: str
     model_cfg_key: str
     adapter_ctx: Tuple
 
 
 class ModuleRegistry(dict):  # type: ignore[type-arg]
+    """Maps ``(model_src, task, adapter_ctx)`` to the configuration registered for it."""
+
     def register(
         self,
         model_src_key: str,
@@ -103,14 +115,24 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
             self[composition_key] = supported_composition  # type: ignore[assignment]
 
     def canonicalize_composition(self, adapter_ctx: Sequence[Adapter]) -> Tuple:
+        """Sort an adapter context into canonical order, so a combination has ONE key however it was written."""
         return tuple(sorted(list(adapter_ctx), key=lambda a: a.value))
 
     def available_keys(self, key_type: RegKeyType | str = "string") -> None:
+        """Print the registered keys in the requested form.
+
+        See :meth:`available_keys_feedback` for the string.
+        """
         if isinstance(key_type, str):
             key_type = RegKeyType[key_type.upper()]
         print(self.available_keys_feedback(key_type.value))
 
     def available_keys_feedback(self, target_key: str | Tuple) -> str:
+        """Render the registered keys matching ``target_key``'s type, as a table with descriptions.
+
+        Filtering by TYPE is what lets one registry hold both string and tuple keys without a listing mixing the two
+        into something a reader cannot act on.
+        """
         assert isinstance(target_key, (str, tuple)), "`target_key` must be either a str or a tuple"
         # Collect entries as (displayable_key, description) and sort by the displayable key
         entries: list[tuple[str, str]] = []
@@ -135,6 +157,7 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
             return tabulate(entries, headers=["(Model Src, Task Name, Adapter Ctx)", "Description"])
 
     def composition_keys(self) -> Set:
+        """The tuple-form keys only -- i.e. the composition keys, excluding string aliases."""
         return {key for key in self.keys() if isinstance(key, tuple)}
 
     @override
@@ -192,6 +215,7 @@ def instantiate_and_register(
     itdm_cfg_defaults_fn: Callable | None = None,
     it_cfg_defaults_fn: Callable | None = None,
 ) -> None:
+    """Build a configuration from a registry entry and register it under ``reg_key``."""
     cfg_dict = deepcopy(rv)
     reg_info, shared_cfg, registered_cfg = rv["reg_info"], rv["shared_config"], rv["registered_cfg"]
     reg_info["adapter_combinations"] = resolve_adapter_combinations(reg_info["adapter_combinations"])
@@ -210,6 +234,7 @@ def instantiate_and_register(
 def instantiate_or_import(
     registered_cfg, shared_cfg, itdm_cfg_defaults_fn, it_cfg_defaults_fn, datamodule_cls, module_cls
 ):
+    """Hydrate a registry entry: build its configs, importing the declared classes where given."""
     datamodule_cfg = itdm_cfg_factory(registered_cfg["datamodule_cfg"], shared_cfg, defaults_func=itdm_cfg_defaults_fn)
     module_cfg = it_cfg_factory(registered_cfg["module_cfg"], shared_cfg, defaults_func=it_cfg_defaults_fn)
     if datamodule_cls_path := registered_cfg.get("datamodule_cls", None):
@@ -222,6 +247,7 @@ def instantiate_or_import(
 def gen_module_registry(
     yaml_reg_path: Path = DEFAULT_MODULE_REGISTRY_PATH, register_func: Callable = instantiate_and_register
 ) -> None:
+    """Populate a registry from a YAML file, one entry per registered configuration."""
     with open(yaml_reg_path, encoding="utf-8") as file:
         # Load the YAML file content
         data = yaml.safe_load(file)
@@ -246,6 +272,7 @@ def gen_module_registry(
 
 
 def resolve_adapter_combinations(adapter_combinations: Sequence):
+    """Normalize declared adapter combinations, accepting a bare string as a one-adapter combination."""
     registered_combinations = []
     for adps in adapter_combinations:
         if isinstance(adps, str):
@@ -313,6 +340,11 @@ def _admits_plain_dict(declared) -> bool:
 
 
 def instantiate_nested(c: Dict | List, skip_keys: Set | None = None):
+    """Recursively instantiate ``class_path``/``init_args`` nodes, honoring ``compose_ref`` where present.
+
+    ``skip_keys`` leaves selected subtrees as plain data -- needed where a nested mapping is configuration
+    FOR something rather than a description of an object to build.
+    """
     skip_keys = skip_keys or set()
     if isinstance(c, dict) and "compose_ref" in c:
         # cross-repo prompt-config composition (design §11.5): one grammar, one extension point
@@ -344,12 +376,18 @@ def instantiate_nested(c: Dict | List, skip_keys: Set | None = None):
 
 
 def apply_defaults(cfg: ITConfig | ITDataModuleConfig, defaults: Dict, force_override: bool = False):
+    """Apply default values to a config, filling only unset fields unless ``force_override``."""
     for k, v in defaults.items():
         if not getattr(cfg, k, None) or force_override:
             setattr(cfg, k, v)
 
 
 def itdm_cfg_factory(cfg: Dict, shared_config: Dict, defaults_func: Callable | None = None):
+    """Build an ``ITDataModuleConfig`` from a body plus shared config -- one half of the ONE merge site.
+
+    Shared values are applied here, through the constructor, which is what keeps ``AutoCompConfig``
+    synthesis working: composition happens inside the config constructors this calls.
+    """
     prompt_cfg = cfg.get("prompt_cfg", {})
     # instantiate supported class_path refs (compose_ref EXTENDS class_path instantiation: the
     # class_path task schema composes with a hub-referenced model-prompt definition, design §11.5)
@@ -367,6 +405,11 @@ def itdm_cfg_factory(cfg: Dict, shared_config: Dict, defaults_func: Callable | N
 
 
 def it_cfg_factory(cfg: Dict, shared_config: Dict | None = None, defaults_func: Callable | None = None):
+    """Build an ``ITConfig`` from a body plus shared config -- the other half of the one merge site.
+
+    Note the asymmetry with the datamodule factory: shared config is applied only on the ``class_path``
+    branch, since a plain-dict body names its fields explicitly and has nothing to merge into.
+    """
     if "class_path" in cfg:
         cfg["init_args"] = cfg["init_args"] | shared_config if "init_args" in cfg else shared_config
         instantiated_cfg = instantiate_nested(cfg)
@@ -417,6 +460,7 @@ class ModuleHydrator:
 
     @property
     def registry(self) -> "ModuleRegistry":
+        """The underlying registry, built on first access under a lock."""
         if self._registry is None:
             with self._lock:
                 if self._registry is None:
@@ -505,10 +549,12 @@ class LazyModuleRegistry:
             self._hydrator.hydrate_all()
 
     def get(self, target: Tuple | str | Any, default: Any = None) -> Any:
+        """Look up one key, hydrating only that entry."""
         self._resolve(target)
         return self.registry.get(target, default)
 
     def register(self, *args, **kwargs):
+        """Register an entry directly, without triggering hydration."""
         return self.registry.register(*args, **kwargs)
 
     def __getitem__(self, key):
@@ -530,12 +576,24 @@ class LazyModuleRegistry:
         return self.registry
 
     def keys(self):
+        """All keys.
+
+        Forces FULL hydration -- every entry is built.
+        """
         return self._full_registry().keys()
 
     def values(self):
+        """All registered configurations.
+
+        Forces FULL hydration.
+        """
         return self._full_registry().values()
 
     def items(self):
+        """All (key, configuration) pairs.
+
+        Forces FULL hydration.
+        """
         return self._full_registry().items()
 
     def __len__(self):
@@ -549,13 +607,26 @@ class LazyModuleRegistry:
 
     # Forward other common methods
     def available_keys(self, *args, **kwargs):
+        """Print all registered keys.
+
+        Forces full hydration.
+        """
         return self._full_registry().available_keys(*args, **kwargs)
 
     def available_keys_feedback(self, *args, **kwargs):
+        """Render all registered keys as a table.
+
+        Forces full hydration.
+        """
         return self._full_registry().available_keys_feedback(*args, **kwargs)
 
     def available_compositions(self, *args, **kwargs):
+        """Render the registered adapter compositions.
+
+        Forces full hydration.
+        """
         return self._full_registry().available_compositions(*args, **kwargs)
 
     def remove(self, *args, **kwargs):
+        """Remove an entry, without triggering hydration."""
         return self.registry.remove(*args, **kwargs)
