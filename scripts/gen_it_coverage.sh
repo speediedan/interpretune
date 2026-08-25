@@ -148,6 +148,21 @@ venv_dir=$(expand_tilde "${venv_dir}")
 # Priority: --venv-dir > IT_VENV_BASE > default ~/.venvs
 venv_path=$(determine_venv_path "${venv_dir}" "${target_env_name}")
 
+# Report to the terminal as well as the session log. Everything here used to exit into the log
+# only, which is indistinguishable from a run still in progress to whoever launched it.
+fail(){
+    echo "gen_it_coverage: $1" >&2
+    echo "gen_it_coverage: $1" >> "$coverage_session_log" 2>/dev/null || true
+    exit 1
+}
+
+# With --no-rebuild-base there is no build step to surface a bad env name, so check it up front
+# rather than failing later inside `source .../bin/activate`.
+require_existing_venv(){
+    [[ -x "${venv_path}/bin/activate" || -f "${venv_path}/bin/activate" ]] && return 0
+    fail "no venv at '${venv_path}' for --target-env-name='${target_env_name}'. Build it first with scripts/build_it_env.sh, or drop --no-rebuild-base."
+}
+
 # Strip leading/trailing quotes from string variables if present
 if [[ -n "${from_source_spec}" ]]; then
     from_source_spec=$(strip_quotes "$from_source_spec")
@@ -175,32 +190,30 @@ check_self_test_only(){
 env_rebuild(){
     cd ${repo_home}
 
-    case $1 in
-        it_latest | it_release )
-            echo "Rebuilding environment with build_it_env.sh..." >> $coverage_session_log
-            # Build command with conditional flags
-            build_cmd="${repo_home}/scripts/build_it_env.sh --repo-home=${repo_home} --target-env-name=$1"
-            [[ -n ${venv_dir} ]] && build_cmd="${build_cmd} --venv-dir=${venv_dir}"
-            [[ -n ${python_version} ]] && build_cmd="${build_cmd} --python-version=${python_version}"
-            [[ -n ${torch_backend} ]] && build_cmd="${build_cmd} --torch-backend=${torch_backend}"
+    # Any env name is accepted. build_it_env.sh is what actually validates the target, and the
+    # build command never varied by name -- an allowlist here only refused unfamiliar names, which
+    # made a pins-only env (the one CLAUDE.md requires for anything gating a release or an upstream
+    # PR) impossible to run without clobbering the integrated dev env.
+    echo "Rebuilding environment with build_it_env.sh..." >> $coverage_session_log
+    # Build command with conditional flags
+    build_cmd="${repo_home}/scripts/build_it_env.sh --repo-home=${repo_home} --target-env-name=$1"
+    [[ -n ${venv_dir} ]] && build_cmd="${build_cmd} --venv-dir=${venv_dir}"
+    [[ -n ${python_version} ]] && build_cmd="${build_cmd} --python-version=${python_version}"
+    [[ -n ${torch_backend} ]] && build_cmd="${build_cmd} --torch-backend=${torch_backend}"
 
-            # Handle multiple --from-source flags
-            if [[ ${#from_source_specs[@]} -gt 0 ]]; then
-                for spec in "${from_source_specs[@]}"; do
-                    build_cmd="${build_cmd} --from-source='${spec}'"
-                done
-            fi
+    # Handle multiple --from-source flags
+    if [[ ${#from_source_specs[@]} -gt 0 ]]; then
+        for spec in "${from_source_specs[@]}"; do
+            build_cmd="${build_cmd} --from-source='${spec}'"
+        done
+    fi
 
-            [[ -n ${pip_install_flags} ]] && build_cmd="${build_cmd} --uv-install-flags='${pip_install_flags}'"
+    [[ -n ${pip_install_flags} ]] && build_cmd="${build_cmd} --uv-install-flags='${pip_install_flags}'"
 
-            echo "Running: ${build_cmd}" >> $coverage_session_log
-            eval ${build_cmd} >> $coverage_session_log 2>&1
-            ;;
-        *)
-            echo "no matching environment found, exiting..." >> $coverage_session_log
-            exit 1
-            ;;
-    esac
+    echo "Running: ${build_cmd}" >> $coverage_session_log
+    if ! eval ${build_cmd} >> $coverage_session_log 2>&1; then
+        fail "environment build failed for '$1'; see ${coverage_session_log}"
+    fi
 }
 
 collect_env_coverage(){
@@ -278,62 +291,57 @@ PY
         failures_flag="--allow-failures"
         echo "Running in --allow-failures mode: coverage collection will continue past test failures." >> $coverage_session_log
     fi
-    case $1 in
-        it_latest )
-            check_self_test_only "Skipping all tests and examples." && return
-            python -m coverage erase
-            if [[ $run_all_and_examples -eq 1 ]]; then
-                # Using pytest-cov ensures coverage starts before test collection imports
-                run_logged_phase \
-                    "base pytest" \
-                    env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-report= tests src/it_examples/tests src/it_examples -v ${pytest_resource_args} ${rerun_args} \
-                    >> "$coverage_session_log" 2>&1
-                run_logged_cuda_phase \
-                    "base pytest cuda-marked" \
-                    run_partitioned_cuda_pytest_phase \
-                    >> "$coverage_session_log" 2>&1
-                run_logged_phase \
-                    "special tests standalone" \
-                    bash -lc "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-                run_logged_phase \
-                    "special tests profile_ci" \
-                    bash -lc "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-                run_logged_phase \
-                    "special tests profile" \
-                    bash -lc "./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-                run_logged_phase \
-                    "special tests optional" \
-                    bash -lc "./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-                run_logged_cuda_phase \
-                    "special tests benchmark" \
-                    bash -lc "./tests/special_tests.sh --mark_type=benchmark --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-            else
-                # Using pytest-cov ensures coverage starts before test collection imports
-                run_logged_phase \
-                    "base pytest" \
-                    env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v ${pytest_resource_args} ${rerun_args} \
-                    >> "$coverage_session_log" 2>&1
-                run_logged_cuda_phase \
-                    "base pytest cuda-marked" \
-                    run_partitioned_cuda_pytest_phase \
-                    >> "$coverage_session_log" 2>&1
-                run_logged_phase \
-                    "special tests standalone" \
-                    bash -lc "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-                run_logged_phase \
-                    "special tests profile_ci" \
-                    bash -lc "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-            fi
-            ;;
-        *)
-            echo "no matching environment found, exiting..."  >> $coverage_session_log
-            exit 1
-            ;;
-    esac
+    # Phases are identical for every env name -- nothing here has ever branched on it, so the
+    # harness runs the same four phases against whatever env --target-env-name selects.
+    check_self_test_only "Skipping all tests and examples." && return
+    python -m coverage erase
+    if [[ $run_all_and_examples -eq 1 ]]; then
+        # Using pytest-cov ensures coverage starts before test collection imports
+        run_logged_phase \
+            "base pytest" \
+            env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-report= tests src/it_examples/tests src/it_examples -v ${pytest_resource_args} ${rerun_args} \
+            >> "$coverage_session_log" 2>&1
+        run_logged_cuda_phase \
+            "base pytest cuda-marked" \
+            run_partitioned_cuda_pytest_phase \
+            >> "$coverage_session_log" 2>&1
+        run_logged_phase \
+            "special tests standalone" \
+            bash -lc "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+        run_logged_phase \
+            "special tests profile_ci" \
+            bash -lc "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+        run_logged_phase \
+            "special tests profile" \
+            bash -lc "./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+        run_logged_phase \
+            "special tests optional" \
+            bash -lc "./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+        run_logged_cuda_phase \
+            "special tests benchmark" \
+            bash -lc "./tests/special_tests.sh --mark_type=benchmark --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+    else
+        # Using pytest-cov ensures coverage starts before test collection imports
+        run_logged_phase \
+            "base pytest" \
+            env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v ${pytest_resource_args} ${rerun_args} \
+            >> "$coverage_session_log" 2>&1
+        run_logged_cuda_phase \
+            "base pytest cuda-marked" \
+            run_partitioned_cuda_pytest_phase \
+            >> "$coverage_session_log" 2>&1
+        run_logged_phase \
+            "special tests standalone" \
+            bash -lc "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+        run_logged_phase \
+            "special tests profile_ci" \
+            bash -lc "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+    fi
 }
 
 env_rebuild_collect(){
     if [[ $no_rebuild_base -eq 1 ]]; then
+        require_existing_venv
         echo "Skipping rebuild of the base IT env ${target_env_name}" >> $coverage_session_log
     else
         echo "Beginning IT env rebuild for $1" >> $coverage_session_log
@@ -350,20 +358,15 @@ start_time=$(date +%s)
 echo "IT coverage collection executing at ${d} PT" > $coverage_session_log
 echo "Generating base coverage for the IT env ${target_env_name}" >> $coverage_session_log
 env_rebuild_collect "${target_env_name}"
+# Hook for envs that need an EXTRA coverage pass beyond the standard phases. Unknown names are not
+# an error here: the default is "no additional pass required", which is true of every env today.
 case ${target_env_name} in
-    it_latest)
-        echo "No env-specific additional coverage currently required for ${target_env_name}" >> $coverage_session_log
-        ;;
-    it_release)
-        echo "No env-specific additional coverage currently required for ${target_env_name}" >> $coverage_session_log
-        ;;
     # it_release_pt2_2_x)  # special path to be used when releasing a previous patch version after a new minor version available
     #     echo "Generating env-specific coverage for the IT env it_release_pt2_0_1" >> $coverage_session_log
     #     env_rebuild_collect "it_release_pt2_0_1"
     #     ;;
     *)
-        echo "no matching environment found, exiting..."  >> $coverage_session_log
-        exit 1
+        echo "No env-specific additional coverage currently required for ${target_env_name}" >> $coverage_session_log
         ;;
 esac
 echo "Writing collected coverage stats for IT env ${target_env_name}" >> $coverage_session_log
