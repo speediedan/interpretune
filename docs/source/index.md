@@ -61,10 +61,23 @@ export VENV_BASE=${HOME}/.venvs IT_TARGET_VENV=it_latest
 uv venv ${VENV_BASE}/${IT_TARGET_VENV} --python 3.13
 source ${VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 
-# Install with development dependencies
+# Install what the example notebooks need.
 # (the git-deps group becomes optional once circuit-tracer is published on PyPI)
-uv pip install -e ".[test,examples,lightning,profiling]" --group git-deps dev
+uv pip install -e ".[examples]" --group git-deps
 ```
+
+`examples` is an **extra**; `git-deps`, `dev`, `test` and `profiling` are PEP 735
+**dependency-groups**, and each needs its own `--group`. The distinction is easy to get wrong and
+fails quietly in both directions: naming a group inside the extras brackets is only a *warning* and
+silently drops it, and a bare name after `--group git-deps` is parsed as another package to install
+rather than a second group. For the contributor toolchain:
+
+```bash
+uv pip install -e ".[examples,lightning]" --group git-deps --group test --group profiling
+```
+
+See {doc}`the examples gallery <examples>` for which notebooks need `git-deps`, a GPU, or gated
+model access.
 
 ### Basic usage
 

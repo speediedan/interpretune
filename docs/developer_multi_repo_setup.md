@@ -166,9 +166,15 @@ full-dependency install would drag in its unused autointerp/cloud chain
 Update that pin alongside the `git-deps` group pins.
 
 `syrupy` (SAEDashboard snapshot tests) and `pgpq` (the columnar local-DB import encoder) are no
-longer post-build extras: both now live in interpretune's `examples` extra and the CI lock, so every
-`build_it_env.sh` run installs them. They previously had to be added by hand after each rebuild,
-which meant they silently vanished on the next one.
+longer post-build extras: both live in interpretune's `test` dependency-group and the CI lock, so
+every `build_it_env.sh` run installs them. They previously had to be added by hand after each
+rebuild, which meant they silently vanished on the next one.
+
+They moved out of the `examples` extra into `test` in 2026-08 so that `.[examples]` is a notebook
+install rather than a maintainer install. That does not reintroduce the vanishing problem: the CI
+lock is compiled across the extras *and* the `dev`/`test`/`profiling` groups, and `build_it_env.sh`
+installs from that lock, so which of the two they are declared in makes no difference to any
+environment built here.
 
 (`polars` is optional: only the neuronpedia-utils converter's opt-in `--emit-arrow` mode and its tests
 use it — those tests skip cleanly when it is absent. The production columnar lane uses pyarrow.)

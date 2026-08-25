@@ -609,8 +609,8 @@ class Setup:
             rc = self._run_streamed(cmd, cwd=it)
             if rc != 0:
                 self.fail(f"build_it_env.sh failed with exit code {rc}")
-        # neuronpedia-utils (pinned git no-deps install) and pgpq (examples extra) are handled by
-        # build_it_env.sh / the locked requirements — verify they landed rather than reinstalling.
+        # neuronpedia-utils (pinned git no-deps install) and pgpq (`test` dependency-group) are handled
+        # by build_it_env.sh / the locked requirements — verify they landed rather than reinstalling.
         if not self.args.dry_run:
             probe = subprocess.run(
                 [str(venv_path / "bin" / "python"), "-c", "import neuronpedia_utils, pgpq"], capture_output=True
@@ -618,7 +618,7 @@ class Setup:
             if probe.returncode != 0:
                 self.fail(
                     "neuronpedia_utils/pgpq missing from the built venv — expected via "
-                    "requirements/ci/nodeps_git_requirements.txt + the examples extra in the CI lock."
+                    "requirements/ci/nodeps_git_requirements.txt + the `test` group in the CI lock."
                 )
             self.say("- [OK] neuronpedia-utils + pgpq present (columnar local-DB import lane)")
         self._check_gated_model_access(venv_path)
