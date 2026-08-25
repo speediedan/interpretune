@@ -149,8 +149,15 @@ Use the provided build script for automated setup:
 # Standard development build (recommended for dev work)
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
 
-# Quick editable install (without locked requirements)
-uv pip install -e ".[test,examples,lightning,profiling]" --group git-deps dev
+# Quick editable install (without locked requirements).
+# `examples`/`lightning` are EXTRAS; `git-deps`/`dev`/`test`/`profiling` are PEP 735
+# dependency-groups and each needs its own `--group`. Naming a group inside the extras brackets is
+# only a warning and silently drops it; a bare name after `--group git-deps` is parsed as a package
+# to install, not a second group.
+uv pip install -e ".[examples,lightning]" --group git-deps --group test --group profiling
+
+# To only RUN the example notebooks, the test/profiling toolchain is unnecessary:
+uv pip install -e ".[examples]" --group git-deps
 
 # Venv Location Options (for hardlink performance and standalone process wrappers):
 #
@@ -597,7 +604,7 @@ We currently only exclude one file from type checking in the /src tree ("src/it_
 ## Special Dependencies and Known Issues
 
 ### Circuit-Tracer Dependency
-**Note:** circuit-tracer is installed directly from git as specified in `pyproject.toml`. The commit is pinned in the examples optional dependencies: `circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@004f1b28...`. When you run `uv pip install -e ".[examples]"`, uv resolves and installs this git dependency automatically.
+**Note:** circuit-tracer is installed from git, pinned in the **`git-deps` dependency-group** of `pyproject.toml` (not the `examples` extra — it moved, and the group is excluded from the universal lock precisely because a git URL cannot be locked). So `uv pip install -e ".[examples]"` alone does **not** install it; the install needs `--group git-deps`. Read the current SHA out of `pyproject.toml` rather than from any doc: the pin moves, and it must include `d117ba1`, which fixes a silent BOS double-prefix in the feature-intervention path.
 
 ### Dependency Constraints
 - **torch** requires 2.7.1+ for newer features

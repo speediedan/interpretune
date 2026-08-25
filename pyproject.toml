@@ -85,23 +85,33 @@ lightning = [
     "peft>=0.18",
 ]
 
+# Scope: what someone RUNNING THE SHIPPED NOTEBOOKS needs. Test tooling and maintainer-lane packages
+# belong in the dependency-groups below, so that `.[examples]` on its own is a usable notebook install
+# rather than a contributor install (#287).
+#
+# THREE ENTRIES HERE LOOK UNUSED TO ANY GREP AND ARE NOT. Recorded because an import audit run while
+# trimming this list flagged all three, and acting on the first would have broken every RTE/BoolQ
+# example:
+#   - scikit-learn: nothing in this repo imports sklearn. But `evaluate.load("super_glue", ...)` in
+#     it_examples/experiments/rte_boolq.py fetches a metric script whose module-level imports include
+#     `sklearn.metrics`. The dependency is real and lives in HF's downloaded metric module, where no
+#     static check of this tree can see it.
+#   - ipywidgets: a Jupyter FRONTEND extension, never imported. Widget rendering (tqdm.notebook,
+#     plotly) degrades silently without it rather than raising.
+#   - torch-tb-profiler: a TensorBoard PLUGIN, loaded via entry-point discovery, never imported.
+# An empty grep is evidence about the grep. Do not drop any of these on import evidence alone.
 examples = [
     "wandb",
     "torch-tb-profiler",
     "notebook",
     "jupyterlab",
     "ipywidgets",
-    "jupytext >= 1.10",  # converting notebook source .py to .ipynb
-    "nbval >= 0.9.6",  # testing the notebook
     "python-dotenv",
     "plotly",
     "matplotlib",
-    "gdown",
     "evaluate",
     "scikit-learn",
     "neuronpedia",
-    "pgpq >=0.11,<0.12",  # binary Arrow COPY encoder for the columnar local-DB import lane
-    "syrupy >= 4.6",  # snapshot testing consumed by the SAEDashboard/SAELens suites run from this env
     # v3 adds the TransformerBridge architecture. 3.5.1 is the release cut from the commit this project
     # previously pinned by git URL (tag v3.5.1 == 4ba2187b), so this is a release-pin of identical code.
     # sae-dashboard caps transformer-lens below 3.x (`^2.2.0`, i.e. <3.0.0), hence the matching entry
@@ -195,9 +205,23 @@ test = [
     # open. See huggingface_hub#3995. Floored here rather than on hf-xet directly so the platform
     # markers (x86_64/arm64 only) stay hub's to maintain.
     "huggingface_hub[hf_xet] >= 1.9.0",
-    # Notebook testing
+    # Notebook testing. These execute the PUBLISHED notebooks in CI; a notebook USER never needs
+    # them, which is why the documented user install no longer pulls this group (#287).
     "nbmake >= 1.5.0",
     "papermill >= 2.4.0",
+    # Moved here from the `examples` extra 2026-08-25 (#287): both serve maintainer lanes, not
+    # notebook users. `syrupy` backs the SAEDashboard/SAELens snapshot suites run from the
+    # integrated dev env; `pgpq` is the binary Arrow COPY encoder for the columnar local-DB import
+    # lane driven by scripts/setup_dashboard_benchmark_env.py.
+    #
+    # This is deliberately NOT a return to the pre-2026-08 arrangement where both were post-build
+    # extras added by hand and silently vanished on the next rebuild. The CI lock is compiled with
+    # `--extra examples --extra lightning --group dev --group test --group profiling`
+    # (requirements/utils/lock_ci_requirements.sh), and build_it_env.sh installs FROM that lock, so
+    # every dev/CI environment still gets them automatically. Only `.[examples]` on its own loses
+    # them, which is the point.
+    "syrupy >= 4.6",
+    "pgpq >=0.11,<0.12",
     # sae_dashboard moved to git-deps (fork-pinned) until the upstream SD PR merges
 ]
 
@@ -411,9 +435,9 @@ junit_duration_report = "call"
 tmp_path_retention_count = 30  # allow retention of more successful runs during profiling result generation (default 3)
 
 
-[tool.jupytext]
-notebook_metadata_filter = "-all"
-
-[tool.jupytext.formats]
-"notebooks/" = "ipynb"
-"scripts/" = "py"
+# [tool.jupytext] removed 2026-08-25 with the jupytext dependency (#287). It paired
+# `"notebooks/" = "ipynb"` with `"scripts/" = "py"`, a layout this repo does not use: the notebook
+# lane is dev/*.ipynb -> publish/*.ipynb via scripts/publish_notebooks.py, and the .py files under
+# notebooks/ are helper modules the notebooks import, not paired sources (none carries a jupytext
+# header). The config was inert, but inert config for an uninstalled tool is a landmine, so it goes
+# with the dependency rather than after it.

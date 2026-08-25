@@ -65,21 +65,47 @@ jobs:
           activate-environment: false
           enable-cache: true
 
-      - name: Extract the install command from README.md
+      - name: Extract the install commands from README.md
         id: extract
         run: |
           # Extracted, never duplicated. A hardcoded copy would let README.md drift while this job kept
           # testing the old command and stayed green -- the exact failure class this lane exists to catch.
-          CMD="$(grep -E '^uv pip install -e ' README.md || true)"
-          COUNT="$(printf '%s\n' "${CMD}" | grep -c . || true)"
-          if [ "${COUNT}" != "1" ]; then
-            echo "ERROR: expected exactly one 'uv pip install -e' line in README.md, found ${COUNT}." >&2
+          #
+          # README.md documents TWO installs since #287: a lean one for someone who only wants to RUN the
+          # notebooks, and the contributor one that adds the test/profiling toolchain. They are told apart
+          # by `--group test` -- the substantive difference rather than an incidental one -- and the
+          # partition is asserted to be exactly 1 and 1, so a reshape fails HERE rather than silently
+          # testing whichever line happened to come first.
+          ALL="$(grep -E '^uv pip install -e ' README.md || true)"
+          COUNT="$(printf '%s\n' "${ALL}" | grep -c . || true)"
+          USER_CMD="$(printf '%s\n' "${ALL}" | grep -v -- '--group test' || true)"
+          CONTRIB_CMD="$(printf '%s\n' "${ALL}" | grep -- '--group test' || true)"
+          U_N="$(printf '%s\n' "${USER_CMD}" | grep -c . || true)"
+          C_N="$(printf '%s\n' "${CONTRIB_CMD}" | grep -c . || true)"
+          if [ "${COUNT}" != "2" ] || [ "${U_N}" != "1" ] || [ "${C_N}" != "1" ]; then
+            echo "ERROR: expected exactly one lean and one contributor 'uv pip install -e' line in" >&2
+            echo "README.md; found ${COUNT} total (${U_N} without --group test, ${C_N} with)." >&2
             echo "The install recipe moved or was reshaped; update this extraction deliberately." >&2
-            printf '%s\n' "${CMD}" >&2
+            printf '%s\n' "${ALL}" >&2
             exit 1
           fi
-          echo "Extracted: ${CMD}"
-          echo "cmd=${CMD}" >> "${GITHUB_OUTPUT}"
+          echo "User install:        ${USER_CMD}"
+          echo "Contributor install: ${CONTRIB_CMD}"
+          # The env below is built from the CONTRIBUTOR command, because the assertions that follow
+          # import `lightning` and `papermill` -- which only the extras/groups it adds provide. The user
+          # command is validated separately, by resolution, in the next step.
+          echo "cmd=${CONTRIB_CMD}" >> "${GITHUB_OUTPUT}"
+          echo "user_cmd=${USER_CMD}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve the lean user install (README's headline command)
+        run: |
+          # The command most readers actually run. Resolving it is what backs README's claim that running
+          # a notebook needs neither the test nor the profiling toolchain. It is deliberately NOT the env
+          # the rest of this job asserts against, since those assertions require the contributor extras.
+          # --dry-run keeps it cheap: an unresolvable recipe is the defect worth catching here, and
+          # building a second full environment would roughly double this lane's runtime for little more.
+          env -u PYTHONPATH uv venv "${IT_VENV}-lean" --python 3.13
+          env -u PYTHONPATH VIRTUAL_ENV="${IT_VENV}-lean" ${{ steps.extract.outputs.user_cmd }} --dry-run
 
       - name: Create the venv and install exactly what README.md says
         run: |

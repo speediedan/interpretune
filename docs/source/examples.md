@@ -14,6 +14,40 @@ Several examples need optional adapters (TransformerLens, NNsight, SAELens, circ
 and in some cases gated model weights. See {doc}`usage/developer_multi_repo_setup` for environment
 setup.
 
+## What each notebook needs
+
+The base install covers three of these. The rest additionally need the `git-deps` group, because they
+use the circuit-tracer adapter and no circuit-tracer release carries the surface interpretune uses.
+
+```bash
+uv pip install -e ".[examples]"                    # SAELens tutorial + the two hub-only notebooks
+uv pip install -e ".[examples]" --group git-deps   # everything else
+```
+
+| Notebook | Install | GPU | Model access |
+|---|---|---|---|
+| Op collections | `.[examples]` | not required | HF token — it publishes a collection to your namespace |
+| Hub op opt-in | `.[examples]` | not required | HF token |
+| SAELens tutorial | `.[examples]` | bf16 CUDA | none — `gpt2` |
+| Circuit Tracer tutorial | `+ git-deps` | bf16 CUDA | **gated** — `google/gemma-2-2b` |
+| CT analysis backend demo | `+ git-deps` | bf16 CUDA | **gated** — `google/gemma-2-2b` |
+| Concept-direction steering | `+ git-deps` | bf16 CUDA | **gated** — `google/gemma-2-2b` |
+| Attribution analysis | `+ git-deps` | bf16 CUDA | **gated** — `google/gemma-2-2b` |
+| Shared-analysis round-trip | `+ git-deps` | bf16 CUDA | **gated** — `google/gemma-2-2b`, plus an HF token to publish |
+| Neuronpedia integration | `+ git-deps` | bf16 CUDA | **gated** — `google/gemma-3-1b-it`, plus a Neuronpedia API key |
+| Concept-direction steering (local Neuronpedia) | `+ git-deps` | bf16 CUDA | **gated** — `google/gemma-3-1b-it`, plus a locally hosted Neuronpedia |
+
+```{note}
+**Gated** here means the weights are public but require accepting a licence on the Hugging Face model
+page and then authenticating. Export the token as `HF_GATED_PUBLIC_REPO_AUTH_KEY` — the variable
+these example configs name — or log in with `hf auth login`. An unset variable is not fatal: the
+configs fall back to any ambient Hugging Face credential and warn, rather than raising during
+session construction.
+```
+
+`papermill` and `nbmake` (in the `test` group) execute these notebooks in CI. Running one yourself
+needs neither.
+
 ## Gallery
 
 | Notebook | Adapters | Demonstrates | Colab |

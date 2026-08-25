@@ -50,9 +50,7 @@ backports-tarfile==1.2.0 ; python_full_version < '3.12' and platform_machine != 
 beartype==0.22.9
     # via transformer-lens
 beautifulsoup4==4.15.0
-    # via
-    #   gdown
-    #   nbconvert
+    # via nbconvert
 better-abc==0.0.3
     # via transformer-lens
 bitsandbytes==0.50.0 ; sys_platform != 'darwin'
@@ -100,7 +98,6 @@ contourpy==1.3.3 ; python_full_version >= '3.11'
 coverage[toml]==7.15.4
     # via
     #   interpretune (pyproject.toml:test)
-    #   nbval
     #   pytest-cov
 cryptography==50.0.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x' and sys_platform == 'linux'
     # via secretstorage
@@ -158,7 +155,6 @@ fastjsonschema==2.22.1
 filelock==3.32.2
     # via
     #   datasets
-    #   gdown
     #   huggingface-hub
     #   python-discovery
     #   torch
@@ -181,8 +177,6 @@ fsspec[http]==2026.6.0
     #   lightning
     #   pytorch-lightning
     #   torch
-gdown==6.1.0
-    # via interpretune (pyproject.toml)
 graze==0.1.44
     # via babe
 grpcio==1.83.0
@@ -231,7 +225,6 @@ ipykernel==7.3.0
     # via
     #   jupyterlab
     #   nbmake
-    #   nbval
 ipython==8.39.0 ; python_full_version < '3.11'
     # via
     #   ipykernel
@@ -295,7 +288,6 @@ jupyter-client==8.9.1
     #   ipykernel
     #   jupyter-server
     #   nbclient
-    #   nbval
 jupyter-core==5.9.1
     # via
     #   ipykernel
@@ -331,8 +323,6 @@ jupyterlab-server==2.28.0
     #   notebook
 jupyterlab-widgets==3.0.16
     # via ipywidgets
-jupytext==1.19.5
-    # via interpretune (pyproject.toml)
 keyring==25.7.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via twine
 kiwisolver==1.5.0
@@ -349,10 +339,7 @@ lightning-utilities==0.15.3
 markdown==3.10.3
     # via tensorboard
 markdown-it-py==4.2.0
-    # via
-    #   jupytext
-    #   mdit-py-plugins
-    #   rich
+    # via rich
 markupsafe==3.0.3
     # via
     #   jinja2
@@ -366,8 +353,6 @@ matplotlib-inline==0.2.2
     # via
     #   ipykernel
     #   ipython
-mdit-py-plugins==0.6.1
-    # via jupytext
 mdurl==0.1.2
     # via markdown-it-py
 mistune==3.3.4
@@ -398,16 +383,12 @@ nbconvert==7.17.1
 nbformat==5.11.0
     # via
     #   jupyter-server
-    #   jupytext
     #   nbclient
     #   nbconvert
     #   nbmake
-    #   nbval
     #   papermill
 nbmake==1.5.5
     # via interpretune (pyproject.toml:test)
-nbval==0.11.0
-    # via interpretune (pyproject.toml)
 nest-asyncio2==1.7.2
     # via ipykernel
 neuronpedia==1.2.1
@@ -497,7 +478,6 @@ packaging==26.3
     #   jupyter-server
     #   jupyterlab
     #   jupyterlab-server
-    #   jupytext
     #   lightning
     #   lightning-utilities
     #   matplotlib
@@ -547,7 +527,7 @@ peft==0.20.0
 pexpect==4.9.0 ; sys_platform != 'emscripten' and sys_platform != 'win32'
     # via ipython
 pgpq==0.11.1
-    # via interpretune (pyproject.toml)
+    # via interpretune (pyproject.toml:test)
 pillow==12.3.0
     # via
     #   matplotlib
@@ -628,13 +608,10 @@ pyright==1.1.411
     # via
     #   interpretune (pyproject.toml:dev)
     #   interpretune (pyproject.toml:test)
-pysocks==1.7.1
-    # via requests
 pytest==9.1.1
     # via
     #   interpretune (pyproject.toml:test)
     #   nbmake
-    #   nbval
     #   pytest-cov
     #   pytest-rerunfailures
     #   syrupy
@@ -675,7 +652,6 @@ pyyaml==6.0.3
     #   huggingface-hub
     #   jsonargparse
     #   jupyter-events
-    #   jupytext
     #   lightning
     #   papermill
     #   peft
@@ -700,11 +676,10 @@ regex==2026.7.19
     # via
     #   nltk
     #   transformers
-requests[socks]==2.34.2
+requests==2.34.2
     # via
     #   datasets
     #   evaluate
-    #   gdown
     #   graze
     #   jupyterlab-server
     #   neuronpedia
@@ -793,7 +768,7 @@ stack-data==0.6.3
 statsmodels==0.14.6
     # via plotly-express
 syrupy==5.5.3
-    # via interpretune (pyproject.toml)
+    # via interpretune (pyproject.toml:test)
 tabulate==0.10.0
     # via interpretune (pyproject.toml)
 tenacity==9.1.4
@@ -823,7 +798,6 @@ tomli==2.4.1 ; python_full_version <= '3.11'
     #   coverage
     #   jupyter-builder
     #   jupyterlab
-    #   jupytext
     #   pytest
 torch-tb-profiler==0.4.3
     # via interpretune (pyproject.toml)
@@ -843,7 +817,6 @@ tqdm==4.70.0
     # via
     #   datasets
     #   evaluate
-    #   gdown
     #   huggingface-hub
     #   lightning
     #   nltk
@@ -898,7 +871,6 @@ typing-extensions==4.16.0
     #   beautifulsoup4
     #   cryptography
     #   exceptiongroup
-    #   gdown
     #   grpcio
     #   huggingface-hub
     #   ipython
