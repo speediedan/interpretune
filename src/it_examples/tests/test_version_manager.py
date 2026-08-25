@@ -93,19 +93,92 @@ def test_needs_temp_install_matching_version():
 
 
 def test_needs_temp_install_mismatched_version():
-    """Test that temp install is needed when versions don't match."""
+    """Test that temp install is needed when versions don't match.
+
+    Both carve-outs are exercised here rather than mocked, so this asserts against however
+    circuit-tracer actually got into the running environment: editable in a from-source dev env,
+    a VCS pin in CI and in any env built from the pins.
+    """
     mgr = PackageVersionManager("circuit-tracer", "99.99.99")
-    # If the package is editably installed (dev environment), we preserve editable
-    # installs and do not perform a temp install. Otherwise, a version mismatch
-    # should trigger a temp install.
     if mgr.is_editable_install():
         # Editable installs preserve the developer's local checkout. When a required
         # version is requested but an editable install is present, we skip a temp
         # install and emit a UserWarning to make this behavior explicit to the user.
         with pytest.warns(match="Preserving editable install"):
             assert not mgr.needs_temp_install()
+    elif mgr.get_vcs_commit() is not None:
+        # A git-pinned install already fixes the code; the version string is derived from the
+        # commit and cannot be matched against a hard-coded value across pin bumps.
+        with pytest.warns(match="installed from a VCS pin"):
+            assert not mgr.needs_temp_install()
     else:
         assert mgr.needs_temp_install()
+
+
+def _vcs_direct_url(commit: str = "1e40cbf6e5edacf3f5bbb1bf11cb1ea375d37aea") -> dict:
+    """Build a PEP 610 ``direct_url.json`` payload of the shape pip records for a git install."""
+    return {
+        "url": "https://github.com/speediedan/circuit-tracer.git",
+        "vcs_info": {"vcs": "git", "commit_id": commit, "requested_revision": commit},
+    }
+
+
+def test_get_vcs_commit_returns_commit_for_vcs_install(monkeypatch):
+    """A git-installed distribution reports the commit recorded under vcs_info."""
+    mgr = PackageVersionManager("circuit-tracer", "0.1.0")
+    monkeypatch.setattr(mgr, "_read_direct_url", lambda: _vcs_direct_url())
+    assert mgr.get_vcs_commit() == "1e40cbf6e5edacf3f5bbb1bf11cb1ea375d37aea"
+
+
+@pytest.mark.parametrize(
+    "direct_url",
+    [
+        pytest.param(None, id="index_install"),
+        pytest.param({"url": "file:///repo", "dir_info": {"editable": True}}, id="editable_install"),
+        pytest.param({"url": "file:///wheel.whl"}, id="local_wheel"),
+    ],
+)
+def test_get_vcs_commit_none_without_vcs_info(monkeypatch, direct_url):
+    """Anything that is not a VCS install reports no commit."""
+    mgr = PackageVersionManager("circuit-tracer", "0.1.0")
+    monkeypatch.setattr(mgr, "_read_direct_url", lambda: direct_url)
+    assert mgr.get_vcs_commit() is None
+
+
+def test_needs_temp_install_skips_vcs_install_on_mismatch(monkeypatch):
+    """A VCS-pinned install is honored over a stale configured version, and says so."""
+    mgr = PackageVersionManager("circuit-tracer", "0.4.0")
+    monkeypatch.setattr(mgr, "get_installed_version", lambda: "0.5.3.dev31+g1e40cbf6e")
+    monkeypatch.setattr(mgr, "is_editable_install", lambda: False)
+    monkeypatch.setattr(mgr, "_read_direct_url", lambda: _vcs_direct_url())
+
+    with pytest.warns(UserWarning, match="installed from a VCS pin"):
+        assert not mgr.needs_temp_install()
+
+
+def test_needs_temp_install_vcs_matching_version_is_quiet(monkeypatch, recwarn):
+    """A VCS install whose derived version happens to match warns about nothing."""
+    mgr = PackageVersionManager("circuit-tracer", "0.5.3.dev31+g1e40cbf6e")
+    monkeypatch.setattr(mgr, "get_installed_version", lambda: "0.5.3.dev31+g1e40cbf6e")
+    monkeypatch.setattr(mgr, "is_editable_install", lambda: False)
+    monkeypatch.setattr(mgr, "_read_direct_url", lambda: _vcs_direct_url())
+
+    assert not mgr.needs_temp_install()
+    assert not [w for w in recwarn if issubclass(w.category, UserWarning)]
+
+
+def test_needs_temp_install_index_install_still_installs(monkeypatch):
+    """The carve-out is scoped to VCS installs: an index install still triggers a temp install.
+
+    This is the guard against the carve-out being too broad -- without it, a genuine version
+    mismatch on a normally-installed package would be silently ignored.
+    """
+    mgr = PackageVersionManager("circuit-tracer", "0.4.0")
+    monkeypatch.setattr(mgr, "get_installed_version", lambda: "0.3.0")
+    monkeypatch.setattr(mgr, "is_editable_install", lambda: False)
+    monkeypatch.setattr(mgr, "_read_direct_url", lambda: None)
+
+    assert mgr.needs_temp_install()
 
 
 def test_needs_temp_install_nonexistent():

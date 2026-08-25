@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 # Mapping of (package_name, version) to git-based installation URLs
 # Used as fallback when package is not available on PyPI
 # Package names are normalized according to PEP 503 (canonical form)
+#
+# Reachable only for packages installed from an INDEX: `needs_temp_install` returns early for
+# editable and VCS installs, and interpretune installs every package listed here from a git URL
+# (the `git-deps` group). Keying on a version string is therefore a fallback of last resort, not
+# the mechanism that keeps a pin and its config aligned -- do not add an entry per pin bump.
 GIT_FALLBACK_URLS = {
     (
         "circuit-tracer",
@@ -96,23 +101,51 @@ class PackageVersionManager:
         except importlib.metadata.PackageNotFoundError:
             return None
 
+    def _read_direct_url(self) -> dict | None:
+        """Read the PEP 610 ``direct_url.json`` recorded for the installed distribution.
+
+        Packages installed from a local path or a VCS URL record where they came from; packages
+        resolved from an index do not, so a ``None`` here means "installed normally".
+
+        Returns:
+            Parsed ``direct_url.json`` contents, or None if the package is not installed, records no
+            direct URL, or the file could not be parsed
+        """
+        try:
+            dist = importlib.metadata.distribution(self.package_name)
+            direct_url_content = dist.read_text("direct_url.json")
+            if direct_url_content:
+                return json.loads(direct_url_content)
+        except (importlib.metadata.PackageNotFoundError, FileNotFoundError, json.JSONDecodeError):
+            logger.debug(f"No parseable direct_url.json for {self.package_name}")
+        return None
+
+    def get_vcs_commit(self) -> str | None:
+        """Get the commit this package was installed from, if it came from a VCS URL.
+
+        A distribution installed from a git URL records the resolved commit under ``vcs_info`` in
+        ``direct_url.json`` (PEP 610).
+
+        Returns:
+            The resolved commit id if this is a VCS install, None otherwise
+        """
+        direct_url_data = self._read_direct_url()
+        if direct_url_data:
+            return direct_url_data.get("vcs_info", {}).get("commit_id")
+        return None
+
     def is_editable_install(self) -> bool:
         """Check if the package is installed in editable mode.
 
         Returns:
             True if package is editably installed, False otherwise
         """
-        try:
-            dist = importlib.metadata.distribution(self.package_name)
-            # Check for .egg-link or direct_url.json (PEP 610) indicating editable install
-            direct_url_content = dist.read_text("direct_url.json")
-            if direct_url_content:
-                direct_url_data = json.loads(direct_url_content)
-                return direct_url_data.get("dir_info", {}).get("editable", False)
-        except (importlib.metadata.PackageNotFoundError, FileNotFoundError, json.JSONDecodeError):
-            logger.debug(
-                f"Falling back to pip show for editable check due to issue w/ primary method for {self.package_name}"
-            )
+        direct_url_data = self._read_direct_url()
+        if direct_url_data:
+            return direct_url_data.get("dir_info", {}).get("editable", False)
+        logger.debug(
+            f"Falling back to pip show for editable check due to issue w/ primary method for {self.package_name}"
+        )
 
         # Fallback: check using pip show
         try:
@@ -140,6 +173,10 @@ class PackageVersionManager:
         If the package is installed in editable mode, we skip temp installation regardless
         of version mismatch to preserve the developer's local checkout.
 
+        The same applies to VCS installs: a package installed from a git URL is already pinned to an
+        exact commit, which is a stronger guarantee than a version string a maintainer has to keep
+        in sync by hand.
+
         Returns:
             True if temp installation is needed, False otherwise
         """
@@ -157,6 +194,34 @@ class PackageVersionManager:
                 f"Preserving editable install and skipping temp install for required version {self.required_version}",
                 UserWarning,
             )
+            return False
+
+        vcs_commit = self.get_vcs_commit()
+        if vcs_commit is not None:
+            # A VCS install is already pinned to an exact commit by whatever built the environment
+            # (for interpretune, the `git-deps` group in pyproject.toml). Upstream packages
+            # increasingly DERIVE their version from that commit rather than declaring one --
+            # circuit-tracer does, via hatch-vcs -- so the version string moves with every pin bump
+            # and comparing it against a hard-coded value measures config freshness, not code
+            # identity. The commit is the stronger guarantee of the two, so honor it and skip the
+            # temp install for the same reason editable installs are skipped just above.
+            if installed != self.required_version:
+                # Non-fatal, but still worth surfacing: the configured version has drifted from what
+                # the pin resolves to, and only a human can decide whether that is a stale config or
+                # a pin that moved. Refusing to run would be the wrong response -- the pinned commit
+                # is exactly what was asked for.
+                warnings.warn(
+                    f"{self.package_name} is installed from a VCS pin at commit {vcs_commit[:10]} "
+                    f"(version={installed}), which does not match the configured required version "
+                    f"{self.required_version}. Honoring the pinned commit and skipping the temp "
+                    f"install; update the configured version to silence this.",
+                    UserWarning,
+                )
+            else:
+                logger.info(
+                    f"{self.package_name} is installed from a VCS pin at commit {vcs_commit[:10]} "
+                    f"(version={installed}); skipping temp install"
+                )
             return False
 
         if installed != self.required_version:
