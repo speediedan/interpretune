@@ -418,7 +418,7 @@ class CircuitTracerAnalysisBackend:
 
     def graph_scan_json(self, graph: Any) -> str:
         """The graph's scan metadata as JSON, coercing non-serializable values to strings."""
-        return json.dumps(graph.scan, default=str)
+        return json.dumps(graph.scan_name, default=str)
 
     def select_feature_rows(self, active_features: torch.Tensor, selected_features: torch.Tensor) -> torch.Tensor:
         """Index the active-feature table by selected indices, returning an empty (0, 3) table when none."""
@@ -434,7 +434,7 @@ class CircuitTracerAnalysisBackend:
         """
         metadata = {
             "input_string": graph.input_string,
-            "scan": graph.scan,
+            "scan": graph.scan_name,
             "vocab_size": graph.vocab_size,
             "cfg": self.graph_cfg_dict(graph),
         }
@@ -532,7 +532,7 @@ class CircuitTracerAnalysisBackend:
             activation_values=components["activation_values"],
             logit_targets=logit_targets,
             logit_probabilities=components["logit_probabilities"],
-            scan=components["scan"],
+            scan_name=components["scan"],
             vocab_size=components["vocab_size"],
         )
 
@@ -615,7 +615,7 @@ class CircuitTracerAnalysisBackend:
             activation_values=graph.activation_values.index_select(0, kept_feature_nodes.cpu()),
             logit_targets=graph.logit_targets,
             logit_probabilities=graph.logit_probabilities,
-            scan=graph.scan,
+            scan_name=graph.scan_name,
             vocab_size=graph.vocab_size,
         )
 

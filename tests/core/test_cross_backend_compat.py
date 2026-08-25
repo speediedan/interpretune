@@ -303,7 +303,7 @@ def _make_graph(prompt: str) -> Graph:
         activation_values=torch.tensor([0.25, 0.75], dtype=torch.float32),
         logit_targets=[LogitTarget("Dallas", 2), LogitTarget("Austin", 3)],
         logit_probabilities=torch.tensor([0.4, 0.6], dtype=torch.float32),
-        scan="gemma",
+        scan_name="gemma",
         vocab_size=32,
     )
 

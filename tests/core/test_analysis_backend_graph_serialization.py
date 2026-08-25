@@ -137,7 +137,7 @@ def _make_graph() -> Graph:
         activation_values=torch.tensor([0.25, 0.75], dtype=torch.float32),
         logit_targets=[LogitTarget("Dallas", 2), LogitTarget("Austin", 3)],
         logit_probabilities=torch.tensor([0.4, 0.6], dtype=torch.float32),
-        scan="gemma",
+        scan_name="gemma",
         vocab_size=32,
     )
 
@@ -172,7 +172,7 @@ def _make_signed_graph() -> Graph:
         activation_values=torch.tensor([0.25, 0.75], dtype=torch.float32),
         logit_targets=[LogitTarget("Dallas", 2), LogitTarget("Austin", 3)],
         logit_probabilities=torch.tensor([0.5, 0.5], dtype=torch.float32),
-        scan="gemma",
+        scan_name="gemma",
         vocab_size=32,
     )
 
@@ -447,7 +447,7 @@ def test_compute_attribution_graph_impl_resolves_virtual_logit_target_ids() -> N
             LogitTarget("concept_c", vocab_size + 2),
         ],
         logit_probabilities=torch.tensor([0.5, 0.3, 0.2], dtype=torch.float32),
-        scan="gemma",
+        scan_name="gemma",
         vocab_size=vocab_size,
     )
     # Verify the graph indeed produces virtual IDs
