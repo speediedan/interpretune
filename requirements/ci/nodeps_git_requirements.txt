@@ -10,4 +10,4 @@
 # source build, openai, google-genai, boto3) that the import lane never uses — hence --no-deps;
 # psycopg/pyarrow/pgpq come from the lock. For plain-uv (non-build_it_env.sh) installs, run:
 #   uv pip install --no-deps -r requirements/ci/nodeps_git_requirements.txt
-neuronpedia-utils @ git+https://github.com/speediedan/neuronpedia.git@6484b3420271650098576138fac65c1f22354ade#subdirectory=utils/neuronpedia-utils
+neuronpedia-utils @ git+https://github.com/speediedan/neuronpedia.git@802194633abe469b4100bdd717a47809ab950f9a#subdirectory=utils/neuronpedia-utils
