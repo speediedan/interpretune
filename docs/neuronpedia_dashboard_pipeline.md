@@ -459,10 +459,13 @@ nohup python -m interpretune.utils.neuronpedia_dashboard_pipeline \
 Important resume caveat:
 
 - Partial-layer resume is only safe when the existing `run_settings.json` matches the worker's resolved `n_features_per_batch`.
-- In the current `context319-full-prompts` namespace, layer `9` was left with partial `1024`-feature GPU0 output, so a
-  `512`-feature GPU1 worker could not resume it and exited with the explicit run-settings mismatch error.
-- The correct recovery was to leave layer `9` for GPU0 work and restart GPU1 from layer `10`, which already matches the
-  `512`-feature worker shape.
+- Recorded example, no longer reproducible: in the `context319-full-prompts` namespace, layer `9` was left with partial
+  `1024`-feature GPU0 output, so a `512`-feature GPU1 worker could not resume it and exited with the explicit
+  run-settings mismatch error. The recovery was to leave layer `9` for GPU0 work and restart GPU1 from layer `10`,
+  which already matched the `512`-feature worker shape. That run tree was deleted 2026-08-26, so the state described
+  here is history; the rule in the first bullet is the part that generalises. Complete 262k RTE layers `9` and `23`
+  from a separate build do survive, outside `dashboard_runs/`, as described in
+  [Run roots are not always under `dashboard_runs/`](#run-roots-are-not-always-under-dashboard_runs).
 
 The other worker continues because it has its own process group, child runner, log file, and layer lock. To stop the
 whole two-worker run, terminate each worker process group separately.
@@ -942,15 +945,17 @@ python scripts/launch_neuronpedia_dashboard_pipeline.py \
   --run-name-suffix context319-full-prompts
 ```
 
-The `--run-name-suffix context319-full-prompts` piece is what keeps the new full-prompt restart out of the old completed unsuffixed run namespace. The active GPU1 YAML now defaults to that same suffix, but keeping it explicit in the command makes the fresh lineage obvious in shell history and protects future ad hoc overrides.
+The `--run-name-suffix context319-full-prompts` piece originally kept the full-prompt restart out of the then-completed unsuffixed run namespace. The active GPU1 YAML defaults to that same suffix, and keeping it explicit in the command still makes the lineage obvious in shell history and protects future ad hoc overrides.
 
-Do not use the unsuffixed run directory below for the new full-prompt restart:
+**Status as of 2026-08-26: neither namespace holds completed layers.** The suffixed run tree was deleted, and the unsuffixed one below retains only a single resume log with no layer directories:
 
 ```text
 ${IT_NP_CACHE}/dashboard_runs/gemma-3-1b-it_gemmascope-2-transcoder-262k-rte
 ```
 
-That unsuffixed namespace contains the earlier completed lineage and its `run.resume-0-25.log` markers. Reusing it will trigger completed-layer skips rather than a fresh generation start.
+A launch against either namespace therefore regenerates from layer `0`. Budget for a full multi-day multi-GPU run before starting one, and do not expect the completed-layer skips this section previously described.
+
+Clearing the suffix does not restore a resume, and it is marginally worse than leaving it in place: the unsuffixed directory still exists, so the run takes the resume path and finds nothing to skip, whereas the suffixed path finds no run root at all and takes the clean path honestly.
 
 The launcher prints the exact `tail -f` target automatically. With the suffixed context-`319` launch, the logs now live under:
 
@@ -1009,9 +1014,38 @@ Current tuning notes for this RTE Bridge path:
 6. Future runs no longer create a nested `layer_<n>/google/...` leaf when `model_id` contains `/`. The runner now sanitizes `google/gemma-3-1b-it` into a single path component like `google_gemma-3-1b-it_...` before building the leaf output directory.
 7. The shared token cache stays CPU-backed through `before_feature_run_0`; the decisive GPU jump belongs to `SaeVisRunner.run(...)`, not token materialization.
 8. Treat GPU1 as an independent worker target, not as a way to split a single runner. Two concurrent dashboard processes duplicate model/SAE residency and CPU packaging work, so monitor host RSS and cache IO if GPU0 and GPU1 are used at the same time.
-9. A fresh context-`319` launch should start in a suffixed run directory and log `START layer=<n>` immediately, not a sequence of completed-layer skips from the old unsuffixed lineage. If you see the new pipeline warning that the requested layer range is already complete, you are still pointed at a finished lineage.
+9. A fresh context-`319` launch should start in a suffixed run directory and log `START layer=<n>` immediately, not a sequence of completed-layer skips. If you see the pipeline warning that the requested layer range is already complete, you are pointed at a run directory that already holds finished layers. Neither 262k RTE namespace holds any as of 2026-08-26, so that warning now indicates a different run directory than the two named above.
 10. The 2026-05-02 two-worker validation assigned `layer_0` to GPU0 and `layer_1` to GPU1, wrote new batch artifacts from both workers, stopped GPU1 independently while GPU0 continued through another batch, cleaned stale locks on restart, and relaunched the two-worker config successfully.
 11. Torch profiler traces are written as `batch-<n>.trace.json`; dashboard leaf discovery deliberately matches only exact `batch-<n>.json` files so those traces do not get mistaken for generated dashboard batches.
+
+### Run roots are not always under `dashboard_runs/`
+
+An inventory keyed on `${IT_NP_CACHE}/dashboard_runs/` is incomplete. The pipeline writes into whatever run root it is
+given, and one-off full-layer builds and validation runs are commonly pointed at a private root elsewhere under
+`${IT_NP_CACHE}`. Those trees use the same `<model>_<source_set_id>[_<suffix>]/layer_<n>/...` layout and carry the same
+resume logs, but they never appear in a listing of `dashboard_runs/`.
+
+For example, complete 262k RTE layers `9` and `23` live under a dated full-layer-build root rather than in the shared
+tree:
+
+```text
+${IT_NP_CACHE}/full_layer_builds/262k_rte_20260705/run_root/gemma-3-1b-it_gemmascope-2-transcoder-262k-rte/layer_9
+${IT_NP_CACHE}/full_layer_builds/262k_rte_20260705/run_root/gemma-3-1b-it_gemmascope-2-transcoder-262k-rte/layer_23
+```
+
+To find every run tree for a source set rather than only the shared ones, search by layout instead of by directory:
+
+```bash
+find "${IT_NP_CACHE}" -type d -name "*_gemmascope-2-transcoder-262k-rte*" -prune -print 2>/dev/null
+```
+
+Do not add a `-maxdepth` bound to that search. Run roots sit at varying depths, and benchmark-artifact roots in
+particular nest several levels below their dated parent, so a bound that looks generous silently truncates the result.
+`-prune` keeps the search cheap by not descending into a run root once it has matched, which is what a depth bound was
+reaching for without the truncation.
+
+This matters whenever you are deciding that generated output does not exist. Absence from `dashboard_runs/` is not
+absence from disk, and a layer that looks unbuilt may simply have been built somewhere else.
 
 ### Operational troubleshooting for GPU1 background runs
 
