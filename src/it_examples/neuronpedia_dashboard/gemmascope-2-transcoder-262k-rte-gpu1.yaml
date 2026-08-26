@@ -4,6 +4,13 @@ pipeline:
   sae_set: gemma-scope-2-1b-it-transcoders-all
   neuronpedia_source_set_id: gemmascope-2-transcoder-262k-rte
   neuronpedia_source_set_description: Transcoder - 262k (RTE)
+  # The run tree this suffix names was deleted 2026-08-26, so a launch with this config now
+  # finds no run root and generates from layer 0 rather than resuming. That is the honest
+  # behaviour and the value is left in place deliberately: the unsuffixed namespace holds no
+  # completed layers either, so clearing the suffix would relocate a full regeneration rather
+  # than restore a resume, and would do so via the resume path with nothing to skip.
+  # `gemmascope-2-transcoder-262k-rte-gpu01.yaml` EXTENDS this file and inherits the suffix,
+  # so both configs behave this way.
   run_name_suffix: context319-full-prompts
   release_url: https://huggingface.co
   hf_weights_repo_id: google/gemma-scope-2-1b-it
