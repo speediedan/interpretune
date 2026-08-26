@@ -1036,8 +1036,13 @@ ${IT_NP_CACHE}/full_layer_builds/262k_rte_20260705/run_root/gemma-3-1b-it_gemmas
 To find every run tree for a source set rather than only the shared ones, search by layout instead of by directory:
 
 ```bash
-find "${IT_NP_CACHE}" -maxdepth 6 -type d -name "*_gemmascope-2-transcoder-262k-rte*" 2>/dev/null
+find "${IT_NP_CACHE}" -type d -name "*_gemmascope-2-transcoder-262k-rte*" -prune -print 2>/dev/null
 ```
+
+Do not add a `-maxdepth` bound to that search. Run roots sit at varying depths, and benchmark-artifact roots in
+particular nest several levels below their dated parent, so a bound that looks generous silently truncates the result.
+`-prune` keeps the search cheap by not descending into a run root once it has matched, which is what a depth bound was
+reaching for without the truncation.
 
 This matters whenever you are deciding that generated output does not exist. Absence from `dashboard_runs/` is not
 absence from disk, and a layer that looks unbuilt may simply have been built somewhere else.
