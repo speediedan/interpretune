@@ -2,14 +2,14 @@ name: Env build smoke
 
 # Standalone smoke test for the unified multi-repo editable dev environment builder
 # (scripts/build_it_env.sh). Builds a MINIMAL but representative from-source set
-# (SAELens + SAEDashboard editable, CPU-only torch) on Linux and macOS.
+# (SAEDashboard editable, CPU-only torch) on Linux and macOS.
 # See docs/developer_multi_repo_setup.md for the full canonical build.
 
 on:
   workflow_dispatch:
     inputs:
       from_source_ref:
-        description: 'Branch/ref to clone for the from-source deps (SAELens, SAEDashboard)'
+        description: 'Branch/ref to clone for the from-source dep (SAEDashboard)'
         required: false
         default: 'streamlined-streamable-dashboard-generation-phase-1'
         type: string
@@ -64,8 +64,6 @@ jobs:
         run: |
           mkdir -p "${HOME}/from-source"
           git clone --depth 1 --branch "${FROM_SOURCE_REF}" \
-            https://github.com/speediedan/SAELens.git "${HOME}/from-source/SAELens"
-          git clone --depth 1 --branch "${FROM_SOURCE_REF}" \
             https://github.com/speediedan/SAEDashboard.git "${HOME}/from-source/SAEDashboard"
 
       - name: Configure CPU-only torch pin (torch-pre.txt, stable channel)
@@ -95,27 +93,7 @@ jobs:
           cp requirements/ci/overrides.txt "${RUNNER_TEMP}/overrides_ci.txt"
           cat "${RUNNER_TEMP}/overrides_ci.txt"
 
-      - name: Prepare CPU-pruned SAELens exported requirements
-        run: |
-          # requirements/ci/sl_uv_requirements.txt is a poetry export resolved against
-          # CUDA torch, so it pins the nvidia-*/triton CUDA libraries for Linux x86_64.
-          # They are dead weight (several GB) on CPU-only runners; prune them for the
-          # smoke build. Also prune the transformer-lens and jaxtyping pins: the
-          # UV_OVERRIDE transformer-lens==3.5.1 release pin replaces the export's
-          # transformer-lens==2.16.1 (which would otherwise pull the v2 line), and the poetry
-          # export's jaxtyping==0.3.9 pin sits above sae-dashboard's ^0.2.28 cap — the
-          # validated integrated env resolves 0.2.38, so let the resolver find that
-          # here too. torchvision/torchaudio pins are pruned too: the
-          # exported pins resolve to CUDA-built linux wheels that are ABI-incompatible
-          # with the +cpu torch (operator torchvision::nms does not exist), and nothing
-          # in the smoke import surface hard-requires them. All other pins (incl. torch==<pin>, satisfied by
-          # the installed +cpu build) are preserved.
-          grep -vE '^(nvidia-|triton==|transformer-lens==|jaxtyping==|torchvision==|torchaudio==)' \
-            requirements/ci/sl_uv_requirements.txt \
-            > "${RUNNER_TEMP}/sl_uv_requirements_cpu.txt"
-          echo "Pruned $(($(wc -l < requirements/ci/sl_uv_requirements.txt) - $(wc -l < "${RUNNER_TEMP}/sl_uv_requirements_cpu.txt"))) pinned lines"
-
-      - name: Build environment (SAELens + SAEDashboard from source, CPU torch)
+      - name: Build environment (SAEDashboard from source, CPU torch)
         shell: bash
         run: |
           set -x
@@ -124,7 +102,6 @@ jobs:
             --repo-home="${GITHUB_WORKSPACE}" \
             --target-env-name="${TARGET_ENV_NAME}" \
             --venv-dir="${HOME}/.venvs" \
-            --from-source="sae_lens:${HOME}/from-source/SAELens:dev:UV_OVERRIDE=${RUNNER_TEMP}/overrides_ci.txt:FLAGS=-r ${RUNNER_TEMP}/sl_uv_requirements_cpu.txt" \
             --from-source="sae_dashboard:${HOME}/from-source/SAEDashboard:dev:UV_OVERRIDE=${RUNNER_TEMP}/overrides_ci.txt:UV_EXCLUDE=${GITHUB_WORKSPACE}/requirements/ci/excludes.txt" \
             2>&1 | tee "${RUNNER_TEMP}/env-build-smoke.log"
 
@@ -162,8 +139,9 @@ jobs:
           set -x
           source "${HOME}/.venvs/${TARGET_ENV_NAME}/bin/activate"
           python -c "import interpretune; import sae_lens; import sae_dashboard; import torch; print(f'interpretune={interpretune.__version__} sae_lens={sae_lens.__version__} torch={torch.__version__} cuda_available={torch.cuda.is_available()}')"
-          # from-source packages must be editable installs pointing at the local checkouts
-          uv pip show sae-lens | grep -i "editable project location"
+          # from-source packages must be editable installs pointing at the local checkouts.
+          # sae-lens is deliberately NOT among them: it installs from its released floor
+          # (pyproject `sae_lens >= 6.49.0`), so the import above is what validates it.
           uv pip show sae-dashboard | grep -i "editable project location"
           python requirements/utils/collect_env_details.py
 
