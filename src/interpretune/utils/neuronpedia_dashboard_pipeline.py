@@ -1853,6 +1853,20 @@ def _legacy_layer_runner_command(
         command.append(f"--end-batch={config.end_batch}")
     if not config.runner_shuffle_tokens:
         command.append("--no-shuffle-tokens")
+    if config.capture_hook_name:
+        # Unlike the diagnostic options below, dropping this one silently would produce a WRONG
+        # artifact rather than a less-instrumented one: the run would capture at the hook the SAE
+        # declares, which for Gemma Scope 2 transcoders is not the tensor they were trained on. A
+        # detached baseline predating the option cannot honor it, so refuse rather than mislead.
+        if not _legacy_runner_supports_option(config.saedashboard_repo_root, "--capture-hook-name"):
+            raise ValueError(
+                "capture_hook_name is set, but the legacy runner at "
+                f"{config.saedashboard_repo_root} does not accept --capture-hook-name. That baseline "
+                "would silently capture at the hook the SAE declares, which is the defect this "
+                "setting exists to avoid. Use runner_implementation='current', or point "
+                "saedashboard_repo_root at a checkout that supports the option."
+            )
+        command.append(f"--capture-hook-name={config.capture_hook_name.format(layer=layer_num)}")
     if config.runner_log_resource_snapshots and _legacy_runner_supports_option(
         config.saedashboard_repo_root, "--log-resource-snapshots"
     ):

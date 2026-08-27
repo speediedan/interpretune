@@ -4375,3 +4375,71 @@ def test_shipped_gemmascope_configs_name_the_capture_hook():
             f"{config_path.name} does not name the capture hook, so it would capture at the hook the "
             "SAE declares, which is not the tensor these transcoders were trained on"
         )
+
+
+def _legacy_capture_hook_config(tmp_path: Path) -> NeuronpediaDashboardPipelineConfig:
+    return NeuronpediaDashboardPipelineConfig(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemma-scope-2-1b-it-transcoders-all",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k-rte",
+        neuronpedia_source_set_description="Transcoder - 262k - RTE",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_resid_post",
+        prompts_huggingface_dataset_path="aps/super_glue",
+        prompts_huggingface_dataset_config_name="rte",
+        prompts_huggingface_dataset_split="train",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path / "baseline_saedashboard",
+        saelens_repo_root=tmp_path / "baseline_saelens",
+        neuronpedia_utils_root=tmp_path / "baseline_neuronpedia_utils",
+        interpretune_env_file=None,
+        runner_implementation="legacy",
+        capture_hook_name="blocks.{layer}.ln2.hook_out",
+    )
+
+
+def _write_fake_legacy_runner(repo_root: Path, *, supports_capture_hook: bool) -> None:
+    runner = repo_root / "sae_dashboard" / "neuronpedia" / "neuronpedia_runner.py"
+    runner.parent.mkdir(parents=True, exist_ok=True)
+    body = 'parser.add_argument("--sae-set")\n'
+    if supports_capture_hook:
+        body += 'parser.add_argument("--capture-hook-name")\n'
+    runner.write_text(body, encoding="utf-8")
+
+
+def test_legacy_runner_command_passes_capture_hook_name(tmp_path: Path) -> None:
+    """The legacy path must honor `capture_hook_name` too.
+
+    It shares the defect the setting exists to prevent: without the flag the runner captures at the
+    hook the SAE declares, which for Gemma Scope 2 transcoders is not the tensor they were trained
+    on, and the resulting artifact looks entirely plausible.
+    """
+    config = _legacy_capture_hook_config(tmp_path)
+    _write_fake_legacy_runner(config.saedashboard_repo_root, supports_capture_hook=True)
+    for layer in (0, 12):
+        command = dashboard_pipeline._layer_runner_command(
+            config, layer_num=layer, output_dir=tmp_path / f"layer_{layer}"
+        )
+        assert f"--capture-hook-name=blocks.{layer}.ln2.hook_out" in command
+
+
+def test_legacy_runner_command_refuses_baseline_that_cannot_capture_hook(tmp_path: Path) -> None:
+    """A baseline predating the option must fail loudly rather than silently capture the wrong tensor.
+
+    The sibling diagnostic options are dropped silently when unsupported, which is right for them: the artifact is
+    merely less instrumented. Dropping this one changes what the artifact MEASURES.
+    """
+    config = _legacy_capture_hook_config(tmp_path)
+    _write_fake_legacy_runner(config.saedashboard_repo_root, supports_capture_hook=False)
+    with pytest.raises(ValueError, match="does not accept --capture-hook-name"):
+        dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
