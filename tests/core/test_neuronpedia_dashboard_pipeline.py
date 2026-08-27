@@ -13,6 +13,8 @@ from types import SimpleNamespace
 from types import ModuleType
 from typing import Any, cast
 
+import dataclasses
+
 import pytest
 import torch
 import yaml
@@ -1016,6 +1018,17 @@ def test_layer_runner_command_includes_bridge_and_custom_dataset_args(tmp_path: 
     command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
 
     assert "--model-wrapper=bridge" in command
+    # Unset by default: the SAE's own declared hook stays authoritative unless someone overrides it.
+    assert not any(arg.startswith("--capture-hook-name") for arg in command)
+
+    # When set, it is passed through with `{layer}` substituted, so one config line covers every layer.
+    # This is the CAPTURE location; `hook_point` remains the Neuronpedia source label.
+    overridden = dataclasses.replace(config, capture_hook_name="blocks.{layer}.ln2.hook_out")
+    for layer in (0, 12):
+        layer_command = dashboard_pipeline._layer_runner_command(
+            overridden, layer_num=layer, output_dir=tmp_path / f"layer_{layer}"
+        )
+        assert f"--capture-hook-name=blocks.{layer}.ln2.hook_out" in layer_command
     assert f"--prompt-dataset-path={tmp_path / 'pretokenized_prompts'}" in command
     assert "--prompt-dataset-mode=load_from_disk" in command
     assert "--prompt-dataset-name=rte" in command

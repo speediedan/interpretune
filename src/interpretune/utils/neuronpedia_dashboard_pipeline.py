@@ -214,6 +214,16 @@ class NeuronpediaDashboardPipelineConfig:
     clt_weights_filename: str = ""
     dataset_streaming: bool = True
     model_wrapper: str = "hooked"
+    # Capture activations at this hook rather than the one the SAE's metadata declares. Needed where
+    # the declared TransformerLens name denotes a different tensor from the one the SAE was trained
+    # on: Gemma Scope 2 transcoders declare ``blocks.{layer}.hook_mlp_in``, the residual BEFORE the
+    # block norm, while they are trained on that norm's output, which a TransformerBridge names
+    # ``blocks.{layer}.ln2.hook_out``. ``{layer}`` is substituted per layer.
+    #
+    # NOTE this is the CAPTURE location. ``hook_point`` above is the Neuronpedia source LABEL, drawn
+    # from a fixed eight-name vocabulary that has no term for this tensor, so the two can legitimately
+    # read differently and the runner announces when they do.
+    capture_hook_name: str | None = None
     bridge_enable_compatibility_mode: bool = True
     bridge_compatibility_mode_kwargs: dict[str, Any] = field(default_factory=lambda: {"no_processing": True})
     runner_log_resource_snapshots: bool = False
@@ -1638,6 +1648,11 @@ def _layer_runner_command(
         f"--prompt-dataset-path={prompt_dataset_path}",
         f"--prompt-dataset-mode={resolved_dataset_mode}",
         f"--model-wrapper={config.model_wrapper}",
+        *(
+            [f"--capture-hook-name={config.capture_hook_name.format(layer=layer_num)}"]
+            if config.capture_hook_name
+            else []
+        ),
         f"--output-dir={output_dir}",
         f"--sae_dtype={config.sae_dtype}",
         f"--model_dtype={config.model_dtype}",
@@ -3059,6 +3074,12 @@ def _create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--clt-weights-filename")
     parser.add_argument("--dataset-streaming", action=argparse.BooleanOptionalAction)
     parser.add_argument("--model-wrapper", choices=("hooked", "bridge"))
+    parser.add_argument(
+        "--capture-hook-name",
+        help="Capture at this hook instead of the one the SAE declares; '{layer}' is substituted per "
+        "layer. Use where the declared name denotes a different tensor than the SAE was trained on, "
+        "e.g. 'blocks.{layer}.ln2.hook_out' for Gemma Scope 2 transcoders on a TransformerBridge.",
+    )
     parser.add_argument(
         "--bridge-enable-compatibility-mode",
         action=argparse.BooleanOptionalAction,
