@@ -79,6 +79,36 @@ the feature axis is 16x narrower. With more VRAM you can raise `n_prompts_total`
 `n_features_per_batch` or `n_prompts_in_forward_pass`; only `n_prompts_total` needs changing to
 reproduce the larger corpus. The 262k production config documents where the memory cliffs sit.
 
+## A caveat on `--hook-point hook_mlp_in` for Gemma Scope 2 transcoders
+
+The examples below pass `--hook-point hook_mlp_in`. What that flag controls is path-dependent, and
+worth knowing before reading the rest of this caveat. On the SAE and transcoder path it records the
+hook point in the exported Neuronpedia metadata, while collection happens at the hook name the SAE
+itself declares (`SAE.cfg.hook_name`); for these releases both are the same string. On the vector
+path there is no SAE config to defer to, so the flag builds the hook name that activations are
+actually read from.
+
+Either way, the tensor these transcoders were trained on and the tensor named `hook_mlp_in` are
+**not the same tensor**, and the difference is large enough to matter.
+
+Google ships a `config.json` beside each transcoder declaring
+`hf_hook_point_in: model.layers.{N}.pre_feedforward_layernorm.output`, which is the norm's output.
+TransformerLens fires `hook_mlp_in` on the residual stream *before* that norm. Measured on
+`google/gemma-scope-2-1b-it` layer 5 (16k, `l0_small_affine`), reconstructing the transcoder's own
+declared target: FVU 0.11 at L0 17 from the declared input, against FVU 20585 at L0 819 from
+`hook_mlp_in`, with a declared L0 of 15. The two tensors share a cosine similarity of 0.088.
+
+Corpora generated at `hook_mlp_in` therefore encode a tensor these transcoders were not trained on.
+They still render as plausible dashboards, because an L0 of 819 out of 16384 is sparse enough per
+token to look ordinary; what changes is which features fire and how strongly.
+
+Current behavior is unchanged and the flag still does what it says. Whether to regenerate affected
+corpora, and at which hook, is not settled here, and the limit is narrower than a plumbing problem:
+**on the legacy `HookedTransformer` path the declared tensor has no hook name to give**. TL fires
+`hook_mlp_in` before the norm and `ln2.hook_normalized` between the divide and the gain, and there is
+no third option, so naming it correctly is not something a flag can currently express in either path
+above.
+
 ## Standard launch example
 
 A fuller invocation for `gemma-3-1b-it` `gemmascope-2-transcoder-16k`, spelling out every flag

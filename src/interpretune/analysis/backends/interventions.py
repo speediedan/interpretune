@@ -64,14 +64,27 @@ HOOK_ALIAS_GROUPS: tuple[tuple[str, ...], ...] = (
     ("attn.q.hook_out", "hook_q"),
     ("attn.k.hook_out", "hook_k"),
     ("attn.v.hook_out", "hook_v"),
-    ("mlp.hook_in", "hook_mlp_in"),
+    # NOT grouped with `hook_mlp_in`: `mlp.hook_in` is the sublayer's argument, i.e. the block norm's
+    # OUTPUT, while TransformerLens fires the legacy `blocks.{i}.hook_mlp_in` on `resid_mid.clone()`
+    # BEFORE that norm (`components/transformer_block.py:195-197`; the bridge matches legacy, see
+    # `model_bridge/bridge.py:3870`). Measured cos 0.088 apart on gemma-3-1b-it layer 5. Grouping them
+    # applies an intervention one norm away from where the caller asked for it.
+    ("mlp.hook_in",),
+    ("hook_mlp_in",),
     ("mlp.hook_out", "hook_mlp_out"),
     ("embed.hook_out", "hook_embed"),
     ("pos_embed.hook_out", "hook_pos_embed"),
     ("attn.hook_pattern", "attn.hook_attention_weights"),
     ("attn.hook_hidden_states", "attn.hook_result"),
-    ("ln1.hook_out", "ln1.hook_normalized", "ln1.hook_scale"),
-    ("ln2.hook_out", "ln2.hook_normalized", "ln2.hook_scale"),
+    # The three norm tensors are NOT aliases; see NOTE [Norm hooks are three tensors] in
+    # `hook_mapping.py`. `hook_normalized` fires before the learned gain and `hook_scale` is the
+    # per-token denominator, shape [batch, pos, 1], which cannot alias a [batch, pos, d_model] tensor
+    # at all. Measured on gemma-3-1b-it layer 5: `ln2.hook_out` matches the norm module's output at
+    # cos 1.000000, `ln2.hook_normalized` at 0.181. TransformerLens' `model_structure.md` documents
+    # them as aliases of `.hook_out`; its own implementation disagrees, and this table followed the
+    # documentation.
+    ("ln1.hook_out",),
+    ("ln2.hook_out",),
 )
 
 

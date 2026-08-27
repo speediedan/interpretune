@@ -103,6 +103,52 @@ class TestNNsightBackendConfig:
 # ==============================================================================
 
 
+class TestNormHooksAreThreeTensors:
+    """A norm exposes three tensors and this table must not conflate any two of them.
+
+    Measured on `google/gemma-3-1b-it` layer 5 against the HF norm module's output: `ln2.hook_out`
+    matches at cosine 1.000000, `ln2.hook_normalized` at 0.181, and the block-level `hook_mlp_in`
+    (the norm's INPUT) at 0.088. TransformerLens' own `model_structure.md` documents the first two as
+    aliases; its implementation fires them either side of the learned gain.
+    """
+
+    ARCHITECTURES = ("Gemma2ForCausalLM", "Gemma3ForCausalLM", "Gemma3ForConditionalGeneration")
+
+    @pytest.mark.parametrize("architecture", ARCHITECTURES)
+    def test_norm_output_resolves_to_the_module_output(self, architecture):
+        path, io_type = HookNameResolver(architecture).resolve("blocks.5.ln2.hook_out")
+        assert path.endswith("layers.5.pre_feedforward_layernorm")
+        assert io_type == "output"
+
+    @pytest.mark.parametrize("architecture", ARCHITECTURES)
+    def test_mlp_input_is_the_same_tensor_as_the_norm_output(self, architecture):
+        """The norm's output IS the MLP's argument, so both spellings must resolve identically."""
+        resolver = HookNameResolver(architecture)
+        assert resolver.resolve("blocks.5.mlp.hook_in") == resolver.resolve("blocks.5.ln2.hook_out")
+
+    @pytest.mark.parametrize("architecture", ARCHITECTURES)
+    @pytest.mark.parametrize("hook", ["ln1.hook_normalized", "ln2.hook_normalized", "ln2.hook_scale"])
+    def test_pre_gain_and_scale_hooks_are_refused_with_a_reason(self, architecture, hook):
+        """No HF module emits these, so a mapping could only point at a neighbouring tensor."""
+        with pytest.raises(ValueError, match="no module counterpart"):
+            HookNameResolver(architecture).resolve(f"blocks.5.{hook}")
+
+    @pytest.mark.parametrize("architecture", ARCHITECTURES)
+    def test_the_norm_input_is_distinct_from_its_output(self, architecture):
+        resolver = HookNameResolver(architecture)
+        assert resolver.resolve("blocks.5.hook_resid_mid")[1] == "input"
+        assert resolver.resolve("blocks.5.ln2.hook_out")[1] == "output"
+
+    def test_sublayer_input_is_not_grouped_with_the_legacy_block_hook(self):
+        """`mlp.hook_in` is post-norm, `hook_mlp_in` is pre-norm: aliasing them moves interventions."""
+        from interpretune.analysis.backends.interventions import HOOK_ALIAS_GROUPS
+
+        for group in HOOK_ALIAS_GROUPS:
+            assert not {"mlp.hook_in", "hook_mlp_in"} <= set(group)
+            assert not {"ln2.hook_out", "ln2.hook_normalized"} <= set(group)
+            assert not {"ln2.hook_out", "ln2.hook_scale"} <= set(group)
+
+
 class TestHookNameResolver:
     """Tests for HookNameResolver hook name parsing and resolution."""
 
