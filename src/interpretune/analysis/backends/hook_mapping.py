@@ -63,6 +63,55 @@ class ArchitectureMapping:
     hook_mappings: dict[str, HookMapping] = field(default_factory=dict)
 
 
+# NOTE [Norm hooks are three tensors]:
+# A norm is two operations, so it exposes three tensors, and conflating any two of them silently
+# reads an artifact off activations it was not trained on:
+#
+#   (1) hook_in          the norm's input                       (resid_pre / resid_mid)
+#   (2) hook_normalized  x / scale, BEFORE the learned gain     no HF module emits this
+#   (3) hook_out         the module's output, gain included     the HF norm module's output
+#
+# Measured on google/gemma-3-1b-it layer 5 against the HF module output: `ln2.hook_out` matches at
+# cosine 1.000000 (rel_l2 6.9e-07) and `ln2.hook_normalized` at 0.181. They are not the same tensor.
+#
+# TransformerLens' own `docs/source/content/model_structure.md` states that
+# `blocks.{i}.ln2.hook_normalized` and `blocks.{i}.ln2.hook_scale` are "legacy aliases for
+# `.hook_out`". Its implementation disagrees: `model_bridge/generalized_components/normalization.py`
+# fires `hook_scale` on the denominator (:93), `hook_normalized` on `x / scale` (:98), applies the
+# gain (:101), and only then fires `hook_out` (:110). `hook_scale` is `[batch, pos, 1]` and cannot be
+# an alias of a `[batch, pos, d_model]` tensor at all. This table previously followed that
+# documentation and inherited the error.
+#
+# Legacy `HookedTransformer` has NO post-gain norm hook (verified: `hook_scale` and `hook_normalized`
+# only, across layer_norm.py, rms_norm.py, layer_norm_pre.py, rms_norm_pre.py), so (3) is expressible
+# on a TransformerBridge and not on legacy. `ln2.hook_normalized` is therefore deliberately UNMAPPED
+# here rather than pointed at the nearest module: no HF module output equals it, and returning (3)
+# for it is the exact defect this note exists to prevent.
+_UNMAPPABLE_HOOKS: dict[str, str] = {
+    f"{norm}.hook_{suffix}": reason
+    for norm in ("ln1", "ln2", "ln1_post", "ln2_post", "ln_final")
+    for suffix, reason in (
+        (
+            "normalized",
+            "TransformerLens fires it on `x / scale`, before the norm's learned gain, so no HF module "
+            "output equals it. Capture `{norm}.hook_out` for the gain-included tensor the sublayer "
+            "actually receives, or recompute `x / scale` from `{norm}.hook_in`.",
+        ),
+        (
+            "scale",
+            "it is the norm's per-token denominator, shape [batch, pos, 1], an intermediate of the "
+            "norm's arithmetic that no module returns. Recompute it from `{norm}.hook_in`.",
+        ),
+    )
+}
+
+
+def _unmappable_hook_reason(base_name: str) -> str | None:
+    """Why a deliberately-unmapped hook has no envoy path, if it is one of them."""
+    reason = _UNMAPPABLE_HOOKS.get(base_name)
+    return None if reason is None else reason.replace("{norm}", base_name.split(".")[0])
+
+
 def _with_hook_aliases(
     hook_mappings: dict[str, HookMapping],
     alias_targets: dict[str, str],
@@ -154,7 +203,8 @@ GEMMA2_HOOK_MAPPINGS: dict[str, HookMapping] = _with_hook_aliases(
         "hook_attn_out": HookMapping(envoy_path="model.layers.{layer}.self_attn", io_type="output"),
         # Attention internal hooks (hook_z = attention output before output projection)
         "attn.hook_z": HookMapping(envoy_path="model.layers.{layer}.self_attn.o_proj", io_type="input"),
-        "ln2.hook_normalized": HookMapping(
+        # The norm's OUTPUT, gain multiply included. See NOTE [Norm hooks are three tensors].
+        "ln2.hook_out": HookMapping(
             envoy_path="model.layers.{layer}.pre_feedforward_layernorm", io_type="output", tuple_output=False
         ),
         "unembed.hook_in": HookMapping(envoy_path="lm_head", io_type="input", tuple_output=False),
@@ -164,7 +214,8 @@ GEMMA2_HOOK_MAPPINGS: dict[str, HookMapping] = _with_hook_aliases(
         "hook_out": "hook_resid_post",
         "attn.hook_out": "hook_attn_out",
         "attn.o.hook_in": "attn.hook_z",
-        "ln2.hook_out": "ln2.hook_normalized",
+        # The norm's output IS the MLP's input: measured identical (cos 1.000000) on gemma-3-1b-it.
+        "mlp.hook_in": "ln2.hook_out",
     },
 )
 
@@ -192,7 +243,8 @@ GEMMA3_MULTIMODAL_HOOK_MAPPINGS: dict[str, HookMapping] = _with_hook_aliases(
         ),
         "hook_attn_out": HookMapping(envoy_path="model.language_model.layers.{layer}.self_attn", io_type="output"),
         "attn.hook_z": HookMapping(envoy_path="model.language_model.layers.{layer}.self_attn.o_proj", io_type="input"),
-        "ln2.hook_normalized": HookMapping(
+        # The norm's OUTPUT, gain multiply included. See NOTE [Norm hooks are three tensors].
+        "ln2.hook_out": HookMapping(
             envoy_path="model.language_model.layers.{layer}.pre_feedforward_layernorm",
             io_type="output",
             tuple_output=False,
@@ -204,7 +256,8 @@ GEMMA3_MULTIMODAL_HOOK_MAPPINGS: dict[str, HookMapping] = _with_hook_aliases(
         "hook_out": "hook_resid_post",
         "attn.hook_out": "hook_attn_out",
         "attn.o.hook_in": "attn.hook_z",
-        "ln2.hook_out": "ln2.hook_normalized",
+        # The norm's output IS the MLP's input: measured identical (cos 1.000000) on gemma-3-1b-it.
+        "mlp.hook_in": "ln2.hook_out",
     },
 )
 
@@ -307,6 +360,11 @@ class HookNameResolver:
         """
         layer, base_name, _ = self.parse_hook_name(tl_hook_name)
         if base_name not in self._mapping.hook_mappings:
+            unmappable = _unmappable_hook_reason(base_name)
+            if unmappable is not None:
+                raise ValueError(
+                    f"Hook {base_name!r} has no module counterpart on {self._architecture!r}: {unmappable}"
+                )
             raise ValueError(
                 f"Unknown hook name {base_name!r} for architecture {self._architecture!r}. "
                 f"Supported hooks: {self.supported_hooks}"
@@ -373,6 +431,11 @@ class HookNameResolver:
         """
         layer, base_name, _ = self.parse_hook_name(tl_hook_name)
         if base_name not in self._mapping.hook_mappings:
+            unmappable = _unmappable_hook_reason(base_name)
+            if unmappable is not None:
+                raise ValueError(
+                    f"Hook {base_name!r} has no module counterpart on {self._architecture!r}: {unmappable}"
+                )
             raise ValueError(
                 f"Unknown hook name {base_name!r} for architecture {self._architecture!r}. "
                 f"Supported hooks: {self.supported_hooks}"
