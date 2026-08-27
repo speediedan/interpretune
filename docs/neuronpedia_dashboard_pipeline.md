@@ -79,6 +79,7 @@ the feature axis is 16x narrower. With more VRAM you can raise `n_prompts_total`
 `n_features_per_batch` or `n_prompts_in_forward_pass`; only `n_prompts_total` needs changing to
 reproduce the larger corpus. The 262k production config documents where the memory cliffs sit.
 
+<a id="gemma-scope-2-capture-hook-caveat"></a>
 ## A caveat on `--hook-point hook_mlp_in` for Gemma Scope 2 transcoders
 
 The examples below pass `--hook-point hook_mlp_in`. What that flag controls is path-dependent, and
@@ -102,12 +103,29 @@ Corpora generated at `hook_mlp_in` therefore encode a tensor these transcoders w
 They still render as plausible dashboards, because an L0 of 819 out of 16384 is sparse enough per
 token to look ordinary; what changes is which features fire and how strongly.
 
-Current behavior is unchanged and the flag still does what it says. Whether to regenerate affected
-corpora, and at which hook, is not settled here, and the limit is narrower than a plumbing problem:
-**on the legacy `HookedTransformer` path the declared tensor has no hook name to give**. TL fires
-`hook_mlp_in` before the norm and `ln2.hook_normalized` between the divide and the gain, and there is
-no third option, so naming it correctly is not something a flag can currently express in either path
-above.
+`--hook-point` still does what it says: it sets the Neuronpedia source label. What has changed is
+that the label no longer decides where activations are read from. `capture_hook_name` names the
+capture location outright, and the shipped `gemmascope-2-*` configs set it to
+`blocks.{layer}.ln2.hook_out`, the norm's output, on a `TransformerBridge`:
+
+```yaml
+hook_point: hook_mlp_in                         # Neuronpedia source LABEL
+capture_hook_name: blocks.{layer}.ln2.hook_out  # where activations are actually read
+model_wrapper: bridge
+```
+
+The two are expected to disagree, because `hook_point` is drawn from a fixed Neuronpedia vocabulary
+with no term for this tensor. Editing the label to match would change the label and not the capture.
+
+The original limit still holds for the path it was about: **on the legacy `HookedTransformer` path
+the declared tensor has no hook name to give.** TL fires `hook_mlp_in` before the norm and
+`ln2.hook_normalized` between the divide and the gain, with no third option, so a legacy run cannot
+name this tensor at all. `capture_hook_name` resolves it on the bridge path only, which is why these
+configs pin `model_wrapper: bridge` rather than treating it as a free choice.
+
+Whether to regenerate previously affected corpora is not settled here. If you do regenerate, confirm
+the capture from the run log rather than from the config or the metadata: see
+[Which tensor the run captures](verifying_dashboard_generation.md#which-tensor-the-run-captures-and-how-to-confirm-it-did).
 
 ## Standard launch example
 

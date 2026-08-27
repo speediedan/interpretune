@@ -203,10 +203,82 @@ python scripts/run_dashboard_benchmark_suite.py --mode full       # ~2 h, 17 leg
 Full usage: `scripts/dashboard_benchmark_suite_usage.md` (in the repository).
 
 For a single end-to-end generation rather than the benchmark wave, see the
-[quickstart](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu) —
+[quickstart](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu):
 one command against a committed config, about an hour on a single 24 GiB card. It generates into the
 same source set the monology corpus in **(c)** imports into, so the same
 [collision flags](neuronpedia_dashboard_pipeline.md#source-set-collisions) apply.
+
+### Which tensor the run captures, and how to confirm it did
+
+Read this before regenerating anything for the Gemma Scope 2 transcoders. It is the one part of the
+regeneration that cannot be checked by looking at the result.
+
+These transcoders are trained on the block norm's output, which Google's shipped `config.json`
+declares as `model.layers.{N}.pre_feedforward_layernorm.output`. Their SAELens metadata declares
+`blocks.{N}.hook_mlp_in`, which TransformerLens fires on the residual stream *before* that norm.
+Those are different tensors, and not marginally so: reconstructing the transcoder's declared target
+on layer 5 gives FVU 0.11 from the declared input against FVU 20585 from `hook_mlp_in`, with a cosine
+similarity of 0.088 between the two. See
+[the caveat in the pipeline guide](neuronpedia_dashboard_pipeline.md#gemma-scope-2-capture-hook-caveat)
+for the full measurement.
+
+The shipped configs resolve this by naming the capture location outright:
+
+```yaml
+capture_hook_name: blocks.{layer}.ln2.hook_out
+```
+
+Four configs set it and five inherit it through `EXTENDS`, so all nine are covered and a run against
+any of them captures the right tensor without further arguments. `{layer}` is substituted per layer,
+and the value is a `TransformerBridge` name, which is why these configs also set
+`model_wrapper: bridge`.
+
+**Confirm it from the run log, because nothing else can tell you.** The runner announces the decision
+once per run:
+
+```
+Capturing at 'blocks.5.ln2.hook_out' (explicitly configured) rather than the SAE's declared
+hook name 'blocks.5.hook_mlp_in'. ...
+```
+
+Grep the log for `Capturing at` and check the hook it names. This matters more than it looks:
+compatibility mode leaves **both** hooks live on the model at once, and a generated corpus carries no
+trace of which one was read. **A corpus generated with both hooks live and no log evidence of which
+was used is indistinguishable from a defective one by inspection of the artifact**, which is the
+property that let this go unnoticed through a year of parity testing. Parity compares two legs that
+resolve the hook the same way, so it cannot see a difference that is upstream of both.
+
+For these transcoders, **a run log with no `Capturing at` line at all captured at the declared hook**,
+because the runner prints only when the capture location differs from the declared one. Scope that
+reading to this family: for an SAE whose declared hook already names the right tensor, silence is
+correct and expected.
+
+> **Do not "fix" the `hook_point` label to match.** The config carries both, eleven lines apart and
+> deliberately disagreeing:
+>
+> ```yaml
+> hook_point: hook_mlp_in                       # the Neuronpedia source LABEL
+> capture_hook_name: blocks.{layer}.ln2.hook_out  # where activations are actually read
+> ```
+>
+> `hook_point` is the Neuronpedia source label, drawn from a fixed vocabulary with no term for this
+> tensor. Editing it changes the label and not the capture, which yields a corpus that reads correct
+> and captures wrong: strictly worse than a mismatch you can see. A label agreeing with the capture is
+> also exactly what the defective corpora show, so agreement is not evidence of anything.
+
+### Before a direct pipeline run: check the tree yourself
+
+`run_dashboard_benchmark_suite.py` refuses to package from dirty repositories unless you pass
+`--allow-dirty`. `launch_neuronpedia_dashboard_pipeline.py` has no such guard, so a direct run, which
+is what the quickstart above describes, will start against whatever is in your working tree.
+
+```bash
+git -C <interpretune> status -sb
+grep -c capture_hook_name src/interpretune/utils/neuronpedia_dashboard_pipeline.py   # expect > 0
+```
+
+**If that count is zero the tree lacks the capture-hook support regardless of which branch it reports
+being on.** A branch name describes what was checked out, not what is in the files now.
 
 ---
 
