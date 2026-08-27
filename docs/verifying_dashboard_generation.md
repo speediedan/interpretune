@@ -266,6 +266,46 @@ correct and expected.
 > and captures wrong: strictly worse than a mismatch you can see. A label agreeing with the capture is
 > also exactly what the defective corpora show, so agreement is not evidence of anything.
 
+### The acceptance check, which needs no baseline at all
+
+The log line above tells you what a run *intended*. To check what it *produced*, compare the corpus's
+implied L0 against the number the SAE declares for itself. SAELens carries that per `sae_id` in its own
+directory:
+
+```yaml
+# sae_lens/pretrained_saes.yaml, gemma-scope-2-1b-it-transcoders-all
+- id: layer_5_width_16k_l0_small_affine
+  l0: 15
+```
+
+The release name is an independent sanity check on the same quantity: `l0_small` against `l0_big`.
+
+```
+implied L0 per token       corrected layer 0    12.8      near the declared 15
+                           corrected layer 25   21.7      near the declared 15
+                           defective layer 0   451.1      a 30x violation
+```
+
+**This is the only check here that is absolute.** Everything else compares against something, and every
+comparison we had was blind to this defect for one of two structurally different reasons:
+
+- **Parity is blind because the defect is common-mode.** Hook resolution happens in the runner's
+  constructor, above the legacy/columnar split, so both legs of any comparison capture at the same hook
+  by construction. A differential check cannot see an error shared by both of its legs.
+- **Throughput is blind because it measures a quantity the defect does not touch.** In the two-layer
+  pilot, layers whose stored output differed by 27% finished within 7 ms of each other: wall time is
+  dominated by forward passes, which the hook location does not change. Generation throughput remains a
+  useful performance-regression guard and is not evidence about capture location.
+
+Implied L0 escapes both, because it is absolute *and* it measures the stored artifact. A reader holding
+one corpus, with no reference corpus and no prior run, can falsify it in a single query.
+
+**Do not read the row counts as a substitute for it.** A corrected deep layer and a defective shallow
+one are close or identical on every gross statistic: corrected layer 25 stores 522,029 rows at 47.1%
+nonzero with a median max of 0.00, against defective layer 0 at 483,013 rows, 34.2% nonzero, and a
+median max of 0.0000. Deep layers are legitimately sparser. Those figures mean something only with the
+layer held fixed and the hook varied.
+
 ### Before a direct pipeline run: check the tree yourself
 
 `run_dashboard_benchmark_suite.py` refuses to package from dirty repositories unless you pass
