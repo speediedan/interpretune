@@ -17,7 +17,7 @@ One guided, transparent, non-destructive flow that prepares everything
    verifying the resulting tree state against pinned expectations.
 4. Ensure the neuronpedia local-stack env defaults (`.env`: Postgres host port/data dir, HF
    cache paths — appended only when missing) and check the local Postgres is reachable
-   (offering the docker compose bring-up when it is not).
+   (reporting how to start it when it is not).
 5. Build the integrated interpretune benchmark venv via `scripts/build_it_env.sh`
    (SAEDashboard + SAELens editable from source; everything else from interpretune's pins).
    An existing venv is only cleared after explicit confirmation (or `--clear-existing-venv`).
@@ -28,7 +28,7 @@ One guided, transparent, non-destructive flow that prepares everything
    suite needs, and print the detected GPU + the exact command to run the benchmark.
 
 PREREQUISITES (checked in Step 1):
-- `git` and `uv` on PATH; `docker` only if the local Neuronpedia DB needs bring-up;
+- `git` and `uv` on PATH; a reachable Postgres (this script verifies, it does not start one);
   bash >= 4.3 for the env build (macOS: `brew install bash`).
 - HuggingFace access to the GATED model `google/gemma-3-1b-it`: accept the license on the
   model page, then authenticate via `hf auth login` (stored token) or `export HF_TOKEN=...`
@@ -315,14 +315,13 @@ class Setup:
     def check_prereqs(self) -> None:
         self.say("\n=== Step 1/7: prerequisites (tools + HuggingFace access) ===")
         self.say(
-            "Required: git + uv on PATH; docker only for local-DB bring-up; bash >= 4.3 for the env "
+            "Required: git + uv on PATH; a Postgres this script can reach; bash >= 4.3 for the env "
             "build (macOS: `brew install bash`). Root is never required; nothing is pushed and no "
             "existing checkout is modified."
         )
         for tool, why, fatal in (
             ("git", "clones/worktrees", True),
             ("uv", "the env build and package installs", not self.args.skip_env_build),
-            ("docker", "local Neuronpedia DB bring-up (only if the DB is not already running)", False),
         ):
             path = shutil.which(tool)
             if path:
@@ -482,10 +481,15 @@ class Setup:
     def _ensure_np_env_defaults(self) -> None:
         """Append missing local-stack keys to the neuronpedia untracked `.env`.
 
-        Upstream `docker/compose.yaml` defaults are unsuitable for a generic local benchmark host
-        (`POSTGRES_HOST_PORT` 5432 collides with a host Postgres; `POSTGRES_DATA_DIR` falls back to
-        the root-owned `/var/lib/postgresql/data`), so pin them per-host in the gitignored `.env`
-        (compose reads `.env.localhost` then `.env`; existing values are never modified here).
+        `HF_HOME` / `HF_HUB_CACHE` / `HF_DATASETS_CACHE` are the load-bearing ones: neuronpedia's
+        `make inference-dev` sources this `.env` into the process environment, so a relocated HF
+        cache is honoured with no mount and no flag.
+
+        `POSTGRES_HOST_PORT` and `POSTGRES_DATA_DIR` are **vestigial** and kept only because
+        removing keys from an operator's `.env` is not this script's business. They were read by
+        `docker/compose.yaml`, which upstream deleted; nothing consumes them now. The port that
+        matters today is the one inside `--local-db-url`, and the data directory belongs to
+        whoever runs the server. Existing values are never modified here.
         """
 
         np_repo = self.repo_paths["neuronpedia"]
@@ -510,7 +514,8 @@ class Setup:
             self.say(f"    {k}={v}")
         if not self.confirm("  append these keys?"):
             self.warn(
-                f"{env_file} not updated — compose bring-up may use upstream defaults (port 5432, root-owned data dir)."
+                f"{env_file} not updated — a relocated HF cache will not be picked up by "
+                "neuronpedia's `make inference-dev`, which sources this file."
             )
             return
         if not self.args.dry_run:
@@ -534,32 +539,20 @@ class Setup:
         except OSError:
             pass
         self.warn(f"Postgres NOT reachable at {host}:{port}.")
+        # No bring-up is offered any more, and that is not a regression: upstream neuronpedia
+        # removed containers from the repo entirely (no Dockerfiles, no compose files, no
+        # `init.sh`). Its `make db-*` targets are pure client-side psql/prisma calls against
+        # POSTGRES_URL_NON_POOLING -- they VERIFY a server, they do not start one. So there is
+        # nothing for this script to launch, and pretending otherwise is what the previous
+        # compose branch did: it failed soft behind `compose.is_file()`, silently stopping at
+        # some point after upstream deleted the file, with no signal that a capability had gone.
         np_repo = self.repo_paths.get("neuronpedia")
-        compose = np_repo / "docker" / "compose.yaml" if np_repo else None
-        if compose and compose.is_file() and shutil.which("docker"):
-            cmd = [
-                "docker",
-                "compose",
-                "-f",
-                "docker/compose.yaml",
-                "--env-file",
-                ".env.localhost",
-                "--env-file",
-                ".env",
-                "up",
-                "-d",
-                "db-init",
-                "postgres",
-            ]
-            if self.confirm(f"  bring up the local Neuronpedia DB now? ({' '.join(cmd)} in {np_repo})"):
-                self.run(cmd, cwd=np_repo)
-            else:
-                self.warn("continuing without a reachable DB — import legs will fail until it is up.")
-        else:
-            self.warn(
-                "docker or the neuronpedia compose file is unavailable; start Postgres yourself "
-                "(see neuronpedia Makefile target 'webapp-localhost-run') or pass --local-db-url."
-            )
+        hint = f" (`cd {np_repo} && make db-check` diagnoses it)" if np_repo else ""
+        self.warn(
+            "start Postgres yourself, then re-run"
+            f"{hint}, or pass --local-db-url to point at a server that is already up. "
+            "The DB-import benchmark legs will fail until it is reachable."
+        )
 
     def build_env(self) -> Path:
         self.say("\n=== Step 5/7: interpretune benchmark venv (build_it_env.sh) ===")
