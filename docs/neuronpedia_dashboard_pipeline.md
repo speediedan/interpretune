@@ -120,8 +120,14 @@ with no term for this tensor. Editing the label to match would change the label 
 The original limit still holds for the path it was about: **on the legacy `HookedTransformer` path
 the declared tensor has no hook name to give.** TL fires `hook_mlp_in` before the norm and
 `ln2.hook_normalized` between the divide and the gain, with no third option, so a legacy run cannot
-name this tensor at all. `capture_hook_name` resolves it on the bridge path only, which is why these
-configs pin `model_wrapper: bridge` rather than treating it as a free choice.
+name *this* tensor at all.
+
+That is a limit of the name, not of the field. `capture_hook_name` is path-agnostic: the override is
+applied before the wrapper is consulted at all, and is unit-tested on both paths so the two mechanisms
+cannot diverge on an unrelated flag. It is usable on the legacy path for any hook legacy can name.
+What is bridge-specific is the *value* these transcoders need, `blocks.{layer}.ln2.hook_out`, which is
+a `TransformerBridge` name. That is why the shipped configs pin `model_wrapper: bridge` alongside it,
+rather than leaving the wrapper a free choice.
 
 Whether to regenerate previously affected corpora is not settled here. If you do regenerate, confirm
 the capture from the run log rather than from the config or the metadata: see
