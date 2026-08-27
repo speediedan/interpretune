@@ -82,6 +82,32 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
                     "configuration and never read this payload -- consumption is strictly two-path with "
                     "no merge semantics (#128)."
                 )
+    if "adapters" in kinds:
+        ad = manifest.get("adapters") or {}
+        entrypoint = ad.get("entrypoint")
+        declares = ad.get("declares")
+        if not entrypoint or not isinstance(entrypoint, str):
+            raise ComponentManifestError(
+                f"{source}: kind `adapters` requires an `adapters.entrypoint` (repo-relative .py that registers "
+                "the adapter's compositions). Adapters are the only kind whose payload IS code."
+            )
+        if (
+            not declares
+            or not isinstance(declares, list)
+            or not all(isinstance(d, str) and d.isidentifier() for d in declares)
+        ):
+            raise ComponentManifestError(
+                f"{source}: kind `adapters` requires a non-empty `adapters.declares` list of Adapter names this "
+                "component adds (valid Python identifiers). The manifest declares the names so the loader can "
+                "check that the code registered what the manifest advertised, rather than discovering the "
+                "adapter surface by executing it."
+            )
+        for entry in ad.get("compositions") or []:
+            if not isinstance(entry, dict) or not entry.get("component") or not isinstance(entry.get("adapters"), list):
+                raise ComponentManifestError(
+                    f"{source}: each `adapters.compositions` entry needs a `component` name and an `adapters` "
+                    f"list, got {entry!r}"
+                )
     if "promptconfigs" in kinds:
         pc = manifest.get("promptconfigs") or {}
         if not pc.get("entrypoint") or not isinstance(pc.get("definitions"), dict) or not pc["definitions"]:
