@@ -54,6 +54,17 @@ pr:
       - docs/**
       - "*.md"
   drafts: false  # Only run for PRs that are "ready for review"
+  #
+  # Observed reporting behaviour, which is worth knowing when a PR seems not to have run:
+  #   - diff matches an include and no exclude  -> the pipeline runs
+  #   - diff matches nothing, or only excludes  -> NO build, but a NEUTRAL check still posts
+  # So a NEUTRAL row means "evaluated and skipped". The absence of ANY row means the pipeline was
+  # never evaluated, which is a different thing and is not something these filters produce.
+  #
+  # Note the consequence: with no required status checks configured, a pull request whose GPU build
+  # never ran still reports a clean, mergeable state. "All checks green" and "everything that should
+  # run, ran" are different claims and only the first is visible. Before merging on a green rollup,
+  # confirm the Azure check is PRESENT, not merely non-failing.
 
 parameters:
   - name: reset_hf_cache
@@ -96,6 +107,32 @@ jobs:
         # trace-teardown wipe of the default settrace-based core (see gen_it_coverage.sh)
         COVERAGE_CORE: sysmon
 
+    # WORKSPACE REUSE -- read this if a build fails at `Checkout ... to s` in well under a minute.
+    #
+    # `clean: outputs` clears build outputs and KEEPS the source folder, so each build re-syncs an
+    # existing checkout instead of re-cloning. That is deliberate: forcing a full re-clone on every
+    # GPU build is a standing cost paid to guard against a rare event, and the rare event is cheap to
+    # recover from by hand.
+    #
+    # The rare event: if a build is killed mid-checkout (host OOM is the way this happens here, see
+    # the memory note on the lease step below), git can be left having written part of `.git`. A
+    # `.git` with no `HEAD` and no `config` is not a repository, so the next build's `git clean -ffdx`
+    # and `git reset --hard` both fail, and the agent's fallback of deleting the source folder can
+    # fail too if the dead build left files owned by the container's uid rather than the agent's.
+    #
+    # Diagnosing it, in order:
+    #   1. Prefer the task result over inspecting the directory: if the most recent build's Checkout
+    #      task SUCCEEDED, the workspace is healthy and the problem is elsewhere.
+    #   2. If you do inspect, confirm `.git/HEAD` and `.git/config` report "No such file or directory"
+    #      and NOT "Permission denied" -- an access limit looks identical from outside.
+    #   3. A workspace that is mid-checkout right now has the SAME signature as a corrupt one (small,
+    #      those two files absent). Check that no build is in flight before concluding anything, and
+    #      re-check immediately before acting rather than relying on an earlier look.
+    #
+    # Recovery is to delete the agent's source folder (`<agent>/_work/<n>/s`), which needs an account
+    # with agent-uid access. Whether a rerun ALONE clears it is untested: the one observed occurrence
+    # was cleared by hand before any rerun met it. If it recurs, rerunning once before deleting costs
+    # about a minute and would settle that.
     workspace:
       clean: outputs
 
