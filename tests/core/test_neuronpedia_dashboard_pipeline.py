@@ -4343,3 +4343,35 @@ def test_dashboard_manifest_records_the_row_group_size(tmp_path: Path) -> None:
     )
     manifest = dashboard_pipeline.build_dashboard_manifest(config)
     assert manifest["artifacts"]["parquet_row_group_size"] == SD_DEFAULT_PARQUET_ROW_GROUP_SIZE
+
+
+def test_shipped_gemmascope_configs_name_the_capture_hook():
+    """Every shipped gemma-scope-2 transcoder config must capture at the trained tensor.
+
+    Without this, a config that simply omits `capture_hook_name` falls back to the hook the SAE
+    declares, which for these releases is the residual BEFORE the block norm rather than the tensor
+    the transcoder was trained on. That produces a plausible-looking corpus with no error to notice,
+    so the guard is a forcing function rather than a style check.
+
+    Resolved through the loader rather than grepped, because these configs use `EXTENDS:` and only
+    four of the nine set the value directly.
+    """
+    import pathlib as _pathlib
+
+    import it_examples
+
+    config_dir = _pathlib.Path(it_examples.__file__).parent / "neuronpedia_dashboard"
+    configs = sorted(config_dir.glob("*.yaml"))
+    assert configs, "no dashboard configs found; this guard would silently pass"
+
+    for config_path in configs:
+        values = dashboard_pipeline._normalize_pipeline_overrides(
+            dashboard_pipeline._extract_dashboard_pipeline_values(
+                dashboard_pipeline.load_dashboard_pipeline_config_payload(config_path),
+                config_path=config_path,
+            )
+        )
+        assert values.get("capture_hook_name") == "blocks.{layer}.ln2.hook_out", (
+            f"{config_path.name} does not name the capture hook, so it would capture at the hook the "
+            "SAE declares, which is not the tensor these transcoders were trained on"
+        )

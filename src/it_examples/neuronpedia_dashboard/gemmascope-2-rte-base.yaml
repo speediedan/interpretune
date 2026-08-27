@@ -15,6 +15,15 @@ pipeline:
   release_id: gemma-scope-2
   release_title: Gemma Scope 2
   hook_point: hook_mlp_in
+  # Where activations are actually captured. Set explicitly because these transcoders' declared
+  # TransformerLens hook name is NOT the tensor they were trained on: Gemma Scope declares
+  # `pre_feedforward_layernorm.output` (the block norm's output) while SAELens declares
+  # `blocks.{layer}.hook_mlp_in`, the residual BEFORE that norm. Measured cos 0.088 apart on
+  # gemma-3-1b-it layer 5; `blocks.{layer}.ln2.hook_out` matches the declared tensor at cos 1.000000
+  # on a TransformerBridge. `hook_point` above stays as it is: it is the Neuronpedia source LABEL,
+  # whose fixed vocabulary has no term for this tensor, so the two read differently by necessity and
+  # the runner announces the divergence.
+  capture_hook_name: blocks.{layer}.ln2.hook_out
   prompts_huggingface_dataset_path: aps/super_glue
   prompts_huggingface_dataset_config_name: rte
   prompts_huggingface_dataset_split: train
