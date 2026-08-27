@@ -261,13 +261,32 @@ class Setup:
             self._log(line)
         return proc.wait()
 
-    def confirm(self, question: str, default: bool = True) -> bool:
+    def _auto_answer(self, question: str, shown: str) -> bool:
+        """True when this run must not prompt, having already reported the answer it will use.
+
+        `--dry-run` prints a plan and executes nothing, so there is nothing for an operator to decide; prompting there
+        strands the run on a question whose answer cannot matter. A non-interactive stdin (CI, a pipe, `< /dev/null`) is
+        handled at the `input()` call rather than here, because it is a property of the invocation and not of the
+        arguments.
+        """
         if self.args.yes:
-            self.say(f"{question} [auto-{'yes' if default else 'no'} via --yes]")
+            self.say(f"{question} [auto-{shown} via --yes]")
+            return True
+        if self.args.dry_run:
+            self.say(f"{question} [auto-{shown} via --dry-run; nothing is executed]")
+            return True
+        return False
+
+    def confirm(self, question: str, default: bool = True) -> bool:
+        if self._auto_answer(question, "yes" if default else "no"):
             return default
         suffix = "[Y/n]" if default else "[y/N]"
         while True:
-            resp = input(f"{question} {suffix} ").strip().lower()
+            try:
+                resp = input(f"{question} {suffix} ").strip().lower()
+            except EOFError:
+                self.warn(f"no input available; taking the default ({'yes' if default else 'no'}) for: {question}")
+                return default
             if not resp:
                 self._log(f"{question} -> (default {'yes' if default else 'no'})")
                 return default
@@ -280,12 +299,15 @@ class Setup:
 
     def choose(self, question: str, choices: dict[str, str], default: str) -> str:
         """choices: {key: description}; returns the chosen key."""
-        if self.args.yes:
-            self.say(f"{question} [auto-'{default}' via --yes]")
+        if self._auto_answer(question, f"'{default}'"):
             return default
         menu = ", ".join(f"[{k}] {v}" for k, v in choices.items())
         while True:
-            resp = input(f"{question} ({menu}; default {default}): ").strip().lower()
+            try:
+                resp = input(f"{question} ({menu}; default {default}): ").strip().lower()
+            except EOFError:
+                self.warn(f"no input available; taking the default ('{default}') for: {question}")
+                return default
             if not resp:
                 self._log(f"{question} -> (default '{default}')")
                 return default
@@ -377,12 +399,51 @@ class Setup:
                     )
                 dirty = self.run(["git", "-C", str(path), "status", "--porcelain"], mutating=False)
                 if dirty:
-                    self.say(
-                        f"  {spec.dirname} has uncommitted changes:\n    " + "\n    ".join(dirty.splitlines()[:12])
-                    )
+                    entries = dirty.splitlines()
+
+                    # `??` is porcelain's untracked marker. Split it out because the stash offer below
+                    # passes `-u`, which sweeps untracked files too: a maintainer's hand-written local
+                    # config is exactly the kind of file that is untracked, valuable and unbacked-up.
+                    # `run()` strips, so the first porcelain line has lost the leading space of its
+                    # two-character status field; splitting on whitespace is correct for both shapes.
+                    def _porcelain_path(entry: str) -> str:
+                        parts = entry.split(None, 1)
+                        return parts[1] if len(parts) > 1 else entry
+
+                    untracked = [e for e in entries if e.startswith("??")]
+                    tracked = [e for e in entries if not e.startswith("??")]
+                    shown = (tracked + untracked)[:12]
+                    elided = len(entries) - len(shown)
+                    summary = f"  {spec.dirname} has uncommitted changes"
+                    if untracked:
+                        summary += f" ({len(tracked)} tracked, {len(untracked)} untracked)"
+                    self.say(summary + ":\n    " + "\n    ".join(shown))
+                    if elided > 0:
+                        self.say(f"    ... and {elided} more (`git -C {path} status` for the full list)")
+                    if untracked:
+                        self.warn(
+                            f"stashing {spec.dirname} would also remove its {len(untracked)} untracked "
+                            "file(s) from the tree (`git stash push -u`). Recover with `git -C "
+                            f"{path} stash pop`."
+                        )
+                    # A dirty `.env*` is usually the local-stack wiring (DB host/port, cache paths),
+                    # i.e. the very settings the run about to be configured depends on. Stashing it
+                    # reverts them, and the resulting failure surfaces as an unreachable database
+                    # rather than as a stash, which is a long way from the cause.
+                    envish = sorted(q for q in (_porcelain_path(e) for e in entries) if Path(q).name.startswith(".env"))
+                    if envish:
+                        self.warn(
+                            f"{spec.dirname}'s pending changes include local-stack config "
+                            f"({', '.join(envish)}). Stashing reverts the settings this run is about to "
+                            "depend on; prefer [c] unless you know they are unrelated."
+                        )
                     action = self.choose(
-                        f"  {spec.dirname} is dirty — stash, continue as-is, or abort?",
-                        {"s": "git stash push -u", "c": "continue with dirty tree", "a": "abort"},
+                        f"  {spec.dirname} is dirty: stash, continue as-is, or abort?",
+                        {
+                            "s": "git stash push -u (INCLUDING untracked files)" if untracked else "git stash push -u",
+                            "c": "continue with dirty tree",
+                            "a": "abort",
+                        },
                         "c",
                     )
                     if action == "a":
@@ -392,6 +453,7 @@ class Setup:
                             ["git", "-C", str(path), "stash", "push", "-u", "-m", "setup_dashboard_benchmark_env"],
                             cwd=None,
                         )
+                        self.say(f"    stashed; restore with `git -C {path} stash pop`")
                     elif spec.key in MANIFEST_REPO_KEYS:
                         self.warn(
                             f"{spec.dirname} left dirty — reviewer packaging refuses dirty manifest repos "
