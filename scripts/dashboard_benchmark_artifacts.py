@@ -43,7 +43,7 @@ SUMMARY_STAGES = (
 LEGACY_CONVERSION_STAGE = "neuronpedia_conversion_and_json_serialization"
 COLUMNAR_WRITE_STAGES = ("activation_row_packaging", "activation_copy_row_packaging")
 ROLLING_SUBSTAGE_PREFIX = "rolling_"
-DETACHED_BASELINE_LINEAGE_PREFIX = "SD-7886eaa+benchmark_patches/SL-3eea6552/NP-5a33f17"
+DETACHED_BASELINE_LINEAGE_PREFIX = "SD-7886eaa+benchmark_patches/SL-3eea6552/NP-789942ed"
 
 _SUCCESS_STATUSES = {"target_reached", "exited"}
 
