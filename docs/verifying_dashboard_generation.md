@@ -281,10 +281,18 @@ directory:
 The release name is an independent sanity check on the same quantity: `l0_small` against `l0_big`.
 
 ```
-implied L0 per token       corrected layer 0    12.8      near the declared 15
-                           corrected layer 25   21.7      near the declared 15
-                           defective layer 0   451.1      a 30x violation
+implied L0 per token       corrected layer 0    12.7      0.85x declared
+                           corrected layer 16   19.4      1.29x declared
+                           corrected layer 25   21.7      1.45x declared
+                           defective layer 0   451.1        30x declared
 ```
+
+Corrected runs sit between 0.85x and 1.45x of the declared value and rise monotonically with depth,
+which is expected: deeper layers carry denser representations. **Accept a regeneration when its implied
+L0 is within 3x of the declared `l0`.** That passes every corrected layer measured, with the worst at
+1.45x, and fails the defective corpus by an order of magnitude. The threshold is deliberately loose,
+because the signal it has to catch is 30x and a tight bound would only add false alarms on layers
+nobody has profiled yet.
 
 **This is the only check here that is absolute.** Everything else compares against something, and every
 comparison we had was blind to this defect for one of two structurally different reasons:
