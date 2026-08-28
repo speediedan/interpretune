@@ -2393,7 +2393,11 @@ def ensure_source_ids_sidecar(config: NeuronpediaDashboardPipelineConfig, *, ove
 
 
 DASHBOARD_MANIFEST_FILE = "dashboards.json"
-DASHBOARD_MANIFEST_SCHEMA = 1
+# 2: adds source_set.capture_hook_name. The bump matters because absence is otherwise ambiguous --
+# at schema 1 a missing field means "written before the field existed", at 2 it means "captured at the
+# hook the SAE declares". A consumer distinguishing a corrected corpus from a defective one needs to
+# tell those apart.
+DASHBOARD_MANIFEST_SCHEMA = 2
 
 #: Distributions whose versions determine what a corpus's bytes look like. ``sae-dashboard`` writes
 #: the parquet (page index included), ``pyarrow`` is the writer itself, and ``huggingface_hub``
@@ -2458,6 +2462,13 @@ def build_dashboard_manifest(config: NeuronpediaDashboardPipelineConfig) -> dict
             "description": config.neuronpedia_source_set_description,
             "sae_set": config.sae_set,
             "hook_point": config.hook_point,
+            # WHERE THE ACTIVATIONS CAME FROM, as distinct from `hook_point` above, which is the
+            # Neuronpedia source LABEL drawn from a fixed vocabulary that cannot name every tensor.
+            # The two legitimately differ: Gemma Scope 2 transcoders are labelled `hook_mlp_in` and
+            # captured at `blocks.{layer}.ln2.hook_out`. Without this field a corpus records nothing
+            # about which tensor produced it, so a corrected corpus and one captured at the wrong hook
+            # are indistinguishable in the manifest. `None` means the SAE's declared hook was used.
+            "capture_hook_name": config.capture_hook_name,
             "release_id": config.release_id,
             "release_title": config.release_title,
             "release_url": config.release_url,
