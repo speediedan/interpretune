@@ -4181,6 +4181,31 @@ class TestDashboardManifest:
         (run / dashboard_pipeline.DASHBOARD_MANIFEST_FILE).write_text("{not json", encoding="utf-8")
         assert dashboard_pipeline.read_dashboard_manifest(run) == {}
 
+    def test_records_the_capture_hook_distinctly_from_the_source_label(self, tmp_path: Path) -> None:
+        """`hook_point` is the Neuronpedia LABEL; `capture_hook_name` is the tensor read.
+
+        They legitimately differ, and before the manifest carried both, a corpus captured at the
+        trained tensor and one captured at the hook the SAE declares were indistinguishable: the
+        label reads the same either way, so only `generated_utc` separated them, which is
+        circumstantial and does not survive a re-upload.
+        """
+        config = self._config(tmp_path, hook_point="hook_mlp_in", capture_hook_name="blocks.{layer}.ln2.hook_out")
+        source_set = dashboard_pipeline.build_dashboard_manifest(config)["source_set"]
+        assert source_set["capture_hook_name"] == "blocks.{layer}.ln2.hook_out"
+        assert source_set["hook_point"] == "hook_mlp_in"
+        assert source_set["capture_hook_name"] != source_set["hook_point"]
+
+    def test_absent_capture_hook_is_recorded_as_none_rather_than_omitted(self, tmp_path: Path) -> None:
+        """An explicit `None` says "the SAE's declared hook was used"; an absent key says nothing.
+
+        The schema bump to 2 is what makes that readable: below it, a missing field means the manifest
+        predates the field, which is a different claim from the run having used the declared hook.
+        """
+        manifest = dashboard_pipeline.build_dashboard_manifest(self._config(tmp_path))
+        assert "capture_hook_name" in manifest["source_set"]
+        assert manifest["source_set"]["capture_hook_name"] is None
+        assert manifest["schema"] >= 2
+
 
 class TestSourceIdResolution:
     """Identity must come from the corpus or the caller -- never from where the files happen to sit.
