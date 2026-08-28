@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -618,12 +619,23 @@ class Setup:
         # did: it failed soft behind `compose.is_file()`, silently stopping at some point after
         # upstream deleted the file, with no signal that a capability had gone.
         #
-        # Deliberately names NO Makefile target. neuronpedia has no `db-*` targets on any ref;
-        # `db-init` appears only as a compose SERVICE in lines referring to the deleted
-        # docker/compose.yaml. Pointing at one is how this hint was wrong before.
+        # The `make db-check` hint is emitted only if that target is actually present in the
+        # checkout, because whether it exists depends on which neuronpedia ref is cloned rather
+        # than on anything this script controls: upstream's post-refactor tree has `db-check`,
+        # `db-init`, `db-status` and `db-reset`, while the fork's pre-refactor branches have none
+        # of them. A hint hard-coded either way is wrong half the time and wrong silently, since
+        # a missing Make target only surfaces when the reader tries it. Ask the tree instead.
+        np_repo = self.repo_paths.get("neuronpedia")
+        hint = ""
+        if np_repo and (Path(np_repo) / "Makefile").is_file():
+            try:
+                if re.search(r"^db-check:", (Path(np_repo) / "Makefile").read_text(), re.M):
+                    hint = f" (`cd {np_repo} && make db-check` diagnoses it)"
+            except OSError:
+                pass
         self.warn(
-            "start Postgres yourself, then re-run, or pass --local-db-url to point at a server "
-            "that is already up. The DB-import benchmark legs will fail until it is reachable."
+            f"start Postgres yourself, then re-run{hint}, or pass --local-db-url to point at a "
+            "server that is already up. The DB-import benchmark legs will fail until it is reachable."
         )
 
     def build_env(self) -> Path:
