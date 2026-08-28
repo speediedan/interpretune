@@ -185,6 +185,23 @@ jobs:
         displayName: 'Published notebooks (bf16_cuda)'
 
       - bash: |
+          # Rootless docker with userns remapping means anything this job wrote lands under the
+          # container's host subuid, which the agent -- running as its own uid -- cannot remove. The
+          # agent deletes some of these at the START of the next run, in a step we do not control, and
+          # when that delete fails the CHECKOUT fails before any step runs. `.pytest_cache` is the only
+          # directory currently in that category; the published-notebook step above creates it.
+          #
+          # Mirrors the equivalent cleanup in gpu-tests.yml. `always()` because a FAILED run leaves the
+          # same residue as a passing one, and a failure that also poisons the next run is how one bad
+          # build becomes a stuck pipeline.
+          echo 'Adjusting ownership/permissions...'
+          sudo chmod -R 775 /__w/3/s || true
+          echo 'Cleaning up ephemeral directories...'
+          sudo rm -rf /__w/3/s/.pytest_cache || true
+        condition: always()
+        displayName: 'Clean container-owned workspace residue'
+
+      - bash: |
           # Release the host GPU lease. condition: always() so a failed or cancelled run does not strand
           # it; belt-and-braces because container teardown frees it anyway.
           source scripts/gpu_lease_wrap.sh 2>/dev/null && \
