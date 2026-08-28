@@ -98,7 +98,7 @@ pipeline:
   local_db_import_chunk_size: 16000
   # REQUIRED for inline import: without an explicit DB URL the pipeline logs one startup WARNING and
   # silently degrades to generation-only.
-  local_db_url: postgres://postgres:postgres@127.0.0.1:5433/postgres
+  local_db_url: postgres://postgres:postgres@127.0.0.1:5432/postgres
   archive_partial_dirs: false
   heartbeat_seconds: 60
   stall_timeout_seconds: 1800
