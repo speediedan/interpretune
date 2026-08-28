@@ -175,9 +175,15 @@ jobs:
             PYTHONPATH="$(Build.Repository.LocalPath)/src:$(Build.Repository.LocalPath)" \
             "$(Build.Repository.LocalPath)/.readme-venv/bin/python" -m pytest \
               src/it_examples/tests/test_notebooks.py -v -rs --durations=25 2>&1 | tee /tmp/nb_out.txt
-          # 4 expected skips: two `Optional/extended test execution`, two `Standalone execution`.
-          # Neither is GPU-gated, so they skip on a GPU host too and are part of the pinned shape.
-          bash .azure-pipelines/assert_surface.sh /tmp/nb_out.txt 16 4 \
+          # 5 expected skips, all measured from a real run rather than anticipated:
+          #   2  Optional/extended test execution
+          #   2  Standalone execution
+          #   1  test_circuit_tracer_w_neuronpedia_notebook, needs NEURONPEDIA_API_KEY
+          # None is GPU-gated, so they skip on a GPU host too and are part of the pinned shape. The
+          # neuronpedia one skips in EVERY environment: no workflow in this repo supplies that key, so
+          # exercising it would be a new credential decision rather than a pipeline fix. Pinning it here
+          # keeps the assertion able to detect drift; it does not endorse the gap.
+          bash .azure-pipelines/assert_surface.sh /tmp/nb_out.txt 16 5 \
             "published notebooks" "${PIPESTATUS[0]}"
         env:
           HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
