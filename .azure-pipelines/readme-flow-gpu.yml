@@ -74,11 +74,21 @@ jobs:
           # kept testing the previous command and stayed green -- the exact failure class this lane
           # exists to catch. Asserting exactly one match means a reshaped install section fails loudly
           # rather than silently testing nothing.
-          CMD="$(grep -E '^uv pip install -e ' README.md || true)"
+          #
+          # README.md documents TWO installs: a notebook install (`.[examples]`) and the fuller one
+          # selected here. Which one this lane needs is determined rather than preferred: the
+          # provenance assertion two steps down imports `lightning`, carried only by the `lightning`
+          # EXTRA, and `papermill`, carried only by the `test` GROUP. Selecting on `--group test`
+          # picks the only line that can satisfy it.
+          #
+          # Do NOT relax this to "take the first match": that would pass extraction and then fail the
+          # provenance assertion, turning a precise error into a confusing one.
+          CMD="$(grep -E '^uv pip install -e .*--group test' README.md || true)"
           COUNT="$(printf '%s\n' "${CMD}" | grep -c . || true)"
           if [ "${COUNT}" != "1" ]; then
-            echo "ERROR: expected exactly one 'uv pip install -e' line in README.md, found ${COUNT}." >&2
-            echo "The install recipe moved or was reshaped; update this extraction deliberately." >&2
+            echo "ERROR: expected exactly one 'uv pip install -e ... --group test' line in README.md," >&2
+            echo "found ${COUNT}. The install recipe moved or was reshaped; update this extraction" >&2
+            echo "deliberately, keeping it aligned with what the provenance assertion imports." >&2
             exit 1
           fi
           echo "Extracted: ${CMD}"
