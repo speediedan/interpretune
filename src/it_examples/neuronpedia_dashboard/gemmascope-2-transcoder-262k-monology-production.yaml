@@ -95,7 +95,7 @@ pipeline:
   # degrades to generation-only, with imports left to be backfilled via --import-only-local-db.
   # Candidate pipeline fix: import_to_local_db=true + unresolvable DB URL should be a hard error,
   # not a warning.
-  local_db_url: postgres://postgres:postgres@127.0.0.1:5433/postgres
+  local_db_url: postgres://postgres:postgres@127.0.0.1:5432/postgres
   archive_partial_dirs: false
   heartbeat_seconds: 60
   stall_timeout_seconds: 1800
