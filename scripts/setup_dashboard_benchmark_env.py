@@ -77,7 +77,7 @@ PATCHES_DIR = SCRIPT_DIR / "benchmark_baseline_patches"
 # installing it would put a retired commit into the very environment used to verify a corpus.
 WAVE_BRANCH = "streamlined-streamable-dashboard-generation-phase-1"
 INTERPRETUNE_BRANCH = "main"
-DEFAULT_DB_URL = "postgres://postgres:postgres@127.0.0.1:5433/postgres"
+DEFAULT_DB_URL = "postgres://postgres:postgres@127.0.0.1:5432/postgres"
 GATED_MODEL = "google/gemma-3-1b-it"
 REFERENCE_GPU = "NVIDIA GeForce RTX 4090 (24 GiB)"
 

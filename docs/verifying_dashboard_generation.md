@@ -133,7 +133,7 @@ You can generate one explanation directly to confirm the setup before running th
 python scripts/generate_neuronpedia_feature_explanation.py \
   --model-id gemma-3-1b-it --layer 0 --source-set gemmascope-2-transcoder-262k --index 17 \
   --base-url http://localhost:3000 --insert-into-local-db \
-  --local-db-url 'postgres://postgres:postgres@127.0.0.1:5433/postgres'
+  --local-db-url 'postgres://postgres:postgres@127.0.0.1:5432/postgres'
 ```
 
 Full reference:
@@ -172,7 +172,7 @@ a 38.5 MiB file rather than all of it. Each corpus records its own layout in `da
 ```bash
 python scripts/fetch_dashboards_from_hub.py \
   --bucket speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards \
-  --local-db-url postgres://postgres:postgres@127.0.0.1:5433/postgres \
+  --local-db-url postgres://postgres:postgres@127.0.0.1:5432/postgres \
   --autosuffix-on-exists
 ```
 

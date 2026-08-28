@@ -42,7 +42,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROFILE_SCRIPT = PROJECT_ROOT / "scripts" / "profile_neuronpedia_dashboard_generation.py"
 NOTEBOOK_TEMPLATE = PROJECT_ROOT / "scripts" / "templates" / "dashboard_profiling_notebook_template.ipynb"
 DEFAULT_JEMALLOC = Path("/usr/lib/x86_64-linux-gnu/libjemalloc.so")
-DEFAULT_DB_URL = "postgres://postgres:postgres@127.0.0.1:5433/postgres"
+DEFAULT_DB_URL = "postgres://postgres:postgres@127.0.0.1:5432/postgres"
 DEFAULT_REPO_ROOTS = {
     "SD": Path(os.getenv("SAEDASHBOARD_REPO_ROOT", str(Path.home() / "repos" / "SAEDashboard"))),
     "SL": Path(os.getenv("SAELENS_REPO_ROOT", str(Path.home() / "repos" / "SAELens"))),

@@ -5,7 +5,7 @@ PROMPT:
 
 NEURONPEDIA:
   use_localhost: true
-  local_db_url: postgres://postgres:postgres@127.0.0.1:5433/postgres
+  local_db_url: postgres://postgres:postgres@127.0.0.1:5432/postgres
   local_webapp_url: http://localhost:3000
   local_explanation_type_name: np_moe-max-act-logits
 

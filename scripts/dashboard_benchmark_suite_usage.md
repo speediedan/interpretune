@@ -45,7 +45,7 @@ RTX 4090, 24 GiB; three-way ~25 min, full mode ~2 h there).
 ## Prerequisites
 
 - The interpretune environment active (papermill, nbformat, matplotlib available), all four editable repos installed.
-- Local Neuronpedia Postgres reachable (default `postgres://postgres:postgres@127.0.0.1:5433/postgres`).
+- Local Neuronpedia Postgres reachable (default `postgres://postgres:postgres@127.0.0.1:5432/postgres`).
 - Detached baseline worktrees present for 3-way mode (`SAEDashboard-7886eaa` + siblings; created by the
   setup script above — point `IT_NP_BASELINE_WORKTREES` at their root when it is not the legacy default
   `${IT_NP_CACHE}/baseline_worktrees_20260518`).
@@ -81,7 +81,7 @@ rolling-coefficient threads=8), then packages the reviewer artifacts:
 python scripts/run_dashboard_benchmark_suite.py \
   --mode threeway \
   --session-root /tmp/np_dashboard_generation_profiles/threeway_$(date +%Y%m%d) \
-  --local-db-url "postgres://postgres:postgres@127.0.0.1:5433/postgres"
+  --local-db-url "postgres://postgres:postgres@127.0.0.1:5432/postgres"
 ```
 
 Restrict to one scenario with `--scenarios rte` (or `monology`). Forward additional child-pipeline flags to all
@@ -149,7 +149,7 @@ nohup python scripts/run_dashboard_benchmark_suite.py --mode full \
   --session-root /tmp/np_dashboard_generation_profiles/full_$(date +%Y%m%d) \
   --package-root /tmp/dashboard_benchmark_packages/full_$(date +%Y%m%d) \
   --run-tag dashboard-bench \
-  --local-db-url "postgres://postgres:postgres@127.0.0.1:5433/postgres" \
+  --local-db-url "postgres://postgres:postgres@127.0.0.1:5432/postgres" \
   > /tmp/full_wave.log 2>&1 &
 
 tail -f /tmp/full_wave.log            # follow progress
