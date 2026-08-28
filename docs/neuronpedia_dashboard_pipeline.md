@@ -42,7 +42,7 @@ the env-file path; a repo-local `.env` is used by default when present), but the
 use is:
 
 ```bash
-postgres://postgres:postgres@127.0.0.1:5433/postgres
+postgres://postgres:postgres@127.0.0.1:5432/postgres
 ```
 
 
@@ -1122,7 +1122,7 @@ Recommended response sequence for this run family:
 Use `--import-only-local-db` when dashboards were already generated with `--skip-local-db-import` and you later want to import the existing export bundles into the local Neuronpedia DB without rerunning generation.
 
 ```bash
-LOCAL_NEURONPEDIA_DB_URL='postgres://postgres:postgres@127.0.0.1:5433/postgres' \
+LOCAL_NEURONPEDIA_DB_URL='postgres://postgres:postgres@127.0.0.1:5432/postgres' \
 python -m interpretune.utils.neuronpedia_dashboard_pipeline \
   --model-name gemma-3-1b-it \
   --model-layers 26 \
@@ -1437,7 +1437,7 @@ bundle = Path(
 )
 summary = import_neuronpedia_export_bundle_local_db(
     bundle,
-    local_db_url='postgres://postgres:postgres@127.0.0.1:5433/postgres',
+    local_db_url='postgres://postgres:postgres@127.0.0.1:5432/postgres',
 )
 print(summary)
 PY
