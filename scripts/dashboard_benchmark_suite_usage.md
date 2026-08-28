@@ -48,7 +48,7 @@ RTX 4090, 24 GiB; three-way ~25 min, full mode ~2 h there).
 - Local Neuronpedia Postgres reachable (default `postgres://postgres:postgres@127.0.0.1:5432/postgres`).
 - Detached baseline worktrees present for 3-way mode (`SAEDashboard-7886eaa` + siblings; created by the
   setup script above — point `IT_NP_BASELINE_WORKTREES` at their root when it is not the legacy default
-  `${IT_NP_CACHE}/baseline_worktrees_20260518`).
+  `${IT_NP_CACHE}/baseline_worktrees_20260826`).
 - The four benchmark prompt datasets present under `${IT_NP_CACHE}` (`pretokenized/` + `legacy_pretokenized/`); they
   are not published to the HF Hub — the setup script above offers to build any missing ones, or regenerate them per
   ["Regenerating the benchmark prompt datasets"](../docs/neuronpedia_dashboard_pipeline.md#regenerating-the-benchmark-prompt-datasets).

@@ -11,7 +11,7 @@ One guided, transparent, non-destructive flow that prepares everything
    0.7.0 as release pins, circuit-tracer at the pinned fork SHA). Existing checkouts
    are never switched or modified; dirty trees are surfaced with an offer to stash.
 3. Create the detached preserved-baseline worktrees (the pre-PR comparison lineage
-   `SD-7886eaa+benchmark_patches / SL-3eea6552 / NP-5a33f17`) in a directory you choose,
+   `SD-7886eaa+benchmark_patches / SL-3eea6552 / NP-789942ed`) in a directory you choose,
    applying the audited benchmark patches from `scripts/benchmark_baseline_patches/`
    (see that directory's README for the per-patch classification/rationale) and
    verifying the resulting tree state against pinned expectations.
@@ -81,10 +81,22 @@ DEFAULT_DB_URL = "postgres://postgres:postgres@127.0.0.1:5432/postgres"
 GATED_MODEL = "google/gemma-3-1b-it"
 REFERENCE_GPU = "NVIDIA GeForce RTX 4090 (24 GiB)"
 
-# Preserved pre-PR baseline pins (lineage `SD-7886eaa+benchmark_patches/SL-3eea6552/NP-5a33f17`).
+# Preserved pre-PR baseline pins (lineage `SD-7886eaa+benchmark_patches/SL-3eea6552/NP-789942ed`).
+#
+# The neuronpedia pin is the MERGE BASE of upstream and this work, so everything differing between the
+# baseline and a current run is ours. It was previously `5a33f17`, 113 upstream commits earlier and on
+# the far side of upstream's backend refactor, which meant the comparison silently included that
+# refactor as well.
+#
+# `tests/fixtures/neuronpedia_dashboard_phase4/` still records `NP-5a33f17` and the row counts measured
+# there. That is deliberate and must not be hand-edited to agree with this constant: those numbers were
+# produced at `5a33f17` and saying otherwise would falsify where they came from. That fixture's own
+# README lists this pin changing as a regeneration trigger, so it is re-measured by a benchmark run, not
+# by a find-and-replace. Until that run, the two disagreeing is the correct state and is the signal that
+# the re-baseline is outstanding.
 SD_BASELINE_SHA = "7886eaa227398a52cd77a4483c94ecc74d204d34"
 SL_BASELINE_SHA = "3eea65526345e0df384a7c89b3c7f9d6f541d687"
-NP_BASELINE_SHA = "5a33f178e828ed5eb35e90a57b81807ee73d2153"
+NP_BASELINE_SHA = "789942edf920d64f221ca1be1443f539f8b4c47d"
 
 # Benchmark patches applied (in this order) on top of the clean SD baseline commit.
 SD_BASELINE_PATCHES = (
@@ -499,7 +511,7 @@ class Setup:
         plans = (
             ("sae_dashboard", "SAEDashboard-7886eaa", SD_BASELINE_SHA, "benchmark-baseline-7886eaa", True),
             ("sae_lens", "SAELens-3eea6552", SL_BASELINE_SHA, "benchmark-baseline-3eea6552", False),
-            ("neuronpedia", "neuronpedia-5a33f17", NP_BASELINE_SHA, None, False),
+            ("neuronpedia", "neuronpedia-789942ed", NP_BASELINE_SHA, None, False),
         )
         for repo_key, wt_name, sha, fallback_ref, patched in plans:
             repo = self.repo_paths[repo_key]

@@ -40,12 +40,12 @@ DEFAULT_RUN_ROOT = NP_CACHE_ROOT / "dashboard_runs"
 # Detached preserved-baseline worktrees root; created/populated by scripts/setup_dashboard_benchmark_env.py
 # (override with $IT_NP_BASELINE_WORKTREES when the worktrees live outside the default cache location).
 DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT = Path(
-    os.getenv("IT_NP_BASELINE_WORKTREES", str(NP_CACHE_ROOT / "baseline_worktrees_20260518"))
+    os.getenv("IT_NP_BASELINE_WORKTREES", str(NP_CACHE_ROOT / "baseline_worktrees_20260826"))
 )
 DEFAULT_PHASE3_BASELINE_SAEDASHBOARD_ROOT = DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "SAEDashboard-7886eaa"
 DEFAULT_PHASE3_BASELINE_SAELENS_ROOT = DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "SAELens-3eea6552"
 DEFAULT_PHASE3_BASELINE_NEURONPEDIA_UTILS_ROOT = (
-    DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "neuronpedia-5a33f17" / "utils" / "neuronpedia-utils"
+    DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "neuronpedia-789942ed" / "utils" / "neuronpedia-utils"
 )
 DEFAULT_PHASE3_RTE_TEXT_DATASET = NP_CACHE_ROOT / "baseline_datasets" / "rte_text_phase3_2490_context319"
 DEFAULT_PHASE3_RTE_PRETOKENIZED_DATASET = (
