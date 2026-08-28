@@ -70,7 +70,7 @@ already configured and don't want to overwrite:
 ```bash
 cd neuronpedia
 make init-env   # overwrites existing .env after confirming
-make webapp-localhost-build && make webapp-localhost-run
+make webapp-build && make webapp-run
 ```
 ### 2. Set up the explanation CLI (OPTIONAL)
 
@@ -280,19 +280,25 @@ directory:
 
 The release name is an independent sanity check on the same quantity: `l0_small` against `l0_big`.
 
+Measured across all 52 layers of the two corrected corpora, against a declared `l0` of 15:
+
 ```
-implied L0 per token       corrected layer 0    12.7      0.85x declared
-                           corrected layer 16   19.4      1.29x declared
-                           corrected layer 25   21.7      1.45x declared
-                           defective layer 0   451.1        30x declared
+                        min            median          max
+monology       12.8 (0.85x)     17.9 (1.19x)   31.5 (2.10x)
+rte            10.1 (0.67x)     17.1 (1.14x)   40.2 (2.68x)
+the corpus this replaced        ~451 (30.1x)
 ```
 
-Corrected runs sit between 0.85x and 1.45x of the declared value and rise monotonically with depth,
-which is expected: deeper layers carry denser representations. **Accept a regeneration when its implied
-L0 is within 3x of the declared `l0`.** That passes every corrected layer measured, with the worst at
-1.45x, and fails the defective corpus by an order of magnitude. The threshold is deliberately loose,
-because the signal it has to catch is 30x and a tight bound would only add false alarms on layers
-nobody has profiled yet.
+**A correct run lands in the same neighbourhood as the declared value; a run captured at the wrong
+tensor is an order of magnitude above it.** That is the whole signal, and it is large enough that no
+threshold is needed to see it: the corrected spread tops out below 3x while the defective corpus sits
+at 30x, a full order of magnitude clear of anything measured here.
+
+Two cautions on reading the spread, both learned from it rather than assumed. It is **not** monotonic
+in depth: layer 6 (16.3) sits below layer 5 (18.3), so a dip at one layer is not evidence of anything.
+And the range is wider than a small sample suggests, 0.67x to 2.68x rather than the 0.85x to 1.45x
+that the first three layers profiled implied, so **a single layer landing near 2.5x is ordinary and a
+gate set tightly around early observations would have failed on real data.**
 
 **This is the only check here that is absolute.** Everything else compares against something, and every
 comparison we had was blind to this defect for one of two structurally different reasons:
