@@ -203,10 +203,130 @@ python scripts/run_dashboard_benchmark_suite.py --mode full       # ~2 h, 17 leg
 Full usage: `scripts/dashboard_benchmark_suite_usage.md` (in the repository).
 
 For a single end-to-end generation rather than the benchmark wave, see the
-[quickstart](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu) —
+[quickstart](neuronpedia_dashboard_pipeline.md#quickstart-gemma-3-1b-it-16k-on-monology-single-gpu):
 one command against a committed config, about an hour on a single 24 GiB card. It generates into the
 same source set the monology corpus in **(c)** imports into, so the same
 [collision flags](neuronpedia_dashboard_pipeline.md#source-set-collisions) apply.
+
+### Which tensor the run captures, and how to confirm it did
+
+Read this before regenerating anything for the Gemma Scope 2 transcoders. It is the one part of the
+regeneration that cannot be checked by looking at the result.
+
+These transcoders are trained on the block norm's output, which Google's shipped `config.json`
+declares as `model.layers.{N}.pre_feedforward_layernorm.output`. Their SAELens metadata declares
+`blocks.{N}.hook_mlp_in`, which TransformerLens fires on the residual stream *before* that norm.
+Those are different tensors, and not marginally so: reconstructing the transcoder's declared target
+on layer 5 gives FVU 0.11 from the declared input against FVU 20585 from `hook_mlp_in`, with a cosine
+similarity of 0.088 between the two. See
+[the caveat in the pipeline guide](neuronpedia_dashboard_pipeline.md#gemma-scope-2-capture-hook-caveat)
+for the full measurement.
+
+The shipped configs resolve this by naming the capture location outright:
+
+```yaml
+capture_hook_name: blocks.{layer}.ln2.hook_out
+```
+
+Four configs set it and five inherit it through `EXTENDS`, so all nine are covered and a run against
+any of them captures the right tensor without further arguments. `{layer}` is substituted per layer,
+and the value is a `TransformerBridge` name, which is why these configs also set
+`model_wrapper: bridge`.
+
+**Confirm it from the run log, because nothing else can tell you.** The runner announces the decision
+once per run:
+
+```
+Capturing at 'blocks.5.ln2.hook_out' (explicitly configured) rather than the SAE's declared
+hook name 'blocks.5.hook_mlp_in'. ...
+```
+
+Grep the log for `Capturing at` and check the hook it names. This matters more than it looks:
+compatibility mode leaves **both** hooks live on the model at once, and a generated corpus carries no
+trace of which one was read. **A corpus generated with both hooks live and no log evidence of which
+was used is indistinguishable from a defective one by inspection of the artifact**, which is the
+property that let this go unnoticed through a year of parity testing. Parity compares two legs that
+resolve the hook the same way, so it cannot see a difference that is upstream of both.
+
+For these transcoders, **a run log with no `Capturing at` line at all captured at the declared hook**,
+because the runner prints only when the capture location differs from the declared one. Scope that
+reading to this family: for an SAE whose declared hook already names the right tensor, silence is
+correct and expected.
+
+> **Do not "fix" the `hook_point` label to match.** The config carries both, eleven lines apart and
+> deliberately disagreeing:
+>
+> ```yaml
+> hook_point: hook_mlp_in                       # the Neuronpedia source LABEL
+> capture_hook_name: blocks.{layer}.ln2.hook_out  # where activations are actually read
+> ```
+>
+> `hook_point` is the Neuronpedia source label, drawn from a fixed vocabulary with no term for this
+> tensor. Editing it changes the label and not the capture, which yields a corpus that reads correct
+> and captures wrong: strictly worse than a mismatch you can see. A label agreeing with the capture is
+> also exactly what the defective corpora show, so agreement is not evidence of anything.
+
+### The acceptance check, which needs no baseline at all
+
+The log line above tells you what a run *intended*. To check what it *produced*, compare the corpus's
+implied L0 against the number the SAE declares for itself. SAELens carries that per `sae_id` in its own
+directory:
+
+```yaml
+# sae_lens/pretrained_saes.yaml, gemma-scope-2-1b-it-transcoders-all
+- id: layer_5_width_16k_l0_small_affine
+  l0: 15
+```
+
+The release name is an independent sanity check on the same quantity: `l0_small` against `l0_big`.
+
+```
+implied L0 per token       corrected layer 0    12.7      0.85x declared
+                           corrected layer 16   19.4      1.29x declared
+                           corrected layer 25   21.7      1.45x declared
+                           defective layer 0   451.1        30x declared
+```
+
+Corrected runs sit between 0.85x and 1.45x of the declared value and rise monotonically with depth,
+which is expected: deeper layers carry denser representations. **Accept a regeneration when its implied
+L0 is within 3x of the declared `l0`.** That passes every corrected layer measured, with the worst at
+1.45x, and fails the defective corpus by an order of magnitude. The threshold is deliberately loose,
+because the signal it has to catch is 30x and a tight bound would only add false alarms on layers
+nobody has profiled yet.
+
+**This is the only check here that is absolute.** Everything else compares against something, and every
+comparison we had was blind to this defect for one of two structurally different reasons:
+
+- **Parity is blind because the defect is common-mode.** Hook resolution happens in the runner's
+  constructor, above the legacy/columnar split, so both legs of any comparison capture at the same hook
+  by construction. A differential check cannot see an error shared by both of its legs.
+- **Throughput is blind because it measures a quantity the defect does not touch.** In the two-layer
+  pilot, layers whose stored output differed by 27% finished within 7 ms of each other: wall time is
+  dominated by forward passes, which the hook location does not change. Generation throughput remains a
+  useful performance-regression guard and is not evidence about capture location.
+
+Implied L0 escapes both, because it is absolute *and* it measures the stored artifact. A reader holding
+one corpus, with no reference corpus and no prior run, can falsify it in a single query.
+
+**Do not read the row counts as a substitute for it.** A corrected deep layer and a defective shallow
+one are close or identical on every gross statistic: corrected layer 25 stores 522,029 rows at 47.1%
+nonzero with a median max of 0.00, against defective layer 0 at 483,013 rows, 34.2% nonzero, and a
+median max of 0.0000. Deep layers are legitimately sparser. Those figures mean something only with the
+layer held fixed and the hook varied.
+
+### Before a direct pipeline run: check the tree yourself
+
+`run_dashboard_benchmark_suite.py` refuses to package from dirty repositories unless you pass
+`--allow-dirty`. `launch_neuronpedia_dashboard_pipeline.py` has no such guard, so a direct run, which
+is what the quickstart above describes, will start against whatever is in your working tree.
+
+```bash
+git -C <interpretune> status -sb
+grep -c capture_hook_name src/interpretune/utils/neuronpedia_dashboard_pipeline.py   # expect > 0
+```
+
+**If that count is zero the tree lacks the capture-hook support regardless of which branch it reports
+being on.** A branch name describes what was checked out, not what is in the files now.
 
 ---
 
