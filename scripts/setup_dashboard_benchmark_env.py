@@ -17,9 +17,12 @@ One guided, transparent, non-destructive flow that prepares everything
    verifying the resulting tree state against pinned expectations.
 4. Ensure the neuronpedia local-stack env defaults (`.env`: Postgres host port/data dir, HF
    cache paths — appended only when missing) and check the local Postgres is reachable
-   (offering the docker compose bring-up when it is not).
+   (reporting how to start it when it is not).
 5. Build the integrated interpretune benchmark venv via `scripts/build_it_env.sh`
-   (SAEDashboard + SAELens editable from source; everything else from interpretune's pins).
+   (SAEDashboard editable from source; everything else, SAELens included, from interpretune's
+   pins). SAELens is deliberately NOT built from source: its wave work merged upstream and
+   released as 6.49.0, so the pins resolve the same code the artifacts were produced with,
+   while the fork checkout would substitute a retired commit. See Step 2.
    An existing venv is only cleared after explicit confirmation (or `--clear-existing-venv`).
 6. Verify the benchmark prompt datasets exist under `$IT_NP_CACHE`, offering to build any
    missing ones (tokenizer-only, CPU, a few minutes each; requires the gated-model access
@@ -28,7 +31,7 @@ One guided, transparent, non-destructive flow that prepares everything
    suite needs, and print the detected GPU + the exact command to run the benchmark.
 
 PREREQUISITES (checked in Step 1):
-- `git` and `uv` on PATH; `docker` only if the local Neuronpedia DB needs bring-up;
+- `git` and `uv` on PATH; a reachable Postgres (this script verifies, it does not start one);
   bash >= 4.3 for the env build (macOS: `brew install bash`).
 - HuggingFace access to the GATED model `google/gemma-3-1b-it`: accept the license on the
   model page, then authenticate via `hf auth login` (stored token) or `export HF_TOKEN=...`
@@ -59,11 +62,18 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 IT_ROOT = SCRIPT_DIR.parent
 PATCHES_DIR = SCRIPT_DIR / "benchmark_baseline_patches"
 
-# The three FORK repos still carry the wave work on a topic branch, because their PRs are open
-# upstream and their head refs are that branch. interpretune is different: its side of the wave lands
-# on `main` (the dependency refresh as #234, the docs/examples as #232), so cloning it at the topic
-# branch would hand reviewers a checkout that is behind `main` -- and would break outright once the
-# topic branch is deleted. Keep the two axes separate rather than sharing one constant.
+# SAEDashboard and neuronpedia still carry the wave work on a topic branch, because their PRs are
+# open upstream and their head refs are that branch. interpretune is different: its side of the wave
+# lands on `main` (the dependency refresh as #234, the docs/examples as #232), so cloning it at the
+# topic branch would hand reviewers a checkout that is behind `main` -- and would break outright once
+# the topic branch is deleted. Keep the two axes separate rather than sharing one constant.
+#
+# SAELens is cloned at the wave branch too, but ONLY as the source of the preserved-baseline worktree
+# (`SL_BASELINE_SHA`, materialised in `create_worktrees`). It is deliberately NOT installed from that
+# checkout: SAELens#721 merged and released as 6.49.0, and sae-lens was retired from interpretune's
+# git-deps on 2026-08-09, so the CI pins resolve the released code the artifacts were produced with.
+# The wave branch head additionally carries the `pretrained_saes.yaml` entries retired as corrupt, so
+# installing it would put a retired commit into the very environment used to verify a corpus.
 WAVE_BRANCH = "streamlined-streamable-dashboard-generation-phase-1"
 INTERPRETUNE_BRANCH = "main"
 DEFAULT_DB_URL = "postgres://postgres:postgres@127.0.0.1:5433/postgres"
@@ -315,14 +325,13 @@ class Setup:
     def check_prereqs(self) -> None:
         self.say("\n=== Step 1/7: prerequisites (tools + HuggingFace access) ===")
         self.say(
-            "Required: git + uv on PATH; docker only for local-DB bring-up; bash >= 4.3 for the env "
+            "Required: git + uv on PATH; a Postgres this script can reach; bash >= 4.3 for the env "
             "build (macOS: `brew install bash`). Root is never required; nothing is pushed and no "
             "existing checkout is modified."
         )
         for tool, why, fatal in (
             ("git", "clones/worktrees", True),
             ("uv", "the env build and package installs", not self.args.skip_env_build),
-            ("docker", "local Neuronpedia DB bring-up (only if the DB is not already running)", False),
         ):
             path = shutil.which(tool)
             if path:
@@ -482,10 +491,15 @@ class Setup:
     def _ensure_np_env_defaults(self) -> None:
         """Append missing local-stack keys to the neuronpedia untracked `.env`.
 
-        Upstream `docker/compose.yaml` defaults are unsuitable for a generic local benchmark host
-        (`POSTGRES_HOST_PORT` 5432 collides with a host Postgres; `POSTGRES_DATA_DIR` falls back to
-        the root-owned `/var/lib/postgresql/data`), so pin them per-host in the gitignored `.env`
-        (compose reads `.env.localhost` then `.env`; existing values are never modified here).
+        `HF_HOME` / `HF_HUB_CACHE` / `HF_DATASETS_CACHE` are the load-bearing ones: neuronpedia's
+        `make inference-dev` sources this `.env` into the process environment, so a relocated HF
+        cache is honoured with no mount and no flag.
+
+        `POSTGRES_HOST_PORT` and `POSTGRES_DATA_DIR` are **vestigial** and kept only because
+        removing keys from an operator's `.env` is not this script's business. They were read by
+        `docker/compose.yaml`, which upstream deleted; nothing consumes them now. The port that
+        matters today is the one inside `--local-db-url`, and the data directory belongs to
+        whoever runs the server. Existing values are never modified here.
         """
 
         np_repo = self.repo_paths["neuronpedia"]
@@ -510,7 +524,8 @@ class Setup:
             self.say(f"    {k}={v}")
         if not self.confirm("  append these keys?"):
             self.warn(
-                f"{env_file} not updated — compose bring-up may use upstream defaults (port 5432, root-owned data dir)."
+                f"{env_file} not updated — a relocated HF cache will not be picked up by "
+                "neuronpedia's `make inference-dev`, which sources this file."
             )
             return
         if not self.args.dry_run:
@@ -534,32 +549,20 @@ class Setup:
         except OSError:
             pass
         self.warn(f"Postgres NOT reachable at {host}:{port}.")
-        np_repo = self.repo_paths.get("neuronpedia")
-        compose = np_repo / "docker" / "compose.yaml" if np_repo else None
-        if compose and compose.is_file() and shutil.which("docker"):
-            cmd = [
-                "docker",
-                "compose",
-                "-f",
-                "docker/compose.yaml",
-                "--env-file",
-                ".env.localhost",
-                "--env-file",
-                ".env",
-                "up",
-                "-d",
-                "db-init",
-                "postgres",
-            ]
-            if self.confirm(f"  bring up the local Neuronpedia DB now? ({' '.join(cmd)} in {np_repo})"):
-                self.run(cmd, cwd=np_repo)
-            else:
-                self.warn("continuing without a reachable DB — import legs will fail until it is up.")
-        else:
-            self.warn(
-                "docker or the neuronpedia compose file is unavailable; start Postgres yourself "
-                "(see neuronpedia Makefile target 'webapp-localhost-run') or pass --local-db-url."
-            )
+        # No bring-up is offered any more, and that is not a regression: upstream neuronpedia
+        # removed containers from the repo entirely (no Dockerfiles, no compose files, no
+        # `init.sh`). Nothing in its Makefile starts a server either, so there is nothing for
+        # this script to launch, and pretending otherwise is what the previous compose branch
+        # did: it failed soft behind `compose.is_file()`, silently stopping at some point after
+        # upstream deleted the file, with no signal that a capability had gone.
+        #
+        # Deliberately names NO Makefile target. neuronpedia has no `db-*` targets on any ref;
+        # `db-init` appears only as a compose SERVICE in lines referring to the deleted
+        # docker/compose.yaml. Pointing at one is how this hint was wrong before.
+        self.warn(
+            "start Postgres yourself, then re-run, or pass --local-db-url to point at a server "
+            "that is already up. The DB-import benchmark legs will fail until it is reachable."
+        )
 
     def build_env(self) -> Path:
         self.say("\n=== Step 5/7: interpretune benchmark venv (build_it_env.sh) ===")
@@ -581,9 +584,18 @@ class Setup:
                 if action == "k":
                     return venv_path
         it, ov = self.repo_paths["interpretune"], "requirements/ci/overrides.txt"
-        ex, slr = "requirements/ci/excludes.txt", "requirements/ci/sl_uv_requirements.txt"
-        # Only the two PR-branch repos build from source; TransformerLens/nnsight come from the locked
-        # release pins (override-dependencies + overrides.txt) and circuit-tracer from the git-deps group.
+        ex = "requirements/ci/excludes.txt"
+        # Only SAEDashboard builds from source, because its fix is unreleased and a maintainer needs the
+        # checkout. Everything else comes from the locked pins: sae-lens (released as 6.49.0, retired
+        # from git-deps 2026-08-09), TransformerLens/nnsight (override-dependencies + overrides.txt) and
+        # circuit-tracer (the git-deps group).
+        #
+        # Do NOT re-add `--from-source=sae_lens:...`. Beyond substituting a retired commit for the
+        # released pin, that path hands uv `requirements/ci/sl_uv_requirements.txt`, the vendored
+        # SAELens Poetry export, which is how pytest-timeout/docstr-coverage/ruff reach environments
+        # while being declared in neither pyproject.toml nor the CI lock. The README-flow lanes exist
+        # to detect exactly that superset, so importing it here would make this env less like a user's
+        # than the pins already make it.
         cmd = [
             str(it / "scripts" / "build_it_env.sh"),
             f"--repo-home={it}",
@@ -594,11 +606,10 @@ class Setup:
                 f"--from-source=sae_dashboard:{self.repo_paths['sae_dashboard']}:dev"
                 f":UV_EXCLUDE={it / ex}:UV_OVERRIDE={it / ov}"
             ),
-            f"--from-source=sae_lens:{self.repo_paths['sae_lens']}:dev:UV_OVERRIDE={it / ov}:FLAGS=-r {it / slr}",
         ]
         self.say(
-            "- integrated env build (SAEDashboard + SAELens from source; typically a few minutes with a "
-            "warm uv cache — first-time torch/CUDA wheel downloads can add ~5-10 min):"
+            "- integrated env build (SAEDashboard from source, sae-lens from the pins; typically a few "
+            "minutes with a warm uv cache; first-time torch/CUDA wheel downloads can add ~5-10 min):"
         )
         if not self.confirm("  run the env build now?"):
             self.warn("env build skipped — activate/build a suitable venv before running the suite.")

@@ -7,8 +7,9 @@ profiling notebook (+ HTML export), and a top-level `benchmark_summary.md` linki
 
 ## Environment setup (one guided command)
 
-> **Prerequisites** (the setup script checks these itself): `git` and `uv` on PATH; `docker` only
-> if the local Neuronpedia DB needs bring-up; bash >= 4.3 for the env build (macOS:
+> **Prerequisites** (the setup script checks these itself): `git` and `uv` on PATH; a reachable
+> Postgres (the script verifies one, it does not start one: upstream neuronpedia has no
+> containers, so there is nothing for it to bring up); bash >= 4.3 for the env build (macOS:
 > `brew install bash`); HuggingFace access to the **gated** `google/gemma-3-1b-it` model (accept
 > the license, then `hf auth login` or `export HF_TOKEN=...` —
 > `HF_GATED_PUBLIC_REPO_AUTH_KEY` is honored as a fallback). **Root is never required; nothing is
@@ -22,7 +23,7 @@ detached preserved-baseline worktrees (applying the audited patches from
 `scripts/benchmark_baseline_patches/` — see that directory's README for the per-patch
 classification/rationale), manages the neuronpedia local-stack `.env` defaults (Postgres host
 port/data dir + HF cache paths, appended only when missing) and checks the local Postgres
-(offering the docker compose bring-up), builds the integrated benchmark venv via
+(reporting how to start it if it is not reachable), builds the integrated benchmark venv via
 `scripts/build_it_env.sh` (SAEDashboard + SAELens editable from source), offers to build any
 missing benchmark prompt datasets (the pretokenization commands of record — tokenizer-only,
 CPU, a few minutes per set), and writes a `benchmark_env.sh` you source before running the
