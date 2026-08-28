@@ -551,17 +551,17 @@ class Setup:
         self.warn(f"Postgres NOT reachable at {host}:{port}.")
         # No bring-up is offered any more, and that is not a regression: upstream neuronpedia
         # removed containers from the repo entirely (no Dockerfiles, no compose files, no
-        # `init.sh`). Its `make db-*` targets are pure client-side psql/prisma calls against
-        # POSTGRES_URL_NON_POOLING -- they VERIFY a server, they do not start one. So there is
-        # nothing for this script to launch, and pretending otherwise is what the previous
-        # compose branch did: it failed soft behind `compose.is_file()`, silently stopping at
-        # some point after upstream deleted the file, with no signal that a capability had gone.
-        np_repo = self.repo_paths.get("neuronpedia")
-        hint = f" (`cd {np_repo} && make db-check` diagnoses it)" if np_repo else ""
+        # `init.sh`). Nothing in its Makefile starts a server either, so there is nothing for
+        # this script to launch, and pretending otherwise is what the previous compose branch
+        # did: it failed soft behind `compose.is_file()`, silently stopping at some point after
+        # upstream deleted the file, with no signal that a capability had gone.
+        #
+        # Deliberately names NO Makefile target. neuronpedia has no `db-*` targets on any ref;
+        # `db-init` appears only as a compose SERVICE in lines referring to the deleted
+        # docker/compose.yaml. Pointing at one is how this hint was wrong before.
         self.warn(
-            "start Postgres yourself, then re-run"
-            f"{hint}, or pass --local-db-url to point at a server that is already up. "
-            "The DB-import benchmark legs will fail until it is reachable."
+            "start Postgres yourself, then re-run, or pass --local-db-url to point at a server "
+            "that is already up. The DB-import benchmark legs will fail until it is reachable."
         )
 
     def build_env(self) -> Path:
