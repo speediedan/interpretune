@@ -926,7 +926,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--venv-dir", default=os.getenv("IT_VENV_BASE", str(Path.home() / ".venvs")))
     parser.add_argument("--venv-name", default="it_bench")
-    parser.add_argument("--torch-backend", default="cu128", help="build_it_env.sh torch backend (cu128, cpu, auto).")
+    parser.add_argument(
+        "--torch-backend",
+        default="auto",
+        help="build_it_env.sh torch backend. `auto` lets uv pick a build matching the host driver; "
+        "pin a specific one (cu130, cu128, cpu) only if you know the pinned torch publishes it.",
+    )
     parser.add_argument("--local-db-url", default=DEFAULT_DB_URL)
     parser.add_argument("--skip-env-build", action="store_true", help="Skip the venv build step entirely.")
     parser.add_argument(
