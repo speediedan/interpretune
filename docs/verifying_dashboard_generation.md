@@ -69,9 +69,14 @@ already configured and don't want to overwrite:
 
 ```bash
 cd neuronpedia
-make init-env   # overwrites existing .env after confirming
+make init-env        # OVERWRITES .env, prompts first; skip it if yours is already configured
+make webapp-install  # required on a fresh checkout: the build fails with `env-cmd: not found` without it
 make webapp-build && make webapp-run
 ```
+
+`make webapp-install` is easy to skip because the failure names a missing binary rather than a
+missing step: `make webapp-build` on an uninstalled checkout reports `sh: 1: env-cmd: not found`,
+which reads like a broken environment rather than an absent `node_modules`.
 ### 2. Set up the explanation CLI (OPTIONAL)
 
 <details>
@@ -178,7 +183,21 @@ python scripts/fetch_dashboards_from_hub.py \
 
 Swap the bucket id for `…__rte__dashboards` to fetch the other corpus. That is the whole
 procedure: it reads the corpus's own `dashboards.json`, picks the matching committed config,
-creates the destination, downloads, imports, and prints a count summary. Add `--dry-run` to see the
+creates the destination, downloads, imports, and prints a count summary.
+
+**The target database must already be initialised, not merely reachable.** The import writes a
+`SourceRelease` row whose `creatorId` references the `bot` user that `prisma/seed.ts` creates, so a
+database carrying the schema but no seed data fails with:
+
+```
+psycopg.errors.ForeignKeyViolation: insert or update on table "SourceRelease"
+  violates foreign key constraint "SourceRelease_creatorId_fkey"
+DETAIL: Key (creatorId)=(...) is not present in table "User".
+```
+
+That names the symptom rather than the cause. `make db-init` in the neuronpedia checkout supplies
+what is missing: it applies migrations, runs `prisma db seed`, and installs the pgvector tuning. A
+stack brought up through **(b)** has already done this; a database created any other way has not. Add `--dry-run` to see the
 plan without moving anything or `--dest <dir>` to choose where the corpus lands (default:
 `$IT_NP_CACHE/hub_downloads`, else `$HF_HOME/interpretune/neuronpedia/hub_downloads`).
 
