@@ -208,6 +208,33 @@ class TestHubAdapterLoad:
         with pytest.raises(AdapterComponentError, match="registered no compositions"):
             load_hub_adapter("org/fixture-adapter", cache_dir=cache, registry=CompositionRegistry())
 
+    def test_loaded_module_is_reachable_without_reconstructing_its_name(
+        self, tmp_path, monkeypatch, restore_adapter_enum
+    ):
+        """An adapter's non-registered surface (a seam, capability helpers) must be reachable.
+
+        The alternative is callers rebuilding the revision-scoped module name themselves, which hardcodes a naming
+        scheme that belongs to the loader.
+        """
+        from interpretune.adapters.registration import CompositionRegistry
+        from interpretune.hub.adapters import load_hub_adapter, loaded_adapter_module
+        from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR
+
+        cache = self._publish(tmp_path, REGISTERS_DECLARED)
+        monkeypatch.setenv(IT_TRUST_REMOTE_CODE_ENV_VAR, "1")
+        load_hub_adapter("org/fixture-adapter", cache_dir=cache, registry=CompositionRegistry())
+
+        module = loaded_adapter_module("org/fixture-adapter", cache_dir=cache)
+        assert hasattr(module, "FixtureAdapter")
+
+    def test_reaching_an_unloaded_module_raises_rather_than_importing_it(self, tmp_path):
+        """The accessor resolves; it must never become a second, ungated execution path."""
+        from interpretune.hub.adapters import AdapterComponentError, loaded_adapter_module
+
+        cache = self._publish(tmp_path, REGISTERS_DECLARED)
+        with pytest.raises(AdapterComponentError, match="has not been loaded"):
+            loaded_adapter_module("org/fixture-adapter", cache_dir=cache)
+
     def test_component_without_the_adapters_kind_is_rejected(self, tmp_path, monkeypatch):
         import yaml
 
