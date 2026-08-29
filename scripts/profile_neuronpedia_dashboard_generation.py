@@ -26,7 +26,11 @@ from interpretune.utils.neuronpedia_explanations import DEFAULT_IT_NP_CACHE
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_MODEL_NAME = "gemma-3-1b-it"
-DEFAULT_SOURCE_SET_ID = "gemmascope-2-transcoder-262k-rte"
+# Benchmark presets import into the LIVE Neuronpedia database, so these ids must not be the production
+# ones. They were, and every benchmark run silently created partial single-layer sources under the names
+# real corpora use -- indistinguishable from real data by name, and invisible to a corpus check scoped to
+# the 16k sets. The `-bench` suffix keeps benchmark residue self-identifying in the database.
+DEFAULT_SOURCE_SET_ID = "gemmascope-2-transcoder-262k-rte-bench"
 DEFAULT_RUN_NAME = f"{DEFAULT_MODEL_NAME}_{DEFAULT_SOURCE_SET_ID}"
 DEFAULT_SESSION_ROOT = Path("/tmp/np_dashboard_generation_profiles")
 # Benchmark interpreter/profiler selection: IT_BENCH_PYTHON / IT_BENCH_PY_SPY override; otherwise the
@@ -79,7 +83,7 @@ DEFAULT_PHASE4_MONOLOGY_SHARED_TOKENS_FILE = DEFAULT_PHASE3_MONOLOGY_LEGACY_PRET
 DEFAULT_PRETOKENIZED_DATASET = DEFAULT_PHASE3_RTE_PRETOKENIZED_DATASET
 # Block-device IO sampling target: any path on the cache filesystem works (resolve_block_device stats it).
 DEFAULT_CACHE_PATH = Path(os.getenv("IT_NP_PROFILE_CACHE_DEVICE", str(NP_CACHE_ROOT)))
-DEFAULT_MONOLOGY_SOURCE_SET_ID = "gemmascope-2-transcoder-262k"
+DEFAULT_MONOLOGY_SOURCE_SET_ID = "gemmascope-2-transcoder-262k-bench"
 DEFAULT_PHASE3_PROMPTS_TOTAL = 2490
 DEFAULT_PHASE3_RTE_TOKENS_IN_PROMPT = 319
 DEFAULT_PHASE3_MONOLOGY_TOKENS_IN_PROMPT = 128
