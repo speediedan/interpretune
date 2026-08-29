@@ -718,8 +718,94 @@ class Setup:
                     "requirements/ci/nodeps_git_requirements.txt + the `test` group in the CI lock."
                 )
             self.say("- [OK] neuronpedia-utils + pgpq present (columnar local-DB import lane)")
+        self._install_baseline_only_deps(venv_path)
         self._check_gated_model_access(venv_path)
         return venv_path
+
+    def _install_baseline_only_deps(self, venv_path: Path) -> None:
+        """Install runtime deps the PRESERVED BASELINE trees need and the current pins no longer carry.
+
+        The venv is built from interpretune's current pins, but the detached baseline worktrees are older
+        code with their own requirements, and a dependency dropped since then is simply absent. It
+        surfaces as a `ModuleNotFoundError` inside the detached-legacy legs, hours into a benchmark, on
+        the one path nobody runs casually. `orjson` did exactly that: declared in
+        `SAEDashboard-7886eaa/pyproject.toml`, imported at module scope by its `neuronpedia_export`, and
+        gone from current pins.
+
+        Only packages ABSENT ENTIRELY are installed, and never a version already present. The point is to
+        supply what the pins cannot know about, not to reconcile two dependency sets: letting a baseline's
+        older constraint downgrade a current package would break the leg it is meant to enable.
+
+        Asks the trees rather than carrying a list, so the next dropped dependency needs no edit here.
+        """
+
+        if self.args.dry_run or not self.repo_paths:
+            return
+        wt_root = Path(self.args.worktrees_dir).expanduser()
+        venv_python = venv_path / "bin" / "python"
+        if not venv_python.exists():
+            return
+        wanted: dict[str, str] = {}
+        for tree in sorted(wt_root.glob("*")):
+            pyproject = tree / "pyproject.toml"
+            if not pyproject.is_file():
+                continue
+            for name, spec in self._poetry_runtime_deps(pyproject).items():
+                wanted.setdefault(name, spec)
+        if not wanted:
+            return
+        missing = []
+        for name, spec in wanted.items():
+            rc = subprocess.run(
+                [str(venv_python), "-c", "import importlib.metadata as m,sys;m.version(sys.argv[1])", name],
+                capture_output=True,
+            ).returncode
+            if rc != 0:
+                missing.append((name, spec))
+        if not missing:
+            self.say("- [OK] baseline worktrees need no dependency the current pins lack")
+            return
+        req = [f"{n}{s}" for n, s in sorted(missing)]
+        self.say(f"- baseline-only dependencies absent from the current pins: {', '.join(req)}")
+        cmd = [str(venv_python), "-m", "pip", "install", "--quiet", *req]
+        self.say(f"  $ {' '.join(cmd)}")
+        self.actions_taken.append(" ".join(cmd))
+        if subprocess.run(cmd).returncode != 0:
+            self.warn(
+                f"could not install baseline-only dependencies ({', '.join(req)}); the detached-legacy "
+                "benchmark legs will fail with ModuleNotFoundError until they are present."
+            )
+        else:
+            self.say(f"- [OK] installed {len(req)} baseline-only dependency(ies)")
+
+    @staticmethod
+    def _poetry_runtime_deps(pyproject: Path) -> dict[str, str]:
+        """Runtime `[tool.poetry.dependencies]` as PEP 508 specifiers.
+
+        Deliberately narrow. Table-valued entries (git urls, extras, path deps) and `python` itself are
+        skipped: they are not the shape this exists to catch, and resolving them here would mean
+        reproducing poetry's resolver against a tree that is not being installed.
+        """
+
+        try:
+            import tomllib
+
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        deps = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
+        out: dict[str, str] = {}
+        for name, spec in deps.items():
+            if name == "python" or not isinstance(spec, str):
+                continue
+            spec = spec.strip()
+            if spec.startswith("^") or spec.startswith("~"):
+                out[name] = f">={spec[1:]}"
+            elif spec in ("*", ""):
+                out[name] = ""
+            else:
+                out[name] = spec
+        return out
 
     def _check_gated_model_access(self, venv_path: Path) -> None:
         """Authoritative gated-repo access check via the built venv (non-fatal; needs network)."""
