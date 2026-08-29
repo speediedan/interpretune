@@ -1,0 +1,153 @@
+{
+  "generated_at_utc": "2026-08-29T17:11:06+00:00",
+  "source_root": "/tmp/np_dashboard_generation_profiles/full_20260829",
+  "mode": "full",
+  "timing_mode": "steady-state",
+  "summary_warmup_batches": 1,
+  "target_batches": 4,
+  "layer": 9,
+  "scenarios": [
+    "rte",
+    "monology"
+  ],
+  "config": [],
+  "monology_sweep": null,
+  "path_tags": null,
+  "prompt_sweep": false,
+  "prompt_sweep_layer": 12,
+  "prompt_sweep_configs": [],
+  "pretokenization_record": {
+    "generated_at_utc": "2026-07-24T02:44:38+00:00",
+    "duration_s": 8.587,
+    "rows": 2490,
+    "context_size": 128,
+    "dataset": "gemma-3-1b-it_pile_uncopyrighted_context128_concat_2490"
+  },
+  "prompt_sweep_mitigation_args": [],
+  "gpu_device_total_mib": 24564,
+  "invocation": "python scripts/run_dashboard_benchmark_suite.py --from-existing /tmp/np_dashboard_generation_profiles/full_20260829 --package-root /tmp/dashboard_benchmark_packages/full_20260829 --coordination-pr-url https://github.com/speediedan/interpretune/issues/231",
+  "coordination_pr_url": "https://github.com/speediedan/interpretune/issues/231",
+  "repo_heads": {
+    "SD": "7a0266f",
+    "SL": "v6.49.1",
+    "NP": "9c043341",
+    "IT": "c573842"
+  },
+  "dirty_repos": [],
+  "lineages": {
+    "detached_legacy": "SD-7886eaa+benchmark_patches/SL-3eea6552/NP-789942ed/IT-c573842",
+    "current_legacy": "SD-7a0266f/SL-v6.49.1/NP-9c043341/IT-c573842",
+    "columnar_gpu": "SD-7a0266f/SL-v6.49.1/NP-9c043341/IT-c573842"
+  },
+  "restamped_at_utc": "2026-08-29T17:10:43+00:00",
+  "restamp_repo_heads": {
+    "SD": "7a0266f",
+    "SL": "v6.49.1",
+    "NP": "9c043341",
+    "IT": "c573842"
+  },
+  "variants": [
+    {
+      "variant_dir": "columnar_monology",
+      "label": "columnar-monology-pretokenized-reduced",
+      "scenario": "monology",
+      "path": "columnar_gpu"
+    },
+    {
+      "variant_dir": "columnar_monology_2048x256",
+      "label": "columnar-monology-pretokenized-reduced-2048x256",
+      "scenario": "monology",
+      "path": "columnar_gpu"
+    },
+    {
+      "variant_dir": "columnar_monology_4096x256",
+      "label": "columnar-monology-pretokenized-reduced-4096x256",
+      "scenario": "monology",
+      "path": "columnar_gpu"
+    },
+    {
+      "variant_dir": "columnar_monology_promptsweep_4096x256x24576",
+      "label": "columnar-monology-pretok-sweep-4096x256x24576",
+      "scenario": "monology",
+      "path": "columnar_gpu"
+    },
+    {
+      "variant_dir": "columnar_monology_promptsweep_4096x256x2490",
+      "label": "columnar-monology-pretok-sweep-4096x256x2490",
+      "scenario": "monology",
+      "path": "columnar_gpu"
+    },
+    {
+      "variant_dir": "columnar_monology_promptsweep_4096x256x4096",
+      "label": "columnar-monology-pretok-sweep-4096x256x4096",
+      "scenario": "monology",
+      "path": "columnar_gpu"
+    },
+    {
+      "variant_dir": "columnar_rte",
+      "label": "columnar-rte-pretokenized-reduced",
+      "scenario": "rte",
+      "path": "columnar_gpu"
+    },
+    {
+      "variant_dir": "columnar_rte_1024x128",
+      "label": "columnar-rte-pretokenized-reduced-1024x128",
+      "scenario": "rte",
+      "path": "columnar_gpu"
+    },
+    {
+      "variant_dir": "columnar_rte_2048x128",
+      "label": "columnar-rte-pretokenized-reduced-2048x128",
+      "scenario": "rte",
+      "path": "columnar_gpu"
+    },
+    {
+      "variant_dir": "detached_legacy_monology",
+      "label": "detached-legacy-monology-pretokenized-reduced",
+      "scenario": "monology",
+      "path": "detached_legacy"
+    },
+    {
+      "variant_dir": "detached_legacy_rte",
+      "label": "detached-legacy-rte-pretokenized-reduced",
+      "scenario": "rte",
+      "path": "detached_legacy"
+    },
+    {
+      "variant_dir": "legacy_monology",
+      "label": "legacy-monology-pretokenized-reduced",
+      "scenario": "monology",
+      "path": "current_legacy"
+    },
+    {
+      "variant_dir": "legacy_monology_2048x256",
+      "label": "legacy-monology-pretokenized-reduced-2048x256",
+      "scenario": "monology",
+      "path": "current_legacy"
+    },
+    {
+      "variant_dir": "legacy_monology_4096x256",
+      "label": "legacy-monology-pretokenized-reduced-4096x256",
+      "scenario": "monology",
+      "path": "current_legacy"
+    },
+    {
+      "variant_dir": "legacy_rte",
+      "label": "legacy-rte-pretokenized-reduced",
+      "scenario": "rte",
+      "path": "current_legacy"
+    },
+    {
+      "variant_dir": "legacy_rte_1024x128",
+      "label": "legacy-rte-pretokenized-reduced-1024x128",
+      "scenario": "rte",
+      "path": "current_legacy"
+    },
+    {
+      "variant_dir": "legacy_rte_2048x128",
+      "label": "legacy-rte-pretokenized-reduced-2048x128",
+      "scenario": "rte",
+      "path": "current_legacy"
+    }
+  ]
+}
