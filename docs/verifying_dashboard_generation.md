@@ -197,7 +197,13 @@ DETAIL: Key (creatorId)=(...) is not present in table "User".
 
 That names the symptom rather than the cause. `make db-init` in the neuronpedia checkout supplies
 what is missing: it applies migrations, runs `prisma db seed`, and installs the pgvector tuning. A
-stack brought up through **(b)** has already done this; a database created any other way has not. Add `--dry-run` to see the
+stack brought up through **(b)** has already done this; a database created any other way has not.
+
+**Check the buckets from an authenticated session, not anonymously.** The unauthenticated Hub API has
+been observed reporting a bucket as empty while it was in fact full, and serving a stale manifest for
+several minutes after a push. Both failures look like an answer rather than an error, so a maintainer
+confirming a corpus anonymously can reach a confident wrong conclusion about what is published. `hf
+auth login`, or pass a token, before concluding anything about bucket contents. Add `--dry-run` to see the
 plan without moving anything or `--dest <dir>` to choose where the corpus lands (default:
 `$IT_NP_CACHE/hub_downloads`, else `$HF_HOME/interpretune/neuronpedia/hub_downloads`).
 
