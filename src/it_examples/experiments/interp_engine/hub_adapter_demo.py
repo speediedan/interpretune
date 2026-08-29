@@ -49,7 +49,9 @@ def main() -> int:
     import torch.nn.functional as F
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    import interpretune as it
+    # Imported from the submodule rather than reached as `it.hub`: the package exposes it lazily via
+    # PEP 562, which a type checker cannot see, and an example should type-check like any other code.
+    from interpretune.hub import pull
     from interpretune.hub.adapters import load_hub_adapter, loaded_adapter_module
     from interpretune.protocol import Adapter
 
@@ -58,7 +60,7 @@ def main() -> int:
     os.environ.setdefault("IT_TRUST_REMOTE_CODE", "1")
 
     print(f"pulling {args.component!r}" + (f" @ {args.revision}" if args.revision else " @ refs/main"))
-    it.hub.pull(args.component, revision=args.revision)
+    pull(args.component, revision=args.revision)
 
     before = set(Adapter.__members__)
     members = load_hub_adapter(args.component)
