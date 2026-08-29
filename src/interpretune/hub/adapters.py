@@ -97,6 +97,10 @@ def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None)
         )
     enforce_component_requires(manifest, source=source)
     entrypoint = (manifest.get("adapters") or {}).get("entrypoint")
+    if not entrypoint:  # unreachable via validate_component_manifest; guards hand-built manifests
+        raise AdapterComponentError(
+            f"{source}: kind `adapters` declares no `adapters.entrypoint`, so there is nothing to load."
+        )
     # The gate belongs HERE, at the point of execution, and it raises: an adapter composes into the MRO,
     # so "loaded fewer things" is not a degraded success for this kind (#255, #125).
     ensure_remote_code_trusted(
