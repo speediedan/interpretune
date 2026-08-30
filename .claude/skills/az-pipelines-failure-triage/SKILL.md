@@ -1,71 +1,34 @@
 ---
-name: az-pipelines-debug
-description: Debug and operate the interpretune self-hosted Azure GPU pipeline, including PAT-backed approval release, queue triage, worker dispatch checks, phase-split test diagnosis, and memory-aware fixture narrowing.
+name: az-pipelines-failure-triage
+description: Diagnose a FAILED or memory-suspect run of the interpretune self-hosted Azure GPU pipeline - failure-class taxonomy across the four phase-split Testing tasks, local reproduction commands per phase, cuda-marked selector semantics, and fixture/CUDA scope narrowing for OOM-prone tests. Use when a build is red or exiting 137, not for approving or dispatching runs.
 license: Apache-2.0
 metadata:
   author: speediedan
-  version: '1.0'
-compatibility: Requires bash, az CLI with azure-devops extension, curl, Python 3.10+, access to the interpretune Azure DevOps project, and AZURE_DEVOPS_EXT_PAT in the shell environment.
+  version: '2.0'
 ---
 
-# Azure Pipelines Debug Skill
+# Azure Pipelines Failure Triage
 
-Use this skill when an interpretune self-hosted GPU Azure DevOps run is queued, failing, or suspected to be exhausting memory.
-
-## GPU lease: how this pipeline interacts with local GPU work
-
-The self-hosted agent runs **one Azure job at a time**, so two pipeline runs never collide. The real risk is
-a pipeline job landing on top of a **local** multi-GPU run — this host is shared with finetuning-scheduler
-and both projects are worked on interactively.
-
-The job bind-mounts `/tmp/di_leases:/gpu_leases` and holds the host `gpu` lease for its duration
-(`Acquire host GPU lease` step; released in the `always()` cleanup step). `flock` works on the inode, so the
-mounted lock file interlocks with host processes — **no change to the agent installation** is required. It
-**fails open**: if the directory is not mounted the job runs unserialized rather than failing.
-
-### ⛔ Never reset a lease held by CI — either project's CI
-
-`gpu_lease.sh --reset --force` **kills the holder process**. That is the right escape hatch for a wedged
-*local* run and the wrong tool for a pipeline job, for two reasons:
-
-1. **The holder pid is meaningless on the host.** A CI holder lives in the job container's PID namespace,
-   so `--force` either fails to kill it or, worse, kills an unrelated host process that happens to share
-   that pid number. `--status` marks these holders with a `[container]` tag and `project=azure-<buildId>`
-   (interpretune: `azure-it-<buildId>`) — treat either as read-only.
-2. **The lease is already self-healing for CI.** Container teardown kills every process inside the job, and
-   the kernel releases the lease. There is no stale-lock path to clean up.
-
-**The host and pool are shared between finetuning-scheduler and interpretune**, so a lease you did not
-expect may legitimately belong to the *other* project's pipeline job or local suite. Check `project=`
-before assuming it is stale.
-
-Correct responses:
-
-| Situation | Do this |
-| --- | --- |
-| Lease held by a CI job you want to stop | **Cancel the pipeline run.** Teardown frees the lease. |
-| Lease held by the other project | Leave it. Wait, or coordinate — do not reset. |
-| CI job timed out waiting for the lease | A genuine conflict. Let the local run finish and re-queue. |
-| Lease looks stale (`--status` flags an anomaly) | `gpu_lease.sh --doctor`, then plain `--reset` (free leases only). |
-| Genuinely wedged **local** run | `--reset --force` is appropriate here. |
-
-**Never kill or restart the agent to free a lease.** `restart-stack.sh` is for a wedged agent, not for lease
-recovery, and restarting it mid-job strands the run without releasing anything the kernel would not have
-released anyway.
+Use this skill when an interpretune self-hosted GPU Azure DevOps run has FAILED, or is suspected of
+exhausting memory. Driving the pipeline itself (auth, releasing or rejecting gated runs, queue and
+dispatch problems, "why has it not started") is the vendored `az-pipelines-ops` skill; GPU
+serialization is the vendored `gpu-lease` skill. This file carries what neither can: the failure
+taxonomy and reproduction paths specific to THIS repo's pipeline shape.
 
 ## When to Use This Skill
 
-- A GPU Azure build remains `notStarted` after a PR becomes ready for review
-- The self-hosted agent is online, but no worker log is created for the queued build
+- A GPU Azure build completed `failed` and you have (or can fetch) its logs
 - A GPU Azure step exits `137`, receives a shutdown signal, or otherwise fails under load
-- You need to approve, monitor, or re-triage the interpretune GPU pipeline from the shell
 - You need to narrow fixture retention or split test slices to stabilize CUDA-involved phases
 
 ## Constraints and Ground Truth
 
+> Three operational notes below (the path-filter/cumulative-diff behavior, the approve-dispatches-a-
+> memory-heavy-job warning, and the build-level `queue.name` quirk) are retained here because the
+> vendored `az-pipelines-ops` master does not yet carry them; they are candidates to move there.
+
 - The pipeline is `.azure-pipelines/gpu-tests.yml`
 - The GPU runner uses the self-hosted `Default` pool, but a queued build may still show `queue.name = Azure Pipelines` at the build level
-- PR-triggered GPU runs require explicit Azure approval before the job is dispatched to the self-hosted runner
 - **Path filters do not stop a docs-only PUSH from queueing a build.** For a `pr:` trigger the filters
   are evaluated against the pull request's **cumulative diff**, not the delta of the push that fired
   it — a pipeline validates the merge commit. So once a PR touches `src/**`, every later push
@@ -80,7 +43,6 @@ released anyway.
   - Practical consequence when managing the queue: batch documentation pushes with the code they
     describe, or expect to dispose of a gate per docs push. Approving a gate and then pushing again
     is worse — Azure cancels the superseded run, so the approval buys nothing.
-- `AZURE_DEVOPS_EXT_PAT` is the preferred non-interactive authentication path for `az devops` and Azure DevOps REST calls
 - **Approving a gate dispatches a memory-heavy job to the self-hosted host immediately.** Before
   approving/releasing any gated build, confirm no full local test suite is running on that host —
   a local full-suite run and the CI container's suite contend on host RAM (not GPU) and can
@@ -115,65 +77,7 @@ released anyway.
   3. `Testing: standalone gpu` runs standalone GPU tests
   4. `Testing: CI Profiling` runs profiling GPU tests
 
-## Step 1: Verify Auth, Build State, and Approval Gate
-
-```bash
-printenv AZURE_DEVOPS_EXT_PAT | wc -c
-az pipelines build show --id <build_id> --organization https://dev.azure.com/speediedan --project interpretune -o table
-curl -sS -u ":${AZURE_DEVOPS_EXT_PAT}" \
-  "https://dev.azure.com/speediedan/interpretune/_apis/pipelines/approvals?state=pending&api-version=7.1-preview.1"
-```
-
-Interpretation:
-
-- If the build is `notStarted` and approvals are pending, approve the run before touching the agent
-- If no approval is pending, then inspect queue backlog, worker dispatch, and agent availability next
-
-## Step 2: Release (or Reject) the Queued Run
-
-Preferred: use the multi-mode approvals helper script (distributed-insight repo,
-`project_admin/shared_admin_scripts/az_pipeline_agent_scripts/manage-approvals.sh`). It reads
-`ADO_MCP_AUTH_TOKEN` or `AZURE_DEVOPS_EXT_PAT` from the environment and supports
-`list`, `approve`, `reject`, `approve-all`, and `reject-all` modes:
-
-```bash
-cd "$ADMIN_SCRIPTS"   # maintainer admin tooling; path is in the local instructions file
-./manage-approvals.sh -o speediedan -p interpretune -m list
-./manage-approvals.sh -o speediedan -p interpretune -m approve -i "<approval_id>" -c "Approved via CLI for self-hosted GPU validation."
-./manage-approvals.sh -o speediedan -p interpretune -m reject -i "<approval_id>"   # terminates the gated build
-./manage-approvals.sh -o speediedan -p interpretune -m reject-all                   # dispose all stale pending gates
-```
-
-Notes: pending approvals for PR-gated builds are only visible via the pipelines approvals API
-(`state=pending`) — gated builds sit `notStarted`, so scanning in-progress build timelines finds
-nothing. Rejecting a gate completes the build as `failed` (that is the terminal state for a
-rejected approval, not an error in the script).
-
-Fallback: approve the pending gate directly with curl:
-
-```bash
-curl -sS -X PATCH -u ":${AZURE_DEVOPS_EXT_PAT}" \
-  -H "Content-Type: application/json" \
-  -d '[{"approvalId":"<approval_id>","status":"approved","comment":"Approved via CLI for self-hosted GPU validation."}]' \
-  "https://dev.azure.com/speediedan/interpretune/_apis/pipelines/approvals?api-version=7.1-preview.1"
-```
-
-## Step 3: Monitor Job Dispatch and Runner Activity
-
-```bash
-watch -n 30 'az pipelines build show --id <build_id> --organization https://dev.azure.com/speediedan --project interpretune --query "{status:status,result:result,startTime:startTime,finishTime:finishTime}" -o json'
-tail -f "$AGENT_HOME"/_diag/Agent_*.log
-ls -1t "$AGENT_HOME"/_diag/Worker_*.log | head
-az pipelines agent list --organization https://dev.azure.com/speediedan --pool-id 1 -o table
-```
-
-Interpretation:
-
-- If the agent log only shows keepalive polling and no new worker log appears, the run is still blocked upstream
-- If a new worker log appears, switch to that log immediately for step-level failure details
-- If the agent is offline or disabled, fix that before editing the pipeline or tests
-
-## Step 4: Triage Failure Class
+## Step 1: Triage Failure Class
 
 ### Queue / approval failures
 
@@ -220,7 +124,7 @@ Action:
 - Prefer isolating CUDA-gated tests into `IT_RUN_CUDA_TESTS=1`, standalone, and `profile_ci` slices
 - Increase swap only after verifying the phase split and fixture retention are not the main cause
 
-## Step 5: Local Reproduction Strategy
+## Step 2: Local Reproduction Strategy
 
 Use the local Azure reproduction flow in `distributed-insight` to recreate the containerized runner context. Start with the same phase that failed remotely.
 
@@ -256,7 +160,7 @@ gated pipeline must still pass on push/merge so coverage stays updated):
   approvals until local GPU work finishes — approve after, with the hold noted in the approval
   comment.
 
-## Step 6: Fixture and Scope Triage for CUDA-Involved Tests
+## Step 3: Fixture and Scope Triage for CUDA-Involved Tests
 
 When CUDA tests still carry too much memory:
 
@@ -269,7 +173,7 @@ When CUDA tests still carry too much memory:
 - Prefer `AnalysisExtractionMixin` and declarative `AnalysisFixtureSpec` entries over parity-local extraction helpers
 - Narrow heavyweight fixture scope only for the classes or aliases that are actually forcing retention across methods
 
-## Step 7: What Not to Do
+## Step 4: What Not to Do
 
 - Do not permanently disable GPU coverage for the self-hosted pipeline just to avoid OOMs
 - Do not assume a build-level `queue.name` of `Azure Pipelines` means the YAML job pool changed

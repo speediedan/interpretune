@@ -316,7 +316,7 @@ validate against current `expected_accuracy`/`salient_pkg_versions`, not stale t
 dependency state. After the local gate is green, all REMOTE checks must also pass: the GitHub Actions
 matrix (`ci_test-full`, `type-check`) and the self-hosted Azure GPU pipeline
 (`.azure-pipelines/gpu-tests.yml`) — trigger via a ready-for-review PR targeting `main` (releases the
-Azure PR trigger; approve the gated run per `.claude/skills/az-pipelines-debug/SKILL.md`) or a manual
+Azure PR trigger; approve the gated run per `.claude/skills/az-pipelines-ops/SKILL.md`) or a manual
 pipeline run.
 
 If the coverage harness reports a conflicting pytest process, check whether it is still active before
