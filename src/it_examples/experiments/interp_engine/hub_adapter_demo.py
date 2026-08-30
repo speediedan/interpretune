@@ -72,7 +72,8 @@ def main() -> int:
     hf_model = AutoModelForCausalLM.from_pretrained(args.model, dtype=torch.float32).eval()
     tokenizer = AutoTokenizer.from_pretrained(args.model)
 
-    from interp_engine import EagerModel, run_with_cache  # provided by the component's requires: block
+    # Provided by the component's requires: block; absent (by design) in envs that never pulled it.
+    from interp_engine import EagerModel, run_with_cache  # pyright: ignore[reportMissingImports]
 
     engine_model = EagerModel(args.model, hf_model=hf_model, tokenizer=tokenizer, dtype="float32")
     tokens = engine_model.to_tokens(args.text)
