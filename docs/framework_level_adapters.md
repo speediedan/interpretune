@@ -150,4 +150,4 @@ and notebook usage patterns.
 - [Session, Module, and DataModule Usage Patterns](session_module_datamodule_usage.md)
 - [Analysis Runner Usage](analysis_runner_usage.md)
 - [Protocol Architecture](protocol_architecture_working_design.md)
-- [Developing Adapters](../.github/instructions/developing_adapters.instructions.md)
+- [Developing Adapters](../.claude/skills/developing-adapters/SKILL.md)

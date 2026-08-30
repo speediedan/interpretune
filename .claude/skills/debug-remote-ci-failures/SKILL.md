@@ -511,7 +511,7 @@ The GitHub checks are only part of the pre-wave gate — the self-hosted Azure G
   GPU work finishes), and local runs never replace the pipeline — it must pass on push/merge so
   coverage stays updated.
 
-See `.github/skills/az-pipelines-debug/SKILL.md` for full triage of the GPU leg.
+See `.claude/skills/az-pipelines-debug/SKILL.md` for full triage of the GPU leg.
 
 ---
 
@@ -522,4 +522,4 @@ See `.github/skills/az-pipelines-debug/SKILL.md` for full triage of the GPU leg.
 - `pyproject.toml` — Dependency pins and override-dependencies
 - `requirements/ci/overrides.txt` — CI dependency overrides
 - `requirements/ci/requirements.txt` — Locked CI requirements
-- `.github/instructions/fixture_usage.instructions.md` — Test fixture patterns
+- `.claude/skills/fixture-usage/SKILL.md` — Test fixture patterns
