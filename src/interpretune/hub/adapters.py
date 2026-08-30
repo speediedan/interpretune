@@ -72,6 +72,31 @@ def _import_adapter_entrypoint(repo_id: str, snapshot: Path, revision: str, entr
     return module
 
 
+def loaded_adapter_module(repo_id: str, cache_dir: Path | None = None) -> ModuleType:
+    """The entrypoint module a previously-loaded adapter component was imported from.
+
+    Adapters can expose more than the compositions they register -- a translation seam, capability
+    helpers -- and a caller that has loaded one should be able to reach those without reconstructing
+    the revision-scoped module name the loader synthesised. Reaching into ``sys.modules`` by hand is
+    the alternative, and it hardcodes a naming scheme that is this module's business.
+
+    Raises if the component has not been loaded in this process: this resolves an already-imported
+    module and deliberately executes nothing, so it needs no trust gate of its own.
+    """
+    from interpretune.hub.components import resolve_component_manifest
+
+    _, _, revision = resolve_component_manifest(repo_id, cache_dir=cache_dir)
+    sanitized = repo_id.replace("/", "__").replace("-", "_").replace(".", "_")
+    module_name = f"it_hub_adapters.{sanitized}.{revision}"
+    module = sys.modules.get(module_name)
+    if module is None:
+        raise AdapterComponentError(
+            f"{repo_id} has not been loaded in this process (looked for {module_name!r}). Call "
+            "`load_hub_adapter` first; this accessor deliberately executes nothing itself."
+        )
+    return module
+
+
 def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None) -> list[Adapter]:
     """Load ONE cached adapter component: trust gate, enum extension, entrypoint, registration.
 

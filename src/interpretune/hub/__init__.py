@@ -23,6 +23,7 @@ _LAZY_ATTRS = {
     "AdapterComponentError": "interpretune.hub.adapters",
     "declared_adapters": "interpretune.hub.adapters",
     "load_hub_adapter": "interpretune.hub.adapters",
+    "loaded_adapter_module": "interpretune.hub.adapters",
     "IT_COMPONENT_MANIFEST": "interpretune.hub.manifest",
     "ComponentManifestError": "interpretune.hub.manifest",
     "derive_config_key": "interpretune.hub.manifest",
