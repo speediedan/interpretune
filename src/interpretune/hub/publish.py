@@ -46,6 +46,20 @@ def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Pat
     for rel in (manifest.get("ops") or {}).get("files") or []:
         shutil.copy2(component_dir / rel, out_dir / rel)
 
+    # adapters entrypoints are SELF-CONTAINED for the same reason promptconfigs' are: the file must be
+    # readable and runnable straight out of the snapshot, with no in-repo package to import from.
+    adapters_entrypoint = (manifest.get("adapters") or {}).get("entrypoint")
+    if adapters_entrypoint:
+        src = component_dir / adapters_entrypoint
+        if not src.is_file():
+            raise FileNotFoundError(
+                f"Manifest declares adapters entrypoint {adapters_entrypoint!r}, which is not present in "
+                f"{component_dir}."
+            )
+        dest = out_dir / adapters_entrypoint
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+
     entrypoint = module_section.get("entrypoint")
     if entrypoint:
         if entrypoint_src is None or not Path(entrypoint_src).is_file():

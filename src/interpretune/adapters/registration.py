@@ -136,6 +136,63 @@ class CompositionRegistry(dict):
         return f"Registered Adapter Compositions: {pformat(self.keys())}"
 
 
+#: Adapter names added at runtime by hub components, mapped to the repo that added each one. Kept so a
+#: second load of the same repo is idempotent while two repos claiming one name is an error rather than
+#: a silent last-writer-wins.
+_DYNAMIC_ADAPTERS: dict[str, str] = {}
+
+
+class DynamicAdapterError(ValueError):
+    """A hub component's declared adapter name cannot be added to :class:`~interpretune.protocol.Adapter`."""
+
+
+def register_dynamic_adapter(name: str, *, source: str) -> Adapter:
+    """Add ``name`` to the :class:`~interpretune.protocol.Adapter` enum on behalf of a hub component.
+
+    Composition keys are built from ``Adapter`` members, so an adapter that arrives at runtime has to become
+    one before it can register anything. ``Adapter`` is closed at class-creation time like any enum, so this
+    installs the member through the enum's own member maps rather than rebuilding the class: rebuilding would
+    orphan every ``Adapter`` reference already held by a live session.
+
+    Idempotent per source: reloading the same component returns the member it added. A name already taken by
+    a built-in adapter, or by a DIFFERENT component, raises -- two components silently sharing one name would
+    make composition keys mean different things in different sessions.
+    """
+    if not name.isidentifier():
+        raise DynamicAdapterError(f"{source}: adapter name {name!r} is not a valid Python identifier")
+    existing = Adapter._member_map_.get(name)
+    if existing is not None:
+        owner = _DYNAMIC_ADAPTERS.get(name)
+        if owner is None:
+            raise DynamicAdapterError(
+                f"{source}: adapter name {name!r} is a built-in interpretune adapter and cannot be redefined "
+                "by a hub component."
+            )
+        if owner != source:
+            raise DynamicAdapterError(
+                f"{source}: adapter name {name!r} was already registered by {owner!r}. Two components cannot "
+                "share one adapter name: composition keys are built from these members, so the same key would "
+                "mean different things depending on load order."
+            )
+        return cast(Adapter, existing)
+    member = object.__new__(Adapter)
+    member._name_ = name
+    member._value_ = name
+    # `type.__setattr__` deliberately: EnumMeta refuses attribute assignment for names it already knows, and
+    # the attribute has to exist before the member maps claim the name.
+    type.__setattr__(Adapter, name, member)
+    Adapter._member_map_[name] = member
+    Adapter._member_names_.append(name)
+    Adapter._value2member_map_[name] = member
+    _DYNAMIC_ADAPTERS[name] = source
+    return member
+
+
+def dynamic_adapters() -> dict[str, str]:
+    """Adapter names added at runtime, mapped to the component that added each."""
+    return dict(_DYNAMIC_ADAPTERS)
+
+
 @runtime_checkable
 class AdapterProtocol(Protocol):
     """What a class must implement to participate in adapter composition."""
