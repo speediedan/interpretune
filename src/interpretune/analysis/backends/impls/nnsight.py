@@ -366,8 +366,15 @@ class NNsightModelBackend:
 
     @property
     def capabilities(self) -> frozenset[BackendCapability]:
-        """NNsight supports batched hooks (multi-invoke) and gradient caching."""
-        return frozenset({BackendCapability.BATCHED_HOOKS, BackendCapability.GRADIENTS})
+        """NNsight implements every method group, and its batched-hooks path genuinely fuses (multi-invoke)."""
+        return frozenset(
+            {
+                BackendCapability.BATCHED_HOOKS,
+                BackendCapability.GRADIENTS,
+                BackendCapability.LATENT_MODELS,
+                BackendCapability.INTERVENTION,
+            }
+        )
 
     def supports(self, capability: BackendCapability) -> bool:
         """Check whether this backend supports a given capability."""

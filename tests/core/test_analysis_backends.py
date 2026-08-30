@@ -784,7 +784,7 @@ class TestBackendCapability:
         assert AnalysisBackendCapability.FEATURE_INTERVENTION.value == "feature_intervention"
 
     def test_enum_members_count(self):
-        assert len(BackendCapability) == 2
+        assert len(BackendCapability) == 4
         assert len(AnalysisBackendCapability) == 2
 
     def test_membership_in_frozenset(self):

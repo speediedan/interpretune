@@ -147,22 +147,16 @@ class AnalysisBackend(Protocol):
 
 
 @runtime_checkable
-class ModelBackend(Protocol):
-    """Protocol defining the interface for model execution backends.
+class ModelBackendCore(Protocol):
+    """The REQUIRED surface of a model execution backend.
 
-    Each backend wraps a specific framework's model execution API (e.g., TransformerLens hook-based execution, nnsight
-    trace-based execution) behind a uniform interface used by analysis op implementations.
-
-    .. note:: ``hook=True`` evaluation
-
-        NNsight's ``hook=True`` parameter (on ``tracer.invoke()``) enables ``.output`` /
-        ``.input`` access on auxiliary modules like SAEs.  Our current architecture calls
-        ``sae.encode()`` / ``sae.decode()`` explicitly within the trace, giving direct
-        proxy access to feature activations.  If SAEs were registered as model sub-modules,
-        ``hook=True`` could replace explicit encode/decode calls, but the current external
-        ``latent_model_handles`` design makes ``hook=True`` unnecessary.  Adding
-        ``hook=True`` would require architectural changes to how SAEs are attached and is
-        best evaluated in a future session.
+    Every model backend implements this much: plain forward, cached forward, and cache wrapping,
+    plus the capability introspection ops use to gate everything beyond it. The optional method
+    groups live in the ``Supports*`` protocols below, each tied to the
+    :class:`~interpretune.analysis.backends.capabilities.BackendCapability` member of the same name;
+    ops call an optional method only after ``backend.supports(...)`` says so (see
+    ``require_backend_capability``). A partial backend (e.g. a hub-delivered adapter's) implements
+    this core plus whichever groups it truthfully claims.
     """
 
     @property
@@ -202,6 +196,55 @@ class ModelBackend(Protocol):
         """
         ...
 
+    def fwd_w_cache(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        names_filter: NamesFilter,
+    ) -> tuple[torch.Tensor, Any]:
+        """Run a forward pass with activation caching but without latent model hooks.
+
+        Args:
+            model: The model to run.
+            batch: Input batch dict.
+            names_filter: Filter specifying which hook activations to cache.
+
+        Returns:
+            Tuple of (logits, activation_cache).
+        """
+        ...
+
+    def wrap_activation_cache(
+        self,
+        cache_dict: dict[str, Any],
+        model: Any,
+    ) -> Any:
+        """Wrap a raw activation dict into a backend-specific activation cache object.
+
+        For TransformerLens, wraps in ``ActivationCache``. Other backends may return the dict
+        as-is or wrap in their own cache type.
+
+        Args:
+            cache_dict: Raw dict mapping hook names to activation tensors.
+            model: The model instance (may be needed for cache construction).
+
+        Returns:
+            A cache object suitable for indexed access by hook name.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsLatentModels(Protocol):
+    """Methods gated by ``BackendCapability.LATENT_MODELS``: execution with latent-model handles attached.
+
+    ``fwd_w_hooks_batched`` lives HERE, not behind ``BATCHED_HOOKS``: every latent-models backend
+    implements it (a sequential loop is a valid implementation), while ``BATCHED_HOOKS`` describes
+    whether the backend can fuse the configs into one execution context -- an efficiency property of
+    HOW the method runs, not of whether it exists. TL is the live example: it implements the method
+    and does not claim the capability.
+    """
+
     def fwd_w_cache_and_latent_models(
         self,
         model: Any,
@@ -215,24 +258,6 @@ class ModelBackend(Protocol):
             model: The model to run (e.g., HookedSAETransformer, SAETransformerBridge).
             batch: Input batch dict (unpacked as ``**batch`` for the model call).
             latent_model_handles: Latent model handles (e.g., SAE objects) to attach.
-            names_filter: Filter specifying which hook activations to cache.
-
-        Returns:
-            Tuple of (logits, activation_cache).
-        """
-        ...
-
-    def fwd_w_cache(
-        self,
-        model: Any,
-        batch: dict[str, Any],
-        names_filter: NamesFilter,
-    ) -> tuple[torch.Tensor, Any]:
-        """Run a forward pass with activation caching but without latent model hooks.
-
-        Args:
-            model: The model to run.
-            batch: Input batch dict.
             names_filter: Filter specifying which hook activations to cache.
 
         Returns:
@@ -303,6 +328,11 @@ class ModelBackend(Protocol):
         """
         ...
 
+
+@runtime_checkable
+class SupportsGradients(Protocol):
+    """Methods gated by ``BackendCapability.GRADIENTS``: forward + backward with gradient caching."""
+
     def fwd_w_grads_and_latent_models(
         self,
         model: Any,
@@ -343,24 +373,10 @@ class ModelBackend(Protocol):
         """
         ...
 
-    def wrap_activation_cache(
-        self,
-        cache_dict: dict[str, Any],
-        model: Any,
-    ) -> Any:
-        """Wrap a raw activation dict into a backend-specific activation cache object.
 
-        For TransformerLens, wraps in ``ActivationCache``. Other backends may return the dict
-        as-is or wrap in their own cache type.
-
-        Args:
-            cache_dict: Raw dict mapping hook names to activation tensors.
-            model: The model instance (may be needed for cache construction).
-
-        Returns:
-            A cache object suitable for indexed access by hook name.
-        """
-        ...
+@runtime_checkable
+class SupportsIntervention(Protocol):
+    """Methods gated by ``BackendCapability.INTERVENTION``: baseline-vs-intervention paired execution."""
 
     def fwd_w_intervention(
         self,
@@ -393,3 +409,31 @@ class ModelBackend(Protocol):
             ``(pre_intervention_logits, post_intervention_logits)`` — both real tensors.
         """
         ...
+
+
+@runtime_checkable
+class ModelBackend(
+    ModelBackendCore,
+    SupportsLatentModels,
+    SupportsGradients,
+    SupportsIntervention,
+    Protocol,
+):
+    """Protocol defining the interface for model execution backends.
+
+    Each backend wraps a specific framework's model execution API (e.g., TransformerLens hook-based execution, nnsight
+    trace-based execution) behind a uniform interface used by analysis op implementations.
+
+    .. note:: ``hook=True`` evaluation
+
+        NNsight's ``hook=True`` parameter (on ``tracer.invoke()``) enables ``.output`` /
+        ``.input`` access on auxiliary modules like SAEs.  Our current architecture calls
+        ``sae.encode()`` / ``sae.decode()`` explicitly within the trace, giving direct
+        proxy access to feature activations.  If SAEs were registered as model sub-modules,
+        ``hook=True`` could replace explicit encode/decode calls, but the current external
+        ``latent_model_handles`` design makes ``hook=True`` unnecessary.  Adding
+        ``hook=True`` would require architectural changes to how SAEs are attached and is
+        best evaluated in a future session.
+    """
+
+    ...

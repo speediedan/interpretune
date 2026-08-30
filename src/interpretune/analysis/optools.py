@@ -181,6 +181,20 @@ def require_model_backend(module: Any) -> Any:
     return backend
 
 
+def require_backend_capability(backend: Any, capability: Any, op_name: str) -> None:
+    """Raise a uniform, actionable error when ``backend`` does not claim ``capability``.
+
+    Optional ``ModelBackend`` method groups are capability-gated (``SupportsLatentModels`` et al.), so
+    ops call this before an optional method rather than letting a partial backend fail as an
+    ``AttributeError`` deep inside execution.
+    """
+    if not backend.supports(capability):
+        raise ValueError(
+            f"{op_name} requires a model backend with {capability.name}; "
+            f"{type(backend).__name__} reports {sorted(c.name for c in backend.capabilities)}"
+        )
+
+
 def resolve_tokenizer(module: Any) -> Any:
     """Resolve a tokenizer from a generic module or its analysis backend."""
     analysis_backend = get_analysis_backend(module)

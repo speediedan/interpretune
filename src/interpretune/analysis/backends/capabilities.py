@@ -23,12 +23,28 @@ class BackendCapability(Enum):
     to a simpler code path (e.g., looping instead of batching).
     """
 
+    LATENT_MODELS = "latent_models"
+    """Backend supports execution with latent-model handles attached (``SupportsLatentModels``:
+
+    ``fwd_w_cache_and_latent_models``, ``fwd_w_hooks_and_latent_models``, ``fwd_w_hooks_batched``).
+    """
+
     BATCHED_HOOKS = "batched_hooks"
     """Backend can run multiple forward passes with different hook configs in a single batched execution (e.g.,
-    NNsight multi-invoke within one trace)."""
+    NNsight multi-invoke within one trace).
+
+    An efficiency property of HOW ``fwd_w_hooks_batched`` runs --
+    the method itself is part of ``LATENT_MODELS`` and a sequential loop is a valid implementation.
+    """
 
     GRADIENTS = "gradients"
-    """Backend supports forward + backward with gradient caching."""
+    """Backend supports forward + backward with gradient caching (``SupportsGradients``)."""
+
+    INTERVENTION = "intervention"
+    """Backend supports baseline-vs-intervention paired execution (``SupportsIntervention``:
+
+    ``fwd_w_intervention``).
+    """
 
 
 class AnalysisBackendCapability(Enum):
