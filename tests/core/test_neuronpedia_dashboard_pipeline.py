@@ -703,10 +703,10 @@ def test_profile_import_stage_columnar_skips_conversion(
     assert import_profile.mode == "columnar"
     assert captured_import_kwargs["activation_use_stage_table"] is False
     assert captured_import_kwargs["source_id_override"] == (
-        "9-gemmascope-2-transcoder-262k-rte__columnar-import-profile__profile-import-feedfacecafe"
+        "9-gemmascope-2-transcoder-262k-rte-bench__columnar-import-profile__profile-import-feedfacecafe"
     )
     assert captured_import_kwargs["activation_id_prefix"] == (
-        "9-gemmascope-2-transcoder-262k-rte__columnar-import-profile__profile-import-feedfacecafe-activation"
+        "9-gemmascope-2-transcoder-262k-rte-bench__columnar-import-profile__profile-import-feedfacecafe-activation"
     )
     assert import_profile.conversion_seconds == pytest.approx(0.0)
     assert import_profile.activation_table_load_seconds == pytest.approx(2.34)
@@ -714,7 +714,7 @@ def test_profile_import_stage_columnar_skips_conversion(
     assert import_profile.activation_import_seconds == pytest.approx(43.87)
     assert import_profile.wall_seconds == pytest.approx(50.2)
     assert import_profile.local_db_source_id == (
-        "9-gemmascope-2-transcoder-262k-rte__columnar-import-profile__profile-import-feedfacecafe"
+        "9-gemmascope-2-transcoder-262k-rte-bench__columnar-import-profile__profile-import-feedfacecafe"
     )
     assert import_profile.imported_activation_rows == 259605
     assert import_profile.imported_neuron_rows == 8192
