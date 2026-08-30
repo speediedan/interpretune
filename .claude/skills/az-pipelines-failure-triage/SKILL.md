@@ -15,6 +15,9 @@ dispatch problems, "why has it not started") is the vendored `az-pipelines-ops` 
 serialization is the vendored `gpu-lease` skill. This file carries what neither can: the failure
 taxonomy and reproduction paths specific to THIS repo's pipeline shape.
 
+Both halves number their steps from 1, so a bare "Step N" below always means a step of THIS skill;
+any reference to the other half is qualified by skill name.
+
 ## When to Use This Skill
 
 - A GPU Azure build completed `failed` and you have (or can fetch) its logs
