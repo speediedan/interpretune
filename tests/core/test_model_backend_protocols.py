@@ -82,3 +82,34 @@ class TestCapabilityGate:
         backend = _CaptureOnlyBackend()
         with pytest.raises(ValueError, match=r"some_op requires .*LATENT_MODELS.*_CaptureOnlyBackend"):
             require_backend_capability(backend, BackendCapability.LATENT_MODELS, "some_op")
+
+    def test_gate_is_value_based_across_module_identity_splits(self):
+        """A reloaded capabilities module yields value-equal but identity-distinct enum members.
+
+        This repo's suite can load a module twice (documented importlib double-loading class), so the gate must pass for
+        a backend that REPORTS the capability even when the two sides hold members from different load events.
+        """
+        import importlib.util
+
+        from interpretune.analysis.backends import capabilities as cap_mod
+
+        import sys
+
+        spec = importlib.util.spec_from_file_location("_cap_copy_for_test", cap_mod.__file__)
+        assert spec is not None and spec.loader is not None
+        cap_copy = importlib.util.module_from_spec(spec)
+        # dataclass field resolution looks the module up by name during exec
+        sys.modules["_cap_copy_for_test"] = cap_copy
+        try:
+            spec.loader.exec_module(cap_copy)
+        finally:
+            sys.modules.pop("_cap_copy_for_test", None)
+        other_member = cap_copy.BackendCapability.GRADIENTS
+        assert other_member is not BackendCapability.GRADIENTS  # the split is real
+
+        class _SplitBackend(_CaptureOnlyBackend):
+            @property
+            def capabilities(self):
+                return frozenset({other_member})
+
+        require_backend_capability(_SplitBackend(), BackendCapability.GRADIENTS, "some_op")

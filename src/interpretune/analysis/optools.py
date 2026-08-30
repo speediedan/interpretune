@@ -188,7 +188,11 @@ def require_backend_capability(backend: Any, capability: Any, op_name: str) -> N
     ops call this before an optional method rather than letting a partial backend fail as an
     ``AttributeError`` deep inside execution.
     """
-    if not backend.supports(capability):
+    # Compare by VALUE, not enum identity: this repo's test infrastructure can load the capabilities
+    # module twice (the documented importlib double-loading class), leaving value-equal enum members
+    # that fail an identity-based ``in``. A backend that REPORTS the capability must pass the gate.
+    supported = {getattr(c, "value", c) for c in backend.capabilities}
+    if getattr(capability, "value", capability) not in supported:
         raise ValueError(
             f"{op_name} requires a model backend with {capability.name}; "
             f"{type(backend).__name__} reports {sorted(c.name for c in backend.capabilities)}"
@@ -443,6 +447,7 @@ __all__ = [
     "last_token_logits",
     "load_json_field",
     "mean_target_logit_delta",
+    "require_backend_capability",
     "require_model_backend",
     "resolve_aggregate_input",
     "resolve_embedding_weight",
