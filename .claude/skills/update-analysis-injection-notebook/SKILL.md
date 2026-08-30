@@ -25,7 +25,7 @@ Use this skill when:
 
 This skill builds on the analysis injection framework documented in:
 
-- `.github/instructions/analysis_injection.instructions.md` — Architecture overview, config format, debugging workflow, common failure patterns
+- `.claude/skills/analysis-injection/SKILL.md` — Architecture overview, config format, debugging workflow, common failure patterns
 - Read this file first if unfamiliar with the analysis injection system
 
 ## Required User Inputs
