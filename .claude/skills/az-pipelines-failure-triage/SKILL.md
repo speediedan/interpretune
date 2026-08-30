@@ -61,7 +61,10 @@ taxonomy and reproduction paths specific to THIS repo's pipeline shape.
 Action:
 
 - Approve the run first
-- Only restart the agent if approvals are clear and the pool still is not dispatching work
+- Only restart the agent after the build TIMELINE shows neither a pending approval nor an
+  in-progress authorization checkpoint; a build can have clear approvals and still be blocked on
+  resource authorization, which the approvals API cannot see (see the vendored `az-pipelines-ops`
+  skill, Step 1)
 
 ### Infrastructure or runner failures
 
