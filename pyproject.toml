@@ -58,6 +58,10 @@ dependencies = [
     # all three -- a routine Lightning bump is the unblocking event, which nobody would connect to a
     # jsonargparse ceiling without this note. Verified against lightning 2.6.5 (latest) on 2026-08-19.
     "jsonargparse[signatures] >= 4.49.0,<5.0",
+    # Eagerly imported on the `import interpretune` path (utils/__init__ -> schema_validation) and by the
+    # neuronpedia extension; previously reached every env transitively, which hid the omission until a bare
+    # `uv pip install interpretune @ git+...` consumer could not import the package at all (#403).
+    "jsonschema >= 4.0.0",
     # "finetuning-scheduler[possible_future_it_plugin] >= 2.5.0",
 ]
 
