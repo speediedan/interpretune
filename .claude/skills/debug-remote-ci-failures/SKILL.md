@@ -495,8 +495,9 @@ The GitHub checks are only part of the pre-wave gate — the self-hosted Azure G
   `AZURE_DEVOPS_EXT_PAT`). Rejecting a gate completes the build as `failed` — that is the normal
   terminal state for a rejected approval.
 - **Agent stack restart**: infrastructure failures (e.g. `stat -c %g /var/run/docker.sock` failing
-  at "Initialize containers" after a host reboot) are recovered with the NOPASSWD-sudoers
-  one-liner `sudo /opt/az_pipeline_agent/restart-stack.sh` (restarts rootless docker + the agent
+  at "Initialize containers" after a host reboot) are recovered by the operator restarting the
+  rootless-docker and agent stack via an authorized wrapper script (its path and authorization are
+  machine-specific and recorded in the local instructions file
   service, restoring the docker.sock symlink).
 
 - **Fast local iteration instead of pipeline round-trips (debug only)**: reproduce the failing

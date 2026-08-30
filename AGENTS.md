@@ -494,36 +494,16 @@ Serialization details matter here:
 
 - **GitHub Actions** (`ci_test-full.yml`): Ubuntu 22.04, Windows 2022, macOS 14, Python 3.13, 90-min timeout
 - **Azure GPU pipeline** (`.azure-pipelines/gpu-tests.yml`): Self-hosted, requires admin approval, only for ready-for-review PRs. Use CPU CI as long as possible before requesting GPU runs.
-- The self-hosted approval gate can be driven from the shell when `AZURE_DEVOPS_EXT_PAT` is present. Prefer PAT-backed Azure DevOps CLI or REST calls over manual UI approval when you need to release a queued GPU run during active debugging.
-- A queued build can stay in `notStarted` until its approval is granted. Check the build first, then inspect pending approvals before changing runner configuration:
-  ```bash
-  az pipelines build show --id <build_id> --organization https://dev.azure.com/speediedan --project interpretune -o table
-  curl -sS -u ":${AZURE_DEVOPS_EXT_PAT}" \
-    "https://dev.azure.com/speediedan/interpretune/_apis/pipelines/approvals?state=pending&api-version=7.1-preview.1"
-  ```
-- Preferred approval management: the multi-mode helper script in the distributed-insight repo
-  (`project_admin/shared_admin_scripts/az_pipeline_agent_scripts/manage-approvals.sh`), auth via
-  `ADO_MCP_AUTH_TOKEN` or `AZURE_DEVOPS_EXT_PAT`:
-  ```bash
-  ./manage-approvals.sh -o speediedan -p interpretune -m list
-  ./manage-approvals.sh -o speediedan -p interpretune -m approve -i "<approval_id>" -c "Approved via CLI for GPU validation."
-  ./manage-approvals.sh -o speediedan -p interpretune -m reject-all   # dispose stale pending gates
-  ```
-  (Rejecting a gate completes the build as `failed` — the normal terminal state for a rejected approval.)
-- Fallback: approve a pending run with a PATCH to the approvals endpoint:
-  ```bash
-  curl -sS -X PATCH -u ":${AZURE_DEVOPS_EXT_PAT}" \
-    -H "Content-Type: application/json" \
-    -d '[{"approvalId":"<approval_id>","status":"approved","comment":"Approved via CLI for GPU validation."}]' \
-    "https://dev.azure.com/speediedan/interpretune/_apis/pipelines/approvals?api-version=7.1-preview.1"
-  ```
-- Agent-stack recovery: infrastructure failures on the self-hosted runner (e.g. the pipeline dying at
-  "Initialize containers" with `stat -c %g /var/run/docker.sock` errors after a host reboot) are fixed
-  by restarting the rootless-docker + agent stack; this exact command is authorized for agents via a
-  NOPASSWD sudoers entry:
-  ```bash
-  sudo /opt/az_pipeline_agent/restart-stack.sh
-  ```
+- **A queued GPU build can sit in `notStarted` until its approval is granted, and that is normal.**
+  Check the build's approval state before touching runner configuration: an ungranted gate looks
+  identical to a dispatch problem from the outside, and the reflex it invites (inspecting the agent,
+  restarting things) is the wrong one.
+- The approval gate can be driven from the shell rather than the web UI, which is preferable during
+  active debugging. The maintainer's tooling, credentials and host-specific recovery procedures are
+  machine-specific and live in a local, uncommitted instructions file rather than here.
+- **Agent-stack recovery** (for example the pipeline dying at "Initialize containers" with
+  `stat -c %g /var/run/docker.sock` errors after a host reboot) is an operator task on the self-hosted
+  runner, not something to attempt from a contributor checkout.
 - The build-level queue shown by `az pipelines build show` may still display `Azure Pipelines` even when the YAML job uses the self-hosted `Default` pool. Treat approval state and actual worker dispatch as the source of truth before editing the pool stanza.
 - The current GPU test flow is intentionally phase-split to reduce peak memory while preserving CUDA coverage:
   1. `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''`
@@ -643,11 +623,13 @@ Dev notebooks live in `src/it_examples/notebooks/dev/` and are auto-published to
 When work is blocked by a command that requires elevated access or interactive local auth (sudo, an
 interactive login, a gpg/pinentry prompt, a locked credential store), do not just work around it silently:
 include in the response summary a concrete proposed solution that would let Claude execute that command (or a
-scripted group of commands) autonomously in the future. The established pattern is a root-owned wrapper
-script + sudoers `NOPASSWD` directive + `~/.claude/settings.json` `permissions.allow` entry — e.g.
-`Bash(sudo /opt/az_pipeline_agent/restart-stack.sh)` paired with
-`speediedan ALL=(ALL) NOPASSWD: /opt/az_pipeline_agent/restart-stack.sh`. Propose that pattern (or a
-better-fitting design) so it can be implemented and validated in a subsequent session.
+scripted group of commands) autonomously in the future. The established pattern is a narrowly-scoped
+root-owned wrapper script, authorized by a sudoers `NOPASSWD` directive naming that exact script and no
+other, paired with a matching `permissions.allow` entry in the local Claude settings. The point is that
+the wrapper bounds what elevated access can do, rather than granting a general capability. Propose that
+pattern (or a better-fitting design) so it can be implemented and validated in a subsequent session.
+Concrete wrapper paths and sudoers lines are machine-specific and belong in a local, uncommitted
+instructions file rather than in this published one.
 
 ## Important Caveats
 
