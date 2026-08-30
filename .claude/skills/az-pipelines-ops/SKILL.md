@@ -87,6 +87,21 @@ curl -sS -u ":${AZ_PAT}" \
   "${ORG}/${PROJECT}/_apis/pipelines/checks/configurations?resourceType=queue&resourceId=<queueId>&api-version=7.1-preview.1"
 ```
 
+## Path filters on a `pr:` trigger evaluate the PR's CUMULATIVE diff
+
+A `pr:`-triggered pipeline with `paths:` filters does not evaluate the diff of the push you just made.
+It evaluates the pull request's diff as a whole. Three consequences that all surprise people:
+
+- **A docs-only push re-queues a gated build** as soon as the PR overall touches a filtered path. The
+  push looks exempt in isolation and is not, because the filter is not being applied to it.
+- **`[skip ci]` in the commit message does not rescue it.** That convention is honoured by some hosted
+  CI systems and is not what path filters consult.
+- **Approving and then pushing wastes the gate.** The approval applies to the queued run; the new push
+  supersedes it and queues another run needing another approval. Push first, then approve.
+
+The practical rule on a gated pipeline is to batch pushes and approve last, rather than approving as
+soon as a gate appears.
+
 ## Step 3: Confirm the agent actually picked it up
 
 Only reach this step when the timeline showed no checkpoint records.

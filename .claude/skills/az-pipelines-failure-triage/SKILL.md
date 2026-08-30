@@ -23,34 +23,7 @@ taxonomy and reproduction paths specific to THIS repo's pipeline shape.
 
 ## Constraints and Ground Truth
 
-> Three operational notes below (the path-filter/cumulative-diff behavior, the approve-dispatches-a-
-> memory-heavy-job warning, and the build-level `queue.name` quirk) are retained here because the
-> vendored `az-pipelines-ops` master does not yet carry them; they are candidates to move there.
-
 - The pipeline is `.azure-pipelines/gpu-tests.yml`
-- The GPU runner uses the self-hosted `Default` pool, but a queued build may still show `queue.name = Azure Pipelines` at the build level
-- **Path filters do not stop a docs-only PUSH from queueing a build.** For a `pr:` trigger the filters
-  are evaluated against the pull request's **cumulative diff**, not the delta of the push that fired
-  it — a pipeline validates the merge commit. So once a PR touches `src/**`, every later push
-  re-triggers it, including one that only edits `docs/`. Verified 2026-08-05: a docs-only commit
-  queued build 709 on PR #240 even though `docs/**` is absent from the include list.
-  - `[skip ci]` does **not** rescue this. Microsoft documents that PR pipelines run on the merge
-    commit "regardless if there exist pushed commits whose messages or descriptions contain
-    `[skip ci]`" — the skip tokens (`[skip ci]`, `[azurepipelines skip]`, `***NO_CI***`, …) suppress
-    only CI/branch triggers.
-  - What path filters DO buy is skipping a PR whose *entire* diff is documentation, so keep
-    `docs/**` and `*.md` in the exclude lists.
-  - Practical consequence when managing the queue: batch documentation pushes with the code they
-    describe, or expect to dispose of a gate per docs push. Approving a gate and then pushing again
-    is worse — Azure cancels the superseded run, so the approval buys nothing.
-- **Approving a gate dispatches a memory-heavy job to the self-hosted host immediately.** Before
-  approving/releasing any gated build, confirm no full local test suite is running on that host —
-  a local full-suite run and the CI container's suite contend on host RAM (not GPU) and can
-  OOM-kill BOTH sides: the local run dies silently mid-progress (frozen log, no summary — easily
-  misread as a hang or genuine failure) while the build completes `failed`. CPU-only local runs
-  (`CUDA_VISIBLE_DEVICES=''`) are NOT exempt: the GPU lease doesn't serialize them. Serialize by
-  wrapping local full-suite runs under the host's lease mechanism, or by waiting out the build.
-  (Host-specific values and the exact lease wrap live in the machine-local notes.)
 - Runner constraints (**host-specific — see the note below; values here are illustrative**):
   - RAM on the order of tens of GiB, with **swap much smaller than RAM** (the current host is an example:
     roughly 62 GiB RAM against 2 GiB swap unless explicitly expanded). This ratio is why memory pressure,
@@ -176,8 +149,6 @@ When CUDA tests still carry too much memory:
 ## Step 4: What Not to Do
 
 - Do not permanently disable GPU coverage for the self-hosted pipeline just to avoid OOMs
-- Do not assume a build-level `queue.name` of `Azure Pipelines` means the YAML job pool changed
-- Do not restart the agent before checking for a pending approval
 - Do not degrade application code to compensate for fixture or CI-environment issues
 
 ## Expected Outcome
