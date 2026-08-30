@@ -125,7 +125,9 @@ curl -sS -u ":${AZ_PAT}" "${ORG}/${PROJECT}/_apis/build/builds/<id>?api-version=
 ## What not to do
 
 - **Do not restart the agent to clear a stuck build** until the timeline has ruled out approval and
-  authorization. Restarting strands the run without fixing a permission.
+  authorization. Restarting strands the run without fixing a permission. Once the timeline shows no
+  checkpoint records, a genuinely wedged agent IS the remaining cause and restarting it is correct;
+  the rule is about the order, not a prohibition.
 - **Do not treat a long wait as a hang.** A queued job behind a lease or another run is the system
   working, and cancelling loses the queue position.
 - **Do not grant "access to all pipelines" on a resource** to unblock one definition. It removes the
