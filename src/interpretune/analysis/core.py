@@ -9,7 +9,10 @@ from copy import deepcopy
 import torch
 from torch._dynamo.utils import is_namedtuple_cls, namedtuple_fields
 import pandas as pd
-import plotly.express as px
+
+# NOTE: plotly is deliberately not imported at module level. This module sits on the bare
+# `import interpretune` path (via bundled-extension detection), and plotly is a notebook-only
+# visualization aid used by exactly two plotting helpers, which import it on first use (#403).
 from tabulate import tabulate
 from transformers import PreTrainedTokenizerBase
 from sae_lens.config import HfDataset
@@ -856,6 +859,8 @@ class AnalysisStore:
         Returns:
             None - displays plots in notebook
         """
+        import plotly.express as px
+
         if per_batch:
             # Plot per batch
             for i, batch in enumerate(self.attribution_values):
@@ -1176,6 +1181,8 @@ def latent_metrics_scatter(
         width: Plot width in pixels
         height: Plot height in pixels
     """
+    import plotly.express as px
+
     if not hasattr(metrics1, metric_field) or not hasattr(metrics2, metric_field):
         raise ValueError(f"Metric field '{metric_field}' not found in one or both metrics")
 
