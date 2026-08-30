@@ -181,6 +181,24 @@ def require_model_backend(module: Any) -> Any:
     return backend
 
 
+def require_backend_capability(backend: Any, capability: Any, op_name: str) -> None:
+    """Raise a uniform, actionable error when ``backend`` does not claim ``capability``.
+
+    Optional ``ModelBackend`` method groups are capability-gated (``SupportsLatentModels`` et al.), so
+    ops call this before an optional method rather than letting a partial backend fail as an
+    ``AttributeError`` deep inside execution.
+    """
+    # Compare by VALUE, not enum identity: this repo's test infrastructure can load the capabilities
+    # module twice (the documented importlib double-loading class), leaving value-equal enum members
+    # that fail an identity-based ``in``. A backend that REPORTS the capability must pass the gate.
+    supported = {getattr(c, "value", c) for c in backend.capabilities}
+    if getattr(capability, "value", capability) not in supported:
+        raise ValueError(
+            f"{op_name} requires a model backend with {capability.name}; "
+            f"{type(backend).__name__} reports {sorted(c.name for c in backend.capabilities)}"
+        )
+
+
 def resolve_tokenizer(module: Any) -> Any:
     """Resolve a tokenizer from a generic module or its analysis backend."""
     analysis_backend = get_analysis_backend(module)
@@ -429,6 +447,7 @@ __all__ = [
     "last_token_logits",
     "load_json_field",
     "mean_target_logit_delta",
+    "require_backend_capability",
     "require_model_backend",
     "resolve_aggregate_input",
     "resolve_embedding_weight",

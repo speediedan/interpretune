@@ -17,7 +17,8 @@ if TYPE_CHECKING:
     from transformer_lens.hook_points import HookPoint
 
 from interpretune.analysis.ops.base import get_batch_input
-from interpretune.analysis.optools import require_model_backend
+from interpretune.analysis.backends.capabilities import BackendCapability
+from interpretune.analysis.optools import require_backend_capability, require_model_backend
 from interpretune.protocol import DefaultAnalysisBatchProtocol
 
 
@@ -74,6 +75,7 @@ def model_fwd_w_cache_latent_models_impl(
         batch = module.auto_prune_batch(batch, "forward")
 
     model_backend = require_model_backend(module)
+    require_backend_capability(model_backend, BackendCapability.LATENT_MODELS, "model_fwd_w_cache_latent_models")
     latent_model_handles = getattr(module, "sae_handles", None)
     if not latent_model_handles:
         raise ValueError("model_fwd_w_cache_latent_models requires sae_handles on the module")
@@ -141,6 +143,7 @@ def model_ablation_impl(
             index_map.append((name, latent_idx))
 
     model_backend = require_model_backend(module)
+    require_backend_capability(model_backend, BackendCapability.LATENT_MODELS, "ablation_attribution")
     all_logits = model_backend.fwd_w_hooks_batched(
         model=module.model,
         batch=batch,

@@ -60,7 +60,14 @@ from interpretune.analysis.backends.interventions import (
     get_intervention_target_shape,
     resolve_interventions,
 )
-from interpretune.analysis.backends.protocols import AnalysisBackend, ModelBackend
+from interpretune.analysis.backends.protocols import (
+    AnalysisBackend,
+    ModelBackend,
+    ModelBackendCore,
+    SupportsGradients,
+    SupportsIntervention,
+    SupportsLatentModels,
+)
 
 __all__ = [
     "ANALYSIS_BACKEND_REGISTRY",
@@ -74,6 +81,10 @@ __all__ = [
     "InterventionSpec",
     "InterventionValue",
     "ModelBackend",
+    "ModelBackendCore",
+    "SupportsGradients",
+    "SupportsIntervention",
+    "SupportsLatentModels",
     "ModuleCapabilities",
     "apply_feature_score_sign_filter",
     "apply_feature_selection_filter",

@@ -74,8 +74,9 @@ class TLModelBackend:
 
     @property
     def capabilities(self) -> frozenset[BackendCapability]:
-        """TL supports gradients but not batched hooks (uses sequential loop)."""
-        return frozenset({BackendCapability.GRADIENTS})
+        """TL implements every method group; BATCHED_HOOKS is absent because its batched-hooks path is a sequential
+        loop rather than a fused execution."""
+        return frozenset({BackendCapability.GRADIENTS, BackendCapability.LATENT_MODELS, BackendCapability.INTERVENTION})
 
     def supports(self, capability: BackendCapability) -> bool:
         """Check whether this backend supports a given capability."""
