@@ -464,20 +464,11 @@ nightly
 We now have a separate Azure DevOps pipeline that runs GPU/standalone tests on a self-hosted runner: `.azure-pipelines/gpu-tests.yml`.
 - This pipeline is intentionally restrictive: it only triggers for PRs that are marked "ready for review" and must be explicitly approved by a repository administrator before the self-hosted GPU job will run (currently: speediedan).
 - Because self-hosted GPU capacity is limited, aim to rely on feedback from the normal GitHub Actions CPU CI workflow for as long as possible while iterating on an issue. Defer switching the PR to "ready for review" until you believe GPU testing is necessary. Copilot should prefer this conservative approach when suggesting CI runs or opening PRs.
-- The self-hosted approval gate can be driven from the shell when `AZURE_DEVOPS_EXT_PAT` is present. Prefer PAT-backed Azure DevOps CLI or REST calls over manual UI approval when you need to release a queued GPU run during active debugging.
-- A queued build can stay in `notStarted` until its approval is granted. Check the build first, then inspect pending approvals before changing runner configuration:
-  ```bash
-  az pipelines build show --id <build_id> --organization https://dev.azure.com/speediedan --project interpretune -o table
-  curl -sS -u ":${AZURE_DEVOPS_EXT_PAT}" \
-    "https://dev.azure.com/speediedan/interpretune/_apis/pipelines/approvals?state=pending&api-version=7.1-preview.1"
-  ```
-- Approve a pending run with a PATCH to the approvals endpoint:
-  ```bash
-  curl -sS -X PATCH -u ":${AZURE_DEVOPS_EXT_PAT}" \
-    -H "Content-Type: application/json" \
-    -d '[{"approvalId":"<approval_id>","status":"approved","comment":"Approved via CLI for GPU validation."}]' \
-    "https://dev.azure.com/speediedan/interpretune/_apis/pipelines/approvals?api-version=7.1-preview.1"
-  ```
+- **A queued GPU build can sit in `notStarted` until its approval is granted, and that is normal.**
+  Check the approval state before touching runner configuration: an ungranted gate looks identical to
+  a dispatch problem from the outside, and the reflex it invites is the wrong one.
+- Maintainers can drive the approval gate through the Azure DevOps API rather than the web UI. The
+  tooling and credentials are machine-specific and live in a local, uncommitted instructions file.
 - The build-level queue shown by `az pipelines build show` may still display `Azure Pipelines` even when the YAML job uses the self-hosted `Default` pool. Treat approval state and actual worker dispatch as the source of truth before editing the pool stanza.
 - The current GPU test flow is intentionally phase-split to reduce peak memory while preserving CUDA coverage:
   1. `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''`

@@ -137,7 +137,7 @@ Preferred: use the multi-mode approvals helper script (distributed-insight repo,
 `list`, `approve`, `reject`, `approve-all`, and `reject-all` modes:
 
 ```bash
-cd /home/speediedan/repos/distributed-insight/project_admin/shared_admin_scripts/az_pipeline_agent_scripts
+cd "$ADMIN_SCRIPTS"   # maintainer admin tooling; path is in the local instructions file
 ./manage-approvals.sh -o speediedan -p interpretune -m list
 ./manage-approvals.sh -o speediedan -p interpretune -m approve -i "<approval_id>" -c "Approved via CLI for self-hosted GPU validation."
 ./manage-approvals.sh -o speediedan -p interpretune -m reject -i "<approval_id>"   # terminates the gated build
@@ -193,8 +193,9 @@ Action:
 
 Action:
 
-- Restart the whole agent stack (rootless docker + agent service) with the NOPASSWD-sudoers
-  one-liner — agents are explicitly authorized to run this:
+- Restart the whole agent stack (rootless docker + agent service) via the operator's authorized
+  wrapper script. Whether an agent may invoke it, and how it is authorized, is machine-specific and
+  recorded in the local instructions file rather than here:
 
   ```bash
   sudo "$AGENT_HOME"/restart-stack.sh
