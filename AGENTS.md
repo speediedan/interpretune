@@ -366,7 +366,9 @@ export GPU_LEASE_CMD=/path/to/gpu_lease.sh        # opt in for this shell
 
 `tests/special_tests.sh` and ``scripts/gen_it_coverage.sh`` self re-exec under the lease, so one acquisition covers a
 whole suite. The Azure GPU pipeline participates too, by bind-mounting the lease directory into the job
-container (`flock` works on the inode, so container and host processes interlock).
+container (`flock` works on the inode, so container and host processes interlock). A CI-held lease is
+identifiable by its holder metadata: project tag `azure-it-<buildId>` plus a `[container]` marker. Never
+force-reset a lease showing that attribution; cancel the pipeline run instead.
 
 Two things worth knowing up front:
 
