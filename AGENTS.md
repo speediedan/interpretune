@@ -370,6 +370,11 @@ container (`flock` works on the inode, so container and host processes interlock
 identifiable by its holder metadata: project tag `azure-it-<buildId>` plus a `[container]` marker. Never
 force-reset a lease showing that attribution; cancel the pipeline run instead.
 
+The `gpu-lease` skill under `.claude/skills/` is a VENDORED copy of the repo-neutral master in
+[speediedan/skills](https://github.com/speediedan/skills) (plugin `common-infra-skills`); the vendored copy
+is canonical for this repo so a bare clone works with nothing installed. Do not edit it here: change the
+master and re-sync (`sync-shared-skills.sh push --repo interpretune`, in the maintainer's admin tooling).
+
 Two things worth knowing up front:
 
 - **Waiting is normal, not a failure.** A run may sit at `'gpu' lease is held; waiting...` for as long as
