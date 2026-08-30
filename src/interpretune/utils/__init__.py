@@ -1,4 +1,15 @@
 from interpretune.utils.exceptions import MisconfigurationException
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Static-only: gives type checkers the lazy pipeline exports without the runtime sae_dashboard import.
+    from interpretune.utils.neuronpedia_dashboard_pipeline import (
+        NeuronpediaDashboardLayerResult,
+        NeuronpediaDashboardPipelineConfig,
+        completed_layers_from_logs,
+        convert_dashboard_output,
+        run_dashboard_pipeline,
+    )
 from interpretune.utils.import_utils import (
     package_available,
     module_available,
@@ -93,13 +104,13 @@ from interpretune.utils.neuronpedia_explanations import (
     generate_explanation_artifact,
     invoke_explanation_cli_with_retries,
 )
-from interpretune.utils.neuronpedia_dashboard_pipeline import (
-    NeuronpediaDashboardLayerResult,
-    NeuronpediaDashboardPipelineConfig,
-    completed_layers_from_logs,
-    convert_dashboard_output,
-    run_dashboard_pipeline,
-)
+
+# NOTE: neuronpedia_dashboard_pipeline is deliberately NOT imported eagerly. It imports
+# sae_dashboard at module level, an optional git-deps dependency a bare `pip/uv install
+# interpretune` does not carry, so an eager import here breaks `import interpretune` outright for
+# any clean consumer install (#403). Its public names remain importable from this package via the
+# PEP 562 ``__getattr__`` at the bottom of this module, matching the lazy-import idiom used for
+# other heavy deps.
 from interpretune.utils.neuronpedia_dashboard_hub import (
     COPY_ROWS_STEM,
     DASHBOARDS_TOKEN_ENV_VAR,
@@ -235,3 +246,23 @@ __all__ = [
     "resolve_dashboards_token",
     "summarize_by_table",
 ]
+
+
+_LAZY_PIPELINE_EXPORTS = frozenset(
+    {
+        "NeuronpediaDashboardLayerResult",
+        "NeuronpediaDashboardPipelineConfig",
+        "completed_layers_from_logs",
+        "convert_dashboard_output",
+        "run_dashboard_pipeline",
+    }
+)
+
+
+def __getattr__(name: str):
+    """Resolve dashboard-pipeline exports lazily so ``import interpretune`` does not require sae_dashboard."""
+    if name in _LAZY_PIPELINE_EXPORTS:
+        from interpretune.utils import neuronpedia_dashboard_pipeline
+
+        return getattr(neuronpedia_dashboard_pipeline, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
