@@ -62,6 +62,10 @@ dependencies = [
     # neuronpedia extension; previously reached every env transitively, which hid the omission until a bare
     # `uv pip install interpretune @ git+...` consumer could not import the package at all (#403).
     "jsonschema >= 4.0.0",
+    # The bundled MemProfiler extension imports psutil at module level, and config/extensions.py
+    # detects (imports) every bundled extension when `interpretune.config` is imported, so psutil is a
+    # hard import-time requirement of `import interpretune` — previously satisfied only transitively.
+    "psutil >= 5.9.0",
     # "finetuning-scheduler[possible_future_it_plugin] >= 2.5.0",
 ]
 
