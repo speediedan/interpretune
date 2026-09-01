@@ -49,8 +49,8 @@ class TestDecomposition:
         assert not isinstance(backend, ModelBackend)
 
     def test_bundled_backends_satisfy_every_group(self):
-        from interpretune.analysis.backends.impls.nnsight import NNsightModelBackend
-        from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
+        from interpretune.adapters.nnsight.backends import NNsightModelBackend
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
         for backend in (TLModelBackend(), NNsightModelBackend(hook_resolver=None)):
             assert isinstance(backend, ModelBackend)
@@ -65,7 +65,7 @@ class TestDecomposition:
 
     def test_batched_hooks_is_an_efficiency_claim_not_method_presence(self):
         """TL implements fwd_w_hooks_batched (sequential loop) without claiming BATCHED_HOOKS."""
-        from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
         backend = TLModelBackend()
         assert callable(backend.fwd_w_hooks_batched)
@@ -74,7 +74,7 @@ class TestDecomposition:
 
 class TestCapabilityGate:
     def test_gate_passes_silently_when_claimed(self):
-        from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
         require_backend_capability(TLModelBackend(), BackendCapability.GRADIENTS, "gradient_attribution")
 

@@ -15,8 +15,26 @@ from interpretune.protocol import Adapter
 
 log = logging.getLogger(__name__)
 
-# DEFAULT auto-composition search paths
-AUTOCOMP_SEARCH_PATHS = ["interpretune.adapters", "interpretune.config"]
+# DEFAULT auto-composition search TEMPLATES, formatted with an adapter name.
+#
+# Each adapter now owns one package holding its module composition and its config (#401), so
+# auto-composition looks inside that package rather than at two parallel namespaces keyed by adapter
+# name. Templates rather than base paths because the interesting modules are no longer all the same
+# depth, and because a template states the convention it depends on instead of implying it.
+#
+# A hub-delivered adapter is NOT reachable this way: its module is executed from a cache under a
+# revision-scoped synthetic name, so no import path can be derived from the adapter name. Discovery for
+# those goes through the registry the component's entrypoint writes to, which is why this list stays
+# BUNDLED-only rather than growing a "search everything" mode that would still miss them.
+# NOT the bare package: `inspect.getmembers` below calls `dir()` and then `getattr` for every name, and
+# these packages export lazily, so scanning the package would RESOLVE every export and import each
+# adapter's framework as a side effect of composing a config. The submodules define the classes anyway
+# (the `member.__module__` guard already discards anything merely re-exported), so the package entry
+# would contribute nothing while costing heavy imports.
+AUTOCOMP_SEARCH_TEMPLATES = [
+    "interpretune.adapters.{adapter}.config",
+    "interpretune.adapters.{adapter}.adapter",
+]
 
 AdapterSeq: TypeAlias = Sequence[Adapter | str] | Adapter | str
 
@@ -170,11 +188,13 @@ def find_adapter_subclasses(
     adapter_space = (
         adapter_seq_to_list(target_adapters) if target_adapters is not None else Adapter.__members__.values()
     )
-    # Search both adapters and config namespaces
-    for base_path in AUTOCOMP_SEARCH_PATHS:
+    # Search each adapter's package and the submodules that define its composition and config classes.
+    # Only modules ALREADY imported are considered, which is what keeps this pass from importing heavy
+    # frameworks as a side effect of resolving a config.
+    for template in AUTOCOMP_SEARCH_TEMPLATES:
         candidate_modules = {}
         for val in adapter_space:
-            module_path = f"{base_path}.{val.name}"
+            module_path = template.format(adapter=val.name)
             if module_path in sys.modules:
                 candidate_modules[val] = (module_path, sys.modules[module_path])
         for adapter, (module_fqn, module) in candidate_modules.items():

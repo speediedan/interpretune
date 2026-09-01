@@ -19,7 +19,7 @@ for _path in (REPO_ROOT, TESTS_DIR):
     if _path_str not in sys.path:
         sys.path.insert(0, _path_str)
 
-from interpretune.config.nnsight import NNsightConfig  # noqa: E402
+from interpretune.adapters.nnsight.config import NNsightConfig  # noqa: E402
 from interpretune.adapter_registry import ADAPTER_REGISTRY  # noqa: E402
 from interpretune.utils.resource_mgmt import cleanup_python_cuda, safe_clean_cuda  # noqa: E402
 from tests import load_dotenv  # noqa: E402

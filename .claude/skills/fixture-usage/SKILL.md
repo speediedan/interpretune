@@ -434,7 +434,7 @@ gemma2.rte.circuit_tracer_tl:
           init_args:
             enabled: True
             lm_generation_cfg:
-              class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+              class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
                 output_logits: true
@@ -447,13 +447,13 @@ gemma2.rte.circuit_tracer_tl:
               dtype: float32
             model_head: transformers.Gemma2ForCausalLM
         tl_cfg:
-          class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
+          class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig
           init_args:
             model_name: gemma-2-2b
             default_padding_side: left
             use_bridge: false  # circuit_tracer requires HookedTransformer, not TransformerBridge
         circuit_tracer_cfg:
-          class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+          class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
           init_args:
             backend: "transformerlens"
             transcoder_set: "gemma"

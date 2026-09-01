@@ -53,7 +53,7 @@ from interpretune import (
     sanitize_input_name,
     STEP_OUTPUT,
 )
-from interpretune.config.nnsight import ITNNsightConfig, NNsightConfig
+from interpretune.adapters.nnsight.config import ITNNsightConfig, NNsightConfig
 
 
 log = logging.getLogger(__name__)

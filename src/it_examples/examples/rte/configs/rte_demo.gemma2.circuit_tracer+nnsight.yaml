@@ -32,7 +32,7 @@ registered_cfg:
     prepare_data_map_cfg:
       batched: true
   module_cfg:
-    class_path: interpretune.config.nnsight.ITNNsightConfig
+    class_path: interpretune.adapters.nnsight.config.ITNNsightConfig
     init_args:
       auto_comp_cfg:
         class_path: interpretune.config.shared.AutoCompConfig
@@ -60,7 +60,7 @@ registered_cfg:
             dtype: float32
           model_head: transformers.Gemma2ForCausalLM
       nnsight_cfg:
-        class_path: interpretune.config.nnsight.NNsightConfig
+        class_path: interpretune.adapters.nnsight.config.NNsightConfig
         init_args:
           model_name: google/gemma-2-2b
           device_map: cuda
@@ -71,7 +71,7 @@ registered_cfg:
             padding_side: left
             add_bos_token: true
       circuit_tracer_cfg:
-        class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+        class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
         init_args:
           backend: "nnsight"
           transcoder_set: "gemma"

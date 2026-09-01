@@ -33,7 +33,7 @@ import torch
 
 from tests.runif import RunIf
 
-from interpretune.analysis.backends.impls.nnsight import (
+from interpretune.adapters.nnsight.backends import (
     HookNameResolver,
     NNsightModelBackend,
     get_default_configs_per_pass,
@@ -363,7 +363,7 @@ class TestCrossBackendAgreement:
         from nnsight import LanguageModel
         from transformer_lens import HookedTransformer
 
-        from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
         prompt = "The capital of France is"
         hook = "blocks.8.hook_resid_post"

@@ -50,7 +50,7 @@ registered_cfg:
         init_args:
           enabled: True
           lm_generation_cfg:
-            class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+            class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
             init_args:
               max_new_tokens: 1
       hf_from_pretrained_cfg:
@@ -61,17 +61,17 @@ registered_cfg:
             dtype: float32
           model_head: transformers.GPT2LMHeadModel
       tl_cfg:
-        class_path: interpretune.config.transformer_lens.ITLensBridgeConfig
+        class_path: interpretune.adapters.transformer_lens.config.ITLensBridgeConfig
         init_args:
           model_name: gpt2-small
           default_padding_side: left
       sae_cfgs:
-        - class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
+        - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
           init_args:
             release: gpt2-small-res-jb
             sae_id: blocks.0.hook_resid_pre
             device: cuda
-        - class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
+        - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
           init_args:
             release: gpt2-small-res-jb
             sae_id: blocks.1.hook_resid_pre

@@ -12,10 +12,10 @@ import doctest
 
 import pytest
 
-import interpretune.config.nnsight
+import interpretune.adapters.nnsight.config
 import interpretune.utils.import_utils
 
-_DOCTEST_MODULES = (interpretune.utils.import_utils, interpretune.config.nnsight)
+_DOCTEST_MODULES = (interpretune.utils.import_utils, interpretune.adapters.nnsight.config)
 
 
 @pytest.mark.parametrize("module", _DOCTEST_MODULES, ids=lambda m: m.__name__)
@@ -33,7 +33,7 @@ def test_expected_doctest_surface():
         "interpretune.utils.import_utils.compare_version",
         "interpretune.utils.import_utils.module_available",
         "interpretune.utils.import_utils.package_available",
-        "interpretune.config.nnsight.ITNNsightConfig",
-        "interpretune.config.nnsight.NNsightConfig",
+        "interpretune.adapters.nnsight.config.ITNNsightConfig",
+        "interpretune.adapters.nnsight.config.NNsightConfig",
     }
     assert expected <= found, f"doctest surface shrank: missing {expected - found}"

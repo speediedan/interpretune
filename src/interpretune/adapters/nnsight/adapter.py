@@ -25,7 +25,7 @@ from interpretune.protocol import Adapter
 
 if TYPE_CHECKING:
     from nnsight import LanguageModel
-    from interpretune.config.nnsight import NNsightConfig, ITNNsightConfig
+    from interpretune.adapters.nnsight.config import NNsightConfig, ITNNsightConfig
 
 
 ################################################################################
@@ -176,7 +176,7 @@ class BaseNNsightModule(BaseITModule):
         if nnsight_cfg.remote:
             api_key = nnsight_cfg.api_key or os.environ.get("NDIF_API_KEY")
             if api_key:
-                from interpretune.config.nnsight import _nnsight_accepts_init_remote
+                from interpretune.adapters.nnsight.config import _nnsight_accepts_init_remote
 
                 if _nnsight_accepts_init_remote():
                     # nnsight 0.6 line: the wrapper consumes api_key at init

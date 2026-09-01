@@ -61,13 +61,15 @@ SANCTIONED_IT_PREFIXES = (
     "interpretune.protocol",
 )
 
-# Checked BEFORE the prefix allow above, and deliberately an exclusion list rather than a narrowed
-# prefix: `SANCTIONED_IT_PREFIXES` matches by prefix, so every submodule of a sanctioned package is
-# sanctioned by default. `backends.impls` holds the concrete per-library backends, which an op must
-# consume through the protocols and capability helpers rather than importing -- importing one is the
-# backend entanglement the seam exists to prevent, and it would pass the prefix check unnoticed.
-# Expressed as an exclusion so that adding a future seam module cannot silently re-open it.
-UNSANCTIONED_IT_PREFIXES = ("interpretune.analysis.backends.impls",)
+# Checked BEFORE the prefix allow above. The concrete per-library backends now live in their adapter
+# packages (`interpretune.adapters.<name>.backends`), which an op must consume through the protocols and
+# capability helpers rather than importing -- importing one is the backend entanglement the seam exists
+# to prevent. `interpretune.adapters` is not a sanctioned prefix, so such an import is already denied by
+# default; the explicit deny is kept because it states the CONTRACT rather than relying on an absence,
+# and it keeps biting if a broader prefix is ever sanctioned. It also names the whole adapters package,
+# not just its `backends` submodules: an op has no business importing an adapter's config or module
+# composition either.
+UNSANCTIONED_IT_PREFIXES = ("interpretune.adapters",)
 ALLOWED_THIRD_PARTY = {"torch", "transformers", "jaxtyping", "transformer_lens"}
 STDLIB = set(sys.stdlib_module_names)
 
@@ -191,12 +193,11 @@ def test_bundled_family_imports_no_private_names(module_path: Path):
 
 
 class TestConcreteBackendsAreDenied:
-    """The ``backends.impls`` deny must actually bite, since a prefix match would otherwise allow it.
+    """The adapters deny must actually bite, and must not over-reach into the sanctioned seam.
 
-    ``interpretune.analysis.backends`` is sanctioned, and ``SANCTIONED_IT_PREFIXES`` matches by prefix, so every
-    submodule of it is sanctioned by default -- including the concrete per-library backends that an op must never
-    import. Without an explicit exclusion the reorg that moved them under ``impls/`` would be inert against this
-    contract, so these tests drive the real check with synthetic family modules rather than asserting the constant.
+    Concrete per-library backends live in their adapter packages, which an op must never import: it consumes them
+    through the protocols and capability helpers. These tests drive the real check with synthetic family modules rather
+    than asserting the constant, so that a rename of the constant cannot make the contract inert.
     """
 
     @staticmethod
@@ -210,7 +211,7 @@ class TestConcreteBackendsAreDenied:
     def test_importing_a_concrete_backend_is_rejected(self, tmp_path):
         module_path = self._family_module(
             tmp_path,
-            "from interpretune.analysis.backends.impls.nnsight import NNsightModelBackend\n",
+            "from interpretune.adapters.nnsight.backends import NNsightModelBackend\n",
         )
         with pytest.raises(AssertionError, match="concrete backend"):
             test_bundled_family_module_imports_are_sanctioned(module_path)
@@ -227,7 +228,7 @@ class TestConcreteBackendsAreDenied:
         """The private-name rule spans all interpretune modules, so it covers impls without its own deny."""
         module_path = self._family_module(
             tmp_path,
-            "from interpretune.analysis.backends.impls.nnsight import _navigate_envoy\n",
+            "from interpretune.adapters.nnsight.backends import _navigate_envoy\n",
         )
         with pytest.raises(AssertionError, match="private names"):
             test_bundled_family_imports_no_private_names(module_path)
@@ -235,12 +236,14 @@ class TestConcreteBackendsAreDenied:
     @pytest.mark.parametrize(
         "module_name, denied",
         [
-            ("interpretune.analysis.backends.impls", True),
-            ("interpretune.analysis.backends.impls.circuit_tracer", True),
+            ("interpretune.adapters", True),
+            ("interpretune.adapters.circuit_tracer.backends", True),
+            ("interpretune.adapters.transformer_lens.backends", True),
+            ("interpretune.adapters.transformer_lens.config", True),
             ("interpretune.analysis.backends", False),
             ("interpretune.analysis.backends.protocols", False),
             # Guards against expressing the deny as a substring or narrowed prefix.
-            ("interpretune.analysis.backends.implicit_thing", False),
+            ("interpretune.adapters_like_thing", False),
         ],
     )
     def test_deny_matches_on_path_boundaries(self, module_name, denied):

@@ -132,7 +132,7 @@ class TestNNsightConfig:
 
         kwargs = config.get_nnsight_kwargs()
 
-        from interpretune.config.nnsight import _nnsight_accepts_init_remote
+        from interpretune.adapters.nnsight.config import _nnsight_accepts_init_remote
 
         if _nnsight_accepts_init_remote():  # nnsight 0.6 line: remote is an init kwarg
             assert kwargs["remote"] is True
@@ -488,7 +488,7 @@ class TestNNsightRemoteExecution:
         )
 
         kwargs = config.get_nnsight_kwargs()
-        from interpretune.config.nnsight import _nnsight_accepts_init_remote
+        from interpretune.adapters.nnsight.config import _nnsight_accepts_init_remote
 
         if _nnsight_accepts_init_remote():  # nnsight 0.6 line: remote is an init kwarg
             assert kwargs["remote"] is True

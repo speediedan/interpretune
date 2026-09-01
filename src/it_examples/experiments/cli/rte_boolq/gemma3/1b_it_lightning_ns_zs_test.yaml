@@ -36,7 +36,7 @@ registered_cfg:
     init_args:
       experiment_tag: gemma3_1b_it_lightning_ns_zs_test
       nnsight_cfg:
-        class_path: interpretune.config.nnsight.NNsightConfig
+        class_path: interpretune.adapters.nnsight.config.NNsightConfig
         init_args:
           model_name: google/gemma-3-1b-it
           device_map: auto

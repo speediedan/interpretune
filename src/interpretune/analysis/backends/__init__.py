@@ -12,11 +12,11 @@ hub) — see ``docs/custom_ops_composition_guide.md``. It provides:
 - :mod:`~interpretune.analysis.backends.feature_selection`: feature-selection specs and filters
 
 The four modules above are the seam. The concrete backends live one level down in
-:mod:`~interpretune.analysis.backends.impls` (``transformer_lens``, ``nnsight``, ``circuit_tracer``),
+each adapter's own package (``interpretune.adapters.<name>.backends``),
 which is **not** part of the op-author surface: an op consumes backends through the protocols and
 capability helpers, never by importing one, and the publishability lint enforces that by excluding
-``impls`` from this otherwise-sanctioned prefix. ``hook_mapping`` stays here rather than under
-``impls`` because the seam itself uses it (``interventions``) and it exports ``HOOK_ALIAS_GROUPS``
+``interpretune.adapters`` from op imports. ``hook_mapping`` stays here rather than with an adapter
+because the seam itself uses it (``interventions``) and it exports ``HOOK_ALIAS_GROUPS``
 through this façade, so moving it would invert the layering.
 
 This module is a re-export façade only: ``__all__`` below is the public surface. Note that

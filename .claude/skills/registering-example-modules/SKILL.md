@@ -100,7 +100,7 @@ module_cfg:
   class_path: interpretune.config.module.ITConfig
   init_args:
     tl_cfg:
-      class_path: interpretune.config.transformer_lens.ITLensFromPretrainedConfig
+      class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedConfig
 ```
 
 **SAE-Lens:**
@@ -109,9 +109,9 @@ module_cfg:
   class_path: interpretune.config.module.ITConfig
   init_args:
     tl_cfg:
-      class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
+      class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig
     sae_cfgs:
-      - class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
+      - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
         init_args:
           release: gpt2-small-res-jb
           sae_id: blocks.0.hook_resid_pre
@@ -120,10 +120,10 @@ module_cfg:
 **NNsight:**
 ```yaml
 module_cfg:
-  class_path: interpretune.config.nnsight.ITNNsightConfig
+  class_path: interpretune.adapters.nnsight.config.ITNNsightConfig
   init_args:
     nnsight_cfg:
-      class_path: interpretune.config.nnsight.NNsightConfig
+      class_path: interpretune.adapters.nnsight.config.NNsightConfig
       init_args:
         model_name: openai-community/gpt2
         device_map: cpu
@@ -137,9 +137,9 @@ module_cfg:
   class_path: interpretune.config.module.ITConfig
   init_args:
     tl_cfg:
-      class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
+      class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig
     circuit_tracer_cfg:
-      class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+      class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
       init_args:
         backend: "transformerlens"
         transcoder_set: "gemma"
@@ -254,7 +254,7 @@ gpt2.rte.nnsight:
       train_batch_size: 2
       eval_batch_size: 2
     module_cfg:
-      class_path: interpretune.config.nnsight.ITNNsightConfig
+      class_path: interpretune.adapters.nnsight.config.ITNNsightConfig
       init_args:
         auto_comp_cfg:
           class_path: interpretune.config.shared.AutoCompConfig
@@ -272,7 +272,7 @@ gpt2.rte.nnsight:
               dtype: float32
             model_head: transformers.GPT2LMHeadModel
         nnsight_cfg:
-          class_path: interpretune.config.nnsight.NNsightConfig
+          class_path: interpretune.adapters.nnsight.config.NNsightConfig
           init_args:
             model_name: openai-community/gpt2
             device_map: cpu

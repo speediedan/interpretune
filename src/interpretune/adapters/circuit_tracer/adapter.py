@@ -87,7 +87,7 @@ class BaseCircuitTracerModule(BaseITModule):
         # Initialize attributes that may be required in base init methods
         self.attribution_graphs: list[InstantiatedGraph] = []
         self._replacement_model: ReplacementModelType | None = None
-        from interpretune.analysis.backends.impls.circuit_tracer import DEFAULT_CT_ANALYSIS_BACKEND
+        from interpretune.adapters.circuit_tracer.backends import DEFAULT_CT_ANALYSIS_BACKEND
 
         self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
         super().__init__(*args, **kwargs)
@@ -153,7 +153,7 @@ class BaseCircuitTracerModule(BaseITModule):
 
         if backend == "nnsight":
             from interpretune.analysis.backends.hook_mapping import HookNameResolver
-            from interpretune.analysis.backends.impls.nnsight import NNsightModelBackend, get_default_configs_per_pass
+            from interpretune.adapters.nnsight.backends import NNsightModelBackend, get_default_configs_per_pass
 
             hf_model = NNsightModelBackend._get_hf_model(self.model)
             hf_config = getattr(hf_model, "config", None)
@@ -166,7 +166,7 @@ class BaseCircuitTracerModule(BaseITModule):
             )
             self._model_backend.register_model_hooks(self.model)  # type: ignore[attr-defined]
         else:
-            from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
+            from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
             self._model_backend = TLModelBackend()  # type: ignore[attr-defined]
 

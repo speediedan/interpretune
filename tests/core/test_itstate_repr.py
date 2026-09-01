@@ -1,5 +1,5 @@
 from interpretune.config import ITState
-from interpretune.config.transformer_lens import ITLensCustomConfig
+from interpretune.adapters.transformer_lens.config import ITLensCustomConfig
 from interpretune.session import ITSession
 from interpretune.base.modules import BaseITModule
 

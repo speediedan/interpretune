@@ -204,6 +204,13 @@ class AdapterProtocol(Protocol):
 
 
 def _register_adapters(registry: Any, method: str, module: ModuleType, parent: Type[object]) -> None:
+    """Register every adapter class ``module`` defines.
+
+    Pass a module that DEFINES the classes, not a lazily-exporting package: ``getmembers`` walks
+    ``dir()``, which a PEP 562 ``__getattr__`` does not populate on its own, so a package would yield
+    nothing and register NOTHING -- silently, since registering zero adapters is not an error here.
+    Per-adapter packages therefore hand their ``<pkg>.adapter`` submodule to this.
+    """
     for _, member in getmembers(module, isclass):
         if issubclass(member, parent) and member is not parent:  # and is_overridden(method, member, parent):
             register_fn = getattr(member, method)

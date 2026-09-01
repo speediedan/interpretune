@@ -30,7 +30,7 @@ from circuit_tracer.graph import Graph
 from circuit_tracer.utils.tl_nnsight_mapping import UnifiedConfig
 
 from interpretune.analysis import AnalysisInputs, execute_analysis_op
-from interpretune.analysis.backends.impls.circuit_tracer import DEFAULT_CT_ANALYSIS_BACKEND
+from interpretune.adapters.circuit_tracer.backends import DEFAULT_CT_ANALYSIS_BACKEND
 from interpretune.analysis.core import AnalysisStore
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.bundled.concept.concept_ops import (
@@ -38,7 +38,7 @@ from interpretune.analysis.ops.bundled.concept.concept_ops import (
     extract_concept_latent_examples_impl,
 )
 from interpretune.analysis.ops.bundled.concept.concept_ops import extract_concept_latent_state_from_cache
-from interpretune.config.circuit_tracer import CircuitTracerConfig
+from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig
 from interpretune.config import init_analysis_cfgs
 from tests import load_dotenv
 from it_examples.tests.notebook._harness.session import resolve_model_spec

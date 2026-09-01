@@ -1,8 +1,8 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Tuple, Callable, Any, Dict, Sequence, TYPE_CHECKING, Iterable
-from interpretune.config.transformer_lens import ITLensCfg
-from interpretune.config.nnsight import NNsightConfig
+from interpretune.adapters.transformer_lens.config import ITLensCfg
+from interpretune.adapters.nnsight.config import NNsightConfig
 import pytest
 
 from interpretune.adapters import ADAPTER_REGISTRY

@@ -160,22 +160,33 @@ def register_analysis_backend(name: str, backend: "AnalysisBackend") -> None:
     ANALYSIS_BACKEND_REGISTRY[name] = backend
 
 
-def resolve_analysis_backend(name: str) -> "AnalysisBackend":
-    """Resolve a backend NAME to its registered instance, lazily importing the in-tree module.
+# Bundled backend NAME -> the module whose import registers it. An explicit table rather than a path
+# built from the name: the ImportError below is swallowed, so a convention-derived path that goes stale
+# degrades into "no backend registered" instead of failing where the cause is visible. A table breaks
+# loudly at review time when a module moves, and `test_backend_name_resolution.py` resolves every entry
+# from a cold registry as a positive control -- the failure mode here is an ABSENCE, which passes
+# silently when nothing checks it.
+_BUNDLED_BACKEND_MODULES: dict[str, str] = {
+    "circuit_tracer": "interpretune.adapters.circuit_tracer.backends",
+}
 
-    In-tree backends register themselves at import time, so a name that is not in the registry yet may simply not have
-    been imported. The lazy import targets ``backends.impls.<name>``, where the concrete backends live. Note this
-    resolution is by module PATH built from the name, which is why moving those modules is not a pure-motion change even
-    though nothing imports them by name from here: the ``ImportError`` below is swallowed, so a stale path degrades into
-    "no backend registered" rather than an import failure that would point at the cause.
+
+def resolve_analysis_backend(name: str) -> "AnalysisBackend":
+    """Resolve a backend NAME to its registered instance, lazily importing the bundled module.
+
+    Bundled backends register themselves at import time, so a name that is not in the registry yet may simply not have
+    been imported. Hub-delivered backends register from their component entrypoint and are already present by the time
+    anything resolves them, so they never reach the table.
     """
     if name not in ANALYSIS_BACKEND_REGISTRY:
-        import importlib
+        module_path = _BUNDLED_BACKEND_MODULES.get(name)
+        if module_path is not None:
+            import importlib
 
-        try:
-            importlib.import_module(f"interpretune.analysis.backends.impls.{name}")
-        except ImportError:
-            pass
+            try:
+                importlib.import_module(module_path)
+            except ImportError:
+                pass
     if name not in ANALYSIS_BACKEND_REGISTRY:
         raise KeyError(
             f"No analysis backend registered as {name!r} (known: {sorted(ANALYSIS_BACKEND_REGISTRY)}). "

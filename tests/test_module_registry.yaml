@@ -100,13 +100,13 @@ rte.cust.transformer_lens:
           init_args:
             enabled: True
             lm_generation_cfg:
-              class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+              class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
               init_args:
                   max_new_tokens: 1
                   output_logits: true
                   return_dict_in_generate: true
         tl_cfg:
-          class_path: interpretune.config.transformer_lens.ITLensCustomConfig
+          class_path: interpretune.adapters.transformer_lens.config.ITLensCustomConfig
           init_args:
             cfg:
               n_layers: 2
@@ -159,13 +159,13 @@ rte.cust.sae_lens:
           init_args:
             enabled: True
             lm_generation_cfg:
-              class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+              class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
                 output_logits: true
                 return_dict_in_generate: true
         tl_cfg:
-          class_path: interpretune.config.transformer_lens.ITLensCustomConfig
+          class_path: interpretune.adapters.transformer_lens.config.ITLensCustomConfig
           init_args:
             cfg:
               n_layers: 1
@@ -177,7 +177,7 @@ rte.cust.sae_lens:
               act_fn: 'relu'
               tokenizer_name: 'gpt2'
         sae_cfgs:
-          class_path: interpretune.config.sae_lens.SAELensCustomConfig
+          class_path: interpretune.adapters.sae_lens.config.SAELensCustomConfig
           init_args:
             cfg:
               architecture: standard
@@ -303,7 +303,7 @@ rte.gpt2.transformer_lens:
           init_args:
             enabled: True
             lm_generation_cfg:
-              class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+              class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
               init_args:
                   max_new_tokens: 1
                   output_logits: true
@@ -316,7 +316,7 @@ rte.gpt2.transformer_lens:
               dtype: float32
             model_head: transformers.GPT2LMHeadModel
         tl_cfg:
-          class_path: interpretune.config.transformer_lens.ITLensFromPretrainedConfig
+          class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedConfig
     datamodule_cls:
       class_path: tests.modules.FingerprintTestITDataModule
     module_cls:
@@ -368,7 +368,7 @@ rte.gpt2.sae_lens:
           init_args:
             enabled: True
             lm_generation_cfg:
-              class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+              class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
                 output_logits: true
@@ -381,14 +381,14 @@ rte.gpt2.sae_lens:
               dtype: float32
             model_head: transformers.GPT2LMHeadModel
         tl_cfg:
-          class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
+          class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig
         sae_cfgs:
-          - class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
+          - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
             init_args:
               release: gpt2-small-res-jb
               sae_id: blocks.0.hook_resid_pre
               device: cuda
-          - class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
+          - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
             init_args:
               release: gpt2-small-res-jb
               sae_id: blocks.1.hook_resid_pre
@@ -427,7 +427,7 @@ rte.gpt2.nnsight:
       train_batch_size: 2
       eval_batch_size: 2
     module_cfg:
-      class_path: interpretune.config.nnsight.ITNNsightConfig
+      class_path: interpretune.adapters.nnsight.config.ITNNsightConfig
       init_args:
         auto_comp_cfg:
           class_path: interpretune.config.shared.AutoCompConfig
@@ -438,7 +438,7 @@ rte.gpt2.nnsight:
               import_only: True
             target_adapters: nnsight
         nnsight_cfg:
-          class_path: interpretune.config.nnsight.NNsightConfig
+          class_path: interpretune.adapters.nnsight.config.NNsightConfig
           init_args:
             model_name: openai-community/gpt2
             device_map: cpu
@@ -485,7 +485,7 @@ rte.gpt2.nnsight+sae_lens:
       train_batch_size: 2
       eval_batch_size: 2
     module_cfg:
-      class_path: interpretune.config.sae_lens.SAELensConfig
+      class_path: interpretune.adapters.sae_lens.config.SAELensConfig
       init_args:
         backend: nnsight
         auto_comp_cfg:
@@ -515,7 +515,7 @@ rte.gpt2.nnsight+sae_lens:
               dtype: float32
             model_head: transformers.GPT2LMHeadModel
         nnsight_cfg:
-          class_path: interpretune.config.nnsight.NNsightConfig
+          class_path: interpretune.adapters.nnsight.config.NNsightConfig
           init_args:
             model_name: openai-community/gpt2
             device_map: cpu
@@ -525,12 +525,12 @@ rte.gpt2.nnsight+sae_lens:
               padding_side: left
               add_bos_token: true
         sae_cfgs:
-          - class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
+          - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
             init_args:
               release: gpt2-small-res-jb
               sae_id: blocks.0.hook_resid_pre
               device: cpu
-          - class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
+          - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
             init_args:
               release: gpt2-small-res-jb
               sae_id: blocks.1.hook_resid_pre
@@ -632,7 +632,7 @@ rte.gemma2.sae_lens:
           init_args:
             enabled: True
             lm_generation_cfg:
-              class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+              class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
                 output_logits: true
@@ -645,9 +645,9 @@ rte.gemma2.sae_lens:
               dtype: float32
             model_head: transformers.Gemma2ForCausalLM
         tl_cfg:
-          class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
+          class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig
         sae_cfgs:
-          class_path: interpretune.config.sae_lens.SAELensFromPretrainedConfig
+          class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
           init_args:
             release: gemma-scope-2b-pt-res-canonical
             sae_id: layer_25/width_16k/canonical
@@ -698,7 +698,7 @@ rte.gemma2.transformer_lens:
           init_args:
             enabled: True
             lm_generation_cfg:
-              class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+              class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
                 output_logits: true
@@ -711,7 +711,7 @@ rte.gemma2.transformer_lens:
               dtype: float32
             model_head: transformers.Gemma2ForCausalLM
         tl_cfg:
-          class_path: interpretune.config.transformer_lens.ITLensBridgeConfig
+          class_path: interpretune.adapters.transformer_lens.config.ITLensBridgeConfig
           init_args:
             model_name: gemma-2-2b
             default_padding_side: left  # to pad on left
@@ -779,7 +779,7 @@ rte_base_test.gemma2.circuit_tracer:
               dtype: float32
             model_head: transformers.Gemma2ForCausalLM
         circuit_tracer_cfg:
-          class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+          class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
           init_args:
             transcoder_set: "gemma"
             max_n_logits: 10
@@ -840,7 +840,7 @@ rte_base_test.gemma2.circuit_tracer+transformer_lens:
           init_args:
             enabled: True
             lm_generation_cfg:
-              class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+              class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
                 output_logits: true
@@ -853,13 +853,13 @@ rte_base_test.gemma2.circuit_tracer+transformer_lens:
               dtype: float32
             model_head: transformers.Gemma2ForCausalLM
         tl_cfg:
-          class_path: interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig
+          class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig
           init_args:
             model_name: gemma-2-2b
             default_padding_side: left
             use_bridge: false  # circuit_tracer requires HookedTransformer, not TransformerBridge
         circuit_tracer_cfg:
-          class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+          class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
           init_args:
             backend: "transformerlens"
             transcoder_set: "gemma"
@@ -935,7 +935,7 @@ rte_base_test.gemma2.circuit_tracer+nnsight:
               dtype: float32
             model_head: transformers.Gemma2ForCausalLM
         circuit_tracer_cfg:
-          class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+          class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
           init_args:
             backend: "nnsight"
             transcoder_set: "gemma"
@@ -1010,7 +1010,7 @@ rte_base_test.gemma2.circuit_tracer+nnsight.remote:
               dtype: float32
             model_head: transformers.Gemma2ForCausalLM
         circuit_tracer_cfg:
-          class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+          class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
           init_args:
             backend: "nnsight"
             transcoder_set: "gemma"
@@ -1145,7 +1145,7 @@ rte_base_test.gemma3.circuit_tracer+nnsight:
               dtype: float32
             model_head: transformers.Gemma3ForCausalLM
         circuit_tracer_cfg:
-          class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+          class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
           init_args:
             backend: "nnsight"
             transcoder_set: "mwhanna/gemma-scope-2-1b-pt/transcoder_all/width_16k_l0_small_affine"
@@ -1287,13 +1287,13 @@ rte.llama3.transformer_lens:
           init_args:
             enabled: True
             lm_generation_cfg:
-              class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+              class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
               init_args:
                 max_new_tokens: 1
                 output_logits: true
                 return_dict_in_generate: true
         tl_cfg:
-          class_path: interpretune.config.transformer_lens.ITLensBridgeConfig
+          class_path: interpretune.adapters.transformer_lens.config.ITLensBridgeConfig
           init_args:
             model_name: Llama-3.2-3B-Instruct
             default_padding_side: left  # to pad on left

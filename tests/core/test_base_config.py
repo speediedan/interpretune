@@ -27,7 +27,7 @@ from it_examples.experiments.rte_boolq import (
     GenerativeClassificationConfig,
     RTEBoolqSLConfig,
 )
-from interpretune.config.transformer_lens import TLensGenerationConfig
+from interpretune.adapters.transformer_lens.config import TLensGenerationConfig
 from tests.base_defaults import default_test_task
 from tests.utils import _unwrap_one
 from tests.base_defaults import OpTestConfig

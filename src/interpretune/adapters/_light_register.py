@@ -41,13 +41,18 @@ def register_all_adapters(registry) -> None:
     future.
     """
     # TODO: consider making this auto-discoverable via entrypoints
+    # NOTE: these name the DEFINING submodule (`<pkg>.adapter`), not the package. Per-adapter packages
+    # export lazily via PEP 562 `__getattr__`, and the discovery below walks `dir(mod)`, which does not
+    # trigger a lazy resolver -- pointing at a package would find no adapter classes and register
+    # NOTHING, silently. The submodules are the import-safe half of each package anyway (their heavy
+    # imports are TYPE_CHECKING/local), which is the property this pass depends on.
     adapter_modules: Iterable[str] = (
         "interpretune.adapters.core",
         "interpretune.adapters.lightning",
-        "interpretune.adapters.sae_lens",
-        "interpretune.adapters.transformer_lens",
-        "interpretune.adapters.circuit_tracer",
-        "interpretune.adapters.nnsight",
+        "interpretune.adapters.sae_lens.adapter",
+        "interpretune.adapters.transformer_lens.adapter",
+        "interpretune.adapters.circuit_tracer.adapter",
+        "interpretune.adapters.nnsight.adapter",
     )
 
     for mod_path in adapter_modules:

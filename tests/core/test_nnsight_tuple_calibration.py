@@ -77,7 +77,7 @@ class TestTupleOutputCalibration:
         assert resolver.resolve_for_envoy("blocks.0.hook_resid_post").tuple_output == before
 
     def test_backend_calibration_is_idempotent(self, tiny_gpt2, monkeypatch):
-        from interpretune.analysis.backends.impls.nnsight import NNsightModelBackend, get_default_configs_per_pass
+        from interpretune.adapters.nnsight.backends import NNsightModelBackend, get_default_configs_per_pass
 
         backend = NNsightModelBackend(
             HookNameResolver("GPT2LMHeadModel"), configs_per_pass=get_default_configs_per_pass()
