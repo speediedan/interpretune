@@ -38,7 +38,7 @@
                 init_args:
                   enabled: True
                   lm_generation_cfg:
-                    class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+                    class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
                     init_args:
                       max_new_tokens: 1
               hf_from_pretrained_cfg:
@@ -49,7 +49,7 @@
                     dtype: float32
                   model_head: transformers.GPT2LMHeadModel
               tl_cfg:
-                class_path: interpretune.config.transformer_lens.ITLensFromPretrainedConfig
+                class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedConfig
           datamodule_cls:  # if you want to enable dataset fingerprinting, override the base test datamodule as follows:
             class_path: tests.modules.FingerprintTestITDataModule
    ```

@@ -19,11 +19,11 @@ from interpretune.config import (
     ITLensCustomConfig,
     ITLensFromPretrainedConfig,
 )
-from interpretune.config.transformer_lens import ITLensBridgeConfig, TLConfigInitMixin
+from interpretune.adapters.transformer_lens.config import ITLensBridgeConfig, TLConfigInitMixin
 from interpretune.utils import ITInstantiationFeedbackWarning, rank_zero_warn, MisconfigurationException, _resolve_dtype
 
 if TYPE_CHECKING:
-    from interpretune.config.nnsight import NNsightConfig
+    from interpretune.adapters.nnsight.config import NNsightConfig
 
 # Valid backend identifiers
 _VALID_SAE_BACKENDS = ("transformerlens", "nnsight")
@@ -192,7 +192,7 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
 
     def _init_nnsight_backend(self) -> None:
         """Initialize NNsight backend configuration."""
-        from interpretune.config.nnsight import NNsightConfig
+        from interpretune.adapters.nnsight.config import NNsightConfig
 
         if not self.nnsight_cfg:
             raise MisconfigurationException(

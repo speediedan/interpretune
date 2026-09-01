@@ -36,7 +36,7 @@ registered_cfg:
     init_args:
       experiment_tag: gemma3_1b_it_lightning_ct_ns_zs_test
       circuit_tracer_cfg:
-        class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+        class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
         init_args:
           backend: nnsight
           transcoder_set: mwhanna/gemma-scope-2-1b-it/transcoder_all/width_16k_l0_small_affine

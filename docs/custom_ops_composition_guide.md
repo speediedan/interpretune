@@ -70,7 +70,7 @@ rather than a reach into package internals:
   the package, so **import from `interpretune.analysis.backends`** even though the API reference
   documents each module separately (the pages tell you where a name lives; the package is the stable
   import path). Importing a submodule directly is not rejected, it is just a path we may move.
-  **One exception is rejected**: `interpretune.analysis.backends.impls` holds the concrete
+  **One exception is rejected**: `interpretune.adapters` holds each adapter's concrete
   per-library backends (TransformerLens, nnsight, circuit-tracer), and an op may not import them.
   Ask for a capability, or take an `AnalysisBackend` through the protocols, so your op works on every
   backend that satisfies it rather than one. CI enforces this

@@ -19,8 +19,8 @@ from interpretune.config import (
     ITLensFromPretrainedConfig,
     ITLensCustomConfig,
 )
-from interpretune.config.nnsight import NNsightConfig
-from interpretune.config.transformer_lens import ITLensBridgeConfig
+from interpretune.adapters.nnsight.config import NNsightConfig
+from interpretune.adapters.transformer_lens.config import ITLensBridgeConfig
 from tests.utils import ablate_cls_attrs
 from tests.base_defaults import default_test_task
 from tests.runif import RunIf
@@ -309,10 +309,10 @@ class TestClassSAELens:
         assert isinstance(it_cfg, SAELensConfig)
         assert it_cfg.sae_cfgs[0].cfg.device in ["cuda", "mps"]
 
-    @patch("interpretune.adapters.sae_lens.get_pretrained_saes_directory")
-    @patch("interpretune.adapters.sae_lens.display")
-    @patch("interpretune.adapters.sae_lens.IFrame")
-    @patch("interpretune.adapters.sae_lens.print")
+    @patch("interpretune.adapters.sae_lens.adapter.get_pretrained_saes_directory")
+    @patch("interpretune.adapters.sae_lens.adapter.display")
+    @patch("interpretune.adapters.sae_lens.adapter.IFrame")
+    @patch("interpretune.adapters.sae_lens.adapter.print")
     def test_display_dashboard(self, mock_print, mock_iframe, mock_display, mock_get_dir):
         """Test the display_dashboard static method."""
         # Setup mock directory response
@@ -346,7 +346,7 @@ class TestClassSAELens:
         mock_display.assert_called_once()
 
     @patch("interpretune.adapters.sae_lens.SAELensAnalysisMixin.display_dashboard")
-    @patch("interpretune.adapters.sae_lens.print")
+    @patch("interpretune.adapters.sae_lens.adapter.print")
     def test_display_latent_dashboards(self, mock_print, mock_display_dashboard):
         """Test the display_latent_dashboards static method."""
         from interpretune.adapters.sae_lens import SAELensAnalysisMixin
@@ -504,7 +504,7 @@ class TestNNsightSAEBackend:
 
     def test_nnsight_module_has_model_backend(self, sl_ns_gpt2_module):
         """Verify NNsight SAE module has a model_backend initialized."""
-        from interpretune.analysis.backends.impls.nnsight import NNsightModelBackend
+        from interpretune.adapters.nnsight.backends import NNsightModelBackend
 
         assert isinstance(sl_ns_gpt2_module.model_backend, NNsightModelBackend)
 
@@ -544,7 +544,7 @@ class TestBridgeSAEBackend:
 
     def test_bridge_module_has_tl_backend(self, sl_br_gpt2_module):
         """Verify Bridge SAE module has a TL model backend initialized."""
-        from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
         assert isinstance(sl_br_gpt2_module.model_backend, TLModelBackend)
 

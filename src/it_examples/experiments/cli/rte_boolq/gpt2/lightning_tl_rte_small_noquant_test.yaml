@@ -35,7 +35,7 @@ registered_cfg:
       cust_fwd_kwargs: {}
       experiment_tag: lightning_tl_rte_small_noquant_test
       tl_cfg:
-        class_path: interpretune.config.transformer_lens.ITLensFromPretrainedConfig
+        class_path: interpretune.adapters.transformer_lens.config.ITLensFromPretrainedConfig
         init_args:
           device: cuda
           dtype: bfloat16
@@ -50,7 +50,7 @@ registered_cfg:
         init_args:
           enabled: true
           lm_generation_cfg:
-            class_path: interpretune.config.transformer_lens.TLensGenerationConfig
+            class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
             init_args:
               max_new_tokens: 1
   datamodule_cls: it_examples.experiments.rte_boolq.RTEBoolqDataModule

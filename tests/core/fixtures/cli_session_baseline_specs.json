@@ -336,7 +336,7 @@
     "entailment_mapping_indices": null,
     "input_inspection_enabled": true,
     "lm_generation_cfg": {
-     "__class__": "interpretune.config.transformer_lens.TLensGenerationConfig",
+     "__class__": "interpretune.adapters.transformer_lens.config.TLensGenerationConfig",
      "do_sample": true,
      "eos_token_id": null,
      "freq_penalty": 0.0,
@@ -486,7 +486,7 @@
    "pl_lrs_cfg": {},
    "sae_cfgs": [
     {
-     "__class__": "interpretune.config.sae_lens.SAELensFromPretrainedConfig",
+     "__class__": "interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig",
      "device": "cuda",
      "dtype": "torch.bfloat16",
      "release": "gemma-scope-2b-pt-res-canonical",
@@ -495,7 +495,7 @@
    ],
    "task_name": "rte",
    "tl_cfg": {
-    "__class__": "interpretune.config.transformer_lens.ITLensBridgeConfig",
+    "__class__": "interpretune.adapters.transformer_lens.config.ITLensBridgeConfig",
     "default_padding_side": "left",
     "device": "cuda",
     "dtype": "bfloat16",
@@ -619,7 +619,7 @@
     "entailment_mapping_indices": null,
     "input_inspection_enabled": true,
     "lm_generation_cfg": {
-     "__class__": "interpretune.config.transformer_lens.TLensGenerationConfig",
+     "__class__": "interpretune.adapters.transformer_lens.config.TLensGenerationConfig",
      "do_sample": true,
      "eos_token_id": null,
      "freq_penalty": 0.0,
@@ -769,7 +769,7 @@
    "pl_lrs_cfg": {},
    "sae_cfgs": [
     {
-     "__class__": "interpretune.config.sae_lens.SAELensFromPretrainedConfig",
+     "__class__": "interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig",
      "device": "cuda",
      "dtype": "torch.bfloat16",
      "release": "gemma-scope-2b-pt-res-canonical",
@@ -778,7 +778,7 @@
    ],
    "task_name": "rte",
    "tl_cfg": {
-    "__class__": "interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig",
+    "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig",
     "center_unembed": false,
     "center_writing_weights": false,
     "checkpoint_index": null,
@@ -907,7 +907,7 @@
     "entailment_mapping_indices": null,
     "input_inspection_enabled": true,
     "lm_generation_cfg": {
-     "__class__": "interpretune.config.transformer_lens.TLensGenerationConfig",
+     "__class__": "interpretune.adapters.transformer_lens.config.TLensGenerationConfig",
      "do_sample": true,
      "eos_token_id": null,
      "freq_penalty": 0.0,
@@ -1057,7 +1057,7 @@
    "pl_lrs_cfg": {},
    "sae_cfgs": [
     {
-     "__class__": "interpretune.config.sae_lens.SAELensFromPretrainedConfig",
+     "__class__": "interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig",
      "device": "cuda",
      "dtype": "torch.bfloat16",
      "release": "gemma-scope-2b-pt-res-canonical",
@@ -1066,7 +1066,7 @@
    ],
    "task_name": "rte",
    "tl_cfg": {
-    "__class__": "interpretune.config.transformer_lens.ITLensFromPretrainedNoProcessingConfig",
+    "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig",
     "center_unembed": false,
     "center_writing_weights": false,
     "checkpoint_index": null,
@@ -1401,7 +1401,7 @@
    "analysis_cfg": null,
    "auto_comp_cfg": null,
    "circuit_tracer_cfg": {
-    "__class__": "interpretune.config.circuit_tracer.CircuitTracerConfig",
+    "__class__": "interpretune.adapters.circuit_tracer.config.CircuitTracerConfig",
     "analysis_target_tokens": [
      "\u2581Yes",
      "\u2581No"
@@ -1921,7 +1921,7 @@
    "analysis_cfg": null,
    "auto_comp_cfg": null,
    "circuit_tracer_cfg": {
-    "__class__": "interpretune.config.circuit_tracer.CircuitTracerConfig",
+    "__class__": "interpretune.adapters.circuit_tracer.config.CircuitTracerConfig",
     "analysis_target_tokens": [
      "\u2581Yes",
      "\u2581No"
@@ -2176,7 +2176,7 @@
    "analysis_cfg": null,
    "auto_comp_cfg": null,
    "circuit_tracer_cfg": {
-    "__class__": "interpretune.config.circuit_tracer.CircuitTracerConfig",
+    "__class__": "interpretune.adapters.circuit_tracer.config.CircuitTracerConfig",
     "analysis_target_tokens": [
      "\u2581Yes",
      "\u2581No"
@@ -2566,7 +2566,7 @@
     "pretty_print_json": true
    },
    "nnsight_cfg": {
-    "__class__": "interpretune.config.nnsight.NNsightConfig",
+    "__class__": "interpretune.adapters.nnsight.config.NNsightConfig",
     "api_key": null,
     "attn_implementation": "eager",
     "default_padding_side": "left",
@@ -2799,7 +2799,7 @@
     "pretty_print_json": true
    },
    "nnsight_cfg": {
-    "__class__": "interpretune.config.nnsight.NNsightConfig",
+    "__class__": "interpretune.adapters.nnsight.config.NNsightConfig",
     "api_key": null,
     "attn_implementation": "eager",
     "default_padding_side": "left",
@@ -2897,7 +2897,7 @@
    "analysis_cfg": null,
    "auto_comp_cfg": null,
    "circuit_tracer_cfg": {
-    "__class__": "interpretune.config.circuit_tracer.CircuitTracerConfig",
+    "__class__": "interpretune.adapters.circuit_tracer.config.CircuitTracerConfig",
     "analysis_target_tokens": [
      "\u2581Yes",
      "\u2581No"
@@ -3165,7 +3165,7 @@
    "analysis_cfg": null,
    "auto_comp_cfg": null,
    "circuit_tracer_cfg": {
-    "__class__": "interpretune.config.circuit_tracer.CircuitTracerConfig",
+    "__class__": "interpretune.adapters.circuit_tracer.config.CircuitTracerConfig",
     "analysis_target_tokens": [
      "\u2581Yes",
      "\u2581No"
@@ -3462,7 +3462,7 @@
     "entailment_mapping_indices": null,
     "input_inspection_enabled": true,
     "lm_generation_cfg": {
-     "__class__": "interpretune.config.transformer_lens.TLensGenerationConfig",
+     "__class__": "interpretune.adapters.transformer_lens.config.TLensGenerationConfig",
      "do_sample": true,
      "eos_token_id": null,
      "freq_penalty": 0.0,
@@ -3607,7 +3607,7 @@
    "pl_lrs_cfg": {},
    "task_name": "rte",
    "tl_cfg": {
-    "__class__": "interpretune.config.transformer_lens.ITLensFromPretrainedConfig",
+    "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedConfig",
     "center_unembed": true,
     "center_writing_weights": true,
     "checkpoint_index": null,

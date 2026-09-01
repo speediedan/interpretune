@@ -40,7 +40,7 @@ registered_cfg:
       model_cfg:
         _attn_implementation: eager
       circuit_tracer_cfg:
-        class_path: interpretune.config.circuit_tracer.CircuitTracerConfig
+        class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
         init_args:
           backend: nnsight
           transcoder_set: gemma

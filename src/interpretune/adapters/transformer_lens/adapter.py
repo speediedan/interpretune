@@ -318,7 +318,7 @@ class BaseITLensModule(BaseITModule):
         - Apply any transformer_bridge_config_overrides to the TransformerBridgeConfig
         - Call enable_compatibility_mode() with the specified kwargs if enable_compatibility_mode=True
         """
-        from interpretune.config.transformer_lens import ITLensBridgeConfig
+        from interpretune.adapters.transformer_lens.config import ITLensBridgeConfig
 
         tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
         hf_model = self.model

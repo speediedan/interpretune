@@ -35,7 +35,7 @@ from interpretune.analysis.backends.hook_mapping import (
     ResolvedHook,
     SUBHOOK_SUFFIXES,
 )
-from interpretune.analysis.backends.impls.nnsight import (
+from interpretune.adapters.nnsight.backends import (
     NNsightActivationCacheAdapter,
     NNsightModelBackend,
     _DummyHookPoint,
@@ -83,13 +83,13 @@ class TestNNsightBackendConfig:
 
     def test_default_configs_per_pass_cpu_linux(self, monkeypatch):
         monkeypatch.delenv("IT_NNSIGHT_CONFIGS_PER_PASS", raising=False)
-        monkeypatch.setattr("interpretune.analysis.backends.impls.nnsight.platform.system", lambda: "Linux")
+        monkeypatch.setattr("interpretune.adapters.nnsight.backends.platform.system", lambda: "Linux")
         monkeypatch.setattr("torch.cuda.is_available", lambda: False)
         assert get_default_configs_per_pass() == 4
 
     def test_default_configs_per_pass_cpu_windows(self, monkeypatch):
         monkeypatch.delenv("IT_NNSIGHT_CONFIGS_PER_PASS", raising=False)
-        monkeypatch.setattr("interpretune.analysis.backends.impls.nnsight.platform.system", lambda: "Windows")
+        monkeypatch.setattr("interpretune.adapters.nnsight.backends.platform.system", lambda: "Windows")
         monkeypatch.setattr("torch.cuda.is_available", lambda: False)
         assert get_default_configs_per_pass() == 2
 
@@ -844,9 +844,9 @@ class TestNNsightSpliceSae:
         sae.decode.side_effect = lambda x: x * 2.0
         return sae
 
-    @patch("interpretune.analysis.backends.impls.nnsight._write_envoy_activation")
-    @patch("interpretune.analysis.backends.impls.nnsight._read_envoy_activation")
-    @patch("interpretune.analysis.backends.impls.nnsight._navigate_envoy")
+    @patch("interpretune.adapters.nnsight.backends._write_envoy_activation")
+    @patch("interpretune.adapters.nnsight.backends._read_envoy_activation")
+    @patch("interpretune.adapters.nnsight.backends._navigate_envoy")
     def test_splice_sae_calls_encode_decode(self, mock_nav, mock_read, mock_write, backend, mock_sae):
         """Verify _splice_sae calls encode, decode, and writes back the result."""
         fake_act = torch.randn(2, 10, 768)
@@ -862,9 +862,9 @@ class TestNNsightSpliceSae:
         assert torch.allclose(stage_values["hook_sae_acts_post"], fake_act * 0.5)
         assert resolved.module_path == "transformer.h.0"
 
-    @patch("interpretune.analysis.backends.impls.nnsight._write_envoy_activation")
-    @patch("interpretune.analysis.backends.impls.nnsight._read_envoy_activation")
-    @patch("interpretune.analysis.backends.impls.nnsight._navigate_envoy")
+    @patch("interpretune.adapters.nnsight.backends._write_envoy_activation")
+    @patch("interpretune.adapters.nnsight.backends._read_envoy_activation")
+    @patch("interpretune.adapters.nnsight.backends._navigate_envoy")
     def test_splice_sae_applies_hook_fn(self, mock_nav, mock_read, mock_write, backend, mock_sae):
         """When hook_fn is provided, it should be applied to feature_acts before decode."""
         fake_act = torch.randn(2, 10, 768)
@@ -880,9 +880,9 @@ class TestNNsightSpliceSae:
         assert hook_arg.name == "blocks.0.hook_resid_post.hook_sae_acts_post"
         assert torch.allclose(stage_values["hook_sae_acts_post"], torch.zeros_like(fake_act))
 
-    @patch("interpretune.analysis.backends.impls.nnsight._write_envoy_activation")
-    @patch("interpretune.analysis.backends.impls.nnsight._read_envoy_activation")
-    @patch("interpretune.analysis.backends.impls.nnsight._navigate_envoy")
+    @patch("interpretune.adapters.nnsight.backends._write_envoy_activation")
+    @patch("interpretune.adapters.nnsight.backends._read_envoy_activation")
+    @patch("interpretune.adapters.nnsight.backends._navigate_envoy")
     def test_splice_sae_no_hook_fn_skips_hook(self, mock_nav, mock_read, mock_write, backend, mock_sae):
         """Without hook_fn, encode result goes directly to decode."""
         fake_act = torch.randn(2, 10, 768)
@@ -899,9 +899,9 @@ class TestNNsightSpliceSae:
         assert torch.allclose(decode_arg, fake_act * 0.5)
         assert torch.allclose(stage_values["hook_sae_acts_pre"], fake_act * 0.25)
 
-    @patch("interpretune.analysis.backends.impls.nnsight._write_envoy_activation")
-    @patch("interpretune.analysis.backends.impls.nnsight._read_envoy_activation")
-    @patch("interpretune.analysis.backends.impls.nnsight._navigate_envoy")
+    @patch("interpretune.adapters.nnsight.backends._write_envoy_activation")
+    @patch("interpretune.adapters.nnsight.backends._read_envoy_activation")
+    @patch("interpretune.adapters.nnsight.backends._navigate_envoy")
     def test_splice_sae_returns_resolved_hook(self, mock_nav, mock_read, mock_write, backend, mock_sae):
         """Returned resolved hook should have correct metadata."""
         mock_nav.return_value = MagicMock()
@@ -959,7 +959,7 @@ class TestTLModelBackendCapabilities:
 
     @pytest.fixture()
     def backend(self):
-        from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
         return TLModelBackend()
 
@@ -987,7 +987,7 @@ class TestTLFwdWHooksBatched:
 
     @pytest.fixture()
     def backend(self):
-        from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
         return TLModelBackend()
 
@@ -1294,7 +1294,7 @@ class TestFwdWInterventionSignature:
         assert "latent_model_handles" in param_names
 
     def test_tl_fwd_w_intervention_signature(self):
-        from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
         backend = TLModelBackend()
         sig = inspect.signature(backend.fwd_w_intervention)
@@ -1306,7 +1306,7 @@ class TestFwdWInterventionSignature:
 
     def test_tl_unknown_mode_raises(self):
         """TL backend should raise ValueError for unknown intervention modes."""
-        from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
         backend = TLModelBackend()
         mock_model = MagicMock()
@@ -1326,7 +1326,7 @@ class TestFwdWInterventionSignature:
 
     def test_tl_wildcard_expansion(self):
         """TL backend should expand wildcard patterns against model.hook_dict."""
-        from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
         backend = TLModelBackend()
         mock_model = MagicMock()
@@ -1365,7 +1365,7 @@ class TestFwdWInterventionSignature:
 
     def test_tl_replace_mode_hook_overwrites(self):
         """TL backend replace mode hook should overwrite (not add to) the activation."""
-        from interpretune.analysis.backends.impls.transformer_lens import TLModelBackend
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
         backend = TLModelBackend()
         mock_model = MagicMock()

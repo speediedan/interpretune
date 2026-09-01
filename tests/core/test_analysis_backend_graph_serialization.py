@@ -16,7 +16,7 @@ from circuit_tracer.graph import Graph
 from circuit_tracer.utils.tl_nnsight_mapping import UnifiedConfig
 
 from interpretune.analysis.backends import expand_intervention_patterns
-from interpretune.analysis.backends.impls.circuit_tracer import DEFAULT_CT_ANALYSIS_BACKEND
+from interpretune.adapters.circuit_tracer.backends import DEFAULT_CT_ANALYSIS_BACKEND
 from interpretune.analysis.core import AnalysisStore, schema_to_features
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.dispatcher import DISPATCHER
