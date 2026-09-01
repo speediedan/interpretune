@@ -1,6 +1,6 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from dataclasses import dataclass, field
-from typing import Literal, NamedTuple, Any, Callable, Sequence, List, Dict, Type, TypeGuard
+from typing import Literal, NamedTuple, Any, Callable, Sequence, List, Dict, Type, TypeGuard, TYPE_CHECKING
 from types import MappingProxyType
 import os
 from pathlib import Path
@@ -15,7 +15,15 @@ import pandas as pd
 # visualization aid used by exactly two plotting helpers, which import it on first use (#403).
 from tabulate import tabulate
 from transformers import PreTrainedTokenizerBase
-from sae_lens.config import HfDataset
+
+if TYPE_CHECKING:
+    # HfDataset is used only in annotations here, and `from __future__ import annotations` keeps them
+    # strings at runtime. Importing it eagerly made sae_lens -- an `examples`-extra package -- a hard
+    # requirement of `import interpretune.config`, which reaches this module (#401/#403). Same pattern
+    # protocol.py already uses for exactly this name.
+    from sae_lens.config import HfDataset
+else:
+    HfDataset = None  # type: ignore[assignment,misc]
 from datasets import Features, Array2D, Value, Array3D, load_dataset, Column
 from datasets import Sequence as DatasetsSequence
 

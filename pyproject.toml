@@ -66,6 +66,11 @@ dependencies = [
     # detects (imports) every bundled extension when `interpretune.config` is imported, so psutil is a
     # hard import-time requirement of `import interpretune` — previously satisfied only transitively.
     "psutil >= 5.9.0",
+    # analysis/optools.py annotates with jaxtyping at module level, and interpretune.config reaches
+    # that module, so this is a hard import-time requirement. It previously arrived only via
+    # transformer-lens (an `examples`-extra package that depends on it), which hid the omission from
+    # every env that carried TL -- i.e. all of them until a bare consumer install existed.
+    "jaxtyping >= 0.2.0",
     # "finetuning-scheduler[possible_future_it_plugin] >= 2.5.0",
 ]
 
