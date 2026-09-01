@@ -19,9 +19,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent.parent
-NOTEBOOK_REL = Path("it_examples/notebooks/dev/interp_engine_example/interp_engine_hub_adapter.ipynb")
-DEV_NOTEBOOK = REPO_ROOT / "src" / NOTEBOOK_REL
-PUBLISHED_NOTEBOOK = Path(str(DEV_NOTEBOOK).replace("/dev/", "/publish/"))
+NOTEBOOK_SUBPATH = ("interp_engine_example", "interp_engine_hub_adapter.ipynb")
+NOTEBOOKS_ROOT = REPO_ROOT / "src" / "it_examples" / "notebooks"
+# Built from PARTS, not by string-replacing "/dev/". That replace is a no-op on Windows, where the
+# separator is a backslash, and it fails silently in the worst way: PUBLISHED_NOTEBOOK becomes the DEV
+# path, so `test_dev_and_published_copies_both_exist` passes VACUOUSLY (the dev file exists, and it was
+# asked about twice) while only the parts assertion below notices. Caught by Windows CI, which is the
+# only runner where the two paths differ.
+DEV_NOTEBOOK = NOTEBOOKS_ROOT.joinpath("dev", *NOTEBOOK_SUBPATH)
+PUBLISHED_NOTEBOOK = NOTEBOOKS_ROOT.joinpath("publish", *NOTEBOOK_SUBPATH)
 
 
 def _cells(path: Path) -> list[dict]:
@@ -35,6 +41,11 @@ def _code_source(path: Path) -> str:
 class TestNotebookForm:
     def test_dev_and_published_copies_both_exist(self):
         """Notebook tests run against PUBLISHED notebooks, so a dev-only notebook is invisible to them."""
+        # The control: these must be DIFFERENT paths. If the published path were ever derived in a way
+        # that collapsed onto the dev path, this test would assert the same file exists twice and pass
+        # while checking nothing -- which is exactly what happened on Windows before the paths were
+        # built from parts.
+        assert DEV_NOTEBOOK != PUBLISHED_NOTEBOOK
         assert DEV_NOTEBOOK.is_file(), f"missing dev notebook: {DEV_NOTEBOOK}"
         assert PUBLISHED_NOTEBOOK.is_file(), (
             f"missing published copy: {PUBLISHED_NOTEBOOK}. Run `python scripts/publish_notebooks.py --force`."
