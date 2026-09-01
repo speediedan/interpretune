@@ -225,7 +225,12 @@ class TestClassBaseConfigs:
         #     cfg = yaml.load(f, Loader=yaml.FullLoader)
 
     def test_find_adapter_subclasses_with_nonexistent_module(self):
-        """find_adapter_subclasses skips adapters whose module isn't in sys.modules."""
+        """find_adapter_subclasses skips adapters whose module cannot be resolved.
+
+        Per-adapter packages (#401) moved the searched modules to ``interpretune.adapters.<name>.config``
+        and ``.adapter``, and the search now IMPORTS a candidate rather than only reading sys.modules, so
+        an unresolvable adapter is skipped via ImportError instead of via absence.
+        """
         from interpretune.config.shared import find_adapter_subclasses
         from types import ModuleType
 
@@ -239,12 +244,12 @@ class TestClassBaseConfigs:
         class DummySubclass:
             pass
 
-        DummySubclass.__module__ = "interpretune.adapters.existing_adapter"
-        mod = ModuleType("interpretune.adapters.existing_adapter")
+        DummySubclass.__module__ = "interpretune.adapters.existing_adapter.config"
+        mod = ModuleType("interpretune.adapters.existing_adapter.config")
         setattr(mod, "DummySubclass", DummySubclass)
 
         # Inject only our fake module, but leave the rest of sys.modules intact
-        with patch.dict("sys.modules", {"interpretune.adapters.existing_adapter": mod}, clear=False):
+        with patch.dict("sys.modules", {"interpretune.adapters.existing_adapter.config": mod}, clear=False):
             subs, supers = find_adapter_subclasses(object, target_adapters=[adapter1, adapter2])
 
         # Verify only adapter1 appears

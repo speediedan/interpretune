@@ -1,5 +1,6 @@
 from typing import Any, TypeVar, TypeAlias, Sequence
 from dataclasses import dataclass, field, fields, make_dataclass
+import importlib
 import inspect
 import logging
 import os
@@ -188,15 +189,30 @@ def find_adapter_subclasses(
     adapter_space = (
         adapter_seq_to_list(target_adapters) if target_adapters is not None else Adapter.__members__.values()
     )
-    # Search each adapter's package and the submodules that define its composition and config classes.
-    # Only modules ALREADY imported are considered, which is what keeps this pass from importing heavy
-    # frameworks as a side effect of resolving a config.
+    # Search the submodules that DEFINE each adapter's composition and config classes, IMPORTING them
+    # rather than only considering what is already in sys.modules.
+    #
+    # Importing is required for correctness now that adapter configs resolve lazily: before the
+    # per-adapter packages (#401) `interpretune.config.<name>` was imported eagerly and so was always
+    # present, and a sys.modules-only scan silently found nothing once that stopped being true --
+    # auto-composition would return no candidates and the caller would get a bare ITConfig.
+    #
+    # It does not cost the bare-install property this restructure exists to buy, because
+    # auto-composition runs when a caller CONSTRUCTS a config carrying adapter-specific kwargs, never at
+    # import time; at that point importing that adapter is exactly what the caller asked for. An adapter
+    # whose framework is absent raises ImportError here and is skipped, which is the correct answer to
+    # "can this adapter satisfy these kwargs".
     for template in AUTOCOMP_SEARCH_TEMPLATES:
         candidate_modules = {}
         for val in adapter_space:
             module_path = template.format(adapter=val.name)
-            if module_path in sys.modules:
-                candidate_modules[val] = (module_path, sys.modules[module_path])
+            module = sys.modules.get(module_path)
+            if module is None:
+                try:
+                    module = importlib.import_module(module_path)
+                except Exception:  # absent framework, or an adapter that fails to import here
+                    continue
+            candidate_modules[val] = (module_path, module)
         for adapter, (module_fqn, module) in candidate_modules.items():
             for _, member in inspect.getmembers(module, inspect.isclass):
                 if member.__module__ != module_fqn:

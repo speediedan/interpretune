@@ -309,10 +309,10 @@ class TestClassSAELens:
         assert isinstance(it_cfg, SAELensConfig)
         assert it_cfg.sae_cfgs[0].cfg.device in ["cuda", "mps"]
 
-    @patch("interpretune.adapters.sae_lens.get_pretrained_saes_directory")
-    @patch("interpretune.adapters.sae_lens.display")
-    @patch("interpretune.adapters.sae_lens.IFrame")
-    @patch("interpretune.adapters.sae_lens.print")
+    @patch("interpretune.adapters.sae_lens.adapter.get_pretrained_saes_directory")
+    @patch("interpretune.adapters.sae_lens.adapter.display")
+    @patch("interpretune.adapters.sae_lens.adapter.IFrame")
+    @patch("interpretune.adapters.sae_lens.adapter.print")
     def test_display_dashboard(self, mock_print, mock_iframe, mock_display, mock_get_dir):
         """Test the display_dashboard static method."""
         # Setup mock directory response
@@ -346,7 +346,7 @@ class TestClassSAELens:
         mock_display.assert_called_once()
 
     @patch("interpretune.adapters.sae_lens.SAELensAnalysisMixin.display_dashboard")
-    @patch("interpretune.adapters.sae_lens.print")
+    @patch("interpretune.adapters.sae_lens.adapter.print")
     def test_display_latent_dashboards(self, mock_print, mock_display_dashboard):
         """Test the display_latent_dashboards static method."""
         from interpretune.adapters.sae_lens import SAELensAnalysisMixin
