@@ -1026,3 +1026,36 @@ projections — enabling several high-value probes once supported (tracked in
 4. **J-lens concept-direction basis**: `concept_direction(..., basis="jlens")` as a third basis —
    per-layer drift-corrected concept vectors may produce attribution targets whose selected
    features are *less* output-machinery-biased at intermediate layers (testable against Finding 2).
+
+#### Status of the J-space probes (2026-09-01)
+
+Since the probes above were designed, the *write* half of the J-space technique has landed and the
+*read* half has not (tracking: [interpretune#225](https://github.com/speediedan/interpretune/issues/225)
+in-tree, [#273](https://github.com/speediedan/interpretune/issues/273) for the published collection;
+API summary in `intervention_capabilities_overview.md`). What that means per probe:
+
+- **Probes 1 and 3 (workspace readouts at the probe-token and answer positions; workspace-flip vs
+  logit-flip ordering)** need a `jlens_read` op; none exists yet. Probe 3 additionally has its
+  steering side ready: the steering demos' section 4b already performs the J-space swap at the answer
+  position, so the readout table slots in around an intervention that is already measured.
+- **Probe 2 (per-feature J-space signatures)** needs the readout op AND a decision the folding
+  investigation has since made for it: the J-lens vector of token `c` is `(W_U[c] * s) @ J_l` with
+  `s` the final norm's elementwise scale, because that is the direction the paper's own readout
+  `softmax(W_U norm(J h))` computes (the "rows of `W_U J`" shorthand drops the norm). An unfolded
+  signature would not be the readout's direction. The seam that resolves `W_U` and `s` per model
+  family already exists (`interpretune.analysis.optools.resolve_unembed_and_norm_scale`). This
+  probe is the principled replacement for the 1-D "output projection" column in the Phase-6 table
+  above, which is its `k = 1`, single-token special case.
+- **Probe 4 (`concept_direction(..., basis="jlens")`)** needs the selector to be introduced: there is
+  no `basis=` parameter today, embed and store are two parallel pipelines in this harness, and
+  `use_answer_state_as_basis` is a different axis. Its test against Finding 2 (are jlens-basis
+  attribution targets less output-machinery-biased at intermediate layers) remains the right one.
+
+One measured result that bears on Finding 4 arrived from the folding work rather than from a probe:
+on gemma-3-1b-it the demo residual projects enormously onto both unfolded concept poles (coordinate
+norm about 869) with a near-zero Color-minus-Fruit *contrast*, while the folded basis exposes the
+contrast cleanly (details on [#330](https://github.com/speediedan/interpretune/issues/330)). That is
+the representation-level shape Finding 4 predicts at the selection level (large opposing pushes that
+cancel), and it suggests probe 1 should report the contrast coordinate, not the raw per-token
+coordinates, when it is eventually run. The same trap is recorded for the subspace attribution design
+on [#338](https://github.com/speediedan/interpretune/issues/338).
