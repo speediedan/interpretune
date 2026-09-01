@@ -78,6 +78,8 @@ click==8.5.0
     #   nltk
     #   papermill
     #   wandb
+cloudpickle==3.1.2
+    # via joblib
 colorama==0.4.6 ; sys_platform == 'win32'
     # via
     #   ipython
@@ -94,7 +96,7 @@ contourpy==1.3.2 ; python_full_version < '3.11'
     # via matplotlib
 contourpy==1.3.3 ; python_full_version >= '3.11'
     # via matplotlib
-coverage[toml]==7.15.4
+coverage[toml]==7.16.0
     # via
     #   interpretune (pyproject.toml:test)
     #   pytest-cov
@@ -151,7 +153,7 @@ fancy-einsum==0.0.3
     # via transformer-lens
 fastjsonschema==2.22.2
     # via nbformat
-filelock==3.32.4
+filelock==3.32.5
     # via
     #   datasets
     #   huggingface-hub
@@ -160,8 +162,10 @@ filelock==3.32.4
     #   virtualenv
 finetuning-scheduler==2.13.0
     # via interpretune (pyproject.toml)
-fonttools==4.63.0
+fonttools==4.64.0
     # via matplotlib
+formulaic==1.2.2
+    # via statsmodels
 fqdn==1.5.1
     # via jsonschema
 frozenlist==1.8.0
@@ -178,7 +182,7 @@ fsspec[http]==2026.6.0
     #   torch
 graze==0.1.44
     # via babe
-grpcio==1.83.0
+grpcio==1.83.1
     # via tensorboard
 h11==0.16.0
     # via httpcore
@@ -191,7 +195,7 @@ httpx==0.28.1
     #   datasets
     #   huggingface-hub
     #   jupyterlab
-huggingface-hub[hf-xet]==1.28.0
+huggingface-hub[hf-xet]==1.29.0
     # via
     #   interpretune (pyproject.toml:test)
     #   accelerate
@@ -214,12 +218,14 @@ idna==3.19
     #   jsonschema
     #   requests
     #   yarl
-importlib-metadata==9.0.0 ; python_full_version < '3.12' and platform_machine != 'ppc64le' and platform_machine != 's390x'
+importlib-metadata==9.0.1 ; python_full_version < '3.12' and platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via keyring
 importlib-resources==7.1.0
     # via py2store
 iniconfig==2.3.0
     # via pytest
+interface-meta==2.0.1
+    # via formulaic
 ipykernel==7.3.0
     # via
     #   jupyterlab
@@ -228,7 +234,7 @@ ipython==8.39.0 ; python_full_version < '3.11'
     # via
     #   ipykernel
     #   ipywidgets
-ipython==9.16.1 ; python_full_version >= '3.11'
+ipython==9.17.0 ; python_full_version >= '3.11'
     # via
     #   ipykernel
     #   ipywidgets
@@ -261,7 +267,7 @@ jinja2==3.1.6
     #   jupyterlab-server
     #   nbconvert
     #   torch
-joblib==1.5.3
+joblib==1.6.0
     # via
     #   nltk
     #   scikit-learn
@@ -273,6 +279,7 @@ jsonpointer==3.1.1
     # via jsonschema
 jsonschema[format-nongpl]==4.26.0
     # via
+    #   interpretune (pyproject.toml)
     #   jupyter-events
     #   jupyterlab-server
     #   nbformat
@@ -282,7 +289,7 @@ jupyter-builder==1.2.2
     # via
     #   jupyterlab
     #   notebook
-jupyter-client==8.9.1
+jupyter-client==8.10.0
     # via
     #   ipykernel
     #   jupyter-server
@@ -301,7 +308,7 @@ jupyter-events==0.12.1
     # via jupyter-server
 jupyter-lsp==2.3.1
     # via jupyterlab
-jupyter-server==2.20.0
+jupyter-server==2.21.0
     # via
     #   jupyter-lsp
     #   jupyterlab
@@ -324,7 +331,7 @@ jupyterlab-widgets==3.0.17
     # via ipywidgets
 keyring==25.7.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via twine
-kiwisolver==1.5.0
+kiwisolver==1.5.1
     # via matplotlib
 lark==1.3.1
     # via rfc3987-syntax
@@ -370,6 +377,7 @@ multiprocess==0.70.19
     #   evaluate
 narwhals==2.25.0
     # via
+    #   formulaic
     #   plotly
     #   scikit-learn
 nbclient==0.11.0
@@ -413,6 +421,7 @@ numpy==2.2.6 ; python_full_version < '3.11'
     #   contourpy
     #   datasets
     #   evaluate
+    #   formulaic
     #   matplotlib
     #   pandas
     #   patsy
@@ -432,6 +441,7 @@ numpy==2.4.6 ; python_full_version == '3.11.*'
     #   contourpy
     #   datasets
     #   evaluate
+    #   formulaic
     #   matplotlib
     #   pandas
     #   patsy
@@ -451,6 +461,7 @@ numpy==2.5.2 ; python_full_version >= '3.12'
     #   contourpy
     #   datasets
     #   evaluate
+    #   formulaic
     #   matplotlib
     #   pandas
     #   patsy
@@ -483,6 +494,7 @@ packaging==26.3
     #   lightning-utilities
     #   matplotlib
     #   nbconvert
+    #   patsy
     #   peft
     #   plotly
     #   pytest
@@ -500,6 +512,7 @@ pandas==2.3.3 ; python_full_version < '3.11'
     #   babe
     #   datasets
     #   evaluate
+    #   formulaic
     #   plotly-express
     #   statsmodels
     #   torch-tb-profiler
@@ -509,6 +522,7 @@ pandas==3.0.5 ; python_full_version >= '3.11'
     #   babe
     #   datasets
     #   evaluate
+    #   formulaic
     #   plotly-express
     #   statsmodels
     #   torch-tb-profiler
@@ -519,7 +533,7 @@ papermill==2.7.0
     # via interpretune (pyproject.toml:test)
 parso==0.8.7
     # via jedi
-patsy==1.0.2
+patsy==1.0.3
     # via
     #   plotly-express
     #   statsmodels
@@ -533,7 +547,7 @@ pillow==12.3.0
     # via
     #   matplotlib
     #   tensorboard
-platformdirs==4.11.4
+platformdirs==4.11.5
     # via
     #   jupyter-core
     #   virtualenv
@@ -561,18 +575,19 @@ propcache==0.5.2
     # via
     #   aiohttp
     #   yarl
-protobuf==7.36.0
+protobuf==7.36.1
     # via
     #   tensorboard
     #   transformer-lens
     #   wandb
 psutil==7.2.2
     # via
+    #   interpretune (pyproject.toml)
     #   accelerate
     #   ipykernel
     #   ipython
     #   peft
-psycopg==3.3.4
+psycopg==3.3.5
     # via interpretune (pyproject.toml:test)
 ptyprocess==0.7.0 ; os_name != 'nt' or (sys_platform != 'emscripten' and sys_platform != 'win32')
     # via
@@ -590,9 +605,9 @@ pyarrow==25.0.1
     #   pgpq
 pycparser==3.0 ; implementation_name != 'PyPy'
     # via cffi
-pydantic==2.13.4
+pydantic==2.13.5
     # via wandb
-pydantic-core==2.46.4
+pydantic-core==2.46.5
     # via pydantic
 pygments==2.21.0
     # via
@@ -626,7 +641,7 @@ python-dateutil==2.9.0.post0
     #   jupyter-client
     #   matplotlib
     #   pandas
-python-discovery==1.5.3
+python-discovery==1.6.0
     # via virtualenv
 python-dotenv==1.2.3
     # via
@@ -666,14 +681,14 @@ pyzmq==27.2.0
     #   ipykernel
     #   jupyter-client
     #   jupyter-server
-readme-renderer==45.0
+readme-renderer==46.0
     # via twine
 referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
     #   jupyter-events
-regex==2026.7.19
+regex==2026.8.31
     # via
     #   nltk
     #   transformers
@@ -715,7 +730,7 @@ rpds-py==2026.6.3 ; python_full_version >= '3.11'
     # via
     #   jsonschema
     #   referencing
-sae-lens==6.49.1
+sae-lens==6.50.0
     # via interpretune (pyproject.toml)
 safetensors==0.8.0
     # via
@@ -729,16 +744,19 @@ scikit-learn==1.9.0 ; python_full_version >= '3.11'
     # via interpretune (pyproject.toml)
 scipy==1.15.3 ; python_full_version < '3.11'
     # via
+    #   formulaic
     #   plotly-express
     #   scikit-learn
     #   statsmodels
 scipy==1.17.1 ; python_full_version == '3.11.*'
     # via
+    #   formulaic
     #   plotly-express
     #   scikit-learn
     #   statsmodels
 scipy==1.18.1 ; python_full_version >= '3.12'
     # via
+    #   formulaic
     #   plotly-express
     #   scikit-learn
     #   statsmodels
@@ -766,7 +784,7 @@ soupsieve==2.9.2
     # via beautifulsoup4
 stack-data==0.6.3
     # via ipython
-statsmodels==0.14.6
+statsmodels==0.15.0
     # via plotly-express
 syrupy==6.0.0
     # via interpretune (pyproject.toml:test)
@@ -859,7 +877,7 @@ twine==7.0.0
     # via interpretune (pyproject.toml:test)
 typeguard==4.6.0
     # via transformer-lens
-typer==0.27.1
+typer==0.27.2
     # via transformers
 typeshed-client==2.13.0
     # via jsonargparse
@@ -872,6 +890,7 @@ typing-extensions==4.16.0
     #   beautifulsoup4
     #   cryptography
     #   exceptiongroup
+    #   formulaic
     #   grpcio
     #   huggingface-hub
     #   ipython
@@ -913,11 +932,11 @@ urllib3==2.7.0
     #   requests
     #   sentry-sdk
     #   twine
-uv==0.12.6
+uv==0.12.8
     # via
     #   interpretune (pyproject.toml:dev)
     #   interpretune (pyproject.toml:test)
-virtualenv==21.7.5
+virtualenv==21.7.7
     # via pre-commit
 wadler-lindig==0.1.7
     # via jaxtyping
@@ -925,7 +944,7 @@ wandb==0.29.0
     # via
     #   interpretune (pyproject.toml)
     #   transformer-lens
-wcwidth==0.8.2
+wcwidth==0.8.3
     # via prompt-toolkit
 webcolors==25.10.0
     # via jsonschema
@@ -933,12 +952,14 @@ webencodings==0.6.1
     # via
     #   bleach
     #   tinycss2
-websocket-client==1.9.0
+websocket-client==1.9.2
     # via jupyter-server
 werkzeug==3.1.8
     # via tensorboard
 widgetsnbextension==4.0.16
     # via ipywidgets
+wrapt==2.4.0
+    # via formulaic
 xxhash==4.0.1
     # via
     #   datasets
