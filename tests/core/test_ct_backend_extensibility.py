@@ -94,11 +94,22 @@ class TestCoreKnowsNothingOfAnyHubAdapter:
         from pathlib import Path
 
         core = Path(__file__).parent.parent.parent / "src" / "interpretune"
-        offenders = [
-            str(p.relative_to(core))
-            for p in core.rglob("*.py")
-            if "interp_engine" in p.read_text() or "interp-engine" in p.read_text()
-        ]
+        # `encoding="utf-8"` is REQUIRED, not tidiness. Bare `read_text()` decodes with the platform
+        # default, which is cp1252 on Windows, and core carries characters it cannot decode (U+2581, the
+        # SentencePiece marker in `utils/neuronpedia_explanations.py`, is UTF-8 `E2 96 81` and 0x81 is
+        # undefined in cp1252). Locale-decoding a source file is wrong on every platform; on Windows it
+        # also raises.
+        scanned = 0
+        offenders = []
+        for p in core.rglob("*.py"):
+            scanned += 1
+            text = p.read_text(encoding="utf-8")
+            if "interp_engine" in text or "interp-engine" in text:
+                offenders.append(str(p.relative_to(core)))
+        # POSITIVE CONTROL. This assertion's success condition is an ABSENCE, so it passes just as
+        # cheerfully when the walk found nothing at all -- a wrong `core` path, a rename, a packaging
+        # change. Pin that the scan actually happened before believing what it did not find.
+        assert scanned > 50, f"expected to scan the core package, walked only {scanned} files under {core}"
         assert not offenders, f"core references a hub adapter: {offenders}"
 
     def test_the_bundled_registry_names_only_bundled_backends(self):
