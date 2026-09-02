@@ -16,9 +16,12 @@ class CircuitTracerConfig(ITSerializableCfg):
 
     """Backend to use for attribution.
 
-    Options:
+    Bundled options:
         - 'transformerlens': Use TransformerLens/HookedTransformer backend (default)
         - 'nnsight': Use NNsight/LanguageModel backend
+
+    Not an exhaustive list: any name present in ``CT_BACKEND_REGISTRY`` is valid, which is how a
+    third-party adapter adds a backend without a change here.
     """
     backend: str = "transformerlens"
 
@@ -119,10 +122,17 @@ class CircuitTracerConfig(ITSerializableCfg):
         if self.ndif_api_key is None and self.nnsight_remote:
             self.ndif_api_key = os.environ.get("NDIF_API_KEY")
 
-        # Validate backend selection
-        valid_backends = ["transformerlens", "nnsight"]
-        if self.backend not in valid_backends:
-            raise ValueError(f"Invalid backend '{self.backend}'. Must be one of {valid_backends}")
+        # Validate the backend against the REGISTRY, not a literal list. A backend registered from
+        # outside this package -- a hub component's, say -- must be configurable without editing core,
+        # and a hard-coded list is precisely the seam a third party cannot enter. Imported locally to
+        # keep this config module free of the adapter's import chain.
+        from interpretune.adapters.circuit_tracer.adapter import CT_BACKEND_REGISTRY
+
+        if self.backend not in CT_BACKEND_REGISTRY:
+            raise ValueError(
+                f"Invalid backend '{self.backend}'. Registered backends: {sorted(CT_BACKEND_REGISTRY)}. "
+                "A third-party backend registers itself into CT_BACKEND_REGISTRY before its config is built."
+            )
 
         valid_intervention_value_sources = ["top_feature_scores", "top_feature_activation_values", "constant"]
         if self.intervention_value_source not in valid_intervention_value_sources:

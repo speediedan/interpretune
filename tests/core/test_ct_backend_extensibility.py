@@ -1,0 +1,119 @@
+"""The circuit-tracer seams must be enterable by a backend core does not name.
+
+Before N2 these were identity branches (`if backend == "nnsight": ... else: TL`), which a third-party
+adapter could not enter and which OVERWROTE any model backend already attached in the MRO. Both are
+the shapes the per-adapter package work (#401) exists to remove: core owns protocols, capability
+vocabulary and registries, and knows nothing about any particular hub adapter.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from interpretune.adapters.circuit_tracer.adapter import CT_BACKEND_REGISTRY, CT_MODEL_BACKEND_FACTORIES
+from interpretune.config import CircuitTracerConfig
+
+
+@pytest.fixture
+def third_party_backend():
+    """Register a backend core has never heard of, and clean up."""
+    name = "a_third_party_backend"
+    CT_BACKEND_REGISTRY[name] = "SomeReplacementModel"
+    try:
+        yield name
+    finally:
+        CT_BACKEND_REGISTRY.pop(name, None)
+        CT_MODEL_BACKEND_FACTORIES.pop(name, None)
+
+
+class TestConfigValidationIsRegistryDriven:
+    def test_an_unregistered_backend_is_refused(self):
+        with pytest.raises(ValueError, match="Registered backends"):
+            CircuitTracerConfig(backend="not_a_registered_backend")
+
+    def test_registration_alone_makes_a_backend_configurable(self, third_party_backend):
+        """The whole point: no edit to core, no branch, just a registry entry."""
+        assert CircuitTracerConfig(backend=third_party_backend).backend == third_party_backend
+
+    def test_the_bundled_backends_still_validate(self):
+        for name in ("transformerlens", "nnsight"):
+            assert CircuitTracerConfig(backend=name).backend == name
+
+    def test_it_is_refused_again_once_unregistered(self, third_party_backend):
+        """Negative control: the acceptance above is caused by the registration, not by a widened check."""
+        CT_BACKEND_REGISTRY.pop(third_party_backend)
+        with pytest.raises(ValueError, match="Registered backends"):
+            CircuitTracerConfig(backend=third_party_backend)
+
+
+class TestAttachDoesNotOverride:
+    """A model backend already attached in the MRO must survive circuit-tracer's init.
+
+    This is the mechanism that lets a third adapter compose: it attaches its own backend, and
+    circuit-tracer -- which arrives later in the MRO -- must leave it alone. Without this the
+    composition order silently decides which backend wins.
+    """
+
+    @staticmethod
+    def _module_with(backend):
+        class _M:
+            pass
+
+        m = _M()
+        if backend is not None:
+            m._model_backend = backend
+        return m
+
+    def test_an_existing_backend_is_detected(self):
+        from interpretune.analysis.backends.capabilities import get_model_backend
+
+        sentinel = object()
+        assert get_model_backend(self._module_with(sentinel)) is sentinel
+
+    def test_absence_is_reported_as_none_not_an_error(self):
+        """The attach path branches on this, so it must answer rather than raise on a bare module."""
+        from interpretune.analysis.backends.capabilities import get_model_backend
+
+        assert get_model_backend(self._module_with(None)) is None
+
+    def test_a_registered_backend_may_supply_no_factory(self, third_party_backend):
+        """Legitimate case: the backend's own adapter attaches it, so circuit-tracer must not require one."""
+        assert third_party_backend in CT_BACKEND_REGISTRY
+        assert CT_MODEL_BACKEND_FACTORIES.get(third_party_backend) is None
+
+
+class TestCoreKnowsNothingOfAnyHubAdapter:
+    """Zero references to a hub-delivered adapter anywhere in core.
+
+    The rails (#125) exist so a component registers ITSELF. Anything core did on its behalf would recreate the
+    privileged position #401 removed, and it would do so silently -- a name in a branch reads as support rather than as
+    a special case.
+    """
+
+    def test_no_core_module_mentions_interp_engine(self):
+        from pathlib import Path
+
+        core = Path(__file__).parent.parent.parent / "src" / "interpretune"
+        # `encoding="utf-8"` is explicit because bare `read_text()` decodes with the platform default.
+        # That is NOT currently a CI failure -- `ci_test-full.yml` sets `PYTHONUTF8=1`, so the Windows
+        # runner decodes UTF-8 anyway. It matters off that path: a local Windows run without UTF-8 mode
+        # gets cp1252, and core carries U+2581 (the SentencePiece marker in
+        # `utils/neuronpedia_explanations.py`), UTF-8 `E2 96 81`, whose 0x81 is undefined in cp1252 and
+        # raises. Being explicit costs nothing and does not depend on a workflow env var staying put.
+        # See #429 for the repo-wide survey.
+        scanned = 0
+        offenders = []
+        for p in core.rglob("*.py"):
+            scanned += 1
+            text = p.read_text(encoding="utf-8")
+            if "interp_engine" in text or "interp-engine" in text:
+                offenders.append(str(p.relative_to(core)))
+        # POSITIVE CONTROL. This assertion's success condition is an ABSENCE, so it passes just as
+        # cheerfully when the walk found nothing at all -- a wrong `core` path, a rename, a packaging
+        # change. Pin that the scan actually happened before believing what it did not find.
+        assert scanned > 50, f"expected to scan the core package, walked only {scanned} files under {core}"
+        assert not offenders, f"core references a hub adapter: {offenders}"
+
+    def test_the_bundled_registry_names_only_bundled_backends(self):
+        """A hub backend must not be pre-registered here; it registers itself from its entrypoint."""
+        assert set(CT_BACKEND_REGISTRY) == {"transformerlens", "nnsight"}
