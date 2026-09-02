@@ -94,11 +94,13 @@ class TestCoreKnowsNothingOfAnyHubAdapter:
         from pathlib import Path
 
         core = Path(__file__).parent.parent.parent / "src" / "interpretune"
-        # `encoding="utf-8"` is REQUIRED, not tidiness. Bare `read_text()` decodes with the platform
-        # default, which is cp1252 on Windows, and core carries characters it cannot decode (U+2581, the
-        # SentencePiece marker in `utils/neuronpedia_explanations.py`, is UTF-8 `E2 96 81` and 0x81 is
-        # undefined in cp1252). Locale-decoding a source file is wrong on every platform; on Windows it
-        # also raises.
+        # `encoding="utf-8"` is explicit because bare `read_text()` decodes with the platform default.
+        # That is NOT currently a CI failure -- `ci_test-full.yml` sets `PYTHONUTF8=1`, so the Windows
+        # runner decodes UTF-8 anyway. It matters off that path: a local Windows run without UTF-8 mode
+        # gets cp1252, and core carries U+2581 (the SentencePiece marker in
+        # `utils/neuronpedia_explanations.py`), UTF-8 `E2 96 81`, whose 0x81 is undefined in cp1252 and
+        # raises. Being explicit costs nothing and does not depend on a workflow env var staying put.
+        # See #429 for the repo-wide survey.
         scanned = 0
         offenders = []
         for p in core.rglob("*.py"):
