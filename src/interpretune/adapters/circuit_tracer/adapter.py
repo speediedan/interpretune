@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, TYPE_CHECKING
+from typing import Callable, Any, TYPE_CHECKING
 from dataclasses import dataclass, field
 from pathlib import Path
 from copy import deepcopy
@@ -24,20 +24,63 @@ from interpretune.adapters import (
 )
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import CircuitTracerConfig, ITConfig
+from interpretune.analysis.backends.capabilities import get_model_backend
 from interpretune.utils import rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
 
 if TYPE_CHECKING:
     from interpretune.analysis.backends import AnalysisBackendCapability
 
-# Type alias for replacement model backends - supports both TransformerLens and NNsight
+#: The bundled replacement-model types. Deliberately NOT a closed union of what a replacement model may
+#: be: a backend registered from outside this package (a hub component's, say) contributes a class this
+#: module cannot name, so callers annotate against this alias for the bundled path and treat the
+#: registry as the authority on what is valid.
 ReplacementModelType = TransformerLensReplacementModel | NNSightReplacementModel
 
-# Registry mapping circuit-tracer backend names to expected ReplacementModel class names.
+#: Registry mapping a circuit-tracer backend NAME to the ReplacementModel class name it must produce.
+#:
+#: This is the rendezvous, and it is extensible by assignment: a third-party adapter registers its
+#: backend here rather than this module growing a branch for it. Nothing below compares a backend name
+#: to a literal -- the registry answers "is this valid" and "what should it have produced".
 CT_BACKEND_REGISTRY: dict[str, str] = {
     "transformerlens": "TransformerLensReplacementModel",
     "nnsight": "NNSightReplacementModel",
 }
+
+#: Backend NAME -> a callable returning the ``ModelBackend`` to attach for it, given the module.
+#:
+#: Separate from the validation registry above because the two answer different questions, and a
+#: backend may legitimately register for one and not the other: a component whose module composition
+#: already attaches its own model backend registers no factory here at all, and the attach below
+#: leaves it alone (see the "attach, do not override" note there).
+#:
+#: Each factory imports its framework LOCALLY, which is what keeps this module free of eager
+#: transformer_lens / nnsight imports. circuit-tracer owns the two bundled pairings because it arrived
+#: after both; a later adapter owns its own pairing and registers it from its own package.
+CT_MODEL_BACKEND_FACTORIES: dict[str, Callable[[Any], Any]] = {}
+
+
+def _tl_model_backend(_module: Any) -> Any:
+    from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+    return TLModelBackend()
+
+
+def _nnsight_model_backend(module: Any) -> Any:
+    from interpretune.adapters.nnsight.backends import NNsightModelBackend, get_default_configs_per_pass
+    from interpretune.analysis.backends.hook_mapping import HookNameResolver
+
+    hf_model = NNsightModelBackend._get_hf_model(module.model)
+    hf_config = getattr(hf_model, "config", None)
+    architectures = getattr(hf_config, "architectures", None) if hf_config else None
+    model_arch = architectures[0] if architectures else type(hf_model).__name__
+    backend = NNsightModelBackend(HookNameResolver(model_arch), configs_per_pass=get_default_configs_per_pass())
+    backend.register_model_hooks(module.model)
+    return backend
+
+
+CT_MODEL_BACKEND_FACTORIES["transformerlens"] = _tl_model_backend
+CT_MODEL_BACKEND_FACTORIES["nnsight"] = _nnsight_model_backend
 
 
 @dataclass(kw_only=True)
@@ -138,12 +181,13 @@ class BaseCircuitTracerModule(BaseITModule):
             **pretrained_kwargs,
         )
 
-        # Validate returned model type matches expected backend using CT_BACKEND_REGISTRY.
+        # Validate the returned model against the REGISTRY rather than against a known set of names, so
+        # a backend registered from outside this package validates the same way the bundled ones do.
         expected_name = CT_BACKEND_REGISTRY.get(backend)
         if not expected_name or type(replacement_model).__name__ != expected_name:
             raise ValueError(
                 f"Invalid replacement model for backend '{backend}': expected {expected_name}, "
-                f"got {type(replacement_model).__name__}"
+                f"got {type(replacement_model).__name__} (registered backends: {sorted(CT_BACKEND_REGISTRY)})"
             )
 
         self._replacement_model = replacement_model
@@ -151,24 +195,19 @@ class BaseCircuitTracerModule(BaseITModule):
         # Replace the model with the replacement model for circuit tracing
         self.model = self._replacement_model
 
-        if backend == "nnsight":
-            from interpretune.analysis.backends.hook_mapping import HookNameResolver
-            from interpretune.adapters.nnsight.backends import NNsightModelBackend, get_default_configs_per_pass
-
-            hf_model = NNsightModelBackend._get_hf_model(self.model)
-            hf_config = getattr(hf_model, "config", None)
-            architectures = getattr(hf_config, "architectures", None) if hf_config else None
-            model_arch = architectures[0] if architectures else type(hf_model).__name__
-            resolver = HookNameResolver(model_arch)
-            self._model_backend = NNsightModelBackend(  # type: ignore[attr-defined]
-                resolver,
-                configs_per_pass=get_default_configs_per_pass(),
-            )
-            self._model_backend.register_model_hooks(self.model)  # type: ignore[attr-defined]
-        else:
-            from interpretune.adapters.transformer_lens.backends import TLModelBackend
-
-            self._model_backend = TLModelBackend()  # type: ignore[attr-defined]
+        # ATTACH, DO NOT OVERRIDE. Another adapter in this MRO may have attached its own model backend
+        # already -- that is how a third adapter composes with this one -- and clobbering it here would
+        # make the composition order decide which backend wins, silently. Only attach when nothing has.
+        if get_model_backend(self) is None:
+            factory = CT_MODEL_BACKEND_FACTORIES.get(backend)
+            if factory is not None:
+                self._model_backend = factory(self)  # type: ignore[attr-defined]
+            else:
+                # A registered backend with no factory is legitimate: its adapter attaches its own.
+                rank_zero_info(
+                    f"No model-backend factory registered for circuit-tracer backend {backend!r}; "
+                    "leaving the module's model backend unset for its own adapter to attach."
+                )
 
     def _capture_hyperparameters(self) -> None:
         """Capture hyperparameters for logging."""
