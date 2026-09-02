@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TypeAlias, Callable, Any, TYPE_CHECKING
+from typing import TypeAlias, Any, TYPE_CHECKING
 from dataclasses import dataclass, field
 from pathlib import Path
 from copy import deepcopy
@@ -51,50 +51,13 @@ if TYPE_CHECKING:
 ReplacementModelType: TypeAlias = nn.Module
 BundledReplacementModelType = TransformerLensReplacementModel | NNSightReplacementModel
 
-#: Registry mapping a circuit-tracer backend NAME to the ReplacementModel class name it must produce.
-#:
-#: This is the rendezvous, and it is extensible by assignment: a third-party adapter registers its
-#: backend here rather than this module growing a branch for it. Nothing below compares a backend name
-#: to a literal -- the registry answers "is this valid" and "what should it have produced".
-CT_BACKEND_REGISTRY: dict[str, str] = {
-    "transformerlens": "TransformerLensReplacementModel",
-    "nnsight": "NNSightReplacementModel",
-}
-
-#: Backend NAME -> a callable returning the ``ModelBackend`` to attach for it, given the module.
-#:
-#: Separate from the validation registry above because the two answer different questions, and a
-#: backend may legitimately register for one and not the other: a component whose module composition
-#: already attaches its own model backend registers no factory here at all, and the attach below
-#: leaves it alone (see the "attach, do not override" note there).
-#:
-#: Each factory imports its framework LOCALLY, which is what keeps this module free of eager
-#: transformer_lens / nnsight imports. circuit-tracer owns the two bundled pairings because it arrived
-#: after both; a later adapter owns its own pairing and registers it from its own package.
-CT_MODEL_BACKEND_FACTORIES: dict[str, Callable[[Any], Any]] = {}
-
-
-def _tl_model_backend(_module: Any) -> Any:
-    from interpretune.adapters.transformer_lens.backends import TLModelBackend
-
-    return TLModelBackend()
-
-
-def _nnsight_model_backend(module: Any) -> Any:
-    from interpretune.adapters.nnsight.backends import NNsightModelBackend, get_default_configs_per_pass
-    from interpretune.analysis.backends.hook_mapping import HookNameResolver
-
-    hf_model = NNsightModelBackend._get_hf_model(module.model)
-    hf_config = getattr(hf_model, "config", None)
-    architectures = getattr(hf_config, "architectures", None) if hf_config else None
-    model_arch = architectures[0] if architectures else type(hf_model).__name__
-    backend = NNsightModelBackend(HookNameResolver(model_arch), configs_per_pass=get_default_configs_per_pass())
-    backend.register_model_hooks(module.model)
-    return backend
-
-
-CT_MODEL_BACKEND_FACTORIES["transformerlens"] = _tl_model_backend
-CT_MODEL_BACKEND_FACTORIES["nnsight"] = _nnsight_model_backend
+# The registries live in `registry.py`, which imports NOTHING from circuit-tracer. They are the seam a
+# third-party backend enters, and a seam that can only be reached by importing this module -- which
+# requires an optional package -- is not reachable by the components it exists for.
+from interpretune.adapters.circuit_tracer.registry import (  # noqa: E402
+    CT_BACKEND_REGISTRY as CT_BACKEND_REGISTRY,
+    CT_MODEL_BACKEND_FACTORIES as CT_MODEL_BACKEND_FACTORIES,
+)
 
 
 @dataclass(kw_only=True)

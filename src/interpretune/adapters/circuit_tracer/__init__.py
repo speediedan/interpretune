@@ -11,9 +11,12 @@ on paths that must stay importable without it, so a name is resolved only when i
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from interpretune.adapters.circuit_tracer.registry import (
+        CT_BACKEND_REGISTRY as CT_BACKEND_REGISTRY,
+        CT_MODEL_BACKEND_FACTORIES as CT_MODEL_BACKEND_FACTORIES,
+    )
     from interpretune.adapters.circuit_tracer.adapter import (
         BaseCircuitTracerModule as BaseCircuitTracerModule,
-        CT_BACKEND_REGISTRY as CT_BACKEND_REGISTRY,
         CircuitTracerAdapter as CircuitTracerAdapter,
         CircuitTracerAnalysisMixin as CircuitTracerAnalysisMixin,
         CircuitTracerAttributeMixin as CircuitTracerAttributeMixin,
@@ -36,7 +39,8 @@ if TYPE_CHECKING:
 # public name -> the submodule that defines it
 _EXPORT_MODULES = {
     "BaseCircuitTracerModule": "adapter",
-    "CT_BACKEND_REGISTRY": "adapter",
+    "CT_BACKEND_REGISTRY": "registry",
+    "CT_MODEL_BACKEND_FACTORIES": "registry",
     "CircuitTracerAdapter": "adapter",
     "CircuitTracerAnalysisBackend": "backends",
     "CircuitTracerAnalysisMixin": "adapter",
@@ -55,6 +59,7 @@ _EXPORT_MODULES = {
 __all__ = [
     "BaseCircuitTracerModule",
     "CT_BACKEND_REGISTRY",
+    "CT_MODEL_BACKEND_FACTORIES",
     "CircuitTracerAdapter",
     "CircuitTracerAnalysisBackend",
     "CircuitTracerAnalysisMixin",

@@ -124,9 +124,11 @@ class CircuitTracerConfig(ITSerializableCfg):
 
         # Validate the backend against the REGISTRY, not a literal list. A backend registered from
         # outside this package -- a hub component's, say -- must be configurable without editing core,
-        # and a hard-coded list is precisely the seam a third party cannot enter. Imported locally to
-        # keep this config module free of the adapter's import chain.
-        from interpretune.adapters.circuit_tracer.adapter import CT_BACKEND_REGISTRY
+        # and a hard-coded list is precisely the seam a third party cannot enter.
+        #
+        # Imported from `registry`, NOT from `adapter`: `adapter` imports circuit-tracer eagerly, so
+        # reading the registry through it made validating this config require an OPTIONAL package.
+        from interpretune.adapters.circuit_tracer.registry import CT_BACKEND_REGISTRY
 
         if self.backend not in CT_BACKEND_REGISTRY:
             raise ValueError(

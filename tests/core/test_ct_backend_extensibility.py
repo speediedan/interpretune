@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from interpretune.adapters.circuit_tracer.adapter import CT_BACKEND_REGISTRY, CT_MODEL_BACKEND_FACTORIES
+from interpretune.adapters.circuit_tracer.registry import CT_BACKEND_REGISTRY, CT_MODEL_BACKEND_FACTORIES
 from interpretune.config import CircuitTracerConfig
 
 
