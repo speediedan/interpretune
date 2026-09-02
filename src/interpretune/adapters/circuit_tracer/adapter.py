@@ -1,11 +1,12 @@
 from __future__ import annotations
-from typing import Callable, Any, TYPE_CHECKING
+from typing import TypeAlias, Callable, Any, TYPE_CHECKING
 from dataclasses import dataclass, field
 from pathlib import Path
 from copy import deepcopy
 from datetime import datetime
 
 import torch
+from torch import nn
 
 from circuit_tracer import ReplacementModel, Graph, attribute
 from circuit_tracer.utils import create_graph_files
@@ -31,11 +32,24 @@ from interpretune.protocol import Adapter
 if TYPE_CHECKING:
     from interpretune.analysis.backends import AnalysisBackendCapability
 
-#: The bundled replacement-model types. Deliberately NOT a closed union of what a replacement model may
-#: be: a backend registered from outside this package (a hub component's, say) contributes a class this
-#: module cannot name, so callers annotate against this alias for the bundled path and treat the
-#: registry as the authority on what is valid.
-ReplacementModelType = TransformerLensReplacementModel | NNSightReplacementModel
+#: What a circuit-tracer replacement model may be. `torch.nn.Module`, and it CANNOT be narrower:
+#:
+#: `circuit_tracer.ReplacementModel` is a FACTORY, not a base class. Its products inherit from
+#: UNRELATED bases -- the bundled two extend `HookedTransformer` and `LanguageModel` respectively, and
+#: circuit-tracer's own additional backends extend others still -- so the products share no common
+#: ancestor except `nn.Module`. Neither the factory class nor a union of the bundled two is a
+#: supertype of all of them, which is measurable rather than theoretical: type-checking against a
+#: circuit-tracer carrying a third backend rejects that backend's product at the assignment below
+#: under either narrower annotation.
+#:
+#: A union would also be closed by construction: a backend registered from outside this package
+#: contributes a class no module in core can name, so the union would reject it -- the privileged
+#: position #401 removed, expressed in the type system instead of in a branch.
+#:
+#: The bundled aliases stay importable for callers that genuinely mean one specific backend, and
+#: `CT_BACKEND_REGISTRY` remains the runtime authority on what a given backend must have produced.
+ReplacementModelType: TypeAlias = nn.Module
+BundledReplacementModelType = TransformerLensReplacementModel | NNSightReplacementModel
 
 #: Registry mapping a circuit-tracer backend NAME to the ReplacementModel class name it must produce.
 #:
@@ -181,6 +195,21 @@ class BaseCircuitTracerModule(BaseITModule):
             **pretrained_kwargs,
         )
 
+        # NARROWED EXPLICITLY, and the reason is a real tension rather than a type-checker workaround.
+        # circuit-tracer types `backend` as a CLOSED `Literal` of the backends IT ships, and overloads
+        # `from_pretrained` on it. Our `backend` is a plain `str` BY DESIGN -- the registry is open, so
+        # a third-party backend name cannot appear in anyone's Literal -- which means no overload
+        # matches and the fallback return is optional. Narrowing
+        # here keeps the open registry AND gives a caller a message naming the cause, where the
+        # class-name check below would otherwise report a confusing `NoneType` mismatch.
+        if replacement_model is None:
+            raise ValueError(
+                f"ReplacementModel.from_pretrained returned None for backend {backend!r} "
+                f"(registered backends: {sorted(CT_BACKEND_REGISTRY)}). A registered backend whose "
+                "factory cannot construct a model should raise with its own reason rather than "
+                "returning None."
+            )
+
         # Validate the returned model against the REGISTRY rather than against a known set of names, so
         # a backend registered from outside this package validates the same way the bundled ones do.
         expected_name = CT_BACKEND_REGISTRY.get(backend)
@@ -192,8 +221,10 @@ class BaseCircuitTracerModule(BaseITModule):
 
         self._replacement_model = replacement_model
 
-        # Replace the model with the replacement model for circuit tracing
-        self.model = self._replacement_model
+        # Assigned from the NARROWED LOCAL, not re-read from the attribute: `_replacement_model` is
+        # declared optional (it is None before init), so reading it back here would reintroduce the
+        # `| None` that the check above just ruled out.
+        self.model = replacement_model
 
         # ATTACH, DO NOT OVERRIDE. Another adapter in this MRO may have attached its own model backend
         # already -- that is how a third adapter composes with this one -- and clobbering it here would
