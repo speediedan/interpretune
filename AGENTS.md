@@ -518,23 +518,53 @@ Serialization details matter here:
 
 Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeline composition may change without deprecation notices. Do not add backwards-compatibility shims (fallback code paths, silent coercions, etc.) to preserve caller assumptions that predate the current design. If an op's contract changes, update all in-tree callers and tests to match the new contract directly.
 
-## Shipped docs must not reference agent workstreams
+## Anything publicly visible is written for a public reader
 
-Anything under `docs/`, `README.md`, or a docstring is read by users and outlives the work that
-produced it. **Never park an open decision in shipped documentation by pointing at a private agent
-workstream** ("an open decision on the X workstream", "to be settled by the Y session"). Those
-workstreams close, get renamed, or are simply invisible to a reader, and the decision is then lost in
-a document that still implies someone is holding it.
+**The test is visibility, not file type.** This covers `docs/`, `README.md`, docstrings, commit messages,
+PR bodies and titles, issue bodies and comments, generated repo cards, published component manifests —
+and whatever public surface exists next. An earlier version of this rule enumerated surfaces, and the
+enumeration is what failed: issue bodies were never excluded by judgement, they were simply not on a list
+written before they mattered. **Two violations came directly from following that list's letter** (see
+below), so the scope is now a property. If a person outside this project can read it, it is in scope.
 
-**File an issue and reference the issue number.** An issue survives the session, carries the
-pros/cons, and shows its own resolution. A workstream reference does none of that.
+That framing matters more than it sounds, because new surfaces keep appearing. The adapter card is
+published prose on a public repo, generated at publish time, and it would have been on none of the old
+lists.
 
-The same applies to an issue that has since closed: `#124` closed while a doc still cited it as the
-home of an unsettled default, which is how that decision nearly went missing. If a doc must record an
-open question, it points at an OPEN issue or it states the question and the current behavior plainly.
+### Three things that must never appear there
 
-Private plan/log pairs in the admin repo are the right place for workstream-scoped detail. Shipped
-docs are not.
+1. **Private agent-session or workstream names.** `ie-adapter`, `hub-registration-umbrella`, "the X
+   session", "settled on the Y workstream". These are invisible to a reader, and they close or get
+   renamed. **Name the lane by what it does** — "the adapter-component lane", "the J-lens lane" — which
+   preserves the ownership information the sentence exists to convey instead of deleting it.
+2. **AI-attribution trailers.** `Co-Authored-By: Claude ...`, "Generated with ...", `Claude-Session:` links.
+   Commit noise, and on a third-party repo they are noise the maintainer did not ask for and cannot act on.
+3. **Ephemeral CI references.** Build numbers, run URLs, approval ids. They identify a log that expires and
+   a context the reader will not have. Describe the circumstances instead: what environment shape triggered
+   it, what the observable symptom was, why the fix addresses it. Those belong in PR discussion threads and
+   workstream logs, which carry their own context.
+
+### Never park an open decision by pointing at a workstream
+
+An open question recorded as "to be settled by the Y session" is lost the moment that session ends, in a
+document that still implies someone is holding it. **File an issue and reference the issue number.** An
+issue survives, carries the pros and cons, and shows its own resolution.
+
+**The remedy has its own trap, and it is how one of the violations above happened.** "File an issue" moves
+the text to a *public* surface — so the issue itself must obey the three rules above. Filing an issue and
+then naming a private session inside it is the rule's own fix becoming the vector.
+
+The same applies to an issue that has since closed: `#124` closed while a doc still cited it as the home of
+an unsettled default, which is how that decision nearly went missing. If a doc must record an open
+question, it points at an OPEN issue or it states the question and the current behaviour plainly.
+
+Private plan/log pairs in the admin repo are the right place for workstream-scoped detail.
+
+### When you notice a violation
+
+Fix the artifact, then **sweep the rest** — these arrive in batches, because whatever produced one was
+usually applied uniformly. Verify by re-reading the artifact after the edit rather than trusting the write
+to have landed. Leave merged commit history alone; a rewrite costs more than the noise.
 
 ## Commit & PR Requirements
 
@@ -575,11 +605,11 @@ docs are not.
   observable symptom was, and why the fix addresses it. Ephemeral ids belong in PR discussion
   threads and workstream logs, which carry their own context, not in the tree.
 
-- **No AI-attribution trailers** (`Co-Authored-By: Claude ...`, "Generated with ..." lines) in commit
-  messages or PR bodies — they are commit noise (and `.claude/settings.json` no longer adds them). When
-  rebasing the long-lived multi-repo workstream branches (interpretune, SAEDashboard, SAELens,
-  circuit-tracer, neuronpedia) ahead of opening PRs, strip these trailers from prior commits as part of
-  the rebase; a full-history sweep outside those rebases is not required.
+- **No AI-attribution trailers, private session names, or ephemeral CI references** in commit messages
+  or PR bodies — see *Anything publicly visible is written for a public reader* above, which states the
+  rule over every public surface rather than a list of them. When rebasing the long-lived multi-repo
+  workstream branches ahead of opening PRs, strip these from prior commits as part of the rebase; a
+  full-history sweep outside those rebases is not required.
 
 ## Multi-Session Workstream Cadence (plan + completion log)
 
