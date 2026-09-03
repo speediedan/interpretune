@@ -20,7 +20,11 @@ from pathlib import Path
 
 import pytest
 
-from interpretune.adapters._light_register import _declared_requires, _owning_package, register_all_adapters
+from interpretune.adapters._light_register import (
+    _implementation_module,
+    discover_adapter_entrypoints,
+    register_all_adapters,
+)
 from interpretune.adapters.registration import CompositionRegistry
 
 ADAPTER_PACKAGES = ("circuit_tracer", "transformer_lens", "sae_lens", "nnsight")
@@ -81,7 +85,7 @@ class TestDeclarationIsReadableWithoutTheDependency:
                 print("CONTROL_OK")
 
             from interpretune.adapters._light_register import _declared_requires
-            declared = _declared_requires("interpretune.adapters.circuit_tracer.adapter")
+            declared = _declared_requires("interpretune.adapters.circuit_tracer")
             print("DECLARED_OK" if declared else "DECLARED_MISSING", declared)
         """)
         proc = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=300)
@@ -102,6 +106,8 @@ class TestUnavailableAdaptersAreReported:
         """
         import interpretune.adapters.circuit_tracer as ctpkg
 
+        if not discover_adapter_entrypoints():
+            pytest.skip("installed interpretune metadata predates the entry-point group; reinstall to exercise")
         monkeypatch.setattr(ctpkg, "__it_requires__", {"pip": ["a-package-nobody-has"]}, raising=False)
         with caplog.at_level(logging.INFO):
             register_all_adapters(CompositionRegistry())
@@ -120,19 +126,55 @@ class TestUnavailableAdaptersAreReported:
         assert "unavailable in this environment" not in caplog.text
 
 
-class TestOwningPackageResolution:
-    """`<pkg>.adapter` declares via its package; a flat module has no package and falls back."""
+class TestImplementationModuleResolution:
+    """The entry point names the IMPORT-SAFE module; the registrable classes may live one level down.
 
-    def test_a_packaged_adapter_resolves_to_its_package(self):
-        assert _owning_package("interpretune.adapters.circuit_tracer.adapter") == "interpretune.adapters.circuit_tracer"
+    Resolving this AFTER the requirement check is what keeps the heavy import behind the predicate. Getting it backwards
+    would import the framework in order to decide whether the framework should be imported.
+    """
 
-    def test_a_flat_adapter_module_has_no_owning_package(self):
-        """`core` and `lightning` are flat modules, so they declare nothing and use the weaker fallback."""
-        assert _owning_package("interpretune.adapters.core") is None
-        assert _owning_package("interpretune.adapters.lightning") is None
+    def test_a_packaged_adapter_resolves_to_its_adapter_submodule(self):
+        assert (
+            _implementation_module("interpretune.adapters.circuit_tracer")
+            == "interpretune.adapters.circuit_tracer.adapter"
+        )
 
-    def test_a_flat_module_declares_nothing(self):
-        assert _declared_requires("interpretune.adapters.core") is None
+    def test_a_flat_adapter_module_resolves_to_itself(self):
+        """`core` and `lightning` carry no heavy module-level import, so they are both halves at once."""
+        assert _implementation_module("interpretune.adapters.core") == "interpretune.adapters.core"
+        assert _implementation_module("interpretune.adapters.lightning") == "interpretune.adapters.lightning"
+
+    def test_a_nonexistent_module_resolves_to_itself_rather_than_raising(self):
+        """Resolution must not raise on a name a third party got wrong; the import that follows reports it."""
+        assert _implementation_module("not.a.real.module") == "not.a.real.module"
+
+
+class TestDiscoveryIsEntrypointDriven:
+    def test_an_empty_group_warns_rather_than_registering_nothing_quietly(self, monkeypatch):
+        """Registering nothing must never be indistinguishable from an environment with no adapters.
+
+        This is the #431 lesson at the discovery layer: the failure is silent by default, and its most likely cause --
+        installed metadata predating the group -- looks exactly like a correct empty result.
+        """
+        import importlib.metadata as md
+
+        # Patch the LOOKUP, not `discover_adapter_entrypoints` -- patching the function would replace the
+        # code under test, and the assertion would then be about the stub rather than about the rails.
+        monkeypatch.setattr(md, "entry_points", lambda **kw: [])
+        with pytest.warns(UserWarning, match="entry-point group is empty"):
+            discover_adapter_entrypoints()
+
+    def test_the_bundled_adapters_are_discoverable_when_metadata_is_current(self):
+        """Skips rather than fails when the installed metadata predates the group, and SAYS which it is."""
+        found = discover_adapter_entrypoints()
+        if not found:
+            pytest.skip("installed interpretune metadata predates the entry-point group; reinstall to exercise")
+        assert set(found) >= {"core", "lightning", "circuit_tracer", "nnsight"}
+        for name, value in found.items():
+            assert not value.endswith(".adapter"), (
+                f"{name} names an implementation module; entry points must name the IMPORT-SAFE module, "
+                "or resolving one imports the framework it is deciding about."
+            )
 
 
 class TestManifestCompositionsArePartitioned:
