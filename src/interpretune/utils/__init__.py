@@ -23,7 +23,6 @@ from interpretune.utils.import_utils import (
     _CT_AVAILABLE,
     _NEURONPEDIA_AVAILABLE,
     _NNSIGHT_AVAILABLE,
-    _IE_AVAILABLE,
 )
 from interpretune.utils.logging import (
     ITInstantiationFeedbackWarning,
@@ -145,7 +144,6 @@ __all__ = [
     "_CT_AVAILABLE",
     "_NEURONPEDIA_AVAILABLE",
     "_NNSIGHT_AVAILABLE",
-    "_IE_AVAILABLE",
     "_import_class",
     "instantiate_class",
     "_resolve_dtype",

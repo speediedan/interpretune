@@ -36,7 +36,14 @@ import pytest
 import torch
 from torch.testing import assert_close
 
-from interpretune.utils import _IE_AVAILABLE
+from interpretune.utils.import_utils import package_available
+
+# Asked HERE rather than exported from `interpretune.utils`, deliberately. The bundled availability flags
+# name BUNDLED adapters; `interp_engine` is hub-delivered, and core naming it would recreate the privileged
+# position per-adapter packaging removed — a hub component is supposed to register ITSELF. A test may know
+# which optional package it needs; core may not. `test_no_core_module_mentions_interp_engine` enforces this,
+# and caught the first version of this module, which had added the flag to core.
+_IE_AVAILABLE = package_available("interp_engine")
 
 MODEL_ID = "gpt2"
 LAYER = 5
