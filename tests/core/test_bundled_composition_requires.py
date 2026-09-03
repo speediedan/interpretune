@@ -133,3 +133,59 @@ class TestOwningPackageResolution:
 
     def test_a_flat_module_declares_nothing(self):
         assert _declared_requires("interpretune.adapters.core") is None
+
+
+class TestManifestCompositionsArePartitioned:
+    """The hub half of the same predicate: a declared composition may be skipped, never silently."""
+
+    @staticmethod
+    def _manifest(extra_requires):
+        return {
+            "adapters": {
+                "compositions": [
+                    {"component": "module", "adapters": ["core", "interp_engine"]},
+                    {
+                        "component": "module",
+                        "adapters": ["core", "interp_engine", "circuit_tracer"],
+                        "requires": extra_requires,
+                    },
+                ]
+            }
+        }
+
+    def test_an_unsatisfiable_entry_is_partitioned_out_with_its_reason(self):
+        from interpretune.hub.adapters import _partition_declared_compositions
+
+        satisfiable, unsupported = _partition_declared_compositions(
+            self._manifest({"pip": ["a-package-nobody-has"]}), source="demo"
+        )
+        assert satisfiable == (("module", "core", "interp_engine"),)
+        assert len(unsupported) == 1
+        assert "a-package-nobody-has" in unsupported[0][1], "the skip must carry the REASON, not just the fact"
+
+    def test_a_satisfiable_entry_is_kept(self):
+        """Positive control: the partition is caused by the requirement, not by having a `requires` key."""
+        from interpretune.hub.adapters import _partition_declared_compositions
+
+        satisfiable, unsupported = _partition_declared_compositions(self._manifest({"pip": ["pytest"]}), source="demo")
+        assert len(satisfiable) == 2 and not unsupported
+
+    def test_composition_identity_is_order_insensitive(self):
+        """Manifest author order must not matter: the registry side value-sorts, so this side must too."""
+        from interpretune.hub.adapters import _composition_key
+
+        a = _composition_key({"component": "module", "adapters": ["lightning", "interp_engine"]})
+        b = _composition_key({"component": "module", "adapters": ["interp_engine", "lightning"]})
+        assert a == b
+
+
+class TestDirectImportPathIsNamed:
+    def test_supported_compositions_is_None_outside_a_load(self):
+        """`None` means "no manifest governs this invocation" -- the pip / direct-import path.
+
+        Not empty (which would silently register nothing) and not the full declared set (which would import an absent
+        dependency). A component reached by `pip install` has no rails to consult.
+        """
+        from interpretune.hub.adapters import supported_compositions
+
+        assert supported_compositions() is None
