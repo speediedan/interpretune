@@ -33,31 +33,70 @@ def _import_adapter_module(module_path: str) -> ModuleType | None:
         return None
 
 
-def _owning_package(module_path: str) -> str | None:
-    """The adapter PACKAGE owning an implementation submodule, or ``None`` for a flat adapter module.
-
-    ``adapter_modules`` names ``<pkg>.adapter`` submodules; the declaration lives one level up, in the
-    package ``__init__``, which is the half that stays importable without the heavy dependency.
-    """
-    pkg, _, leaf = module_path.rpartition(".")
-    return pkg if leaf == "adapter" and pkg else None
-
-
-def _declared_requires(module_path: str) -> dict | None:
+def _declared_requires(declared_module: str) -> dict | None:
     """Read an adapter's declared requirements WITHOUT importing its implementation module.
 
-    This is the whole point of the declaration being an eager constant in the package ``__init__``: the
-    answer to "should this be imported" must not need the import it is deciding about.
+    ``declared_module`` is what the entry point named, which is by contract the IMPORT-SAFE half: a
+    package `__init__` for an adapter with a heavy implementation, or the module itself for one that has
+    none. So importing it to read the declaration costs nothing and needs no optional dependency — which
+    is the property the whole read-before-import design rests on.
 
-    ``None`` means nothing is declared -- a flat adapter module with no owning package, or a package that
-    declares nothing. Those fall back to import-and-report below, which is weaker (a caught exception is a
-    symptom, not a reason) but still never silent.
+    ``None`` means nothing is declared. Those fall back to import-and-report below, which is weaker (a
+    caught exception is a symptom, not a reason) but still never silent.
     """
-    pkg_path = _owning_package(module_path)
-    if pkg_path is None:
-        return None
-    pkg = _import_adapter_module(pkg_path)
-    return getattr(pkg, "__it_requires__", None) if pkg is not None else None
+    mod = _import_adapter_module(declared_module)
+    return getattr(mod, "__it_requires__", None) if mod is not None else None
+
+
+#: The entry-point group through which ANY adapter — bundled or third-party — announces itself.
+ADAPTER_ENTRYPOINT_GROUP = "interpretune.adapters"
+
+
+def discover_adapter_entrypoints() -> dict[str, str]:
+    """Adapter name -> the import-safe module that declares it, from the entry-point group.
+
+    This replaces a hardcoded tuple of six module paths. That tuple was a RAILS file naming packages, so a
+    bundled adapter was privileged by construction and a third-party replacement had no way to occupy a
+    slot in it — the concrete form of "the rails may depend only on what a component DECLARES, never on
+    which package it is".
+
+    **Each value names what is IMPORT-SAFE, never the heavy implementation module**, because resolving an
+    entry point imports what it names. A group entry pointing at `<pkg>.adapter` would import the framework
+    in order to decide whether the framework should be imported.
+
+    An EMPTY result is reported rather than returned quietly: registering nothing is indistinguishable from
+    an environment with no adapters, and the overwhelmingly likely cause is installed metadata that predates
+    this group (an editable install not refreshed after the entry points were declared).
+    """
+    from importlib.metadata import entry_points
+
+    found = {ep.name: ep.value for ep in entry_points(group=ADAPTER_ENTRYPOINT_GROUP)}
+    if not found:
+        from interpretune.utils.logging import rank_zero_warn
+
+        rank_zero_warn(
+            f"No adapters discovered: the {ADAPTER_ENTRYPOINT_GROUP!r} entry-point group is empty, so NO "
+            "compositions will register. This usually means the installed interpretune metadata predates "
+            "the group — reinstall (`uv pip install -e .`) to refresh it. It does not mean this environment "
+            "has no adapters."
+        )
+    return found
+
+
+def _implementation_module(declared: str) -> str:
+    """Where an adapter's registrable classes live, given the import-safe module the entry point named.
+
+    A packaged adapter keeps its classes in `<pkg>.adapter` and its declaration in `<pkg>/__init__.py`; a flat adapter
+    module is both. Resolving this AFTER the requirement check is what keeps the heavy import behind the predicate.
+    """
+    from importlib.util import find_spec
+
+    try:
+        if find_spec(f"{declared}.adapter") is not None:
+            return f"{declared}.adapter"
+    except (ImportError, AttributeError, ValueError):
+        pass
+    return declared
 
 
 def register_all_adapters(registry) -> None:
@@ -67,34 +106,24 @@ def register_all_adapters(registry) -> None:
     The set of modules is initially explicit and small but may switch to an entrypoint-based discovery mechanism in the
     future.
     """
-    # TODO: consider making this auto-discoverable via entrypoints
-    # NOTE: these name the DEFINING submodule (`<pkg>.adapter`), not the package. Per-adapter packages
-    # export lazily via PEP 562 `__getattr__`, and the discovery below walks `dir(mod)`, which does not
-    # trigger a lazy resolver -- pointing at a package would find no adapter classes and register
-    # NOTHING, silently. The submodules are the import-safe half of each package anyway (their heavy
-    # imports are TYPE_CHECKING/local), which is the property this pass depends on.
-    adapter_modules: Iterable[str] = (
-        "interpretune.adapters.core",
-        "interpretune.adapters.lightning",
-        "interpretune.adapters.sae_lens.adapter",
-        "interpretune.adapters.transformer_lens.adapter",
-        "interpretune.adapters.circuit_tracer.adapter",
-        "interpretune.adapters.nnsight.adapter",
-    )
+    discovered = discover_adapter_entrypoints()
+    adapter_modules: Iterable[str] = tuple(discovered.values())
 
     from interpretune.utils.requirements import requirement_status
 
-    skipped: list[tuple[str, str]] = []  # (adapter module, reason)
+    skipped: list[tuple[str, str]] = []  # (adapter, reason)
 
-    for mod_path in adapter_modules:
+    for declared_module in adapter_modules:
         # EVALUATE BEFORE IMPORTING. Deciding by catching an ImportError conflates "this optional
         # dependency is absent" with "this adapter is broken", and reports neither -- which is #431: an
         # absent dependency silently removed 18 of 48 compositions with nothing printed. A declared
         # requirement yields a REASON instead of a symptom.
-        declared = _declared_requires(mod_path)
-        if declared and (unmet := requirement_status(declared, source=mod_path)):
-            skipped.append((mod_path, unmet[0].message))
+        requires = _declared_requires(declared_module)
+        if requires and (unmet := requirement_status(requires, source=declared_module)):
+            skipped.append((declared_module, unmet[0].message))
             continue
+        # Only NOW resolve and import the implementation, which for a packaged adapter is the heavy half.
+        mod_path = _implementation_module(declared_module)
         mod = _import_adapter_module(mod_path)
         if mod is None:
             # Nothing declared, or declared-and-satisfied yet the import still failed. Either way this is
