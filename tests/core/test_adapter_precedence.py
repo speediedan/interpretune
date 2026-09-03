@@ -329,12 +329,28 @@ class TestHubAndBundledCompositionsAreIndistinguishable:
     the registry CONTRACT carries no provenance, so a silent substitution leaves nothing a consumer could
     branch on or notice, and `it.hub.adapter_info` is the instrument that recovers it.
 
-    **One channel does survive, and it is pinned rather than wished away.** Hub composition classes carry a
-    revision-scoped ``__module__`` naming the component, because the loader imports each cached revision
-    under its own synthetic module name. That is diagnostic, not contract: useful when debugging, and not
-    something code may branch on. An earlier draft of this class asserted the stronger "nothing anywhere
-    reveals provenance" and failed on first run -- correctly, since it would have put a false premise under
-    the precedence rationale.
+    **One channel does survive, and what depends on it is a THREE-way split, not two.** Hub composition
+    classes carry a revision-scoped ``__module__`` naming the component, because the loader imports each
+    cached revision under its own synthetic module name:
+
+    - **Registry contract** -- exposes no provenance (key shape, entry type, arity, enumeration). The claim
+      the tests below make.
+    - **Diagnostic** -- ``__module__`` as a debugging channel when a composition is misbehaving. Real, and
+      not something code may branch on.
+    - **Functionally load-bearing, tracked as #432** -- anything round-tripping a class by DOTTED PATH
+      inherits the revision: ``class_path:`` YAML, ``instantiate_class(..., import_only=True)``, pickling,
+      any config recording a class by qualified name. #432 is this same fact from the other side --
+      registration parity holds while CONFIGURATION parity breaks, because a hub component has no stable
+      dotted path to put in a ``class_path:`` at all.
+
+    Saying only "diagnostic, not contract" would invite a reader to conclude nothing depends on it, and
+    #432 is a standing counterexample.
+
+    An earlier draft of this class asserted the stronger "nothing anywhere reveals provenance" and failed on
+    first run -- correctly. **That is the good failure mode**: an assertion stronger than the truth fails
+    immediately and cheaply, where one weaker than the truth passes forever and carries a false premise into
+    the PR body, stated confidently. Prefer the assertion that can fail today over the one that would be
+    comfortable.
     """
 
     @staticmethod
@@ -418,11 +434,18 @@ class TestHubAndBundledCompositionsAreIndistinguishable:
         say where they came from, which is a genuinely useful thing when debugging a composition that is not
         behaving.
 
-        It is recorded here as DIAGNOSTIC rather than contract, in both directions. Code must not branch on
-        it -- the name is an implementation detail of the loader, and depending on it would recreate the
-        second-class delivery path parity exists to prevent. Equally, if a refactor ever flattens these
-        module names, this test fails and the loss of a debugging channel is a decision someone makes rather
-        than a side effect they ship.
+        It is NOT registry contract -- code must not branch on it to decide how to treat a composition,
+        since the name is a loader implementation detail and depending on it would recreate the second-class
+        delivery path parity exists to prevent.
+
+        But it is not merely cosmetic either, and #432 is the reason to say so here: because the path
+        carries a revision that changes on every publish, nothing a hub component defines has a stable
+        dotted path, so ``class_path:`` YAML cannot name a hub component's classes at all. Registration
+        parity holds; configuration parity does not. Any stable-alias scheme answering #432 therefore has to
+        resolve the PRECEDENCE-WINNING component, which is where that issue meets this module.
+
+        If a refactor ever flattens these module names, this test fails -- and both consequences (a lost
+        debugging channel, and a changed premise under #432) become a decision rather than a side effect.
         """
         registry, hub_member = parity_registry
         _, hub_key = self._keys(registry, hub_member)
