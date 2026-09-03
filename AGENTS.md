@@ -533,10 +533,15 @@ lists.
 
 ### Three things that must never appear there
 
-1. **Private agent-session or workstream names.** `ie-adapter`, `hub-registration-umbrella`, "the X
-   session", "settled on the Y workstream". These are invisible to a reader, and they close or get
-   renamed. **Name the lane by what it does** — "the adapter-component lane", "the J-lens lane" — which
-   preserves the ownership information the sentence exists to convey instead of deleting it.
+1. **Private agent-session or workstream names.** "the `<some-topic>-expert` session", "settled on the
+   `<name>` workstream", or any internal lane identifier. These are invisible to a reader, and they close
+   or get renamed. **Name the lane by what it DOES** — "the adapter-component lane", "the registration
+   lane" — which preserves the ownership information the sentence exists to convey instead of deleting it.
+
+   Note that this paragraph obeys its own rule: it uses placeholders rather than real session names,
+   because **this file is checked into the public repo**. A rule against publishing private names cannot
+   illustrate itself with private names, and the first draft of this section did exactly that — which is
+   the same reflex the rule exists to catch, committed inside the rule.
 2. **AI-attribution trailers.** `Co-Authored-By: Claude ...`, "Generated with ...", `Claude-Session:` links.
    Commit noise, and on a third-party repo they are noise the maintainer did not ask for and cannot act on.
 3. **Ephemeral CI references.** Build numbers, run URLs, approval ids. They identify a log that expires and
@@ -556,7 +561,7 @@ then naming a private session inside it is the rule's own fix becoming the vecto
 
 The same applies to an issue that has since closed: `#124` closed while a doc still cited it as the home of
 an unsettled default, which is how that decision nearly went missing. If a doc must record an open
-question, it points at an OPEN issue or it states the question and the current behaviour plainly.
+question, it points at an OPEN issue or it states the question and the current behavior plainly.
 
 Private plan/log pairs in the admin repo are the right place for workstream-scoped detail.
 
