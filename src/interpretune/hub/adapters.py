@@ -142,6 +142,14 @@ def supported_compositions() -> tuple[tuple[str, ...], ...] | None:
     a component reached by ``pip install`` has no rails to consult, so nothing has evaluated its
     conditionality and it should register what its code knows it can support. Returning an empty tuple
     there would silently register nothing; returning everything would import an absent dependency.
+
+    **CALL THIS FROM THE THREAD THE ENTRYPOINT RUNS ON.** The set is carried in a ``ContextVar``, and a
+    newly spawned thread starts with a fresh context, so a query from one reads ``None`` -- which this
+    function documents as "no manifest governs", and which would be FALSE there: a load is in progress and
+    the thread simply cannot see it. Verified, not assumed: a `threading.Thread` reads ``None`` while its
+    parent reads the set. Unreachable today because entrypoints execute synchronously during
+    ``load_hub_adapter``, and recorded so that adding concurrency later fails loudly in review rather than
+    silently at runtime.
     """
     return _SUPPORTED_COMPOSITIONS.get()
 

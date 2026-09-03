@@ -189,3 +189,35 @@ class TestDirectImportPathIsNamed:
         from interpretune.hub.adapters import supported_compositions
 
         assert supported_compositions() is None
+
+
+class TestSupportedCompositionsIsThreadScoped:
+    """The set is a ContextVar, so a spawned thread reads `None` -- which MEANS something different there.
+
+    `None` is documented as "no manifest governs this invocation". In a thread spawned during a load that
+    reading is false: a manifest does govern, the thread just cannot see it. Unreachable today because
+    entrypoints execute synchronously, and pinned so the docstring cannot quietly stop being true.
+    """
+
+    def test_a_spawned_thread_does_not_inherit_the_set(self):
+        import threading
+
+        from interpretune.hub.adapters import _SUPPORTED_COMPOSITIONS, supported_compositions
+
+        token = _SUPPORTED_COMPOSITIONS.set((("module", "core", "demo"),))
+        try:
+            seen = {}
+
+            def worker():
+                seen["value"] = supported_compositions()
+
+            t = threading.Thread(target=worker)
+            t.start()
+            t.join()
+            assert supported_compositions() == (("module", "core", "demo"),), "the setting thread must see it"
+            assert seen["value"] is None, (
+                "if a spawned thread ever DOES inherit the set, supported_compositions()'s docstring is "
+                "wrong in the other direction and must be updated."
+            )
+        finally:
+            _SUPPORTED_COMPOSITIONS.reset(token)
