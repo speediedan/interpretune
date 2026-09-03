@@ -10,6 +10,15 @@ on paths that must stay importable without it, so a name is resolved only when i
 
 from typing import TYPE_CHECKING
 
+#: What this adapter needs before its implementation module can be imported, in the same vocabulary a hub
+#: component's manifest uses (``interpretune`` / ``adapters`` / ``pip``). One predicate, two sources: a hub
+#: component declares in its manifest, a bundled adapter declares here.
+#:
+#: THIS MUST STAY EAGER -- a module-level constant, never routed through the lazy ``__getattr__`` map below.
+#: Registration reads it to decide WHETHER to import the implementation submodule; resolving it lazily would
+#: import that submodule to answer the question, which needs the very dependency being tested for.
+__it_requires__ = {"pip": ["sae-lens"]}
+
 if TYPE_CHECKING:
     from interpretune.adapters.sae_lens.adapter import (
         BaseSAELensModule as BaseSAELensModule,

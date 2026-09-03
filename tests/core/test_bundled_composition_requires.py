@@ -1,0 +1,135 @@
+"""A bundled adapter's compositions must not vanish silently when its optional dependency is absent.
+
+Measured on `main` before this change: with circuit-tracer absent, `register_all_adapters` survived, **18 of
+48 compositions disappeared, and nothing was printed** (#431). The skip itself was never the defect --
+registering a subset is correct when a dependency is genuinely absent. The defect was that "this
+composition is unavailable here" and "this composition does not exist" became indistinguishable at exactly
+the moment a user needs to tell them apart.
+
+`_light_register`'s own docstring has promised a warning here since it was written and never emitted one.
+"""
+
+from __future__ import annotations
+
+import ast
+import logging
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
+import pytest
+
+from interpretune.adapters._light_register import _declared_requires, _owning_package, register_all_adapters
+from interpretune.adapters.registration import CompositionRegistry
+
+ADAPTER_PACKAGES = ("circuit_tracer", "transformer_lens", "sae_lens", "nnsight")
+SRC = Path(__file__).parent.parent.parent / "src" / "interpretune" / "adapters"
+
+
+class TestDeclarationIsReadableWithoutTheDependency:
+    """The declaration must be EAGER. Routing it through the lazy map would look like tidying and break it.
+
+    A lazily-resolved ``__it_requires__`` would import the implementation submodule to answer the question,
+    which needs the very dependency being tested for -- silently restoring the bootstrap problem while
+    reading as consistency.
+    """
+
+    @pytest.mark.parametrize("pkg", ADAPTER_PACKAGES)
+    def test_declaration_is_a_module_level_assignment(self, pkg):
+        """Static guard: the constant is assigned at module level, not routed through ``__getattr__``."""
+        init = SRC / pkg / "__init__.py"
+        tree = ast.parse(init.read_text(encoding="utf-8"), filename=str(init))
+        assigned = [
+            t.id
+            for node in tree.body  # module level ONLY
+            if isinstance(node, ast.Assign)
+            for t in node.targets
+            if isinstance(t, ast.Name)
+        ]
+        assert "__it_requires__" in assigned, (
+            f"{pkg}/__init__.py must assign __it_requires__ at module level; a lazily-resolved declaration "
+            "imports the submodule to answer 'should I import the submodule'."
+        )
+
+    def test_declaration_is_readable_with_the_dependency_blocked(self):
+        """Runtime proof, in a subprocess so the import blocker cannot leak into the rest of the suite."""
+        probe = textwrap.dedent("""
+            import sys, importlib.abc, warnings
+            warnings.filterwarnings("ignore")
+            import interpretune  # noqa: F401
+
+            class Blocker(importlib.abc.MetaPathFinder):
+                def find_spec(self, name, path=None, target=None):
+                    if name.split(".")[0] == "circuit_tracer":
+                        raise ModuleNotFoundError(f"No module named {name!r}")
+                    return None
+
+            sys.meta_path.insert(0, Blocker())
+            for m in [k for k in sys.modules if k.split(".")[0] == "circuit_tracer"]:
+                del sys.modules[m]
+            for m in [k for k in sys.modules if "adapters.circuit_tracer" in k]:
+                del sys.modules[m]
+
+            # POSITIVE CONTROL: a blocker that fails to block reports "readable" for something it never
+            # guarded, which is indistinguishable from the result being sought.
+            try:
+                import circuit_tracer  # noqa: F401
+                print("CONTROL_FAILED")
+                raise SystemExit(0)
+            except ModuleNotFoundError:
+                print("CONTROL_OK")
+
+            from interpretune.adapters._light_register import _declared_requires
+            declared = _declared_requires("interpretune.adapters.circuit_tracer.adapter")
+            print("DECLARED_OK" if declared else "DECLARED_MISSING", declared)
+        """)
+        proc = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=300)
+        out = proc.stdout
+        assert "CONTROL_OK" in out, f"blocker did not block; probe proves nothing.\n{out}\n{proc.stderr}"
+        assert "DECLARED_OK" in out, (
+            f"the declaration was unreadable with circuit-tracer absent, which is the one case it exists "
+            f"for.\n{out}\n{proc.stderr}"
+        )
+
+
+class TestUnavailableAdaptersAreReported:
+    def test_an_unmet_declared_requirement_is_reported_with_its_reason(self, monkeypatch, caplog):
+        """The reason must name the DEPENDENCY, not a symptom.
+
+        A caught ``ImportError`` says only that something failed; an evaluated requirement says what is
+        missing, which is the difference between a user knowing to `pip install` and a user filing a bug.
+        """
+        import interpretune.adapters.circuit_tracer as ctpkg
+
+        monkeypatch.setattr(ctpkg, "__it_requires__", {"pip": ["a-package-nobody-has"]}, raising=False)
+        with caplog.at_level(logging.INFO):
+            register_all_adapters(CompositionRegistry())
+        text = caplog.text
+        assert "a-package-nobody-has" in text, f"the skip did not name the missing dependency:\n{text}"
+        assert "not installed" in text
+
+    def test_nothing_is_reported_when_everything_is_available(self, caplog):
+        """Negative control: the report fires on absence, not on every import.
+
+        Without this, a report that fired unconditionally would pass the test above while telling a
+        fully-provisioned user their adapters are unavailable.
+        """
+        with caplog.at_level(logging.INFO):
+            register_all_adapters(CompositionRegistry())
+        assert "unavailable in this environment" not in caplog.text
+
+
+class TestOwningPackageResolution:
+    """`<pkg>.adapter` declares via its package; a flat module has no package and falls back."""
+
+    def test_a_packaged_adapter_resolves_to_its_package(self):
+        assert _owning_package("interpretune.adapters.circuit_tracer.adapter") == "interpretune.adapters.circuit_tracer"
+
+    def test_a_flat_adapter_module_has_no_owning_package(self):
+        """`core` and `lightning` are flat modules, so they declare nothing and use the weaker fallback."""
+        assert _owning_package("interpretune.adapters.core") is None
+        assert _owning_package("interpretune.adapters.lightning") is None
+
+    def test_a_flat_module_declares_nothing(self):
+        assert _declared_requires("interpretune.adapters.core") is None

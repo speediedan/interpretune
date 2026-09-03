@@ -25,14 +25,16 @@ from interpretune.hub.manifest import (
 )
 
 
-def _installed_version(dist_name: str) -> str | None:
-    """Installed distribution version, or ``None`` when metadata is unavailable (e.g. raw checkouts)."""
-    from importlib.metadata import version
-
-    try:
-        return version(dist_name)
-    except Exception:
-        return None
+# The predicate lives in `interpretune.utils.requirements`, NOT here: it is shared by the hub and bundled
+# paths, and a predicate shared by both cannot sit inside one of them. The bundled registration pass
+# imports only the standard library, so reaching into the hub subsystem to answer "is this available here"
+# would invert the layering. (Layering, not import cost -- huggingface_hub and yaml are already resident
+# after `import interpretune`, via transformers and jsonargparse.)
+from interpretune.utils.requirements import (
+    UnmetRequirement as UnmetRequirement,
+    installed_version as _installed_version,
+    requirement_status as requirement_status,
+)
 
 
 # version telemetry for hf_hub_download (design §8); interpretune may be running from a raw checkout
@@ -50,39 +52,12 @@ def enforce_component_requires(manifest: dict, source: str = "<component>") -> N
     an adapter name this interpretune does not know (usually means a newer interpretune is required —
     NOT that every listed adapter's backend must be importable, since configs compose subsets), and a
     ``pip`` requirement that is not installed / does not satisfy its specifier.
+
+    Disposition only — :func:`requirement_status` evaluates, and raising ``unmet[0]`` preserves this
+    function's pre-split behaviour exactly.
     """
-    from packaging.requirements import Requirement
-    from packaging.specifiers import SpecifierSet
-
-    req = manifest.get("requires") or {}
-    it_spec = req.get("interpretune")
-    if it_spec:
-        it_version = _installed_version("interpretune")
-        if it_version is None:  # raw-checkout fallback; skip when genuinely undeterminable
-            import interpretune
-
-            it_version = getattr(interpretune, "__version__", None)
-        if it_version is not None and not SpecifierSet(str(it_spec)).contains(it_version, prereleases=True):
-            raise ComponentRequirementError(
-                f"{source}: requires interpretune {it_spec!r} but {it_version!r} is installed. "
-                "(If this version looks wrong for your checkout, stale packaging metadata — e.g. an old "
-                "src/*.egg-info directory — can shadow the real installation when src/ is on sys.path.)"
-            )
-    from interpretune.protocol import Adapter
-
-    for name in req.get("adapters") or []:
-        if name not in Adapter.__members__:
-            raise ComponentRequirementError(
-                f"{source}: requires adapter {name!r}, which this interpretune does not provide "
-                f"(known: {sorted(Adapter.__members__)}) — a newer interpretune release may be required."
-            )
-    for entry in req.get("pip") or []:
-        r = Requirement(str(entry))
-        installed = _installed_version(r.name)
-        if installed is None:
-            raise ComponentRequirementError(f"{source}: requires pip package {entry!r}, which is not installed.")
-        if r.specifier and not r.specifier.contains(installed, prereleases=True):
-            raise ComponentRequirementError(f"{source}: requires {entry!r} but {r.name} {installed!r} is installed.")
+    if unmet := requirement_status(manifest.get("requires") or {}, source):
+        raise ComponentRequirementError(unmet[0].message)
 
 
 def _snapshot_revision(downloaded_path: Path) -> str:
