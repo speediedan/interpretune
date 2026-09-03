@@ -188,6 +188,40 @@ def op_info(op_name: str):
     return DISPATCHER.op_info(op_name)
 
 
+def prefer_adapters(*repo_ids: str, replace: bool = False) -> list[str]:
+    """Allow these hub components' adapters to shadow bundled adapter names; returns the active precedence.
+
+    Bundled adapters win their names by default, and a hub component declaring one of those names is
+    REFUSED rather than applied. This is how a caller asks for the hub copy instead -- per component and
+    explicitly::
+
+        it.hub.pull("someone/it-transformer-lens-adapter")   # fetch (network)
+        it.hub.prefer_adapters("someone/it-transformer-lens-adapter")  # and now it may shadow
+
+    Stricter than the op equivalent on purpose: an adapter composes into the session MRO, so the wrong one
+    changes what the session IS, at import time, before any result exists to look wrong. Call with no
+    arguments to clear the opt-in. ``IT_ADAPTER_PRECEDENCE`` is the env parity for scripted runs.
+    """
+    from interpretune.hub.precedence import prefer_adapters as _prefer
+
+    return _prefer(*repo_ids, replace=replace)
+
+
+def adapter_info(name: str):
+    """Report which definition an adapter name reaches now, and what the alternatives are.
+
+    Returns an :class:`~interpretune.hub.precedence.AdapterResolution` -- provenance, the publishing
+    component and cached revision for hub adapters, the other definitions sharing the name, and the
+    precedence that decided. Printing it is the intended use.
+
+    Worth more than its op counterpart, because a shadowed adapter is harder to see: both definitions are
+    the SAME ``Adapter`` enum member by construction, so the member cannot tell you which code it reaches.
+    """
+    from interpretune.hub.precedence import adapter_info as _info
+
+    return _info(name)
+
+
 def push(
     component_dir: Path,
     repo_id: str,
