@@ -225,3 +225,240 @@ class TestCandidateSerialization:
             name="interp_engine", source="hub", component=HUB_REPO, revision="abc123def456"
         ).to_dict()
         assert record["component"] == HUB_REPO and record["revision"] == "abc123def456"
+
+
+# --------------------------------------------------------------------------------------------------
+# The executable parity test: WHY precedence has to exist at all.
+# --------------------------------------------------------------------------------------------------
+
+PARITY_ADAPTER = "parity_fixture_adapter"
+
+PARITY_ENTRYPOINT = '''
+    class ParityAdapterModule:
+        """Stand-in for a real adapter mixin; the rails do not care what it composes."""
+
+    class ParityAdapter:
+        @classmethod
+        def register_adapter_ctx(cls, adapter_ctx_registry) -> None:
+            adapter_ctx_registry.register(
+                lead_adapter="parity_fixture_adapter",
+                component_key="module",
+                adapter_combination=("core", "parity_fixture_adapter"),
+                composition_classes=(ParityAdapterModule,),
+                description="hub-delivered composition, for the parity comparison",
+            )
+'''
+
+
+class BundledStyleModule:
+    """Stand-in for a bundled adapter's composition class."""
+
+
+@pytest.fixture()
+def restore_adapter_enum():
+    """Undo dynamic ``Adapter`` members a test adds; the enum is process-global state."""
+    from interpretune.adapters import registration
+    from interpretune.protocol import Adapter
+
+    names = set(Adapter._member_map_)
+    yield
+    for name in set(Adapter._member_map_) - names:
+        member = Adapter._member_map_.pop(name)
+        Adapter._member_names_.remove(name)
+        Adapter._value2member_map_.pop(member.value, None)
+        type.__delattr__(Adapter, name)
+        registration._DYNAMIC_ADAPTERS.pop(name, None)
+
+
+@pytest.fixture()
+def parity_registry(tmp_path, monkeypatch, restore_adapter_enum):
+    """One registry holding two compositions of DIFFERENT provenance: one bundled-style, one hub-delivered."""
+    import textwrap
+
+    import yaml
+
+    from interpretune.adapters.registration import CompositionRegistry
+    from interpretune.hub.adapters import load_hub_adapter
+    from interpretune.hub.components import local_publish
+    from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR
+
+    component = tmp_path / "component"
+    component.mkdir(parents=True, exist_ok=True)
+    (component / "it_component.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "it_schema_version": 1,
+                "kinds": ["adapters"],
+                "adapters": {
+                    "entrypoint": "parity_entry.py",
+                    "declares": [PARITY_ADAPTER],
+                    "compositions": [{"component": "module", "adapters": ["core", PARITY_ADAPTER]}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (component / "parity_entry.py").write_text(textwrap.dedent(PARITY_ENTRYPOINT), encoding="utf-8")
+    cache = tmp_path / "components"
+    local_publish(component, "org/parity-fixture", cache_dir=cache)
+    monkeypatch.setenv(IT_TRUST_REMOTE_CODE_ENV_VAR, "1")
+
+    registry = CompositionRegistry()
+    # The bundled side, registered exactly the way a bundled adapter's `register_adapter_ctx` does.
+    registry.register(
+        lead_adapter="core",
+        component_key="module",
+        adapter_combination=("core",),
+        composition_classes=(BundledStyleModule,),
+        description="bundled-style composition, for the parity comparison",
+    )
+    members = load_hub_adapter("org/parity-fixture", cache_dir=cache, registry=registry)
+    return registry, members[0]
+
+
+class TestHubAndBundledCompositionsAreIndistinguishable:
+    """A hub-delivered composition must be a first-class citizen -- and that is EXACTLY why precedence exists.
+
+    This is the negative control for the whole precedence rule, and it belongs beside it rather than in a
+    parity module of its own. The rule above only earns its strictness if the two provenances are genuinely
+    indistinguishable to a consumer: were a hub composition visibly different in the registry, shadowing
+    would announce itself and a default-refuse would be over-engineering.
+
+    So these tests assert the two halves of one claim. **Parity (R-I):** same retrieval call, same key
+    shape, same entry shape, same enumeration -- a hub adapter is not second-class. **And its consequence:**
+    the registry CONTRACT carries no provenance, so a silent substitution leaves nothing a consumer could
+    branch on or notice, and `it.hub.adapter_info` is the instrument that recovers it.
+
+    **One channel does survive, and it is pinned rather than wished away.** Hub composition classes carry a
+    revision-scoped ``__module__`` naming the component, because the loader imports each cached revision
+    under its own synthetic module name. That is diagnostic, not contract: useful when debugging, and not
+    something code may branch on. An earlier draft of this class asserted the stronger "nothing anywhere
+    reveals provenance" and failed on first run -- correctly, since it would have put a false premise under
+    the precedence rationale.
+    """
+
+    @staticmethod
+    def _keys(registry, hub_member):
+        from interpretune.protocol import Adapter
+
+        bundled = ("module", *registry.canonicalize_composition((Adapter.core,)))
+        hub = ("module", *registry.canonicalize_composition((Adapter.core, hub_member)))
+        return bundled, hub
+
+    def test_both_are_retrieved_by_the_same_call(self, parity_registry):
+        registry, hub_member = parity_registry
+        bundled_key, hub_key = self._keys(registry, hub_member)
+        assert registry.get(bundled_key) is not None, "the bundled-style composition must be retrievable"
+        assert registry.get(hub_key) is not None, (
+            "the hub-delivered composition must be retrievable through the SAME accessor; a separate lookup "
+            "path would make hub adapters second-class and defeat the point of the component kind"
+        )
+
+    def test_the_key_shapes_are_the_same(self, parity_registry):
+        """Positional string component key, then ``Adapter`` MEMBERS -- for both provenances.
+
+        Worth asserting explicitly because the members are the subtle half: a hub adapter's member is
+        created dynamically, and a key holding a plain string instead would still look right when printed.
+        """
+        from interpretune.protocol import Adapter
+
+        registry, hub_member = parity_registry
+        bundled_key, hub_key = self._keys(registry, hub_member)
+        for key in (bundled_key, hub_key):
+            assert isinstance(key[0], str)
+            assert all(isinstance(part, Adapter) for part in key[1:]), (
+                f"{key!r} holds a non-member adapter; compositions must key on Adapter members in both cases"
+            )
+
+    def test_both_appear_in_the_same_enumeration(self, parity_registry):
+        registry, hub_member = parity_registry
+        bundled_key, hub_key = self._keys(registry, hub_member)
+        available = registry.available_compositions()
+        for key in (bundled_key, hub_key):
+            assert any(set(key[1:]) <= set(candidate) for candidate in available), (
+                f"{key!r} is missing from `available_compositions()`; a composition a consumer cannot "
+                "discover is not at parity however it was delivered"
+            )
+
+    def test_the_entries_have_the_same_shape(self, parity_registry):
+        registry, hub_member = parity_registry
+        bundled_key, hub_key = self._keys(registry, hub_member)
+        bundled, hub = registry.get(bundled_key), registry.get(hub_key)
+        assert type(bundled) is type(hub), (
+            f"registry entries differ by provenance ({type(bundled)} vs {type(hub)}), so a consumer could "
+            "branch on delivery mechanism -- which is precisely what compositional parity forbids"
+        )
+
+    def test_the_registry_contract_does_not_expose_provenance(self, parity_registry):
+        """THE POINT, stated at the granularity that is actually true.
+
+        The claim is about the registry's CONTRACT -- what a consumer retrieves and can branch on: the key,
+        the entry, the enumeration. None of those differ by provenance, which is the parity guarantee and
+        also why a silent substitution would leave nothing for a consumer to notice.
+
+        **An earlier version of this test asserted more than that** -- that nothing anywhere in the entry's
+        rendered form named its origin -- and it failed immediately, correctly. See the test below: a hub
+        composition's classes carry a synthetic ``__module__`` that names the component. That is a real
+        channel, and pretending otherwise would have put a false premise under the precedence rationale.
+        """
+        registry, hub_member = parity_registry
+        bundled_key, hub_key = self._keys(registry, hub_member)
+        bundled, hub = registry.get(bundled_key), registry.get(hub_key)
+        assert type(bundled) is type(hub)
+        assert len(bundled) == len(hub), "entry arity differs by provenance, so a consumer could branch on it"
+        # The composition tuple holds classes in both cases -- not a class for one and a descriptor or
+        # wrapper for the other, which is the shape a second-class delivery path would take.
+        assert all(isinstance(c, type) for c in bundled) and all(isinstance(c, type) for c in hub)
+
+    def test_provenance_survives_only_on_the_class_module_and_that_is_diagnostic_not_contract(self, parity_registry):
+        """Pins the one channel that DOES carry origin, so neither its removal nor its use is silent.
+
+        `_import_adapter_entrypoint` imports each component under a revision-scoped synthetic module name so
+        two cached revisions cannot collide in ``sys.modules``. A side effect is that hub-delivered classes
+        say where they came from, which is a genuinely useful thing when debugging a composition that is not
+        behaving.
+
+        It is recorded here as DIAGNOSTIC rather than contract, in both directions. Code must not branch on
+        it -- the name is an implementation detail of the loader, and depending on it would recreate the
+        second-class delivery path parity exists to prevent. Equally, if a refactor ever flattens these
+        module names, this test fails and the loss of a debugging channel is a decision someone makes rather
+        than a side effect they ship.
+        """
+        registry, hub_member = parity_registry
+        _, hub_key = self._keys(registry, hub_member)
+        modules = {c.__module__ for c in registry.get(hub_key)}
+        assert any(m.startswith("it_hub_adapters.") for m in modules), (
+            f"hub composition classes no longer carry a revision-scoped module name ({modules!r}). If that "
+            "was deliberate, note that the only remaining way to identify a hub-delivered composition when "
+            "debugging is `it.hub.adapter_info`."
+        )
+
+    def test_the_fixture_really_delivered_a_HUB_composition(self, parity_registry):
+        """Guard against the whole class above passing vacuously.
+
+        Every test here compares a hub-delivered composition against a bundled-style one. If the fixture
+        ever stopped actually loading through the hub path -- a changed cache layout, a silently swallowed
+        failure -- the comparisons would still run and still pass, against two bundled-style entries. This
+        pins that the hub half is genuinely hub-delivered.
+        """
+        from interpretune.adapters.registration import dynamic_adapters
+
+        _, hub_member = parity_registry
+        assert hub_member.name == PARITY_ADAPTER
+        assert hub_member.name in dynamic_adapters(), (
+            "the fixture's adapter is not a DYNAMIC member, so it did not come through the hub load path "
+            "and every parity comparison in this class is comparing bundled against bundled"
+        )
+
+    def test_adapter_info_is_the_instrument_that_can_tell_them_apart(self, parity_registry):
+        """Positive control on the consequence: what the registry cannot say, `adapter_info` can.
+
+        Without this the test above is only half an argument -- it establishes that provenance is invisible
+        without establishing that anything recovers it, which would make the situation hopeless rather than
+        merely requiring an instrument.
+        """
+        registry, hub_member = parity_registry
+        record_hub_adapter(hub_member.name, component="org/parity-fixture", revision="abc123def456")
+        resolution = adapter_info(hub_member.name)
+        assert resolution.active.component == "org/parity-fixture"
+        assert resolution.active.source == "hub"
