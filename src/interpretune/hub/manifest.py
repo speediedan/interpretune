@@ -108,6 +108,17 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
                     f"{source}: each `adapters.compositions` entry needs a `component` name and an `adapters` "
                     f"list, got {entry!r}"
                 )
+            # OPTIONAL per-composition `requires`: SOFT, unlike the component-wide block. Unmet means this
+            # ONE composition is skipped and the others still register; unmet component-wide means the
+            # component does not load at all. Same vocabulary either way, so a component can STATE its
+            # conditionality rather than overstate its surface -- a manifest advertising three compositions
+            # while the environment yields two, with nothing saying so, is #431 in the declarative layer.
+            entry_requires = entry.get("requires")
+            if entry_requires is not None and not isinstance(entry_requires, dict):
+                raise ComponentManifestError(
+                    f"{source}: `adapters.compositions[].requires` must be a mapping in the same vocabulary as "
+                    f"the component-wide `requires` (interpretune / adapters / pip), got {entry_requires!r}"
+                )
     if "promptconfigs" in kinds:
         pc = manifest.get("promptconfigs") or {}
         if not pc.get("entrypoint") or not isinstance(pc.get("definitions"), dict) or not pc["definitions"]:

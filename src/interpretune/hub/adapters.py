@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from contextvars import ContextVar
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING
@@ -30,6 +31,7 @@ from interpretune.hub.manifest import ComponentManifestError
 
 if TYPE_CHECKING:
     from interpretune.protocol import Adapter
+from interpretune.utils.logging import rank_zero_info
 
 
 class AdapterComponentError(ComponentManifestError):
@@ -97,15 +99,78 @@ def loaded_adapter_module(repo_id: str, cache_dir: Path | None = None) -> Module
     return module
 
 
+#: The satisfiable composition set the loader hands to an executing entrypoint. A ContextVar rather than a
+#: module global so concurrent loads cannot see each other's set, and so it is unset outside a load --
+#: which is what makes the direct-import path distinguishable rather than silently answered.
+_SUPPORTED_COMPOSITIONS: ContextVar[tuple[tuple[str, ...], ...] | None] = ContextVar(
+    "it_supported_compositions", default=None
+)
+
+
+def _composition_key(entry: dict) -> tuple[str, ...]:
+    """A composition entry's identity: component plus its adapters, ORDER-INSENSITIVE.
+
+    Sorted because `canonicalize_composition` value-sorts the registry side, so comparing author order
+    against canonical order would reject a correct component on its first run.
+    """
+    return (str(entry.get("component")), *sorted(str(a) for a in entry.get("adapters") or []))
+
+
+def _partition_declared_compositions(
+    manifest: dict, source: str
+) -> tuple[tuple[tuple[str, ...], ...], list[tuple[str, str]]]:
+    """Split declared compositions into those this environment can support and those it cannot."""
+    from interpretune.utils.requirements import requirement_status
+
+    satisfiable: list[tuple[str, ...]] = []
+    unsupported: list[tuple[str, str]] = []
+    for entry in (manifest.get("adapters") or {}).get("compositions") or []:
+        key = _composition_key(entry)
+        unmet = requirement_status(entry.get("requires") or {}, source=source)
+        if unmet:
+            unsupported.append(("+".join(key), unmet[0].message))
+        else:
+            satisfiable.append(key)
+    return tuple(satisfiable), unsupported
+
+
+def supported_compositions() -> tuple[tuple[str, ...], ...] | None:
+    """The composition set the rails determined this environment supports, for an executing entrypoint.
+
+    ``None`` means **no manifest governs this invocation** -- the honest description of a direct import
+    (``import my_component``) rather than a load through the rails. That is a NAMED case, not a fallback:
+    a component reached by ``pip install`` has no rails to consult, so nothing has evaluated its
+    conditionality and it should register what its code knows it can support. Returning an empty tuple
+    there would silently register nothing; returning everything would import an absent dependency.
+
+    **CALL THIS FROM THE THREAD THE ENTRYPOINT RUNS ON.** The set is carried in a ``ContextVar``, and a
+    newly spawned thread starts with a fresh context, so a query from one reads ``None`` -- which this
+    function documents as "no manifest governs", and which would be FALSE there: a load is in progress and
+    the thread simply cannot see it. Verified, not assumed: a `threading.Thread` reads ``None`` while its
+    parent reads the set. Unreachable today because entrypoints execute synchronously during
+    ``load_hub_adapter``, and recorded so that adding concurrency later fails loudly in review rather than
+    silently at runtime.
+    """
+    return _SUPPORTED_COMPOSITIONS.get()
+
+
 def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None) -> list[Adapter]:
     """Load ONE cached adapter component: trust gate, enum extension, entrypoint, registration.
 
     Returns the :class:`~interpretune.protocol.Adapter` members the component contributed. Idempotent:
     reloading the same cached revision returns the same members without re-executing the entrypoint.
 
-    Raises rather than degrading. Op discovery can drop one bad collection and still give a working
-    session; a requested adapter cannot be dropped, because the composition the caller asked for is
-    what would silently change.
+    Raises rather than degrading **for the component as a whole**: op discovery can drop one bad
+    collection and still give a working session, whereas a component that loads nothing cannot be a
+    partial success.
+
+    A single COMPOSITION is different, and since #431 may be SKIPPED. An entry whose ``requires`` this
+    environment cannot satisfy is not an error -- registering the others is the correct outcome, and it
+    is what lets ONE published component serve whatever compositions the installed environment supports.
+    What must never happen is skipping it silently, because "this composition is unavailable here" and
+    "this composition does not exist" then become indistinguishable at the moment a user needs to tell
+    them apart. So every skip is reported at rank zero with its reason, and the post-hoc invariant
+    compares what registered against what was SATISFIABLE rather than against everything declared.
     """
     from interpretune.adapters import ADAPTER_REGISTRY
     from interpretune.adapters.registration import AdapterProtocol, register_dynamic_adapter
@@ -132,12 +197,34 @@ def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None)
         repo_id, what=f"the adapter entrypoint {entrypoint!r} (it composes into the session MRO)"
     )
 
+    # THE RAILS COMPUTE, THE ENTRYPOINT REGISTERS WHAT IT IS HANDED. The alternative -- exposing a
+    # predicate the entrypoint calls with its own arguments -- lets the component ask a DIFFERENT question
+    # from the one the invariant below judges it against. Two evaluations that agree today diverge the
+    # moment a composition carries its own `requires` (a version floor on an adapter that is merely
+    # present, say), and the mismatch then fires against a component that did exactly what it was told.
+    # One evaluation, handed over, cannot disagree with itself.
+    satisfiable, unsupported = _partition_declared_compositions(manifest, source=source)
+    if unsupported:
+        rank_zero_info(
+            f"{source}: {len(satisfiable)} of {len(satisfiable) + len(unsupported)} declared composition(s) are "
+            "supported in this environment; the rest are unavailable here rather than nonexistent:\n"
+            + "\n".join(f"  - {entry}: {reason}" for entry, reason in unsupported)
+        )
+
     members = [register_dynamic_adapter(name, source=repo_id) for name in names]
     before = set(registry.keys())
     module = _import_adapter_entrypoint(repo_id, snapshot, revision, entrypoint)
-    for _, member in vars(module).items():
-        if isinstance(member, type) and isinstance(member, AdapterProtocol) and hasattr(member, "register_adapter_ctx"):
-            member.register_adapter_ctx(registry)
+    token = _SUPPORTED_COMPOSITIONS.set(satisfiable)
+    try:
+        for _, member in vars(module).items():
+            if (
+                isinstance(member, type)
+                and isinstance(member, AdapterProtocol)
+                and hasattr(member, "register_adapter_ctx")
+            ):
+                member.register_adapter_ctx(registry)
+    finally:
+        _SUPPORTED_COMPOSITIONS.reset(token)
     added = set(registry.keys()) - before
     unregistered = [m for m in members if not any(m in key for key in added)]
     if unregistered and added:
@@ -151,4 +238,27 @@ def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None)
             f"{source}: entrypoint {entrypoint!r} registered no compositions. An adapters component whose "
             f"entrypoint registers nothing declares {names!r} and delivers nothing."
         )
+    # THE INVARIANT COMPARES AGAINST THE SATISFIABLE SET, NOT AGAINST EVERYTHING DECLARED. Checking
+    # against the declaration would fail a component that correctly skipped an unsupportable composition
+    # -- punishing it for doing the right thing. Checking only "did something register" misses the other
+    # direction: a satisfiable composition that did NOT register is a real mismatch, and so is one that
+    # registered while the manifest excluded it.
+    if satisfiable:
+        # A registry composition key is (component_key, Adapter, ...) -- the component as a plain string
+        # and the adapters as enum MEMBERS, so compare on `.value`. `str(Adapter.core)` is 'Adapter.core',
+        # which silently matches nothing and would make this invariant fire on every correct component.
+        registered_keys = [{getattr(part, "value", part) for part in key} for key in added if isinstance(key, tuple)]
+
+        def _covered(entry_key: tuple[str, ...]) -> bool:
+            wanted = set(entry_key[1:])  # the component name is positional, not part of the adapter set
+            return any(wanted <= k for k in registered_keys)
+
+        missing = [k for k in satisfiable if not _covered(k)]
+        if missing:
+            raise AdapterComponentError(
+                f"{source}: entrypoint {entrypoint!r} did not register composition(s) "
+                f"{['+'.join(k) for k in missing]!r}, whose requirements this environment SATISFIES. An "
+                "unsatisfiable composition is skipped and reported; a satisfiable one that does not appear "
+                "is a mismatch between what the manifest promised and what the code delivered."
+            )
     return members

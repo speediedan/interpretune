@@ -33,6 +33,33 @@ def _import_adapter_module(module_path: str) -> ModuleType | None:
         return None
 
 
+def _owning_package(module_path: str) -> str | None:
+    """The adapter PACKAGE owning an implementation submodule, or ``None`` for a flat adapter module.
+
+    ``adapter_modules`` names ``<pkg>.adapter`` submodules; the declaration lives one level up, in the
+    package ``__init__``, which is the half that stays importable without the heavy dependency.
+    """
+    pkg, _, leaf = module_path.rpartition(".")
+    return pkg if leaf == "adapter" and pkg else None
+
+
+def _declared_requires(module_path: str) -> dict | None:
+    """Read an adapter's declared requirements WITHOUT importing its implementation module.
+
+    This is the whole point of the declaration being an eager constant in the package ``__init__``: the
+    answer to "should this be imported" must not need the import it is deciding about.
+
+    ``None`` means nothing is declared -- a flat adapter module with no owning package, or a package that
+    declares nothing. Those fall back to import-and-report below, which is weaker (a caught exception is a
+    symptom, not a reason) but still never silent.
+    """
+    pkg_path = _owning_package(module_path)
+    if pkg_path is None:
+        return None
+    pkg = _import_adapter_module(pkg_path)
+    return getattr(pkg, "__it_requires__", None) if pkg is not None else None
+
+
 def register_all_adapters(registry) -> None:
     """Call `register_adapter_ctx` on each known adapter class.
 
@@ -55,9 +82,25 @@ def register_all_adapters(registry) -> None:
         "interpretune.adapters.nnsight.adapter",
     )
 
+    from interpretune.utils.requirements import requirement_status
+
+    skipped: list[tuple[str, str]] = []  # (adapter module, reason)
+
     for mod_path in adapter_modules:
+        # EVALUATE BEFORE IMPORTING. Deciding by catching an ImportError conflates "this optional
+        # dependency is absent" with "this adapter is broken", and reports neither -- which is #431: an
+        # absent dependency silently removed 18 of 48 compositions with nothing printed. A declared
+        # requirement yields a REASON instead of a symptom.
+        declared = _declared_requires(mod_path)
+        if declared and (unmet := requirement_status(declared, source=mod_path)):
+            skipped.append((mod_path, unmet[0].message))
+            continue
         mod = _import_adapter_module(mod_path)
         if mod is None:
+            # Nothing declared, or declared-and-satisfied yet the import still failed. Either way this is
+            # NOT an expected absence, so it is reported rather than swallowed -- the module docstring has
+            # always promised a warning here and never emitted one.
+            skipped.append((mod_path, f"{mod_path} could not be imported (no unmet declared requirement)"))
             continue
         # Each adapter module defines one or more adapter classes that implement
         # `register_adapter_ctx`; find them and call the registration method.
@@ -76,4 +119,18 @@ def register_all_adapters(registry) -> None:
                         continue
         except Exception:
             # Defensive: if introspection on the module fails, skip it.
+            skipped.append((mod_path, f"{mod_path} imported but could not be introspected for adapter classes"))
             continue
+
+    # REPORT, ONCE, AT RANK ZERO. The skip itself was never the defect -- registering a subset is correct
+    # when a dependency is genuinely absent. The defect was that it was SILENT, so "this composition is
+    # unavailable here" and "this composition does not exist" became indistinguishable at exactly the
+    # moment a user needs to tell them apart (#431).
+    if skipped:
+        from interpretune.utils.logging import rank_zero_info
+
+        lines = "\n".join(f"  - {path}: {reason}" for path, reason in skipped)
+        rank_zero_info(
+            f"Registered adapters from {len(adapter_modules) - len(skipped)} of {len(adapter_modules)} "
+            f"modules; {len(skipped)} unavailable in this environment:\n{lines}"
+        )

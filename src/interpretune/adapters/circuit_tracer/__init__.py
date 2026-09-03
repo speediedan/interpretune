@@ -10,6 +10,17 @@ on paths that must stay importable without it, so a name is resolved only when i
 
 from typing import TYPE_CHECKING
 
+#: What this adapter needs before its implementation module can be imported, in the same vocabulary a hub
+#: component's manifest uses (``interpretune`` / ``adapters`` / ``pip``). One predicate, two sources: a hub
+#: component declares in its manifest, a bundled adapter declares here.
+#:
+#: THIS MUST STAY EAGER -- a module-level constant, never routed through the lazy ``__getattr__`` map below.
+#: The whole point is that registration can read it to decide WHETHER to import ``.adapter``; resolving it
+#: lazily would import that submodule to answer the question, which needs the very dependency being tested
+#: for. Tidying it into the map would look like consistency and would silently restore the bootstrap
+#: problem, so a test asserts this is readable with circuit-tracer absent.
+__it_requires__ = {"pip": ["circuit-tracer"]}
+
 if TYPE_CHECKING:
     from interpretune.adapters.circuit_tracer.registry import (
         CT_BACKEND_REGISTRY as CT_BACKEND_REGISTRY,
