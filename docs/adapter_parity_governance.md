@@ -1,6 +1,8 @@
-# HookedTransformer, TransformerBridge, and the Current Parity Model
+# Adapter Parity Governance
 
-This document explains how Interpretune currently understands the behavioral relationship between HookedTransformer, TransformerBridge, and the NNsight backend in the latent-model analysis stack.
+This document governs which execution backends hold a **tight numerical parity contract** with each other, which are validated separately, and why the split falls where it does.
+
+It began as an account of HookedTransformer, TransformerBridge and NNsight. The reasoning generalized, so the document did: any adapter — bundled or hub-delivered — is placed by the same question, and the answer determines what a test may legitimately assert about it.
 
 ## Why This Matters
 
@@ -15,11 +17,14 @@ That architectural split matters for both implementation decisions and test expe
 
 ### HuggingFace-native family
 
-TransformerBridge and NNsight stay on the HuggingFace model path.
+TransformerBridge, NNsight and interp-engine all stay on the HuggingFace model path.
 
 - TransformerBridge wraps the HF model for TransformerLens-compatible analysis access.
 - NNsight traces the HF model directly through its deferred execution system.
-- Both therefore inherit the same native attention-mask semantics, pad-position handling, and position-id behavior.
+- interp-engine hooks the HF modules directly; its architecture facts (sandwich norms, residual multipliers, parallel residual) are detected *structurally* from the real model rather than from converted weights or names.
+- All three therefore inherit the same native attention-mask semantics, pad-position handling, and position-id behavior.
+
+**Placement is decided by which forward runs, not by who ships the adapter.** interp-engine arrives as a hub-delivered component rather than a bundled one, and that is irrelevant to this classification — a bundled adapter running its own forward would sit in the other family, and a third-party adapter on the HF path sits here.
 
 ### HookedTransformer family
 
@@ -72,15 +77,29 @@ This separation allowed the analysis ops, cache abstractions, and parity fixture
 
 Interpretune currently treats HuggingFace-native execution as the tight parity path.
 
-### Active tight parity
+### Active tight parity — a convergence set, not a pair
 
-TransformerBridge ↔ NNsight is the main backend parity contract.
+TransformerBridge ↔ NNsight ↔ interp-engine is the backend parity contract.
 
-- both operate on the HF forward path
+- all operate on the HF forward path
 - differences come primarily from hook and tracing mechanisms rather than model semantics
 - tight tolerances are appropriate here
 
-This is the parity signal that now protects the generalized latent-model analysis ops.
+This is the parity signal that protects the generalized latent-model analysis ops.
+
+**Why a third member is worth more than more coverage.** A *pair* that agrees cannot distinguish "both correct" from "both wrong in the same way" — the two implementations share the HF forward, so a shared misreading of it is invisible to the comparison. A third independent implementation over that same forward converts agreement into **convergence**: three agreeing is evidence about the forward; two agreeing is evidence about the two. Adding members strengthens the *existing* contract rather than running a parallel one beside it.
+
+**Optional members are gated on being installed, and the skip carries a reason.** A hub-delivered adapter is not present in every environment. Its parity leg is evaluated through the same declared-requirements predicate the rest of the rails use, so an absent backend produces "unavailable here, because X is not installed" rather than a bare skip — the distinction between *this comparison could not run* and *this comparison does not exist*.
+
+### Matching names is not matching tensors
+
+**A parity comparison must be between points that mean the same thing, and hook NAMES do not establish that.**
+
+interp-engine's `mlp_in` and `attn_in` are the sublayer's *post-norm* inputs. TransformerLens' `hook_mlp_in` and `hook_attn_in` fire on the *pre-norm* residual. Those differ by a whole normalization — measurably so: on gemma-3-1b-it the two tensors reach a cosine of ~0.17 and differ in norm by up to three orders of magnitude.
+
+A parity test that resolves names through a translation layer, without checking that the layer preserves meaning, will compare a post-norm tensor against a pre-norm one and report a divergence that is real but is not the divergence it claims to measure. **The dangerous response is the natural one: loosen the tolerance until it passes** — which buries a genuine defect under a threshold chosen to hide it, and leaves a green test asserting nothing.
+
+So: compare points established to be semantically identical, and keep the correctness of any name translation as a *separate* assertion with its own test. A parity suite and a mapping suite answer different questions, and merging them lets each one's failure be mistaken for the other's.
 
 ### Separate HookedTransformer validation
 
