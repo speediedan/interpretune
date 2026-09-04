@@ -188,7 +188,7 @@ design/intervention_hook_pattern_support
 design/resource_management
 design/tl_config_hierarchy_overview
 design/tl_style_naming_implementation
-design/ht_bridge_parity_behavior
+design/adapter_parity_governance
 design/fts_transformerlens_integration
 ```
 
