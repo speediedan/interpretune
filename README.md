@@ -105,10 +105,9 @@ uv pip install -e ".[examples]" --group git-deps
 Add `lightning` only if you want the Lightning adapter and its fine-tuning-scheduler integration:
 `".[examples,lightning]"`. It is a genuinely optional adapter, not part of the base install.
 
-Add `interp-engine` if you want the interp-engine execution backend available locally — it is what the
-cross-backend parity suite drives, and circuit-tracer's attribution-over-the-engine path uses it. Note this
-installs the **engine** only: the hub adapter that composes it into a session is pulled separately with
-`it.hub.pull`, which is what makes it a hub-delivered adapter rather than a bundled one.
+The `examples` extra includes the interp-engine execution backend, which the cross-backend parity suite
+drives. That installs the **engine** only: the hub adapter composing it into a session is pulled separately
+with `it.hub.pull`, which is what makes it hub-delivered rather than bundled.
 
 <details>
 <summary><b>Contributor install</b> (adds the test, profiling and dashboard-benchmark tooling)</summary>
@@ -118,7 +117,7 @@ installs the **engine** only: the hub adapter that composes it into a session is
 # dependency-groups, so each needs its own `--group`. Requesting a group as an extra is only a
 # WARNING, not an error, and silently drops it (dropping `test` takes papermill/nbmake with it,
 # so the notebook tests then cannot run at all). `test` includes the `dev` group transitively.
-uv pip install -e ".[examples,lightning,interp-engine]" --group git-deps --group test --group profiling
+uv pip install -e ".[examples,lightning]" --group git-deps --group test --group profiling
 
 # Optional: only if you will run the Neuronpedia dashboard local-DB import/benchmark lanes —
 # installs the pinned neuronpedia-utils (--no-deps: its unused autointerp/cloud dependency
