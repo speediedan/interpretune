@@ -37,26 +37,15 @@ dependencies = [
     "transformers>=4.57.1",
     "tabulate >= 0.9.0",
     "datasets >= 4.0.0",
-    # Ceiling is MEASURED, not inherited: `ArgumentParser.instantiate_classes` (which `ITCLI` and the Lightning
-    # adapter both call) is deprecated from 4.49.0 and emits a JsonargparseDeprecationWarning that our own
-    # `unexpected_warns` assertions treat as a failure. Its replacement, `instantiate`, does not exist below
-    # 4.49.0, so spanning both needs the migration tracked in #278 before this can move to <5.0. The previous
-    # <4.42.0 cap cited an unverified "regression w/ 4.42"; 4.42.0 is in fact clean (89 CLI-surface tests and
-    # 15/15 shipped configs), and nothing in the dependency graph ever asked for that bound.
-    # FLOOR >=4.49.0: `ArgumentParser.instantiate_classes` was deprecated in 4.49.0 (removed in 5.0.0)
-    # and its replacement `instantiate` does not exist below 4.49.0, so the two cannot both be satisfied.
-    # Deliberately drops 4.35-4.48: pre-MVP, and a commonly used interface is being deprecated, so we take
-    # the cleaner end state over the wider window (#278).
-    # CEILING <5.0 IS GATED ON LIGHTNING, NOT ON US. lightning <= 2.6.5 itself calls TWO jsonargparse
-    # APIs that 5.0.0 REMOVES -- those are breaks, not warnings:
-    #   1. `ArgumentParser.instantiate_classes`, from `LightningCLI.instantiate_classes` (cli.py:612)
-    #   2. `skip_none=`, from `SaveConfigCallback`'s parser.save/dump          (cli.py:291, 307, 590)
-    #   3. `ArgumentParser.add_instantiator`, from `_add_instantiators`             (cli.py:596, 601)
-    # `LightningArgumentParser` overrides none of them, so all resolve to jsonargparse's deprecated
-    # implementations. Our own call site already uses `instantiate`, so interpretune's code being clean
-    # does NOT permit this ceiling to move. Moving past `<5.0` requires a Lightning release that migrates
-    # all three -- a routine Lightning bump is the unblocking event, which nobody would connect to a
-    # jsonargparse ceiling without this note. Verified against lightning 2.6.5 (latest) on 2026-08-19.
+    # FLOOR >=4.49.0: `instantiate_classes` is deprecated from 4.49.0 (removed in 5.0.0) and its
+    # replacement `instantiate` does not exist below it, so the two cannot both be satisfied.
+    #
+    # THE <5.0 CEILING IS GATED ON LIGHTNING, NOT ON US, which is the non-obvious part: lightning
+    # <=2.6.5 itself calls three jsonargparse APIs that 5.0.0 REMOVES (`instantiate_classes`,
+    # `skip_none=`, `add_instantiator`), and `LightningArgumentParser` overrides none of them. Our own
+    # call site is already migrated, so interpretune being clean does not permit this ceiling to move --
+    # a routine Lightning bump is the unblocking event, which nobody would connect to a jsonargparse
+    # ceiling without this note.
     "jsonargparse[signatures] >= 4.49.0,<5.0",
     # Eagerly imported on the `import interpretune` path (utils/__init__ -> schema_validation) and by the
     # neuronpedia extension; previously reached every env transitively, which hid the omission until a bare
@@ -105,19 +94,6 @@ transformerbridge = "interpretune.adapters.transformer_lens:TransformerBridgeStr
 
 [project.optional-dependencies]
 
-# A DIRECT optional dependency, deliberately, rather than one reached through circuit-tracer's own
-# `interp-engine` extra. Interpretune's core never imports it -- the adapter is hub-delivered -- but the
-# cross-backend parity suite drives the engine directly, and a transitive path made its presence an
-# accident of which circuit-tracer extra a build happened to request. It silently vanished from a dev env
-# on exactly that basis, taking four parity assertions into the skipped column with it.
-#
-# This installs the ENGINE only. The hub adapter that composes it into a session
-# (`it-interp-engine-adapter`) is pulled separately through `it.hub.pull`, which is the point of a
-# hub-delivered adapter -- installing the engine does not register any composition.
-interp-engine = [
-    "interp-engine~=1.5.1",
-]
-
 lightning = [
     # 2.13.0 published 2026-07-26; interpretune had been pinning its release candidate by git SHA
     # (c378e55) while it was unpublished. The consumed surface — StrategyAdapter,
@@ -128,21 +104,16 @@ lightning = [
     "peft>=0.18",
 ]
 
-# Scope: what someone RUNNING THE SHIPPED NOTEBOOKS needs. Test tooling and maintainer-lane packages
-# belong in the dependency-groups below, so that `.[examples]` on its own is a usable notebook install
-# rather than a contributor install (#287).
+# Scope: what someone running the shipped notebooks needs. Test and maintainer tooling belongs in the
+# dependency-groups below, so `.[examples]` alone is a usable notebook install.
 #
-# THREE ENTRIES HERE LOOK UNUSED TO ANY GREP AND ARE NOT. Recorded because an import audit run while
-# trimming this list flagged all three, and acting on the first would have broken every RTE/BoolQ
-# example:
-#   - scikit-learn: nothing in this repo imports sklearn. But `evaluate.load("super_glue", ...)` in
-#     it_examples/experiments/rte_boolq.py fetches a metric script whose module-level imports include
-#     `sklearn.metrics`. The dependency is real and lives in HF's downloaded metric module, where no
-#     static check of this tree can see it.
-#   - ipywidgets: a Jupyter FRONTEND extension, never imported. Widget rendering (tqdm.notebook,
-#     plotly) degrades silently without it rather than raising.
-#   - torch-tb-profiler: a TensorBoard PLUGIN, loaded via entry-point discovery, never imported.
-# An empty grep is evidence about the grep. Do not drop any of these on import evidence alone.
+# THREE ENTRIES LOOK UNUSED TO ANY GREP AND ARE NOT -- an import audit flagged all three, and acting on
+# the first would have broken every RTE/BoolQ example:
+#   - scikit-learn: imported by the metric script `evaluate.load("super_glue", ...)` downloads, which
+#     lives outside this tree where no static check can see it.
+#   - ipywidgets: a Jupyter frontend extension; widget rendering degrades silently without it.
+#   - torch-tb-profiler: a TensorBoard plugin, loaded by entry point, never imported.
+# An empty grep is evidence about the grep. Do not drop these on import evidence alone.
 examples = [
     "wandb",
     "torch-tb-profiler",
@@ -154,32 +125,26 @@ examples = [
     "matplotlib",
     "evaluate",
     "scikit-learn",
-    # Floored at the version whose contents were verified against the published wheel, and capped
-    # below the next unseen major. 2.0.0 (unpublished at time of writing) removes the
-    # `neuronpedia.types.**` subtree, none of which is imported here: the three surfaces this
-    # project consumes (`np_graph_metadata.NPGraphMetadata`, `requests.base_request.NPRequest`,
-    # and the top-level `api_key` context manager) are byte-identical across that bump, so a `<2`
-    # cap would exclude a release already known to be compatible.
+    # Capped below the next unseen major rather than at <2: the three surfaces used here
+    # (`NPGraphMetadata`, `NPRequest`, the `api_key` context manager) are byte-identical across the
+    # 2.0.0 bump, so <2 would exclude a release already known to be compatible.
     "neuronpedia >=1.2.1,<3",
     # v3 adds the TransformerBridge architecture. 3.5.1 is the release cut from the commit this project
     # previously pinned by git URL (tag v3.5.1 == 4ba2187b), so this is a release-pin of identical code.
-    # sae-dashboard caps transformer-lens below 3.x (`^2.2.0`, i.e. <3.0.0), hence the matching entry
-    # in [tool.uv] override-dependencies / requirements/ci/overrides.txt. sae-lens does NOT cap it --
-    # its `>=2.16.1` is a FLOOR, which 3.5.1 satisfies. (Corrected 2026-08-09; the comment previously
-    # listed sae-lens as a capping downstream, which would have made the override look load-bearing
-    # for a constraint that does not exist.)
+    # sae-dashboard caps transformer-lens below 3.x (`^2.2.0`), hence the matching entry in
+    # [tool.uv] override-dependencies / requirements/ci/overrides.txt. sae-lens does NOT cap it.
     "transformer-lens >=3.5.1,<4",
-    # Released floor since 2026-08-09: SAELens#721 merged (`3495640`) and shipped in 6.49.0, so the
-    # Scalable Dashboards fork pin is retired. 6.49.0 is the FIRST release carrying the
-    # `ActivationsStore.get_batch_tokens(move_to_model_device=...)` seam SAEDashboard's columnar
-    # runner uses; SAEDashboard probes for it and degrades gracefully, so this is a floor for the
-    # optimization rather than for correctness.
-    #
-    # NOTE the released alias set is deliberately NARROWER than the fork's: the maintainer verified
-    # every `neuronpedia:` entry against production neuronpedia.org and dropped all 52 gemma-3-1b-it
-    # aliases, which pointed at pages that do not exist. Nothing here depended on them resolving --
-    # they 404'd under the fork too.
+    # First release carrying the `ActivationsStore.get_batch_tokens(move_to_model_device=...)` seam
+    # SAEDashboard's columnar runner uses. SAEDashboard probes for it and degrades gracefully, so this
+    # is a floor for the optimization rather than for correctness.
     "sae_lens >= 6.49.0",
+    # The engine the cross-backend parity suite drives directly. Declared here rather than reached
+    # through circuit-tracer's own extra, which made its presence depend on which extra a build asked
+    # for -- a rebuild silently dropped it and four parity assertions went to skipped. Installs the
+    # engine only; the hub adapter composing it into a session is pulled with `it.hub.pull`.
+    # The marker is required, not cosmetic: interp-engine supports >=3.11 while this project supports
+    # >=3.10, so an unmarked requirement makes the universal lock unsatisfiable.
+    "interp-engine ~=1.5.1; python_version >= '3.11'",
     # we comment these out when installing from git urls to avoid dep conflicts
     # note packages that have need to have git url deps override transitive dependencies (e.g. needing to override
     # sae-lens' transformer-lens dependency with a git url dep) need to be moved to git-deps as well
@@ -199,69 +164,33 @@ examples = [
 git-deps = [
     # circuit-tracer: pinned to a fork branch MERGING TWO open upstream PRs, because interpretune
     # needs both and neither is merged:
-    #   decoderesearch/circuit-tracer#79   "Add `transformers` v5.0.0 compatibility"  (the previous pin)
-    #   decoderesearch/circuit-tracer#111  "feat: interp-engine support"
-    # #111 supplies InterpEngineReplacementModel and attribution over the engine, which the
-    # interp-engine adapter composition CONSUMES rather than reimplements -- rebuilding a replacement
-    # model inside an adapter would diverge from upstream on its first release.
+    #   decoderesearch/circuit-tracer#79    transformers v5 compatibility
+    #   decoderesearch/circuit-tracer#111   interp-engine support (supplies InterpEngineReplacementModel,
+    #                                       which the adapter composition consumes rather than reimplements)
     #
-    # The branch is `it-pin/79-plus-111` on the fork. It is a PIN TARGET, not a proposed change, and it
-    # is expected to be REBASED as both PRs evolve before merging: verify by CONTENT rather than
-    # assuming this SHA still carries what you need. RETIRE IT once both merge -- the replacement is a
-    # plain upstream pin (or a release floor), and leaving a fork pin in place after upstream carries
-    # the code is how a fork silently becomes a maintenance surface.
+    # No release carries what we need: PyPI has only 0.5.0, and the correctness fix below is in no
+    # upstream tag. RETIRE this pin once both PRs merge -- a fork pin outliving upstream is how a fork
+    # becomes a maintenance surface.
     #
-    # Its one merge conflict was pyproject.toml's `dev` extra (#79 added pytest-rerunfailures to the
-    # single-line form; #111 reformatted it and added interp-engine plus an `interp-engine` extra),
-    # resolved as the UNION -- taking either side alone drops a dependency its own PR needs.
-    #
-    # #111 requires `interp-engine>=1.3.3`; the adapter component pins `~=1.3.0` (>=1.3.0,<1.4.0). The
-    # intersection is 1.3.3 through 1.3.x, and 1.3.6 satisfies both. Note WHICH SIDE BINDS: #111's floor
-    # would admit 1.4+, the component's ceiling would not, so the component is the effective ceiling for
-    # both and whoever bumps it is moving the ceiling for circuit-tracer too, not only for the adapter.
-    #
-    # No RELEASE carries what interpretune needs: PyPI publishes only 0.5.0 (uploaded 2026-03-29), and
-    # the correctness fix below is not in any upstream tag through v0.5.2 nor in upstream main.
-    #
-    # The pin MUST include the "Canonicalize nnsight trace inputs via tokenized tensors" commit --
-    # before it, a raw `str` prompt was re-tokenized with add_special_tokens=True, double-prefixing
-    # an explicit BOS and silently shifting every position index in the feature-intervention path.
-    # That commit was d117ba1 until 2026-08-25, when #79 was rebased onto upstream v0.5.2
-    # (8f1e243); it is now 11cb4f9. Verify by CONTENT rather than by SHA, since a rebase moves it:
+    # The pin MUST include "Canonicalize nnsight trace inputs via tokenized tensors". Before it, a raw
+    # `str` prompt was re-tokenized with add_special_tokens=True, double-prefixing BOS and silently
+    # shifting every position index in the feature-intervention path. The branch is rebased as the PRs
+    # evolve, so VERIFY BY CONTENT, not by SHA:
     #   git log --grep="Canonicalize nnsight trace" <pin>   -> must return exactly one commit
-    # The previous pin point 3fde7e2 remains reachable on the fork as tag
-    # `it-pin-pre-rebase-20260825`, so older interpretune commits still install.
-    #
-    # circuit-tracer derives its version from VCS (hatch-vcs), so this pin resolves to
-    # 0.5.3.dev36+gc3e298f5a -- 36 commits past v0.5.2 (verified by installing the pin URL). Upstream's v* tags were pushed to the fork
-    # on 2026-08-25 so `git describe` can find them; without them the same commit reported
-    # 0.0.1.dev78, which understated the fork by three minor versions to everyone who installed it.
-    # Nothing keys on that string (see #363), but a bump changes it, and it is worth recognizing.
     "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@c3e298f5a71b6b0b01b717e8b446639e730e2485",
-    # sae-lens RETIRED from git-deps 2026-08-09 -- SAELens#721 merged and released as 6.49.0, so it
-    # is now a released floor in `dependencies` above. This is the wave's first git-dep to go.
+    # sae-lens is NOT here: retired to a released floor in `dependencies` above once SAELens#721
+    # shipped in 6.49.0. Do NOT resurrect the old pin (`speediedan/SAELens@86f90b3d`) -- it carries 20
+    # duplicate YAML keys in `pretrained_saes.yaml` from a bad rebase, silently binding 10 `-pt-`
+    # transcoder entries to the WRONG weights.
     #
-    # The retired pin (`speediedan/SAELens@86f90b3d`) must NOT be resurrected: it carries 20 duplicate
-    # YAML keys in `pretrained_saes.yaml` (10 x `path`, 10 x `l0`) from a bad rebase, which silently
-    # bound 10 entries in `gemma-scope-2-1b-pt-` / `-12b-pt-transcoders-all` to the WRONG weights.
-    # Upstream main never had them and the maintainer fixed them before merging. Only `-pt-` releases
-    # were affected and everything here uses `gemma-scope-2-1b-it-transcoders-all`, so nothing we
-    # generated was wrong -- but the pin itself is unsafe.
+    # sae-dashboard stays pinned while SD#74 is open: the dashboard pipeline imports fork-only surface
+    # (e.g. `sae_dashboard.neuronpedia.prompt_bucketing`). Flip to a released floor at merge.
     #
-    # sae-dashboard stays pinned: its PR (SD#74) is still open, and
-    # interpretune.utils.neuronpedia_dashboard_pipeline imports fork-only surface
-    # (e.g. sae_dashboard.neuronpedia.prompt_bucketing). Flip it to a released floor at merge.
-    # The SD#74 head carrying `columnar_parquet_row_group_size` and `columnar_write_page_index`. Both are hard FLOORS
-    # rather than runtime-probed capabilities: interpretune emits --columnar-write-page-index unconditionally, so an
-    # older SAEDashboard fails with "unrecognized arguments" rather than silently producing an unindexed
-    # corpus. Neither a page index nor row-group boundaries can be added after generation, so that
-    # trade -- loud failure over silent degradation -- is the only safe one. Pre-MVP, so requiring a
-    # floor is cheaper than carrying a compatibility gate.
-    #
-    # The row-group default is what actually makes an artifact streamable: readers prune per ROW
-    # GROUP, so the previous one-row-group files cost a reader the WHOLE file to fetch one feature
-    # and the page index did not change that. Generation commands are unchanged (the default is on),
-    # but corpora generated before this pin have to be regenerated to benefit.
+    # `columnar_parquet_row_group_size` and `columnar_write_page_index` are hard floors, not probed
+    # capabilities: interpretune passes --columnar-write-page-index unconditionally, so an older
+    # SAEDashboard fails loudly rather than producing an unindexed corpus. Neither can be added after
+    # generation. The row-group default is what makes an artifact streamable (readers prune per row
+    # group), so corpora generated before this pin need regenerating to benefit.
     "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@823ae3b61c0c33d7cf40e68d043a4dfe3375342d",
 ]
 
@@ -294,17 +223,10 @@ test = [
     # them, which is why the documented user install no longer pulls this group (#287).
     "nbmake >= 1.5.0",
     "papermill >= 2.4.0",
-    # Moved here from the `examples` extra 2026-08-25 (#287): both serve maintainer lanes, not
-    # notebook users. `syrupy` backs the SAEDashboard/SAELens snapshot suites run from the
-    # integrated dev env; `pgpq` is the binary Arrow COPY encoder for the columnar local-DB import
-    # lane driven by scripts/setup_dashboard_benchmark_env.py.
-    #
-    # This is deliberately NOT a return to the pre-2026-08 arrangement where both were post-build
-    # extras added by hand and silently vanished on the next rebuild. The CI lock is compiled with
-    # `--extra examples --extra lightning --group dev --group test --group profiling`
-    # (requirements/utils/lock_ci_requirements.sh), and build_it_env.sh installs FROM that lock, so
-    # every dev/CI environment still gets them automatically. Only `.[examples]` on its own loses
-    # them, which is the point.
+    # Maintainer lanes, not notebook users: `syrupy` backs the SAEDashboard/SAELens snapshot suites,
+    # `pgpq` is the Arrow COPY encoder for the columnar local-DB import lane. Dev and CI environments
+    # still get them automatically, since the CI lock is compiled with these groups and
+    # build_it_env.sh installs from that lock -- only bare `.[examples]` loses them, which is the point.
     "syrupy >= 4.6",
     "pgpq >=0.11,<0.12",
     # sae_dashboard moved to git-deps (fork-pinned) until the upstream SD PR merges

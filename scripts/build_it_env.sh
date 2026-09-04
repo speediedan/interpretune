@@ -305,7 +305,7 @@ it_install(){
 
     # 1. Install interpretune in editable mode + git-deps group (uv doesn't currently support url deps in locked reqs)
     echo "Installing interpretune in editable mode..."
-    uv pip install ${uv_install_flags} -e ".[interp-engine]" --group git-deps
+    uv pip install ${uv_install_flags} -e . --group git-deps
 
     # 2. Install locked CI requirements (all PyPI packages)
     # Note: Torch is already installed in base_env_build, so we don't use --torch-backend here.
