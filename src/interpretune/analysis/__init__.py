@@ -31,6 +31,9 @@ from interpretune.analysis.backends import (
     AnalysisBackend,
     AnalysisBackendCapability,
     BackendCapability,
+    InterventionMode,
+    InterventionSupport,
+    LatentModelSupport,
     ModuleCapabilities,
 )
 from interpretune.analysis.core import (
@@ -100,6 +103,9 @@ __all__ = [
     "AnalysisBackendCapability",
     "AnalysisBackend",
     "ModuleCapabilities",
+    "InterventionMode",
+    "InterventionSupport",
+    "LatentModelSupport",
     # Protocol Definitions
     "LatentModelFqn",
     "DefaultAnalysisBatchProtocol",

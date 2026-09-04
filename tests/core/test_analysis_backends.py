@@ -21,8 +21,14 @@ from interpretune.analysis.backends import (
     AnalysisBackendCapability,
     BackendCapability,
     InterventionDict,
+    InterventionMode,
     InterventionSpec,
+    InterventionSupport,
+    LatentModelSupport,
     ModelBackend,
+    ModuleCapabilities,
+    PositionScope,
+    require_intervention_support,
     apply_intervention,
     build_intervention_dict,
     expand_intervention_patterns,
@@ -771,8 +777,8 @@ class TestNNsightEnvoyHelpers:
 class TestBackendCapability:
     """Tests for the BackendCapability enum values and membership."""
 
-    def test_batched_hooks_value(self):
-        assert BackendCapability.BATCHED_HOOKS.value == "batched_hooks"
+    def test_latent_models_value(self):
+        assert BackendCapability.LATENT_MODELS.value == "latent_models"
 
     def test_gradients_value(self):
         assert BackendCapability.GRADIENTS.value == "gradients"
@@ -783,26 +789,53 @@ class TestBackendCapability:
     def test_feature_intervention_value(self):
         assert AnalysisBackendCapability.FEATURE_INTERVENTION.value == "feature_intervention"
 
-    def test_intervention_position_scope_values(self):
-        """The two scopes are separate capabilities because supporting interventions and being able to
-        SCOPE one are different facts: a backend whose steering primitive applies to every prompt
-        position supports `INTERVENTION` and not `INTERVENTION_LAST_TOKEN`."""
-        assert BackendCapability.INTERVENTION_LAST_TOKEN.value == "intervention_last_token"
-        assert BackendCapability.INTERVENTION_ALL_POSITIONS.value == "intervention_all_positions"
+    def test_scopes_and_modes_are_a_support_record_not_members(self):
+        """Supporting interventions and being able to SCOPE or MODE one are different kinds of fact.
+
+        The enum answers "which method groups exist"; which configurations of a group a backend can honour is a typed
+        record on the group's protocol. A flat member per configuration was tried (two scope members) and could not
+        carry the mode axis without a member per mode as well.
+        """
+        assert not hasattr(BackendCapability, "INTERVENTION_LAST_TOKEN")
+        assert not hasattr(BackendCapability, "INTERVENTION_ALL_POSITIONS")
+        assert not hasattr(BackendCapability, "BATCHED_HOOKS")
+        support = InterventionSupport(position_scopes={"last_token"}, modes={"add"})
+        assert support.position_scopes == frozenset({PositionScope.LAST_TOKEN})
+        assert support.modes == frozenset({InterventionMode.ADD})
+
+    def test_a_support_record_must_declare_something(self):
+        with pytest.raises(ValueError, match="position scope"):
+            InterventionSupport(position_scopes=frozenset(), modes={InterventionMode.ADD})
+        with pytest.raises(ValueError, match="intervention mode"):
+            InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, modes=frozenset())
 
     def test_enum_members_count(self):
         """A ratchet, so adding a capability is a conscious act rather than a side effect.
 
-        Raised from 4 to 6 when position scope became expressible (#441): a backend can now declare which position sets
-        it can intervene on, instead of every caller assuming last-token.
+        Three members: one per ``Supports*`` protocol. It was briefly six, when position scope was added as two
+        flat members beside an efficiency flag; those were sub-modes of one surface, and they now live in the
+        surface's support record instead.
         """
-        assert len(BackendCapability) == 6
+        assert len(BackendCapability) == 3
         assert len(AnalysisBackendCapability) == 2
 
     def test_membership_in_frozenset(self):
-        caps = frozenset({BackendCapability.BATCHED_HOOKS, BackendCapability.GRADIENTS})
-        assert BackendCapability.BATCHED_HOOKS in caps
+        caps = frozenset({BackendCapability.LATENT_MODELS, BackendCapability.GRADIENTS})
+        assert BackendCapability.LATENT_MODELS in caps
         assert BackendCapability.GRADIENTS in caps
+
+    def test_module_capabilities_require_a_record_for_each_declared_surface(self):
+        """The invariant a card or a conformance report relies on: the record is there iff the surface is."""
+        with pytest.raises(ValueError, match="INTERVENTION is declared but no intervention support record"):
+            ModuleCapabilities(model=frozenset({BackendCapability.INTERVENTION}), analysis=frozenset())
+        with pytest.raises(ValueError, match="LATENT_MODELS is not declared"):
+            ModuleCapabilities(model=frozenset(), analysis=frozenset(), latent_models=LatentModelSupport())
+        ok = ModuleCapabilities(
+            model=frozenset({BackendCapability.INTERVENTION}),
+            analysis=frozenset(),
+            intervention=InterventionSupport.every(),
+        )
+        assert ok.intervention is not None and ok.latent_models is None
 
 
 # ==============================================================================
@@ -821,14 +854,14 @@ class TestNNsightModelBackendCapabilities:
     def test_capabilities_returns_frozenset(self, backend):
         assert isinstance(backend.capabilities, frozenset)
 
-    def test_capabilities_includes_batched_hooks(self, backend):
-        assert BackendCapability.BATCHED_HOOKS in backend.capabilities
+    def test_batched_hooks_is_declared_on_the_latent_model_record(self, backend):
+        assert backend.latent_model_support == LatentModelSupport(batched_hooks=True)
 
     def test_capabilities_includes_gradients(self, backend):
         assert BackendCapability.GRADIENTS in backend.capabilities
 
-    def test_supports_batched_hooks(self, backend):
-        assert backend.supports(BackendCapability.BATCHED_HOOKS) is True
+    def test_intervention_record_declares_every_scope_and_mode(self, backend):
+        assert backend.intervention_support == InterventionSupport.every()
 
     def test_supports_gradients(self, backend):
         assert backend.supports(BackendCapability.GRADIENTS) is True
@@ -984,14 +1017,14 @@ class TestTLModelBackendCapabilities:
     def test_capabilities_includes_gradients(self, backend):
         assert BackendCapability.GRADIENTS in backend.capabilities
 
-    def test_capabilities_does_not_include_batched_hooks(self, backend):
-        assert BackendCapability.BATCHED_HOOKS not in backend.capabilities
+    def test_batched_hooks_is_not_claimed(self, backend):
+        assert backend.latent_model_support == LatentModelSupport(batched_hooks=False)
 
     def test_supports_gradients(self, backend):
         assert backend.supports(BackendCapability.GRADIENTS) is True
 
-    def test_supports_batched_hooks_false(self, backend):
-        assert backend.supports(BackendCapability.BATCHED_HOOKS) is False
+    def test_intervention_record_declares_every_scope_and_mode(self, backend):
+        assert backend.intervention_support == InterventionSupport.every()
 
 
 class TestTLFwdWHooksBatched:
@@ -1407,4 +1440,189 @@ class TestFwdWInterventionSignature:
             model=mock_model,
             batch={"input": torch.randn(1, 3)},
             interventions={"blocks.0.hook_resid_post": spec},
+        )
+
+
+# ==============================================================================
+# Intervention contract: scope and mode survive canonicalization, and are gated
+# ==============================================================================
+
+
+class _AddOnlyLastTokenBackend:
+    """A backend shaped like a hub-delivered steering adapter: INTERVENTION, one scope, one mode."""
+
+    capabilities = frozenset({BackendCapability.INTERVENTION})
+    intervention_support = InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, modes={InterventionMode.ADD})
+
+
+class _UndeclaredBackend:
+    capabilities = frozenset({BackendCapability.INTERVENTION})
+
+
+class TestInterventionScopeSurvivesCanonicalization:
+    """`build_intervention_dict` is the canonicalization every backend runs, so a field it drops is dropped
+    everywhere at once.
+
+    `position_scope` WAS dropped: the rebuilt spec took the default, and an
+    `all_positions` request reached both bundled backends as last-token with nothing raised.
+    """
+
+    _HOOK = "blocks.0.hook_resid_post"
+
+    def _canonical(self, raw):
+        return build_intervention_dict({self._HOOK: raw}, {self._HOOK: [self._HOOK]}, {self._HOOK: (4,)})[self._HOOK][0]
+
+    def test_a_spec_keeps_its_scope(self):
+        spec = InterventionSpec(intervention_tensor=torch.ones(4), mode="add", position_scope="all_positions")
+        assert self._canonical(spec).position_scope is PositionScope.ALL_POSITIONS
+
+    def test_a_mapping_keeps_its_scope(self):
+        raw = {"intervention_tensor": torch.ones(4), "mode": "add", "position_scope": "all_positions"}
+        assert self._canonical(raw).position_scope is PositionScope.ALL_POSITIONS
+
+    def test_the_default_is_still_last_token(self):
+        assert self._canonical(torch.ones(4)).position_scope is PositionScope.LAST_TOKEN
+
+    def test_mode_is_normalized_to_the_enum(self):
+        assert (
+            self._canonical({"intervention_tensor": torch.ones(4), "mode": "project"}).mode is InterventionMode.PROJECT
+        )
+
+    def test_an_unknown_mode_is_refused_by_name(self):
+        with pytest.raises(ValueError, match="Unknown intervention mode 'smear'"):
+            self._canonical({"intervention_tensor": torch.ones(4), "mode": "smear"})
+
+    def test_a_per_hook_tensors_mapping_keeps_its_scope(self):
+        """The wildcard shape (`intervention_tensors`, one per matched hook) is a second expansion path and dropped
+        the scope independently of the first; one shared field reader now serves both."""
+        raw = {"intervention_tensors": [torch.ones(4)], "mode": "add", "position_scope": "all_positions"}
+        assert self._canonical(raw).position_scope is PositionScope.ALL_POSITIONS
+
+    def test_shorthand_inputs_carry_the_scope(self):
+        """The op's shorthand surface (`intervention_position_scope`) reaches the payload; without it a caller
+        using shorthand fields could only ever ask for last-token."""
+        fields = {
+            "intervention_hook_pattern": self._HOOK,
+            "intervention_tensor": torch.ones(4),
+            "intervention_mode": "add",
+            "intervention_position_scope": "all_positions",
+        }
+        payload = resolve_interventions(
+            analysis_batch={}, resolve_field=fields.get, load_json_field=lambda _name: None, kwargs={}
+        )
+        assert payload[self._HOOK]["position_scope"] is PositionScope.ALL_POSITIONS
+        assert payload[self._HOOK]["mode"] is InterventionMode.ADD
+
+    def test_all_positions_reaches_the_edit(self):
+        """The consequence, end to end through apply_intervention: every position moves, not only the last."""
+        spec = self._canonical({"intervention_tensor": torch.ones(4), "mode": "add", "position_scope": "all_positions"})
+        value = torch.zeros(2, 3, 4)
+        out = apply_intervention(value, spec, last_pos=2)
+        assert torch.equal(out, torch.ones(2, 3, 4))
+
+
+class TestRequireInterventionSupport:
+    """The single gate an op calls, on a RAW payload, before any backend canonicalizes it."""
+
+    def test_declared_scope_and_mode_pass(self):
+        payload = {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), mode="add")}
+        require_intervention_support(_AddOnlyLastTokenBackend(), payload, backend_name="stub")
+
+    def test_undeclared_scope_is_refused_naming_the_declared_set(self):
+        payload = {
+            "blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), mode="add", position_scope="all_positions")
+        }
+        with pytest.raises(NotImplementedError, match=r"position_scope='all_positions'.*declares \['last_token'\]"):
+            require_intervention_support(_AddOnlyLastTokenBackend(), payload, backend_name="stub")
+
+    def test_undeclared_mode_is_refused_on_the_mode_axis(self):
+        payload = {"blocks.0.hook_resid_post": {"intervention_tensor": torch.ones(4), "mode": "replace"}}
+        with pytest.raises(NotImplementedError, match=r"mode='replace'.*declares \['add'\].*MODE axis"):
+            require_intervention_support(_AddOnlyLastTokenBackend(), payload, backend_name="stub")
+
+    def test_a_bare_tensor_carries_the_default_mode_and_is_gated_on_it(self):
+        """A raw tensor means `replace` by default; a backend that only adds must refuse it, not add it."""
+        with pytest.raises(NotImplementedError, match="mode='replace'"):
+            require_intervention_support(
+                _AddOnlyLastTokenBackend(), {"blocks.0.hook_resid_post": torch.ones(4)}, backend_name="stub"
+            )
+
+    def test_a_per_hook_tensors_mapping_is_gated_without_its_tensors(self):
+        payload = {
+            "blocks.*.hook_resid_post": {
+                "intervention_tensors": [torch.ones(4)],
+                "mode": "add",
+                "position_scope": "all_positions",
+            }
+        }
+        with pytest.raises(NotImplementedError, match="all_positions"):
+            require_intervention_support(_AddOnlyLastTokenBackend(), payload, backend_name="stub")
+
+    def test_a_sequence_of_specs_is_gated_entry_by_entry(self):
+        payload = {
+            "blocks.0.hook_resid_post": [
+                InterventionSpec(torch.ones(4), mode="add"),
+                InterventionSpec(torch.ones(4), mode="add", position_scope="all_positions"),
+            ]
+        }
+        with pytest.raises(NotImplementedError, match="all_positions"):
+            require_intervention_support(_AddOnlyLastTokenBackend(), payload, backend_name="stub")
+
+    def test_claiming_intervention_without_a_record_is_refused(self):
+        """No legacy 'assume last-token' path: a backend that claims the surface must say what it supports."""
+        payload = {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), mode="add")}
+        with pytest.raises(NotImplementedError, match="attaches no `intervention_support` record"):
+            require_intervention_support(_UndeclaredBackend(), payload, backend_name="stub")
+
+    def test_the_record_is_read_by_value_not_identity(self):
+        """A record from a second load of the capabilities module (this suite's documented double-import class)
+        must still pass the gate: compare the declared VALUES, never `isinstance` the record."""
+
+        class _LooksLikeARecord:
+            position_scopes = frozenset({"last_token"})
+            modes = frozenset({"add"})
+
+        class _Backend:
+            capabilities = frozenset({BackendCapability.INTERVENTION})
+            intervention_support = _LooksLikeARecord()
+
+        require_intervention_support(
+            _Backend(), {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), mode="add")}, backend_name="dup"
+        )
+        with pytest.raises(NotImplementedError, match="all_positions"):
+            require_intervention_support(
+                _Backend(),
+                {
+                    "blocks.0.hook_resid_post": InterventionSpec(
+                        torch.ones(4), mode="add", position_scope="all_positions"
+                    )
+                },
+                backend_name="dup",
+            )
+
+    def test_an_empty_record_is_a_type_error(self):
+        class _Backend:
+            capabilities = frozenset({BackendCapability.INTERVENTION})
+            intervention_support = object()
+
+        with pytest.raises(TypeError, match="must be an InterventionSupport"):
+            require_intervention_support(
+                _Backend(), {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), mode="add")}, backend_name="x"
+            )
+
+    def test_the_bundled_backends_declare_everything(self):
+        """Both bundled backends see the whole activation, so every scope and mode is expressible; a narrowing here
+        would be a regression, not a policy change."""
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+        payload = {
+            "blocks.0.hook_resid_post": [
+                InterventionSpec(torch.ones(4), mode=m, position_scope=s)
+                for m in InterventionMode
+                for s in PositionScope
+            ]
+        }
+        require_intervention_support(TLModelBackend(), payload, backend_name="tl")
+        require_intervention_support(
+            NNsightModelBackend(HookNameResolver("GPT2LMHeadModel")), payload, backend_name="ns"
         )

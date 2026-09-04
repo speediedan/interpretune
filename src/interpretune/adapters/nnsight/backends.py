@@ -23,6 +23,8 @@ import torch
 
 from interpretune.analysis.backends import (
     BackendCapability,
+    InterventionSupport,
+    LatentModelSupport,
     InterventionDict,
     InterventionSpec,
     InterventionValue,
@@ -366,19 +368,24 @@ class NNsightModelBackend:
 
     @property
     def capabilities(self) -> frozenset[BackendCapability]:
-        """NNsight implements every method group, and its batched-hooks path genuinely fuses (multi-invoke)."""
+        """NNsight implements every method group."""
         return frozenset(
             {
-                BackendCapability.BATCHED_HOOKS,
                 BackendCapability.GRADIENTS,
                 BackendCapability.LATENT_MODELS,
                 BackendCapability.INTERVENTION,
-                # Both scopes, for the same reason as TL: the traced value is the full
-                # activation, so which positions get edited is the caller's choice.
-                BackendCapability.INTERVENTION_LAST_TOKEN,
-                BackendCapability.INTERVENTION_ALL_POSITIONS,
             }
         )
+
+    @property
+    def intervention_support(self) -> InterventionSupport:
+        """Every scope and every mode, for the same reason as TL: the traced value is the full activation."""
+        return InterventionSupport.every()
+
+    @property
+    def latent_model_support(self) -> LatentModelSupport:
+        """The batched-hooks path genuinely fuses its configs into one trace (multi-invoke)."""
+        return LatentModelSupport(batched_hooks=True)
 
     def supports(self, capability: BackendCapability) -> bool:
         """Check whether this backend supports a given capability."""
