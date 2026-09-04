@@ -494,6 +494,7 @@ def model_fwd_intervention(
     Output Schema:
         pre_intervention_logits (float32)
         post_intervention_logits (float32)
+        intervention_position_effect (float32)
         logit_diff (float32)
     """
     ...

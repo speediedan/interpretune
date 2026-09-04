@@ -333,6 +333,13 @@ model_fwd_intervention:
       datasets_dtype: float32
       required: false
       sequence_type: true
+    intervention_position_effect:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+      dyn_dim: 1
+      dyn_dim_ceil: max_seq_len
+      array_shape: [null, batch_size]
     logit_diff:
       datasets_dtype: float32
       required: false

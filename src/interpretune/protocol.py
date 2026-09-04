@@ -895,4 +895,5 @@ class CircuitAnalysisBatchProtocol(DefaultAnalysisBatchProtocol):
     intervention_scale_factors: list[float] | torch.Tensor | None
     pre_intervention_logits: torch.Tensor | None
     post_intervention_logits: torch.Tensor | None
+    intervention_position_effect: torch.Tensor | None
     logit_diff: torch.Tensor | float | None

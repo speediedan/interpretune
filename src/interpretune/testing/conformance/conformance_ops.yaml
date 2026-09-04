@@ -1,0 +1,37 @@
+# The conformance suite's own op collection: one op, written the way a consumer would write one.
+#
+# `model_fwd_w_cache` declares its `cache` intermediate-only, so a capture cannot be read back from the
+# store. This op composes after it and writes the requested points into store columns, which keeps the
+# capture case on the runner path (the contract is that an adapter is USABLE through the runner, not that
+# its backend method works in isolation) and doubles as a worked example of a non-bundled collection.
+#
+# Storage shape: the store's feature vocabulary has no "dict of arbitrary tensors", and the point names are
+# chosen at run time, so the activations are written FLATTENED with their shape and names beside them and
+# rebuilt by `captured_points()`. Three plain columns instead of one clever one.
+collection:
+  name: conformance
+  version: 0.1.0
+
+store_capture_points:
+  description: Write the requested activation-cache points into store columns so a capture can be compared after the run
+  implementation: interpretune.testing.conformance.ops.store_capture_points_impl
+  required_ops: [model_fwd_w_cache]
+  aliases: []
+  input_schema:
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+      # optional at the input check: the op produces it through `model_fwd_w_cache` itself when absent
+      required: false
+  output_schema:
+    captured_values:
+      datasets_dtype: float32
+      sequence_type: true
+    captured_shape:
+      datasets_dtype: int64
+      sequence_type: true
+    captured_point_names:
+      datasets_dtype: string
+      sequence_type: true
+      non_tensor: true

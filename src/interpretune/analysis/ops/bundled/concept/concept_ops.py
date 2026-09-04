@@ -1056,10 +1056,17 @@ def model_fwd_intervention_impl(
     target_ids_tensor = None if target_ids is None else torch.as_tensor(target_ids, dtype=torch.long).reshape(-1)
     logit_diff = mean_target_logit_delta(pre_lt, post_lt, target_ids_tensor)
 
+    # Per-position effect, `[batch, pos]`: the max-abs logit delta at every position. The last-token logits
+    # above answer "what changed the prediction"; this answers "WHICH positions the intervention touched",
+    # which is the only observable that distinguishes a last-token edit from a whole-prompt one. A
+    # whole-prompt edit produces plausible last-token logits, so without this column the scope could not
+    # be checked from the store at all.
+    position_effect = (post_logits.detach() - pre_logits.detach()).abs().amax(dim=-1)
     analysis_batch.update(
         pre_intervention_logits=pre_lt.detach().cpu(),
         post_intervention_logits=post_lt.detach().cpu(),
         logit_diff=logit_diff.detach().cpu(),
+        intervention_position_effect=position_effect.to(torch.float32).cpu(),
     )
     return analysis_batch
 

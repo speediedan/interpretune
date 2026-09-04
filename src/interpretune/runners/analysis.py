@@ -42,6 +42,13 @@ def analysis_store_generator(
     """
     # TODO: should we create separate dataset phase subsplits (per epoch)?
     # TODO: allow for custom dataloader associations
+    if max_epochs < 1:
+        # `range(max_epochs)` with the runner config's default of -1 is EMPTY, so the store would be built from
+        # zero rows and fail two frames away inside `datasets` ("corresponds to no data"), with nothing pointing
+        # at the setting. An analysis run with no epochs is a request for nothing; refuse it by name.
+        raise ValueError(
+            f"analysis requires max_epochs >= 1 (got {max_epochs}); pass max_epochs=1 to the analysis runner config"
+        )
     dataloader = datamodule.test_dataloader()  # type: ignore[attr-defined]  # ITDataModule provides test_dataloader
     test_ctx = {"module": module, "as_generator": True}
     for epoch_idx in range(max_epochs):

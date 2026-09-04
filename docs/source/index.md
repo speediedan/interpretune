@@ -147,6 +147,7 @@ usage/analysis_injection_usage
 :hidden:
 
 usage/adapter_development_guide
+usage/adapter_conformance_contract
 usage/framework_level_adapters
 usage/circuit_tracer_backend_support
 ```
