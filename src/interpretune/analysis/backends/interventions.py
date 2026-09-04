@@ -74,7 +74,7 @@ class InterventionSpec(NamedTuple):
     mode: str = "replace"
     scale_factor: float = 1.0
     use_intervention_tensor_as_basis: bool = True
-    position_scope: str = PositionScope.LAST_TOKEN
+    position_scope: PositionScope | str = PositionScope.LAST_TOKEN
 
 
 InterventionValue: TypeAlias = Any
@@ -674,7 +674,7 @@ def apply_intervention(
     projection target. In ``"project"`` mode the target defines the default projection basis; when
     ``spec.use_intervention_tensor_as_basis`` is ``False`` the direction is reversed.
     """
-    scope = spec.position_scope
+    scope = normalize_position_scope(spec.position_scope)
 
     if scope == PositionScope.LAST_TOKEN:
         value[:, last_pos, ...] = _apply_mode_to_region(value[:, last_pos, ...], spec)
@@ -686,12 +686,24 @@ def apply_intervention(
         value[...] = _apply_mode_to_region(flat, spec).reshape(value.shape)
         return value
 
-    raise ValueError(
-        f"Unknown position_scope {scope!r}; expected one of "
-        f"{[m.value for m in PositionScope]!r}. An unrecognised scope is refused rather than "
-        "defaulted, because both valid scopes produce plausible activations and guessing between "
-        "them is undetectable downstream."
-    )
+    raise AssertionError(f"unreachable: normalize_position_scope admitted {scope!r}")
+
+
+def normalize_position_scope(scope: PositionScope | str) -> PositionScope:
+    """Coerce a spec's scope to the enum, raising with the valid set if it is not one.
+
+    Exists so exactly ONE place converts. A spec can legitimately arrive carrying a plain string -- from
+    YAML, or a notebook literal -- and ``PositionScope`` is a ``str`` enum so those compare equal at
+    runtime. Leaving each consumer to handle both forms is how one of them eventually handles only one.
+    """
+    try:
+        return PositionScope(scope)
+    except ValueError:
+        raise ValueError(
+            f"Unknown position_scope {scope!r}; expected one of {[m.value for m in PositionScope]!r}. "
+            "An unrecognised scope is refused rather than defaulted, because both valid scopes produce "
+            "plausible activations and guessing between them is undetectable downstream."
+        ) from None
 
 
 #: Which capability a given scope requires. Kept as data rather than an ``if`` chain so adding a third
@@ -716,27 +728,24 @@ def require_position_scope(capabilities, spec: InterventionSpec, *, backend: str
     Making the absence of a declaration mean "refuse everything" would break every such backend at
     once, and making it mean "supports everything" would reintroduce the silent substitution.
     """
-    required = _SCOPE_CAPABILITY.get(spec.position_scope)
-    if required is None:
-        raise ValueError(f"Unknown position_scope {spec.position_scope!r} for backend {backend!r}")
+    scope = normalize_position_scope(spec.position_scope)
+    required = _SCOPE_CAPABILITY[scope]
     from interpretune.analysis.backends.capabilities import BackendCapability
 
     declared = set(capabilities or ())
     scope_caps = {BackendCapability.INTERVENTION_LAST_TOKEN, BackendCapability.INTERVENTION_ALL_POSITIONS}
     if not (declared & scope_caps):
         # Undeclared: legacy last-token assumption, see docstring.
-        if spec.position_scope == PositionScope.LAST_TOKEN:
+        if scope == PositionScope.LAST_TOKEN:
             return
         raise NotImplementedError(
             f"backend {backend!r} declares no intervention position-scope capabilities, so it is "
-            f"treated as last-token only and cannot honour position_scope="
-            f"{spec.position_scope.value if hasattr(spec.position_scope, 'value') else spec.position_scope!r}. "
+            f"treated as last-token only and cannot honour position_scope={scope.value!r}. "
             f"Declare {BackendCapability.INTERVENTION_ALL_POSITIONS} if it can steer every position."
         )
     if getattr(BackendCapability, required) not in declared:
         raise NotImplementedError(
-            f"backend {backend!r} cannot apply an intervention with position_scope="
-            f"{getattr(spec.position_scope, 'value', spec.position_scope)!r}; it declares "
+            f"backend {backend!r} cannot apply an intervention with position_scope={scope.value!r}; it declares "
             f"{sorted(c.value for c in declared & scope_caps)!r}. This is refused rather than "
             "narrowed or widened to the supported scope, because both scopes produce plausible "
             "activations and a silent substitution cannot be detected from the result."
