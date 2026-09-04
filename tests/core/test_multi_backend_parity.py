@@ -18,9 +18,11 @@ convergence, which is the failure mode this whole file exists to exclude.
 1. **Capture** -- does the backend see the same activation? A divergence here explains any divergence at
    layers 2 and 3, so testing it separately localizes the fault instead of reporting three failures for
    one cause.
-2. **Intervention** -- does the backend apply the same edit, to the same positions? This is where #441
-   lives: interp-engine steers every prompt position while our contract is the last token, with matching
-   shapes and no exception raised.
+2. **Intervention** -- does the backend apply the same edit, to the positions it was ASKED to? Backends
+   differ in which position scopes they can express at all: some can restrict an edit to the final token,
+   some only steer every position. Neither is wrong, but a caller who asked for one and silently received
+   the other gets plausible activations and no error, so the scope has to be part of the contract and a
+   backend that cannot honour one has to refuse rather than substitute.
 3. **Analysis ops** -- do ops built on those backends produce the same values?
 
 **Layer 2 asserts the changed-position SET, not the values and not a count.** A whole-prompt intervention
@@ -459,12 +461,16 @@ def _final_logits_nnsight(prompt_ids):
     return saved[0, -1, :].detach()
 
 
-#: interp-engine is deliberately ABSENT here, and that absence is a finding rather than an omission.
-#: Its point vocabulary is activation points; it exposes no `logits` point, so "the model's output
-#: distribution" -- the one tensor every analysis op ultimately reduces to -- has no name in it. Layers 1
-#: and 2 work around this by observing the final layer's `resid_post` instead, which is the same
-#: workaround the adapter has to make. That mismatch between hook vocabularies is the concrete friction
-#: motivating the activation-point naming refactor; see the issue tracking it.
+#: interp-engine is deliberately ABSENT here, and the reason is a VOCABULARY gap, not a capability gap.
+#: It can produce the output distribution perfectly well -- it runs a HuggingFace model with a real
+#: unembed. What is missing is a NAME to ask for that tensor by: its vocabulary is activation points and
+#: carries no `logits` entry, so the one tensor every analysis op reduces to cannot be addressed. Layers 1
+#: and 2 work around this by observing the final layer's residual instead, which is the same workaround an
+#: adapter has to make.
+#:
+#: The distinction matters to one reader in particular: someone deciding whether to build an adapter.
+#: "Exposes no logits point" reads as *the engine is limited*, when the true statement is *our addressing
+#: scheme is* -- and only the second is true.
 FINAL_LOGITS = {
     "transformer_lens": _final_logits_transformer_lens,
     "nnsight": _final_logits_nnsight,
