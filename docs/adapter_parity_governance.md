@@ -91,6 +91,37 @@ This is the parity signal that protects the generalized latent-model analysis op
 
 **Optional members are gated on being installed, and the skip carries a reason.** A hub-delivered adapter is not present in every environment. Its parity leg is evaluated through the same declared-requirements predicate the rest of the rails use, so an absent backend produces "unavailable here, because X is not installed" rather than a bare skip — the distinction between *this comparison could not run* and *this comparison does not exist*.
 
+### Three layers, tested separately, because their failures mean different things
+
+Parity is not one claim. A backend can observe the forward correctly and still edit it wrongly, and an
+analysis op can diverge for reasons neither of those explains. The suite is therefore split by layer, and
+the split is diagnostic rather than organizational:
+
+| Layer | Question | Why it is separate |
+| --- | --- | --- |
+| **1. Capture** | Does the backend see the same activation? | A capture divergence *explains* a divergence at layers 2 and 3. Testing it separately localizes the fault instead of reporting three failures for one cause — and the intervention failure would be the misleading one to chase. |
+| **2. Intervention** | Does the backend apply the same edit, **to the same positions**? | Shapes and plausibility do not distinguish a last-token edit from a whole-prompt one. This is the layer where a silent wrong-answer defect lives. |
+| **3. Analysis ops** | Do ops built on those backends produce the same values? | An op composes many calls; a divergence here is only interpretable once 1 and 2 are known good. |
+
+**Layer 2's discriminator is causality, not introspection**, which is what makes it work identically for
+every participant. In a causal LM, editing the residual stream at position `p` can only affect positions
+`>= p` downstream. So a last-token intervention moves exactly the final position of a later activation, and
+a whole-prompt intervention moves all of them. "Which positions were steered" — an internal question each
+backend answers differently, and some cannot answer at all — becomes one observable that every backend
+exposes and that the HF reference exposes too.
+
+**Assert the position SET, not a count, and never the values alone.** A whole-prompt intervention produces
+entirely plausible activations, so a value comparison passes under the defect. A count is no better: a bug
+steering position 0 under a last-token spec gives a count of 1, and a whole-prompt intervention that
+happens to be inert somewhere also gives 1 while operating on the wrong scope. Both are the same failure —
+the arithmetic agrees while the operation differs. **And "changed" must name a tolerance**, or the set goes
+noisy from nondeterminism at ~1e-9 and the pressure becomes to loosen the assertion until it passes, which
+is how a guard decays into decoration.
+
+**Validate the discriminator in both directions before trusting it.** A test that only checks the
+last-token case cannot distinguish "the instrument works" from "the instrument always returns the last
+position". The whole-prompt case is what demonstrates it can tell the two apart.
+
 ### Matching names is not matching tensors
 
 **A parity comparison must be between points that mean the same thing, and hook NAMES do not establish that.**
@@ -100,6 +131,8 @@ interp-engine's `mlp_in` and `attn_in` are the sublayer's *post-norm* inputs. Tr
 A parity test that resolves names through a translation layer, without checking that the layer preserves meaning, will compare a post-norm tensor against a pre-norm one and report a divergence that is real but is not the divergence it claims to measure. **The dangerous response is the natural one: loosen the tolerance until it passes** — which buries a genuine defect under a threshold chosen to hide it, and leaves a green test asserting nothing.
 
 So: compare points established to be semantically identical, and keep the correctness of any name translation as a *separate* assertion with its own test. A parity suite and a mapping suite answer different questions, and merging them lets each one's failure be mistaken for the other's.
+
+**A measured instance, and the reason the family boundary is drawn where it is.** The TransformerLens participant in the convergence set must be **TransformerBridge**, not `HookedTransformer.from_pretrained`. The latter is the legacy path: it converts weights, folding LayerNorm and centering writing weights by default. Those transforms preserve model *outputs* while changing the residual stream — so its `hook_resid_pre` is a differently-scaled tensor wearing the same name as the bridge's. Substituting it fails the convergence assertion while interp-engine and NNsight pass, and the reflex when exactly one participant disagrees is to widen the tolerance, which would have buried the real signal: the family is defined by *executing the HF forward*, and the legacy path does not.
 
 ### Separate HookedTransformer validation
 
