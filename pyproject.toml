@@ -373,6 +373,7 @@ exclude = ["it_examples.tests*"]
 "interpretune.analysis.ops.bundled.attribution" = ["*.yaml"]
 "interpretune.analysis.ops.bundled.concept" = ["*.yaml"]
 "interpretune.analysis.ops.bundled.circuit_tracer" = ["*.yaml"]
+"interpretune.testing.conformance" = ["*.yaml"]
 
 [tool.setuptools_scm]
 fallback_version = "0.1.0.dev0"

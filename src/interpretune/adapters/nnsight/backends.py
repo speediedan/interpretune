@@ -267,6 +267,43 @@ def _infer_num_layers(model: Any) -> int:
     raise ValueError("Unable to infer model layer count for NNsight activation caching")
 
 
+#: Where a base hook sits inside a block, in forward order. Anything not listed sorts with the block output.
+_BLOCK_RANK = {
+    "hook_in": 0,
+    "hook_resid_pre": 0,
+    "ln1": 1,
+    "attn": 2,
+    "hook_attn_out": 2,
+    "hook_resid_mid": 3,
+    "ln2": 3,
+    "mlp": 4,
+    "hook_mlp_out": 4,
+    "hook_out": 5,
+    "hook_resid_post": 5,
+}
+
+
+def _forward_order(hook_names: Any, resolver: HookNameResolver) -> list[str]:
+    """Sort hook names into the order the forward pass produces them.
+
+    nnsight resolves an envoy's ``.input``/``.output`` in trace order and raises ``MissedProviderError``
+    ("did you call an Envoy out of order?") when a later module's value is requested before an earlier
+    one's. A caller's ``names_filter`` is a set, not a schedule, so the order it happens to arrive in must
+    not decide whether the capture works: ``["blocks.5.hook_out", "blocks.6.hook_in"]`` succeeded and the
+    reverse failed until this sort existed.
+    """
+
+    def key(name: str) -> tuple[int, int, str]:
+        layer, base, _sub = resolver.parse_hook_name(name)
+        if layer < 0:
+            # global hooks: embeddings run before every block, everything else (ln_final, unembed) after
+            return (-1 if base.startswith(("embed", "pos_embed", "hook_embed", "hook_pos_embed")) else 10**6, 0, name)
+        head = base.split(".")[0]
+        return (layer, _BLOCK_RANK.get(head, _BLOCK_RANK.get(base, 5)), name)
+
+    return sorted(hook_names, key=key)
+
+
 def _iter_requested_hook_names(
     model: Any,
     resolver: HookNameResolver,
@@ -655,7 +692,7 @@ class NNsightModelBackend:
         ]
         with model.trace() as tracer:
             with _invoke_trace(tracer, batch):
-                for hook_name in requested_base_hooks:
+                for hook_name in _forward_order(requested_base_hooks, self._resolver):
                     resolved = self._resolver.resolve_for_envoy(hook_name)
                     envoy = _navigate_envoy(model, resolved.module_path)
                     act_proxy = _read_envoy_activation(envoy, resolved)
@@ -682,7 +719,9 @@ class NNsightModelBackend:
     ) -> tuple[torch.Tensor, Any]:
         """Run a forward pass with activation caching but without latent model hooks."""
         self._ensure_tuple_calibration(model)
-        requested_hooks = _iter_requested_hook_names(model, self._resolver, names_filter, include_subhooks=False)
+        requested_hooks = _forward_order(
+            _iter_requested_hook_names(model, self._resolver, names_filter, include_subhooks=False), self._resolver
+        )
         saved_cache: dict[str, Any] = {}
         saved_logits: Any = None
         with model.trace() as tracer:

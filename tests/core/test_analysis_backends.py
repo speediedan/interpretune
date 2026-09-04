@@ -1626,3 +1626,38 @@ class TestRequireInterventionSupport:
         require_intervention_support(
             NNsightModelBackend(HookNameResolver("GPT2LMHeadModel")), payload, backend_name="ns"
         )
+
+
+class TestNNsightCaptureOrder:
+    """Nnsight resolves envoy values in trace order, so the backend must schedule captures in FORWARD order
+    regardless of how the caller listed them.
+
+    Found by the conformance suite, whose capture op sorts point
+    names alphabetically and so asked for `blocks.5.attn.hook_out` before `blocks.5.hook_in`.
+    """
+
+    def test_names_are_sorted_into_forward_order(self):
+        from interpretune.adapters.nnsight.backends import _forward_order
+
+        resolver = HookNameResolver("GPT2LMHeadModel")
+        names = [
+            "unembed.hook_in",
+            "blocks.6.hook_in",
+            "blocks.5.hook_out",
+            "blocks.5.attn.hook_out",
+            "blocks.5.hook_in",
+        ]
+        assert _forward_order(names, resolver) == [
+            "blocks.5.hook_in",
+            "blocks.5.attn.hook_out",
+            "blocks.5.hook_out",
+            "blocks.6.hook_in",
+            "unembed.hook_in",
+        ]
+
+    def test_order_is_a_function_of_the_set_not_the_list(self):
+        from interpretune.adapters.nnsight.backends import _forward_order
+
+        resolver = HookNameResolver("GPT2LMHeadModel")
+        a = ["blocks.5.hook_out", "blocks.6.hook_in"]
+        assert _forward_order(a, resolver) == _forward_order(list(reversed(a)), resolver)

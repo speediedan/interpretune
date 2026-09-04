@@ -326,6 +326,10 @@ class Adapter(AutoStrEnum):
 
 ## Testing Patterns
 
+An adapter that ships outside this repository validates its composition with the distributed conformance
+suite, `interpretune.testing.conformance`; the contract, its oracles and a minimal consumer are in
+`adapter_conformance_contract.md`. The bundled adapters run the same suite in `tests/core/test_backend_conformance.py`.
+
 ### Parity Test Configuration
 
 ```python

@@ -496,3 +496,22 @@ class TestAnalysisRunner:
         # Verify neither apply nor warning was called - branch not entered
         mock_apply.assert_not_called()
         mock_warn.assert_not_called()
+
+
+class TestAnalysisGeneratorRefusesZeroEpochs:
+    """`max_epochs` defaults to -1 on the runner config and the generator iterates `range(max_epochs)`, so an unset
+    value used to yield ZERO rows and fail two frames away inside `datasets`.
+
+    Refused by name instead.
+    """
+
+    @pytest.mark.parametrize("max_epochs", [0, -1])
+    def test_a_run_with_no_epochs_is_refused(self, max_epochs):
+        from interpretune.runners.analysis import analysis_store_generator
+
+        class _DM:
+            def test_dataloader(self):
+                raise AssertionError("the dataloader must not be touched when the run is refused")
+
+        with pytest.raises(ValueError, match="max_epochs >= 1"):
+            next(analysis_store_generator(module=object(), datamodule=_DM(), max_epochs=max_epochs))

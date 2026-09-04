@@ -33,7 +33,7 @@ from typing import Any, Callable, ClassVar, Literal, Mapping
 import psutil
 import torch
 
-from interpretune.analysis.core import LatentAnalysisDict
+from interpretune.testing.conformance.extraction import ExtractedAnalysisStore  # (promoted; re-exported)
 from interpretune.utils.resource_mgmt import cleanup_python_cuda
 
 from tests.runif import get_runner_ram_gb
@@ -141,49 +141,6 @@ class AnalysisFixtureSpec:
     @property
     def uses_payload_extractor(self) -> bool:
         return bool(self.field_names or self.include_dataset_metadata or self.include_result or self.extra_extractors)
-
-
-class ExtractedAnalysisStore:
-    """Minimal ``AnalysisStore`` view backed by a selected subset of fields."""
-
-    def __init__(self, **fields: Any) -> None:
-        self._fields = fields
-
-    def __deepcopy__(self, memo: dict[int, Any]) -> ExtractedAnalysisStore:
-        copied = type(self)(**deepcopy(self._fields, memo))
-        memo[id(self)] = copied
-        return copied
-
-    def __getattr__(self, name: str) -> Any:
-        if name in self._fields:
-            return self._fields[name]
-        raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
-
-    def by_latent_model(self, field_name: str, stack_latents: bool = True) -> LatentAnalysisDict:
-        """Match ``AnalysisStore.by_latent_model`` for selected nested fields."""
-
-        values = getattr(self, field_name)
-        assert values, f"No values found for field {field_name}"
-        if not isinstance(values[0], dict):
-            raise TypeError(
-                f"Values for field {field_name} must be dictionaries to be transformed into a LatentAnalysisDict"
-            )
-
-        result = LatentAnalysisDict()
-        latent_model_names = values[0].keys()
-        for latent_model in latent_model_names:
-            if isinstance(values[0][latent_model], dict) and stack_latents:
-                batch_tensors = []
-                for batch in values:
-                    latent_tensors = [tensor for tensor in batch[latent_model].values()]
-                    batch_tensors.append(torch.stack(latent_tensors) if latent_tensors else None)
-                result[latent_model] = batch_tensors  # type: ignore[assignment]
-            else:
-                result[latent_model] = [  # type: ignore[assignment]
-                    None if isinstance(batch[latent_model], list) and not batch[latent_model] else batch[latent_model]
-                    for batch in values
-                ]
-        return result
 
 
 class ExtractedFixturePayload:
