@@ -9,14 +9,14 @@ from __future__ import annotations
 import pytest
 import torch
 
-from interpretune.analysis.backends.interventions import InterventionSpec, apply_intervention_to_last_token
+from interpretune.analysis.backends.interventions import InterventionSpec, apply_intervention
 
 
 def _patch(h: torch.Tensor, v_s: torch.Tensor, v_t: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
     value = torch.zeros(1, 2, h.shape[-1], dtype=h.dtype)
     value[:, 1, :] = h
     spec = InterventionSpec(intervention_tensor=torch.stack([v_s, v_t]), mode="patch", scale_factor=scale)
-    return apply_intervention_to_last_token(value, spec, last_pos=1)[0, 1]
+    return apply_intervention(value, spec, last_pos=1)[0, 1]
 
 
 class TestLensCoordinatePatch:
@@ -87,13 +87,13 @@ class TestLensCoordinatePatch:
         h = torch.randn(1, 2, 6)
         spec = InterventionSpec(intervention_tensor=torch.randn(6), mode="patch")
         with pytest.raises(ValueError, match="exactly two lens vectors"):
-            apply_intervention_to_last_token(h, spec, last_pos=1)
+            apply_intervention(h, spec, last_pos=1)
 
     def test_width_mismatch_names_both_widths(self):
         value = torch.randn(1, 2, 6)
         spec = InterventionSpec(intervention_tensor=torch.randn(2, 5), mode="patch")
         with pytest.raises(ValueError, match="width 5 .*6-dimensional"):
-            apply_intervention_to_last_token(value, spec, last_pos=1)
+            apply_intervention(value, spec, last_pos=1)
 
     def test_batch_rows_are_patched_independently(self):
         torch.manual_seed(0)
@@ -103,7 +103,7 @@ class TestLensCoordinatePatch:
         value[0, 1, :] = 3.0 * v_s + 1.0 * v_t
         value[1, 1, :] = -2.0 * v_s + 7.0 * v_t
         spec = InterventionSpec(intervention_tensor=torch.stack([v_s, v_t]), mode="patch")
-        out = apply_intervention_to_last_token(value, spec, last_pos=1)
+        out = apply_intervention(value, spec, last_pos=1)
         assert out[0, 1] @ v_s == pytest.approx(1.0, abs=1e-4)
         assert out[1, 1] @ v_s == pytest.approx(7.0, abs=1e-4)
         assert out[1, 1] @ v_t == pytest.approx(-2.0, abs=1e-4)
@@ -113,11 +113,11 @@ class TestLensCoordinatePatch:
         value = torch.randn(1, 2, 6)
         spec = InterventionSpec(intervention_tensor=torch.randn(6), mode="patchh")
         with pytest.raises(ValueError, match="Unknown intervention mode"):
-            apply_intervention_to_last_token(value, spec, last_pos=1)
+            apply_intervention(value, spec, last_pos=1)
 
 
 class TestPatchReachesThroughTheValidatedPath:
-    """The low-level tests above call `apply_intervention_to_last_token` directly and so bypass validation.
+    """The low-level tests above call `apply_intervention` directly and so bypass validation.
 
     That is exactly how this nearly shipped unreachable: `_validate_intervention_spec` gates every
     intervention arriving through the op surface, and it both allowlists the mode and requires the tensor

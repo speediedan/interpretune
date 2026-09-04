@@ -23,7 +23,7 @@ from interpretune.analysis.backends import (
     InterventionDict,
     InterventionSpec,
     ModelBackend,
-    apply_intervention_to_last_token,
+    apply_intervention,
     build_intervention_dict,
     expand_intervention_patterns,
     resolve_interventions,
@@ -783,8 +783,20 @@ class TestBackendCapability:
     def test_feature_intervention_value(self):
         assert AnalysisBackendCapability.FEATURE_INTERVENTION.value == "feature_intervention"
 
+    def test_intervention_position_scope_values(self):
+        """The two scopes are separate capabilities because supporting interventions and being able to
+        SCOPE one are different facts: a backend whose steering primitive applies to every prompt
+        position supports `INTERVENTION` and not `INTERVENTION_LAST_TOKEN`."""
+        assert BackendCapability.INTERVENTION_LAST_TOKEN.value == "intervention_last_token"
+        assert BackendCapability.INTERVENTION_ALL_POSITIONS.value == "intervention_all_positions"
+
     def test_enum_members_count(self):
-        assert len(BackendCapability) == 4
+        """A ratchet, so adding a capability is a conscious act rather than a side effect.
+
+        Raised from 4 to 6 when position scope became expressible (#441): a backend can now declare which position sets
+        it can intervene on, instead of every caller assuming last-token.
+        """
+        assert len(BackendCapability) == 6
         assert len(AnalysisBackendCapability) == 2
 
     def test_membership_in_frozenset(self):
@@ -1245,7 +1257,7 @@ class TestInterventionDictHelpers:
             scale_factor=1.0,
         )
 
-        result = apply_intervention_to_last_token(value.clone(), spec, last_pos=1)
+        result = apply_intervention(value.clone(), spec, last_pos=1)
         expected = torch.tensor([[[0.0, 0.0], [3.0, 0.0]]], dtype=torch.float32)
         assert torch.allclose(result, expected)
 
@@ -1258,7 +1270,7 @@ class TestInterventionDictHelpers:
             use_intervention_tensor_as_basis=False,
         )
 
-        result = apply_intervention_to_last_token(value.clone(), spec, last_pos=1)
+        result = apply_intervention(value.clone(), spec, last_pos=1)
         expected = torch.tensor([[[0.0, 0.0], [1.8, 2.4]]], dtype=torch.float32)
         assert torch.allclose(result, expected)
 

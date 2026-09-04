@@ -11,7 +11,7 @@ from interpretune.analysis.backends import (
     BackendCapability,
     InterventionDict,
     InterventionValue,
-    apply_intervention_to_last_token,
+    apply_intervention,
     build_intervention_dict,
     expand_intervention_patterns,
     get_intervention_target_shape,
@@ -76,7 +76,18 @@ class TLModelBackend:
     def capabilities(self) -> frozenset[BackendCapability]:
         """TL implements every method group; BATCHED_HOOKS is absent because its batched-hooks path is a sequential
         loop rather than a fused execution."""
-        return frozenset({BackendCapability.GRADIENTS, BackendCapability.LATENT_MODELS, BackendCapability.INTERVENTION})
+        return frozenset(
+            {
+                BackendCapability.GRADIENTS,
+                BackendCapability.LATENT_MODELS,
+                BackendCapability.INTERVENTION,
+                # Both scopes: a TL hook receives the whole activation, so restricting to the final
+                # token and editing every position are equally expressible here. The scope is the
+                # caller's choice, which is exactly what `position_scope` exists to carry.
+                BackendCapability.INTERVENTION_LAST_TOKEN,
+                BackendCapability.INTERVENTION_ALL_POSITIONS,
+            }
+        )
 
     def supports(self, capability: BackendCapability) -> bool:
         """Check whether this backend supports a given capability."""
@@ -260,7 +271,7 @@ class TLModelBackend:
             for spec in spec_list:
 
                 def _hook(value: torch.Tensor, hook: Any, _spec=spec, _last_pos=last_pos) -> torch.Tensor:
-                    return apply_intervention_to_last_token(value, _spec, last_pos=_last_pos)
+                    return apply_intervention(value, _spec, last_pos=_last_pos)
 
                 fwd_hooks.append((hook_name, _hook))
 
