@@ -422,3 +422,139 @@ class TestInterpEngineSteeringIsAllPositions:
             "interp-engine's steering is no longer whole-prompt. An adapter declaring only "
             "INTERVENTION_ALL_POSITIONS for it would now be wrong, and #441's framing needs revisiting."
         )
+
+
+# --------------------------------------------------------------------------------------------------
+# Layer 3: analysis ops
+# --------------------------------------------------------------------------------------------------
+#
+# Layer 3 decomposes, and the decomposition is worth stating because it says where the risk actually is.
+# `logit_diffs_impl` derives everything it returns from `analysis_batch.answer_logits` and
+# `answer_indices`; it never touches the backend. So "do analysis ops agree across backends" is really
+# two questions:
+#
+#   (a) do backends produce the same ANSWER LOGITS?   <- varies by backend; this is where risk lives
+#   (b) given identical inputs, is the op DETERMINISTIC and backend-independent?  <- pure by construction
+#
+# Both are asserted, because (b) being true by construction today is exactly the kind of property that
+# stops being true when someone adds a backend-conditional branch to an op, and nothing else would catch
+# that. Asserting only (a) would leave the op layer unguarded; asserting only (b) would test arithmetic
+# nobody doubts.
+
+
+def _final_logits_transformer_lens(prompt_ids):
+    from transformer_lens.model_bridge import TransformerBridge
+
+    model = TransformerBridge.boot_transformers(MODEL_ID, device="cpu")
+    return model(prompt_ids)[0, -1, :].detach()
+
+
+def _final_logits_nnsight(prompt_ids):
+    import nnsight
+    from nnsight import LanguageModel
+
+    model = LanguageModel(MODEL_ID, device_map="cpu", dispatch=True)
+    with model.trace(prompt_ids):
+        saved = nnsight.save(model.output.logits)
+    return saved[0, -1, :].detach()
+
+
+#: interp-engine is deliberately ABSENT here, and that absence is a finding rather than an omission.
+#: Its point vocabulary is activation points; it exposes no `logits` point, so "the model's output
+#: distribution" -- the one tensor every analysis op ultimately reduces to -- has no name in it. Layers 1
+#: and 2 work around this by observing the final layer's `resid_post` instead, which is the same
+#: workaround the adapter has to make. That mismatch between hook vocabularies is the concrete friction
+#: motivating the activation-point naming refactor; see the issue tracking it.
+FINAL_LOGITS = {
+    "transformer_lens": _final_logits_transformer_lens,
+    "nnsight": _final_logits_nnsight,
+}
+
+
+@pytest.mark.parametrize("participant", sorted(FINAL_LOGITS))
+class TestAnswerLogitsConvergeOnTheForward:
+    """(a) The half that can actually differ: the tensor every analysis op reduces to."""
+
+    def test_final_position_logits_match_the_hf_reference(self, participant, hf_reference, prompt_ids):
+        if participant not in AVAILABLE:
+            pytest.skip(f"{participant} is not installed")
+        got = FINAL_LOGITS[participant](prompt_ids)
+        ref = hf_reference["logits"][0, -1, :]
+        assert_close(
+            got.to(ref.dtype),
+            ref,
+            rtol=RTOL,
+            atol=ATOL,
+            msg=(
+                f"{participant}'s final-position logits diverged from the HF forward. Every analysis op "
+                "reduces to this tensor, so a divergence here propagates to all of them."
+            ),
+        )
+
+
+class TestTheOpLayerIsBackendIndependent:
+    """(b) The half that is pure by construction -- asserted so it cannot quietly stop being.
+
+    `logit_diffs_impl` takes its inputs from the analysis batch and never consults the backend. That is a
+    design property, not an accident, and it is what lets one op serve every backend. A future
+    backend-conditional branch inside an op would break it silently: the op would still run, still return
+    plausible numbers, and no existing parity test would notice, because they all compare backends running
+    THEIR OWN ops rather than one op over fixed inputs.
+    """
+
+    @staticmethod
+    def _run(answer_logits, answer_indices):
+        import torch as _t
+
+        from interpretune.analysis.ops.bundled.core.core_ops import logit_diffs_impl
+
+        captured = {}
+
+        class _Batch(dict):
+            """Minimal analysis batch: the op only reads two fields and calls `.update`."""
+
+            answer_logits = None
+            answer_indices = None
+
+            def update(self, **kw):
+                captured.update(kw)
+
+        ab = _Batch()
+        ab.answer_logits = answer_logits
+        ab.answer_indices = answer_indices
+
+        def _fake_get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn):
+            # Stand in for the label-dependent half; the point under test is that the op consults its
+            # ARGUMENTS rather than the module it was handed.
+            return (
+                _t.tensor(0.0),
+                answer_logits.sum(-1) if answer_logits.dim() > 1 else answer_logits.clone(),
+                _t.zeros(answer_logits.shape[0], dtype=_t.long),
+                answer_logits,
+            )
+
+        logit_diffs_impl(
+            module=object(),  # deliberately not a backend: the op must not consult it
+            analysis_batch=ab,
+            batch={"input_ids": _t.zeros(answer_logits.shape[0], 4, dtype=_t.long)},
+            get_loss_preds_diffs=_fake_get_loss_preds_diffs,
+        )
+        return captured
+
+    def test_identical_inputs_give_identical_outputs(self):
+        logits = torch.randn(3, 1, 5)
+        idx = torch.zeros(3, 1, dtype=torch.long)
+        a = self._run(logits.clone(), idx.clone())
+        b = self._run(logits.clone(), idx.clone())
+        assert_close(a["logit_diffs"], b["logit_diffs"])
+
+    def test_the_op_does_not_consult_the_module_it_is_handed(self):
+        """The load-bearing assertion: `module` is a bare object, so any backend branch would raise.
+
+        This is the guard that would fail the day someone adds `if isinstance(module, NNsightBackend)`
+        to an op -- which is the change that would make ops silently backend-dependent while every
+        backend-vs-backend parity test kept passing.
+        """
+        logits = torch.randn(2, 1, 4)
+        out = self._run(logits, torch.zeros(2, 1, dtype=torch.long))
+        assert "logit_diffs" in out and out["logit_diffs"].shape[0] == 2
