@@ -484,6 +484,7 @@ def model_fwd_intervention(
         intervention_mode (string)
         intervention_use_intervention_tensor_as_basis (bool)
         intervention_scale_factor (float32)
+        intervention_position_scope (string)
         use_latent_models (bool)
         concept_direction (float32)
         concept_cache_key (string)

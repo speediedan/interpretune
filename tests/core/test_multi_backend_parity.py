@@ -415,14 +415,14 @@ class TestInterpEngineSteeringIsAllPositions:
         """The capability statement, and the negative control on the claim above.
 
         Without it, "matches all_positions" would be satisfiable by an implementation whose two scopes are
-        the same thing. This pins that interp-engine's scope is genuinely the whole prompt -- which is what
-        an adapter declaring only ``INTERVENTION_ALL_POSITIONS`` is asserting about it.
+        the same thing. This pins that interp-engine's NATIVE scope is genuinely the whole prompt -- which
+        is what an adapter listing ``all_positions`` in its ``InterventionSupport`` is asserting about it.
         """
         vector = _steering_vector(hf_reference)
         steered = self._steered_final_resid(prompt_ids, vector)
         assert changed_positions(hf_final_resid, steered) == set(range(prompt_ids.shape[1])), (
-            "interp-engine's steering is no longer whole-prompt. An adapter declaring only "
-            "INTERVENTION_ALL_POSITIONS for it would now be wrong, and #441's framing needs revisiting."
+            "interp-engine's native steering is no longer whole-prompt. An adapter declaring all_positions "
+            "for it on that basis would now be wrong, and the position-scope framing needs revisiting."
         )
 
 

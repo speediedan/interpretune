@@ -16,52 +16,100 @@ if TYPE_CHECKING:
 
 
 class BackendCapability(Enum):
-    """Capabilities that a model backend may support.
+    """The gated METHOD GROUPS of a model backend: one member per ``Supports*`` protocol, no more.
 
-    Ops and the dispatcher can query ``backend.capabilities`` to check support before
-    calling optional methods.  Backends that do not support a capability should fall back
-    to a simpler code path (e.g., looping instead of batching).
+    Ops and the dispatcher query ``backend.capabilities`` before calling an optional method group
+    (``require_backend_capability``). A member here answers "does this backend implement that surface";
+    it never answers "which configurations of the surface does it support". Those are a different
+    kind of fact and carry a different shape: a typed support record on the protocol that owns the
+    methods (:class:`InterventionSupport` on ``SupportsIntervention``, :class:`LatentModelSupport` on
+    ``SupportsLatentModels``). Keeping the two apart is what lets a backend truthfully claim a surface
+    while declaring exactly which of its modes it can honour, and lets a gate refuse the rest by name.
     """
 
     LATENT_MODELS = "latent_models"
-    """Backend supports execution with latent-model handles attached (``SupportsLatentModels``:
-
-    ``fwd_w_cache_and_latent_models``, ``fwd_w_hooks_and_latent_models``, ``fwd_w_hooks_batched``).
-    """
-
-    BATCHED_HOOKS = "batched_hooks"
-    """Backend can run multiple forward passes with different hook configs in a single batched execution (e.g.,
-    NNsight multi-invoke within one trace).
-
-    An efficiency property of HOW ``fwd_w_hooks_batched`` runs --
-    the method itself is part of ``LATENT_MODELS`` and a sequential loop is a valid implementation.
-    """
+    """``SupportsLatentModels``: ``fwd_w_cache_and_latent_models``, ``fwd_w_hooks_and_latent_models``,
+    ``fwd_w_hooks_batched``."""
 
     GRADIENTS = "gradients"
-    """Backend supports forward + backward with gradient caching (``SupportsGradients``)."""
+    """``SupportsGradients``: forward + backward with gradient caching."""
 
     INTERVENTION = "intervention"
-    """Backend supports baseline-vs-intervention paired execution (``SupportsIntervention``:
+    """``SupportsIntervention``: baseline-vs-intervention paired execution (``fwd_w_intervention``)."""
 
-    ``fwd_w_intervention``).
+
+class PositionScope(str, Enum):
+    """Which positions an intervention edits.
+
+    A ``str`` enum so a spec built from YAML or a notebook can carry the plain string and still
+    compare equal to the member.
+
+    **Both scopes are legitimate operations, not a correct one and a broken one.** Steering the final
+    token is the right shape for "change the next prediction"; steering every position is the right
+    shape for "make the model read the whole prompt differently". Interpretune previously had a name
+    for only the first, which is what made a backend implementing the second look like a defect
+    rather than like a capability we could not express.
     """
 
-    INTERVENTION_LAST_TOKEN = "intervention_last_token"
-    """Backend can restrict an intervention to the FINAL real token.
+    LAST_TOKEN = "last_token"
+    ALL_POSITIONS = "all_positions"
 
-    Declared separately from :attr:`INTERVENTION` because supporting interventions at all and being
-    able to SCOPE one are different facts. A backend whose steering primitive applies to every prompt
-    position supports the former and not this.
+
+class InterventionMode(str, Enum):
+    """How an intervention combines its tensor with the activation it targets.
+
+    A ``str`` enum for the same reason as :class:`PositionScope`. The mode is the second axis of the
+    intervention contract (scope is the first): a backend can implement ``fwd_w_intervention`` and still
+    be unable to express most modes, because ``replace``, ``patch`` and ``project`` all need the CURRENT
+    activation while an additive steering primitive never observes it. A mode a backend has not declared
+    is refused by :func:`~interpretune.analysis.backends.interventions.require_intervention_mode` rather
+    than applied as a different mode, since every mode returns plausible logits and the substitution is
+    undetectable from the result.
     """
 
-    INTERVENTION_ALL_POSITIONS = "intervention_all_positions"
-    """Backend can apply an intervention at EVERY prompt position.
+    REPLACE = "replace"
+    ADD = "add"
+    PATCH = "patch"
+    PROJECT = "project"
 
-    A capability, not a defect. "Steer the whole prompt" is a legitimate experiment -- it is the right shape for
-    changing how a model reads its input, where last-token steering is the right shape for changing the next prediction.
-    Interpretune previously had a name for only one of them, which made a backend implementing the other look broken
-    rather than differently capable.
+
+@dataclass(frozen=True)
+class InterventionSupport:
+    """Which configurations of ``INTERVENTION`` a backend can honour.
+
+    Declaring the capability without one of these is a contract violation, not a legacy default: the absence of a
+    declaration used to mean "assume last-token", which is exactly the silent narrowing the scope field was introduced
+    to remove.
     """
+
+    position_scopes: frozenset[PositionScope]
+    modes: frozenset[InterventionMode]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "position_scopes", frozenset(PositionScope(s) for s in self.position_scopes))
+        object.__setattr__(self, "modes", frozenset(InterventionMode(m) for m in self.modes))
+        if not self.position_scopes:
+            raise ValueError("InterventionSupport must declare at least one position scope")
+        if not self.modes:
+            raise ValueError("InterventionSupport must declare at least one intervention mode")
+
+    @classmethod
+    def every(cls) -> InterventionSupport:
+        """Every scope and every mode: the declaration of a backend whose hook sees the whole activation."""
+        return cls(position_scopes=frozenset(PositionScope), modes=frozenset(InterventionMode))
+
+
+@dataclass(frozen=True)
+class LatentModelSupport:
+    """How ``LATENT_MODELS`` runs on this backend.
+
+    ``batched_hooks`` says whether ``fwd_w_hooks_batched`` fuses its hook configs into one execution
+    (nnsight's multi-invoke) or loops. It lives here rather than in :class:`BackendCapability` because it
+    is a property of HOW a method in that group runs, not a surface of its own: every latent-models
+    backend implements the method, and a sequential loop is a valid implementation.
+    """
+
+    batched_hooks: bool = False
 
 
 class AnalysisBackendCapability(Enum):
@@ -79,10 +127,31 @@ Capability: TypeAlias = BackendCapability | AnalysisBackendCapability
 
 @dataclass(frozen=True)
 class ModuleCapabilities:
-    """Execution and analysis capabilities exposed by a module."""
+    """Execution and analysis capabilities exposed by a module, with each surface's support record.
+
+    ``intervention`` is present iff ``INTERVENTION`` is declared and ``latent_models`` iff
+    ``LATENT_MODELS`` is; the constructor enforces that, so a consumer rendering this (the adapter card,
+    ``adapter_info``, a conformance report) can rely on the record being there when the surface is.
+    """
 
     model: frozenset[BackendCapability]
     analysis: frozenset[AnalysisBackendCapability]
+    intervention: InterventionSupport | None = None
+    latent_models: LatentModelSupport | None = None
+
+    def __post_init__(self) -> None:
+        for capability, record, name in (
+            (BackendCapability.INTERVENTION, self.intervention, "intervention"),
+            (BackendCapability.LATENT_MODELS, self.latent_models, "latent_models"),
+        ):
+            declared = capability in self.model
+            if declared and record is None:
+                raise ValueError(
+                    f"{capability.name} is declared but no {name} support record accompanies it; a backend "
+                    "claiming the surface must say which configurations of it are supported"
+                )
+            if record is not None and not declared:
+                raise ValueError(f"a {name} support record is present but {capability.name} is not declared")
 
     @property
     def all(self) -> frozenset[Capability]:
@@ -255,4 +324,25 @@ def get_module_capabilities(module: Any) -> ModuleCapabilities:
             if isinstance(capability, AnalysisBackendCapability)
         )
 
-    return ModuleCapabilities(model=frozenset(model_capabilities), analysis=frozenset(analysis_capabilities))
+    return ModuleCapabilities(
+        model=frozenset(model_capabilities),
+        analysis=frozenset(analysis_capabilities),
+        intervention=_support_record(
+            backend, BackendCapability.INTERVENTION, model_capabilities, "intervention_support"
+        ),
+        latent_models=_support_record(
+            backend, BackendCapability.LATENT_MODELS, model_capabilities, "latent_model_support"
+        ),
+    )
+
+
+def _support_record(backend: Any, capability: BackendCapability, declared: set[BackendCapability], attr: str) -> Any:
+    """The support record a backend attaches for ``capability``, or ``None`` when it does not declare it.
+
+    Read with ``getattr`` rather than through the protocol so a backend that declares the surface and
+    forgot the record fails in :class:`ModuleCapabilities`' invariant with a message naming the record,
+    instead of as an ``AttributeError`` here.
+    """
+    if capability not in declared or backend is None:
+        return None
+    return getattr(backend, attr, None)

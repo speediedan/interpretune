@@ -64,12 +64,13 @@ class TestDecomposition:
                 assert backend.supports(cap)
 
     def test_batched_hooks_is_an_efficiency_claim_not_method_presence(self):
-        """TL implements fwd_w_hooks_batched (sequential loop) without claiming BATCHED_HOOKS."""
+        """TL implements fwd_w_hooks_batched (sequential loop) and says so on the latent-model record."""
         from interpretune.adapters.transformer_lens.backends import TLModelBackend
+        from interpretune.analysis.backends import LatentModelSupport
 
         backend = TLModelBackend()
         assert callable(backend.fwd_w_hooks_batched)
-        assert not backend.supports(BackendCapability.BATCHED_HOOKS)
+        assert backend.latent_model_support == LatentModelSupport(batched_hooks=False)
 
 
 class TestCapabilityGate:

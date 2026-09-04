@@ -12,28 +12,34 @@ from dataclasses import dataclass
 import re
 from typing import Any, Callable, NamedTuple, TypeAlias
 
-from enum import Enum
-
 import torch
 
+from interpretune.analysis.backends.capabilities import (
+    BackendCapability,
+    InterventionMode,
+    PositionScope,
+)
 from interpretune.analysis.backends.hook_mapping import SUBHOOK_SUFFIXES
 
-
-class PositionScope(str, Enum):
-    """Which positions an intervention edits.
-
-    A ``str`` enum so a spec built from YAML or a notebook can carry the plain string and still
-    compare equal to the member.
-
-    **Both scopes are legitimate operations, not a correct one and a broken one.** Steering the final
-    token is the right shape for "change the next prediction"; steering every position is the right
-    shape for "make the model read the whole prompt differently". Interpretune previously had a name
-    for only the first, which is what made a backend implementing the second look like a defect
-    rather than like a capability we could not express.
-    """
-
-    LAST_TOKEN = "last_token"
-    ALL_POSITIONS = "all_positions"
+__all__ = [
+    "PositionScope",
+    "InterventionMode",
+    "InterventionSpec",
+    "InterventionDict",
+    "InterventionValue",
+    "HOOK_ALIAS_GROUPS",
+    "expand_intervention_patterns",
+    "build_intervention_dict",
+    "resolve_interventions",
+    "apply_intervention",
+    "get_intervention_target_shape",
+    "normalize_position_scope",
+    "normalize_intervention_mode",
+    "require_position_scope",
+    "require_intervention_mode",
+    "require_intervention_support",
+    "iter_intervention_axes",
+]
 
 
 class InterventionSpec(NamedTuple):
@@ -71,7 +77,7 @@ class InterventionSpec(NamedTuple):
     """
 
     intervention_tensor: torch.Tensor
-    mode: str = "replace"
+    mode: InterventionMode | str = InterventionMode.REPLACE
     scale_factor: float = 1.0
     use_intervention_tensor_as_basis: bool = True
     position_scope: PositionScope | str = PositionScope.LAST_TOKEN
@@ -188,9 +194,7 @@ def _coerce_single_intervention_spec(
             raise ValueError("Intervention mapping entries must include an 'intervention_tensor' field")
         return InterventionSpec(
             intervention_tensor=torch.as_tensor(value["intervention_tensor"]),
-            mode=str(value.get("mode", default_mode)),
-            scale_factor=float(value.get("scale_factor", default_scale_factor)),
-            use_intervention_tensor_as_basis=bool(value.get("use_intervention_tensor_as_basis", True)),
+            **_shared_spec_fields(value, default_mode=default_mode, default_scale_factor=default_scale_factor),
         )
     raise TypeError(f"Unsupported intervention value type: {type(value)!r}")
 
@@ -257,9 +261,8 @@ def _validate_intervention_spec(
     hook_name: str,
 ) -> InterventionSpec:
     tensor = torch.as_tensor(spec.intervention_tensor)
-    if spec.mode not in {"replace", "add", "project", "patch"}:
-        raise ValueError(f"Unknown intervention mode: {spec.mode!r}")
-    if spec.mode == "patch":
+    mode = normalize_intervention_mode(spec.mode)
+    if mode is InterventionMode.PATCH:
         # A swap needs a PAIR, so this is the one mode whose tensor is legitimately larger than the slice
         # it targets: `(2, *target_shape)`. The general check below demands the tensor broadcast INTO the
         # target, which `(2, d_model)` against `(d_model,)` does not -- so validating patch under it would
@@ -272,11 +275,15 @@ def _validate_intervention_spec(
         _ensure_shape_compatible(tuple(tensor.shape[1:]), target_shape, hook_name)
     else:
         _ensure_shape_compatible(tuple(tensor.shape), target_shape, hook_name)
+    # Rebuild with EVERY field. An earlier version omitted `position_scope` here, and since this is the
+    # canonicalization every backend runs, an `all_positions` request silently became last-token on both
+    # bundled backends: plausible logits, right arithmetic, wrong position set, nothing raised.
     return InterventionSpec(
         intervention_tensor=tensor,
-        mode=spec.mode,
+        mode=mode,
         scale_factor=spec.scale_factor,
         use_intervention_tensor_as_basis=spec.use_intervention_tensor_as_basis,
+        position_scope=normalize_position_scope(spec.position_scope),
     )
 
 
@@ -367,6 +374,23 @@ def _split_tensor_across_matches(
     return per_hook_specs
 
 
+def _shared_spec_fields(
+    value: Mapping[str, Any], *, default_mode: InterventionMode | str, default_scale_factor: float
+) -> dict[str, Any]:
+    """The non-tensor fields of a mapping payload, normalized, for every spec the mapping expands to.
+
+    One reader for the per-hook (`intervention_tensors`) and single-tensor mapping shapes, so a field
+    added to one cannot be silently absent from the other -- which is how `position_scope` was dropped
+    on the per-hook path while the single-tensor path carried it.
+    """
+    return {
+        "mode": normalize_intervention_mode(value.get("mode", default_mode)),
+        "scale_factor": float(value.get("scale_factor", default_scale_factor)),
+        "use_intervention_tensor_as_basis": bool(value.get("use_intervention_tensor_as_basis", True)),
+        "position_scope": normalize_position_scope(value.get("position_scope", PositionScope.LAST_TOKEN)),
+    }
+
+
 def _expand_intervention_value_for_matches(
     raw_value: InterventionValue,
     matched_hooks: Sequence[str],
@@ -383,18 +407,11 @@ def _expand_intervention_value_for_matches(
             raise ValueError(
                 "intervention_tensors length must match the number of resolved hook points for wildcard interventions"
             )
-        shared_mode = str(raw_value.get("mode", default_mode))
-        shared_scale = float(raw_value.get("scale_factor", default_scale_factor))
-        shared_basis = bool(raw_value.get("use_intervention_tensor_as_basis", True))
+        shared = _shared_spec_fields(raw_value, default_mode=default_mode, default_scale_factor=default_scale_factor)
         return [
             (
                 _validate_intervention_spec(
-                    InterventionSpec(
-                        torch.as_tensor(tensor),
-                        mode=shared_mode,
-                        scale_factor=shared_scale,
-                        use_intervention_tensor_as_basis=shared_basis,
-                    ),
+                    InterventionSpec(torch.as_tensor(tensor), **shared),
                     hook_shapes[hook_name],
                     hook_name,
                 ),
@@ -528,6 +545,14 @@ def resolve_interventions(
         kwargs.get("use_intervention_tensor_as_basis"),
         True,
     )
+    # The scope is part of the shorthand surface too. Without it, the only way to ask for `all_positions`
+    # through the op was an explicit `interventions` mapping, and a caller using the shorthand fields could
+    # not express the second scope at all.
+    position_scope = _first_defined(
+        resolve_field("intervention_position_scope"),
+        kwargs.get("position_scope"),
+        PositionScope.LAST_TOKEN,
+    )
 
     intervention_tensor = resolve_field("intervention_tensor")
     intervention_tensors = load_json_field("intervention_tensors_json")
@@ -544,9 +569,10 @@ def resolve_interventions(
         intervention_mode = intervention_mode or "add"
 
     payload: dict[str, Any] = {
-        "mode": str(intervention_mode or "replace"),
+        "mode": normalize_intervention_mode(intervention_mode or InterventionMode.REPLACE),
         "scale_factor": float(scale_factor),
         "use_intervention_tensor_as_basis": bool(use_intervention_tensor_as_basis),
+        "position_scope": normalize_position_scope(position_scope),
     }
     if intervention_tensors is not None:
         payload["intervention_tensors"] = intervention_tensors
@@ -621,18 +647,18 @@ def _apply_mode_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> 
     share a name.
     """
     target = torch.as_tensor(spec.intervention_tensor, device=input_value.device, dtype=input_value.dtype)
+    mode = normalize_intervention_mode(spec.mode)
 
-    if spec.mode == "replace":
+    if mode is InterventionMode.REPLACE:
         return torch.broadcast_to(target, input_value.shape).to(dtype=input_value.dtype).clone()
 
-    if spec.mode == "add":
+    if mode is InterventionMode.ADD:
         return input_value + target * spec.scale_factor
 
-    if spec.mode == "patch":
+    if mode is InterventionMode.PATCH:
         return _apply_lens_coordinate_patch(spec, input_value=input_value, target=target)
 
-    if spec.mode != "project":
-        raise ValueError(f"Unknown intervention mode: {spec.mode!r}")
+    assert mode is InterventionMode.PROJECT, f"unreachable: normalize_intervention_mode admitted {mode!r}"
 
     input_float = input_value.to(dtype=torch.float32)
     target_float = torch.broadcast_to(target, input_value.shape[1:]).to(dtype=torch.float32)
@@ -706,15 +732,48 @@ def normalize_position_scope(scope: PositionScope | str) -> PositionScope:
         ) from None
 
 
-#: Which capability a given scope requires. Kept as data rather than an ``if`` chain so adding a third
-#: scope cannot silently skip the check for it.
-_SCOPE_CAPABILITY = {
-    PositionScope.LAST_TOKEN: "INTERVENTION_LAST_TOKEN",
-    PositionScope.ALL_POSITIONS: "INTERVENTION_ALL_POSITIONS",
-}
+def normalize_intervention_mode(mode: InterventionMode | str) -> InterventionMode:
+    """Coerce a spec's mode to the enum, raising with the valid set if it is not one.
+
+    One converter, as for scope.
+    """
+    try:
+        return InterventionMode(mode)
+    except ValueError:
+        raise ValueError(
+            f"Unknown intervention mode {mode!r}; expected one of {[m.value for m in InterventionMode]!r}."
+        ) from None
 
 
-def require_position_scope(capabilities, spec: InterventionSpec, *, backend: str) -> None:
+def _declared_axes(backend: Any, *, backend_name: str) -> tuple[set[str], set[str]]:
+    """The backend's declared scope and mode VALUES, or a refusal naming what is missing.
+
+    Read by attribute and compared by value rather than by ``isinstance``, for the same reason
+    ``require_backend_capability`` compares capability values: this repository's test infrastructure can
+    load the capabilities module twice, leaving value-equal, identity-distinct enum members and dataclasses
+    on either side of the gate. A backend that claims ``INTERVENTION`` without a record is refused outright
+    rather than assumed last-token: the assumption is exactly the silent narrowing the scope field exists
+    to remove, and a hub-delivered backend written before the scope existed is the case most likely to
+    hit it.
+    """
+    record = getattr(backend, "intervention_support", None)
+    if record is None:
+        raise NotImplementedError(
+            f"backend {backend_name!r} claims {BackendCapability.INTERVENTION.name} but attaches no "
+            "`intervention_support` record, so nothing says which position scopes or modes it can honour. "
+            "Declare an InterventionSupport(position_scopes=..., modes=...) on the backend."
+        )
+    scopes = {getattr(s, "value", s) for s in getattr(record, "position_scopes", ()) or ()}
+    modes = {getattr(m, "value", m) for m in getattr(record, "modes", ()) or ()}
+    if not scopes or not modes:
+        raise TypeError(
+            f"backend {backend_name!r}.intervention_support must be an InterventionSupport declaring at least one "
+            f"position scope and one mode; got {record!r}"
+        )
+    return scopes, modes
+
+
+def require_position_scope(backend: Any, spec: InterventionSpec, *, backend_name: str) -> None:
     """Refuse, with a reason, when a backend cannot honour the spec's position scope.
 
     **Refusing is the whole point of the scope field.** The two scopes produce equally plausible
@@ -722,31 +781,72 @@ def require_position_scope(capabilities, spec: InterventionSpec, *, backend: str
     so a backend that silently substituted the scope it supports would be undetectable downstream by
     any value comparison. That is precisely the failure that went unnoticed while interpretune had
     only one name for the operation.
-
-    Backends that declare neither scope capability are NOT refused: they predate this distinction and
-    are assumed last-token, which is the behaviour every call site had before the scope existed.
-    Making the absence of a declaration mean "refuse everything" would break every such backend at
-    once, and making it mean "supports everything" would reintroduce the silent substitution.
     """
     scope = normalize_position_scope(spec.position_scope)
-    required = _SCOPE_CAPABILITY[scope]
-    from interpretune.analysis.backends.capabilities import BackendCapability
+    scopes, _modes = _declared_axes(backend, backend_name=backend_name)
+    if scope.value not in scopes:
+        raise NotImplementedError(
+            f"backend {backend_name!r} cannot apply an intervention with position_scope={scope.value!r}; it declares "
+            f"{sorted(scopes)!r}. This is refused rather than narrowed or widened "
+            "to a supported scope, because both scopes produce plausible activations and a silent substitution "
+            "cannot be detected from the result."
+        )
 
-    declared = set(capabilities or ())
-    scope_caps = {BackendCapability.INTERVENTION_LAST_TOKEN, BackendCapability.INTERVENTION_ALL_POSITIONS}
-    if not (declared & scope_caps):
-        # Undeclared: legacy last-token assumption, see docstring.
-        if scope == PositionScope.LAST_TOKEN:
-            return
+
+def require_intervention_mode(backend: Any, spec: InterventionSpec, *, backend_name: str) -> None:
+    """Refuse, with the axis named, when a backend cannot express the spec's mode.
+
+    Modes are where the semantics live: ``replace``, ``patch`` and ``project`` all need the CURRENT
+    activation, and an additive steering primitive never observes it. A backend applying an undeclared
+    mode as the one it has returns plausible logits for an intervention nobody requested, so the gate
+    refuses before the backend is reached.
+    """
+    mode = normalize_intervention_mode(spec.mode)
+    _scopes, modes = _declared_axes(backend, backend_name=backend_name)
+    if mode.value not in modes:
         raise NotImplementedError(
-            f"backend {backend!r} declares no intervention position-scope capabilities, so it is "
-            f"treated as last-token only and cannot honour position_scope={scope.value!r}. "
-            f"Declare {BackendCapability.INTERVENTION_ALL_POSITIONS} if it can steer every position."
+            f"backend {backend_name!r} cannot apply an intervention with mode={mode.value!r}; it declares "
+            f"{sorted(modes)!r}. Refused on the MODE axis rather than applied as "
+            "another mode, since every mode returns plausible logits and the substitution is undetectable."
         )
-    if getattr(BackendCapability, required) not in declared:
-        raise NotImplementedError(
-            f"backend {backend!r} cannot apply an intervention with position_scope={scope.value!r}; it declares "
-            f"{sorted(c.value for c in declared & scope_caps)!r}. This is refused rather than "
-            "narrowed or widened to the supported scope, because both scopes produce plausible "
-            "activations and a silent substitution cannot be detected from the result."
-        )
+
+
+def iter_intervention_axes(
+    interventions: InterventionDict | Mapping[str, InterventionValue],
+    *,
+    default_mode: InterventionMode | str = InterventionMode.REPLACE,
+) -> Iterator[tuple[str, InterventionSpec]]:
+    """Yield ``(hook_pattern, spec)`` for every intervention in a RAW or canonical payload.
+
+    Gating happens before canonicalization, because canonicalization needs concrete hook shapes and therefore runs
+    inside the backend, which is exactly the place a refusal must not depend on. Only the scope and mode of each entry
+    are needed to gate, and both are readable without a shape: a bare tensor carries the defaults, a mapping carries
+    whatever it names, a spec carries itself.
+    """
+    items = interventions.items() if hasattr(interventions, "items") else interventions
+    for pattern, raw in items:
+        if isinstance(raw, Mapping) and "intervention_tensors" in raw:
+            # The per-hook shape carries one set of axes for every tensor, and the tensors are not needed
+            # to gate, so a placeholder stands in for them rather than coercing a shape the gate never reads.
+            shared = _shared_spec_fields(raw, default_mode=default_mode, default_scale_factor=1.0)
+            yield pattern, InterventionSpec(torch.empty(0), **shared)
+            continue
+        for spec in _coerce_shared_intervention_specs(raw, default_mode=normalize_intervention_mode(default_mode)):
+            yield pattern, spec
+
+
+def require_intervention_support(
+    backend: Any,
+    interventions: InterventionDict | Mapping[str, InterventionValue],
+    *,
+    backend_name: str,
+) -> None:
+    """Gate every entry of an intervention payload on both axes before it reaches ``fwd_w_intervention``.
+
+    The single entry point ops call. It reads the payload the way the backend will (same coercion), so the axes gated
+    here are the axes the backend will see, and a backend never has to re-derive them to refuse; its own refusal table,
+    if it keeps one, is the second line of defence for a declaration that has drifted from the implementation.
+    """
+    for _pattern, spec in iter_intervention_axes(interventions):
+        require_position_scope(backend, spec, backend_name=backend_name)
+        require_intervention_mode(backend, spec, backend_name=backend_name)

@@ -12,7 +12,12 @@ from typing import Any, Callable, Protocol, runtime_checkable
 
 import torch
 
-from interpretune.analysis.backends.capabilities import AnalysisBackendCapability, BackendCapability
+from interpretune.analysis.backends.capabilities import (
+    AnalysisBackendCapability,
+    BackendCapability,
+    InterventionSupport,
+    LatentModelSupport,
+)
 from interpretune.analysis.backends.interventions import InterventionDict, InterventionValue
 from interpretune.protocol import NamesFilter
 
@@ -238,12 +243,20 @@ class ModelBackendCore(Protocol):
 class SupportsLatentModels(Protocol):
     """Methods gated by ``BackendCapability.LATENT_MODELS``: execution with latent-model handles attached.
 
-    ``fwd_w_hooks_batched`` lives HERE, not behind ``BATCHED_HOOKS``: every latent-models backend
-    implements it (a sequential loop is a valid implementation), while ``BATCHED_HOOKS`` describes
-    whether the backend can fuse the configs into one execution context -- an efficiency property of
-    HOW the method runs, not of whether it exists. TL is the live example: it implements the method
-    and does not claim the capability.
+    ``fwd_w_hooks_batched`` is part of this group: every latent-models backend implements it, and a
+    sequential loop is a valid implementation. Whether the backend FUSES the configs into one execution
+    is a property of how the method runs, not of whether it exists, so it is declared on
+    :attr:`latent_model_support` rather than as a capability. TL is the live example: it implements the
+    method and declares ``batched_hooks=False``.
     """
+
+    @property
+    def latent_model_support(self) -> LatentModelSupport:
+        """How this group runs here (``batched_hooks``).
+
+        Required whenever ``LATENT_MODELS`` is declared.
+        """
+        ...
 
     def fwd_w_cache_and_latent_models(
         self,
@@ -376,7 +389,23 @@ class SupportsGradients(Protocol):
 
 @runtime_checkable
 class SupportsIntervention(Protocol):
-    """Methods gated by ``BackendCapability.INTERVENTION``: baseline-vs-intervention paired execution."""
+    """Methods gated by ``BackendCapability.INTERVENTION``: baseline-vs-intervention paired execution.
+
+    Claiming the surface is not the whole contract. Which position scopes and which modes a backend can
+    honour are declared on :attr:`intervention_support`, and ``require_intervention_support`` refuses a
+    request outside that declaration BEFORE ``fwd_w_intervention`` is reached, naming the axis. A backend
+    is expected to keep its own refusals for the same cases as the second line of defence: the
+    declaration says what it claims, the refusal says what it does, and the conformance suite checks
+    that the two agree.
+    """
+
+    @property
+    def intervention_support(self) -> InterventionSupport:
+        """The scopes and modes this backend can honour.
+
+        Required whenever ``INTERVENTION`` is declared.
+        """
+        ...
 
     def fwd_w_intervention(
         self,

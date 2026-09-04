@@ -9,6 +9,8 @@ import torch
 
 from interpretune.analysis.backends import (
     BackendCapability,
+    InterventionSupport,
+    LatentModelSupport,
     InterventionDict,
     InterventionValue,
     apply_intervention,
@@ -74,20 +76,25 @@ class TLModelBackend:
 
     @property
     def capabilities(self) -> frozenset[BackendCapability]:
-        """TL implements every method group; BATCHED_HOOKS is absent because its batched-hooks path is a sequential
-        loop rather than a fused execution."""
+        """TL implements every method group."""
         return frozenset(
             {
                 BackendCapability.GRADIENTS,
                 BackendCapability.LATENT_MODELS,
                 BackendCapability.INTERVENTION,
-                # Both scopes: a TL hook receives the whole activation, so restricting to the final
-                # token and editing every position are equally expressible here. The scope is the
-                # caller's choice, which is exactly what `position_scope` exists to carry.
-                BackendCapability.INTERVENTION_LAST_TOKEN,
-                BackendCapability.INTERVENTION_ALL_POSITIONS,
             }
         )
+
+    @property
+    def intervention_support(self) -> InterventionSupport:
+        """Every scope and every mode: a TL hook receives the whole activation, so restricting an edit to the final
+        token and editing every position are equally expressible, and every mode sees the current value."""
+        return InterventionSupport.every()
+
+    @property
+    def latent_model_support(self) -> LatentModelSupport:
+        """The batched-hooks path here is a sequential loop, not a fused execution."""
+        return LatentModelSupport(batched_hooks=False)
 
     def supports(self, capability: BackendCapability) -> bool:
         """Check whether this backend supports a given capability."""

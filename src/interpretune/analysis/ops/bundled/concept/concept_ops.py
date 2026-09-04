@@ -15,7 +15,7 @@ from typing import Any
 import torch
 from transformers import BatchEncoding
 
-from interpretune.analysis.backends import resolve_interventions
+from interpretune.analysis.backends import require_intervention_support, resolve_interventions
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.backends.capabilities import BackendCapability
 from interpretune.analysis.optools import (
@@ -1019,6 +1019,9 @@ def model_fwd_intervention_impl(
         load_json_field=lambda field_name: load_json_field(module, analysis_batch, field_name),
         kwargs=kwargs,
     )
+    # Gate the scope and mode axes HERE, before the backend canonicalizes against hook shapes: a backend
+    # that cannot honour a scope or a mode must refuse by name rather than apply the one it has.
+    require_intervention_support(model_backend, interventions, backend_name=type(model_backend).__name__)
     use_latent_models = bool(
         resolve_aggregate_input(module, analysis_batch, "use_latent_models") or kwargs.get("use_latent_models", False)
     )
