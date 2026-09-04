@@ -430,6 +430,33 @@ pre-commit run --all-files
 - **Ruff rules:** E, W, F enabled; E731, F722 ignored (jaxtyping compat)
 - **McCabe complexity:** max 10
 
+### Issue references in code comments: sparse, and never in place of the reason
+
+**Cite an issue number in a comment only when the comment is ABOUT that issue** — a workaround for a known
+upstream bug, a guard that exists until a tracked fix lands, a deliberate deviation someone will otherwise
+"clean up". Those readers need the ticket, because the comment's whole subject is a thing tracked elsewhere.
+
+**Everywhere else, write the reason instead.** A reviewer two years out gets nothing from
+`This is where #441 lives:` — they must leave the file, find a possibly-closed issue, and reconstruct
+whatever context the author had. One sentence of rationale in the comment costs the same to write and
+survives the issue being closed, renamed, or migrated. Prefer:
+
+```python
+# WRONG -- outsources the reason to a ticket
+# This is where #441 lives: interp-engine steers every prompt position.
+
+# RIGHT -- the reason travels with the code
+# Backends differ in which position scopes they can express, and a caller who asked for one and silently
+# received the other gets plausible activations and no error -- so the scope is part of the contract.
+```
+
+**An issue number is a pointer; the comment should be the thing pointed at.** The same reasoning as the
+ephemeral-CI-reference rule above: identify the circumstances, not the log entry.
+
+Related: comments in this codebase have drifted long. A comment that restates the code, or narrates a
+decision at paragraph length where a sentence would do, costs every future reader. Length should track how
+non-obvious the reasoning is, not how much was known when it was written.
+
 ## Architecture
 
 ### Source Layout
