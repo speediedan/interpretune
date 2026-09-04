@@ -105,6 +105,19 @@ transformerbridge = "interpretune.adapters.transformer_lens:TransformerBridgeStr
 
 [project.optional-dependencies]
 
+# A DIRECT optional dependency, deliberately, rather than one reached through circuit-tracer's own
+# `interp-engine` extra. Interpretune's core never imports it -- the adapter is hub-delivered -- but the
+# cross-backend parity suite drives the engine directly, and a transitive path made its presence an
+# accident of which circuit-tracer extra a build happened to request. It silently vanished from a dev env
+# on exactly that basis, taking four parity assertions into the skipped column with it.
+#
+# This installs the ENGINE only. The hub adapter that composes it into a session
+# (`it-interp-engine-adapter`) is pulled separately through `it.hub.pull`, which is the point of a
+# hub-delivered adapter -- installing the engine does not register any composition.
+interp-engine = [
+    "interp-engine~=1.5.1",
+]
+
 lightning = [
     # 2.13.0 published 2026-07-26; interpretune had been pinning its release candidate by git SHA
     # (c378e55) while it was unpublished. The consumed surface — StrategyAdapter,
