@@ -7,7 +7,7 @@ exception.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 import torch
@@ -137,7 +137,7 @@ class ModelBackendConformance:
             report.declared = sorted(c.name for c in suite.capabilities.model) + sorted(
                 c.name for c in suite.capabilities.analysis
             )
-        if not gate.selects(suite.capabilities, family=suite.family):
+        if not gate.selects(suite.capabilities, family=suite.family, single_prompt=suite.target.single_prompt):
             pytest.skip(f"{UNDECLARED}: needs {gate.describe()}")
 
     # -- always-on ---------------------------------------------------------------------------------
@@ -385,6 +385,24 @@ class ModelBackendConformance:
                 ref["logits"][0, -1, :],
                 what=f"batch {i}: steered last-token logits against the HF reference edit",
             )
+
+    # -- single-prompt backends ----------------------------------------------------------------------
+
+    @conformance_case(single_prompt=True)
+    def test_a_batch_above_the_declared_limit_is_refused_by_name(self, suite):
+        """A target that declared one prompt at a time must REFUSE a larger batch, naming the limit.
+
+        Reaches the backend directly, by design: the runner never builds a batch above the declared size for this
+        target, so the refusal is only observable by asking. Silently processing row 0, or looping and re-padding
+        without saying so, are the substitutions this case exists to catch.
+        """
+        ids, mask = suite.batch_inputs(0)
+        assert ids.shape[0] == 1, f"a single-prompt target must run batches of one row, got {ids.shape[0]}"
+        batch: dict[str, Any] = {"input": ids.repeat(2, 1)}
+        if mask is not None:
+            batch["attention_mask"] = mask.repeat(2, 1)
+        with pytest.raises(Exception, match=r"(?i)one prompt|batch|single"):
+            suite.backend.fwd(model=suite.module.model, batch=batch)
 
     # -- calibration: the discriminator, on the reference alone ------------------------------------
 

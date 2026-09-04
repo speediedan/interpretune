@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +77,8 @@ def build_conformance_session(target: ConformanceTarget, inputs: ConformanceInpu
     from interpretune import AnalysisRunner, ITSession
 
     register_conformance_ops()
+    if target.batch_size is not None and target.batch_size != inputs.batch_size:
+        inputs = replace(inputs, batch_size=target.batch_size)
     if target.load is not None:
         target.load()
     session = ITSession(target.build_session_cfg(inputs))

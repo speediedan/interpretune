@@ -84,6 +84,12 @@ class TestGateSelection:
         )
         assert Gate(capability=BackendCapability.INTERVENTION, scope=PositionScope.LAST_TOKEN).selects(caps, family="x")
 
+    def test_single_prompt_gate_reads_the_target_not_the_backend(self):
+        g = Gate(single_prompt=True)
+        assert g.selects(_caps(), family="x", single_prompt=True)
+        assert not g.selects(_caps(), family="x", single_prompt=False)
+        assert not g.selects(_caps(), family="x")
+
     def test_describe_names_every_axis(self):
         g = Gate(
             capability=BackendCapability.INTERVENTION,

@@ -47,6 +47,10 @@ PROMPTS = (
 )
 
 LIMIT_BATCHES = 2
+#: Rows per batch. Two, so the padded-batch cases see real padding; a single-prompt backend declares 1 on its
+#: target and runs every case unpadded, because looping per row is not a transparent implementation of the
+#: batched contract (left-padded rows keep their padded positions in a batched forward).
+BATCH_SIZE = 2
 MAX_EPOCHS = 1
 
 
@@ -58,6 +62,7 @@ class ConformanceInputs:
     device_type: str = "cpu"
     precision: str = "float32"
     limit_batches: int = LIMIT_BATCHES
+    batch_size: int = BATCH_SIZE
     max_epochs: int = MAX_EPOCHS
     capture_layer: int = CAPTURE_LAYER
     capture_points: Sequence[str] = CAPTURE_POINTS
@@ -108,6 +113,8 @@ class ConformanceInputs:
         it_cfg.lr_scheduler_init = {}
         it_cfg.core_log_dir = str(self.workdir / "logs")
         dm_cfg.dataset_path = str(self.workdir / "dataset")
+        dm_cfg.eval_batch_size = self.batch_size
+        dm_cfg.train_batch_size = self.batch_size
         self._place(it_cfg)
         for name, value in (module_cfg_extras or {}).items():
             setattr(it_cfg, name, value)
@@ -171,6 +178,7 @@ class ConformanceTarget:
             and registered first. ``None`` for bundled adapters.
         datamodule_flavour: which seed data pipeline to start from (``"bridge"`` passes ``input`` +
             ``attention_mask``; ``"nnsight"`` passes ``input_ids``).
+        batch_size: rows per batch for this target; ``1`` for a backend that takes one prompt at a time.
     """
 
     composition: tuple[str, ...]
@@ -178,6 +186,17 @@ class ConformanceTarget:
     forward_family: str = "hf_native"
     load: Callable[[], Any] | None = None
     datamodule_flavour: str = "bridge"
+    batch_size: int | None = None
+    """Override the suite's rows-per-batch.
+
+    A backend that takes one prompt at a time declares ``1``: every case
+    then runs unpadded, and the refusal of a larger batch becomes a case of its own.
+    """
+
+    @property
+    def single_prompt(self) -> bool:
+        """Whether this target declared it takes one prompt at a time."""
+        return self.batch_size == 1
 
     def build_session_cfg(self, inputs: ConformanceInputs):
         """The target's session config, from its factory or the seed default."""

@@ -108,12 +108,39 @@ into a plausible value. A missing attribute is an error.
 by name on any batch with fewer than two real positions rather than reporting a green that measured nothing.
 The discriminating power lives in the input, and an adopter-supplied session config could shorten it.
 
-## Two notes for adopters' own tests
+## Single-prompt backends
+
+Some engines take one prompt at a time and refuse a batch, deliberately. A loop over rows is **not** a
+transparent implementation of the batched contract: in a batched forward, left-padded rows keep their padded
+positions, so per-row unpadded forwards legitimately diverge from the batched reference. The contract therefore
+carries the limit rather than hiding it: a target declares `batch_size=1`, every case then runs unpadded at one
+row per batch, and one more case asserts that a batch above the declared limit is refused by name (never
+processed as row 0, never looped silently).
+
+Four facts about composing into a real session, learned by the first hub adapter on first contact with
+`ITSession` (none of them reachable by a test that hosts the module class by hand):
+
+- A backend wrapper that is not an `nn.Module` cannot take the `module.model` slot (assigning it raises inside
+  `nn.Module`). Ops then hand the backend `module.model`, the raw model, so such a backend must carry its own
+  wrapper handle rather than expect to receive it.
+- At the time `post_auto_model_init` runs the tokenizer lives on the datamodule, not on the module.
+- A composition must be registered for both component keys, `module` and `datamodule`; registering only the
+  module half passes every module-level test and fails at `ITSession` with an error that names a missing adapter.
+- Core resolves a `names_filter` list into a callable at setup, so a backend receives a predicate over hook
+  names even when the caller wrote a list. A backend whose inventory is only partly expressible in that
+  vocabulary applies the predicate over the expressible part; a predicate written in TL names cannot match a
+  point that has no TL name, so that is complete rather than an under-capture.
+
+## Three notes for adopters' own tests
 
 **Derive complements; never transcribe the vocabulary.** A test that lists the capabilities a backend does
 NOT claim by name goes red the moment the enum changes, with no opinion about the change. Derive the
 complement (`set(BackendCapability) - backend.capabilities`) so a member added upstream is asserted absent
 automatically and a removed one simply disappears. The suite's own refusal case is written that way.
+
+**Select compositions by both keys, not by adapter set.** A helper that picks the composition class by matching
+the adapter tuple alone starts returning the datamodule class the moment the datamodule composition is registered
+too, and the failure points at `nn.Module` rather than at the selector. Match on `(component_key, adapters)`.
 
 **Support records coerce.** `InterventionSupport(position_scopes={"last_token"}, modes={"add"})` is valid:
 the record normalizes strings to the enums and refuses an empty set. The gates read the declared values
