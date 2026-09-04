@@ -79,6 +79,10 @@ _LAZY_ATTRS = {
     "push": "interpretune.hub.api",
     "prefer_ops": "interpretune.hub.api",
     "op_info": "interpretune.hub.api",
+    # The adapter half of the same story, named to match: someone who has learned `prefer_ops` / `op_info`
+    # should be able to GUESS these rather than look them up.
+    "prefer_adapters": "interpretune.hub.api",
+    "adapter_info": "interpretune.hub.api",
 }
 
 __all__ = sorted(_LAZY_ATTRS)

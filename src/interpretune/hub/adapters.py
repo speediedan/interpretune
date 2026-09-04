@@ -175,6 +175,7 @@ def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None)
     from interpretune.adapters import ADAPTER_REGISTRY
     from interpretune.adapters.registration import AdapterProtocol, register_dynamic_adapter
     from interpretune.hub.components import enforce_component_requires, resolve_component_manifest
+    from interpretune.hub.precedence import enforce_adapter_precedence, record_hub_adapter
     from interpretune.hub.trust import ensure_remote_code_trusted
 
     registry = ADAPTER_REGISTRY if registry is None else registry
@@ -211,7 +212,14 @@ def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None)
             + "\n".join(f"  - {entry}: {reason}" for entry, reason in unsupported)
         )
 
+    # REFUSE A SHADOWING COMPONENT BEFORE CREATING ITS MEMBERS, not after. `register_dynamic_adapter`
+    # returns the EXISTING member for a name already present, so one line further down the component's
+    # compositions are already registering under the bundled adapter's identity and the shadowing has
+    # happened. A check placed after would report a state it was too late to prevent.
+    enforce_adapter_precedence(repo_id, names, source=source)
     members = [register_dynamic_adapter(name, source=repo_id) for name in names]
+    for name in names:
+        record_hub_adapter(name, component=repo_id, revision=revision)
     before = set(registry.keys())
     module = _import_adapter_entrypoint(repo_id, snapshot, revision, entrypoint)
     token = _SUPPORTED_COMPOSITIONS.set(satisfiable)
