@@ -193,7 +193,7 @@ def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None)
             f"{source}: kind `adapters` declares no `adapters.entrypoint`, so there is nothing to load."
         )
     # The gate belongs HERE, at the point of execution, and it raises: an adapter composes into the MRO,
-    # so "loaded fewer things" is not a degraded success for this kind (#255, #125).
+    # so "loaded fewer things" is not a degraded success for this kind.
     ensure_remote_code_trusted(
         repo_id, what=f"the adapter entrypoint {entrypoint!r} (it composes into the session MRO)"
     )

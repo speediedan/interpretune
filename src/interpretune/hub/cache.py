@@ -19,7 +19,7 @@ IT_CACHE = Path(os.getenv("IT_CACHE", os.path.join(HF_CACHE_HOME, "interpretune"
 
 # component repos (modules/datamodules/ops/adapters) fetched from the Hub
 IT_COMPONENTS_HUB_CACHE = Path(os.getenv("IT_COMPONENTS_HUB_CACHE", IT_CACHE / "hub" / "components"))
-# data artifact repos (analysis stores, dashboards) — reserved for #124 consumers
+# data artifact repos (analysis stores, dashboards)
 IT_ARTIFACTS_HUB_CACHE = Path(os.getenv("IT_ARTIFACTS_HUB_CACHE", IT_CACHE / "hub" / "artifacts"))
 
 # historical op-collection hub cache location (subpath override preserved; default unchanged on disk)

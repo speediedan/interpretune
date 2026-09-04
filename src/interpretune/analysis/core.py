@@ -12,7 +12,7 @@ import pandas as pd
 
 # NOTE: plotly is deliberately not imported at module level. This module sits on the bare
 # `import interpretune` path (via bundled-extension detection), and plotly is a notebook-only
-# visualization aid used by exactly two plotting helpers, which import it on first use (#403).
+# visualization aid used by exactly two plotting helpers, which import it on first use.
 from tabulate import tabulate
 from transformers import PreTrainedTokenizerBase
 
@@ -482,7 +482,7 @@ class AnalysisStore:
         self._protocol_cls = protocol_cls
         # What produced this store's columns, stamped at WRITE time by `AnalysisCfg.apply`. Empty when there
         # is nothing to record (a store loaded from disk, or assembled outside the op path) -- deliberately
-        # empty rather than inferred, since provenance reconstructed after the fact cannot be trusted (#284).
+        # empty rather than inferred, since provenance reconstructed after the fact cannot be trusted.
         self.op_provenance: tuple = ()
 
         load_dataset_kwargs = dict(split=split, streaming=streaming)

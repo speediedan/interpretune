@@ -363,12 +363,12 @@ class ColCfg:
     intermediate_only: bool = False  # Indicates column used in processing but not written to output
     # NOTE [Two Requirement Axes, Deliberately Separate]
     # `ColCfg.connected_obj` and `OpDef.required_capabilities` are the only two requirement axes on the
-    # op-declaration surface, and interpretune#303 decided to keep them separate, widen neither, and add
-    # no third. #51 proposed a third (declare the module METHODS an op calls, so a missing one fails as a
-    # named-op error rather than a bare AttributeError mid-run) and was closed as too expensive for the
-    # benefit. Recorded here rather than only in the issue because it has already been re-litigated once.
+    # op-declaration surface. Keeping them separate, widening neither and adding no third is a settled
+    # decision, recorded here rather than only in its issue because it has already been re-litigated once.
+    # The rejected third axis was "declare the module METHODS an op calls", so a missing one fails as a
+    # named-op error rather than a bare AttributeError mid-run.
     #
-    # Why `required_capabilities` cannot simply absorb #51's case: the blocker is the AVAILABILITY side,
+    # Why `required_capabilities` cannot simply absorb that case: the blocker is the AVAILABILITY side,
     # not the vocabulary. `get_module_capabilities()` derives what a module has exclusively from attached
     # backends (`backend.capabilities`, `analysis_backend.capabilities`, legacy `module.analysis_capabilities`).
     # A "module provides method X" requirement has no backend to ask; satisfying it means `hasattr(module, X)`,
@@ -530,7 +530,7 @@ class AnalysisOp:
     ) -> None:
         self.name = name
         # The RESOLVED BaseAnalysisBatchProtocol subclass this op's batches conform to, or None for the
-        # default (#56). Resolved by the dispatcher rather than here: OpDef carries an import path so it
+        # default. Resolved by the dispatcher rather than here: OpDef carries an import path so it
         # stays serializable, and importing it is trust-gated for hub ops.
         self.protocol_cls = protocol_cls
         self.description = description

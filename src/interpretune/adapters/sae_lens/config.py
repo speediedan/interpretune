@@ -99,7 +99,7 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
     sae_cfgs: (
         SAELensFromPretrainedConfig | SAELensCustomConfig | Sequence[SAELensFromPretrainedConfig | SAELensCustomConfig]
     )
-    # REQUIRED FOR OPTIMIZATION (#68): SAE parameters only reach the optimizer when the SAE is a
+    # REQUIRED FOR OPTIMIZATION: SAE parameters only reach the optimizer when the SAE is a
     # persistent submodule, which is what `add_saes_on_init=True` does -- it calls `model.add_sae(handle)`
     # during module init, BEFORE the optimizer is constructed over `model.parameters()`. SAEs spliced in
     # temporarily for a forward pass (the `model.saes(...)` context manager on the TL path, `_splice_sae`
