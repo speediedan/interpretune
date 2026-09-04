@@ -67,7 +67,17 @@ def generate_artifact_card(envelope: dict, repo_id: str, summary: str | None = N
 
 
 def _adapter_card_sections(manifest: dict, source: str) -> list[str]:
-    """The `adapters` kind's card sections: what it declares, composes, can do, refuses, and EXPOSES.
+    """The `adapters` kind's card sections: what it EXPOSES, declares, and composes.
+
+    **Three blocks, not the five the design sketched, and the card now says so.** Capabilities and
+    refusals live in the adapter's CODE, and the publisher never executes the entrypoint, so they are
+    structurally unreachable from a manifest. Rendering them would require either executing hub-resident
+    code at publish time -- which is what the trust gate exists to prevent -- or trusting an undeclared
+    claim, which is strictly worse than an absent one: a manifest could assert a capability the code does
+    not implement and the card would publish it unchallenged.
+
+    Silently omitting them is its own failure, though. A card with no limits section reads as an adapter
+    with no limits. So the card NAMES what it cannot report and points at where the answer actually lives.
 
     A model card describes weights, which are data. An adapter is code that runs in the caller's process,
     so this card carries a block a model card never needs — the trust posture — and it is the block this
@@ -93,6 +103,14 @@ def _adapter_card_sections(manifest: dict, source: str) -> list[str]:
         "into the MRO of the module your session runs. Inspect it before opting in: "
         f'`interpretune.hub.pull("{source}")` caches the repo without executing anything.'
     )
+    lines += [
+        "",
+        "**What this card cannot tell you:** the capabilities this adapter declares at runtime and the "
+        "hook patterns it refuses. Those live in the code, and the publisher does not execute it, so they "
+        "are not derivable from the manifest this card renders. Read the component's own documentation, "
+        "or load it and ask the registered backend directly. An absent section here is not a claim that "
+        "the adapter has no limits.",
+    ]
     lines += ["", "### Declares", ""]
     lines += [f"- `{name}`" for name in declares] or ["- (none)"]
 

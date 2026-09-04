@@ -124,3 +124,30 @@ class TestOtherKindsAreUnaffected:
         body = str(generate_component_card(module_manifest, "speediedan/rte"))
         assert "## Adapters" not in body
         assert "## Configurations" in body, "the existing module rendering must still work"
+
+
+class TestTheCardNamesWhatItCannotReport:
+    """An absent section reads as an absent limit, which is the stronger claim and the false one.
+
+    The adapter card renders the validated manifest. Capabilities and hook refusals live in the code, and
+    the publisher never executes the entrypoint, so they are structurally unreachable. That is the right
+    trade -- rendering them would mean either executing hub-resident code at publish time, which the trust
+    gate exists to prevent, or publishing an undeclared claim unchallenged.
+
+    But a reader cannot distinguish "not reported" from "none exist" unless the card says which. This pins
+    that it says so, because the sentence is exactly the kind a later tidy-up deletes as boilerplate.
+    """
+
+    def test_the_card_says_capabilities_and_refusals_are_not_derivable(self):
+        card = str(generate_component_card(_manifest(TWO_COMPOSITIONS), REPO))
+        assert "What this card cannot tell you" in card
+        assert "refuses" in card or "refusal" in card
+        assert "no limits" in card, (
+            "the card must state that an absent section is not a claim of no limits; without that "
+            "sentence the omission reads as the stronger claim"
+        )
+
+    def test_it_points_somewhere_actionable(self):
+        """Naming a gap without a next step just relocates the reader's problem."""
+        card = str(generate_component_card(_manifest(TWO_COMPOSITIONS), REPO))
+        assert "documentation" in card or "registered backend" in card
