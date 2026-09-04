@@ -1,11 +1,14 @@
-"""Hook name resolver for mapping between TransformerLens and nnsight/HuggingFace hook names.
+"""TransformerLens hook name -> HuggingFace module path, for the nnsight backend.
 
-Provides the ``HookNameResolver`` class and architecture-specific mappings that translate TL-style hook names
-(e.g., ``"blocks.5.hook_resid_post"``) to HuggingFace module paths (e.g., ``"transformer.h.5"``) and
-input/output selectors.
+This module is the nnsight-facing ADAPTER over the activation-point vocabulary (:mod:`interpretune.analysis.points`).
+The per-architecture tables that used to live here are now data: one ``ComponentMap`` document per
+architecture under ``analysis/points/data/``, and every TL hook name this resolver accepts is derived from
+it by parsing the name into an :class:`~interpretune.analysis.points.ActivationPoint` and resolving it. The
+``HookMapping`` / ``ArchitectureMapping`` records survive as the derived, nnsight-shaped view (a module path
+template, an io selector, a tuple-ness default) because the backend and its tests consume them.
 
-Architecture mappings follow the same pattern as ``circuit-tracer``'s ``tl_nnsight_mapping.py``, using
-``{layer}`` placeholders in path templates that are resolved to concrete layer indices at resolution time.
+Follows the pattern of circuit-tracer's ``tl_nnsight_mapping.py``: a table keyed by HF architecture, one row
+per addressable point, resolved per layer.
 """
 
 from __future__ import annotations
@@ -14,22 +17,15 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, NamedTuple
 
+from interpretune.analysis.backends.hook_mapping_constants import SUBHOOK_SUFFIXES
 
-# Known SAE sub-hook suffixes that should be stripped when resolving to the base model hook
-_SAE_SUBHOOK_SUFFIXES = frozenset(
-    {
-        "hook_sae_input",
-        "hook_sae_acts_pre",
-        "hook_sae_acts_post",
-        "hook_sae_output",
-        "hook_sae_error",
-    }
-)
-
-# Public latent-model sub-hook suffix set used across backends. This mirrors the
-# current SAE hook set but is kept distinct so future custom suffixes can be
-# layered on without rewriting hook parsing call sites.
-SUBHOOK_SUFFIXES = frozenset(_SAE_SUBHOOK_SUFFIXES)
+__all__ = [
+    "ArchitectureMapping",
+    "HookMapping",
+    "HookNameResolver",
+    "ResolvedHook",
+    "SUBHOOK_SUFFIXES",
+]
 
 
 @dataclass(frozen=True)
@@ -73,198 +69,84 @@ class ArchitectureMapping:
 #
 # Measured on google/gemma-3-1b-it layer 5 against the HF module output: `ln2.hook_out` matches at
 # cosine 1.000000 (rel_l2 6.9e-07) and `ln2.hook_normalized` at 0.181. They are not the same tensor.
-#
-# TransformerLens' own `docs/source/content/model_structure.md` states that
-# `blocks.{i}.ln2.hook_normalized` and `blocks.{i}.ln2.hook_scale` are "legacy aliases for
-# `.hook_out`". Its implementation disagrees: `model_bridge/generalized_components/normalization.py`
-# fires `hook_scale` on the denominator (:93), `hook_normalized` on `x / scale` (:98), applies the
-# gain (:101), and only then fires `hook_out` (:110). `hook_scale` is `[batch, pos, 1]` and cannot be
-# an alias of a `[batch, pos, d_model]` tensor at all. This table previously followed that
-# documentation and inherited the error.
-#
-# Legacy `HookedTransformer` has NO post-gain norm hook (verified: `hook_scale` and `hook_normalized`
-# only, across layer_norm.py, rms_norm.py, layer_norm_pre.py, rms_norm_pre.py), so (3) is expressible
-# on a TransformerBridge and not on legacy. `ln2.hook_normalized` is therefore deliberately UNMAPPED
-# here rather than pointed at the nearest module: no HF module output equals it, and returning (3)
-# for it is the exact defect this note exists to prevent.
-_UNMAPPABLE_HOOKS: dict[str, str] = {
-    f"{norm}.hook_{suffix}": reason
-    for norm in ("ln1", "ln2", "ln1_post", "ln2_post", "ln_final")
-    for suffix, reason in (
-        (
-            "normalized",
-            "TransformerLens fires it on `x / scale`, before the norm's learned gain, so no HF module "
-            "output equals it. Capture `{norm}.hook_out` for the gain-included tensor the sublayer "
-            "actually receives, or recompute `x / scale` from `{norm}.hook_in`.",
-        ),
-        (
-            "scale",
-            "it is the norm's per-token denominator, shape [batch, pos, 1], an intermediate of the "
-            "norm's arithmetic that no module returns. Recompute it from `{norm}.hook_in`.",
-        ),
-    )
+# TransformerLens' `model_structure.md` calls (2) an alias of (3); its `normalization.py` fires three
+# distinct tensors. The vocabulary resolves (2) and the scale as DERIVED tensor references (computable
+# from the norm's input and parameters); this nnsight-facing resolver has no envoy for a derived tensor
+# and refuses them with the reason below rather than pointing at the nearest module.
+_DERIVED_REASONS = {
+    "pre_gain_normalized": (
+        "TransformerLens fires it on `x / scale`, before the norm's learned gain, so no HF module "
+        "output equals it. Capture `{norm}.hook_out` for the gain-included tensor the sublayer "
+        "actually receives, or recompute `x / scale` from `{norm}.hook_in`."
+    ),
+    "norm_scale": (
+        "it is the norm's per-token denominator, shape [batch, pos, 1], an intermediate of the "
+        "norm's arithmetic that no module returns. Recompute it from `{norm}.hook_in`."
+    ),
 }
 
 
-def _unmappable_hook_reason(base_name: str) -> str | None:
-    """Why a deliberately-unmapped hook has no envoy path, if it is one of them."""
-    reason = _UNMAPPABLE_HOOKS.get(base_name)
-    return None if reason is None else reason.replace("{norm}", base_name.split(".")[0])
+def _derived_table(architecture: str) -> tuple[dict[str, HookMapping], dict[str, str]]:
+    """Every TL hook name the vocabulary resolves on ``architecture``, as nnsight-shaped rows.
 
+    Returns the mappings plus, for the derived norm tensors, the refusal reason keyed by base name.
+    Semantic names (``hook_resid_pre``, ``hook_mlp_out``, ...) and component names (``ln2.hook_out``,
+    ``attn.o.hook_in``, ``unembed.hook_out``) are enumerated together, so an alias never has to be
+    listed by hand and cannot disagree with the point it names.
+    """
+    from interpretune.analysis.points import (
+        TensorRef,
+        Unresolvable,
+        component_map_for,
+        parse,
+        resolve,
+        semantic_names,
+    )
 
-def _with_hook_aliases(
-    hook_mappings: dict[str, HookMapping],
-    alias_targets: dict[str, str],
-) -> dict[str, HookMapping]:
-    expanded = dict(hook_mappings)
-    for alias_name, target_name in alias_targets.items():
-        target_mapping = hook_mappings.get(target_name)
-        if target_mapping is not None:
-            expanded.setdefault(alias_name, target_mapping)
-    return expanded
+    cmap = component_map_for(architecture)
+    candidates: list[str] = list(semantic_names())
+    for component in cmap.block_components():
+        prefix = f"{component}." if component else ""
+        candidates += [f"{prefix}hook_in", f"{prefix}hook_out"]
+        if cmap.kind_of(component, 0) == "norm":
+            candidates += [f"{prefix}hook_normalized", f"{prefix}hook_scale"]
+    for component in cmap.global_components():
+        candidates += [f"{component}.hook_in", f"{component}.hook_out"]
+        if cmap.kind_of(component, None) == "norm":
+            candidates += [f"{component}.hook_normalized", f"{component}.hook_scale"]
 
-
-# ==============================================================================
-# Architecture-specific mappings
-# ==============================================================================
-
-
-GPT2_HOOK_MAPPINGS: dict[str, HookMapping] = _with_hook_aliases(
-    {
-        # Residual stream hooks
-        "hook_resid_pre": HookMapping(envoy_path="transformer.h.{layer}", io_type="input"),
-        "hook_resid_post": HookMapping(envoy_path="transformer.h.{layer}", io_type="output"),
-        "hook_resid_mid": HookMapping(envoy_path="transformer.h.{layer}.ln_2", io_type="input"),
-        # Component output hooks
-        "hook_attn_out": HookMapping(envoy_path="transformer.h.{layer}.attn", io_type="output"),
-        "hook_mlp_out": HookMapping(envoy_path="transformer.h.{layer}.mlp", io_type="output", tuple_output=False),
-        # Attention internal hooks (hook_z = attention output before output projection)
-        "attn.hook_z": HookMapping(envoy_path="transformer.h.{layer}.attn.c_proj", io_type="input"),
-        # Component input hooks
-        "mlp.hook_pre": HookMapping(envoy_path="transformer.h.{layer}.mlp", io_type="input"),
-        "unembed.hook_in": HookMapping(envoy_path="lm_head", io_type="input", tuple_output=False),
-    },
-    {
-        "hook_in": "hook_resid_pre",
-        "hook_out": "hook_resid_post",
-        "attn.hook_out": "hook_attn_out",
-        "attn.o.hook_in": "attn.hook_z",
-        "mlp.hook_out": "hook_mlp_out",
-    },
-)
-
-GPT2_MAPPING = ArchitectureMapping(
-    model_architecture="GPT2LMHeadModel",
-    hook_mappings=GPT2_HOOK_MAPPINGS,
-)
-
-
-# Llama family
-LLAMA_HOOK_MAPPINGS: dict[str, HookMapping] = _with_hook_aliases(
-    {
-        "hook_resid_pre": HookMapping(envoy_path="model.layers.{layer}", io_type="input"),
-        "hook_resid_post": HookMapping(envoy_path="model.layers.{layer}", io_type="output"),
-        "hook_resid_mid": HookMapping(envoy_path="model.layers.{layer}.post_attention_layernorm", io_type="input"),
-        "hook_mlp_out": HookMapping(envoy_path="model.layers.{layer}.mlp", io_type="output", tuple_output=False),
-        "hook_attn_out": HookMapping(envoy_path="model.layers.{layer}.self_attn", io_type="output"),
-        # Attention internal hooks (hook_z = attention output before output projection)
-        "attn.hook_z": HookMapping(envoy_path="model.layers.{layer}.self_attn.o_proj", io_type="input"),
-        "mlp.hook_pre": HookMapping(envoy_path="model.layers.{layer}.mlp", io_type="input"),
-        "mlp.hook_in": HookMapping(
-            envoy_path="model.layers.{layer}.post_attention_layernorm", io_type="output", tuple_output=False
-        ),
-        "mlp.hook_out": HookMapping(envoy_path="model.layers.{layer}.mlp", io_type="output", tuple_output=False),
-        "unembed.hook_in": HookMapping(envoy_path="lm_head", io_type="input", tuple_output=False),
-    },
-    {
-        "hook_in": "hook_resid_pre",
-        "hook_out": "hook_resid_post",
-        "attn.hook_out": "hook_attn_out",
-        "attn.o.hook_in": "attn.hook_z",
-        "hook_mlp_in": "mlp.hook_in",
-    },
-)
-
-LLAMA_MAPPING = ArchitectureMapping(
-    model_architecture="LlamaForCausalLM",
-    hook_mappings=LLAMA_HOOK_MAPPINGS,
-)
-
-
-# Gemma 2
-GEMMA2_HOOK_MAPPINGS: dict[str, HookMapping] = _with_hook_aliases(
-    {
-        "hook_resid_pre": HookMapping(envoy_path="model.layers.{layer}", io_type="input"),
-        "hook_resid_post": HookMapping(envoy_path="model.layers.{layer}", io_type="output"),
-        "hook_resid_mid": HookMapping(envoy_path="model.layers.{layer}.pre_feedforward_layernorm", io_type="input"),
-        "hook_mlp_out": HookMapping(
-            envoy_path="model.layers.{layer}.post_feedforward_layernorm", io_type="output", tuple_output=False
-        ),
-        "hook_attn_out": HookMapping(envoy_path="model.layers.{layer}.self_attn", io_type="output"),
-        # Attention internal hooks (hook_z = attention output before output projection)
-        "attn.hook_z": HookMapping(envoy_path="model.layers.{layer}.self_attn.o_proj", io_type="input"),
-        # The norm's OUTPUT, gain multiply included. See NOTE [Norm hooks are three tensors].
-        "ln2.hook_out": HookMapping(
-            envoy_path="model.layers.{layer}.pre_feedforward_layernorm", io_type="output", tuple_output=False
-        ),
-        "unembed.hook_in": HookMapping(envoy_path="lm_head", io_type="input", tuple_output=False),
-    },
-    {
-        "hook_in": "hook_resid_pre",
-        "hook_out": "hook_resid_post",
-        "attn.hook_out": "hook_attn_out",
-        "attn.o.hook_in": "attn.hook_z",
-        # The norm's output IS the MLP's input: measured identical (cos 1.000000) on gemma-3-1b-it.
-        "mlp.hook_in": "ln2.hook_out",
-    },
-)
-
-GEMMA2_MAPPING = ArchitectureMapping(
-    model_architecture="Gemma2ForCausalLM",
-    hook_mappings=GEMMA2_HOOK_MAPPINGS,
-)
-
-GEMMA3_MAPPING = ArchitectureMapping(
-    model_architecture="Gemma3ForCausalLM",
-    hook_mappings=GEMMA2_HOOK_MAPPINGS,
-)
-
-GEMMA3_MULTIMODAL_HOOK_MAPPINGS: dict[str, HookMapping] = _with_hook_aliases(
-    {
-        "hook_resid_pre": HookMapping(envoy_path="model.language_model.layers.{layer}", io_type="input"),
-        "hook_resid_post": HookMapping(envoy_path="model.language_model.layers.{layer}", io_type="output"),
-        "hook_resid_mid": HookMapping(
-            envoy_path="model.language_model.layers.{layer}.pre_feedforward_layernorm", io_type="input"
-        ),
-        "hook_mlp_out": HookMapping(
-            envoy_path="model.language_model.layers.{layer}.post_feedforward_layernorm",
-            io_type="output",
-            tuple_output=False,
-        ),
-        "hook_attn_out": HookMapping(envoy_path="model.language_model.layers.{layer}.self_attn", io_type="output"),
-        "attn.hook_z": HookMapping(envoy_path="model.language_model.layers.{layer}.self_attn.o_proj", io_type="input"),
-        # The norm's OUTPUT, gain multiply included. See NOTE [Norm hooks are three tensors].
-        "ln2.hook_out": HookMapping(
-            envoy_path="model.language_model.layers.{layer}.pre_feedforward_layernorm",
-            io_type="output",
-            tuple_output=False,
-        ),
-        "unembed.hook_in": HookMapping(envoy_path="lm_head", io_type="input", tuple_output=False),
-    },
-    {
-        "hook_in": "hook_resid_pre",
-        "hook_out": "hook_resid_post",
-        "attn.hook_out": "hook_attn_out",
-        "attn.o.hook_in": "attn.hook_z",
-        # The norm's output IS the MLP's input: measured identical (cos 1.000000) on gemma-3-1b-it.
-        "mlp.hook_in": "ln2.hook_out",
-    },
-)
-
-GEMMA3_MULTIMODAL_MAPPING = ArchitectureMapping(
-    model_architecture="Gemma3ForConditionalGeneration",
-    hook_mappings=GEMMA3_MULTIMODAL_HOOK_MAPPINGS,
-)
+    mappings: dict[str, HookMapping] = {}
+    derived: dict[str, str] = {}
+    globals_ = set(cmap.global_components())
+    # concrete layer-0 path -> `{layer}` template, from the map's own rows, so the template is never
+    # reconstructed from a string (a block path ends in the index and a replace on ".0." would miss it)
+    templates = {e.module.replace("{i}", "0"): e.module.replace("{i}", "{layer}") for e in cmap.components.values()}
+    for base in dict.fromkeys(candidates):
+        bare = parse(base)
+        # A block-relative base is resolved at layer 0 and the concrete index is turned back into the
+        # `{layer}` template below; a global one resolves as itself.
+        is_global = bare.component in globals_ or base in ("hook_embed", "hook_pos_embed")
+        point_for_resolve = bare if is_global else parse(f"blocks.0.{base}")
+        if bare.caution is not None:
+            # A precise name that callers routinely read as the OTHER tensor (`hook_mlp_in` meaning the
+            # post-norm input the artifact was trained on). Resolving it either way is a silent substitution
+            # for half its callers, so this consumer refuses it and names both spellings.
+            pre = f"{bare.component}.hook_in"
+            post = f"{'mlp' if bare.component == 'ln2' else 'attn'}.hook_in"
+            derived[base] = (
+                f"{bare.caution} Ask for `{post}` (the sublayer's argument) or `{pre}` (the pre-norm residual)."
+            )
+            continue
+        res = resolve(point_for_resolve, cmap)
+        if isinstance(res, Unresolvable):
+            continue
+        assert isinstance(res, TensorRef)
+        if res.derived:
+            derived[base] = _DERIVED_REASONS[res.derivation or ""].replace("{norm}", base.split(".")[0])
+            continue
+        template = templates.get(res.module_path, res.module_path)
+        mappings[base] = HookMapping(envoy_path=template, io_type=res.io, tuple_output=res.tuple_output)  # type: ignore[arg-type]
+    return mappings, derived
 
 
 class ResolvedHook(NamedTuple):
@@ -281,11 +163,29 @@ class ResolvedHook(NamedTuple):
     tuple_output: bool
 
 
-# Registry of all supported architectures
-_ARCHITECTURE_REGISTRY: dict[str, ArchitectureMapping] = {
-    mapping.model_architecture: mapping
-    for mapping in [GPT2_MAPPING, LLAMA_MAPPING, GEMMA2_MAPPING, GEMMA3_MAPPING, GEMMA3_MULTIMODAL_MAPPING]
-}
+#: Hand-registered mappings (``register_architecture``) take precedence over the derived ones.
+_ARCHITECTURE_REGISTRY: dict[str, ArchitectureMapping] = {}
+_DERIVED_CACHE: dict[str, tuple[ArchitectureMapping, dict[str, str]]] = {}
+
+
+def _mapping_for(architecture: str) -> tuple[ArchitectureMapping, dict[str, str]]:
+    """The mapping for an architecture: hand-registered if any, else derived from its component map."""
+    if architecture in _ARCHITECTURE_REGISTRY:
+        return _ARCHITECTURE_REGISTRY[architecture], {}
+    if architecture not in _DERIVED_CACHE:
+        from interpretune.analysis.points import known_architectures
+
+        if architecture not in known_architectures():
+            raise KeyError(architecture)
+        mappings, derived = _derived_table(architecture)
+        _DERIVED_CACHE[architecture] = (ArchitectureMapping(architecture, mappings), derived)
+    return _DERIVED_CACHE[architecture]
+
+
+def _supported_architectures() -> list[str]:
+    from interpretune.analysis.points import known_architectures
+
+    return sorted(set(known_architectures()) | set(_ARCHITECTURE_REGISTRY))
 
 
 # Regex for parsing TL hook names: "blocks.{layer}.{rest}"
@@ -317,18 +217,30 @@ class HookNameResolver:
     """
 
     def __init__(self, model_architecture: str) -> None:
-        if model_architecture not in _ARCHITECTURE_REGISTRY:
-            supported = sorted(_ARCHITECTURE_REGISTRY.keys())
+        try:
+            self._mapping, self._derived_reasons = _mapping_for(model_architecture)
+        except KeyError:
             raise ValueError(
-                f"Unsupported model architecture: {model_architecture!r}. Supported architectures: {supported}"
-            )
+                f"Unsupported model architecture: {model_architecture!r}. Supported architectures: "
+                f"{_supported_architectures()}"
+            ) from None
         self._architecture = model_architecture
-        self._mapping = _ARCHITECTURE_REGISTRY[model_architecture]
         # Measured per-base-hook tuple-ness, filled by calibrate_tuple_outputs(). The static
         # `tuple_output` flags describe a transformers version, not a law: transformers 5.x decoder
         # blocks return plain tensors where 4.x returned tuples, and against a plain tensor
         # `envoy.output[0]` silently reads (and on the write path, OVERWRITES) batch row 0.
         self._measured_tuple_outputs: dict[str, bool] = {}
+
+    def _require_mapped(self, base_name: str) -> None:
+        if base_name in self._mapping.hook_mappings:
+            return
+        reason = self._derived_reasons.get(base_name)
+        if reason is not None:
+            raise ValueError(f"Hook {base_name!r} has no module counterpart on {self._architecture!r}: {reason}")
+        raise ValueError(
+            f"Unknown hook name {base_name!r} for architecture {self._architecture!r}. "
+            f"Supported hooks: {self.supported_hooks}"
+        )
 
     @property
     def architecture(self) -> str:
@@ -359,16 +271,7 @@ class HookNameResolver:
             ValueError: If the hook name cannot be parsed or the base hook is not supported.
         """
         layer, base_name, _ = self.parse_hook_name(tl_hook_name)
-        if base_name not in self._mapping.hook_mappings:
-            unmappable = _unmappable_hook_reason(base_name)
-            if unmappable is not None:
-                raise ValueError(
-                    f"Hook {base_name!r} has no module counterpart on {self._architecture!r}: {unmappable}"
-                )
-            raise ValueError(
-                f"Unknown hook name {base_name!r} for architecture {self._architecture!r}. "
-                f"Supported hooks: {self.supported_hooks}"
-            )
+        self._require_mapped(base_name)
         hook_mapping = self._mapping.hook_mappings[base_name]
         resolved_path = hook_mapping.envoy_path.format(layer=layer)
         return resolved_path, hook_mapping.io_type
@@ -430,16 +333,7 @@ class HookNameResolver:
             ValueError: If the hook name cannot be parsed or the base hook is not supported.
         """
         layer, base_name, _ = self.parse_hook_name(tl_hook_name)
-        if base_name not in self._mapping.hook_mappings:
-            unmappable = _unmappable_hook_reason(base_name)
-            if unmappable is not None:
-                raise ValueError(
-                    f"Hook {base_name!r} has no module counterpart on {self._architecture!r}: {unmappable}"
-                )
-            raise ValueError(
-                f"Unknown hook name {base_name!r} for architecture {self._architecture!r}. "
-                f"Supported hooks: {self.supported_hooks}"
-            )
+        self._require_mapped(base_name)
         hook_mapping = self._mapping.hook_mappings[base_name]
         resolved_path = hook_mapping.envoy_path.format(layer=layer)
         # A measured flag (calibrate_tuple_outputs) beats the static default: the static value
@@ -533,23 +427,14 @@ class HookNameResolver:
 
     @staticmethod
     def get_supported_architectures() -> list[str]:
-        """Return list of all supported model architecture names."""
-        return sorted(_ARCHITECTURE_REGISTRY.keys())
+        """Return list of all supported model architecture names (component maps plus hand registrations)."""
+        return _supported_architectures()
 
     @staticmethod
     def register_architecture(mapping: ArchitectureMapping) -> None:
-        """Register a new architecture mapping.
+        """Register a hand-built mapping, which takes precedence over a derived one for its architecture.
 
-        Args:
-            mapping: The architecture mapping to register.
+        The supported way to add an architecture is a component-map document (``interpretune.analysis.points``);
+        this remains for callers that need to override a row.
         """
         _ARCHITECTURE_REGISTRY[mapping.model_architecture] = mapping
-
-
-__all__ = [
-    "ArchitectureMapping",
-    "HookMapping",
-    "HookNameResolver",
-    "ResolvedHook",
-    "SUBHOOK_SUFFIXES",
-]

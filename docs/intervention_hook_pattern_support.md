@@ -8,6 +8,26 @@
 > (`hook_in` / `hook_out`, `attn.o.hook_in`, and constrained missing-feature retention), but we still need a broader
 > pattern-by-pattern test sweep in a later pass.
 
+## The vocabulary underneath
+
+Hook names are parsed once, at the boundary, by `interpretune.analysis.points.parse`, into an `ActivationPoint`
+with two levels of meaning:
+
+- **Semantic names** say what a tensor IS in the forward and survive an architecture change: `hook_resid_pre`,
+  `hook_resid_mid`, `hook_resid_post`, `hook_attn_out`, `hook_mlp_out`, `attn.hook_z`, `mlp.hook_pre`. They are
+  not legacy. `hook_attn_out` and `hook_mlp_out` are the sublayer's *contribution* to the residual, which is the
+  raw module output on a pre-norm model and the post-norm output on a sandwich-norm model (Gemma), exactly as
+  TransformerLens fires them.
+- **Component names** say WHERE a tensor is, in the TransformerBridge grammar: `blocks.{i}.ln2.hook_out`,
+  `blocks.{i}.attn.o.hook_in`, `unembed.hook_out` (the output distribution), `ln_final.hook_normalized`.
+
+A point resolves against a per-architecture **component map** (`interpretune/analysis/points/data/*.yaml`, one
+short document per architecture) to a PyTorch tensor position, or to an `Unresolvable` carrying the reason.
+A norm is three tensors (`hook_in`, `hook_normalized`, `hook_out`); the middle one and `hook_scale` resolve as
+*derived* references, computable from the norm's input and parameters, never as a neighbouring module.
+Two legacy names parse with a caution: `hook_mlp_in` and `hook_attn_in` name the residual BEFORE the block
+norm, one norm away from the sublayer's actual argument (`mlp.hook_in`, `attn.hook_in`).
+
 ## Resolution layers
 
 Interpretune currently resolves intervention hook names through two layers:
