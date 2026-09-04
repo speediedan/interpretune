@@ -24,7 +24,7 @@ convergence, which is the failure mode this whole file exists to exclude.
 3. **Analysis ops** -- do ops built on those backends produce the same values?
 
 **Layer 2 asserts the changed-position SET, not the values and not a count.** A whole-prompt intervention
-produces entirely plausible logits, which is why the defect survived upstream review. A count is no better:
+produces entirely plausible activations, which is why the conflation went unnoticed. A count is no better:
 a bug steering position 0 under a last-token spec gives a count of 1 and passes, and a whole-prompt
 intervention that happens to be inert at some position also gives a count of 1 while operating on the wrong
 scope. The set *is* the claim, and it costs the same to assert.
@@ -356,15 +356,22 @@ class TestTheScopeDiscriminatorWorks:
 
 
 @pytest.mark.skipif("interp_engine" not in AVAILABLE, reason="interp-engine is not installed")
-class TestInterpEngineSteeringScope:
-    """#441, made executable.
+class TestInterpEngineSteeringIsAllPositions:
+    """Interp-engine steers EVERY prompt position, and that is a capability we now express (#441).
 
-    interp-engine's ``SteeringSpec`` carries ``layers``, ``point`` and ``stream`` -- and **no position
-    field of any kind**. There is no way to ask it to steer only the final token, so it steers the whole
-    prompt, silently, with matching shapes and no exception raised. Our contract is the last token.
+    Its ``SteeringSpec`` carries ``layers``, ``point`` and ``stream`` and no position field, so whole-prompt
+    is the only scope it implements. **That is not a bug in interp-engine.** "Steer the whole prompt" is a
+    legitimate experiment -- the right shape for changing how a model reads its input, where last-token
+    steering is the right shape for changing the next prediction.
 
-    That combination is a silent wrong-answer defect on the intervention path: shapes agree, nothing
-    raises, and the resulting activations are entirely plausible, which is why it survived upstream review.
+    **The defect was ours.** Interpretune's primitive was named `apply_intervention_to_last_token`, so it
+    had no way to say which scope a caller wanted, and interp-engine's whole-prompt result was consumed as
+    though it were last-token. Shapes agreed, nothing raised, and the activations were entirely plausible.
+    `InterventionSpec.position_scope` now names the operation, and `require_position_scope` refuses a scope
+    a backend cannot honour rather than substituting the one it can.
+
+    So these tests are PARITY assertions, not a bug record: interp-engine's native steering must match our
+    ``all_positions`` semantics exactly, and must be distinguishable from ``last_token``.
     """
 
     @staticmethod
@@ -381,31 +388,37 @@ class TestInterpEngineSteeringScope:
         assert out, "steered capture returned nothing"
         return next(iter(out.values()))
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "#441: interp-engine's SteeringSpec has no position scope, so it steers every prompt position "
-            "where our contract is the last token. STRICT, so an upstream fix makes this XPASS and FAILS "
-            "the suite -- we find out the defect is gone by being told, not by remembering to re-check."
-        ),
-    )
-    def test_steering_is_scoped_to_the_last_token(self, hf_reference, hf_final_resid, prompt_ids):
+    def test_native_steering_matches_our_all_positions_semantics(
+        self, hf_model, hf_reference, hf_final_resid, prompt_ids
+    ):
+        """The parity claim: interp-engine's only scope IS our ``all_positions``, numerically.
+
+        Stronger than observing the position set, because it pins the VALUES against an independent
+        implementation of the same operation. If our `all_positions` arithmetic and interp-engine's
+        differed -- a scale applied twice, an edit at the wrong point -- the sets would still match while
+        the tensors did not.
+        """
         vector = _steering_vector(hf_reference)
-        steered = self._steered_final_resid(prompt_ids, vector)
-        assert changed_positions(hf_final_resid, steered) == {prompt_ids.shape[1] - 1}
+        theirs = self._steered_final_resid(prompt_ids, vector)
+        ours = _hf_steered_final_resid(hf_model, prompt_ids, vector, all_positions=True)
+        assert_close(
+            theirs.to(ours.dtype),
+            ours,
+            rtol=RTOL,
+            atol=ATOL,
+            msg="interp-engine's whole-prompt steering diverged from interpretune's all_positions semantics",
+        )
 
-    def test_the_defect_is_specifically_whole_prompt_steering(self, hf_reference, hf_final_resid, prompt_ids):
-        """Characterize what it does INSTEAD, so the xfail is attributed rather than merely observed.
+    def test_it_is_distinguishable_from_last_token(self, hf_reference, hf_final_resid, prompt_ids):
+        """The capability statement, and the negative control on the claim above.
 
-        An xfail alone says "this does not hold". It does not say the cause is scope -- a backend that
-        steered nothing, crashed into a no-op, or rejected the point name would fail the contract too, and
-        the xfail would look identical. That is not hypothetical: the first version of this class captured
-        a point named ``logits``, which interp-engine does not have, so the contract test xfailed on an
-        ``AttributeError`` and looked exactly like #441 confirmed. This test is what caught it.
+        Without it, "matches all_positions" would be satisfiable by an implementation whose two scopes are
+        the same thing. This pins that interp-engine's scope is genuinely the whole prompt -- which is what
+        an adapter declaring only ``INTERVENTION_ALL_POSITIONS`` is asserting about it.
         """
         vector = _steering_vector(hf_reference)
         steered = self._steered_final_resid(prompt_ids, vector)
         assert changed_positions(hf_final_resid, steered) == set(range(prompt_ids.shape[1])), (
-            "interp-engine's steering is no longer whole-prompt, but it is not last-token either. #441's "
-            "diagnosis needs updating before this module's xfail can be trusted."
+            "interp-engine's steering is no longer whole-prompt. An adapter declaring only "
+            "INTERVENTION_ALL_POSITIONS for it would now be wrong, and #441's framing needs revisiting."
         )

@@ -26,7 +26,7 @@ from interpretune.analysis.backends import (
     InterventionDict,
     InterventionSpec,
     InterventionValue,
-    apply_intervention_to_last_token,
+    apply_intervention,
     build_intervention_dict,
     expand_intervention_patterns,
     get_intervention_target_shape,
@@ -373,6 +373,10 @@ class NNsightModelBackend:
                 BackendCapability.GRADIENTS,
                 BackendCapability.LATENT_MODELS,
                 BackendCapability.INTERVENTION,
+                # Both scopes, for the same reason as TL: the traced value is the full
+                # activation, so which positions get edited is the caller's choice.
+                BackendCapability.INTERVENTION_LAST_TOKEN,
+                BackendCapability.INTERVENTION_ALL_POSITIONS,
             }
         )
 
@@ -470,7 +474,7 @@ class NNsightModelBackend:
         act_input = _read_envoy_activation(envoy, resolved)
         if last_pos is not None:
             for spec in stage_interventions.get("hook_sae_input", ()):  # type: ignore[arg-type]
-                act_input = apply_intervention_to_last_token(act_input, spec, last_pos=last_pos)
+                act_input = apply_intervention(act_input, spec, last_pos=last_pos)
 
         # NNsight reads post-merge activations (3D: [batch, seq, n_heads*d_head])
         # for hook_z hooks because HF attention merges heads before calling
@@ -496,7 +500,7 @@ class NNsightModelBackend:
 
             if last_pos is not None and stage_interventions.get("hook_sae_acts_pre"):
                 for spec in stage_interventions["hook_sae_acts_pre"]:
-                    hidden_pre = apply_intervention_to_last_token(hidden_pre, spec, last_pos=last_pos)
+                    hidden_pre = apply_intervention(hidden_pre, spec, last_pos=last_pos)
                 if has_hidden_pre:
                     feature_acts = sae.hook_sae_acts_post(sae.activation_fn(hidden_pre))
                 else:
@@ -508,18 +512,18 @@ class NNsightModelBackend:
 
             if last_pos is not None:
                 for spec in stage_interventions.get("hook_sae_acts_post", ()):  # type: ignore[arg-type]
-                    feature_acts = apply_intervention_to_last_token(feature_acts, spec, last_pos=last_pos)
+                    feature_acts = apply_intervention(feature_acts, spec, last_pos=last_pos)
 
             sae_out = sae.decode(feature_acts)
             sae_error = act_input - sae_out
             if last_pos is not None:
                 for spec in stage_interventions.get("hook_sae_error", ()):  # type: ignore[arg-type]
-                    sae_error = apply_intervention_to_last_token(sae_error, spec, last_pos=last_pos)
+                    sae_error = apply_intervention(sae_error, spec, last_pos=last_pos)
 
             sae_output = sae_out + sae_error if getattr(sae, "use_error_term", False) else sae_out
             if last_pos is not None:
                 for spec in stage_interventions.get("hook_sae_output", ()):  # type: ignore[arg-type]
-                    sae_output = apply_intervention_to_last_token(sae_output, spec, last_pos=last_pos)
+                    sae_output = apply_intervention(sae_output, spec, last_pos=last_pos)
 
             _write_envoy_activation(envoy, resolved, sae_output)
         finally:
@@ -1049,7 +1053,7 @@ class NNsightModelBackend:
                     act_proxy = _read_envoy_activation(envoy, resolved)
 
                     for spec in specs:
-                        act_proxy = apply_intervention_to_last_token(act_proxy, spec, last_pos=last_pos)
+                        act_proxy = apply_intervention(act_proxy, spec, last_pos=last_pos)
 
                     _write_envoy_activation(envoy, resolved, act_proxy)
 

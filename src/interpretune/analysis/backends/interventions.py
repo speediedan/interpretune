@@ -12,9 +12,28 @@ from dataclasses import dataclass
 import re
 from typing import Any, Callable, NamedTuple, TypeAlias
 
+from enum import Enum
+
 import torch
 
 from interpretune.analysis.backends.hook_mapping import SUBHOOK_SUFFIXES
+
+
+class PositionScope(str, Enum):
+    """Which positions an intervention edits.
+
+    A ``str`` enum so a spec built from YAML or a notebook can carry the plain string and still
+    compare equal to the member.
+
+    **Both scopes are legitimate operations, not a correct one and a broken one.** Steering the final
+    token is the right shape for "change the next prediction"; steering every position is the right
+    shape for "make the model read the whole prompt differently". Interpretune previously had a name
+    for only the first, which is what made a backend implementing the second look like a defect
+    rather than like a capability we could not express.
+    """
+
+    LAST_TOKEN = "last_token"
+    ALL_POSITIONS = "all_positions"
 
 
 class InterventionSpec(NamedTuple):
@@ -37,6 +56,14 @@ class InterventionSpec(NamedTuple):
         scale_factor: Scalar multiplier applied to *intervention_tensor* before the intervention
             (not used in ``"replace"`` mode and applied to the projected activation in
             ``"project"`` mode).
+        position_scope: WHICH POSITIONS the intervention edits -- ``"last_token"`` (default) or
+            ``"all_positions"``. This is part of the specification rather than a backend setting
+            because the CALLER knows which operation they meant: steering a final-token prediction
+            and steering a whole prompt are different experiments, not different implementations of
+            one. A backend that cannot honour the requested scope must REFUSE
+            (:func:`require_position_scope`) rather than substitute the other one, since the two
+            produce equally plausible activations and a silent substitution is undetectable
+            downstream.
         use_intervention_tensor_as_basis: Controls which vector defines the projection basis in
             ``"project"`` mode. ``True`` means project the current hook input onto the span of
             ``intervention_tensor``. ``False`` means project ``intervention_tensor`` onto the
@@ -47,6 +74,7 @@ class InterventionSpec(NamedTuple):
     mode: str = "replace"
     scale_factor: float = 1.0
     use_intervention_tensor_as_basis: bool = True
+    position_scope: str = PositionScope.LAST_TOKEN
 
 
 InterventionValue: TypeAlias = Any
@@ -529,12 +557,10 @@ def resolve_interventions(
 
 
 def _apply_lens_coordinate_patch(
-    value: torch.Tensor,
     spec: InterventionSpec,
     *,
     input_value: torch.Tensor,
     target: torch.Tensor,
-    last_pos: int,
 ) -> torch.Tensor:
     """Swap a concept pair in lens coordinates, preserving everything orthogonal to the pair.
 
@@ -581,38 +607,29 @@ def _apply_lens_coordinate_patch(
     swapped = coords.flip(-1) * spec.scale_factor
     patched = flat + (swapped - coords) @ v_matrix.transpose(0, 1)
 
-    value[:, last_pos, ...] = patched.reshape(input_value.shape).to(dtype=input_value.dtype)
-    return value
+    return patched.reshape(input_value.shape).to(dtype=input_value.dtype)
 
 
-def apply_intervention_to_last_token(
-    value: torch.Tensor,
-    spec: InterventionSpec,
-    *,
-    last_pos: int,
-) -> torch.Tensor:
-    """Apply one intervention spec to the last-token slice of an activation tensor.
+def _apply_mode_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
+    """Apply one intervention mode to a selected REGION, returning the edited region.
 
-    The existing hook value is treated as the projection input and
-    ``spec.intervention_tensor`` is treated as the projection target. In ``"project"`` mode,
-    the target defines the default projection basis: the input is projected onto the span of
-    the intervention tensor. When ``spec.use_intervention_tensor_as_basis`` is ``False``, the
-    direction is reversed and the intervention tensor is projected onto the span of the input.
+    The region is whatever the scope selected, flattened so that its leading axis indexes independent
+    rows. That flattening is what lets one implementation serve both scopes: ``last_token`` passes a
+    single position per batch row, ``all_positions`` passes every position as its own row, and the
+    per-row mathematics is identical in both cases -- which is the property that makes the two scopes
+    the SAME operation applied to different position sets, rather than two operations that happen to
+    share a name.
     """
-
-    input_value = value[:, last_pos, ...]
     target = torch.as_tensor(spec.intervention_tensor, device=input_value.device, dtype=input_value.dtype)
 
     if spec.mode == "replace":
-        value[:, last_pos, ...] = target
-        return value
+        return torch.broadcast_to(target, input_value.shape).to(dtype=input_value.dtype).clone()
 
     if spec.mode == "add":
-        value[:, last_pos, ...] = input_value + target * spec.scale_factor
-        return value
+        return input_value + target * spec.scale_factor
 
     if spec.mode == "patch":
-        return _apply_lens_coordinate_patch(value, spec, input_value=input_value, target=target, last_pos=last_pos)
+        return _apply_lens_coordinate_patch(spec, input_value=input_value, target=target)
 
     if spec.mode != "project":
         raise ValueError(f"Unknown intervention mode: {spec.mode!r}")
@@ -633,5 +650,94 @@ def apply_intervention_to_last_token(
         coeff = (source * basis).sum(dim=keepdim_axes, keepdim=True) / denom
         projected = coeff * basis
 
-    value[:, last_pos, ...] = projected.to(dtype=input_value.dtype) * spec.scale_factor
-    return value
+    return projected.to(dtype=input_value.dtype) * spec.scale_factor
+
+
+def apply_intervention(
+    value: torch.Tensor,
+    spec: InterventionSpec,
+    *,
+    last_pos: int,
+) -> torch.Tensor:
+    """Apply one intervention spec to the positions ``spec.position_scope`` selects.
+
+    **The name carries no scope, deliberately.** This replaced ``apply_intervention``,
+    and the rename is the point rather than tidying: a function whose name asserts one scope cannot
+    honestly implement two, and leaving the old name would guarantee every future reader has to work
+    out whether the name or the parameter is lying.
+
+    ``last_pos`` is still required, because it identifies the final real token under left padding and
+    is therefore not derivable from the tensor shape. It is simply unused when the scope is
+    ``all_positions``.
+
+    The existing hook value is treated as the projection input and ``spec.intervention_tensor`` as the
+    projection target. In ``"project"`` mode the target defines the default projection basis; when
+    ``spec.use_intervention_tensor_as_basis`` is ``False`` the direction is reversed.
+    """
+    scope = spec.position_scope
+
+    if scope == PositionScope.LAST_TOKEN:
+        value[:, last_pos, ...] = _apply_mode_to_region(value[:, last_pos, ...], spec)
+        return value
+
+    if scope == PositionScope.ALL_POSITIONS:
+        batch, seq = value.shape[0], value.shape[1]
+        flat = value.reshape(batch * seq, *value.shape[2:])
+        value[...] = _apply_mode_to_region(flat, spec).reshape(value.shape)
+        return value
+
+    raise ValueError(
+        f"Unknown position_scope {scope!r}; expected one of "
+        f"{[m.value for m in PositionScope]!r}. An unrecognised scope is refused rather than "
+        "defaulted, because both valid scopes produce plausible activations and guessing between "
+        "them is undetectable downstream."
+    )
+
+
+#: Which capability a given scope requires. Kept as data rather than an ``if`` chain so adding a third
+#: scope cannot silently skip the check for it.
+_SCOPE_CAPABILITY = {
+    PositionScope.LAST_TOKEN: "INTERVENTION_LAST_TOKEN",
+    PositionScope.ALL_POSITIONS: "INTERVENTION_ALL_POSITIONS",
+}
+
+
+def require_position_scope(capabilities, spec: InterventionSpec, *, backend: str) -> None:
+    """Refuse, with a reason, when a backend cannot honour the spec's position scope.
+
+    **Refusing is the whole point of the scope field.** The two scopes produce equally plausible
+    activations -- a whole-prompt intervention yields sensible logits, and so does a last-token one --
+    so a backend that silently substituted the scope it supports would be undetectable downstream by
+    any value comparison. That is precisely the failure that went unnoticed while interpretune had
+    only one name for the operation.
+
+    Backends that declare neither scope capability are NOT refused: they predate this distinction and
+    are assumed last-token, which is the behaviour every call site had before the scope existed.
+    Making the absence of a declaration mean "refuse everything" would break every such backend at
+    once, and making it mean "supports everything" would reintroduce the silent substitution.
+    """
+    required = _SCOPE_CAPABILITY.get(spec.position_scope)
+    if required is None:
+        raise ValueError(f"Unknown position_scope {spec.position_scope!r} for backend {backend!r}")
+    from interpretune.analysis.backends.capabilities import BackendCapability
+
+    declared = set(capabilities or ())
+    scope_caps = {BackendCapability.INTERVENTION_LAST_TOKEN, BackendCapability.INTERVENTION_ALL_POSITIONS}
+    if not (declared & scope_caps):
+        # Undeclared: legacy last-token assumption, see docstring.
+        if spec.position_scope == PositionScope.LAST_TOKEN:
+            return
+        raise NotImplementedError(
+            f"backend {backend!r} declares no intervention position-scope capabilities, so it is "
+            f"treated as last-token only and cannot honour position_scope="
+            f"{spec.position_scope.value if hasattr(spec.position_scope, 'value') else spec.position_scope!r}. "
+            f"Declare {BackendCapability.INTERVENTION_ALL_POSITIONS} if it can steer every position."
+        )
+    if getattr(BackendCapability, required) not in declared:
+        raise NotImplementedError(
+            f"backend {backend!r} cannot apply an intervention with position_scope="
+            f"{getattr(spec.position_scope, 'value', spec.position_scope)!r}; it declares "
+            f"{sorted(c.value for c in declared & scope_caps)!r}. This is refused rather than "
+            "narrowed or widened to the supported scope, because both scopes produce plausible "
+            "activations and a silent substitution cannot be detected from the result."
+        )

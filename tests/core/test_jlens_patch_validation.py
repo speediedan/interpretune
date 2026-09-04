@@ -41,7 +41,7 @@ from interpretune.adapters.nnsight.backends import (
 from interpretune.analysis.backends.interventions import (
     InterventionDict,
     InterventionSpec,
-    apply_intervention_to_last_token,
+    apply_intervention,
     _validate_intervention_spec,
 )
 
@@ -104,7 +104,7 @@ def _eager_reference_logits(hf_model, spec: InterventionSpec | None) -> torch.Te
 
         def hook(_m, _a, out):
             hidden = out[0] if isinstance(out, tuple) else out
-            apply_intervention_to_last_token(hidden, spec, last_pos=hidden.shape[1] - 1)
+            apply_intervention(hidden, spec, last_pos=hidden.shape[1] - 1)
             return out
 
         handle = hf_model.transformer.h[HOOK_LAYER].register_forward_hook(hook)

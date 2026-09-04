@@ -46,6 +46,23 @@ class BackendCapability(Enum):
     ``fwd_w_intervention``).
     """
 
+    INTERVENTION_LAST_TOKEN = "intervention_last_token"
+    """Backend can restrict an intervention to the FINAL real token.
+
+    Declared separately from :attr:`INTERVENTION` because supporting interventions at all and being
+    able to SCOPE one are different facts. A backend whose steering primitive applies to every prompt
+    position supports the former and not this.
+    """
+
+    INTERVENTION_ALL_POSITIONS = "intervention_all_positions"
+    """Backend can apply an intervention at EVERY prompt position.
+
+    A capability, not a defect. "Steer the whole prompt" is a legitimate experiment -- it is the right shape for
+    changing how a model reads its input, where last-token steering is the right shape for changing the next prediction.
+    Interpretune previously had a name for only one of them, which made a backend implementing the other look broken
+    rather than differently capable.
+    """
+
 
 class AnalysisBackendCapability(Enum):
     """Capabilities exposed by analysis adapters/backends rather than model execution backends."""
