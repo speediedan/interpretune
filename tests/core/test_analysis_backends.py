@@ -246,9 +246,12 @@ class TestHookNameResolver:
 
     def test_resolve_gpt2_mlp_pre(self):
         resolver = HookNameResolver("GPT2LMHeadModel")
+        # TransformerLens defines `mlp.hook_pre` as `mlp.in.hook_out`: the pre-activation AFTER the up
+        # projection, not the MLP's input. The old table pointed it at the MLP module's input, a tensor one
+        # projection away from the one the name means.
         path, io_type = resolver.resolve("blocks.4.mlp.hook_pre")
-        assert path == "transformer.h.4.mlp"
-        assert io_type == "input"
+        assert path == "transformer.h.4.mlp.c_fc"
+        assert io_type == "output"
 
     def test_resolve_global_unembed_hook(self):
         resolver = HookNameResolver("Gemma2ForCausalLM")
@@ -332,8 +335,9 @@ class TestHookNameResolver:
 
     def test_resolve_transcoder_hooks(self):
         resolver = HookNameResolver("GPT2LMHeadModel")
-        read, write = resolver.resolve_transcoder_hooks("blocks.3.mlp.hook_pre", "blocks.3.hook_mlp_out")
-        assert read == ("transformer.h.3.mlp", "input")
+        read, write = resolver.resolve_transcoder_hooks("blocks.3.mlp.hook_in", "blocks.3.hook_mlp_out")
+        # a transcoder reads the MLP's INPUT (the block norm's output) and writes its output
+        assert read == ("transformer.h.3.ln_2", "output")
         assert write == ("transformer.h.3.mlp", "output")
 
     def test_resolve_transcoder_hooks_no_output(self):

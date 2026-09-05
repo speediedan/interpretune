@@ -1,0 +1,20 @@
+# Gemma 3 multimodal (`Gemma3ForConditionalGeneration`): the language model lives one level down. Sandwich norms: a post-norm after each sublayer, so a
+# sublayer's CONTRIBUTION to the residual is the post-norm's output, not the raw module output.
+architecture: Gemma3ForConditionalGeneration
+facts:
+  sandwich_norms: true
+components:
+  embed:                {module: "model.language_model.embed_tokens",                            kind: embed}
+  blocks.{i}:           {module: "model.language_model.layers.{i}",                              kind: block}
+  blocks.{i}.ln1:       {module: "model.language_model.layers.{i}.input_layernorm",              kind: norm}
+  blocks.{i}.attn:      {module: "model.language_model.layers.{i}.self_attn",                    kind: attn}
+  blocks.{i}.attn.o:    {module: "model.language_model.layers.{i}.self_attn.o_proj",             kind: linear}
+  blocks.{i}.ln1_post:  {module: "model.language_model.layers.{i}.post_attention_layernorm",     kind: norm}
+  blocks.{i}.ln2:       {module: "model.language_model.layers.{i}.pre_feedforward_layernorm",    kind: norm}
+  blocks.{i}.mlp:       {module: "model.language_model.layers.{i}.mlp",                          kind: mlp}
+  blocks.{i}.mlp.gate:  {module: "model.language_model.layers.{i}.mlp.gate_proj",                kind: linear}
+  blocks.{i}.mlp.in:    {module: "model.language_model.layers.{i}.mlp.up_proj",                  kind: linear}
+  blocks.{i}.mlp.out:   {module: "model.language_model.layers.{i}.mlp.down_proj",                kind: linear}
+  blocks.{i}.ln2_post:  {module: "model.language_model.layers.{i}.post_feedforward_layernorm",   kind: norm}
+  ln_final:             {module: "model.language_model.norm",                                    kind: norm}
+  unembed:              {module: "lm_head",                                       kind: unembed}
