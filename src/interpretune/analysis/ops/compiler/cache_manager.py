@@ -32,7 +32,10 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 #    the field and a declaring op would silently fall back to the default protocol.
 # 7: name/description/implementation emit via repr() -- a description containing a double quote
 #    previously rendered an unparseable module (silent full recompile on every load).
-CACHE_FORMAT_VERSION = "7"
+# 8: adds `required_intervention_modes` / `required_position_scopes` to OpDef (the INTERVENTION configuration
+#    axes an op needs, checked at validation against the backend's InterventionSupport record). A serialized-shape
+#    change: a cache without the fields would serve ops that skip the axis check and fail late at the backend.
+CACHE_FORMAT_VERSION = "8"
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,13 @@ class OpDef:
     normal_params: dict[str, Any] = field(default_factory=dict)
     required_ops: list[str] = field(default_factory=list)
     required_capabilities: list[str] = field(default_factory=list)
+    # The two configuration axes of the INTERVENTION surface an op needs, as values (`patch`, `all_positions`).
+    # Siblings of `required_capabilities` rather than members of it: a capability names a surface, these name
+    # which configurations of that surface the op will ask for, and the backend's `InterventionSupport`
+    # record is the availability source they are checked against. A composite carries the union of its
+    # parts' axes plus its own.
+    required_intervention_modes: list[str] = field(default_factory=list)
+    required_position_scopes: list[str] = field(default_factory=list)
     composition: list[str] | None = None
     op_state: OpStateSpec | None = None
     # Where this definition came from: "bundled" | "local" | "hub:<user.repo>". Provenance, not name
@@ -85,6 +95,8 @@ class OpDef:
             "normal_params": self.normal_params,
             "required_ops": self.required_ops,
             "required_capabilities": self.required_capabilities,
+            "required_intervention_modes": self.required_intervention_modes,
+            "required_position_scopes": self.required_position_scopes,
             "composition": self.composition,
             "op_state": self.op_state.to_dict() if self.op_state is not None else None,
             "source": self.source,
@@ -491,6 +503,9 @@ class OpDefinitionsCacheManager:
             fields.append(f"required_ops={op_def.required_ops!r}")
         if op_def.required_capabilities:
             fields.append(f"required_capabilities={op_def.required_capabilities!r}")
+        for axis in ("required_intervention_modes", "required_position_scopes"):
+            if value := getattr(op_def, axis):
+                fields.append(f"{axis}={value!r}")
         if op_def.composition:
             fields.append(f"composition={op_def.composition!r}")
         if op_def.op_state is not None:
