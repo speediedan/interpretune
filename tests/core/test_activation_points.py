@@ -128,3 +128,31 @@ class TestBundledMapAgreesWithTransformerLens:
         gpt2."""
         extra = sorted(set(component_map_for("GPT2LMHeadModel").components) - set(tl_gpt2_map.components))
         assert not extra, extra
+
+
+class TestResolverLayerShape:
+    """The resolver refuses a layer on a global point and a missing layer on a block point.
+
+    Found by the first hub
+    adapter enumerating the vocabulary by probing: the lenient forms produced nonsense paths that grew with the
+    vocabulary until every broad filter selected one and was refused.
+    """
+
+    def test_a_block_point_needs_a_layer(self):
+        from interpretune.analysis.backends.hook_mapping import HookNameResolver
+
+        with pytest.raises(ValueError, match="needs a layer"):
+            HookNameResolver("GPT2LMHeadModel").resolve("attn.hook_z")
+
+    def test_a_global_point_takes_no_layer(self):
+        from interpretune.analysis.backends.hook_mapping import HookNameResolver
+
+        with pytest.raises(ValueError, match="takes no layer"):
+            HookNameResolver("GPT2LMHeadModel").resolve("blocks.5.unembed.hook_out")
+
+    def test_the_right_shapes_still_resolve(self):
+        from interpretune.analysis.backends.hook_mapping import HookNameResolver
+
+        r = HookNameResolver("GPT2LMHeadModel")
+        assert r.resolve("blocks.5.attn.hook_z") == ("transformer.h.5.attn.c_proj", "input")
+        assert r.resolve("unembed.hook_out") == ("lm_head", "output")

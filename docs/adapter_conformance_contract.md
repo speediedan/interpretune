@@ -189,6 +189,12 @@ the published card, which renders one row per declared entry and so tells a read
 datamodule. Declare every slot the entrypoint registers, with `requires` on each slot of a conditional
 composition separately, and keep a test that declared and registered agree exactly.
 
+**Enumerate the vocabulary from its public answer, never by probing.** Probing a resolver with candidate
+names measures its permissiveness, not the vocabulary, and the gap grows silently as the vocabulary grows: the
+first adopter's probe produced 252 nonsense names out of 433 once the vocabulary widened, and every broad
+filter that selected one was refused. `ComponentMap.block_components()` and `.global_components()` say which
+names take a layer and which do not; expand the former over layers and offer the latter bare.
+
 **Select compositions by both keys, not by adapter set.** A helper that picks the composition class by matching
 the adapter tuple alone starts returning the datamodule class the moment the datamodule composition is registered
 too, and the failure points at `nn.Module` rather than at the selector. Match on `(component_key, adapters)`.
