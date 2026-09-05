@@ -105,6 +105,10 @@ uv pip install -e ".[examples]" --group git-deps
 Add `lightning` only if you want the Lightning adapter and its fine-tuning-scheduler integration:
 `".[examples,lightning]"`. It is a genuinely optional adapter, not part of the base install.
 
+The `examples` extra includes the interp-engine execution backend, which the cross-backend parity suite
+drives. That installs the **engine** only: the hub adapter composing it into a session is pulled separately
+with `it.hub.pull`, which is what makes it hub-delivered rather than bundled.
+
 <details>
 <summary><b>Contributor install</b> (adds the test, profiling and dashboard-benchmark tooling)</summary>
 
