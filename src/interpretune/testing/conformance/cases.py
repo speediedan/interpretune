@@ -263,7 +263,9 @@ class ModelBackendConformance:
 
     # -- INTERVENTION ------------------------------------------------------------------------------
 
-    def _intervene(self, suite, *, scope: str, mode: str = "add", scale: float = STEER_SCALE, vector=None):
+    def _intervene(
+        self, suite, *, scope: str, mode: str = "add", scale: float = STEER_SCALE, vector=None, basis: bool = True
+    ):
         """The caller's path: a raw payload in run_inputs, through model_fwd_intervention."""
         import interpretune as it
         from interpretune import AnalysisCfg
@@ -276,6 +278,7 @@ class ModelBackendConformance:
                 "mode": mode,
                 "scale_factor": scale,
                 "position_scope": scope,
+                "use_intervention_tensor_as_basis": basis,
             }
         }
         return suite.run(
@@ -350,6 +353,110 @@ class ModelBackendConformance:
             torch.testing.assert_close(
                 post, pre, rtol=0, atol=CONVERGENCE_ATOL, msg="a zero-scale intervention changed the logits"
             )
+
+    # -- per-mode invariants -----------------------------------------------------------------------
+    #
+    # Each declared mode has one algebraic property a caller can state without a reference implementation,
+    # and each case pairs it with a positive control (the mode does SOMETHING), so an identity cannot pass
+    # because the backend ignored the payload. The invariants are batch-safe by construction: an intervention
+    # tensor broadcasts to every row, so "replace with the row's own activation" is not expressible here and
+    # the replace invariant is scale-independence instead.
+
+    def _second_vector(self, vector: torch.Tensor) -> torch.Tensor:
+        """A vector not collinear with ``vector`` and of the same shape: a rolled copy."""
+        return torch.roll(vector, shifts=max(1, vector.numel() // 3), dims=-1)
+
+    @staticmethod
+    def _assert_moved(store, *, what: str) -> None:
+        moved = any(
+            not torch.allclose(post, pre, rtol=0, atol=CONVERGENCE_ATOL)
+            for pre, post in zip(store["pre_intervention_logits"], store["post_intervention_logits"])
+        )
+        assert moved, f"{what} left every logit unchanged, so the invariant below would hold vacuously"
+
+    @staticmethod
+    def _assert_same_logits(a, b, *, what: str) -> None:
+        for i, (x, y) in enumerate(zip(a["post_intervention_logits"], b["post_intervention_logits"])):
+            torch.testing.assert_close(y, x, rtol=0, atol=CONVERGENCE_ATOL, msg=f"{what} (batch {i})")
+
+    @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.REPLACE)
+    def test_replace_ignores_the_scale_factor(self, suite):
+        """`replace` installs the tensor as-is: the result is independent of `scale_factor`, and it moves."""
+        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        vector = self._vector(suite)
+        unit = self._intervene(suite, scope=scope, mode="replace", scale=1.0, vector=vector)
+        scaled = self._intervene(suite, scope=scope, mode="replace", scale=STEER_SCALE * 3, vector=vector)
+        self._assert_moved(unit, what="replace")
+        self._assert_same_logits(unit, scaled, what="replace changed with scale_factor, which it must ignore")
+
+    @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.PATCH)
+    def test_patch_of_a_pair_with_itself_is_identity(self, suite):
+        """Swapping a concept's coordinates with its own leaves the activation, and the logits, unchanged."""
+        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        vector = self._vector(suite)
+        # scale_factor=1.0 is the pure exchange; the paper's alpha scales the swapped coordinates, so any other
+        # value is a deliberate over- or under-steer and not an identity
+        store = self._intervene(suite, scope=scope, mode="patch", scale=1.0, vector=torch.stack([vector, vector]))
+        for i, (pre, post) in enumerate(zip(store["pre_intervention_logits"], store["post_intervention_logits"])):
+            torch.testing.assert_close(
+                post, pre, rtol=0, atol=CONVERGENCE_ATOL, msg=f"patch (v, v) changed the logits (batch {i})"
+            )
+
+    @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.PATCH)
+    def test_patch_is_symmetric_in_pair_order(self, suite):
+        """``h + V(sigma(c) - c)`` is the same update for ``(s, t)`` and ``(t, s)``, and it moves the logits.
+
+        Both orders exchange the same two coordinates, so the pair is unordered; a backend that treated index 0
+        as "from" and index 1 as "to" in some other sense would break this without breaking the identity case.
+        """
+        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        source = self._vector(suite)
+        target = self._second_vector(source)
+        forward = self._intervene(suite, scope=scope, mode="patch", scale=1.0, vector=torch.stack([source, target]))
+        reverse = self._intervene(suite, scope=scope, mode="patch", scale=1.0, vector=torch.stack([target, source]))
+        self._assert_moved(forward, what="patch (s, t)")
+        self._assert_same_logits(forward, reverse, what="patch (s, t) and patch (t, s) differ")
+
+    @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.PROJECT)
+    def test_project_depends_only_on_the_basis_span(self, suite):
+        """Projecting onto ``v`` and onto ``-2v`` is the same projection, and it moves the logits."""
+        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        vector = self._vector(suite)
+        onto_v = self._intervene(suite, scope=scope, mode="project", scale=1.0, vector=vector)
+        onto_span = self._intervene(suite, scope=scope, mode="project", scale=1.0, vector=vector * -2.0)
+        self._assert_moved(onto_v, what="project")
+        self._assert_same_logits(onto_v, onto_span, what="project onto v and onto -2v differ")
+
+    @conformance_case(capability=BackendCapability.INTERVENTION)
+    def test_declared_modes_are_distinguishable(self, suite):
+        """Every declared mode, given the same vector and point, yields logits distinguishable from every other
+        declared mode and from the baseline.
+
+        This is the case a backend that ignored ``mode`` and applied the one it has would fail, which is how the
+        first hub adapter's backend once behaved: plausible logits for an intervention nobody requested.
+        """
+        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        vector = self._vector(suite)
+        payloads: dict[str, tuple[torch.Tensor, float]] = {
+            "add": (vector, STEER_SCALE),
+            "replace": (vector, 1.0),
+            "project": (vector, 1.0),
+            "patch": (torch.stack([vector, self._second_vector(vector)]), 1.0),
+        }
+        declared = sorted(m.value for m in suite.capabilities.intervention.modes)
+        results = {
+            mode: self._intervene(suite, scope=scope, mode=mode, vector=payloads[mode][0], scale=payloads[mode][1])
+            for mode in declared
+        }
+        for mode, store in results.items():
+            self._assert_moved(store, what=f"mode {mode!r}")
+        for i, a in enumerate(declared):
+            for b in declared[i + 1 :]:
+                same = all(
+                    torch.allclose(x, y, rtol=0, atol=CONVERGENCE_ATOL)
+                    for x, y in zip(results[a]["post_intervention_logits"], results[b]["post_intervention_logits"])
+                )
+                assert not same, f"modes {a!r} and {b!r} produced the same logits for the same vector and point"
 
     @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.ADD, family="hf_native")
     def test_baseline_is_an_unsteered_forward(self, suite, hf):

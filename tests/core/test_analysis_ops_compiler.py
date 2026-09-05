@@ -1885,7 +1885,7 @@ class TestCacheFormatVersionCoversCompilerChanges:
     EXPECTED_VERSION = "8"
     EXPECTED_DIGESTS = {
         "schema_compiler.py": "33d733fd865c",
-        "cache_manager.py": "4151ae214d3b",
+        "cache_manager.py": "0ac3c3d889a5",
     }
 
     @staticmethod

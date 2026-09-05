@@ -535,6 +535,7 @@ class AnalysisOpDispatcher:
                 required_capabilities=op_def.get("required_capabilities", []),
                 required_intervention_modes=list(op_def.get("required_intervention_modes", []) or []),
                 required_position_scopes=list(op_def.get("required_position_scopes", []) or []),
+                conformance=op_def.get("conformance"),
                 composition=op_def.get("composition", None),
                 op_state=self._resolve_op_state_spec(op_name, op_def.get("op_state")),
                 source=str(op_def.get("source", "bundled")),

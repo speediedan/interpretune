@@ -541,6 +541,7 @@ class TestOpDefCacheRoundTrip:
             "protocol_cls",
             "required_intervention_modes",
             "required_position_scopes",
+            "conformance",
         }
 
     def test_all_new_fields_survive_serialization(self):
@@ -568,6 +569,7 @@ class TestOpDefCacheRoundTrip:
             protocol_cls="interpretune.protocol.DefaultAnalysisBatchProtocol",
             required_intervention_modes=["patch"],
             required_position_scopes=["all_positions"],
+            conformance={"run_inputs": {"alpha": 1}},
         )
         serialized = OpDefinitionsCacheManager.__dict__["_serialize_op_def"](
             OpDefinitionsCacheManager.__new__(OpDefinitionsCacheManager), op_def
@@ -591,6 +593,7 @@ class TestOpDefCacheRoundTrip:
             ["patch"],
             ["all_positions"],
         )
+        assert restored.conformance == {"run_inputs": {"alpha": 1}}
         # Defaults stay out of the serialized form so the cache does not grow for every new trait.
         plain = OpDef(
             name="y", description="", implementation="m.f", input_schema=OpSchema({}), output_schema=OpSchema({})
@@ -601,7 +604,7 @@ class TestOpDefCacheRoundTrip:
         assert "source=" not in plain_serialized and "requires_grad" not in plain_serialized
         assert "protocol_cls" not in plain_serialized
         assert "collection_name" not in plain_serialized
-        assert "required_intervention_modes" not in plain_serialized
+        assert "required_intervention_modes" not in plain_serialized and "conformance" not in plain_serialized
         # Deliberately a LITERAL, unlike the derived assertion in test_analysis_ops_compiler.py: the point is
         # to fail when the format changes without someone deciding it should, since adding an OpDef field (or
         # otherwise changing compiled output) without a bump makes stale caches deserialize silently wrong.
