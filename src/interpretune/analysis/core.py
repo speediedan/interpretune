@@ -184,12 +184,16 @@ def get_module_dims(module) -> tuple[int, int, int, int, int]:
     max_answer_tokens = module.it_cfg.generative_step_cfg.lm_generation_cfg.max_new_tokens
     # TODO: abstract this so it's not tied to entailment use case but num_classes
     num_classes = module.it_cfg.num_labels or len(module.it_cfg.entailment_mapping)
-    # Resolve the tokenizer wherever the composition keeps it. Bundled adapters' wrappers carry one on
-    # `module.model`; a raw HF model (a core-only composition, or a hub adapter whose wrapper cannot take the
-    # `module.model` slot) does not, and the datamodule always does.
-    from interpretune.analysis.optools import resolve_tokenizer
+    # Bundled adapters' wrappers carry the tokenizer on `module.model`, and that stays the first choice. A raw
+    # HF model (a core-only composition, or a hub adapter whose wrapper cannot take the `module.model` slot)
+    # does not carry one, so fall back to resolving it wherever the composition keeps it (the datamodule always
+    # does). The fallback is second, not first: an analysis backend's `get_tokenizer` may hand back a test
+    # double that has no vocabulary, and the model's own tokenizer must keep winning where it exists.
+    tokenizer = getattr(getattr(module, "model", None), "tokenizer", None)
+    if tokenizer is None:
+        from interpretune.analysis.optools import resolve_tokenizer
 
-    tokenizer = resolve_tokenizer(module)
+        tokenizer = resolve_tokenizer(module)
     vocab_size = tokenizer.vocab_size
     max_seq_len = tokenizer.model_max_length
     # TODO: decide if we want to expose a dict of both latent hook names and dimensions here (not just d_sae)
