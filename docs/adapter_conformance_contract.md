@@ -174,6 +174,19 @@ NOT claim by name goes red the moment the enum changes, with no opinion about th
 complement (`set(BackendCapability) - backend.capabilities`) so a member added upstream is asserted absent
 automatically and a removed one simply disappears. The suite's own refusal case is written that way.
 
+**Adding a component slot changes the arity of every adapter-set-keyed helper.** The first adopter hit this
+three times in one day, each failure pointing somewhere other than the cause: a parity fixture that selected
+by adapter set began returning the datamodule class; a helper that counted slots looked like it counted
+compositions; a cold-venv gate that joined adapter names listed every composition twice. Key every helper on
+`(component_key, adapters)`.
+
+**The manifest is checked in one direction.** A manifest that overstates its compositions fails at load; one
+that understates them (declaring `module` entries while the entrypoint also registers `datamodule` ones) loads
+fine, because the load-time invariant drops the component name on purpose, and the only visible consequence is
+the published card, which renders one row per declared entry and so tells a reader the component supplies no
+datamodule. Declare every slot the entrypoint registers, with `requires` on each slot of a conditional
+composition separately, and keep a test that declared and registered agree exactly.
+
 **Select compositions by both keys, not by adapter set.** A helper that picks the composition class by matching
 the adapter tuple alone starts returning the datamodule class the moment the datamodule composition is registered
 too, and the failure points at `nn.Module` rather than at the selector. Match on `(component_key, adapters)`.
