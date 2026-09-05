@@ -10,6 +10,9 @@
 
 ## The vocabulary underneath
 
+The full statement, written for an outside reader and carrying the reconciliation asked of interp-engine, is
+`activation_point_vocabulary.md`.
+
 Hook names are parsed once, at the boundary, by `interpretune.analysis.points.parse`, into an `ActivationPoint`
 with two levels of meaning:
 

@@ -95,3 +95,38 @@ def test_it_hub_resolves_in_fresh_process():
         timeout=120,
     )
     assert result.returncode == 0, result.stderr[-2000:]
+
+
+def test_import_interpretune_does_not_import_the_testing_package():
+    """`interpretune.testing` ships in the wheel for adopters and must cost nothing by default."""
+    import subprocess
+
+    script = (
+        "import sys, interpretune; "
+        "print(int(any(m == 'interpretune.testing' or m.startswith('interpretune.testing.') for m in sys.modules)))"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip() == "0", "importing interpretune pulled in interpretune.testing"
+
+
+def test_conformance_package_imports_without_pytest():
+    """The conformance package is import-safe without its test-only dependency: pytest is imported lazily by the case
+    and plugin modules, which a consumer only reaches from inside a pytest run."""
+    import subprocess
+
+    script = (
+        "import sys, importlib.abc\n"
+        "class Block(importlib.abc.MetaPathFinder):\n"
+        "    def find_spec(self, name, path, target=None):\n"
+        "        if name == 'pytest' or name.startswith('pytest.'):\n"
+        "            raise ImportError('pytest blocked')\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, Block())\n"
+        "import interpretune.testing.conformance as c\n"
+        "from interpretune.testing.conformance import ConformanceTarget, ConformanceInputs, Gate\n"
+        "print('ok')\n"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip() == "ok"

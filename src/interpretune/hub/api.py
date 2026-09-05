@@ -44,11 +44,18 @@ def pull(
     :class:`~interpretune.registry.RegisteredCfg` — ``datamodule_cfg, module_cfg, datamodule_cls,
     module_cls = it.hub.pull("org/repo", "<key>")``. Without ``key``, returns
     ``(manifest, resolved_commit)`` so callers can inspect the available configurations first.
+
+    A key-less pull also materializes the payloads the manifest's non-configuration kinds need (the
+    adapters and promptconfigs entrypoints, the hookmaps documents), pinned to the resolved commit, so the
+    cache-only loaders (``load_hub_adapter``, ``load_hookmaps``, ``compose_ref``) can complete from the
+    snapshot. Loading never downloads; this is the verb that downloads on purpose.
     """
-    from interpretune.hub.components import pull_component_config, pull_component_manifest
+    from interpretune.hub.components import pull_component_config, pull_component_manifest, pull_component_payloads
 
     if key is None:
-        return pull_component_manifest(repo_id, revision=revision, cache_dir=cache_dir, token=token)
+        manifest, commit = pull_component_manifest(repo_id, revision=revision, cache_dir=cache_dir, token=token)
+        pull_component_payloads(repo_id, manifest, commit, cache_dir=cache_dir, token=token)
+        return manifest, commit
     canonical, body = pull_component_config(repo_id, key, revision=revision, cache_dir=cache_dir, token=token)
     return _hydrate_component_body(canonical, body)
 
@@ -88,6 +95,46 @@ def pull_ops(
 
         DISPATCHER.reload_definitions()
     return result
+
+
+def pull_hookmaps(
+    repo_id: str,
+    *,
+    revision: str | None = None,
+    cache_dir: Path | None = None,
+    token: str | None = None,
+    load: bool = True,
+    replace: bool = False,
+) -> tuple[list[Path], str]:
+    """Explicitly fetch a ``hookmaps`` component (network; manifest-first, revision-pinned) and register its maps.
+
+    Returns ``(document_paths, resolved_commit)``. Hookmaps are DATA: one component-map YAML per
+    architecture, in the schema ``docs/activation_point_vocabulary.md`` gives, so there is no trust gate.
+    With ``load`` (default) the documents are parsed and registered with the activation-point vocabulary
+    immediately, so ``component_map_for(<architecture>)`` and every resolver built on it see them; pass
+    ``load=False`` to fetch only. A document for an architecture interpretune already bundles must agree
+    with the bundled map; ``replace=True`` overrides that deliberately (see :func:`load_hookmaps`).
+    """
+    from interpretune.hub.hookmaps import load_hub_hookmaps, pull_hookmap_files
+
+    paths, commit = pull_hookmap_files(repo_id, revision=revision, cache_dir=cache_dir, token=token)
+    if load:
+        load_hub_hookmaps(repo_id, cache_dir=cache_dir, replace=replace)
+    return paths, commit
+
+
+def load_hookmaps(repo_id: str, *, cache_dir: Path | None = None, replace: bool = False) -> list[str]:
+    """Cache-only registration of a ``hookmaps`` component's maps — never touches the network.
+
+    Returns the architectures registered. Same cache discipline as :func:`load`: an uncached component
+    raises with the exact fetch command. A map that DISAGREES with one already registered (bundled or from
+    another component) is refused, naming both sources, unless ``replace=True``; an identical map is a
+    no-op, since two sources for one architecture agreeing is the normal case for a bundled architecture
+    republished on the hub.
+    """
+    from interpretune.hub.hookmaps import load_hub_hookmaps
+
+    return [cmap.architecture for cmap in load_hub_hookmaps(repo_id, cache_dir=cache_dir, replace=replace)]
 
 
 def unpin_ops(repo_id: str, *, cache_dir: Path | None = None, reload: bool = True) -> bool:

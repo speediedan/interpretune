@@ -196,6 +196,17 @@ def generate_component_card(manifest: dict, repo_id: str, summary: str | None = 
             "collection's ops are then addressable by their namespaced names; `interpretune.hub.prefer_ops`",
             "opts into resolving their BARE names here instead of interpretune's bundled ops.",
         ]
+    hookmap_files = (manifest.get("hookmaps") or {}).get("files") or []
+    if hookmap_files:
+        lines += ["", "## Component maps (hookmaps)", ""]
+        lines += [f"- `{rel}`" for rel in hookmap_files]
+        lines += [
+            "",
+            "One document per architecture, in the activation-point vocabulary's component-map schema. These are",
+            'DATA (no code executes): fetch and register with `interpretune.hub.pull_hookmaps("<org>/<repo>")`, or',
+            "`interpretune.hub.load_hookmaps` from the cache. A map for an architecture interpretune already",
+            "bundles must agree with the bundled one, or be loaded with `replace=True` deliberately.",
+        ]
     definitions = (manifest.get("promptconfigs") or {}).get("definitions") or {}
     if definitions:
         lines += ["", "## Prompt-config definitions", ""]
