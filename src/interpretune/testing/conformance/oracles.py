@@ -83,3 +83,42 @@ def all_equal_sets(sets: Iterable[set[int]]) -> bool:
     """Whether every batch row reported the same position set (a per-row discriminator's sanity check)."""
     sets = list(sets)
     return all(s == sets[0] for s in sets)
+
+
+class expect_refusal:
+    """``pytest.raises`` for a refusal that may surface WRAPPED.
+
+    A backend's refusal (``NotImplementedError`` naming the axis) raised inside the analysis runner reaches the
+    caller as ``datasets``' ``DatasetGenerationError`` with the refusal as ``__cause__``. A case that matched only
+    the outer exception would fail every correctly refusing backend, so this walks the cause and context chain and
+    accepts the first exception of the expected type whose message matches. Usable as a context manager without
+    pytest, so the package stays import-safe.
+    """
+
+    def __init__(self, exc_type: type[BaseException], match: str) -> None:
+        self.exc_type = exc_type
+        self.match = match
+        self.found: BaseException | None = None
+
+    def __enter__(self) -> "expect_refusal":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        import re
+
+        if exc is None:
+            raise AssertionError(
+                f"expected a refusal ({self.exc_type.__name__} matching {self.match!r}); nothing was raised"
+            )
+        seen: set[int] = set()
+        cur: BaseException | None = exc
+        while cur is not None and id(cur) not in seen:
+            seen.add(id(cur))
+            if isinstance(cur, self.exc_type) and re.search(self.match, str(cur)):
+                self.found = cur
+                return True
+            cur = cur.__cause__ or cur.__context__
+        raise AssertionError(
+            f"expected a refusal ({self.exc_type.__name__} matching {self.match!r}) in the exception chain; got "
+            f"{type(exc).__name__}: {str(exc)[:200]}"
+        ) from exc

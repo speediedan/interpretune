@@ -26,6 +26,7 @@ from .gates import UNDECLARED, conformance_case, gate_of
 from .plugin import _REPORT_KEY
 from .inputs import ConformanceInputs, ConformanceTarget
 from .oracles import (
+    expect_refusal,
     CONVERGENCE_ATOL,
     STEER_SCALE,
     assert_non_degenerate,
@@ -320,13 +321,13 @@ class ModelBackendConformance:
     @conformance_case(capability=BackendCapability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, negative=True)
     def test_undeclared_all_positions_is_refused(self, suite):
         """A scope the backend did not declare is refused by name, never narrowed."""
-        with pytest.raises(NotImplementedError, match="position_scope='all_positions'"):
+        with expect_refusal(NotImplementedError, match="position_scope='all_positions'"):
             self._intervene(suite, scope="all_positions")
 
     @conformance_case(capability=BackendCapability.INTERVENTION, scope=PositionScope.LAST_TOKEN, negative=True)
     def test_undeclared_last_token_is_refused(self, suite):
         """A scope the backend did not declare is refused by name, never widened."""
-        with pytest.raises(NotImplementedError, match="position_scope='last_token'"):
+        with expect_refusal(NotImplementedError, match="position_scope='last_token'"):
             self._intervene(suite, scope="last_token")
 
     @conformance_case(capability=BackendCapability.INTERVENTION)
@@ -337,7 +338,7 @@ class ModelBackendConformance:
         # Every mode declared means nothing to refuse: a pass, since the declaration itself is checked elsewhere.
         scope = next(iter(suite.capabilities.intervention.position_scopes)).value
         for mode in undeclared:
-            with pytest.raises(NotImplementedError, match=f"mode='{mode.value}'"):
+            with expect_refusal(NotImplementedError, match=f"mode='{mode.value}'"):
                 self._intervene(suite, scope=scope, mode=mode.value)
 
     @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.ADD)

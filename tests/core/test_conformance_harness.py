@@ -7,6 +7,8 @@ turns "each adapter validates what it declares" from a sentence into a property.
 from __future__ import annotations
 
 
+import pytest
+
 from interpretune.analysis.backends import (
     BackendCapability,
     InterventionMode,
@@ -138,3 +140,34 @@ class TestReportAndVacuity:
 
     def test_undeclared_reason_constant_is_stable(self):
         assert UNDECLARED == "undeclared"
+
+
+class TestExpectRefusal:
+    def test_finds_a_wrapped_refusal(self):
+        from interpretune.testing.conformance.oracles import expect_refusal
+
+        with expect_refusal(NotImplementedError, match="mode='replace'"):
+            try:
+                raise NotImplementedError("backend cannot apply mode='replace'")
+            except NotImplementedError as inner:
+                raise RuntimeError("An error occurred while generating the dataset") from inner
+
+    def test_direct_refusal_still_matches(self):
+        from interpretune.testing.conformance.oracles import expect_refusal
+
+        with expect_refusal(NotImplementedError, match="all_positions"):
+            raise NotImplementedError("position_scope='all_positions' is not declared")
+
+    def test_nothing_raised_is_a_failure(self):
+        from interpretune.testing.conformance.oracles import expect_refusal
+
+        with pytest.raises(AssertionError, match="nothing was raised"):
+            with expect_refusal(NotImplementedError, match="x"):
+                pass
+
+    def test_the_wrong_exception_is_a_failure_naming_what_was_got(self):
+        from interpretune.testing.conformance.oracles import expect_refusal
+
+        with pytest.raises(AssertionError, match="got RuntimeError"):
+            with expect_refusal(NotImplementedError, match="x"):
+                raise RuntimeError("unrelated")

@@ -131,6 +131,26 @@ Four facts about composing into a real session, learned by the first hub adapter
   vocabulary applies the predicate over the expressible part; a predicate written in TL names cannot match a
   point that has no TL name, so that is complete rather than an under-capture.
 
+## Four more facts from the first adoption at the default batch size
+
+- **Pass the attention mask to the engine.** A forward run without it attends to pad positions; on gpt2 a
+  two-row left-padded batch diverged from the masked HF forward by 80 in logits and 45 in a captured residual,
+  while the unpadded row was correct either way. That is exactly why a single-row target cannot see it, and why
+  the padded default is the stronger validation.
+- **The oracle is HF batched with the mask, never per row.** A padded row batched does not equal that row run
+  alone even with the mask (88 on gpt2), because absolute position embeddings shift under left padding. Every
+  HF-native backend shares that behaviour.
+- **Intervention specs may arrive as dicts through the store**, not only as `InterventionSpec` tuples; a
+  backend must read both shapes (the bundled circuit-tracer backend does).
+- **Enumerate hook inventories in Interpretune's vocabulary.** Core resolves a `names_filter` list into a
+  predicate over Interpretune's hook names, and Interpretune prefers the bridge spellings (`hook_out`) where an
+  engine may hold a legacy one (`hook_resid_post`). An adopter who enumerates from their own engine's spellings
+  gets an empty selection, and nothing in the failure says "spelling". Enumerate
+  `HookNameResolver(architecture).supported_hooks`, layer-expanded, and refuse a filter that selects a name the
+  backend cannot map rather than capturing partially.
+- **Refusals surface wrapped.** A refusal raised inside the runner reaches the caller as `datasets`'
+  `DatasetGenerationError` with the refusal as its cause; the suite's refusal cases walk the cause chain.
+
 ## Three notes for adopters' own tests
 
 **Derive complements; never transcribe the vocabulary.** A test that lists the capabilities a backend does
