@@ -104,6 +104,38 @@ Gate `INTERVENTION` (with `intervention_support`):
 have their cases listed on the tracking issue and land as the suite grows; a repository declaring them runs
 whatever exists at its Interpretune version.
 
+## Adapter example notebooks
+
+An adapter repository ships a notebook per declared capability group under its own examples tree, a dev copy and
+a published copy, and publishes them with the engine interpretune uses for its own: the console script
+`interpretune-publish-notebooks`, parameterized from the repository's `pyproject.toml`:
+
+```toml
+[tool.interpretune.notebooks]
+dev_dir = "examples/dev"
+publish_dir = "examples/publish"
+colab_repo = "org/my-adapter"
+colab_branch = "main"
+install_cell = ["%pip install my-adapter[examples]"]   # optional; the default cell is commented out
+[tool.interpretune.notebooks.import_rewrites]          # optional substring rewrites for code cells
+"examples.dev." = "examples.publish."
+```
+
+Nothing is copied from interpretune. `NotebookFormConformance` holds the published copies to their static form
+without a kernel: in sync with dev (the stored hashes match), every dev notebook published, badge and install cell
+first, no `remove-cell` survivors, every import resolvable in the environment the adapter's CI runs in, and no
+direct import of the adapter's pip form where the hub form is the subject (`forbidden_imports`). Executing the
+notebook is the adapter's own CI's job.
+
+```python
+from interpretune.testing.conformance import NotebookFormConformance
+
+
+class TestMyAdapterNotebooks(NotebookFormConformance):
+    root = Path(__file__).resolve().parents[1]
+    forbidden_imports = ("my_adapter",)
+```
+
 ## Two rules for oracles, learned the expensive way
 
 **Never coerce before comparing.** A parity test that normalized backend output with
