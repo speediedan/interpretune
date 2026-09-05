@@ -108,7 +108,7 @@ from interpretune.utils.neuronpedia_explanations import (
 # NOTE: neuronpedia_dashboard_pipeline is deliberately NOT imported eagerly. It imports
 # sae_dashboard at module level, an optional git-deps dependency a bare `pip/uv install
 # interpretune` does not carry, so an eager import here breaks `import interpretune` outright for
-# any clean consumer install (#403). Its public names remain importable from this package via the
+# any clean consumer install. Its public names remain importable from this package via the
 # PEP 562 ``__getattr__`` at the bottom of this module, matching the lazy-import idiom used for
 # other heavy deps.
 from interpretune.utils.neuronpedia_dashboard_hub import (

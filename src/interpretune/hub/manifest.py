@@ -112,7 +112,8 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
             # ONE composition is skipped and the others still register; unmet component-wide means the
             # component does not load at all. Same vocabulary either way, so a component can STATE its
             # conditionality rather than overstate its surface -- a manifest advertising three compositions
-            # while the environment yields two, with nothing saying so, is #431 in the declarative layer.
+            # while the environment yields two, with nothing saying so, is the same silent-skip defect one
+            # layer up, in the declarative surface rather than in discovery.
             entry_requires = entry.get("requires")
             if entry_requires is not None and not isinstance(entry_requires, dict):
                 raise ComponentManifestError(

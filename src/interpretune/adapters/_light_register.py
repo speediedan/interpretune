@@ -115,8 +115,8 @@ def register_all_adapters(registry) -> None:
 
     for declared_module in adapter_modules:
         # EVALUATE BEFORE IMPORTING. Deciding by catching an ImportError conflates "this optional
-        # dependency is absent" with "this adapter is broken", and reports neither -- which is #431: an
-        # absent dependency silently removed 18 of 48 compositions with nothing printed. A declared
+        # dependency is absent" with "this adapter is broken", and reports neither. Measured: an absent
+        # dependency silently removed 18 of 48 compositions with nothing printed. A declared
         # requirement yields a REASON instead of a symptom.
         requires = _declared_requires(declared_module)
         if requires and (unmet := requirement_status(requires, source=declared_module)):
@@ -154,7 +154,7 @@ def register_all_adapters(registry) -> None:
     # REPORT, ONCE, AT RANK ZERO. The skip itself was never the defect -- registering a subset is correct
     # when a dependency is genuinely absent. The defect was that it was SILENT, so "this composition is
     # unavailable here" and "this composition does not exist" became indistinguishable at exactly the
-    # moment a user needs to tell them apart (#431).
+    # moment a user needs to tell them apart.
     if skipped:
         from interpretune.utils.logging import rank_zero_info
 

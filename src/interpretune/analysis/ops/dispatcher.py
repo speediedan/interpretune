@@ -462,7 +462,7 @@ class AnalysisOpDispatcher:
                 apply_auto_columns(definitions_to_compile[op_name])
             except ValueError as e:
                 # Dropping an op whose required_ops do not resolve is exactly the silent failure
-                # #266 flags, so strict loading turns it into an error.
+                # hub-op contract flags, so strict loading turns it into an error.
                 definitions_to_compile.pop(op_name, None)
                 op_load_failure(f"Failed to compile operation '{op_name}': {e}")
 
@@ -1062,7 +1062,7 @@ class AnalysisOpDispatcher:
 
     # The only interpretune namespace a hub op may bind an importable_param to. Anything else is an
     # unsanctioned reach into internals -- the `_import_callable` fallback would happily import any
-    # installed dotted path, which is the one privilege leak #266 left open on the hub side.
+    # installed dotted path, which is the one privilege a hub op retains over a bundled one.
     _SANCTIONED_HUB_PARAM_NAMESPACE = "interpretune.analysis.optools"
 
     def _resolve_protocol_cls(self, op_name: str, op_def: OpDef):

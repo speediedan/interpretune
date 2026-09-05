@@ -63,7 +63,7 @@ class OpDef:
     collection_version: str | None = None
     # Behavioral traits. These replace name-based special cases: framework code asks what an op
     # NEEDS, so hub and local ops can declare the same things bundled ops do.
-    # Import path of a BaseAnalysisBatchProtocol subclass this op's batches conform to (#56). A STRING
+    # Import path of a BaseAnalysisBatchProtocol subclass this op's batches conform to. A STRING
     # rather than a class so an OpDef stays serializable into the generated cache module and a YAML author
     # can declare one without importing it; resolution is the dispatcher's job, and is trust-gated for hub
     # ops exactly as `importable_params` is.
@@ -233,7 +233,7 @@ class OpDefinitionsCacheManager:
                 if latest_revision is None:
                     continue
 
-                # A durable pin (written by a revision-pinned pull; interpretune.hub.pins, #334)
+                # A durable pin (written by a revision-pinned pull; see interpretune.hub.pins)
                 # beats every ref: the trust posture promises that pinning a revision means trusted
                 # code cannot change under you, and discovery is where that promise is either kept
                 # or broken. Binding is STRICT -- a pinned revision that is no longer cached (or
@@ -261,8 +261,8 @@ class OpDefinitionsCacheManager:
                 # fetch at `main` (a card read, a trust inspection) after a REVISION-PINNED pull leaves
                 # refs/main pointing at a snapshot without the manifest while the complete pinned
                 # snapshot sits beside it. Routing discovery through the partial one skips the whole
-                # collection with "no it_component.yaml in the cached snapshot" -- measured as build
-                # 849's failure (#327): pull succeeded, ops never loaded. Prefer main only when its
+                # collection with "no it_component.yaml in the cached snapshot" -- observed as a pull
+                # that succeeded while its ops never loaded. Prefer main only when its
                 # snapshot is manifest-complete; otherwise fall back to the newest revision that is,
                 # and say which mismatch happened rather than silently choosing.
                 candidates = [latest_revision] + sorted(
