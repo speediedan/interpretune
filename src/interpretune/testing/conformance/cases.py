@@ -7,7 +7,7 @@ exception.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 import torch
@@ -26,6 +26,7 @@ from .gates import UNDECLARED, conformance_case, gate_of
 from .plugin import _REPORT_KEY
 from .inputs import ConformanceInputs, ConformanceTarget
 from .oracles import (
+    expect_refusal,
     CONVERGENCE_ATOL,
     STEER_SCALE,
     assert_non_degenerate,
@@ -137,7 +138,7 @@ class ModelBackendConformance:
             report.declared = sorted(c.name for c in suite.capabilities.model) + sorted(
                 c.name for c in suite.capabilities.analysis
             )
-        if not gate.selects(suite.capabilities, family=suite.family):
+        if not gate.selects(suite.capabilities, family=suite.family, single_prompt=suite.target.single_prompt):
             pytest.skip(f"{UNDECLARED}: needs {gate.describe()}")
 
     # -- always-on ---------------------------------------------------------------------------------
@@ -320,13 +321,13 @@ class ModelBackendConformance:
     @conformance_case(capability=BackendCapability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, negative=True)
     def test_undeclared_all_positions_is_refused(self, suite):
         """A scope the backend did not declare is refused by name, never narrowed."""
-        with pytest.raises(NotImplementedError, match="position_scope='all_positions'"):
+        with expect_refusal(NotImplementedError, match="position_scope='all_positions'"):
             self._intervene(suite, scope="all_positions")
 
     @conformance_case(capability=BackendCapability.INTERVENTION, scope=PositionScope.LAST_TOKEN, negative=True)
     def test_undeclared_last_token_is_refused(self, suite):
         """A scope the backend did not declare is refused by name, never widened."""
-        with pytest.raises(NotImplementedError, match="position_scope='last_token'"):
+        with expect_refusal(NotImplementedError, match="position_scope='last_token'"):
             self._intervene(suite, scope="last_token")
 
     @conformance_case(capability=BackendCapability.INTERVENTION)
@@ -337,7 +338,7 @@ class ModelBackendConformance:
         # Every mode declared means nothing to refuse: a pass, since the declaration itself is checked elsewhere.
         scope = next(iter(suite.capabilities.intervention.position_scopes)).value
         for mode in undeclared:
-            with pytest.raises(NotImplementedError, match=f"mode='{mode.value}'"):
+            with expect_refusal(NotImplementedError, match=f"mode='{mode.value}'"):
                 self._intervene(suite, scope=scope, mode=mode.value)
 
     @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.ADD)
@@ -385,6 +386,24 @@ class ModelBackendConformance:
                 ref["logits"][0, -1, :],
                 what=f"batch {i}: steered last-token logits against the HF reference edit",
             )
+
+    # -- single-prompt backends ----------------------------------------------------------------------
+
+    @conformance_case(single_prompt=True)
+    def test_a_batch_above_the_declared_limit_is_refused_by_name(self, suite):
+        """A target that declared one prompt at a time must REFUSE a larger batch, naming the limit.
+
+        Reaches the backend directly, by design: the runner never builds a batch above the declared size for this
+        target, so the refusal is only observable by asking. Silently processing row 0, or looping and re-padding
+        without saying so, are the substitutions this case exists to catch.
+        """
+        ids, mask = suite.batch_inputs(0)
+        assert ids.shape[0] == 1, f"a single-prompt target must run batches of one row, got {ids.shape[0]}"
+        batch: dict[str, Any] = {"input": ids.repeat(2, 1)}
+        if mask is not None:
+            batch["attention_mask"] = mask.repeat(2, 1)
+        with pytest.raises(Exception, match=r"(?i)one prompt|batch|single"):
+            suite.backend.fwd(model=suite.module.model, batch=batch)
 
     # -- calibration: the discriminator, on the reference alone ------------------------------------
 

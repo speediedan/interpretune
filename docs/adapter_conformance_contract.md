@@ -20,6 +20,15 @@ need no peer, chosen per capability:
 There are no published expected-result datasets. A live HuggingFace forward on `gpt2` costs seconds and
 cannot be wrong in the same way as the thing it checks; a versioned artifact can.
 
+## Installing
+
+```bash
+pip install "interpretune[conformance]"   # pytest, evaluate, scikit-learn, accelerate: what the suite's session reaches
+```
+
+The suite refuses to build a session, by name, when those are missing; without that check a clean install
+presents as a page of setup errors (measured on the first adopter) rather than as a dependency.
+
 ## What a repository writes
 
 Two things: how to build a session config for its composition, and one class.
@@ -48,7 +57,9 @@ class TestMyAdapterConformance(ModelBackendConformance):
 ```
 
 The suite owns the inputs (`gpt2`, a fixed prompt list, two batches of the `rte` seed dataset, the op set per
-gate, device and precision, tolerances), the oracles, case selection and the report. The target owns its
+gate, device and precision, tolerances), the oracles, case selection and the report. The default datamodule
+flavour (`"hf"`) is adapter-free: the seed's standalone datamodule plus a core-only module config, so it hydrates
+on a bare core install; a hub adapter should not need TransformerLens to run the suite. The target owns its
 session config, its runtime declarations, its forward family, and how its component is loaded.
 
 ## How cases are selected
@@ -108,12 +119,85 @@ into a plausible value. A missing attribute is an error.
 by name on any batch with fewer than two real positions rather than reporting a green that measured nothing.
 The discriminating power lives in the input, and an adopter-supplied session config could shorten it.
 
-## Two notes for adopters' own tests
+## Single-prompt backends
+
+Some engines take one prompt at a time and refuse a batch, deliberately. A loop over rows is **not** a
+transparent implementation of the batched contract: in a batched forward, left-padded rows keep their padded
+positions, so per-row unpadded forwards legitimately diverge from the batched reference. The contract therefore
+carries the limit rather than hiding it: a target declares `batch_size=1`, every case then runs unpadded at one
+row per batch, and one more case asserts that a batch above the declared limit is refused by name (never
+processed as row 0, never looped silently).
+
+Four facts about composing into a real session, learned by the first hub adapter on first contact with
+`ITSession` (none of them reachable by a test that hosts the module class by hand):
+
+- A backend wrapper that is not an `nn.Module` cannot take the `module.model` slot (assigning it raises inside
+  `nn.Module`). Ops then hand the backend `module.model`, the raw model, so such a backend must carry its own
+  wrapper handle rather than expect to receive it.
+- At the time `post_auto_model_init` runs the tokenizer lives on the datamodule, not on the module.
+- A composition must be registered for both component keys, `module` and `datamodule`; registering only the
+  module half passes every module-level test and fails at `ITSession` with an error that names a missing adapter.
+- Core resolves a `names_filter` list into a callable at setup, so a backend receives a predicate over hook
+  names even when the caller wrote a list. A backend whose inventory is only partly expressible in that
+  vocabulary applies the predicate over the expressible part; a predicate written in TL names cannot match a
+  point that has no TL name, so that is complete rather than an under-capture.
+
+## Four more facts from the first adoption at the default batch size
+
+- **Pass the attention mask to the engine.** A forward run without it attends to pad positions; on gpt2 a
+  two-row left-padded batch diverged from the masked HF forward by 80 in logits and 45 in a captured residual,
+  while the unpadded row was correct either way. That is exactly why a single-row target cannot see it, and why
+  the padded default is the stronger validation.
+- **The oracle is HF batched with the mask, never per row.** A padded row batched does not equal that row run
+  alone even with the mask (88 on gpt2), because absolute position embeddings shift under left padding. Every
+  HF-native backend shares that behaviour.
+- **Intervention specs may arrive as dicts through the store**, not only as `InterventionSpec` tuples; a
+  backend must read both shapes (the bundled circuit-tracer backend does).
+- **Enumerate hook inventories in Interpretune's vocabulary.** Core resolves a `names_filter` list into a
+  predicate over Interpretune's hook names, and Interpretune prefers the bridge spellings (`hook_out`) where an
+  engine may hold a legacy one (`hook_resid_post`). An adopter who enumerates from their own engine's spellings
+  gets an empty selection, and nothing in the failure says "spelling". Enumerate
+  `HookNameResolver(architecture).supported_hooks`, layer-expanded, and refuse a filter that selects a name the
+  backend cannot map rather than capturing partially.
+- **Refusals surface wrapped.** A refusal raised inside the runner reaches the caller as `datasets`'
+  `DatasetGenerationError` with the refusal as its cause; the suite's refusal cases walk the cause chain.
+
+## Four notes for adopters' own tests
+
+**Measure in the environment your CI builds, not the one you developed in.** The first adopter's suite ran
+13 of 14 in a development venv that had accumulated packages, and hit two undeclared-dependency walls of sixteen
+setup errors each in a venv built the way its CI builds one. Neither was visible from the accumulated venv.
+Build the clean environment once before calling the suite adopted, and re-measure it whenever a dependency
+leaves: removing one can reveal another that it had been supplying (the first adopter found `accelerate`
+only after the seed stopped needing TransformerLens, which had been pulling it in).
 
 **Derive complements; never transcribe the vocabulary.** A test that lists the capabilities a backend does
 NOT claim by name goes red the moment the enum changes, with no opinion about the change. Derive the
 complement (`set(BackendCapability) - backend.capabilities`) so a member added upstream is asserted absent
 automatically and a removed one simply disappears. The suite's own refusal case is written that way.
+
+**Adding a component slot changes the arity of every adapter-set-keyed helper.** The first adopter hit this
+three times in one day, each failure pointing somewhere other than the cause: a parity fixture that selected
+by adapter set began returning the datamodule class; a helper that counted slots looked like it counted
+compositions; a cold-venv gate that joined adapter names listed every composition twice. Key every helper on
+`(component_key, adapters)`.
+
+**The manifest is checked in one direction.** A manifest that overstates its compositions fails at load; one
+that understates them (declaring `module` entries while the entrypoint also registers `datamodule` ones) loads
+fine, because the load-time invariant drops the component name on purpose, and the only visible consequence is
+the published card, which renders one row per declared entry and so tells a reader the component supplies no
+datamodule. Declare every slot the entrypoint registers, with `requires` on each slot of a conditional
+composition separately, and keep a test that declared and registered agree exactly.
+
+**Enumerate the vocabulary from its public answer, never by probing.** Probing a resolver with candidate
+names measures its permissiveness, not the vocabulary, and the gap grows silently as the vocabulary grows: the
+first adopter's probe produced 252 nonsense names out of 433 once the vocabulary widened, and every broad
+filter that selected one was refused. `ComponentMap.block_components()` and `.global_components()` say which
+names take a layer and which do not; expand the former over layers and offer the latter bare.
+
+**Select compositions by both keys, not by adapter set.** A helper that picks the composition class by matching
+the adapter tuple alone starts returning the datamodule class the moment the datamodule composition is registered
+too, and the failure points at `nn.Module` rather than at the selector. Match on `(component_key, adapters)`.
 
 **Support records coerce.** `InterventionSupport(position_scopes={"last_token"}, modes={"add"})` is valid:
 the record normalizes strings to the enums and refuses an empty set. The gates read the declared values

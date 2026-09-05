@@ -35,6 +35,9 @@ class Gate:
     mode: InterventionMode | None = None
     batched_hooks: bool | None = None
     family: str | None = None
+    single_prompt: bool | None = None
+    """Select on whether the TARGET declared it takes one prompt at a time (a property of the target, not of the
+    backend's capability set)."""
     negative: bool = False
     """A negative case runs when its capability/scope/mode is ABSENT and is skipped when present."""
 
@@ -51,11 +54,15 @@ class Gate:
             parts.append(f"batched_hooks={self.batched_hooks}")
         if self.family is not None:
             parts.append(f"family={self.family}")
+        if self.single_prompt is not None:
+            parts.append(f"single_prompt={self.single_prompt}")
         return ("NOT " if self.negative else "") + ", ".join(parts) if parts else "always"
 
-    def declared_by(self, caps: ModuleCapabilities, *, family: str) -> bool:
-        """Whether the positive form of this gate is satisfied by ``caps``."""
+    def declared_by(self, caps: ModuleCapabilities, *, family: str, single_prompt: bool = False) -> bool:
+        """Whether the positive form of this gate is satisfied by ``caps`` and the target's declarations."""
         if self.family is not None and family != self.family:
+            return False
+        if self.single_prompt is not None and single_prompt != self.single_prompt:
             return False
         if self.capability is not None and not caps.supports(self.capability):
             return False
@@ -74,9 +81,9 @@ class Gate:
                 return False
         return True
 
-    def selects(self, caps: ModuleCapabilities, *, family: str) -> bool:
+    def selects(self, caps: ModuleCapabilities, *, family: str, single_prompt: bool = False) -> bool:
         """Whether this gate (positive or negative) selects the case for these declarations."""
-        declared = self.declared_by(caps, family=family)
+        declared = self.declared_by(caps, family=family, single_prompt=single_prompt)
         return (not declared) if self.negative else declared
 
 

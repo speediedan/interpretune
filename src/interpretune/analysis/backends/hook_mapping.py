@@ -231,8 +231,10 @@ class HookNameResolver:
         # `envoy.output[0]` silently reads (and on the write path, OVERWRITES) batch row 0.
         self._measured_tuple_outputs: dict[str, bool] = {}
 
-    def _require_mapped(self, base_name: str) -> None:
+    def _require_mapped(self, base_name: str, layer: int | None = None) -> None:
         if base_name in self._mapping.hook_mappings:
+            if layer is not None:
+                self._require_layer_shape(base_name, layer)
             return
         reason = self._derived_reasons.get(base_name)
         if reason is not None:
@@ -241,6 +243,19 @@ class HookNameResolver:
             f"Unknown hook name {base_name!r} for architecture {self._architecture!r}. "
             f"Supported hooks: {self.supported_hooks}"
         )
+
+    def _require_layer_shape(self, base_name: str, layer: int) -> None:
+        """A block-relative point needs a layer and a global point must not carry one.
+
+        Accepting either the other way produced nonsense paths (`transformer.h.-1.attn.c_proj`,
+        `blocks.5.unembed.hook_out`) that a caller probing the resolver for its vocabulary took as valid names;
+        as the vocabulary grew, the junk grew with it and a backend refusing partial selections refused everything.
+        """
+        templated = "{layer}" in self._mapping.hook_mappings[base_name].envoy_path
+        if templated and layer < 0:
+            raise ValueError(f"Hook {base_name!r} is block-relative and needs a layer: 'blocks.<layer>.{base_name}'")
+        if not templated and layer >= 0:
+            raise ValueError(f"Hook {base_name!r} is a global point and takes no layer; ask for {base_name!r} bare")
 
     @property
     def architecture(self) -> str:
@@ -271,7 +286,7 @@ class HookNameResolver:
             ValueError: If the hook name cannot be parsed or the base hook is not supported.
         """
         layer, base_name, _ = self.parse_hook_name(tl_hook_name)
-        self._require_mapped(base_name)
+        self._require_mapped(base_name, layer)
         hook_mapping = self._mapping.hook_mappings[base_name]
         resolved_path = hook_mapping.envoy_path.format(layer=layer)
         return resolved_path, hook_mapping.io_type
@@ -333,7 +348,7 @@ class HookNameResolver:
             ValueError: If the hook name cannot be parsed or the base hook is not supported.
         """
         layer, base_name, _ = self.parse_hook_name(tl_hook_name)
-        self._require_mapped(base_name)
+        self._require_mapped(base_name, layer)
         hook_mapping = self._mapping.hook_mappings[base_name]
         resolved_path = hook_mapping.envoy_path.format(layer=layer)
         # A measured flag (calibrate_tuple_outputs) beats the static default: the static value
