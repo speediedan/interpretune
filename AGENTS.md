@@ -453,6 +453,23 @@ survives the issue being closed, renamed, or migrated. Prefer:
 **An issue number is a pointer; the comment should be the thing pointed at.** The same reasoning as the
 ephemeral-CI-reference rule above: identify the circumstances, not the log entry.
 
+**The cheap check is whether the issue is still open.** Measured across `src/` on the first sweep: **12 of
+16 referenced issues were closed or merged.** A closed issue cited in shipped code is a dead end that looks
+like a pointer — the reader follows it, finds a resolved ticket, and learns nothing about why the code is
+as it is. So:
+
+```bash
+# every issue number cited in a comment, with its state
+grep -rhoP '#\d{2,4}\b' src/ --include='*.py' | sort -u | tr -d '#' \
+  | xargs -I{} gh issue view {} --json number,state --jq '"#\(.number) \(.state)"'
+```
+
+**Open → keep** (the comment is about live work). **Closed → inline the reason and drop the number.**
+
+**Not every long comment is a bad one.** Length should track how non-obvious the reasoning is. A note that
+exists to stop a settled decision being re-litigated earns its space and should say so; a paragraph
+restating the code does not. Trimming by line count alone destroys the first kind along with the second.
+
 Related: comments in this codebase have drifted long. A comment that restates the code, or narrates a
 decision at paragraph length where a sentence would do, costs every future reader. Length should track how
 non-obvious the reasoning is, not how much was known when it was written.

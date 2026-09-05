@@ -38,7 +38,7 @@ def import_cached_entrypoint(repo_id: str, cache_dir: Path | None = None) -> Mod
     if module_name in sys.modules:
         return sys.modules[module_name]
     # the gate belongs HERE, at the point of execution: this is the one place outside op discovery
-    # where interpretune runs Python that came from a hub repo (interpretune#255)
+    # where interpretune runs Python that came from a hub repo
     from interpretune.hub.trust import ensure_remote_code_trusted
 
     ensure_remote_code_trusted(repo_id, what=f"the prompt-config entrypoint {entrypoint!r}")

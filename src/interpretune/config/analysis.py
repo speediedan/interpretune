@@ -679,7 +679,7 @@ class AnalysisCfg(ITSerializableCfg):
             # Create the output store if needed
             from interpretune.analysis import AnalysisStore
 
-            # An op that declares a protocol (#56) gets stores whose attribute surface matches it. Passing
+            # An op that declares a protocol gets stores whose attribute surface matches it. Passing
             # None would override the constructor default with nothing, so only pass what was declared.
             store_kwargs: dict[str, Any] = {"cache_dir": cache_dir, "op_output_dataset_path": op_output_dataset_path}
             if (declared := getattr(self.op, "protocol_cls", None)) is not None:
@@ -694,7 +694,7 @@ class AnalysisCfg(ITSerializableCfg):
             )
 
         # Stamp whichever store we ended up with, including one the caller supplied: this cfg's op is what
-        # writes it, so it is the op whose provenance that store carries (#284).
+        # writes it, so it is the op whose provenance that store carries.
         self._stamp_op_provenance(self.output_store)
 
         # Always prepare the model context to ensure names_filter is materialized

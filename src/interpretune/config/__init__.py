@@ -26,7 +26,7 @@ from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg, init
 # BUNDLED adapter's config has exactly the standing a hub-delivered one does. These names stay
 # importable from here because they always have been, but importing them is no longer a condition of
 # importing `interpretune.config`: `transformer_lens` and `sae_lens` were previously eager, which made
-# two optional-extra frameworks de facto hard requirements of the core config package (#403).
+# two optional-extra frameworks de facto hard requirements of the core config package.
 _ADAPTER_CONFIG_EXPORTS = {
     "ITLensBridgeConfig": "transformer_lens",
     "ITLensCfg": "transformer_lens",

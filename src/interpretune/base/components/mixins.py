@@ -109,7 +109,7 @@ class AnalysisStepMixin:
 
     def on_analysis_start(self) -> Any | None:
         """Optionally execute some post-interpretune session steps if the session is not complete."""
-        # Op-specific conditioning is gone (#266 Phase 2): grad mode is now a declared `requires_grad`
+        # Op-specific conditioning is gone: grad mode is now a declared `requires_grad`
         # trait rather than a comparison against a specific op.
         # TODO: narrow the scope if possible to a context manager around the relevant ops themselves,
         #       rather than toggling a global for the whole analysis run
