@@ -140,6 +140,9 @@ conformance = [
     "pytest",
     "evaluate",
     "scikit-learn",
+    # transformers refuses to load a model with a `device_map` without it, by name. Invisible while any
+    # adapter that depends on it is installed; it surfaced only once the seed no longer needed those adapters.
+    "accelerate",
 ]
 examples = [
     "wandb",

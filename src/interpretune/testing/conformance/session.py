@@ -81,7 +81,7 @@ def _require_suite_dependencies() -> None:
     """
     import importlib.util
 
-    missing = [name for name in ("evaluate", "sklearn") if importlib.util.find_spec(name) is None]
+    missing = [name for name in ("evaluate", "sklearn", "accelerate") if importlib.util.find_spec(name) is None]
     if missing:
         raise ImportError(
             f"the conformance suite needs {missing} (its session runs over the rte seed datamodule); install "

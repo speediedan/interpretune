@@ -23,7 +23,7 @@ cannot be wrong in the same way as the thing it checks; a versioned artifact can
 ## Installing
 
 ```bash
-pip install "interpretune[conformance]"   # pytest, evaluate, scikit-learn: what the suite's session reaches
+pip install "interpretune[conformance]"   # pytest, evaluate, scikit-learn, accelerate: what the suite's session reaches
 ```
 
 The suite refuses to build a session, by name, when those are missing; without that check a clean install
@@ -167,7 +167,9 @@ Four facts about composing into a real session, learned by the first hub adapter
 **Measure in the environment your CI builds, not the one you developed in.** The first adopter's suite ran
 13 of 14 in a development venv that had accumulated packages, and hit two undeclared-dependency walls of sixteen
 setup errors each in a venv built the way its CI builds one. Neither was visible from the accumulated venv.
-Build the clean environment once before calling the suite adopted.
+Build the clean environment once before calling the suite adopted, and re-measure it whenever a dependency
+leaves: removing one can reveal another that it had been supplying (the first adopter found `accelerate`
+only after the seed stopped needing TransformerLens, which had been pulling it in).
 
 **Derive complements; never transcribe the vocabulary.** A test that lists the capabilities a backend does
 NOT claim by name goes red the moment the enum changes, with no opinion about the change. Derive the
