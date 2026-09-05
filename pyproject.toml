@@ -130,6 +130,16 @@ lightning = [
 #     plotly) degrades silently without it rather than raising.
 #   - torch-tb-profiler: a TensorBoard PLUGIN, loaded via entry-point discovery, never imported.
 # An empty grep is evidence about the grep. Do not drop any of these on import evidence alone.
+# What an ADAPTER REPOSITORY needs to run the conformance suite (`interpretune.testing.conformance`) against
+# its own composition. The suite builds a real session over the `rte` seed datamodule, which reaches `evaluate`
+# (and, through the metric script it downloads, `sklearn.metrics`), so those are declared HERE rather than
+# left to the `examples` extra an adopter has no reason to install. Measured on the first adopter: a clean
+# install presented as 16 setup errors plus the vacuity guard, not as a missing dependency.
+conformance = [
+    "pytest",
+    "evaluate",
+    "scikit-learn",
+]
 examples = [
     "wandb",
     "torch-tb-profiler",

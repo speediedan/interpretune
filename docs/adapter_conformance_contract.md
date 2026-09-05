@@ -20,6 +20,15 @@ need no peer, chosen per capability:
 There are no published expected-result datasets. A live HuggingFace forward on `gpt2` costs seconds and
 cannot be wrong in the same way as the thing it checks; a versioned artifact can.
 
+## Installing
+
+```bash
+pip install "interpretune[conformance]"   # pytest, evaluate, scikit-learn: what the suite's session reaches
+```
+
+The suite refuses to build a session, by name, when those are missing; without that check a clean install
+presents as a page of setup errors (measured on the first adopter) rather than as a dependency.
+
 ## What a repository writes
 
 Two things: how to build a session config for its composition, and one class.

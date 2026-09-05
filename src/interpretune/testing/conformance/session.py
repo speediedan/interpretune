@@ -72,10 +72,28 @@ class ConformanceSession:
         return ids, batch.get("attention_mask")
 
 
+def _require_suite_dependencies() -> None:
+    """Name the suite's own runtime dependencies before a missing one presents as setup errors.
+
+    The seed datamodule the suite runs over reaches ``evaluate`` and, through the metric script it downloads,
+    ``sklearn``; both are in interpretune's ``conformance`` extra. Checked up front, by name, because a clean
+    adopter install otherwise fails inside dataset preparation with an error that reads as a broken suite.
+    """
+    import importlib.util
+
+    missing = [name for name in ("evaluate", "sklearn") if importlib.util.find_spec(name) is None]
+    if missing:
+        raise ImportError(
+            f"the conformance suite needs {missing} (its session runs over the rte seed datamodule); install "
+            "interpretune with the `conformance` extra: pip install 'interpretune[conformance]'"
+        )
+
+
 def build_conformance_session(target: ConformanceTarget, inputs: ConformanceInputs) -> ConformanceSession:
     """Load the component if the target says so, compose the session, run init, snapshot the batches."""
     from interpretune import AnalysisRunner, ITSession
 
+    _require_suite_dependencies()
     register_conformance_ops()
     if target.batch_size is not None and target.batch_size != inputs.batch_size:
         inputs = replace(inputs, batch_size=target.batch_size)
