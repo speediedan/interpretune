@@ -25,6 +25,10 @@ SEED_CONFIGS = {
     "bridge": "rte_demo.gpt2.sae_lens",
     "nnsight": "rte_demo.gpt2.nnsight+sae_lens",
 }
+#: The adapter-free flavour: the seed's STANDALONE datamodule entry plus a module config built here from
+#: core classes only. What a hub adapter starts from, because the bridge and nnsight seed configs carry their
+#: adapters' config classes and need those adapters installed to hydrate.
+SEED_DATAMODULE = "rte_boolq"
 
 #: Canonical capture points, spelled in the TransformerLens bridge grammar every backend accepts through
 #: `names_filter`. Restricted to what the HF-side resolver covers on gpt2 today; the norm point joins when the
@@ -71,7 +75,7 @@ class ConformanceInputs:
     prompts: Sequence[str] = PROMPTS
     workdir: Path = field(default_factory=lambda: Path(tempfile.mkdtemp(prefix="it_conformance_")))
 
-    def seed_config(self, flavour: str = "bridge"):
+    def seed_config(self, flavour: str = "hf"):
         """The seed's ``(datamodule_cfg, module_cfg, datamodule_cls, module_cls)`` for a data-pipeline flavour.
 
         Cache-only after ``ensure_local_seeds``; never touches the network. The module cfg returned is the
@@ -82,19 +86,65 @@ class ConformanceInputs:
         from it_examples.seeds import ensure_local_seeds
 
         ensure_local_seeds()
+        if flavour == "hf":
+            return self._adapter_free_seed()
         try:
             key = SEED_CONFIGS[flavour]
         except KeyError:
             raise ValueError(
-                f"unknown datamodule flavour {flavour!r}; expected one of {sorted(SEED_CONFIGS)}"
+                f"unknown datamodule flavour {flavour!r}; expected 'hf' or one of {sorted(SEED_CONFIGS)}"
             ) from None
         return hub_load(SEED_REPO, key)
+
+    def _adapter_free_seed(self):
+        """The standalone datamodule entry, pointed at the suite model, plus a core-only module config.
+
+        Mirrors what the bridge seed config carries on the data side (the attention mask as a model input and a
+        signature column, left padding, a BOS token, the pad id) without any adapter's config class, so it hydrates on a
+        bare core install.
+        """
+        from interpretune import HFGenerationConfig, ITConfig
+        from interpretune.config.mixins import HFFromPretrainedConfig
+        from interpretune.config.shared import AutoCompConfig
+        from interpretune.hub.api import load_datamodule
+        from it_examples.experiments.rte_boolq import (
+            RTEBoolqDataModule,
+            RTEBoolqEntailmentMapping,
+            RTEBoolqGenerativeClassificationConfig,
+            RTEBoolqModule,
+        )
+
+        dm_cfg, _dm_cls = load_datamodule(SEED_REPO, SEED_DATAMODULE)
+        dm_cfg.model_name_or_path = self.model_id
+        dm_cfg.os_env_model_auth_key = None
+        dm_cfg.tokenizer_kwargs = {
+            "model_input_names": ["input", "attention_mask"],
+            "padding_side": "left",
+            "add_bos_token": True,
+        }
+        dm_cfg.tokenizer_id_overrides = {"pad_token_id": 50256}
+        dm_cfg.signature_columns = ["input", "attention_mask", "labels"]
+        dm_cfg.enable_datasets_cache = True
+        dm_cfg.prepare_data_map_cfg = {"batched": True}
+        it_cfg = ITConfig(
+            model_name_or_path=self.model_id,
+            task_name="rte",
+            auto_comp_cfg=AutoCompConfig(module_cfg_name="RTEBoolqConfig", module_cfg_mixin=RTEBoolqEntailmentMapping),
+            hf_from_pretrained_cfg=HFFromPretrainedConfig(
+                pretrained_kwargs={"device_map": self.device_type, "dtype": self.precision},
+                model_head="transformers.GPT2LMHeadModel",
+            ),
+            generative_step_cfg=RTEBoolqGenerativeClassificationConfig(
+                enabled=True, lm_generation_cfg=HFGenerationConfig(model_config={"max_new_tokens": 1})
+            ),
+        )
+        return dm_cfg, it_cfg, RTEBoolqDataModule, RTEBoolqModule
 
     def session_cfg(
         self,
         adapter_ctx: Sequence[Any],
         *,
-        flavour: str = "bridge",
+        flavour: str = "hf",
         module_cfg_extras: dict[str, Any] | None = None,
         prepare: Callable[[Any, Any], None] | None = None,
     ):
@@ -108,7 +158,8 @@ class ConformanceInputs:
         from interpretune import ITSessionConfig
 
         dm_cfg, it_cfg, dm_cls, m_cls = self.seed_config(flavour)
-        it_cfg.sae_cfgs = []
+        if hasattr(it_cfg, "sae_cfgs"):
+            it_cfg.sae_cfgs = []
         it_cfg.optimizer_init = {}
         it_cfg.lr_scheduler_init = {}
         it_cfg.core_log_dir = str(self.workdir / "logs")
@@ -176,8 +227,9 @@ class ConformanceTarget:
             cases against the HF reference apply); anything else gets structural and causal cases only.
         load: called once before the session is built, for a hub component that must be pulled or staged
             and registered first. ``None`` for bundled adapters.
-        datamodule_flavour: which seed data pipeline to start from (``"bridge"`` passes ``input`` +
-            ``attention_mask``; ``"nnsight"`` passes ``input_ids``).
+        datamodule_flavour: which seed data pipeline to start from. ``"hf"`` (the default) is adapter-free and
+            hydrates on a bare core install; ``"bridge"`` and ``"nnsight"`` are the bundled adapters' seed
+            configs and need those adapters installed.
         batch_size: rows per batch for this target; ``1`` for a backend that takes one prompt at a time.
     """
 
@@ -185,7 +237,7 @@ class ConformanceTarget:
     session_cfg_factory: Callable[[ConformanceInputs], Any] | None = None
     forward_family: str = "hf_native"
     load: Callable[[], Any] | None = None
-    datamodule_flavour: str = "bridge"
+    datamodule_flavour: str = "hf"
     batch_size: int | None = None
     """Override the suite's rows-per-batch.
 

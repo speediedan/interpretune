@@ -134,7 +134,8 @@ lightning = [
 # its own composition. The suite builds a real session over the `rte` seed datamodule, which reaches `evaluate`
 # (and, through the metric script it downloads, `sklearn.metrics`), so those are declared HERE rather than
 # left to the `examples` extra an adopter has no reason to install. Measured on the first adopter: a clean
-# install presented as 16 setup errors plus the vacuity guard, not as a missing dependency.
+# install presented as 16 setup errors plus the vacuity guard, not as a missing dependency. `examples` declares
+# `scikit-learn` too, for the same downloaded-metric reason; neither entry is reconciled by deleting the other.
 conformance = [
     "pytest",
     "evaluate",

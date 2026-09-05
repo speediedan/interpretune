@@ -184,8 +184,14 @@ def get_module_dims(module) -> tuple[int, int, int, int, int]:
     max_answer_tokens = module.it_cfg.generative_step_cfg.lm_generation_cfg.max_new_tokens
     # TODO: abstract this so it's not tied to entailment use case but num_classes
     num_classes = module.it_cfg.num_labels or len(module.it_cfg.entailment_mapping)
-    vocab_size = module.model.tokenizer.vocab_size
-    max_seq_len = module.model.tokenizer.model_max_length
+    # Resolve the tokenizer wherever the composition keeps it. Bundled adapters' wrappers carry one on
+    # `module.model`; a raw HF model (a core-only composition, or a hub adapter whose wrapper cannot take the
+    # `module.model` slot) does not, and the datamodule always does.
+    from interpretune.analysis.optools import resolve_tokenizer
+
+    tokenizer = resolve_tokenizer(module)
+    vocab_size = tokenizer.vocab_size
+    max_seq_len = tokenizer.model_max_length
     # TODO: decide if we want to expose a dict of both latent hook names and dimensions here (not just d_sae)
     # d_saes = tuple(h.cfg.d_sae for h in module.sae_handles) if getattr(module, 'sae_handles', None) else None
     # TODO: max_seq_len not currently used, could be provided for downstream usage

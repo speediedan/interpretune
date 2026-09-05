@@ -39,9 +39,6 @@ from interpretune import (
     ITDataModule,
     MemProfilerHooks,
     AnalysisBatch,
-    ITLensConfig,
-    SAELensConfig,
-    CircuitTracerConfig,
     ChatTemplatePromptConfig,
     PromptConfig,
     ITDataModuleConfig,
@@ -53,7 +50,16 @@ from interpretune import (
     sanitize_input_name,
     STEP_OUTPUT,
 )
-from interpretune.adapters.nnsight.config import ITNNsightConfig, NNsightConfig
+from interpretune.utils.import_utils import package_available
+
+# The adapter-specific config classes below exist only when their adapter is installed. This module is the
+# entrypoint of the `rte` seed component, which a hub adapter's conformance run hydrates on a bare core
+# install; importing every adapter's config at module level made that import need transformer-lens, sae-lens
+# and nnsight at once, and the failure named `ITLensConfig` rather than any of them.
+_HAS_TL = package_available("transformer_lens")
+_HAS_SL = package_available("sae_lens")
+_HAS_CT = package_available("circuit_tracer")
+_HAS_NS = package_available("nnsight")
 
 
 log = logging.getLogger(__name__)
@@ -102,22 +108,34 @@ class RTEBoolqChatTemplatePromptConfig(ChatTemplatePromptConfig, RTEBoolqPromptC
 class RTEBoolqConfig(RTEBoolqEntailmentMapping, ITConfig): ...
 
 
-@dataclass(kw_only=True)
-class RTEBoolqTLConfig(RTEBoolqEntailmentMapping, ITLensConfig): ...
+if _HAS_TL:
+    from interpretune import ITLensConfig
+
+    @dataclass(kw_only=True)
+    class RTEBoolqTLConfig(RTEBoolqEntailmentMapping, ITLensConfig): ...
 
 
-@dataclass(kw_only=True)
-class RTEBoolqSLConfig(RTEBoolqEntailmentMapping, SAELensConfig): ...
+if _HAS_SL:
+    from interpretune import SAELensConfig
+
+    @dataclass(kw_only=True)
+    class RTEBoolqSLConfig(RTEBoolqEntailmentMapping, SAELensConfig): ...
 
 
-@dataclass(kw_only=True)
-class RTEBoolqCTConfig(RTEBoolqEntailmentMapping, ITConfig):
-    circuit_tracer_cfg: CircuitTracerConfig | None = None
+if _HAS_CT:
+    from interpretune import CircuitTracerConfig
+
+    @dataclass(kw_only=True)
+    class RTEBoolqCTConfig(RTEBoolqEntailmentMapping, ITConfig):
+        circuit_tracer_cfg: CircuitTracerConfig | None = None
 
 
-@dataclass(kw_only=True)
-class RTEBoolqNNsightConfig(RTEBoolqEntailmentMapping, ITNNsightConfig):
-    nnsight_cfg: NNsightConfig  # re-declare for jsonargparse fail_untyped=True visibility
+if _HAS_NS:
+    from interpretune.adapters.nnsight.config import ITNNsightConfig, NNsightConfig
+
+    @dataclass(kw_only=True)
+    class RTEBoolqNNsightConfig(RTEBoolqEntailmentMapping, ITNNsightConfig):
+        nnsight_cfg: NNsightConfig  # re-declare for jsonargparse fail_untyped=True visibility
 
 
 class RTEBoolqDataModule(ITDataModule):

@@ -57,7 +57,9 @@ class TestMyAdapterConformance(ModelBackendConformance):
 ```
 
 The suite owns the inputs (`gpt2`, a fixed prompt list, two batches of the `rte` seed dataset, the op set per
-gate, device and precision, tolerances), the oracles, case selection and the report. The target owns its
+gate, device and precision, tolerances), the oracles, case selection and the report. The default datamodule
+flavour (`"hf"`) is adapter-free: the seed's standalone datamodule plus a core-only module config, so it hydrates
+on a bare core install; a hub adapter should not need TransformerLens to run the suite. The target owns its
 session config, its runtime declarations, its forward family, and how its component is loaded.
 
 ## How cases are selected
@@ -160,7 +162,12 @@ Four facts about composing into a real session, learned by the first hub adapter
 - **Refusals surface wrapped.** A refusal raised inside the runner reaches the caller as `datasets`'
   `DatasetGenerationError` with the refusal as its cause; the suite's refusal cases walk the cause chain.
 
-## Three notes for adopters' own tests
+## Four notes for adopters' own tests
+
+**Measure in the environment your CI builds, not the one you developed in.** The first adopter's suite ran
+13 of 14 in a development venv that had accumulated packages, and hit two undeclared-dependency walls of sixteen
+setup errors each in a venv built the way its CI builds one. Neither was visible from the accumulated venv.
+Build the clean environment once before calling the suite adopted.
 
 **Derive complements; never transcribe the vocabulary.** A test that lists the capabilities a backend does
 NOT claim by name goes red the moment the enum changes, with no opinion about the change. Derive the
