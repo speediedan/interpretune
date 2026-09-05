@@ -124,8 +124,9 @@ install_cell = ["%pip install my-adapter[examples]"]   # optional; the default c
 Nothing is copied from interpretune. `NotebookFormConformance` holds the published copies to their static form
 without a kernel: in sync with dev (the stored hashes match), every dev notebook published, badge and install cell
 first, no `remove-cell` survivors, every import resolvable in the environment the adapter's CI runs in, and no
-direct import of the adapter's pip form where the hub form is the subject (`forbidden_imports`). Executing the
-notebook is the adapter's own CI's job.
+direct import of the adapter's pip form where the hub form is the subject (`forbidden_imports`, spelled as the
+IMPORT name, which is not always the distribution name; every entry must be importable in the test environment,
+or the case fails as vacuous rather than passing forever). Executing the notebook is the adapter's own CI's job.
 
 ```python
 from interpretune.testing.conformance import NotebookFormConformance

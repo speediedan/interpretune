@@ -8,6 +8,8 @@ repository and then run the notebook-form cases against interpretune's own publi
 from __future__ import annotations
 
 import json
+
+import pytest
 from pathlib import Path
 
 
@@ -112,6 +114,28 @@ class TestEngine:
         (tmp_path / "pyproject.toml").write_text('[tool.interpretune.notebooks]\ndev_dir = "nope"\n')
         assert main(["--root", str(tmp_path)]) == 1
         assert "dev directory not found" in capsys.readouterr().out
+
+
+class TestForbiddenImportsPositiveControl:
+    def test_a_phantom_forbidden_module_is_refused_rather_than_passing(self, tmp_path):
+        """A misspelled pip-form name would otherwise forbid nothing and report success forever."""
+        from interpretune.utils.notebook_publishing import main
+
+        root = _repo(tmp_path)
+        assert main(["--root", str(root)]) == 0
+
+        class Probe(NotebookFormConformance):
+            forbidden_imports = ("no_such_module_anywhere",)
+
+        published = sorted((root / "examples" / "publish").rglob("*.ipynb"))
+        with pytest.raises(AssertionError, match="vacuous.*no_such_module_anywhere"):
+            Probe().test_published_notebooks_avoid_the_forbidden_imports(published)
+
+        class Real(NotebookFormConformance):
+            forbidden_imports = ("json",)  # the demo notebook imports json, so a real name is caught
+
+        with pytest.raises(AssertionError, match="import the pip form directly"):
+            Real().test_published_notebooks_avoid_the_forbidden_imports(published)
 
 
 class TestInterpretuneNotebookForm(NotebookFormConformance):

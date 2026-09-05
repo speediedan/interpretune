@@ -125,6 +125,13 @@ class NotebookFormConformance:
         """Where the hub form is the subject, the notebook must not import the pip form directly."""
         if not self.forbidden_imports:
             pytest.skip("no forbidden imports declared for this repository")
+        # Positive control: a forbidden module that does not exist here forbids nothing and passes forever
+        # (the pip form's import name is not its distribution name, and that is where the misspelling comes
+        # from), so every entry must be importable in the environment this runs in.
+        phantom = [name for name in self.forbidden_imports if importlib.util.find_spec(name) is None]
+        assert not phantom, (
+            f"forbidden_imports names modules absent from this environment, so the check is vacuous: {phantom}"
+        )
         hits = {
             path.name: sorted(imported_modules(load_notebook(path)) & set(self.forbidden_imports)) for path in published
         }
