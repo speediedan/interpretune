@@ -58,8 +58,9 @@ def _import_adapter_entrypoint(repo_id: str, snapshot: Path, revision: str, entr
     if not path.is_file():
         raise AdapterComponentError(
             f"{repo_id}@{revision[:12]}: manifest declares adapters entrypoint {entrypoint!r}, which is not "
-            "present in the snapshot. A partial download, or a manifest naming a path that was never "
-            "published, will do this."
+            "present in the snapshot. A manifest-only fetch leaves exactly this state: run "
+            f"interpretune.hub.pull({repo_id!r}) to materialize the entrypoint (loading never downloads). A manifest "
+            "naming a path that was never published will also do this."
         )
     spec = importlib.util.spec_from_file_location(module_name, path)
     assert spec is not None and spec.loader is not None

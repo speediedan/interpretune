@@ -79,6 +79,24 @@ class TestCachedEntrypointResolution:
             == "<bos><start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n"
         )
 
+    def test_manifest_only_snapshot_names_the_materializing_verb(self, seeded_cache, monkeypatch):
+        from interpretune.hub.components import resolve_component_manifest
+        from interpretune.hub.promptconfigs import import_cached_entrypoint
+        from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR
+
+        import sys
+
+        manifest, snapshot, revision = resolve_component_manifest("speediedan/prompt-configs", cache_dir=seeded_cache)
+        (snapshot / manifest["promptconfigs"]["entrypoint"]).unlink()
+        # the module name is revision-scoped and other tests import this revision; drop it so the file is read
+        for name in [n for n in sys.modules if n.startswith("it_hub_components.") and n.endswith(revision)]:
+            monkeypatch.delitem(sys.modules, name)
+        monkeypatch.setenv(IT_TRUST_REMOTE_CODE_ENV_VAR, "1")
+        with pytest.raises(
+            FileNotFoundError, match=r"not present in the snapshot.*hub\.pull\('speediedan/prompt-configs'\)"
+        ):
+            import_cached_entrypoint("speediedan/prompt-configs", cache_dir=seeded_cache)
+
     def test_unknown_definition_names_available(self, seeded_cache):
         from interpretune.hub.promptconfigs import resolve_prompt_config_class
 

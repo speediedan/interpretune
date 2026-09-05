@@ -46,6 +46,7 @@ def _isolated_registry():
     """Every test starts from the bundled maps alone and leaves nothing behind."""
     from interpretune.analysis.points import component_map as cm
 
+    cm._load_bundled()  # save AFTER the bundled maps are in, or the restore leaves an empty registry marked loaded
     saved = dict(cm._REGISTRY)
     yield
     cm._REGISTRY.clear()

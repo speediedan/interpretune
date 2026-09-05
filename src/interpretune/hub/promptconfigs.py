@@ -42,6 +42,12 @@ def import_cached_entrypoint(repo_id: str, cache_dir: Path | None = None) -> Mod
     from interpretune.hub.trust import ensure_remote_code_trusted
 
     ensure_remote_code_trusted(repo_id, what=f"the prompt-config entrypoint {entrypoint!r}")
+    if not (snapshot / entrypoint).is_file():
+        raise FileNotFoundError(
+            f"{repo_id}@{revision[:12]}: manifest declares promptconfigs entrypoint {entrypoint!r}, which is not "
+            f"present in the snapshot. A manifest-only fetch leaves exactly this state: run "
+            f"interpretune.hub.pull({repo_id!r}) to materialize the entrypoint (loading never downloads)."
+        )
     spec = importlib.util.spec_from_file_location(module_name, snapshot / entrypoint)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
