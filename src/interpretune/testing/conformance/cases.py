@@ -376,8 +376,18 @@ class ModelBackendConformance:
 
     @staticmethod
     def _assert_same_logits(a, b, *, what: str) -> None:
+        """Two runs that are the same operation up to floating-point order agree to the padded tolerance.
+
+        Mathematically equal payloads (a pair in either order, a basis and its negative multiple) reach the backend as
+        different float32 arrays, and the pseudo-inverse or normalization then differs at roundoff. Six blocks later
+        that is up to 1e-6 relative on logits of magnitude ~100, i.e. 1e-4 absolute, which is exactly the exact-identity
+        tolerance; the relative tolerance is what these invariants need. The message keeps torch's own detail appended,
+        so a failure reports the magnitude rather than only the claim.
+        """
         for i, (x, y) in enumerate(zip(a["post_intervention_logits"], b["post_intervention_logits"])):
-            torch.testing.assert_close(y, x, rtol=0, atol=CONVERGENCE_ATOL, msg=f"{what} (batch {i})")
+            torch.testing.assert_close(
+                y, x, rtol=PADDED_RTOL, atol=PADDED_ATOL, msg=lambda detail, i=i: f"{what} (batch {i})\n{detail}"
+            )
 
     @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.REPLACE)
     def test_replace_ignores_the_scale_factor(self, suite):
@@ -399,7 +409,11 @@ class ModelBackendConformance:
         store = self._intervene(suite, scope=scope, mode="patch", scale=1.0, vector=torch.stack([vector, vector]))
         for i, (pre, post) in enumerate(zip(store["pre_intervention_logits"], store["post_intervention_logits"])):
             torch.testing.assert_close(
-                post, pre, rtol=0, atol=CONVERGENCE_ATOL, msg=f"patch (v, v) changed the logits (batch {i})"
+                post,
+                pre,
+                rtol=0,
+                atol=CONVERGENCE_ATOL,
+                msg=lambda detail, i=i: f"patch (v, v) changed the logits (batch {i})\n{detail}",
             )
 
     @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.PATCH)
