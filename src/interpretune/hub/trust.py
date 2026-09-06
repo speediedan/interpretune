@@ -1,10 +1,10 @@
 """The one trust gate for code that arrives from the Hub (interpretune#255).
 
 Interpretune's value proposition is running other people's analysis components, so "what am I
-consenting to execute?" needs one answer in one place. Two paths execute hub-resident Python:
-op-collection modules (analysis ops) and prompt-config entrypoints (``compose_ref``). Both
-consult this module; everything else on the hub path is data (YAML manifests, configurations,
-parquet) and is not gated here.
+consenting to execute?" needs one answer in one place. Three paths execute hub-resident Python:
+op-collection modules (analysis ops), prompt-config entrypoints (``compose_ref``) and adapter
+entrypoints (the ``adapters`` kind). All three consult this module; everything else on the hub path
+is data (YAML manifests, configurations, component maps, parquet) and is not gated here.
 
 Two properties this module deliberately has, both of which the prior implementation lacked:
 

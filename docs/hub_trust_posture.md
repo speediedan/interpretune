@@ -11,21 +11,23 @@ publisher is worth trusting.
 ## What actually executes
 
 Most of what you pull from the Hub is data, and data never triggers this gate: manifests
-(`it_component.yaml`), configurations, cards, and artifact payloads (parquet, the
-`it_artifact.json` envelope) are parsed, not run. You can pull a repo, read its manifest, and see
+(`it_component.yaml`), configurations, standalone datamodule payloads, component maps (the
+`hookmaps` kind), cards, and artifact payloads (parquet, the `it_artifact.json` envelope) are
+parsed, not run. You can pull a repo, read its manifest, and see
 exactly which file it would execute without executing anything.
 
-Two paths execute publisher-authored Python in your process, and both are gated:
+Three paths execute publisher-authored Python in your process, and all three are gated:
 
 | Path | What runs | Gate |
 | --- | --- | --- |
 | Analysis op collections | the op collection's module code, via the dynamic-module cache | discovery skips untrusted repos with a warning |
 | Prompt-config entrypoints (`compose_ref`) | the entrypoint module the manifest names | `RemoteCodeNotTrustedError` |
+| Adapter components (`load_hub_adapter`) | the adapters entrypoint the manifest names, which composes into the session MRO | `RemoteCodeNotTrustedError` |
 
-The two behave differently on purpose. A session with no hub ops is still a working session, so op
+They behave differently on purpose. A session with no hub ops is still a working session, so op
 discovery degrades to "load fewer things" rather than failing your first op access. A `compose_ref`
-that cannot be resolved has no such fallback: the configuration you asked for cannot be built, so
-it raises.
+that cannot be resolved, or an adapter that cannot be loaded, has no such fallback: the configuration
+or composition you asked for cannot be built, so it raises.
 
 ## The threat model
 

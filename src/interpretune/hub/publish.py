@@ -45,6 +45,20 @@ def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Pat
                 shutil.copy2(component_dir / rel, dest)
     for rel in (manifest.get("ops") or {}).get("files") or []:
         shutil.copy2(component_dir / rel, out_dir / rel)
+    # hookmaps documents are data, but data with a schema: a document that does not parse into a
+    # ComponentMap is refused HERE, at publish, rather than by the first consumer to load it.
+    for rel in (manifest.get("hookmaps") or {}).get("files") or []:
+        src = component_dir / rel
+        if not src.is_file():
+            raise FileNotFoundError(
+                f"Manifest declares hookmaps document {rel!r}, which is not present in {component_dir}."
+            )
+        from interpretune.analysis.points.component_map import load_component_map_file
+
+        load_component_map_file(src)
+        dest = out_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
 
     # adapters entrypoints are SELF-CONTAINED for the same reason promptconfigs' are: the file must be
     # readable and runnable straight out of the snapshot, with no in-repo package to import from.

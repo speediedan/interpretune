@@ -14,7 +14,7 @@ import yaml
 
 IT_COMPONENT_MANIFEST = "it_component.yaml"
 SUPPORTED_SCHEMA_VERSIONS = (1,)
-KNOWN_KINDS = ("module", "datamodule", "ops", "adapters", "promptconfigs")
+KNOWN_KINDS = ("module", "datamodule", "ops", "adapters", "promptconfigs", "hookmaps")
 
 
 class ComponentManifestError(ValueError):
@@ -120,6 +120,17 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
                     f"{source}: `adapters.compositions[].requires` must be a mapping in the same vocabulary as "
                     f"the component-wide `requires` (interpretune / adapters / pip), got {entry_requires!r}"
                 )
+    if "hookmaps" in kinds:
+        hm = manifest.get("hookmaps") or {}
+        files = hm.get("files")
+        if not files or not isinstance(files, list) or not all(isinstance(f, str) and f for f in files):
+            raise ComponentManifestError(
+                f"{source}: kind `hookmaps` requires a non-empty `hookmaps.files` list of repo-relative component-map "
+                "YAML paths (one document per architecture, in the schema `docs/activation_point_vocabulary.md` "
+                "gives). The manifest declares which YAMLs are maps; nothing is discovered by filename."
+            )
+        if IT_COMPONENT_MANIFEST in files:
+            raise ComponentManifestError(f"{source}: `hookmaps.files` must not list {IT_COMPONENT_MANIFEST} itself.")
     if "promptconfigs" in kinds:
         pc = manifest.get("promptconfigs") or {}
         if not pc.get("entrypoint") or not isinstance(pc.get("definitions"), dict) or not pc["definitions"]:

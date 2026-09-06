@@ -75,7 +75,8 @@ def resolve_cached_op_files(snapshot_dir: Path, source: str) -> list[Path]:
         if not path.is_file():
             raise OpCollectionManifestError(
                 f"{source}: manifest declares op file {rel!r}, which is not present in the snapshot. "
-                "A partial download or a manifest listing a path that was never published will do this."
+                f"Run interpretune.hub.pull_ops({source.split('@')[0]!r}) to materialize the collection; a manifest "
+                "listing a path that was never published will also do this."
             )
         resolved.append(path)
     return resolved

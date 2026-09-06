@@ -114,6 +114,45 @@ def pull_component_config(
     return check_config_key_parity(cfg_path, body, expected_key=key), body
 
 
+def declared_component_payloads(manifest: dict) -> list[str]:
+    """The repo-relative files a cached component needs beyond its manifest for its NON-configuration kinds.
+
+    ``pull_component_config`` fetches one configuration by key and op collections have their own cache and
+    verb, so those are not listed. What IS listed is every payload a cache-only loader reads whole: the
+    adapters entrypoint (``load_hub_adapter``), the promptconfigs entrypoint (``import_cached_entrypoint``)
+    and the hookmaps documents (``load_hub_hookmaps``). A manifest-only pull of such a component used to
+    leave a snapshot those loaders could not complete, with an error blaming a partial download.
+    """
+    rels: list[str] = []
+    for section in ("adapters", "promptconfigs"):
+        entrypoint = (manifest.get(section) or {}).get("entrypoint")
+        if entrypoint:
+            rels.append(entrypoint)
+    rels.extend((manifest.get("hookmaps") or {}).get("files") or [])
+    return rels
+
+
+def pull_component_payloads(
+    repo_id: str, manifest: dict, commit: str, cache_dir: Path | None = None, token: str | None = None
+) -> list[Path]:
+    """Materialize a validated manifest's declared payloads into the same snapshot, pinned to ``commit``."""
+    paths = []
+    for rel in declared_component_payloads(manifest):
+        paths.append(
+            Path(
+                hf_hub_download(
+                    repo_id,
+                    rel,
+                    revision=commit,  # pinned: the snapshot stays single-revision coherent
+                    cache_dir=str(cache_dir or IT_COMPONENTS_HUB_CACHE),
+                    token=token,
+                    **_TELEMETRY,
+                )
+            )
+        )
+    return paths
+
+
 def register_component_config(
     repo_id: str,
     key: str,

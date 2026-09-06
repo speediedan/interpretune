@@ -198,6 +198,27 @@ class TestHubAdapterLoad:
         key = ("module",) + registry.canonicalize_composition((Adapter.core, members[0]))
         assert len(registry.get(key)) == 1
 
+    def test_manifest_only_snapshot_names_the_materializing_verb(self, tmp_path, monkeypatch, restore_adapter_enum):
+        """The state a key-less pull used to leave: manifest cached, entrypoint never fetched. The refusal must
+        name the verb that fixes it, not only the causes it resembles."""
+        from interpretune.adapters.registration import CompositionRegistry
+        from interpretune.hub.adapters import AdapterComponentError, load_hub_adapter
+        from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR
+
+        from interpretune.hub.components import local_publish
+
+        # its own repo id: the entrypoint module name is revision-scoped, and the fixture's revision is
+        # already imported by the other tests in this process, which would satisfy the sys.modules lookup
+        cache = tmp_path / "components"
+        local_publish(_write_component(tmp_path, REGISTERS_DECLARED), "org/manifest-only", cache_dir=cache)
+        for entry in (cache / "models--org--manifest-only" / "snapshots").rglob("*.py"):
+            entry.unlink()
+        monkeypatch.setenv(IT_TRUST_REMOTE_CODE_ENV_VAR, "1")
+        with pytest.raises(
+            AdapterComponentError, match=r"not present in the snapshot.*hub\.pull\('org/manifest-only'\)"
+        ):
+            load_hub_adapter("org/manifest-only", cache_dir=cache, registry=CompositionRegistry())
+
     def test_entrypoint_registering_nothing_is_an_error(self, tmp_path, monkeypatch, restore_adapter_enum):
         from interpretune.adapters.registration import CompositionRegistry
         from interpretune.hub.adapters import AdapterComponentError, load_hub_adapter
