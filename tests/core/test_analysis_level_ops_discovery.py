@@ -226,5 +226,6 @@ class TestInterventionRequirementAxes:
     def test_the_bundled_intervention_op_declares_the_surface(self):
         op = DISPATCHER.get_op("model_fwd_intervention")
         assert isinstance(op, AnalysisOp)
-        assert BackendCapability.INTERVENTION in op.required_capabilities
+        # by VALUE: the suite can load the capabilities module twice, leaving value-equal, identity-distinct members
+        assert BackendCapability.INTERVENTION.value in {c.value for c in op.required_capabilities}
         assert not op.requires_intervention_axes, "the bundled op is payload-driven and fixes no mode itself"
