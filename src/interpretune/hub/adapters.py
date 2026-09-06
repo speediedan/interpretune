@@ -171,7 +171,9 @@ class HubAdapterLoad:
     skipped: list[tuple[str, str]]
 
 
-def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None) -> HubAdapterLoad:
+def load_hub_adapter(
+    repo_id: str, cache_dir: Path | None = None, registry=None, *, require_hub: bool = False
+) -> HubAdapterLoad:
     """Load ONE cached adapter component: trust gate, enum extension, entrypoint, registration.
 
     Returns a :class:`HubAdapterLoad`: the :class:`~interpretune.protocol.Adapter` members the component
@@ -197,7 +199,7 @@ def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None)
     from interpretune.hub.trust import ensure_remote_code_trusted
 
     registry = ADAPTER_REGISTRY if registry is None else registry
-    manifest, snapshot, revision = resolve_component_manifest(repo_id, cache_dir=cache_dir)
+    manifest, snapshot, revision = resolve_component_manifest(repo_id, cache_dir=cache_dir, require_hub=require_hub)
     source = f"{repo_id}@{revision[:12]}"
     names = declared_adapters(manifest, source=source)
     if not names:
