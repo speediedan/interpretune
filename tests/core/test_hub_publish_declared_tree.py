@@ -42,7 +42,10 @@ class TestExtraFilesDeclaration:
     def test_shape_is_a_list_of_relative_paths(self):
         with pytest.raises(ComponentManifestError, match="`extra_files` must be a list"):
             validate_component_manifest(_manifest(extra_files="tests"), source="t")
-        for bad in ("/etc/passwd", "../sibling", "it_component.yaml"):
+        # judged under both path flavours: a manifest authored on one platform is consumed on another, and a
+        # Windows consumer once accepted "/etc/passwd" (no drive, so not absolute to it) while a POSIX one
+        # accepted "..\\sibling" (a single component to it)
+        for bad in ("/etc/passwd", "../sibling", "..\\sibling", "C:\\Users\\x", "\\share\\x", "it_component.yaml"):
             with pytest.raises(ComponentManifestError, match="relative path inside the component directory"):
                 validate_component_manifest(_manifest(extra_files=[bad]), source="t")
         validate_component_manifest(_manifest(extra_files=["tests", "NOTES.md"]), source="t")
