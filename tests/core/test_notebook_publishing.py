@@ -110,6 +110,23 @@ class TestEngine:
             "the stored .notebook_hashes.json keys must keep resolving"
         )
 
+    def test_hashes_ignore_line_ending_rewrites(self, tmp_path):
+        """A CRLF checkout of the same file must hash as the LF original, or Windows reports everything stale."""
+        from interpretune.utils.notebook_publishing import compute_file_hash
+
+        lf = tmp_path / "lf.py"
+        crlf = tmp_path / "crlf.py"
+        lf.write_bytes(b"a = 1\nb = 2\n")
+        crlf.write_bytes(b"a = 1\r\nb = 2\r\n")
+        assert compute_file_hash(lf) == compute_file_hash(crlf)
+        other = tmp_path / "other.py"
+        other.write_bytes(b"a = 1\nb = 3\n")
+        assert compute_file_hash(lf) != compute_file_hash(other)
+        # a binary file with an incidental CRLF byte pair hashes raw: a checkout never rewrites it
+        png = tmp_path / "img.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n\x00binary")
+        assert compute_file_hash(png) == __import__("hashlib").sha256(png.read_bytes()).hexdigest()
+
     def test_a_missing_dev_dir_is_an_error(self, tmp_path, capsys):
         (tmp_path / "pyproject.toml").write_text('[tool.interpretune.notebooks]\ndev_dir = "nope"\n')
         assert main(["--root", str(tmp_path)]) == 1

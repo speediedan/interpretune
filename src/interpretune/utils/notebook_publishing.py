@@ -120,12 +120,28 @@ def find_root(start: Path | None = None) -> Path:
 
 
 def compute_file_hash(file_path: Path) -> str:
-    """SHA256 of a file's bytes."""
-    digest = hashlib.sha256()
+    """SHA256 of a file's bytes with CRLF folded to LF.
+
+    A checkout with ``core.autocrlf`` (the Windows runners) rewrites every text file's line endings, and a raw
+    hash then reports every notebook as out of date on one platform only. Folding applies to text files and is a
+    no-op for LF ones, so stored hashes stay valid; binary files hash raw.
+    """
     with open(file_path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(4096), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        data = fh.read()
+    if _is_text(data):
+        data = data.replace(b"\r\n", b"\n")
+    return hashlib.sha256(data).hexdigest()
+
+
+def _is_text(data: bytes) -> bool:
+    """UTF-8 with no NUL byte: the files a CRLF checkout rewrites. A PNG with an incidental 0x0d0a stays raw."""
+    if b"\x00" in data:
+        return False
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def load_notebook_hashes(publish_dir: Path) -> dict[str, str]:
