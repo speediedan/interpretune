@@ -1,93 +1,77 @@
 # Intervention Hook Pattern Support
 
-> Working contract: this document records the hook-pattern subset that Interpretune currently treats as portable
-> across intervention surfaces. It is not a claim that every TransformerLens v3 hook name already has matching
-> cross-backend coverage in Interpretune.
->
-> Test coverage note: we added focused regression coverage for the alias paths that recently broke
-> (`hook_in` / `hook_out`, `attn.o.hook_in`, and constrained missing-feature retention), but we still need a broader
-> pattern-by-pattern test sweep in a later pass.
+Hook names are parsed once, at the boundary, by `interpretune.analysis.points.parse`, and everything downstream
+works with the parsed point rather than the string. This document is the caller-facing summary of that vocabulary
+as it applies to `names_filter` (capture) and intervention patterns; the protocol itself, with the component-map
+schema and the interp-engine reconciliation, is [`activation_point_vocabulary.md`](activation_point_vocabulary.md).
 
-## The vocabulary underneath
+## Two levels of name
 
-The full statement, written for an outside reader and carrying the reconciliation asked of interp-engine, is
-`activation_point_vocabulary.md`.
-
-Hook names are parsed once, at the boundary, by `interpretune.analysis.points.parse`, into an `ActivationPoint`
-with two levels of meaning:
-
-- **Semantic names** say what a tensor IS in the forward and survive an architecture change: `hook_resid_pre`,
-  `hook_resid_mid`, `hook_resid_post`, `hook_attn_out`, `hook_mlp_out`, `attn.hook_z`, `mlp.hook_pre`. They are
-  not legacy. `hook_attn_out` and `hook_mlp_out` are the sublayer's *contribution* to the residual, which is the
-  raw module output on a pre-norm model and the post-norm output on a sandwich-norm model (Gemma), exactly as
+- **Semantic points** say what a tensor IS in the forward and survive an architecture change: `hook_resid_pre`,
+  `hook_resid_mid`, `hook_resid_post`, `hook_attn_out`, `hook_mlp_out`. They are not legacy; they are what analysis
+  code should ask for. `hook_attn_out` and `hook_mlp_out` are the sublayer's *contribution* to the residual: the
+  raw module output on a pre-norm model and the post-norm output on a sandwich-norm model, exactly as
   TransformerLens fires them.
-- **Component names** say WHERE a tensor is, in the TransformerBridge grammar: `blocks.{i}.ln2.hook_out`,
-  `blocks.{i}.attn.o.hook_in`, `unembed.hook_out` (the output distribution), `ln_final.hook_normalized`.
+- **Component points** say WHERE a tensor is, in the TransformerBridge grammar: `blocks.{i}.ln2.hook_out`,
+  `blocks.{i}.attn.o.hook_in`, `unembed.hook_out` (the output distribution), `ln_final.hook_normalized`. They are
+  canonical by construction and resolve against a per-architecture component map
+  (`interpretune/analysis/points/data/*.yaml`) to a tensor position, or to an `Unresolvable` carrying the reason.
 
-A point resolves against a per-architecture **component map** (`interpretune/analysis/points/data/*.yaml`, one
-short document per architecture) to a PyTorch tensor position, or to an `Unresolvable` carrying the reason.
-A norm is three tensors (`hook_in`, `hook_normalized`, `hook_out`); the middle one and `hook_scale` resolve as
-*derived* references, computable from the norm's input and parameters, never as a neighbouring module.
-Two legacy names parse with a caution: `hook_mlp_in` and `hook_attn_in` name the residual BEFORE the block
-norm, one norm away from the sublayer's actual argument (`mlp.hook_in`, `attn.hook_in`).
+Two semantic names parse with a **caution**: `hook_mlp_in` and `hook_attn_in` name the residual BEFORE the block
+norm (they are the same tensor as `hook_resid_mid` / `hook_resid_pre`), one norm away from the sublayer's actual
+argument (`mlp.hook_in`, `attn.hook_in`, which the vocabulary addresses at the norm's output). Consumers surface the
+caution; whether to refuse the name is their policy.
 
-## Resolution layers
+## Deprecated spellings: the alias table
 
-Interpretune currently resolves intervention hook names through two layers:
+Legacy `HookedTransformer` names that are neither semantic nor component points are served through ONE table,
+`interpretune.analysis.points.vocabulary.ALIASES`. An alias asserts only that a spelling MEANS a point; whether two
+spellings name the same tensor is answered by resolution, per architecture, never by the table.
 
-1. `expand_intervention_patterns(...)` expands preferred canonical TransformerBridge-style hook names and supported
-   legacy HookedTransformer aliases into the concrete hook names exposed by the active backend.
-2. Backend-specific resolution then takes over:
-   - TransformerLens / TransformerBridge uses the model hook registry plus its alias registry.
-   - NNsight uses `src/interpretune/analysis/backends/hook_mapping.py`, which intentionally supports a smaller,
-     explicitly curated portable subset.
-
-For new configs, prefer the canonical names in the table below. Keep legacy aliases only when preserving older
-notebooks or configs.
-
-## Preferred portable patterns
-
-| Preferred canonical pattern | Legacy aliases accepted | Current portable notes |
+| deprecated spelling | means | level |
 |---|---|---|
-| `blocks.{i}.hook_in` | `blocks.{i}.hook_resid_pre` | Supported by TransformerLens and the NNsight resolver subset. Prefer this spelling in new configs. |
-| `blocks.{i}.hook_out` | `blocks.{i}.hook_resid_post` | Supported by TransformerLens and the NNsight resolver subset. |
-| `blocks.{i}.attn.hook_out` | `blocks.{i}.hook_attn_out`, `blocks.{i}.hook_resid_mid` | Use this as the preferred module-output spelling. `hook_resid_mid` remains accepted for backwards compatibility, but it should be treated as a legacy name. |
-| `blocks.{i}.attn.o.hook_in` | `blocks.{i}.attn.hook_z` | Preferred cross-backend spelling for the attention output-projection input. |
-| `blocks.{i}.mlp.hook_out` | `blocks.{i}.hook_mlp_out` | Portable today for GPT-2 and Llama-family NNsight mappings. Gemma-family NNsight flows still rely on the legacy `hook_mlp_out` path today. |
-| `blocks.{i}.ln2.hook_out` | `blocks.{i}.ln2.hook_normalized`, `blocks.{i}.ln2.hook_scale` | Portable in the Gemma-family NNsight mappings; accepted by alias expansion elsewhere when the backend exposes the corresponding hook. |
-| `unembed.hook_in` | none | Supported directly on TransformerBridge and NNsight models. **Legacy `HookedTransformer` models (e.g. the circuit-tracer TransformerLens backend) expose no `unembed.hook_in`** — use `ln_final.hook_normalized` (the pre-unembed input) there; adding a legacy alias expansion is tracked in [interpretune#223](https://github.com/speediedan/interpretune/issues/223). |
+| `attn.hook_z` | `attn.o.hook_in` | component |
+| `hook_q_input` / `hook_k_input` / `hook_v_input` | `attn.q.hook_in` / `attn.k.hook_in` / `attn.v.hook_in` | component |
+| `hook_q` / `hook_k` / `hook_v` | `attn.q.hook_out` / `attn.k.hook_out` / `attn.v.hook_out` | component |
+| `mlp.hook_pre` | `mlp.in.hook_out` (the up-projection's output, the pre-activation) | component |
+| `mlp.hook_post` | `mlp.out.hook_in` | component |
+| `hook_embed` / `hook_pos_embed` | `embed.hook_out` / `pos_embed.hook_out` | component |
 
-## Backend-specific alias families
+`parse(name)` returns the canonical point with `alias` set to the spelling used, so a linter can say "you wrote X,
+this means Y"; `parse(name, strict=True)` refuses every alias with `DeprecatedPointError` naming the replacement,
+for configs that want to be canonical. Adapters register their own deprecated spellings with `register_alias`; a
+registration that would shadow a semantic point, a component spelling or another alias is refused.
 
-`expand_intervention_patterns(...)` also tries supported canonical/legacy alias families for the following names when
-the active backend exposes them:
+## What replaced the alias groups
 
-- `embed.hook_out` ↔ `hook_embed`
-- `pos_embed.hook_out` ↔ `hook_pos_embed`
-- `attn.hook_in` ↔ `hook_attn_in`
-- `attn.q.hook_in` / `attn.k.hook_in` / `attn.v.hook_in` ↔ `hook_q_input` / `hook_k_input` / `hook_v_input`
-- `attn.q.hook_out` / `attn.k.hook_out` / `attn.v.hook_out` ↔ `hook_q` / `hook_k` / `hook_v`
-- `attn.hook_pattern` ↔ `attn.hook_attention_weights`
-- `attn.hook_hidden_states` ↔ `attn.hook_result`
-- `mlp.hook_in` ↔ `hook_mlp_in`
-- `ln1.hook_out` ↔ `ln1.hook_normalized` / `ln1.hook_scale`
+Earlier versions carried `HOOK_ALIAS_GROUPS`, sets of names treated as one intervention site. Two groups asserted
+identities that measurement refuted, so the mechanism is gone:
 
-Treat these as backend-specific until they are covered by the same explicit NNsight resolver subset and dedicated
-tests.
+- `mlp.hook_in` was grouped with `hook_mlp_in`; they are one norm apart (cos 0.088 on gemma-3-1b-it layer 5).
+- `attn.hook_out`, `hook_attn_out` and `hook_resid_mid` were one group. Measured with plain PyTorch hooks on the
+  HF module at layer 5: on GPT-2, `attn.hook_out` and `hook_attn_out` are byte-identical while `hook_resid_mid` is
+  a different tensor (cos 0.19); on Gemma-2, all three differ (`attn.hook_out` vs `hook_attn_out` cos 0.57,
+  either vs `hook_resid_mid` cos 0.14 and 0.20). `hook_resid_mid` is `blocks.{i}.ln2.hook_in`; `hook_attn_out` is
+  the contribution point and resolves to the post-attention norm's output where one exists; `attn.hook_out` is
+  the raw module output.
+
+Pattern expansion (`expand_intervention_patterns`) and TransformerLens capture (`names_filter`) now try every
+**spelling of the same point** against the hooks the model exposes: the name as written, its canonical component
+form, the semantic names of the same slot, and the registered aliases of each. A contribution point offers only
+its own spelling, because the module it lives in depends on the architecture; a cautioned name is matched only
+when written; a spelling the vocabulary does not know (`attn.hook_pattern`) is tried literally and nothing else.
 
 ## Wildcards
 
-Wildcard patterns are expanded after alias normalization, so both canonical and legacy forms can be used with `*`.
-Examples:
-
-- `blocks.*.hook_in`
-- `blocks.*.hook_out`
-- `blocks.*.attn.hook_out`
-- `blocks.*.attn.o.hook_in`
+A layer wildcard is expanded after spelling normalization, so `blocks.*.hook_in`, `blocks.*.hook_resid_pre`,
+`blocks.*.attn.o.hook_in` and `blocks.*.attn.hook_z` all match the same hooks. Any other wildcard placement is
+matched literally against the model's hook names.
 
 ## Practical guidance
 
-- Prefer canonical TransformerBridge-style names in notebook configs and explicit intervention mappings.
-- Keep old HookedTransformer aliases only when updating older notebooks incrementally.
-- When you need a hook outside the portable table above, treat it as backend-specific and validate it against the
-  active backend before relying on cross-backend parity.
+- Ask for semantic points when you mean a tensor's role (`hook_resid_pre`, `hook_mlp_out`) and component points
+  when you mean a specific module (`blocks.5.ln2.hook_out`, `unembed.hook_in`).
+- Write canonical spellings in new configs and validate with `parse(name, strict=True)`; keep a deprecated alias
+  only while an older notebook is being migrated.
+- A backend that cannot honour a point refuses by name (`Unresolvable`, or the backend's own error). Nothing is
+  narrowed, widened or substituted for you, because every substitution produces plausible activations.

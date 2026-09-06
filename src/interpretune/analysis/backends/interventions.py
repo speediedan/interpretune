@@ -19,7 +19,6 @@ from interpretune.analysis.backends.capabilities import (
     InterventionMode,
     PositionScope,
 )
-from interpretune.analysis.backends.hook_mapping import SUBHOOK_SUFFIXES
 
 __all__ = [
     "PositionScope",
@@ -27,7 +26,6 @@ __all__ = [
     "InterventionSpec",
     "InterventionDict",
     "InterventionValue",
-    "HOOK_ALIAS_GROUPS",
     "expand_intervention_patterns",
     "build_intervention_dict",
     "resolve_interventions",
@@ -84,42 +82,6 @@ class InterventionSpec(NamedTuple):
 
 
 InterventionValue: TypeAlias = Any
-
-
-HOOK_ALIAS_GROUPS: tuple[tuple[str, ...], ...] = (
-    ("hook_in", "hook_resid_pre"),
-    ("hook_out", "hook_resid_post"),
-    ("attn.hook_in", "hook_attn_in"),
-    ("attn.hook_out", "hook_attn_out", "hook_resid_mid"),
-    ("attn.o.hook_in", "attn.hook_z"),
-    ("attn.q.hook_in", "hook_q_input"),
-    ("attn.k.hook_in", "hook_k_input"),
-    ("attn.v.hook_in", "hook_v_input"),
-    ("attn.q.hook_out", "hook_q"),
-    ("attn.k.hook_out", "hook_k"),
-    ("attn.v.hook_out", "hook_v"),
-    # NOT grouped with `hook_mlp_in`: `mlp.hook_in` is the sublayer's argument, i.e. the block norm's
-    # OUTPUT, while TransformerLens fires the legacy `blocks.{i}.hook_mlp_in` on `resid_mid.clone()`
-    # BEFORE that norm (`components/transformer_block.py:195-197`; the bridge matches legacy, see
-    # `model_bridge/bridge.py:3870`). Measured cos 0.088 apart on gemma-3-1b-it layer 5. Grouping them
-    # applies an intervention one norm away from where the caller asked for it.
-    ("mlp.hook_in",),
-    ("hook_mlp_in",),
-    ("mlp.hook_out", "hook_mlp_out"),
-    ("embed.hook_out", "hook_embed"),
-    ("pos_embed.hook_out", "hook_pos_embed"),
-    ("attn.hook_pattern", "attn.hook_attention_weights"),
-    ("attn.hook_hidden_states", "attn.hook_result"),
-    # The three norm tensors are NOT aliases; see NOTE [Norm hooks are three tensors] in
-    # `hook_mapping.py`. `hook_normalized` fires before the learned gain and `hook_scale` is the
-    # per-token denominator, shape [batch, pos, 1], which cannot alias a [batch, pos, d_model] tensor
-    # at all. Measured on gemma-3-1b-it layer 5: `ln2.hook_out` matches the norm module's output at
-    # cos 1.000000, `ln2.hook_normalized` at 0.181. TransformerLens' `model_structure.md` documents
-    # them as aliases of `.hook_out`; its own implementation disagrees, and this table followed the
-    # documentation.
-    ("ln1.hook_out",),
-    ("ln2.hook_out",),
-)
 
 
 @dataclass(frozen=True)
@@ -291,30 +253,29 @@ def expand_intervention_patterns(
     patterns: Sequence[str],
     available_hook_map: Mapping[str, str],
 ) -> dict[str, list[str]]:
-    """Expand raw hook-name patterns to ordered lists of concrete hook names."""
-    alias_lookup = {alias_name: alias_group for alias_group in HOOK_ALIAS_GROUPS for alias_name in alias_group}
+    """Expand raw hook-name patterns to ordered lists of concrete hook names.
 
-    def _split_subhook_suffix(pattern: str) -> tuple[str, str]:
-        parts = pattern.split(".")
-        for index, part in enumerate(parts):
-            if part in SUBHOOK_SUFFIXES:
-                return ".".join(parts[:index]), "." + ".".join(parts[index:])
-        return pattern, ""
+    Every spelling of a pattern's point in the vocabulary (the pattern itself, its canonical component form, the
+    semantic names of the same slot, and the registered aliases of each) is tried against the backend's available
+    hooks, in that order. The vocabulary is the ONE table: the alias groups this function used to carry asserted
+    tensor identity between spellings, and two of them were wrong by measurement (#375: `mlp.hook_in` is one norm
+    away from `hook_mlp_in`; #376: `hook_resid_mid` is the residual after the attention write, not the attention
+    output, and `hook_attn_out` is the post-norm output on a sandwich-norm model). A spelling the vocabulary does
+    not know (`attn.hook_pattern`) is tried literally and nothing else.
+    """
+    from interpretune.analysis.points.vocabulary import UnknownPointError, spellings
 
     def _pattern_variants(pattern: str) -> tuple[str, ...]:
-        base_pattern, subhook_suffix = _split_subhook_suffix(pattern)
-        base_name = base_pattern
-        prefix = ""
-        if base_pattern.startswith("blocks."):
-            parts = base_pattern.split(".", 2)
-            if len(parts) == 3:
-                prefix = f"{parts[0]}.{parts[1]}."
-                base_name = parts[2]
-
-        variants = [pattern]
-        for alias_name in alias_lookup.get(base_name, (base_name,)):
-            variants.append(f"{prefix}{alias_name}{subhook_suffix}")
-        return tuple(dict.fromkeys(variants))
+        # a layer wildcard is spelled through layer 0 and restored; any other wildcard placement is literal
+        layer_wild = pattern.startswith("blocks.*.")
+        probe = "blocks.0." + pattern[len("blocks.*.") :] if layer_wild else pattern
+        try:
+            variants = spellings(probe)
+        except UnknownPointError:
+            return (pattern,)
+        if layer_wild:
+            variants = tuple("blocks.*." + v[len("blocks.0.") :] for v in variants)
+        return variants
 
     expanded: dict[str, list[str]] = {}
     for pattern in patterns:

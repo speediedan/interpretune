@@ -146,13 +146,14 @@ class TestNormHooksAreThreeTensors:
         assert resolver.resolve("blocks.5.ln2.hook_out")[1] == "output"
 
     def test_sublayer_input_is_not_grouped_with_the_legacy_block_hook(self):
-        """`mlp.hook_in` is post-norm, `hook_mlp_in` is pre-norm: aliasing them moves interventions."""
-        from interpretune.analysis.backends.interventions import HOOK_ALIAS_GROUPS
+        """`mlp.hook_in` is post-norm, `hook_mlp_in` is pre-norm: expanding one to the other moves
+        interventions."""
+        from interpretune.analysis.backends.interventions import expand_intervention_patterns
 
-        for group in HOOK_ALIAS_GROUPS:
-            assert not {"mlp.hook_in", "hook_mlp_in"} <= set(group)
-            assert not {"ln2.hook_out", "ln2.hook_normalized"} <= set(group)
-            assert not {"ln2.hook_out", "ln2.hook_scale"} <= set(group)
+        available = {f"blocks.0.{n}": f"blocks.0.{n}" for n in ("hook_mlp_in", "ln2.hook_normalized", "ln2.hook_scale")}
+        for pattern in ("blocks.0.mlp.hook_in", "blocks.0.ln2.hook_out"):
+            with pytest.raises(ValueError, match="did not match any available hook names"):
+                expand_intervention_patterns([pattern], available)
 
 
 class TestHookNameResolver:
@@ -1665,3 +1666,52 @@ class TestNNsightCaptureOrder:
         resolver = HookNameResolver("GPT2LMHeadModel")
         a = ["blocks.5.hook_out", "blocks.6.hook_in"]
         assert _forward_order(a, resolver) == _forward_order(list(reversed(a)), resolver)
+
+
+class TestTLCaptureNamesThroughTheVocabulary:
+    """`names_filter` takes any vocabulary spelling and the cache comes back keyed as the caller spelled it."""
+
+    class _Model:
+        hook_dict = {"blocks.0.hook_resid_pre": None, "blocks.0.attn.hook_z": None, "blocks.0.attn.hook_pattern": None}
+        hook_aliases: dict = {}
+
+    def test_spellings_map_onto_the_hooks_a_legacy_model_exposes(self):
+        from interpretune.adapters.transformer_lens.backends import _normalize_names_filter
+
+        names, reverse = _normalize_names_filter(
+            self._Model(), ["blocks.0.hook_in", "blocks.0.attn.o.hook_in", "blocks.0.attn.hook_pattern"]
+        )
+        assert names == ["blocks.0.hook_resid_pre", "blocks.0.attn.hook_z", "blocks.0.attn.hook_pattern"]
+        assert reverse == {
+            "blocks.0.hook_resid_pre": "blocks.0.hook_in",
+            "blocks.0.attn.hook_z": "blocks.0.attn.o.hook_in",
+        }
+
+    def test_a_single_name_and_a_callable_pass_through(self):
+        from interpretune.adapters.transformer_lens.backends import _normalize_names_filter
+
+        assert _normalize_names_filter(self._Model(), "blocks.0.hook_in") == (
+            "blocks.0.hook_resid_pre",
+            {"blocks.0.hook_resid_pre": "blocks.0.hook_in"},
+        )
+        assert _normalize_names_filter(self._Model(), "blocks.0.hook_resid_pre") == ("blocks.0.hook_resid_pre", {})
+        fn = lambda name: True  # noqa: E731
+        assert _normalize_names_filter(self._Model(), fn) == (fn, {})
+
+    def test_a_name_the_model_lacks_is_left_for_transformer_lens_to_refuse(self):
+        from interpretune.adapters.transformer_lens.backends import _normalize_names_filter
+
+        assert _normalize_names_filter(self._Model(), ["blocks.7.hook_in"]) == (["blocks.7.hook_in"], {})
+
+    def test_the_cache_is_rekeyed_as_requested(self):
+        from interpretune.adapters.transformer_lens.backends import _restore_requested_names
+
+        cache = {"blocks.0.hook_resid_pre": "tensor"}
+        out = _restore_requested_names(cache, {"blocks.0.hook_resid_pre": "blocks.0.hook_in"})
+        assert out["blocks.0.hook_in"] == "tensor" and out["blocks.0.hook_resid_pre"] == "tensor"
+
+        class _Cache:
+            cache_dict = {"blocks.0.attn.hook_z": "z"}
+
+        out = _restore_requested_names(_Cache(), {"blocks.0.attn.hook_z": "blocks.0.attn.o.hook_in"})
+        assert out.cache_dict["blocks.0.attn.o.hook_in"] == "z"

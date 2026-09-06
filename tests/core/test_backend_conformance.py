@@ -37,3 +37,27 @@ class TestConceptCollectionOnBridge(OpCollectionConformance):
         composition=("core", "sae_lens"), forward_family="hf_native", datamodule_flavour="bridge"
     )
     collection = "concept"
+
+
+def _legacy_hooked_transformer(inputs):
+    """The bridge seed's session config with the weight-converted HookedTransformer instead of the bridge."""
+
+    def _no_bridge(_dm_cfg, it_cfg):
+        it_cfg.tl_cfg.use_bridge = False
+
+    return inputs.session_cfg(("core", "sae_lens"), flavour="bridge", prepare=_no_bridge)
+
+
+class TestWeightConvertedConformance(ModelBackendConformance):
+    """The legacy HookedTransformer path (weight conversion, not a bridge over the HF module).
+
+    Its forward is a re-implementation, so the `hf_native` reference cases do not apply and skip by family;
+    the causal and structural cases run, and capture names are the same vocabulary spellings the bridge takes.
+    """
+
+    target = ConformanceTarget(
+        composition=("core", "sae_lens"),
+        session_cfg_factory=_legacy_hooked_transformer,
+        forward_family="weight_converted",
+        datamodule_flavour="bridge",
+    )

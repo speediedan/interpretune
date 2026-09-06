@@ -4,9 +4,10 @@ Every value-level conformance case for the ``hf_native`` family compares against
 the HF module by plain PyTorch hooks. Nothing under test participates in producing them, which is what
 makes agreement evidence about the forward rather than about the pair.
 
-Points are addressed by TransformerLens bridge names and resolved to a module path and io slot through the
-same resolver the nnsight backend uses. When the activation-point vocabulary lands this becomes its first
-consumer and gains a per-point width check; until then it covers what the resolver covers.
+Points are addressed in the activation-point vocabulary (semantic or component spelling) and resolved to a module
+path and io slot through the vocabulary's own resolver and the architecture's component map, so the reference
+shares no addressing code with the backends under test beyond the vocabulary itself. Derived tensors (a norm's
+``hook_normalized`` / ``hook_scale``) are refused with the reason: they are computed, not emitted by a module.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from typing import Any
 
 import torch
 
-from interpretune.analysis.backends.hook_mapping import HookNameResolver
+from interpretune.analysis.points import TensorRef, component_map_for, describe_unresolvable, parse, resolve
 
 
 def _unwrap(output: Any) -> torch.Tensor:
@@ -54,14 +55,21 @@ class HFReference:
         self.model = model.to(torch.device(device)).eval()
         self.device = device
         self.architecture = type(self.model).__name__
-        self._resolver = HookNameResolver(self.architecture)
+        self._cmap = component_map_for(self.architecture)
 
     # -- addressing -------------------------------------------------------------------------------
 
     def resolve(self, point: str) -> ResolvedPoint:
-        """Resolve a TL-bridge-named point to the HF module and io slot, or raise with the resolver's reason."""
-        path, io = self._resolver.resolve(point)
-        return ResolvedPoint(point, path, io)
+        """Resolve a point (any vocabulary spelling) to the HF module and io slot, or raise with the reason."""
+        parsed = parse(point)
+        ref = resolve(parsed, self._cmap)
+        if not isinstance(ref, TensorRef):
+            raise ValueError(describe_unresolvable(parsed, ref))
+        if ref.derived:
+            raise NotImplementedError(
+                f"{point!r} is a derived tensor ({ref.derivation}); the reference captures module tensors only"
+            )
+        return ResolvedPoint(point, ref.module_path, ref.io)
 
     def module_for(self, point: str) -> torch.nn.Module:
         """The HF submodule a point resolves to."""
