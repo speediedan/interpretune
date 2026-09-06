@@ -22,11 +22,19 @@ import sys
 
 # The interpretune packages tests reimport, plus the ones op/hub tests patch values through. `interpretune`
 # itself is omitted: it has no parent to disagree with.
+#
+# `analysis.backends.capabilities` is watched for a different failure than the rest. A split there costs no
+# patch visibility; it duplicates the capability ENUMS, so members that print identically stop comparing
+# equal and `isinstance` filters silently drop them -- a backend then reports it lacks a capability it
+# declares, with no error anywhere. `normalize_backend_capability` rebuilds a canonical member from `.value`,
+# so every consumer that normalizes first is immune and the damage is confined to raw identity reads. That
+# immunity is also why nothing else notices: the split has to be caught here or not at all.
 WATCHED_MODULES = (
     "interpretune.analysis",
     "interpretune.analysis.ops",
     "interpretune.analysis.ops.dispatcher",
     "interpretune.analysis.ops.compiler.cache_manager",
+    "interpretune.analysis.backends.capabilities",
     "interpretune.hub",
     "interpretune.hub.cache",
     "interpretune.hub.manager",
