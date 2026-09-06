@@ -378,6 +378,18 @@ require_hub=True)` raise `LocalSnapshotShadowsHubError` with the fetch command, 
 `refs/main` back to the Hub revision. `HF_HUB_CACHE` does not redirect this cache; it is interpretune's own
 (`IT_COMPONENTS_HUB_CACHE`).
 
+### What a cached revision means
+
+A component's presence in `IT_COMPONENTS_HUB_CACHE` is not evidence that it exists on the Hub. Revisions written
+by `local_publish` are prefixed `local` and every place interpretune renders a revision for a person (`op_info`,
+`adapter_info`, load messages) says `local publish ...` for them. A cached Hub snapshot outlives the repo being
+deleted, renamed, transferred, or simply invisible to the token in use, and loading never consults the Hub
+(correctly). To ask, ask explicitly: `it.hub.hub_presence("<org>/<repo>", revision=...)` reports whether the repo
+and revision are reachable with the current token. A 404 from the Hub means **absent or not visible to this
+token**: HF answers 404 rather than 403 for a private repo a token cannot see, and `whoami` naming the owner does
+not distinguish the two. Check the token's repo scope before treating a 404 as absence; `it.hub.pull` says the
+same in its error.
+
 ### Versioning your op collection
 
 Declare the collection's identity in a header at the top of its op YAML:

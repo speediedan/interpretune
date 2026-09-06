@@ -11,6 +11,8 @@ components are fetched only by these explicit calls.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from pathlib import Path
 
 import yaml
@@ -66,18 +68,68 @@ def _snapshot_revision(downloaded_path: Path) -> str:
     return parts[parts.index("snapshots") + 1]
 
 
+#: Revisions written by :func:`local_publish` carry this prefix; Hub commits are bare hex.
+LOCAL_REVISION_PREFIX = "local"
+
+
+def is_local_revision(revision: str | None) -> bool:
+    """Whether a cached revision came from the local-publish bridge rather than the Hub."""
+    return bool(revision) and str(revision).startswith(LOCAL_REVISION_PREFIX)
+
+
+def describe_revision(revision: str | None) -> str:
+    """A cached revision as a reader should see it: ``local publish 2931c895...`` or ``f13f4770...``.
+
+    A local-publish pseudo-revision is 40 characters and sha-shaped, so printed bare it reads as a commit; the
+    prefix does its job only for a reader who knows to look for it. Every place a revision is rendered for a
+    person goes through this, so the origin travels with the identifier.
+    """
+    if revision is None:
+        return "none"
+    short = revision[:12]
+    return f"local publish {short[len(LOCAL_REVISION_PREFIX) :] or short}" if is_local_revision(revision) else short
+
+
+class HubUnreachableError(LookupError):
+    """The Hub answered 404 for a repo: absent, OR not visible to the token in use.
+
+    HF returns 404 rather than 403 for a private repo a token cannot see, and ``whoami`` naming the repo's owner
+    is not evidence either way (a token scoped to a subset of the owner's repos still answers ``whoami`` with the
+    owner). So "404 while authenticated as the owner" reads as conclusive absence and is not. The message says
+    both readings, because acting on the wrong one once republished a live component as though into a fresh repo.
+    """
+
+
+def _explain_404(repo_id: str, exc: BaseException | None = None) -> HubUnreachableError:
+    return HubUnreachableError(
+        f"The Hub returned 404 for {repo_id!r}: the repo is absent, OR it is private and not visible to the token "
+        "in use. HF answers 404 (not 403) for a private repo a token cannot see, and `whoami` naming the owner does "
+        "not distinguish the two. Check the token's repo scope before treating this as absence; a cached snapshot "
+        "of this repo, if any, is not evidence of Hub presence either (interpretune.hub.hub_presence)."
+    )
+
+
 def pull_component_manifest(
     repo_id: str, revision: str | None = None, cache_dir: Path | None = None, token: str | None = None
 ) -> tuple[dict, str]:
-    """Fetch and validate a component repo's manifest; returns ``(manifest, resolved_commit)``."""
-    path = hf_hub_download(
-        repo_id,
-        IT_COMPONENT_MANIFEST,
-        revision=revision,
-        cache_dir=str(cache_dir or IT_COMPONENTS_HUB_CACHE),
-        token=token,
-        **_TELEMETRY,
-    )
+    """Fetch and validate a component repo's manifest; returns ``(manifest, resolved_commit)``.
+
+    A 404 is re-raised as :class:`HubUnreachableError`, whose message carries both readings (absent, or not
+    visible to this token), since the bare error reads as conclusive absence and is not.
+    """
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    try:
+        path = hf_hub_download(
+            repo_id,
+            IT_COMPONENT_MANIFEST,
+            revision=revision,
+            cache_dir=str(cache_dir or IT_COMPONENTS_HUB_CACHE),
+            token=token,
+            **_TELEMETRY,
+        )
+    except RepositoryNotFoundError as exc:
+        raise _explain_404(repo_id, exc) from exc
     manifest = validate_component_manifest(
         yaml.safe_load(Path(path).read_text(encoding="utf-8")), source=f"{repo_id}@{revision}"
     )
@@ -189,15 +241,6 @@ def register_component_config(
         else:
             register(canonical_key, copy.deepcopy(body))
     return namespaced
-
-
-#: Revisions written by :func:`local_publish` carry this prefix; Hub commits are bare hex.
-LOCAL_REVISION_PREFIX = "local"
-
-
-def is_local_revision(revision: str) -> bool:
-    """Whether a cached revision came from the local-publish bridge rather than the Hub."""
-    return revision.startswith(LOCAL_REVISION_PREFIX)
 
 
 class LocalSnapshotWarning(UserWarning):
@@ -343,3 +386,50 @@ def local_publish(
         (repo_dir / "refs").mkdir(parents=True, exist_ok=True)
         (repo_dir / "refs" / "main").write_text(revision, encoding="utf-8")
     return revision
+
+
+@dataclass(frozen=True)
+class HubPresence:
+    """The answer to "is this repo (and revision) on the Hub, as seen by this token?", asked EXPLICITLY.
+
+    Resolution never asks it (the cache-only invariant is right and stays), so a cached snapshot of a repo that
+    was deleted, renamed, or is merely invisible to the current token keeps loading; this is the verb for a
+    caller who wants to know. ``reachable`` is False on a 404, which means absent OR not visible to the token,
+    and ``detail`` says so.
+    """
+
+    repo_id: str
+    reachable: bool
+    revision: str | None
+    revision_present: bool | None
+    detail: str
+
+
+def hub_presence(repo_id: str, revision: str | None = None, token: str | None = None) -> HubPresence:
+    """Ask the Hub whether ``repo_id`` (and ``revision``, when given) is reachable with this token.
+
+    Network.
+    """
+    from huggingface_hub import HfApi
+    from huggingface_hub.errors import RepositoryNotFoundError, RevisionNotFoundError
+
+    if is_local_revision(revision):
+        return HubPresence(
+            repo_id,
+            False,
+            revision,
+            False,
+            f"{describe_revision(revision)} is a local-publish snapshot; it was never on the Hub",
+        )
+    api = HfApi(token=token)
+    try:
+        info = api.repo_info(repo_id, revision=revision)
+    except RevisionNotFoundError:
+        return HubPresence(
+            repo_id, True, revision, False, f"repo reachable; revision {describe_revision(revision)} is not on the Hub"
+        )
+    except RepositoryNotFoundError:
+        return HubPresence(repo_id, False, revision, None, str(_explain_404(repo_id, None)))
+    return HubPresence(
+        repo_id, True, revision, True if revision else None, f"reachable; Hub head {str(getattr(info, 'sha', ''))[:12]}"
+    )

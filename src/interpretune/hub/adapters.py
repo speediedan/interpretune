@@ -194,13 +194,13 @@ def load_hub_adapter(
     """
     from interpretune.adapters import ADAPTER_REGISTRY
     from interpretune.adapters.registration import AdapterProtocol, register_dynamic_adapter
-    from interpretune.hub.components import enforce_component_requires, resolve_component_manifest
+    from interpretune.hub.components import describe_revision, enforce_component_requires, resolve_component_manifest
     from interpretune.hub.precedence import enforce_adapter_precedence, record_hub_adapter
     from interpretune.hub.trust import ensure_remote_code_trusted
 
     registry = ADAPTER_REGISTRY if registry is None else registry
     manifest, snapshot, revision = resolve_component_manifest(repo_id, cache_dir=cache_dir, require_hub=require_hub)
-    source = f"{repo_id}@{revision[:12]}"
+    source = f"{repo_id}@{describe_revision(revision)}"
     names = declared_adapters(manifest, source=source)
     if not names:
         raise AdapterComponentError(
