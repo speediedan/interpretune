@@ -56,6 +56,31 @@ def _is_relative_inside(rel: str) -> bool:
     return True
 
 
+_REQUIRES_AXES = ("interpretune", "adapters", "modules", "pip")
+
+
+def _validate_requires_shape(requires: Any, where: str) -> None:
+    """The `requires` vocabulary: `interpretune` (a specifier), `adapters` / `modules` / `pip` (lists of names)."""
+    if requires is None:
+        return
+    if not isinstance(requires, dict):
+        raise ComponentManifestError(f"{where} must be a mapping over {_REQUIRES_AXES}, got {requires!r}")
+    # Unknown axes are IGNORED rather than refused, by an existing test's explicit choice: a manifest written for a
+    # newer interpretune may carry an axis this one does not evaluate, and refusing would make the component
+    # unloadable here instead of merely less guarded. Known axes are held to their shape.
+    for axis in ("adapters", "modules", "pip"):
+        values = requires.get(axis)
+        if values is None:
+            continue
+        if not isinstance(values, list) or not all(isinstance(v, str) and v for v in values):
+            raise ComponentManifestError(f"{where}.{axis} must be a list of non-empty strings, got {values!r}")
+        if axis == "modules" and not all(all(part.isidentifier() for part in v.split(".")) for v in values):
+            raise ComponentManifestError(
+                f"{where}.modules entries must be dotted importable names (evaluated with importlib.util.find_spec, "
+                f"nothing is imported), got {values!r}"
+            )
+
+
 def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> dict:
     """Validate the coarse shape of a parsed component manifest, returning it on success."""
     if not isinstance(manifest, dict):
@@ -152,6 +177,14 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
                     "and not the manifest itself. The published artifact is the manifest's allowlist plus these "
                     "declared extras; nothing outside the component directory is ever published."
                 )
+    _validate_requires_shape(manifest.get("requires"), f"{source}: `requires`")
+    for entry in (
+        ((manifest.get("adapters") or {}).get("compositions") or [])
+        if isinstance(manifest.get("adapters"), dict)
+        else []
+    ):
+        if isinstance(entry, dict) and isinstance(entry.get("requires"), dict):
+            _validate_requires_shape(entry["requires"], f"{source}: `adapters.compositions[].requires`")
     if "hookmaps" in kinds:
         hm = manifest.get("hookmaps") or {}
         files = hm.get("files")

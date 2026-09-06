@@ -60,7 +60,7 @@ def requirement_status(requires: dict, source: str = "<component>") -> list[Unme
     nothing to do with a missing optional dependency -- a genuine bug inside an adapter is otherwise
     indistinguishable from an absent package.
 
-    THE EVALUATION ORDER (interpretune, then adapters, then pip) IS LOAD-BEARING, not stylistic: the hard
+    THE EVALUATION ORDER (interpretune, then adapters, then modules, then pip) IS LOAD-BEARING, not stylistic: the hard
     path raises ``unmet[0]``, so this order is what keeps its message identical to the pre-split one when
     several requirements are unmet at once. Looping over ``requires`` in dict order instead would silently
     change which error a user sees.
@@ -97,6 +97,27 @@ def requirement_status(requires: dict, source: str = "<component>") -> list[Unme
                     str(name),
                     f"{source}: requires adapter {name!r}, which this interpretune does not provide "
                     f"(known: {sorted(Adapter.__members__)}) — a newer interpretune release may be required.",
+                )
+            )
+    # `modules`: the importable modules a composition actually uses, evaluated with find_spec (no import, no side
+    # effects). A distribution name is the wrong grain when the dependency is one module of a package that moves
+    # faster than its releases, or a git-pinned package no specifier can express: a checkout two commits behind its
+    # pin had the distribution installed and the module absent, and the composition registered and then broke on
+    # first use. Skipped-and-reported is what the requires design promises; this axis is what lets it deliver.
+    import importlib.util
+
+    for name in req.get("modules") or []:
+        try:
+            present = importlib.util.find_spec(str(name)) is not None
+        except (ModuleNotFoundError, ValueError):
+            present = False  # a missing parent package raises rather than returning None
+        if not present:
+            unmet.append(
+                UnmetRequirement(
+                    "modules",
+                    str(name),
+                    f"{source}: requires importable module {name!r}, which is not present. The distribution may be "
+                    "installed at a version or checkout that lacks it.",
                 )
             )
     for entry in req.get("pip") or []:
