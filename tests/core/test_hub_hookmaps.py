@@ -34,7 +34,7 @@ def _component(tmp_path, architecture="ToyForCausalLM", rows=None, facts=None, n
     root = tmp_path / "component"
     (root / "maps").mkdir(parents=True)
     (root / "it_component.yaml").write_text(yaml.safe_dump(_manifest(hookmaps={"files": [f"maps/{name}"]})))
-    doc = {"architecture": architecture, "components": rows or GPT2_ROWS}
+    doc = {"schema_version": 1, "architecture": architecture, "components": rows or GPT2_ROWS}
     if facts is not None:
         doc["facts"] = facts
     (root / "maps" / name).write_text(yaml.safe_dump(doc))
@@ -87,11 +87,15 @@ class TestPublishStructuralCheck:
         from interpretune.hub.publish import build_component_tree
 
         root = _component(tmp_path)
-        (root / "maps" / "toy.yaml").write_text(yaml.safe_dump({"architecture": "X"}))  # no components
+        (root / "maps" / "toy.yaml").write_text(
+            yaml.safe_dump({"schema_version": 1, "architecture": "X"})
+        )  # no components
         with pytest.raises(ValueError, match="missing the 'components' key"):
             build_component_tree(root, tmp_path / "out")
         (root / "maps" / "toy.yaml").write_text(
-            yaml.safe_dump({"architecture": "X", "components": {"embed": {"module": "m", "kind": "sorcery"}}})
+            yaml.safe_dump(
+                {"schema_version": 1, "architecture": "X", "components": {"embed": {"module": "m", "kind": "sorcery"}}}
+            )
         )
         with pytest.raises(ValueError, match="unknown component kind 'sorcery'"):
             build_component_tree(root, tmp_path / "out")

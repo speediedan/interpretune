@@ -152,6 +152,15 @@ class TestBundledMapAgreesWithTransformerLens:
         bridge = TransformerBridge.boot_transformers("gpt2", device="cpu")
         return from_transformer_lens(bridge.adapter, "GPT2LMHeadModel")
 
+    def test_the_derived_map_carries_the_same_schema_version(self, tl_gpt2_map):
+        from interpretune.analysis.points.component_map import COMPONENT_MAP_SCHEMA_VERSION, component_map_for
+
+        assert (
+            tl_gpt2_map.schema_version
+            == COMPONENT_MAP_SCHEMA_VERSION
+            == component_map_for("GPT2LMHeadModel").schema_version
+        )
+
     def test_every_shared_component_names_the_same_module_and_kind(self, tl_gpt2_map):
         bundled = component_map_for("GPT2LMHeadModel")
         shared = sorted(set(bundled.components) & set(tl_gpt2_map.components))
@@ -196,3 +205,53 @@ class TestResolverLayerShape:
         r = HookNameResolver("GPT2LMHeadModel")
         assert r.resolve("blocks.5.attn.hook_z") == ("transformer.h.5.attn.c_proj", "input")
         assert r.resolve("unembed.hook_out") == ("lm_head", "output")
+
+
+class TestDocumentsAreVersioned:
+    """#479: every component-map document says which schema it was written against."""
+
+    def test_a_document_without_the_field_is_refused_naming_it(self, tmp_path):
+        import yaml
+
+        from interpretune.analysis.points.component_map import COMPONENT_MAP_SCHEMA_VERSION, load_component_map_file
+
+        doc = {"architecture": "X", "components": {"embed": {"module": "e", "kind": "embed"}}}
+        path = tmp_path / "x.yaml"
+        path.write_text(yaml.safe_dump(doc))
+        with pytest.raises(
+            ValueError, match=rf"lacks an integer `schema_version` \(current: {COMPONENT_MAP_SCHEMA_VERSION}\)"
+        ):
+            load_component_map_file(path)
+        for bad in ("1", 1.0, True):
+            path.write_text(yaml.safe_dump({**doc, "schema_version": bad}))
+            with pytest.raises(ValueError, match="lacks an integer `schema_version`"):
+                load_component_map_file(path)
+        path.write_text(yaml.safe_dump({**doc, "schema_version": 1}))
+        assert load_component_map_file(path).schema_version == 1
+
+    def test_every_bundled_document_carries_the_current_version(self):
+        from interpretune.analysis.points.component_map import (
+            COMPONENT_MAP_SCHEMA_VERSION,
+            component_map_for,
+            known_architectures,
+        )
+
+        assert known_architectures()
+        for arch in known_architectures():
+            assert component_map_for(arch).schema_version == COMPONENT_MAP_SCHEMA_VERSION, arch
+
+    def test_the_publisher_refuses_an_unversioned_document(self, tmp_path):
+        import yaml
+
+        from interpretune.hub.publish import build_component_tree
+
+        root = tmp_path / "component"
+        (root / "maps").mkdir(parents=True)
+        (root / "it_component.yaml").write_text(
+            yaml.safe_dump({"it_schema_version": 1, "kinds": ["hookmaps"], "hookmaps": {"files": ["maps/x.yaml"]}})
+        )
+        (root / "maps" / "x.yaml").write_text(
+            yaml.safe_dump({"architecture": "X", "components": {"embed": {"module": "e", "kind": "embed"}}})
+        )
+        with pytest.raises(ValueError, match="lacks an integer `schema_version`"):
+            build_component_tree(root, tmp_path / "out")

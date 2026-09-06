@@ -55,6 +55,7 @@ One short document per architecture. The slot rule is per **kind**, not per row,
 of hooks into a dozen lines and keeps every alias consistent with the point it names.
 
 ```yaml
+schema_version: 1
 architecture: GPT2LMHeadModel            # the model class name, today; other keys later
 facts: {sandwich_norms: false}
 components:                              # component path -> module path template + kind
@@ -71,6 +72,11 @@ components:                              # component path -> module path templat
   ln_final:           {module: "transformer.ln_f",              kind: norm}
   unembed:            {module: "lm_head",                       kind: unembed}
 ```
+
+`schema_version` is required on every document and names the schema it was written against (currently `1`);
+a document without it is refused at read and therefore at publish, since a map published unversioned can never
+be told apart from one written against an unknown revision. What a reader does with a version it does not
+recognise, and the `facts` vocabulary, are the evolution policy's business and are not decided here.
 
 Kinds: `block`, `attn`, `mlp`, `norm`, `linear`, `embed`, `unembed`. A sandwich-norm architecture adds
 `ln1_post` and `ln2_post` rows and sets `facts.sandwich_norms`, which is what routes the contribution points.

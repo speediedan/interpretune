@@ -1,5 +1,6 @@
 # Gemma 2 (transformers `Gemma2ForCausalLM`). Sandwich norms: a post-norm after each sublayer, so a
 # sublayer's CONTRIBUTION to the residual is the post-norm's output, not the raw module output.
+schema_version: 1
 architecture: Gemma2ForCausalLM
 facts:
   sandwich_norms: true

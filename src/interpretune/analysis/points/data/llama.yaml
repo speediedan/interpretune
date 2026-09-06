@@ -1,4 +1,5 @@
 # Llama family (transformers `LlamaForCausalLM`). Pre-norm blocks with a gated MLP.
+schema_version: 1
 architecture: LlamaForCausalLM
 facts:
   sandwich_norms: false
