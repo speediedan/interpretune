@@ -1,8 +1,10 @@
-"""#225: the sanctioned seam for unembed + final-norm-scale resolution.
+"""The sanctioned seam for unembed + final-norm-scale resolution.
 
-The per-family conventions (HF gemma `1 + weight`, other RMSNorms `weight`, TL folded-at-load,
-LayerNorm `weight` + centering-left-to-caller) previously lived only in the jlens op collection's
-private copy; this seam is their single home, and #330's investigation is what validates each row.
+The per-family conventions (HF gemma `1 + weight`, other RMSNorms `weight`, TransformerLens
+folded-at-load, LayerNorm `weight` plus centering) previously lived only in an op collection's
+private copy, where each consumer was free to get a different row wrong. This seam is their single
+home, so a convention is asserted once here rather than rediscovered per caller.
+
 Tests use real transformers norm classes rather than stubs wherever the convention depends on the
 CLASS (kind detection reads the class name), and stubs where only the attribute shape matters.
 """
@@ -15,6 +17,7 @@ import torch
 from interpretune.analysis.optools import (
     UnembedNormInfo,
     _rmsnorm_scale,
+    fold_norm_into_unembed_rows,
     resolve_unembed_and_norm_scale,
 )
 
@@ -217,3 +220,74 @@ class TestRMSNormOffsetIsPerFamilyNotPerPrefix:
         info = resolve_unembed_and_norm_scale(_hf_module("gemma3", norm, inner_attr="transformer"))
         assert info.norm_kind == "layernorm"
         torch.testing.assert_close(info.norm_scale, torch.full((D,), self.WEIGHT))
+
+
+class TestFoldNormIntoUnembedRows:
+    """The folded row must reproduce the model's OWN readout direction, per norm kind.
+
+    Each case checks the composition against the norm module actually applied, so a wrong convention fails on a number
+    rather than on a restatement of the convention being tested.
+    """
+
+    @staticmethod
+    def _x():
+        torch.manual_seed(1)
+        return torch.randn(D)
+
+    def test_rmsnorm_folded_row_reproduces_the_readout_up_to_the_input_scalar(self):
+        w_u = torch.randn(VOCAB, D)
+        scale = torch.linspace(0.3, 2.7, D)
+        info = UnembedNormInfo(w_u=w_u, norm_scale=scale, norm_kind="rmsnorm")
+        x, c = self._x(), 5
+
+        rms = x.pow(2).mean().sqrt()
+        readout = w_u[c] @ (scale * x / rms)
+        folded = fold_norm_into_unembed_rows(info, [c])[0]
+
+        torch.testing.assert_close(folded @ x / rms, readout)
+
+    def test_layernorm_folded_row_needs_the_centering_to_reproduce_the_readout(self):
+        w_u = torch.randn(VOCAB, D)
+        scale = torch.linspace(0.3, 2.7, D)
+        info = UnembedNormInfo(w_u=w_u, norm_scale=scale, norm_kind="layernorm")
+        x, c = self._x(), 5
+
+        std = x.var(unbiased=False).sqrt()
+        readout = w_u[c] @ (scale * (x - x.mean()) / std)
+        folded = fold_norm_into_unembed_rows(info, [c])[0]
+        torch.testing.assert_close(folded @ x / std, readout)
+
+        # The positive control: the same row WITHOUT centering does not reproduce it, so the
+        # assertion above is capable of failing when the projector is dropped.
+        uncentered = w_u[c] * scale
+        assert not torch.isclose(uncentered @ x / std, readout, atol=1e-4, rtol=1e-4)
+
+    def test_rmsnorm_rows_are_not_centered(self):
+        w_u = torch.randn(VOCAB, D)
+        scale = torch.linspace(0.3, 2.7, D)
+        rms_row = fold_norm_into_unembed_rows(UnembedNormInfo(w_u=w_u, norm_scale=scale, norm_kind="rmsnorm"), [3])[0]
+        ln_row = fold_norm_into_unembed_rows(UnembedNormInfo(w_u=w_u, norm_scale=scale, norm_kind="layernorm"), [3])[0]
+        assert rms_row.mean().abs() > 1e-3, "an RMSNorm row must keep its uniform component"
+        torch.testing.assert_close(ln_row.mean(), torch.zeros(()), atol=1e-6, rtol=0)
+
+    def test_apply_norm_false_is_the_probing_shorthand(self):
+        w_u = torch.randn(VOCAB, D)
+        info = UnembedNormInfo(w_u=w_u, norm_scale=torch.linspace(0.3, 2.7, D), norm_kind="rmsnorm")
+        torch.testing.assert_close(fold_norm_into_unembed_rows(info, [2, 7], apply_norm=False), w_u[[2, 7]])
+
+    def test_absent_scale_returns_raw_rows_rather_than_guessing_one(self):
+        w_u = torch.randn(VOCAB, D)
+        info = UnembedNormInfo(w_u=w_u, norm_scale=None, norm_kind="none")
+        torch.testing.assert_close(fold_norm_into_unembed_rows(info, [1]), w_u[[1]])
+
+    def test_rows_are_returned_per_id_in_order(self):
+        w_u = torch.randn(VOCAB, D)
+        info = UnembedNormInfo(w_u=w_u, norm_scale=None, norm_kind="none")
+        rows = fold_norm_into_unembed_rows(info, [4, 1, 4])
+        assert rows.shape == (3, D)
+        torch.testing.assert_close(rows[0], rows[2])
+
+    def test_empty_token_group_raises(self):
+        info = UnembedNormInfo(w_u=torch.randn(VOCAB, D), norm_scale=None, norm_kind="none")
+        with pytest.raises(ValueError, match="at least one token id"):
+            fold_norm_into_unembed_rows(info, [])

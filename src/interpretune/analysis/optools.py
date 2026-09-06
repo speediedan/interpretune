@@ -282,9 +282,12 @@ class UnembedNormInfo(NamedTuple):
             and for TL models (TL's gemma conversion folds the ``+1`` at load), ``weight`` for
             LayerNorms. ``None`` when no final-norm weight is resolvable.
         norm_kind: ``"rmsnorm"``, ``"layernorm"``, or ``"none"`` -- callers constructing readout
-            DIRECTIONS need this because LayerNorm additionally centers (the correct folded
-            direction applies the centering projector), while RMSNorm does not. The centering
-            decision is deliberately left to the caller: interpretune#330 is validating it.
+            DIRECTIONS need this because LayerNorm additionally centers, so its readout-faithful
+            direction is ``C(W_U[c] * scale)`` with the centering projector ``C = I - 11^T/d``,
+            while RMSNorm's is ``W_U[c] * scale`` unchanged. Unlike a uniform rescaling, which
+            cancels in patch mode because scaling ``V`` scales its pseudoinverse inversely, centering
+            removes an ADDITIVE uniform component, so it moves the direction and with it the plane a
+            swap happens in. :func:`fold_norm_into_unembed_rows` applies the right one per kind.
     """
 
     w_u: torch.Tensor
@@ -297,10 +300,12 @@ def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
 
     The J-lens readout is ``softmax(W_U . norm(J h))``: pushing the norm's elementwise scale
     through the dot product gives token directions ``(W_U[c] * scale) @ J``, and dropping the scale
-    is not cosmetic -- measured on gemma-3-1b-it, unfolded vectors fail to steer at all where folded
-    ones flip the answer at scale 1.0 (interpretune#330 carries the derivation and evidence). This
-    is the single sanctioned home for the per-family conventions; the jlens op collection's private
-    copy migrates here (interpretune#273 residual scope).
+    is not cosmetic, and it is not uniformly beneficial either: measured on gemma-3-1b-it unfolded
+    vectors fail to steer at all where folded ones flip the answer at scale 1.0, while on gemma-2-2b
+    the unfolded vector is the stronger of the two. Folding aims the direction at the coordinates the
+    norm amplifies, which helps exactly when the model stores the task contrast there, so it is a
+    per-model choice rather than a default to hard-code. This is the single sanctioned home for the
+    per-family conventions.
 
     Resolution order mirrors :func:`resolve_embedding_weight`: HF-style models first
     (``lm_head.weight`` or GPT-NeoX's ``embed_out.weight``, shape ``(vocab, d)``), then
@@ -343,6 +348,37 @@ def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
         "resolve_unembed_and_norm_scale: module exposes neither an HF-style `.model.lm_head/.embed_out` "
         "nor a TransformerLens-style `.model.W_U`"
     )
+
+
+def fold_norm_into_unembed_rows(info: UnembedNormInfo, token_ids: Any, *, apply_norm: bool = True) -> torch.Tensor:
+    """Readout-faithful unembed rows for ``token_ids``, with the final norm folded in per kind.
+
+    Returns ``(n_tokens, d_model)`` float rows, one per id, in the order given. Composing a lens
+    direction is the caller's job (``rows @ J`` for a J-lens, ``rows`` alone for a logit lens); this
+    function owns only the part that is easy to get subtly wrong.
+
+    Two conventions, both exact rather than heuristic. For an RMSNorm the readout
+    ``W_U[c] . norm(x)`` equals ``(W_U[c] * scale) . x / rms(x)``, so folding the elementwise scale
+    into the row reproduces the readout's own direction and the input-dependent ``1/rms(x)`` scales
+    magnitude only. A LayerNorm additionally subtracts the mean, and pushing that through the dot
+    product moves a centering onto the row: ``(W_U[c] * scale) . (x - mean(x)1) = C(W_U[c] * scale) . x``
+    with ``C = I - 11^T/d``. The learned bias contributes an input-independent logit offset and drops
+    out of a direction.
+
+    ``apply_norm=False`` returns the raw rows, which is the paper's probing shorthand ("rows of
+    ``W_U J``") rather than its readout formula. The two agree only when the scale is uniform, and
+    which one steers better is model-dependent, so neither is a safe default to hard-code.
+    """
+    ids = torch.as_tensor(token_ids, dtype=torch.long).reshape(-1)
+    if ids.numel() == 0:
+        raise ValueError("fold_norm_into_unembed_rows requires at least one token id")
+    rows = info.w_u[ids].float()
+    if not apply_norm or info.norm_scale is None:
+        return rows
+    rows = rows * info.norm_scale.float().to(rows.device)
+    if info.norm_kind == "layernorm":
+        rows = rows - rows.mean(dim=-1, keepdim=True)
+    return rows
 
 
 def resolve_embedding_weight(module: Any) -> torch.Tensor:
@@ -491,6 +527,7 @@ __all__ = [
     "boolean_logits_to_avg_logit_diff",
     "decode_token_ids",
     "extract_logits",
+    "fold_norm_into_unembed_rows",
     "FEATURE_SCORE_SOURCE_ALIASES",
     "get_loss_preds_diffs",
     "last_token_logits",
