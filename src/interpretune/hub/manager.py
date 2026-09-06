@@ -32,6 +32,21 @@ class HubResourceKind:
     delete_patterns: tuple[str, ...] = ("*.py", "*.pyc", "*.yaml", "*.yml")
 
 
+#: Never uploaded from any local directory, whatever a caller stages: caches are not part of an artifact.
+UPLOAD_IGNORE_PATTERNS = ("__pycache__/*", "*.pyc", ".pytest_cache/*", ".mypy_cache/*", ".ruff_cache/*", ".DS_Store")
+
+#: Files the Hub writes into every repo; never "stale" and never removed by a matching publish.
+HUB_MANAGED_FILES = frozenset({".gitattributes"})
+
+
+def fnmatch_escape(path: str) -> str:
+    """Escape ``fnmatch`` metacharacters so an exact path is a pattern matching only itself."""
+    out = []
+    for ch in path:
+        out.append(f"[{ch}]" if ch in "*?[" else ch)
+    return "".join(out)
+
+
 OPS_KIND = HubResourceKind(name="ops", cache_dir=IT_ANALYSIS_HUB_CACHE, discovery_filter="interpretune-ops")
 COMPONENT_KIND = HubResourceKind(name="component", cache_dir=IT_COMPONENTS_HUB_CACHE, discovery_filter="interpretune")
 
@@ -109,8 +124,18 @@ class ITHubResourceManager:
         private: bool = False,
         clean_existing: bool = False,
         delete_patterns: list[str] | None = None,
+        match_staged: bool = False,
+        ignore_patterns: list[str] | None = None,
     ) -> str:
-        """Upload a resource collection to the HF Hub, creating the repository when necessary."""
+        """Upload a resource collection to the HF Hub, creating the repository when necessary.
+
+        ``clean_existing`` removes remote files matching the kind's ``delete_patterns`` (or ``delete_patterns``)
+        before the upload lands. ``match_staged`` is the stronger contract: every remote file the staged tree
+        does not carry is removed in the same commit, so the published tree equals ``local_dir`` exactly
+        (Hub-managed ``.gitattributes`` excepted). The files removed are reported by name, because each one is
+        either a rename's stale half or something that arrived out of band, and both are worth a reader's
+        attention.
+        """
         if "/" not in repo_id:
             raise ValueError(f"Invalid repo_id format: {repo_id}. Expected 'username/repo-name'")
         if not local_dir.exists():
@@ -130,6 +155,20 @@ class ITHubResourceManager:
             self.api.create_repo(repo_id=repo_id, repo_type=REPO_TYPE_MODEL, private=private)
 
         delete_patterns_to_use = None
+        if match_staged and repo_exists:
+            staged = {p.relative_to(local_dir).as_posix() for p in Path(local_dir).rglob("*") if p.is_file()}
+            remote = set(self.api.list_repo_files(repo_id=repo_id, repo_type=REPO_TYPE_MODEL, revision=revision))
+            stale = sorted(f for f in remote - staged if f not in HUB_MANAGED_FILES)
+            if stale:
+                # exact paths as patterns: fnmatch treats a plain path as a literal match
+                delete_patterns_to_use = [fnmatch_escape(f) for f in stale]
+                files_to_delete = list(stale)
+                rank_zero_warn(
+                    f"Publishing to {repo_id!r} removes {len(stale)} file(s) the current publish would not produce "
+                    f"(a renamed file's old name, or something pushed by hand): {stale[:10]}"
+                    f"{'...' if len(stale) > 10 else ''}. The published tree now matches the staged one.",
+                    stacklevel=2,
+                )
         if clean_existing:
             delete_patterns_to_use = delete_patterns if delete_patterns is not None else list(self.kind.delete_patterns)
             if repo_exists:
@@ -159,10 +198,11 @@ class ITHubResourceManager:
                 revision=revision,
                 create_pr=create_pr,
                 delete_patterns=delete_patterns_to_use,
+                ignore_patterns=ignore_patterns if ignore_patterns is not None else list(UPLOAD_IGNORE_PATTERNS),
             )
 
             commit_issued = all((initial_repo_sha, hasattr(commit_info, "oid"), commit_info.oid != initial_repo_sha))
-            if files_to_delete and commit_issued:
+            if files_to_delete and commit_issued and clean_existing and not match_staged:
                 rank_zero_warn(
                     f"clean_existing=True removed {len(files_to_delete)} existing files "
                     f"matching patterns {delete_patterns_to_use} from repository '{repo_id}'. "
@@ -254,8 +294,11 @@ class HubAnalysisOpManager(ITHubResourceManager):
     def upload_ops(self, local_dir: Path, repo_id: str, commit_message: str = "Upload analysis operations", **kwargs):
         """Upload an op collection.
 
-        Historical name, kept as a thin delegation to :meth:`upload`.
+        Historical name, kept as a thin delegation to :meth:`upload`. Bytecode and tool caches under ``local_dir``
+        are never uploaded: a hand-authored collection published from its working directory used to carry its
+        ``.pytest_cache/`` tree to the Hub.
         """
+        kwargs.setdefault("ignore_patterns", list(UPLOAD_IGNORE_PATTERNS))
         return self.upload(local_dir, repo_id, commit_message=commit_message, **kwargs)
 
     def list_available_collections(self, username: str | None = None) -> list[str]:

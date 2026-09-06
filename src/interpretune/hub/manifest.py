@@ -120,6 +120,20 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
                     f"{source}: `adapters.compositions[].requires` must be a mapping in the same vocabulary as "
                     f"the component-wide `requires` (interpretune / adapters / pip), got {entry_requires!r}"
                 )
+    extra = manifest.get("extra_files")
+    if extra is not None:
+        if not isinstance(extra, list) or not all(isinstance(f, str) and f for f in extra):
+            raise ComponentManifestError(
+                f"{source}: `extra_files` must be a list of repo-relative paths (files or directories) to publish "
+                "alongside the manifest-declared payloads, got " + repr(extra)
+            )
+        for rel in extra:
+            if rel == IT_COMPONENT_MANIFEST or Path(rel).is_absolute() or ".." in Path(rel).parts:
+                raise ComponentManifestError(
+                    f"{source}: `extra_files` entry {rel!r} must be a relative path inside the component directory "
+                    "and not the manifest itself. The published artifact is the manifest's allowlist plus these "
+                    "declared extras; nothing outside the component directory is ever published."
+                )
     if "hookmaps" in kinds:
         hm = manifest.get("hookmaps") or {}
         files = hm.get("files")

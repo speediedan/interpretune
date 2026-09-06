@@ -196,6 +196,15 @@ def generate_component_card(manifest: dict, repo_id: str, summary: str | None = 
             "collection's ops are then addressable by their namespaced names; `interpretune.hub.prefer_ops`",
             "opts into resolving their BARE names here instead of interpretune's bundled ops.",
         ]
+    extra_files = manifest.get("extra_files") or []
+    if extra_files:
+        lines += ["", "## Supplementary files", ""]
+        lines += [f"- `{rel}`" for rel in extra_files]
+        lines += [
+            "",
+            "Declared in the manifest's `extra_files` and published by the same builder as the payloads. The",
+            "published tree is the manifest's allowlist plus these; anything else present arrived out of band.",
+        ]
     hookmap_files = (manifest.get("hookmaps") or {}).get("files") or []
     if hookmap_files:
         lines += ["", "## Component maps (hookmaps)", ""]
