@@ -28,7 +28,47 @@ class TestParse:
         assert parse("blocks.5.hook_resid_pre") == parse("blocks.5.hook_in")
         assert parse("blocks.5.hook_resid_post") == parse("blocks.5.hook_out")
         assert parse("blocks.5.hook_resid_mid") == parse("blocks.5.ln2.hook_in")
-        assert parse("blocks.5.attn.hook_z") == parse("blocks.5.attn.o.hook_in")
+
+    def test_a_deprecated_alias_parses_to_its_point_and_remembers_the_spelling(self):
+        from dataclasses import replace
+
+        from interpretune.analysis.points.vocabulary import DeprecatedPointError
+
+        legacy = parse("blocks.5.attn.hook_z")
+        assert legacy.alias == "attn.hook_z"
+        assert replace(legacy, alias=None) == parse("blocks.5.attn.o.hook_in")
+        assert parse("blocks.5.attn.o.hook_in").alias is None
+        with pytest.raises(DeprecatedPointError, match="deprecated spelling 'attn.hook_z'.*write 'attn.o.hook_in'"):
+            parse("blocks.5.attn.hook_z", strict=True)
+        parse("blocks.5.attn.o.hook_in", strict=True)  # canonical spellings are always accepted
+
+    def test_the_alias_table_is_one_table_and_refuses_to_shadow(self):
+        from interpretune.analysis.points.vocabulary import ALIASES, register_alias, spellings
+
+        assert ALIASES.aliases_for("attn.o.hook_in") == ("attn.hook_z",)
+        with pytest.raises(ValueError, match="semantic point"):
+            register_alias("hook_resid_pre", "hook_in")
+        with pytest.raises(ValueError, match="component spelling"):
+            register_alias("ln2.hook_out", "mlp.hook_in")
+        with pytest.raises(ValueError, match="already registered"):
+            register_alias("attn.hook_z", "attn.hook_out")
+        entry = register_alias("hook_attn_z_legacy_probe", "attn.o.hook_in", deprecated_since="probe")
+        try:
+            assert parse("blocks.2.hook_attn_z_legacy_probe").alias == "hook_attn_z_legacy_probe"
+            assert "blocks.2.hook_attn_z_legacy_probe" in spellings("blocks.2.attn.o.hook_in")
+        finally:
+            ALIASES._entries.pop(entry.alias)
+
+    def test_spellings_never_offer_a_different_tensor(self):
+        """The dissolved alias groups (#375, #376): spellings of one point never include another point."""
+        from interpretune.analysis.points.vocabulary import spellings
+
+        assert "blocks.5.hook_mlp_in" not in spellings("blocks.5.mlp.hook_in")
+        assert "blocks.5.mlp.hook_in" not in spellings("blocks.5.hook_mlp_in")
+        assert spellings("blocks.5.hook_attn_out") == ("blocks.5.hook_attn_out",)  # architecture decides the module
+        assert "blocks.5.hook_resid_mid" not in spellings("blocks.5.attn.hook_out")
+        assert "blocks.5.ln2.hook_normalized" not in spellings("blocks.5.ln2.hook_out")
+        assert set(spellings("blocks.5.hook_resid_mid")) == {"blocks.5.hook_resid_mid", "blocks.5.ln2.hook_in"}
 
     def test_contributions_are_semantic_not_component(self):
         p = parse("blocks.5.hook_mlp_out")
@@ -45,7 +85,7 @@ class TestParse:
 
     def test_globals(self):
         assert parse("unembed.hook_out") == ActivationPoint("unembed", Slot.OUT, None)
-        assert parse("hook_embed") == parse("embed.hook_out")
+        assert parse("hook_embed").canonical == "embed.hook_out" and parse("hook_embed").alias == "hook_embed"
 
     @pytest.mark.parametrize("bad", ["blocks.x.hook_in", "blocks.5.", "blocks.5.mlp.hook_sideways", "hook_normalized"])
     def test_unknown_spellings_are_refused_by_name(self, bad):

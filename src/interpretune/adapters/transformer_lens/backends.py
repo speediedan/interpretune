@@ -38,6 +38,59 @@ def _iter_hook_aliases(model: Any) -> dict[str, list[str]]:
     return alias_to_canonical
 
 
+def _normalize_names_filter(
+    model: Any, names_filter: NamesFilter, latent_model_handles: list[Any] | None = None
+) -> tuple[NamesFilter, dict[str, str]]:
+    """Map requested capture names onto the hooks this model exposes, through the vocabulary's spellings.
+
+    A caller asks for a point in any accepted spelling (``blocks.5.hook_in``); a TransformerBridge exposes that name
+    while a legacy HookedTransformer exposes ``blocks.5.hook_resid_pre`` for the same tensor. The same expansion the
+    intervention path uses resolves it, so capture and intervention agree on what a name means. Callables and names
+    the vocabulary does not know pass through untouched. Returns the filter to hand TransformerLens plus
+    ``{actual hook name: requested name}`` so the cache can be re-keyed as the caller spelled it.
+    """
+    if callable(names_filter):
+        return names_filter, {}
+    requested_names = [names_filter] if isinstance(names_filter, str) else list(names_filter or [])
+    if not requested_names:
+        return names_filter, {}
+    from interpretune.analysis.backends.interventions import expand_intervention_patterns
+
+    available = _build_available_hook_map(model, latent_model_handles=latent_model_handles)
+    actual_for: dict[str, str] = {}
+    for name in requested_names:
+        if name in available and available[name] == name:
+            continue  # already an actual hook name
+        try:
+            matches = expand_intervention_patterns([name], available)[name]
+        except ValueError:
+            continue  # unknown to the model too; TransformerLens reports it as before
+        if len(matches) == 1 and matches[0] != name:
+            actual_for[matches[0]] = name
+    if not actual_for:
+        return names_filter, {}
+    resolved = [actual_for.get(n, n) for n in requested_names]
+    reverse = {actual: requested for actual, requested in actual_for.items()}
+    for n in requested_names:
+        actual = next((a for a, r in actual_for.items() if r == n), None)
+        resolved[requested_names.index(n)] = actual or n
+    return (resolved[0] if isinstance(names_filter, str) else resolved), reverse
+
+
+def _restore_requested_names(cache: Any, requested: dict[str, str]) -> Any:
+    """Re-key cached activations captured under a model-specific spelling back to the name the caller used."""
+    if not requested:
+        return cache
+    store = getattr(cache, "cache_dict", None)
+    target = store if isinstance(store, dict) else cache
+    if not isinstance(target, dict):
+        return cache
+    for actual, name in requested.items():
+        if actual in target and name not in target:
+            target[name] = target[actual]
+    return cache
+
+
 def _build_available_hook_map(model: Any, latent_model_handles: list[Any] | None = None) -> dict[str, str]:
     candidate_map: dict[str, str] = {str(name): str(name) for name in model.hook_dict}
     alias_to_canonical = _iter_hook_aliases(model)
@@ -112,7 +165,9 @@ class TLModelBackend:
         names_filter: NamesFilter,
     ) -> tuple[torch.Tensor, Any]:
         """Run forward pass with activation caching and latent model hooks via TransformerLens."""
-        return model.run_with_cache_with_saes(**batch, saes=latent_model_handles, names_filter=names_filter)
+        names_filter, requested = _normalize_names_filter(model, names_filter, latent_model_handles)
+        logits, cache = model.run_with_cache_with_saes(**batch, saes=latent_model_handles, names_filter=names_filter)
+        return logits, _restore_requested_names(cache, requested)
 
     def fwd_w_cache(
         self,
@@ -121,7 +176,9 @@ class TLModelBackend:
         names_filter: NamesFilter,
     ) -> tuple[torch.Tensor, Any]:
         """Run forward pass with activation caching via TransformerLens."""
-        return model.run_with_cache(**batch, names_filter=names_filter)
+        names_filter, requested = _normalize_names_filter(model, names_filter)
+        logits, cache = model.run_with_cache(**batch, names_filter=names_filter)
+        return logits, _restore_requested_names(cache, requested)
 
     def fwd_w_hooks_and_latent_models(
         self,

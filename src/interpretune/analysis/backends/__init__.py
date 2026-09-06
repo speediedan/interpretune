@@ -16,7 +16,7 @@ each adapter's own package (``interpretune.adapters.<name>.backends``),
 which is **not** part of the op-author surface: an op consumes backends through the protocols and
 capability helpers, never by importing one, and the publishability lint enforces that by excluding
 ``interpretune.adapters`` from op imports. ``hook_mapping`` stays here rather than with an adapter
-because the seam itself uses it (``interventions``) and it exports ``HOOK_ALIAS_GROUPS``
+because the seam itself uses it (``interventions``).
 through this façade, so moving it would invert the layering.
 
 This module is a re-export façade only: ``__all__`` below is the public surface. Note that
@@ -54,7 +54,6 @@ from interpretune.analysis.backends.feature_selection import (
     select_top_feature_indices,
 )
 from interpretune.analysis.backends.interventions import (
-    HOOK_ALIAS_GROUPS,
     InterventionDict,
     InterventionSpec,
     InterventionValue,
@@ -86,7 +85,6 @@ __all__ = [
     "BackendCapability",
     "Capability",
     "FeatureSelectionSpec",
-    "HOOK_ALIAS_GROUPS",
     "InterventionDict",
     "InterventionSpec",
     "PositionScope",
