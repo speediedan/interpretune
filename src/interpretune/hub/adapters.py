@@ -50,11 +50,48 @@ def declared_adapters(manifest: dict, source: str = "<component>") -> list[str]:
     return [str(d) for d in declares]
 
 
+HUB_ADAPTER_PACKAGE = "it_hub_adapters"
+
+
+def _sanitized(repo_id: str) -> str:
+    return repo_id.replace("/", "__").replace("-", "_").replace(".", "_")
+
+
+def stable_module_name(repo_id: str) -> str:
+    """The unversioned import path a loaded adapter component's entrypoint is ALSO bound under.
+
+    The loader imports an entrypoint under a revision-scoped name so two cached revisions never collide in
+    ``sys.modules``. That is right for isolation and useless for configuration: YAML ``class_path`` strings are
+    how compositions are configured, and a path containing a revision changes on every publish. So each load
+    additionally binds the module under ``it_hub_adapters.<org>__<repo>`` (``-`` and ``.`` become ``_``), which
+    a YAML can write: ``class_path: it_hub_adapters.org__my_adapter.MyAdapterConfig``. The alias follows the
+    most recent load of that component in this process; with one revision loaded, the normal case, it is simply
+    that revision.
+    """
+    return f"{HUB_ADAPTER_PACKAGE}.{_sanitized(repo_id)}"
+
+
+def _bind_stable_alias(repo_id: str, module: ModuleType) -> None:
+    """Make ``stable_module_name(repo_id)`` importable, including its synthetic parent package."""
+    import types
+
+    parent = sys.modules.get(HUB_ADAPTER_PACKAGE)
+    if parent is None:
+        parent = types.ModuleType(HUB_ADAPTER_PACKAGE)
+        parent.__path__ = []  # a package with no filesystem location: nothing is discovered, only bound
+        sys.modules[HUB_ADAPTER_PACKAGE] = parent
+    alias = stable_module_name(repo_id)
+    sys.modules[alias] = module
+    setattr(parent, _sanitized(repo_id), module)
+
+
 def _import_adapter_entrypoint(repo_id: str, snapshot: Path, revision: str, entrypoint: str) -> ModuleType:
-    """Import the entrypoint from a cached snapshot under a revision-scoped synthetic module name."""
-    sanitized = repo_id.replace("/", "__").replace("-", "_").replace(".", "_")
-    module_name = f"it_hub_adapters.{sanitized}.{revision}"
+    """Import the entrypoint from a cached snapshot under a revision-scoped synthetic module name, and bind it
+    under the stable unversioned alias a YAML ``class_path`` can name (see :func:`stable_module_name`)."""
+    sanitized = _sanitized(repo_id)
+    module_name = f"{HUB_ADAPTER_PACKAGE}.{sanitized}.{revision}"
     if module_name in sys.modules:
+        _bind_stable_alias(repo_id, sys.modules[module_name])
         return sys.modules[module_name]
     path = snapshot / entrypoint
     if not path.is_file():
@@ -74,6 +111,7 @@ def _import_adapter_entrypoint(repo_id: str, snapshot: Path, revision: str, entr
         # a half-executed module in sys.modules would be returned intact by the next call
         sys.modules.pop(module_name, None)
         raise
+    _bind_stable_alias(repo_id, module)
     return module
 
 
@@ -91,8 +129,7 @@ def loaded_adapter_module(repo_id: str, cache_dir: Path | None = None) -> Module
     from interpretune.hub.components import resolve_component_manifest
 
     _, _, revision = resolve_component_manifest(repo_id, cache_dir=cache_dir)
-    sanitized = repo_id.replace("/", "__").replace("-", "_").replace(".", "_")
-    module_name = f"it_hub_adapters.{sanitized}.{revision}"
+    module_name = f"{HUB_ADAPTER_PACKAGE}.{_sanitized(repo_id)}.{revision}"
     module = sys.modules.get(module_name)
     if module is None:
         raise AdapterComponentError(
