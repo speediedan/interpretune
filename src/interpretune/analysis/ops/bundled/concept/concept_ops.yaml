@@ -260,6 +260,9 @@ concept_direction:
 model_fwd_intervention:
   description: Apply generalized hook-point interventions and return pre/post intervention logits
   implementation: interpretune.analysis.ops.bundled.concept.concept_ops.model_fwd_intervention_impl
+  # The mode and scope axes are payload-driven for this op (any declared mode of the backend), so it
+  # declares the surface only; a composite built on it that fixes a mode declares that mode itself.
+  required_capabilities: [intervention]
   aliases: [direction_intervention, direct_concept_direction_intervention]
   input_schema:
     interventions:

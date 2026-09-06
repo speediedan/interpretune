@@ -30,6 +30,7 @@ __all__ = [
     "SelectionReport",
     "conformance_case",
     "ModelBackendConformance",
+    "OpCollectionConformance",
     "NotebookFormConformance",
     "HFReference",
 ]
@@ -41,6 +42,10 @@ def __getattr__(name: str):
         from interpretune.testing.conformance.cases import ModelBackendConformance
 
         return ModelBackendConformance
+    if name == "OpCollectionConformance":
+        from interpretune.testing.conformance.collections import OpCollectionConformance
+
+        return OpCollectionConformance
     if name == "NotebookFormConformance":
         from interpretune.testing.conformance.notebooks import NotebookFormConformance
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from interpretune.testing.conformance import ConformanceTarget, ModelBackendConformance
+from interpretune.testing.conformance import ConformanceTarget, ModelBackendConformance, OpCollectionConformance
 from interpretune.utils.import_utils import package_available
 
 pytest_plugins = ["interpretune.testing.conformance.plugin"]
@@ -28,3 +28,12 @@ class TestNNsightConformance(ModelBackendConformance):
     target = ConformanceTarget(
         composition=("core", "nnsight", "sae_lens"), forward_family="hf_native", datamodule_flavour="nnsight"
     )
+
+
+class TestConceptCollectionOnBridge(OpCollectionConformance):
+    """The bundled `concept` family, validated as a collection against the bridge target."""
+
+    target = ConformanceTarget(
+        composition=("core", "sae_lens"), forward_family="hf_native", datamodule_flavour="bridge"
+    )
+    collection = "concept"

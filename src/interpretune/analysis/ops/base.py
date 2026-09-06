@@ -527,6 +527,8 @@ class AnalysisOp:
         requires_grad: bool = False,
         per_latent_preds: bool = False,
         protocol_cls: Any = None,
+        required_intervention_modes: Sequence[str | Any] | None = None,
+        required_position_scopes: Sequence[str | Any] | None = None,
     ) -> None:
         self.name = name
         # The RESOLVED BaseAnalysisBatchProtocol subclass this op's batches conform to, or None for the
@@ -541,6 +543,12 @@ class AnalysisOp:
         self._impl: Callable | None = None
         self.impl_params = impl_params or {}
         self.required_capabilities = self._normalize_required_capabilities(required_capabilities)
+        # The INTERVENTION configurations this op will ask a backend for. Declared so the refusal a backend
+        # would issue at execution ("cannot apply mode=patch") moves to validation, before anything runs,
+        # and so a conformance suite can read what an op needs without running it. Declaring either axis
+        # implies requiring the INTERVENTION surface; that implication is enforced in _validate_capabilities.
+        self.required_intervention_modes = self._normalize_intervention_modes(required_intervention_modes)
+        self.required_position_scopes = self._normalize_position_scopes(required_position_scopes)
         # Declared cross-batch state (OpStateSpec | None). The SPEC lives on the op; the state
         # itself does not -- ops are process-global singletons, so per-run state is owned by the
         # AnalysisCfg for that run (see AnalysisCfg.op_state).
@@ -560,6 +568,27 @@ class AnalysisOp:
         from interpretune.analysis.backends import normalize_backend_capability
 
         return frozenset(normalize_backend_capability(capability) for capability in required_capabilities)
+
+    @staticmethod
+    def _normalize_intervention_modes(modes: Sequence[str | Any] | None) -> frozenset[Any]:
+        if not modes:
+            return frozenset()
+        from interpretune.analysis.backends.interventions import normalize_intervention_mode
+
+        return frozenset(normalize_intervention_mode(mode) for mode in modes)
+
+    @staticmethod
+    def _normalize_position_scopes(scopes: Sequence[str | Any] | None) -> frozenset[Any]:
+        if not scopes:
+            return frozenset()
+        from interpretune.analysis.backends.interventions import normalize_position_scope
+
+        return frozenset(normalize_position_scope(scope) for scope in scopes)
+
+    @property
+    def requires_intervention_axes(self) -> bool:
+        """Whether the op declares any intervention mode or position scope."""
+        return bool(self.required_intervention_modes or self.required_position_scopes)
 
     @property
     def ctx_key(self) -> str:
@@ -653,8 +682,8 @@ class AnalysisOp:
         yield
 
     def _validate_capabilities(self, module: torch.nn.Module | None) -> None:
-        """Validate that the target module exposes all required capabilities."""
-        if not self.required_capabilities:
+        """Validate that the target module exposes all required capabilities, modes and position scopes."""
+        if not self.required_capabilities and not self.requires_intervention_axes:
             return
 
         if module is None:
@@ -664,6 +693,9 @@ class AnalysisOp:
             raise ValueError(
                 f"Operation '{self.name}' requires module capabilities [{required}] but no module was provided"
             )
+        self._validate_intervention_axes(module)
+        if not self.required_capabilities:
+            return
 
         from interpretune.analysis.backends import (
             AnalysisBackendCapability,
@@ -688,6 +720,42 @@ class AnalysisOp:
                 f"[{available_str}]{backend_detail}; "
                 f"missing [{missing_str}]"
             )
+
+    def _validate_intervention_axes(self, module: torch.nn.Module) -> None:
+        """Refuse, naming the axis, when the module's backend cannot honour a declared mode or scope.
+
+        Compared by VALUE against the backend's ``InterventionSupport`` record (the same reading the payload
+        gates in :mod:`interpretune.analysis.backends.interventions` use), so an undeclared mode is refused
+        here, before execution, instead of at the backend after every earlier op in a composition has run.
+        A backend declaring no ``INTERVENTION`` surface fails the same way: the axes are configurations of that
+        surface, so requiring one requires it.
+        """
+        if not self.requires_intervention_axes:
+            return
+        from interpretune.analysis.backends import BackendCapability, get_module_capabilities
+
+        available = get_module_capabilities(module)
+        record = available.intervention
+        if BackendCapability.INTERVENTION.value not in available.values or record is None:
+            raise ValueError(
+                f"Operation '{self.name}' requires intervention modes "
+                f"{sorted(m.value for m in self.required_intervention_modes)} and position scopes "
+                f"{sorted(s.value for s in self.required_position_scopes)}, but the module declares no "
+                f"{BackendCapability.INTERVENTION.value} surface (capabilities: {sorted(available.values) or 'none'})"
+            )
+        declared_modes = {getattr(m, "value", m) for m in record.modes}
+        declared_scopes = {getattr(s, "value", s) for s in record.position_scopes}
+        for axis, required, declared in (
+            ("mode", {m.value for m in self.required_intervention_modes}, declared_modes),
+            ("position_scope", {s.value for s in self.required_position_scopes}, declared_scopes),
+        ):
+            if missing := required - declared:
+                raise ValueError(
+                    f"Operation '{self.name}' requires intervention {axis}s {sorted(required)} but the module's "
+                    f"backend declares {sorted(declared)}; missing {sorted(missing)}. Refused on the {axis} axis "
+                    "rather than applied as another value, since every value returns plausible results and the "
+                    "substitution is undetectable downstream."
+                )
 
     def _validate_call(
         self,
@@ -810,7 +878,16 @@ class AnalysisOp:
 
     def __hash__(self) -> int:
         # Updated hash to use input_schema instead of description.
-        return hash((self.name, self.output_schema, self.input_schema, self.required_capabilities))
+        return hash(
+            (
+                self.name,
+                self.output_schema,
+                self.input_schema,
+                self.required_capabilities,
+                self.required_intervention_modes,
+                self.required_position_scopes,
+            )
+        )
 
     def __repr__(self) -> str:
         """Detailed representation showing schema and input requirements."""
@@ -974,6 +1051,13 @@ class CompositeAnalysisOp(AnalysisOp):
             # Compile input and output schemas using the op definitions dictionary
             input_schema, output_schema = jit_compile_composition_schema(ops, DISPATCHER._op_definitions)  # type: ignore[arg-type]
 
+        # A composite needs every intervention configuration any part needs, plus whatever it declares itself.
+        # The union is computed here rather than at validation so it is READABLE from the op: a conformance
+        # suite asks a composite what it needs and gets one answer that already accounts for its parts.
+        for axis in ("required_intervention_modes", "required_position_scopes"):
+            declared = set(kwargs.pop(axis, None) or ())
+            declared.update(value for op in ops for value in getattr(op, axis, ()))
+            kwargs[axis] = list(declared) or None  # normalized to a frozenset by AnalysisOp.__init__
         super().__init__(
             name=self.name,
             description=description,
@@ -995,6 +1079,11 @@ class CompositeAnalysisOp(AnalysisOp):
     ) -> BaseAnalysisBatchProtocol:
         """Execute all operations in sequence with automatic parameter resolution."""
         current_batch = analysis_batch or AnalysisBatch()
+        # The UNION of the parts' intervention axes is checked once, up front: a mode the third part needs
+        # is refused before the first part runs, rather than after two stages of work. Capabilities proper
+        # stay per-stage below, since each part validates the surface it uses against the batch it sees.
+        if module is not None:
+            self._validate_intervention_axes(module)
 
         for op in self.composition:
             with op.active_ctx_key(self.name):

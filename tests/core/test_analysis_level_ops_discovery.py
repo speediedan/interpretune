@@ -140,3 +140,92 @@ def test_composite_ops_validate_capabilities_per_stage() -> None:
     finally:
         for sub_op, original_impl in zip(op.composition[:-1], original_impls, strict=True):
             sub_op._impl = original_impl
+
+
+class _InterveningBackend(_DummyBackend):
+    def __init__(self, modes, scopes):
+        from interpretune.analysis.backends import InterventionSupport
+
+        super().__init__(frozenset({BackendCapability.INTERVENTION}))
+        self.intervention_support = InterventionSupport(position_scopes=frozenset(scopes), modes=frozenset(modes))
+
+
+def _intervening_module(modes=("add",), scopes=("last_token",)) -> _DummyModule:
+    module = _DummyModule()
+    module._model_backend = _InterveningBackend(modes, scopes)
+    return module
+
+
+def _op(name="probe", modes=None, scopes=None, capabilities=None) -> AnalysisOp:
+    from interpretune.analysis.ops.base import OpSchema
+
+    op = AnalysisOp(
+        name=name,
+        description="",
+        output_schema=OpSchema({}),
+        required_capabilities=capabilities,
+        required_intervention_modes=modes,
+        required_position_scopes=scopes,
+    )
+    op._impl = lambda module, analysis_batch, batch, batch_idx, **kw: analysis_batch
+    return op
+
+
+class TestInterventionRequirementAxes:
+    """`required_intervention_modes` / `required_position_scopes`: the INTERVENTION configurations an op needs."""
+
+    def test_axes_normalize_to_the_vocabulary_and_refuse_unknown_values(self):
+        from interpretune.analysis.backends import InterventionMode, PositionScope
+
+        op = _op(modes=["patch", InterventionMode.ADD], scopes=["all_positions"])
+        assert op.required_intervention_modes == frozenset({InterventionMode.PATCH, InterventionMode.ADD})
+        assert op.required_position_scopes == frozenset({PositionScope.ALL_POSITIONS})
+        with pytest.raises(ValueError, match="sorcery"):
+            _op(modes=["sorcery"])
+
+    def test_a_missing_mode_is_refused_by_axis_before_execution(self):
+        op = _op(modes=["patch"])
+        module = _intervening_module(modes=("add",), scopes=("last_token",))
+        with pytest.raises(ValueError, match=r"requires intervention modes \['patch'\].*declares \['add'\].*mode axis"):
+            op(module=module, analysis_batch=AnalysisBatch(), batch=None, batch_idx=0)
+
+    def test_a_missing_scope_is_refused_by_axis(self):
+        op = _op(scopes=["all_positions"])
+        module = _intervening_module(modes=("add",), scopes=("last_token",))
+        with pytest.raises(ValueError, match=r"position_scopes \['all_positions'\].*declares \['last_token'\]"):
+            op(module=module, analysis_batch=AnalysisBatch(), batch=None, batch_idx=0)
+
+    def test_declaring_an_axis_implies_the_intervention_surface(self):
+        op = _op(modes=["add"])
+        module = _DummyModule(backend_capabilities=frozenset({BackendCapability.GRADIENTS}))
+        with pytest.raises(ValueError, match="declares no intervention surface"):
+            op(module=module, analysis_batch=AnalysisBatch(), batch=None, batch_idx=0)
+
+    def test_declared_axes_pass_on_a_backend_that_honours_them(self):
+        op = _op(modes=["patch"], scopes=["all_positions"])
+        module = _intervening_module(modes=("add", "patch"), scopes=("last_token", "all_positions"))
+        result = op(module=module, analysis_batch=AnalysisBatch(ok=True), batch=None, batch_idx=0)
+        assert cast(AnalysisBatch, result).ok is True
+
+    def test_composites_carry_the_union_of_their_parts_plus_their_own(self):
+        from interpretune.analysis.backends import InterventionMode, PositionScope
+
+        a = _op("a", modes=["add"])
+        b = _op("b", scopes=["all_positions"])
+        composite = CompositeAnalysisOp([a, b], name="a_then_b", required_intervention_modes=["patch"])
+        assert composite.required_intervention_modes == frozenset({InterventionMode.ADD, InterventionMode.PATCH})
+        assert composite.required_position_scopes == frozenset({PositionScope.ALL_POSITIONS})
+        # and the composite refuses BEFORE its first part runs, on the union
+        ran = []
+        a._impl = lambda module, analysis_batch, batch, batch_idx, **kw: ran.append("a") or analysis_batch
+        module = _intervening_module(modes=("add",), scopes=("last_token", "all_positions"))
+        with pytest.raises(ValueError, match=r"missing \['patch'\]"):
+            composite(module=module, analysis_batch=AnalysisBatch(), batch=None, batch_idx=0)
+        assert ran == []
+
+    def test_the_bundled_intervention_op_declares_the_surface(self):
+        op = DISPATCHER.get_op("model_fwd_intervention")
+        assert isinstance(op, AnalysisOp)
+        # by VALUE: the suite can load the capabilities module twice, leaving value-equal, identity-distinct members
+        assert BackendCapability.INTERVENTION.value in {c.value for c in op.required_capabilities}
+        assert not op.requires_intervention_axes, "the bundled op is payload-driven and fixes no mode itself"

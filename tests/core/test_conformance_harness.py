@@ -171,3 +171,53 @@ class TestExpectRefusal:
         with pytest.raises(AssertionError, match="got RuntimeError"):
             with expect_refusal(NotImplementedError, match="x"):
                 raise RuntimeError("unrelated")
+
+
+class TestCollectionSelection:
+    """`OpCollectionConformance` reads a collection off the dispatcher's canonical definitions."""
+
+    @staticmethod
+    def _def(name, *, implementation="", source="bundled", collection_name=None, composition=None):
+        from interpretune.analysis.ops.base import OpSchema
+        from interpretune.analysis.ops.compiler.cache_manager import OpDef
+
+        return OpDef(
+            name=name,
+            description="",
+            implementation=implementation,
+            input_schema=OpSchema({}),
+            output_schema=OpSchema({}),
+            source=source,
+            collection_name=collection_name,
+            composition=composition,
+        )
+
+    def test_a_bundled_family_is_its_leaves_plus_composites_of_them(self):
+        from interpretune.testing.conformance.collections import belongs_to_collection
+
+        leaf = self._def("x", implementation="interpretune.analysis.ops.bundled.concept.concept_ops.x_impl")
+        other = self._def("y", implementation="interpretune.analysis.ops.bundled.sae.sae_ops.y_impl")
+        assert belongs_to_collection(leaf, "concept") and not belongs_to_collection(other, "concept")
+        composite = self._def("x_then_y", composition=["x", "y"])
+        assert belongs_to_collection(composite, "concept", family_members={"x", "y"})
+        assert not belongs_to_collection(composite, "concept", family_members={"x"})
+        assert not belongs_to_collection(composite, "concept")  # no members admitted: a composite alone is nothing
+
+    def test_a_hub_collection_is_identified_by_declaration_or_provenance(self):
+        from interpretune.testing.conformance.collections import belongs_to_collection
+
+        declared = self._def("org.repo.op", source="hub:org.repo", collection_name="org/repo")
+        by_provenance = self._def("org.repo.op2", source="hub:org.repo")
+        bundled = self._def("op", implementation="interpretune.analysis.ops.bundled.concept.concept_ops.op_impl")
+        assert belongs_to_collection(declared, "org/repo") and belongs_to_collection(by_provenance, "org/repo")
+        assert not belongs_to_collection(bundled, "org/repo")
+
+    def test_the_bundled_concept_family_resolves_to_its_intervention_ops(self):
+        from interpretune.testing.conformance.collections import ops_in_collection
+
+        ops = ops_in_collection("concept")
+        assert "model_fwd_intervention" in ops and "concept_direction" in ops
+        assert all(d.name == n for n, d in ops.items()), "aliases must not appear beside their canonical entry"
+        # a composite that mixes families belongs to none of them: `intervention_from_concept` composes concept
+        # ops with circuit-tracer ops, so validating it "as the concept collection" would judge the wrong thing
+        assert "intervention_from_concept" not in ops and "attribution_from_concept" not in ops

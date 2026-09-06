@@ -539,6 +539,9 @@ class TestOpDefCacheRoundTrip:
             "requires_grad",
             "per_latent_preds",
             "protocol_cls",
+            "required_intervention_modes",
+            "required_position_scopes",
+            "conformance",
         }
 
     def test_all_new_fields_survive_serialization(self):
@@ -564,6 +567,9 @@ class TestOpDefCacheRoundTrip:
             requires_grad=True,
             per_latent_preds=True,
             protocol_cls="interpretune.protocol.DefaultAnalysisBatchProtocol",
+            required_intervention_modes=["patch"],
+            required_position_scopes=["all_positions"],
+            conformance={"run_inputs": {"alpha": 1}},
         )
         serialized = OpDefinitionsCacheManager.__dict__["_serialize_op_def"](
             OpDefinitionsCacheManager.__new__(OpDefinitionsCacheManager), op_def
@@ -581,6 +587,13 @@ class TestOpDefCacheRoundTrip:
         # A declared protocol must survive too, or a CACHED op silently falls back to the default while an
         # identical cold load honours the declaration -- a divergence only a warm cache would show.
         assert restored.protocol_cls == "interpretune.protocol.DefaultAnalysisBatchProtocol"
+        # The intervention axes must survive, or a cached op skips the pre-execution axis check that a cold
+        # load performs and the refusal moves back to the backend, late, for warm caches only.
+        assert (restored.required_intervention_modes, restored.required_position_scopes) == (
+            ["patch"],
+            ["all_positions"],
+        )
+        assert restored.conformance == {"run_inputs": {"alpha": 1}}
         # Defaults stay out of the serialized form so the cache does not grow for every new trait.
         plain = OpDef(
             name="y", description="", implementation="m.f", input_schema=OpSchema({}), output_schema=OpSchema({})
@@ -591,13 +604,14 @@ class TestOpDefCacheRoundTrip:
         assert "source=" not in plain_serialized and "requires_grad" not in plain_serialized
         assert "protocol_cls" not in plain_serialized
         assert "collection_name" not in plain_serialized
+        assert "required_intervention_modes" not in plain_serialized and "conformance" not in plain_serialized
         # Deliberately a LITERAL, unlike the derived assertion in test_analysis_ops_compiler.py: the point is
         # to fail when the format changes without someone deciding it should, since adding an OpDef field (or
         # otherwise changing compiled output) without a bump makes stale caches deserialize silently wrong.
         # Updating it is the acknowledgement, so it should move only alongside a new `# N:` rationale line on
         # CACHE_FORMAT_VERSION itself. Note this only guards fields reaching THIS test; the compiler source is
         # not part of the cache fingerprint at all, which is #290.
-        assert CACHE_FORMAT_VERSION == "7"
+        assert CACHE_FORMAT_VERSION == "8"
 
 
 class TestOpStateIsNotSerialized:

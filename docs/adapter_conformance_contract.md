@@ -104,6 +104,48 @@ Gate `INTERVENTION` (with `intervention_support`):
 have their cases listed on the tracking issue and land as the suite grows; a repository declaring them runs
 whatever exists at its Interpretune version.
 
+## Per-mode invariants and distinguishability
+
+Each intervention mode a backend declares is held to one algebraic property a caller can state without a reference
+implementation, paired with a positive control so an identity cannot pass because the payload was ignored:
+
+| mode | invariant | positive control |
+| --- | --- | --- |
+| `add` | a zero-scale intervention is the identity | (`STEER_SCALE` moves the logits, checked by the scope cases) |
+| `replace` | the result is independent of `scale_factor` | replace moves the logits |
+| `patch` | `(v, v)` is the identity; `(s, t)` and `(t, s)` give the same result | `(s, t)` moves the logits |
+| `project` | projecting onto `v` and onto `-2v` is the same projection | project moves the logits |
+
+The pair-order symmetry of `patch` follows from the update `h + V(sigma(c) - c)`: both orders exchange the same two
+coordinates, so the pair is unordered. Every declared mode must also be distinguishable, for the same vector and
+point, from every other declared mode and from the baseline. That case is the one a backend that ignored `mode` and
+applied the one it has would fail.
+
+The invariants are batch-safe by construction: an intervention tensor broadcasts to every row, so "replace with the
+row's own activation" is not expressible through the op path and is deliberately not a case.
+
+## Op collections
+
+Ops declare what they need beside `required_capabilities`: `required_intervention_modes` and
+`required_position_scopes`, the configurations of the `intervention` surface the op will ask a backend for. A
+composite carries the union of its parts' axes plus its own. `OpCollectionConformance` validates a collection against
+a target through the dispatcher's own definitions:
+
+```python
+from interpretune.testing.conformance import ConformanceTarget, OpCollectionConformance
+
+
+class TestMyOpsOnMyAdapter(OpCollectionConformance):
+    target = ConformanceTarget(composition=("core", "my_adapter"), session_cfg_factory=build_session_cfg)
+    collection = "org/my_ops"  # a hub repo id (pulled by target.load), or a bundled family name such as "concept"
+```
+
+Three cases: every declared requirement is a member of the vocabulary; for each op the target's live declarations
+satisfy its requirements or validation refuses naming the missing capability, mode or scope (nothing executes either
+way); and each op declaring a `conformance: {run_inputs: ...}` block in its definition runs through the runner and
+yields its output columns. A collection with no sampled op skips that last case naming every op, so the absence is
+reported rather than silently passed.
+
 ## Adapter example notebooks
 
 An adapter repository ships a notebook per declared capability group under its own examples tree, a dev copy and

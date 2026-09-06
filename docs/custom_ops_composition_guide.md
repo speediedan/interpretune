@@ -46,6 +46,12 @@ An op should define:
   `uses_default_hooks` (install the default activation-cache forward/backward hooks), and
   `per_latent_preds` (predictions are emitted per latent model and must be joined across them before
   scoring). All default to `false`, and hub and local ops declare them exactly as bundled ops do.
+- optional `required_intervention_modes` and `required_position_scopes`: the configurations of the
+  `intervention` capability the op will ask a backend for (`replace`, `add`, `patch`, `project`;
+  `last_token`, `all_positions`). Checked at validation, before anything runs, against the backend's
+  declared `InterventionSupport`, so a backend that cannot honour a mode refuses by name up front rather
+  than after every earlier op in a composition has executed. A composite needs the union of its parts'
+  axes plus whatever it declares itself. Declaring an axis implies requiring the `intervention` surface.
 - one implementation function
 
 Relevant code:

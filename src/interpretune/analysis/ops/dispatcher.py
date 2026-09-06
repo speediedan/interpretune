@@ -533,6 +533,9 @@ class AnalysisOpDispatcher:
                 normal_params=op_def.get("normal_params", {}),
                 required_ops=op_def.get("required_ops", []),
                 required_capabilities=op_def.get("required_capabilities", []),
+                required_intervention_modes=list(op_def.get("required_intervention_modes", []) or []),
+                required_position_scopes=list(op_def.get("required_position_scopes", []) or []),
+                conformance=op_def.get("conformance"),
                 composition=op_def.get("composition", None),
                 op_state=self._resolve_op_state_spec(op_name, op_def.get("op_state")),
                 source=str(op_def.get("source", "bundled")),
@@ -1141,7 +1144,13 @@ class AnalysisOpDispatcher:
             ops = [op for op in raw_ops if isinstance(op, AnalysisOp)]
             if len(ops) != len(raw_ops):
                 raise ValueError(f"Composition for {op_name} contains non-AnalysisOp objects")
-            op = CompositeAnalysisOp(ops, name=op_name, aliases=op_def.aliases)
+            op = CompositeAnalysisOp(
+                ops,
+                name=op_name,
+                aliases=op_def.aliases,
+                required_intervention_modes=op_def.required_intervention_modes,
+                required_position_scopes=op_def.required_position_scopes,
+            )
             op.description = op_def.description
             op.input_schema = op_def.input_schema
             op.output_schema = op_def.output_schema
@@ -1191,6 +1200,8 @@ class AnalysisOpDispatcher:
             aliases=op_def.aliases,
             impl_params=impl_params,
             required_capabilities=op_def.required_capabilities,
+            required_intervention_modes=op_def.required_intervention_modes,
+            required_position_scopes=op_def.required_position_scopes,
             op_state=op_def.op_state,
             uses_default_hooks=op_def.uses_default_hooks,
             requires_grad=op_def.requires_grad,
