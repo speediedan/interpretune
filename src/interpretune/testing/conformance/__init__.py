@@ -30,6 +30,7 @@ __all__ = [
     "SelectionReport",
     "conformance_case",
     "ModelBackendConformance",
+    "NotebookFormConformance",
     "HFReference",
 ]
 
@@ -40,6 +41,10 @@ def __getattr__(name: str):
         from interpretune.testing.conformance.cases import ModelBackendConformance
 
         return ModelBackendConformance
+    if name == "NotebookFormConformance":
+        from interpretune.testing.conformance.notebooks import NotebookFormConformance
+
+        return NotebookFormConformance
     if name == "HFReference":
         from interpretune.testing.conformance.reference import HFReference
 

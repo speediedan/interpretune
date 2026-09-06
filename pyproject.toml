@@ -33,6 +33,7 @@ classifiers = [
 description = "A package to support LLM reasoning and interpretability experiments at a level of abstraction that is both powerfully flexible and convenient"
 readme = "README.md"
 dependencies = [
+    "tomli >= 2.0; python_version < '3.11'",  # [tool.interpretune.notebooks] on 3.10, where tomllib is absent
     "torch >=2.7.1",
     "transformers>=4.57.1",
     "tabulate >= 0.9.0",
@@ -71,6 +72,9 @@ dependencies = [
 
 [project.entry-points."console_scripts"]
 interpretune = "interpretune.base.components.cli:bootstrap_cli"
+# The notebook publishing engine, parameterized from a consuming repository's [tool.interpretune.notebooks]
+# table, so an adapter repository publishes its example notebooks with the engine rather than a copy of it.
+interpretune-publish-notebooks = "interpretune.utils.notebook_publishing:main"
 
 # Bundled adapters announce themselves through the SAME discovery mechanism a third-party adapter uses.
 # The rails may depend only on what a component DECLARES, never on WHICH package it is -- a hardcoded list
@@ -464,3 +468,10 @@ tmp_path_retention_count = 30  # allow retention of more successful runs during 
 # notebooks/ are helper modules the notebooks import, not paired sources (none carries a jupytext
 # header). The config was inert, but inert config for an uninstalled tool is a landmine, so it goes
 # with the dependency rather than after it.
+
+[tool.interpretune.notebooks]
+# interpretune's own example notebooks; an adapter repository writes the same table for its own layout
+dev_dir = "src/it_examples/notebooks/dev"
+publish_dir = "src/it_examples/notebooks/publish"
+colab_repo = "speediedan/interpretune"
+colab_branch = "main"
