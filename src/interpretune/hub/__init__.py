@@ -22,6 +22,7 @@ _LAZY_ATTRS = {
     "scan_cached_repos": "interpretune.hub.cache",
     "AdapterComponentError": "interpretune.hub.adapters",
     "declared_adapters": "interpretune.hub.adapters",
+    "HubAdapterLoad": "interpretune.hub.adapters",
     "load_hub_adapter": "interpretune.hub.adapters",
     "loaded_adapter_module": "interpretune.hub.adapters",
     "IT_COMPONENT_MANIFEST": "interpretune.hub.manifest",

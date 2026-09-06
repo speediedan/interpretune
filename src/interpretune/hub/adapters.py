@@ -20,6 +20,8 @@ Three properties this path has deliberately:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import importlib.util
 import sys
 from contextvars import ContextVar
@@ -31,7 +33,7 @@ from interpretune.hub.manifest import ComponentManifestError
 
 if TYPE_CHECKING:
     from interpretune.protocol import Adapter
-from interpretune.utils.logging import rank_zero_info
+from interpretune.utils.logging import UnavailableCompositionWarning, rank_zero_warn
 
 
 class AdapterComponentError(ComponentManifestError):
@@ -155,10 +157,25 @@ def supported_compositions() -> tuple[tuple[str, ...], ...] | None:
     return _SUPPORTED_COMPOSITIONS.get()
 
 
-def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None) -> list[Adapter]:
+@dataclass(frozen=True)
+class HubAdapterLoad:
+    """What one ``load_hub_adapter`` call produced.
+
+    ``members`` are the Adapter members the component contributed; ``skipped`` is the per-composition skip
+    report, ``(composition key, reason)`` for every declared composition this environment could not support.
+    Deliberately not iterable: a caller written against the old ``list`` return would otherwise iterate this
+    record's fields without error and register nothing.
+    """
+
+    members: list[Adapter]
+    skipped: list[tuple[str, str]]
+
+
+def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None) -> HubAdapterLoad:
     """Load ONE cached adapter component: trust gate, enum extension, entrypoint, registration.
 
-    Returns the :class:`~interpretune.protocol.Adapter` members the component contributed. Idempotent:
+    Returns a :class:`HubAdapterLoad`: the :class:`~interpretune.protocol.Adapter` members the component
+    contributed and the per-composition skip report. Idempotent:
     reloading the same cached revision returns the same members without re-executing the entrypoint.
 
     Raises rather than degrading **for the component as a whole**: op discovery can drop one bad
@@ -207,10 +224,15 @@ def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None)
     # One evaluation, handed over, cannot disagree with itself.
     satisfiable, unsupported = _partition_declared_compositions(manifest, source=source)
     if unsupported:
-        rank_zero_info(
+        # A WARNING through the warnings module, not an INFO record: the first cold-venv load of a published
+        # adapter skipped two of six declared compositions correctly and printed nothing, because Python's
+        # default logging drops INFO. The report is also RETURNED, so a caller can surface it with no logging
+        # configuration at all.
+        rank_zero_warn(
             f"{source}: {len(satisfiable)} of {len(satisfiable) + len(unsupported)} declared composition(s) are "
             "supported in this environment; the rest are unavailable here rather than nonexistent:\n"
-            + "\n".join(f"  - {entry}: {reason}" for entry, reason in unsupported)
+            + "\n".join(f"  - {entry}: {reason}" for entry, reason in unsupported),
+            category=UnavailableCompositionWarning,
         )
 
     # REFUSE A SHADOWING COMPONENT BEFORE CREATING ITS MEMBERS, not after. `register_dynamic_adapter`
@@ -270,4 +292,4 @@ def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None)
                 "unsatisfiable composition is skipped and reported; a satisfiable one that does not appear "
                 "is a mismatch between what the manifest promised and what the code delivered."
             )
-    return members
+    return HubAdapterLoad(members=members, skipped=list(unsupported))

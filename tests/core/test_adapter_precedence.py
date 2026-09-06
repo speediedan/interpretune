@@ -312,7 +312,7 @@ def parity_registry(tmp_path, monkeypatch, restore_adapter_enum):
         composition_classes=(BundledStyleModule,),
         description="bundled-style composition, for the parity comparison",
     )
-    members = load_hub_adapter("org/parity-fixture", cache_dir=cache, registry=registry)
+    members = load_hub_adapter("org/parity-fixture", cache_dir=cache, registry=registry).members
     return registry, members[0]
 
 

@@ -158,6 +158,16 @@ class ITInstantiationFeedbackWarning(UserWarning):
     """
 
 
+class UnavailableCompositionWarning(UserWarning):
+    """A declared adapter composition was skipped because this environment cannot support it.
+
+    Emitted as a WARNING rather than logged at INFO, deliberately: the skip is a divergence between what a manifest (or
+    a bundled adapter's declaration) advertises and what this environment delivers, and Python's default configuration
+    shows warnings while dropping INFO records. A consumer who has configured nothing still sees which compositions are
+    unavailable here rather than nonexistent; one who wants silence filters exactly this category.
+    """
+
+
 def _warn(message: str | Warning, stacklevel: int = 2, **kwargs: Any) -> None:
     warnings.warn(message, stacklevel=stacklevel, **kwargs)
 
