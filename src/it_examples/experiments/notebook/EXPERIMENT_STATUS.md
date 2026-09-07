@@ -1,6 +1,6 @@
 # Notebook Experimentation Status
 
-**Date:** 2026-07-11 (7c-amendments update; prior full revision 2026-07-07)
+**Date:** 2026-09-01 (J-space status section added; prior revisions 2026-07-11 and 2026-07-07)
 **Scope:** `src/it_examples/experiments/notebook/` (shared notebook harness + `concept_direction/` experiment family)
 **Last experimental checkpoint:** 2026-04-27 (`f53f89a` — "Checkpoint sign-aware feature selection and concept-direction validation")
 
@@ -211,6 +211,58 @@ norm/weight/paired-rejection comparison across Ohio/orange/bat with the `context
 survivors (dashboard-validated); the two anti-target orange Color exemplars (`blue`, `yellow`); a
 non-canceling hybrid answer-basis projection rule; OQ-A (continuation-style PT store prompts) and
 OQ-C (scale-factor sweep aggregation). These are secondary to the auto-pruning direction below.
+
+## J-space (Jacobian-lens) Status (2026-09-01)
+
+The J-space work planned in the 2026-07-18 sections below has partly landed, outside this harness
+(in the steering demo notebooks, the analysis backends and the tests) rather than in it. This section
+is the ground truth for what exists; `intervention_capabilities_overview.md` carries the API-level
+summary and `concept_direction_analysis.md` the per-probe status.
+
+**Landed:** the lens-coordinate `patch` intervention mode (backend-agnostic; validated by an
+eager-reference check, a Jacobian-vector-product convergence check and a magnitude sweep in
+`tests/core/test_jlens_patch_validation.py`); the separately published `speediedan/jlens_steering_ops`
+collection (private until the [#261](https://github.com/speediedan/interpretune/issues/261) flip)
+whose `jlens_patch_intervention` composite drives section 4b of both steering demos on GPU; the
+in-tree unembed and final-norm seam; and the measured final-norm folding result (folding the norm's
+elementwise scale into the lens vectors is essential on gemma-3-1b-it and weaker on gemma-2-2b;
+mechanism and predictor on [#330](https://github.com/speediedan/interpretune/issues/330)).
+
+**Measured on the orange (color vs fruit) example, target-gap deltas:** gemma-2-2b at layer 24,
+J-space swap at scale 1.0 +4.50 against the direct-hook `add` path's +2.00 at scale 20 (TransformerLens
+backend +4.25); gemma-3-1b-it at layer 21, +10.25 against +5.25. These compare a scale-1.0 swap with a
+scale-20 addition, not two effects at matched displacement; a magnitude-matched comparison is queued
+under [#339](https://github.com/speediedan/interpretune/issues/339). They are also a single prompt,
+not a rate.
+
+**Not landed (see [#225](https://github.com/speediedan/interpretune/issues/225)):** any J-lens
+readout, concept probe or sparse J-space decomposition; a `basis="jlens"` selector; per-feature
+J-space signatures; `clamp` or `reject` (project-out) modes; subspace attribution graphs
+([#338](https://github.com/speediedan/interpretune/issues/338)); a task-fitted lens over RTE
+([#273](https://github.com/speediedan/interpretune/issues/273) direction i). The four J-space probes
+designed in `concept_direction_analysis.md` (polysemy cancellation in the workspace, per-feature
+signatures, workspace-flip vs logit-flip ordering, a jlens concept-direction basis) all wait on the
+readout ops.
+
+**What this harness should carry next for J-space, in order:**
+
+1. A `jlens/` experiment family skeleton beside `concept_direction/` (layered YAML, launcher
+   contract, a papermill smoke path with a synthetic lens), so the items below are reproducible
+   artifacts rather than demo cells. It can share harness changes with the `graph_pruning/` skeleton
+   [#220](https://github.com/speediedan/interpretune/issues/220) asks for.
+2. A two-hop battery (30 to 50 prompts with known single-token intermediates, chat-templated for
+   instruction-tuned models): swap the intermediate and the answer separately at every fitted layer at
+   scale 1.0, report top-5 success rate per layer and the depth at which the intermediate swap first
+   takes effect relative to the answer swap. This turns the single-prompt anecdote into the kind of
+   rate the paper reports (54 to 70% for multi-hop swaps on its models).
+3. Probe 2 (per-feature J-space signatures, using folded vectors) as soon as the readout op exists;
+   then probe 3 (readout at the answer position pre and post the feature-mediated intervention, on
+   the existing steering demo); then probes 1 and 4.
+4. The embed-basis `patch` comparison on the Direct-hook path (concept-axis-only swap against the
+   naive `add`), which needs no readout and only the existing demo substrate.
+
+The deferred concept-direction threads listed under "7c Amendments" (store-direction calibration,
+OQ-A, OQ-C, the hybrid answer-basis rule) remain deferred and are not on the J-space critical path.
 
 ## Embed-Path Influence-Score Scale Collapse — RESOLVED as parity-surface reduction (2026-07-20)
 

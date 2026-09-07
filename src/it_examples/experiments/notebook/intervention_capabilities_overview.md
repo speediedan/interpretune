@@ -1,6 +1,7 @@
 # Intervention Capabilities Overview
 
-**Date:** 2026-07-11 (Phase 7 / 7c amendments — see `EXPERIMENT_STATUS.md` "7c Amendments" §2)
+**Date:** 2026-07-11 (Phase 7 / 7c amendments; see `EXPERIMENT_STATUS.md` "7c Amendments" §2);
+J-space status refreshed 2026-09-01
 
 A high-level map of interpretune's current intervention/steering surface as exercised by the
 `concept_direction` experiment family and the circuit-tracer demo notebooks. Deeper reference:
@@ -22,7 +23,12 @@ Both paths emit `pre_intervention_logits`, `post_intervention_logits`, and `logi
 
 ## Embed-path controls (`InterventionSpec`)
 
-- `mode`: `replace` | `add` (`input + tensor * scale_factor`) | `project` (project onto tensor span)
+- `mode`: `replace` | `add` (`input + tensor * scale_factor`) | `project` (project onto tensor span) |
+  `patch` (lens-coordinate swap: takes a `(2, d_model)` pair of directions, reads the activation's
+  coordinates along the pair via the pseudoinverse and exchanges them, `h <- h + V(sigma(c) - c)`,
+  leaving the orthogonal component untouched; basis-agnostic, so J-lens rows and embed-basis
+  concept poles are both valid pairs). The pair and the model must share a residual basis: see the
+  TransformerLens weight-processing caveat in `docs/interpretune_intervention_apis.md`.
 - `scale_factor`: amplification for `add`/`project`
 - `use_intervention_tensor_as_basis`: basis-direction toggle for `project`
 - Hook targeting: explicit `interventions` dicts or shorthand
@@ -32,6 +38,11 @@ Both paths emit `pre_intervention_logits`, `post_intervention_logits`, and `logi
   `concept_direction` with mode `add`.
 - SAE/latent sub-hook targets are supported via `use_latent_models`/`sae_handles`
   (act_input / hidden_pre / feature_acts / sae_error / sae_output sub-hooks on both backends).
+- An op declares the configurations it needs through `required_intervention_modes` and
+  `required_position_scopes`, checked against the backend's `InterventionSupport` record before
+  anything runs. Without them an unsupported mode surfaces only when the backend refuses it, after
+  every earlier op in a composition has already executed, and a published collection advertises
+  nothing a consumer can check short of running it.
 
 ## Store-path controls (`CircuitTracerConfig.intervention_*` + per-call overrides)
 
@@ -104,11 +115,50 @@ modification (or consumer-side local-DB imports). Until then, treat locally gene
 as a maintainer/local-DB-developer capability (exercised by the steering demo's local mode and its
 optional service-gated tests).
 
-## Planned: Jacobian-space (J-lens) integration
+## Jacobian-space (J-lens) integration: shipped and remaining (2026-09-01)
 
-Jacobian-lens support (read/probe/sparse-inventory ops, a `jlens` concept-direction basis,
-lens-coordinate `patch` interventions alongside `add`/`project`, per-feature J-space signatures in
-the decoupling tooling, and shareable J-space artifacts co-designed with AnalysisStore hub support)
-is scoped and tracked in [interpretune#225](https://github.com/speediedan/interpretune/issues/225)
-(post-PR-wave, Wave-2-adjacent; pairs with
-[interpretune#124](https://github.com/speediedan/interpretune/issues/124)).
+The J-space technique (Gurnee et al. 2026, https://transformer-circuits.pub/2026/workspace/) is
+tracked as [interpretune#225](https://github.com/speediedan/interpretune/issues/225) (the in-tree
+half) and [interpretune#273](https://github.com/speediedan/interpretune/issues/273) (a separately
+published, genuinely non-bundled op collection, `speediedan/jlens_steering_ops`, private until the
+[#261](https://github.com/speediedan/interpretune/issues/261) public flip).
+
+**Shipped (the write path):**
+
+- `model_fwd_intervention` mode `patch` (above), validated three ways in
+  `tests/core/test_jlens_patch_validation.py`: an eager-reference check of the traced mechanics, a
+  float64 convergence check against the true per-prompt Jacobian-vector product, and a magnitude
+  sweep (0.25 to 8.0) that pins where first-order behavior departs. No freezing is needed for the
+  mechanics check; the module docstring records why.
+- The collection's `jlens_concept_patch_pair` op builds the `(2, d_model)` J-lens pole pair for a
+  concept token pair from the pre-fitted `neuronpedia/jacobian-lens` artifacts, folding the final
+  norm's elementwise scale into the vectors (`v_c = (W_U[c] * s) @ J_l`, the direction the paper's
+  own readout computes); the composite `jlens_patch_intervention` chains it into the bundled
+  intervention op. Both steering demos carry a J-space section (4b) executed on GPU: the swap flips
+  the orange example at scale 1.0 on gemma-2-2b (layer 24) and gemma-3-1b-it (layer 21), on both
+  backends.
+- `interpretune.analysis.optools.resolve_unembed_and_norm_scale`: the sanctioned seam for the
+  unembed matrix and final-norm scale per model family (HF gemma `1 + weight`, other HF RMSNorms
+  `weight`, TransformerLens `ln_final.w` as stored).
+- The folding decision is measured, not assumed: folding is essential on gemma-3-1b-it (unfolded
+  vectors never flip) and roughly 3x weaker at late layers on gemma-2-2b (both flip), because a
+  uniform norm scale cancels exactly in patch mode and only its anisotropy, through its alignment
+  with where the model stores the task contrast, can matter. `jlens_apply_final_norm` therefore
+  stays a per-model option. The grounding is
+  [interpretune#330](https://github.com/speediedan/interpretune/issues/330).
+
+**Remaining (the read path and the integrations), all tracked on #225 unless noted:**
+
+- A lens loader/config and the readout ops (`jlens_read`, `jlens_concept_probe`,
+  `jlens_sparse_inventory`) behind the backend seam. Nothing in-tree can produce a J-lens readout
+  today; the experimental probes in `concept_direction_analysis.md` wait on this.
+- A `basis="jlens"` selector on `concept_direction` (there is no `basis=` selector today; embed and
+  store are two parallel pipelines, and `use_answer_state_as_basis` is a different axis).
+- Per-feature J-space signatures as the third profile in the Phase-6 decoupling tooling.
+- The `clamp` and `reject` intervention modes (the paper's coordinate clamping and top-k J-space
+  ablation).
+- The embed-basis `patch` comparison on the Direct-hook path (concept-axis-only swap vs naive add).
+- J-lens subspace attribution graphs
+  ([#338](https://github.com/speediedan/interpretune/issues/338)) and level-3 validation of the
+  production pair on the real gemma artifacts
+  ([#339](https://github.com/speediedan/interpretune/issues/339)).
