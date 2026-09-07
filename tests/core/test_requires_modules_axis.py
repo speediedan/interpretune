@@ -53,7 +53,10 @@ class TestManifestValidationOfTheAxis:
     def test_dotted_importable_names_are_accepted(self, per_composition):
         validate_component_manifest(
             self._manifest(
-                {"pip": ["circuit-tracer"], "modules": ["circuit_tracer.replacement_model_interp_engine"]},
+                {
+                    "pip": ["circuit-tracer"],
+                    "modules": ["circuit_tracer.replacement_model.replacement_model_interp_engine"],
+                },
                 per_composition=per_composition,
             ),
             source="t",
