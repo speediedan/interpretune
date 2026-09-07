@@ -81,6 +81,45 @@ def _validate_requires_shape(requires: Any, where: str) -> None:
             )
 
 
+class UnpairedCompositionWarning(UserWarning):
+    """A declared composition set has a ``module`` entry with no ``datamodule`` counterpart, or the reverse."""
+
+
+def _warn_unpaired_compositions(compositions: list, source: str) -> None:
+    """Every composition interpretune ships pairs a ``module`` and a ``datamodule`` for the same adapter set, and
+    an ``ITSession`` resolves both.
+
+    Nothing REQUIRES the pairing (a caller who only builds modules is coherent),
+    so an unpaired set is warned about rather than refused: the alternative is a ``KeyError`` at session
+    construction that reads as a missing adapter when the truth is a half-declared component.
+    """
+    slots: dict[tuple[str, ...], set[str]] = {}
+    for entry in compositions:
+        if not isinstance(entry, dict):
+            continue
+        adapters = tuple(sorted(str(a) for a in entry.get("adapters") or []))
+        slots.setdefault(adapters, set()).add(str(entry.get("component")))
+    unpaired = [
+        (adapters, present)
+        for adapters, present in slots.items()
+        if ({"module", "datamodule"} & present) and not ({"module", "datamodule"} <= present)
+    ]
+    if unpaired:
+        from interpretune.utils.logging import rank_zero_warn
+
+        detail = "; ".join(
+            f"{'+'.join(a)} declares only {sorted(p)} (ITSession will raise on the "
+            f"{'datamodule' if 'module' in p else 'module'} path)"
+            for a, p in unpaired
+        )
+        rank_zero_warn(
+            f"{source}: composition set(s) without a module/datamodule counterpart: {detail}. Every bundled "
+            "composition pairs the two; a half-declared component surfaces as a KeyError at session construction "
+            "that reads as a missing adapter.",
+            category=UnpairedCompositionWarning,
+        )
+
+
 def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> dict:
     """Validate the coarse shape of a parsed component manifest, returning it on success."""
     if not isinstance(manifest, dict):
@@ -196,6 +235,8 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
             )
         if IT_COMPONENT_MANIFEST in files:
             raise ComponentManifestError(f"{source}: `hookmaps.files` must not list {IT_COMPONENT_MANIFEST} itself.")
+    if "adapters" in kinds:
+        _warn_unpaired_compositions((manifest.get("adapters") or {}).get("compositions") or [], source)
     if "promptconfigs" in kinds:
         pc = manifest.get("promptconfigs") or {}
         if not pc.get("entrypoint") or not isinstance(pc.get("definitions"), dict) or not pc["definitions"]:

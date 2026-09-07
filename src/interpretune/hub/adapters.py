@@ -339,4 +339,23 @@ def load_hub_adapter(
                 "unsatisfiable composition is skipped and reported; a satisfiable one that does not appear "
                 "is a mismatch between what the manifest promised and what the code delivered."
             )
+        # THE OTHER DIRECTION: a registration the manifest never declared. Overstating fails above; understating
+        # used to load fine, and its only visible consequence was the card, which renders one row per DECLARED
+        # entry and so told a reader the component supplies no datamodule when it does: a confident wrong answer
+        # on a public surface. Declared slots must equal registered slots, so the card is honest by construction.
+        declared_keys = [set(k) for k in satisfiable] + [set(k.split("+")) for k, _ in unsupported]
+        component_names = {getattr(part, "value", part) for key in added if isinstance(key, tuple) for part in key}
+        undeclared = [
+            sorted(k, key=str)
+            for k in registered_keys
+            if not any(d <= k for d in declared_keys)
+            and k & {n for n in component_names if n in ("module", "datamodule")}
+        ]
+        if undeclared:
+            raise AdapterComponentError(
+                f"{source}: entrypoint {entrypoint!r} registered composition(s) the manifest does not declare: "
+                f"{['+'.join(str(p) for p in k) for k in undeclared]!r}. Declare every composition the entrypoint "
+                "registers: the card renders the declared list, and an undeclared registration makes it claim the "
+                "component supplies less than it does."
+            )
     return HubAdapterLoad(members=members, skipped=list(unsupported))

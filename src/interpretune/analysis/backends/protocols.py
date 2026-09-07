@@ -162,6 +162,14 @@ class ModelBackendCore(Protocol):
     ops call an optional method only after ``backend.supports(...)`` says so (see
     ``require_backend_capability``). A partial backend (e.g. a hub-delivered adapter's) implements
     this core plus whichever groups it truthfully claims.
+
+    **The ``model`` argument every op passes is ``module.model``.** Bundled ops reach it directly, and every
+    bundled adapter puts its own execution wrapper in that slot (nnsight's ``LanguageModel``, sae_lens's
+    ``HookedSAETransformer`` / ``TransformerBridge``, circuit-tracer's replacement model); the slot is not
+    restricted to a raw HF model. An adapter whose execution object cannot occupy ``module.model`` must carry
+    its own handle and reach it from these methods, because nothing else will pass it in. This was unstated
+    until the first third-party adapter left the HF model in the slot, kept its engine handle elsewhere, and
+    found its ops receiving a handle its wrapper could not take.
     """
 
     @property
