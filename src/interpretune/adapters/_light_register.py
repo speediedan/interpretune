@@ -155,11 +155,14 @@ def register_all_adapters(registry) -> None:
     # when a dependency is genuinely absent. The defect was that it was SILENT, so "this composition is
     # unavailable here" and "this composition does not exist" became indistinguishable at exactly the
     # moment a user needs to tell them apart.
+    # At WARNING, through the warnings module: an INFO record never reaches a consumer who has configured no
+    # logging, which is the configuration a plain script is in, and a skip nobody can see is the silent skip.
     if skipped:
-        from interpretune.utils.logging import rank_zero_info
+        from interpretune.utils.logging import UnavailableCompositionWarning, rank_zero_warn
 
         lines = "\n".join(f"  - {path}: {reason}" for path, reason in skipped)
-        rank_zero_info(
+        rank_zero_warn(
             f"Registered adapters from {len(adapter_modules) - len(skipped)} of {len(adapter_modules)} "
-            f"modules; {len(skipped)} unavailable in this environment:\n{lines}"
+            f"modules; {len(skipped)} unavailable in this environment:\n{lines}",
+            category=UnavailableCompositionWarning,
         )

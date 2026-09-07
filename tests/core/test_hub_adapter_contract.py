@@ -68,7 +68,7 @@ class TestPublishedComponentSatisfiesTheRails:
         it.hub.pull(repo_id, revision=revision)
 
         registry = CompositionRegistry()
-        members = load_hub_adapter(repo_id, registry=registry)
+        members = load_hub_adapter(repo_id, registry=registry).members
 
         assert members, "a component declaring adapters must contribute at least one"
         for member in members:
@@ -86,7 +86,7 @@ class TestPublishedComponentSatisfiesTheRails:
         declared = set((manifest.get("adapters") or {}).get("declares") or [])
 
         registry = CompositionRegistry()
-        members = load_hub_adapter(repo_id, registry=registry)
+        members = load_hub_adapter(repo_id, registry=registry).members
         assert {m.name for m in members} == declared
 
     def test_refusing_the_trust_gate_refuses_the_load(self, component, monkeypatch):

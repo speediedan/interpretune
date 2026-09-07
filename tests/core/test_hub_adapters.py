@@ -192,7 +192,7 @@ class TestHubAdapterLoad:
         cache = self._publish(tmp_path, REGISTERS_DECLARED)
         monkeypatch.setenv(IT_TRUST_REMOTE_CODE_ENV_VAR, "1")
         registry = CompositionRegistry()
-        members = load_hub_adapter("org/fixture-adapter", cache_dir=cache, registry=registry)
+        members = load_hub_adapter("org/fixture-adapter", cache_dir=cache, registry=registry).members
 
         assert [m.name for m in members] == [FIXTURE_ADAPTER]
         key = ("module",) + registry.canonicalize_composition((Adapter.core, members[0]))
@@ -292,3 +292,77 @@ class TestHubAdapterLoad:
         monkeypatch.setenv(IT_TRUST_REMOTE_CODE_ENV_VAR, "1")
         with pytest.raises(AdapterComponentError, match="publishes no adapters"):
             load_hub_adapter("org/not-an-adapter", cache_dir=cache, registry=CompositionRegistry())
+
+
+CONDITIONAL_COMPOSITIONS = REGISTERS_DECLARED
+
+
+class TestSkippedCompositionsAreVisible:
+    """A declared composition this environment cannot support is reported where an UNCONFIGURED consumer sees it,
+    and returned, so the skip is never silent (#465)."""
+
+    @staticmethod
+    def _conditional_component(tmp_path):
+        import yaml
+
+        component = _write_component(tmp_path, REGISTERS_DECLARED)
+        manifest = yaml.safe_load((component / "it_component.yaml").read_text())
+        manifest["adapters"]["compositions"].append(
+            {
+                "component": "datamodule",
+                "adapters": ["core", FIXTURE_ADAPTER],
+                "requires": {"pip": ["a-package-nobody-has"]},
+            }
+        )
+        (component / "it_component.yaml").write_text(yaml.safe_dump(manifest))
+        return component
+
+    def test_the_load_returns_the_skip_report(self, tmp_path, monkeypatch, restore_adapter_enum):
+        from interpretune.adapters.registration import CompositionRegistry
+        from interpretune.hub.adapters import HubAdapterLoad, load_hub_adapter
+        from interpretune.hub.components import local_publish
+        from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR
+        from interpretune.utils.logging import UnavailableCompositionWarning
+
+        cache = tmp_path / "components"
+        local_publish(self._conditional_component(tmp_path), "org/conditional", cache_dir=cache)
+        monkeypatch.setenv(IT_TRUST_REMOTE_CODE_ENV_VAR, "1")
+        with pytest.warns(UnavailableCompositionWarning, match="1 of 2 declared composition"):
+            loaded = load_hub_adapter("org/conditional", cache_dir=cache, registry=CompositionRegistry())
+        assert isinstance(loaded, HubAdapterLoad)
+        assert [m.name for m in loaded.members] == [FIXTURE_ADAPTER]
+        assert len(loaded.skipped) == 1
+        key, reason = loaded.skipped[0]
+        assert FIXTURE_ADAPTER in key and "datamodule" in key and "a-package-nobody-has" in reason
+        with pytest.raises(TypeError):
+            iter(loaded)  # the record is not a list; an old-style caller fails loudly rather than silently
+
+    def test_the_report_reaches_a_consumer_with_default_logging(self, tmp_path):
+        """Measured against what a plain script receives: no logging configured, no warnings filter, stderr.
+
+        `caplog` at INFO would capture the record and pass against the bug; a subprocess is the only honest
+        instrument for "an unconfigured consumer sees it".
+        """
+        import os
+        import subprocess
+        import sys
+
+        from interpretune.hub.components import local_publish
+        from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR
+
+        cache = tmp_path / "components"
+        local_publish(self._conditional_component(tmp_path), "org/conditional", cache_dir=cache)
+        script = (
+            "from pathlib import Path\n"
+            "from interpretune.adapters.registration import CompositionRegistry\n"
+            "from interpretune.hub.adapters import load_hub_adapter\n"
+            f"load_hub_adapter('org/conditional', cache_dir=Path({str(cache)!r}), registry=CompositionRegistry())\n"
+            "print('LOAD COMPLETE')\n"
+        )
+        env = {**os.environ, IT_TRUST_REMOTE_CODE_ENV_VAR: "1"}
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=180, env=env)
+        assert result.returncode == 0, result.stderr[-2000:]
+        assert "LOAD COMPLETE" in result.stdout
+        assert (
+            "a-package-nobody-has" in result.stderr and "unavailable here rather than nonexistent" in result.stderr
+        ), "the skip report did not reach a consumer with default logging:\n" + result.stderr[-2000:]

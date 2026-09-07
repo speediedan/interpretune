@@ -26,6 +26,7 @@ from interpretune.adapters._light_register import (
     register_all_adapters,
 )
 from interpretune.adapters.registration import CompositionRegistry
+from interpretune.utils.logging import UnavailableCompositionWarning
 
 ADAPTER_PACKAGES = ("circuit_tracer", "transformer_lens", "sae_lens", "nnsight")
 SRC = Path(__file__).parent.parent.parent / "src" / "interpretune" / "adapters"
@@ -109,9 +110,11 @@ class TestUnavailableAdaptersAreReported:
         if not discover_adapter_entrypoints():
             pytest.skip("installed interpretune metadata predates the entry-point group; reinstall to exercise")
         monkeypatch.setattr(ctpkg, "__it_requires__", {"pip": ["a-package-nobody-has"]}, raising=False)
-        with caplog.at_level(logging.INFO):
+        # A WARNING, asserted as one: `caplog.at_level(INFO)` would capture an INFO record happily and pass
+        # against the bug this guards (an unconfigured consumer never sees INFO).
+        with pytest.warns(UnavailableCompositionWarning, match="unavailable in this environment") as caught:
             register_all_adapters(CompositionRegistry())
-        text = caplog.text
+        text = " ".join(str(w.message) for w in caught)
         assert "a-package-nobody-has" in text, f"the skip did not name the missing dependency:\n{text}"
         assert "not installed" in text
 
@@ -121,9 +124,14 @@ class TestUnavailableAdaptersAreReported:
         Without this, a report that fired unconditionally would pass the test above while telling a
         fully-provisioned user their adapters are unavailable.
         """
-        with caplog.at_level(logging.INFO):
-            register_all_adapters(CompositionRegistry())
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with caplog.at_level(logging.INFO):
+                register_all_adapters(CompositionRegistry())
         assert "unavailable in this environment" not in caplog.text
+        assert not [w for w in caught if issubclass(w.category, UnavailableCompositionWarning)]
 
 
 class TestImplementationModuleResolution:
