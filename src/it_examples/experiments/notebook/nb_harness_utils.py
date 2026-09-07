@@ -51,14 +51,20 @@ from interpretune.utils.neuronpedia_explanations import (
 from it_examples.examples.prompt_configs.prompt_configs import GemmaPromptConfig
 from it_examples.utils.nb_ui_utils import display_layer_divergence_summary, display_logit_drift_summary
 from it_examples.experiments.notebook.config import get_config_value
-from it_examples.experiments.notebook.concept_direction.analysis.concept_direction_analysis import (
-    build_classification_prompt_text,
-)
-from it_examples.experiments.notebook.concept_direction.analysis.intervention_drift_analysis import (
-    resolve_artifact_output_dir,
-    save_preserved_intervention_artifacts,
-    tensor_fingerprint,
-)
+from interpretune.utils.notebook_experiments import ExperimentHooks
+
+# The experiment-specific callables the shared harness needs are SUPPLIED by the experiment rather than
+# imported from one. Importing them here made the shared rails require that particular experiment to be
+# installed, so the shared infrastructure could not be shared. `set_experiment_hooks` is how an
+# experiment, in this tree or outside it, hands them over.
+_EXPERIMENT_HOOKS = ExperimentHooks()
+
+
+def set_experiment_hooks(hooks: ExperimentHooks) -> None:
+    """Register the experiment-specific callables this harness should use."""
+    global _EXPERIMENT_HOOKS
+    _EXPERIMENT_HOOKS = hooks
+
 
 _ipython_display: Any
 _ipython_html: Any
@@ -190,12 +196,12 @@ if TYPE_CHECKING:
     )
 
 
-DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT = Path(
-    os.getenv(
-        "LOCAL_NEURONPEDIA_EXPORT_ROOT",
-        "/home/speediedan/repos/neuronpedia/utils/neuronpedia-utils/neuronpedia_utils/exports",
-    )
-)
+# No default, deliberately. This used to fall back to an absolute path under one contributor's home
+# directory, which is unreachable on every other machine and is shipped source in a public repository.
+# A default that cannot exist is worse than none: it turns a missing setting into a confusing empty
+# result instead of an error naming what to set.
+_LOCAL_NEURONPEDIA_EXPORT_ROOT_ENV = "LOCAL_NEURONPEDIA_EXPORT_ROOT"
+DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT = Path(raw) if (raw := os.getenv(_LOCAL_NEURONPEDIA_EXPORT_ROOT_ENV)) else None
 
 
 @dataclass
@@ -534,7 +540,7 @@ def _count_specific_feature_requests(raw_selection: Any) -> int:
 
 
 def _build_classification_prompt(entity_name: str, question: str) -> str:
-    return build_classification_prompt_text(entity_name, question)
+    return _EXPERIMENT_HOOKS.require("build_classification_prompt_text")(entity_name, question)
 
 
 def _chattify_apply_chat_template(prompt: str, tokenizer: Any) -> str:
@@ -1522,6 +1528,11 @@ class LocalExplanationPreparationResult:
 
 
 def _resolve_local_export_roots(local_export_roots: Iterable[Path | str] | None = None) -> tuple[Path, ...]:
+    if local_export_roots is None and DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT is None:
+        raise ValueError(
+            "no local Neuronpedia export root is configured: pass `local_export_roots=` or set "
+            f"${_LOCAL_NEURONPEDIA_EXPORT_ROOT_ENV} to the directory holding the exports."
+        )
     candidate_roots = tuple(Path(root) for root in (local_export_roots or (DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT,)))
     return tuple(root for root in candidate_roots if root.exists())
 
@@ -1968,7 +1979,7 @@ def _maybe_preserve_debug_intervention_artifacts(
     report: Any,
     runtime_state: dict[str, Any] | None = None,
 ) -> Path | None:
-    artifact_dir = resolve_artifact_output_dir(
+    artifact_dir = _EXPERIMENT_HOOKS.require("resolve_artifact_output_dir")(
         artifact_name=_debug_intervention_artifact_name(cfg, feature_row),
     )
     if artifact_dir is None:
@@ -2000,7 +2011,7 @@ def _maybe_preserve_debug_intervention_artifacts(
         },
         "runtime_state": runtime_state or {},
     }
-    save_preserved_intervention_artifacts(
+    _EXPERIMENT_HOOKS.require("save_preserved_intervention_artifacts")(
         artifact_dir,
         graph=graph,
         feature_row=feature_row,
@@ -2347,7 +2358,7 @@ def _serialize_intervention_call_kwargs(kwargs: dict[str, Any]) -> dict[str, Any
     serialized: dict[str, Any] = {}
     for key, value in kwargs.items():
         if isinstance(value, torch.Tensor):
-            serialized[key] = tensor_fingerprint(value)
+            serialized[key] = _EXPERIMENT_HOOKS.require("tensor_fingerprint")(value)
         elif isinstance(value, range):
             serialized[key] = {"kind": "range", "start": value.start, "stop": value.stop, "step": value.step}
         else:
