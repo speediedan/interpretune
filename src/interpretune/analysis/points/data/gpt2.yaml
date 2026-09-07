@@ -1,4 +1,5 @@
 # GPT-2 (transformers `GPT2LMHeadModel`). Pre-norm blocks, no post-sublayer norms.
+schema_version: 1
 architecture: GPT2LMHeadModel
 facts:
   sandwich_norms: false

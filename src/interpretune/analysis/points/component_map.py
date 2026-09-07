@@ -22,6 +22,12 @@ import yaml
 
 _DATA_DIR = Path(__file__).parent / "data"
 
+#: The component-map document schema version. 1: `architecture`, `components` (component path -> {module, kind}),
+#: optional `facts`. Bump on a change a reader written against the previous number would misread. What a reader
+#: does with a version it does not recognise is the evolution policy's business (interpretune#477); this slice
+#: only makes every document say which schema it was written against.
+COMPONENT_MAP_SCHEMA_VERSION = 1
+
 #: Component kinds and whether their module returns a tuple whose element 0 is the tensor (the static
 #: default; the nnsight backend measures this per model because transformers 5.x changed decoder blocks).
 KIND_TUPLE_OUTPUT: dict[str, bool] = {
@@ -55,6 +61,12 @@ class ComponentMap:
     components: dict[str, ComponentEntry]
     facts: dict[str, Any] = field(default_factory=dict)
     source: str = "bundled"
+    schema_version: int = COMPONENT_MAP_SCHEMA_VERSION
+    """The document schema this map was written against.
+
+    Required on every document: a map published without
+    it is permanently unversioned and can never be told apart from one written against an unknown revision.
+    """
 
     @property
     def sandwich_norms(self) -> bool:
@@ -100,14 +112,27 @@ class ComponentMap:
 
 
 def _from_document(doc: dict[str, Any], *, source: str) -> ComponentMap:
+    if not isinstance(doc, dict):
+        raise ValueError(f"{source}: a component map document must be a mapping, got {type(doc).__name__}")
+    version = doc.get("schema_version")
+    if not isinstance(version, int) or isinstance(version, bool):
+        raise ValueError(
+            f"{source}: component map document lacks an integer `schema_version` (current: "
+            f"{COMPONENT_MAP_SCHEMA_VERSION}). Every map must say which schema it was written against; one "
+            "published without it can never be told apart from one written against an unknown revision."
+        )
     try:
         architecture = doc["architecture"]
         rows = doc["components"]
     except KeyError as e:
-        raise ValueError(f"component map is missing the {e.args[0]!r} key") from None
+        raise ValueError(f"{source}: component map is missing the {e.args[0]!r} key") from None
     components = {name: ComponentEntry(module=row["module"], kind=row["kind"]) for name, row in rows.items()}
     return ComponentMap(
-        architecture=architecture, components=components, facts=dict(doc.get("facts", {})), source=source
+        architecture=architecture,
+        components=components,
+        facts=dict(doc.get("facts", {})),
+        source=source,
+        schema_version=version,
     )
 
 
@@ -202,4 +227,11 @@ def from_transformer_lens(adapter: Any, architecture: str) -> ComponentMap:
     for top, comp in adapter.component_mapping.items():
         walk(top, comp, "")
     facts = {"sandwich_norms": "blocks.{i}.ln2_post" in rows}
-    return ComponentMap(architecture=architecture, components=rows, facts=facts, source="transformer_lens")
+    # the derived map carries the same version as the bundled documents, so the two sources stay comparable
+    return ComponentMap(
+        architecture=architecture,
+        components=rows,
+        facts=facts,
+        source="transformer_lens",
+        schema_version=COMPONENT_MAP_SCHEMA_VERSION,
+    )
