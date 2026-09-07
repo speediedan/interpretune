@@ -366,3 +366,49 @@ class TestSkippedCompositionsAreVisible:
         assert (
             "a-package-nobody-has" in result.stderr and "unavailable here rather than nonexistent" in result.stderr
         ), "the skip report did not reach a consumer with default logging:\n" + result.stderr[-2000:]
+
+
+class TestLoadingTwiceIsIdempotent:
+    """#484: a second `load_hub_adapter` of the same component into the same registry returns the same members
+    without re-executing the entrypoint; the docstring promised it and the delta-based guard refused it."""
+
+    def test_a_second_load_returns_the_same_members_and_runs_nothing_twice(
+        self, tmp_path, monkeypatch, restore_adapter_enum
+    ):
+        from interpretune.adapters.registration import CompositionRegistry
+        from interpretune.hub.adapters import load_hub_adapter, loaded_adapter_module
+        from interpretune.hub.components import local_publish
+        from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR
+
+        marker = tmp_path / "executions"
+        body = REGISTERS_DECLARED + f"\n    import pathlib\n    pathlib.Path({str(marker)!r}).open('a').write('x')\n"
+        component = _write_component(tmp_path, body)
+        cache = tmp_path / "components"
+        local_publish(component, "org/twice", cache_dir=cache)
+        monkeypatch.setenv(IT_TRUST_REMOTE_CODE_ENV_VAR, "1")
+        registry = CompositionRegistry()
+        first = load_hub_adapter("org/twice", cache_dir=cache, registry=registry)
+        keys_after_first = set(registry.keys())
+        second = load_hub_adapter("org/twice", cache_dir=cache, registry=registry)
+        assert [m.name for m in second.members] == [m.name for m in first.members] == [FIXTURE_ADAPTER]
+        assert second.skipped == first.skipped
+        assert set(registry.keys()) == keys_after_first, "a repeat load must not grow the registry"
+        assert marker.read_text() == "x", "the entrypoint executed more than once"
+        assert loaded_adapter_module("org/twice", cache_dir=cache) is loaded_adapter_module(
+            "org/twice", cache_dir=cache
+        )
+
+    def test_a_component_that_registers_nothing_is_still_refused(self, tmp_path, monkeypatch, restore_adapter_enum):
+        """The guard now judges what is registered rather than what this call added; the refusal it exists for
+        stands."""
+        from interpretune.adapters.registration import CompositionRegistry
+        from interpretune.hub.adapters import AdapterComponentError, load_hub_adapter
+        from interpretune.hub.components import local_publish
+        from interpretune.hub.trust import IT_TRUST_REMOTE_CODE_ENV_VAR
+
+        component = _write_component(tmp_path, REGISTERS_NOTHING)
+        cache = tmp_path / "components"
+        local_publish(component, "org/nothing-twice", cache_dir=cache)
+        monkeypatch.setenv(IT_TRUST_REMOTE_CODE_ENV_VAR, "1")
+        with pytest.raises(AdapterComponentError, match="registered no compositions"):
+            load_hub_adapter("org/nothing-twice", cache_dir=cache, registry=CompositionRegistry())
