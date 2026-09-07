@@ -60,6 +60,18 @@ def install_command(entry: str) -> str:
     Quoted because specifiers contain characters a shell treats as its own: `interp-engine~=1.5.1` is
     fine unquoted, `interp-engine>=1.5,<2` is not, and the difference is invisible until someone pastes
     the second one.
+
+    THE ENTRY IS EMITTED VERBATIM, which is what makes a non-PyPI dependency work. A PEP 508 direct
+    reference carries its own source, so `circuit-tracer @ git+https://.../repo.git@<sha>` round-trips
+    into a command that installs the right thing from the right place. That is the form an author whose
+    dependency is not on the configured index should declare.
+
+    A BARE NAME IS A GUESS, and the caller should know it. `circuit-tracer>=0.5.3` produces
+    `uv pip install 'circuit-tracer>=0.5.3'`, which is only correct if that distribution resolves from
+    the configured index. If it does not, the command fails loudly, which is survivable -- but if the
+    name happens to belong to an unrelated project on the index, it installs that instead. Nothing here
+    can tell the two apart without the network, so the remedy is the direct-reference form above rather
+    than a cleverer message.
     """
     return f"uv pip install {entry!r}"
 

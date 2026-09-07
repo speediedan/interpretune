@@ -47,6 +47,30 @@ class TestInstallCommandIsEmitted:
         """`>=1.5,<2` is redirection and a comment to a shell; unquoted it truncates or clobbers a file."""
         assert install_command("interp-engine>=1.5,<2") == "uv pip install 'interp-engine>=1.5,<2'"
 
+    def test_a_direct_reference_round_trips_into_an_installable_command(self):
+        """The escape hatch for a dependency that is not on the configured index.
+
+        `requires.pip` carries a name and specifier; it does not carry a SOURCE -- unless the entry is a
+        PEP 508 direct reference, which carries its own. Emitting the entry verbatim means such an entry
+        produces a command that installs the right thing from the right place, which is what makes a
+        git-pinned dependency expressible at all. interpretune declares `circuit-tracer` exactly this way,
+        because PyPI rejects direct references in published metadata and a manifest is not that.
+        """
+        entry = "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@c3e298f5"
+        command = install_command(entry)
+        assert "git+https://github.com/speediedan/circuit-tracer.git@c3e298f5" in command
+        assert command == f"uv pip install {entry!r}"
+
+    def test_a_bare_name_is_emitted_as_given_and_is_only_as_good_as_the_index(self):
+        """Recorded as a known limit rather than left for someone to discover.
+
+        A bare name resolves against whatever index is configured. If the distribution is not there the command fails
+        loudly, which is survivable; if the name belongs to an unrelated project it installs that instead. Nothing
+        offline can distinguish the two, so the remedy is the direct-reference form, not a cleverer message. This test
+        exists to make the behaviour deliberate.
+        """
+        assert install_command("circuit-tracer>=0.5.3") == "uv pip install 'circuit-tracer>=0.5.3'"
+
     def test_the_modules_axis_does_not_claim_an_install_fixes_it(self):
         """An absent module is not always an absent distribution, so it must not suggest one.
 
