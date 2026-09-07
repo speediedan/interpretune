@@ -12,7 +12,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from interpretune.analysis.optools import UnembedNormInfo, resolve_unembed_and_norm_scale
+from interpretune.analysis.optools import (
+    UnembedNormInfo,
+    _rmsnorm_scale,
+    resolve_unembed_and_norm_scale,
+)
 
 VOCAB, D = 16, 8
 
@@ -129,3 +133,73 @@ def test_no_unembed_surface_raises_rather_than_guessing():
 def test_named_tuple_surface_is_stable():
     """The collection imports this by name; field renames are a compat break worth failing on."""
     assert UnembedNormInfo._fields == ("w_u", "norm_scale", "norm_kind")
+
+
+class TestRMSNormOffsetIsPerFamilyNotPerPrefix:
+    """The gemma line splits on whether its RMSNorm applies `(1 + weight)` or `weight`.
+
+    A prefix test was correct for every family that existed when it was written and silently wrong for
+    `gemma3n` and the whole `gemma4` line. The cases below that assert `weight` for a `gemma*` family are
+    the ones that fail against a prefix rule, so they are what keeps the fix from being reverted by a
+    reasonable-looking simplification.
+    """
+
+    WEIGHT = 0.5
+
+    @pytest.mark.parametrize("model_type", ["gemma", "gemma2", "gemma3", "gemma3_text"])
+    def test_families_that_apply_the_offset(self, model_type):
+        scale = _rmsnorm_scale(torch.full((D,), self.WEIGHT), model_type)
+        torch.testing.assert_close(scale, torch.full((D,), 1.0 + self.WEIGHT))
+
+    @pytest.mark.parametrize(
+        "model_type",
+        ["gemma3n", "gemma3n_text", "gemma4", "gemma4_text", "gemma4_unified", "gemma4_unified_assistant"],
+    )
+    def test_gemma_families_that_do_NOT_apply_the_offset(self, model_type):
+        """These are the cases a `startswith("gemma")` rule gets wrong, so they are the regression."""
+        scale = _rmsnorm_scale(torch.full((D,), self.WEIGHT), model_type)
+        torch.testing.assert_close(scale, torch.full((D,), self.WEIGHT))
+
+    @pytest.mark.parametrize("model_type", ["llama", "qwen3", "mistral", ""])
+    def test_families_outside_the_gemma_namespace_apply_weight_directly(self, model_type):
+        scale = _rmsnorm_scale(torch.full((D,), self.WEIGHT), model_type)
+        torch.testing.assert_close(scale, torch.full((D,), self.WEIGHT))
+
+    def test_an_unrecognized_gemma_family_warns_rather_than_guessing_silently(self):
+        """Both guesses are wrong for some member of this namespace and neither is visible in the output.
+
+        The value still has to be something, so it assumes `weight`; the point is that the assumption is
+        announced rather than made silently.
+        """
+        with pytest.warns(UserWarning, match="unrecognized gemma-family model_type"):
+            scale = _rmsnorm_scale(torch.full((D,), self.WEIGHT), "gemma5_hypothetical")
+        torch.testing.assert_close(scale, torch.full((D,), self.WEIGHT))
+
+    def test_a_recognized_family_does_not_warn(self):
+        """The positive control: if everything warned, the warning above would carry no information."""
+        import warnings
+
+        for model_type in ("gemma3", "gemma4", "llama"):
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                _rmsnorm_scale(torch.full((D,), self.WEIGHT), model_type)
+
+    def test_the_offset_decision_reaches_the_resolved_seam(self):
+        """End to end through `resolve_unembed_and_norm_scale`, not just the helper."""
+        from transformers.models.gemma3.modeling_gemma3 import Gemma3RMSNorm
+
+        norm = Gemma3RMSNorm(D)
+        norm.weight.data = torch.full((D,), self.WEIGHT)
+        offset = resolve_unembed_and_norm_scale(_hf_module("gemma3", norm))
+        plain = resolve_unembed_and_norm_scale(_hf_module("gemma4", norm))
+        torch.testing.assert_close(offset.norm_scale, torch.full((D,), 1.0 + self.WEIGHT))
+        torch.testing.assert_close(plain.norm_scale, torch.full((D,), self.WEIGHT))
+        assert offset.norm_kind == plain.norm_kind == "rmsnorm"
+
+    def test_a_layernorm_is_untouched_by_the_rmsnorm_rule(self):
+        """The offset question is RMSNorm-only; a LayerNorm in any family applies its weight directly."""
+        norm = torch.nn.LayerNorm(D)
+        norm.weight.data = torch.full((D,), self.WEIGHT)
+        info = resolve_unembed_and_norm_scale(_hf_module("gemma3", norm, inner_attr="transformer"))
+        assert info.norm_kind == "layernorm"
+        torch.testing.assert_close(info.norm_scale, torch.full((D,), self.WEIGHT))
