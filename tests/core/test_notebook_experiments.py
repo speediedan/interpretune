@@ -127,6 +127,39 @@ class TestExtendsResolution:
         with pytest.raises(FileNotFoundError, match="which does not exist"):
             resolve_extends_path(tmp_path / "mine.yaml", "it_examples.experiments.notebook:configs/nope.yaml")
 
+    def test_a_resource_inside_a_ZIPPED_package_materializes_to_a_real_readable_file(self, tmp_path):
+        """The case that fails silently without `as_file`.
+
+        For an unpacked install the traversable is already a `Path`, so `str()` of it happens to work and
+        every ordinary test passes. Inside a zipped wheel it is not a filesystem object at all: the string
+        is path-shaped, nothing can open it, and the failure surfaces later as an unrelated read error in
+        the YAML loader rather than here. This pins that a real, readable file comes back either way.
+        """
+        import sys
+        import zipfile
+
+        archive = tmp_path / "zipped_pkg.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("zipped_experiment_pkg/__init__.py", "")
+            zf.writestr("zipped_experiment_pkg/configs/base.yaml", "ZIPPED: true\n")
+        sys.path.insert(0, str(archive))
+        try:
+            resolved = resolve_extends_path(tmp_path / "mine.yaml", "zipped_experiment_pkg:configs/base.yaml")
+            assert resolved.is_file(), "a zipped resource must be materialized, not string-cast"
+            assert resolved.read_text(encoding="utf-8") == "ZIPPED: true\n"
+        finally:
+            sys.path.remove(str(archive))
+            sys.modules.pop("zipped_experiment_pkg", None)
+
+    def test_a_placeholder_prefix_is_refused_with_the_spelling_to_use(self):
+        """`<shared>` was considered and rejected; falling through to "missing file" would hide that.
+
+        Naming one package as special is the assumption the component rails removed, so the refusal says so rather than
+        leaving someone to conclude the feature is broken.
+        """
+        with pytest.raises(ValueError, match="looks like a placeholder"):
+            resolve_extends_path(Path("/tmp/x.yaml"), "<shared>/base.yaml")
+
     def test_a_path_containing_a_colon_is_still_a_path_when_it_exists(self, tmp_path):
         """A colon is legal in a filename, so existence decides before the separator does."""
         odd = tmp_path / "weird:name.yaml"

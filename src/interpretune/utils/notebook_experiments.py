@@ -20,8 +20,11 @@ Every key has a default, so a repository that writes no table gets working behav
 
 from __future__ import annotations
 
+import shutil
 import sys
+import tempfile
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -101,23 +104,58 @@ def resolve_extends_path(config_path: Path, raw_value: str) -> Path:
     A package-resource base is **read-only**: resources may live inside a zip or a wheel and have no
     stable location on disk. A config that expects to write next to its base must name it by path.
     """
+    if raw_value.startswith("<"):
+        raise ValueError(
+            f"{config_path}: EXTENDS value {raw_value!r} looks like a placeholder. There is no reserved "
+            "prefix for the shared configs, deliberately: naming one package as special is the assumption "
+            "the component rails removed. Use `package.module:resource`, for example "
+            "`it_examples.experiments.notebook:configs/base.yaml`, or a path relative to this config."
+        )
     if PACKAGE_RESOURCE_SEPARATOR in raw_value and not Path(raw_value).exists():
-        from importlib.resources import files
-
         package, _, resource = raw_value.partition(PACKAGE_RESOURCE_SEPARATOR)
-        try:
-            traversable = files(package).joinpath(resource)
-        except ModuleNotFoundError as exc:
-            raise FileNotFoundError(
-                f"{config_path}: EXTENDS names package {package!r}, which is not installed. A "
-                "`package.module:resource` EXTENDS reaches configs shipped inside a package; use a "
-                "relative path for a config in this tree."
-            ) from exc
-        if not traversable.is_file():
-            raise FileNotFoundError(f"{config_path}: EXTENDS names {resource!r} in {package!r}, which does not exist")
-        return Path(str(traversable))
+        return _package_resource_path(config_path, package, resource)
     candidate = Path(raw_value).expanduser()
     return candidate if candidate.is_absolute() else (config_path.parent / candidate).resolve()
+
+
+@lru_cache(maxsize=None)
+def _materialize_resource(package: str, resource: str) -> Path:
+    """A real filesystem path for a package resource, copying it out only when it is not already one.
+
+    An installed package is usually unpacked, and then the traversable IS a ``Path`` and is returned
+    unchanged. Inside a zipped wheel it is not: ``str()`` of it yields something path-shaped that no
+    loader can open, so the failure would surface later as an unrelated read error rather than here.
+    ``as_file`` is the supported way to get a real path, and its context manager may delete the file on
+    exit, so the copy is taken while it is open and cached for the process.
+    """
+    from importlib.resources import as_file, files
+
+    traversable = files(package).joinpath(resource)
+    if isinstance(traversable, Path):
+        return traversable
+    cache_dir = Path(tempfile.gettempdir()) / "interpretune_extends" / package
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    destination = cache_dir / Path(resource).name
+    with as_file(traversable) as real_path:
+        shutil.copyfile(real_path, destination)
+    return destination
+
+
+def _package_resource_path(config_path: Path, package: str, resource: str) -> Path:
+    """Resolve ``package.module:resource``, distinguishing a missing package from a missing resource."""
+    from importlib.resources import files
+
+    try:
+        traversable = files(package).joinpath(resource)
+    except (ModuleNotFoundError, TypeError) as exc:
+        raise FileNotFoundError(
+            f"{config_path}: EXTENDS names package {package!r}, which is not installed. A "
+            "`package.module:resource` EXTENDS reaches configs shipped inside a package; use a "
+            "relative path for a config in this tree."
+        ) from exc
+    if not traversable.is_file():
+        raise FileNotFoundError(f"{config_path}: EXTENDS names {resource!r} in {package!r}, which does not exist")
+    return _materialize_resource(package, resource)
 
 
 def default_config_dir(notebook_path: Path, config: ExperimentsConfig | None = None) -> Path:
