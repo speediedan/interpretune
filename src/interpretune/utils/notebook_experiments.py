@@ -20,6 +20,7 @@ Every key has a default, so a repository that writes no table gets working behav
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tempfile
@@ -133,11 +134,21 @@ def _materialize_resource(package: str, resource: str) -> Path:
     traversable = files(package).joinpath(resource)
     if isinstance(traversable, Path):
         return traversable
-    cache_dir = Path(tempfile.gettempdir()) / "interpretune_extends" / package
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    destination = cache_dir / Path(resource).name
+    cache_dir = (Path(tempfile.gettempdir()) / "interpretune_extends" / package).resolve()
+    # Keyed by the FULL resource path, not its basename. A config tree routinely holds several files of
+    # the same name at different depths (`configs/base.yaml` and `configs/gemma/base.yaml`), and a
+    # basename key sends both to one destination: the second materialization overwrites what the first
+    # call's cached path points at, so the first EXTENDS silently reads the second resource's content.
+    destination = (cache_dir / resource).resolve()
+    if cache_dir not in destination.parents:
+        raise ValueError(f"resource {resource!r} in {package!r} escapes the materialization cache")
+    destination.parent.mkdir(parents=True, exist_ok=True)
     with as_file(traversable) as real_path:
-        shutil.copyfile(real_path, destination)
+        # The cache directory is shared between processes, and `copyfile` is not atomic: a concurrent
+        # reader can observe a partially written file. Write a sibling and rename, which is.
+        staged = destination.with_name(f"{destination.name}.{os.getpid()}.tmp")
+        shutil.copyfile(real_path, staged)
+        os.replace(staged, destination)
     return destination
 
 

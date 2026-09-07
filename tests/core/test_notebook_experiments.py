@@ -147,9 +147,40 @@ class TestExtendsResolution:
             resolved = resolve_extends_path(tmp_path / "mine.yaml", "zipped_experiment_pkg:configs/base.yaml")
             assert resolved.is_file(), "a zipped resource must be materialized, not string-cast"
             assert resolved.read_text(encoding="utf-8") == "ZIPPED: true\n"
+            # Say WHICH branch ran. Everything installed here is unpacked, so a test that only checked a
+            # file came back would pass through the fast path and assert nothing about materialization.
+            assert archive not in resolved.parents, "resolved inside the archive: materialization was skipped"
         finally:
             sys.path.remove(str(archive))
             sys.modules.pop("zipped_experiment_pkg", None)
+
+    def test_two_same_named_resources_in_one_package_do_not_collide(self, tmp_path):
+        """Fails against a basename-keyed cache, which is the shape a config tree actually has.
+
+        `configs/base.yaml` and `configs/gemma/base.yaml` is not a contrived pair; it is how these trees are organized.
+        Keyed by basename, the second materialization overwrites what the first call's cached path points at, so the
+        first EXTENDS silently reads the second resource's content. Nothing raises and both reads succeed, which is why
+        it needs a test rather than a guard.
+        """
+        import sys
+        import zipfile
+
+        archive = tmp_path / "collide.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("collide_pkg/__init__.py", "")
+            zf.writestr("collide_pkg/configs/base.yaml", "WHICH: outer\n")
+            zf.writestr("collide_pkg/configs/gemma/base.yaml", "WHICH: inner\n")
+        sys.path.insert(0, str(archive))
+        try:
+            outer = resolve_extends_path(tmp_path / "a.yaml", "collide_pkg:configs/base.yaml")
+            inner = resolve_extends_path(tmp_path / "b.yaml", "collide_pkg:configs/gemma/base.yaml")
+            assert outer != inner, "same-named resources must not share a destination"
+            assert outer.read_text(encoding="utf-8") == "WHICH: outer\n"
+            assert inner.read_text(encoding="utf-8") == "WHICH: inner\n"
+        finally:
+            sys.path.remove(str(archive))
+            for name in [m for m in sys.modules if m.startswith("collide_pkg")]:
+                del sys.modules[name]
 
     def test_a_placeholder_prefix_is_refused_with_the_spelling_to_use(self):
         """`<shared>` was considered and rejected; falling through to "missing file" would hide that.
