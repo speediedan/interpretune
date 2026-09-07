@@ -13,6 +13,7 @@ failure mode is the reason this module exists in the shape it does.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,23 @@ def _find_cell(cells: list[dict], needle: str, cell_type: str = "code") -> tuple
         if needle in src:
             return i, src
     raise AssertionError(f"no {cell_type} cell contains {needle!r} — the notebook's structure changed under this test")
+
+
+def _public_fields(cls) -> set[str]:
+    """The field names an instance of ``cls`` will expose, whatever shape the class is.
+
+    ``dir()`` on the CLASS is the obvious choice and is wrong here: a dataclass's fields are not class
+    attributes unless they carry defaults, so ``dir(HubAdapterLoad)`` returns an empty public set while
+    every instance has ``members`` and ``skipped``. That produced a confident failure blaming the notebook
+    for reading fields "the type does not have", when the type has them and the introspection did not.
+    """
+    import dataclasses
+
+    if dataclasses.is_dataclass(cls):
+        return {f.name for f in dataclasses.fields(cls)}
+    if hasattr(cls, "_fields"):  # NamedTuple
+        return set(cls._fields)
+    return {f for f in getattr(cls, "__annotations__", {})} or {f for f in dir(cls) if not f.startswith("_")}
 
 
 @pytest.fixture(scope="module")
@@ -169,3 +187,83 @@ class TestDeferredWorkSaysWhy:
             "directly above it — the reason here is the unsettled intervention-mode question for the "
             "interp-engine backend, not the sibling notebook's collection reachability"
         )
+
+
+class TestTheNotebookMatchesTheApiItCalls:
+    """The notebook consumes `load_hub_adapter`'s return value; that shape is not the notebook's to assume.
+
+    Added after the return type changed from ``list[Adapter]`` to ``HubAdapterLoad`` in an unrelated PR and
+    the notebook kept iterating it. Every static check in this module still passed, because they parse the
+    cell rather than run it, and execution was uncovered -- so a published example broke on its headline
+    cell with a green suite. These two tests close that from both sides.
+    """
+
+    def test_the_notebook_only_reads_fields_the_return_type_has(self, dev_cells):
+        """Introspect the real class rather than hardcoding its fields, so a rename fails here."""
+        import ast
+
+        from interpretune.hub.adapters import HubAdapterLoad
+
+        _, hub = _find_cell(dev_cells, "load_hub_adapter")
+        tree = ast.parse(hub)
+
+        # the name bound to the load_hub_adapter(...) result
+        bound = None
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            call = node.value
+            if isinstance(call, ast.Call) and "load_hub_adapter" in ast.dump(call.func):
+                bound = node.targets[0].id
+        assert bound, "no assignment from load_hub_adapter(...) found in the hub cell"
+
+        read = {
+            n.attr
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == bound
+        }
+        available = _public_fields(HubAdapterLoad)
+        unknown = read - available
+        assert not unknown, (
+            f"the notebook reads {sorted(unknown)} off the load result, which {HubAdapterLoad.__name__} does "
+            f"not have (it has {sorted(available)}) — the API changed under the notebook"
+        )
+        assert read, (
+            "the notebook binds the load result and never reads a field off it; if it is iterating the "
+            "object directly that is the exact breakage this test exists to catch"
+        )
+
+
+@pytest.mark.skipif(
+    not (os.environ.get("IT_HF_TOKEN") or os.environ.get("HF_TOKEN")),
+    reason="IT_HF_TOKEN or HF_TOKEN required to fetch the component",
+)
+class TestTheHubDeliveryCellActuallyRuns:
+    """Execution coverage for the one section that can run without a GPU or local Neuronpedia.
+
+    The rest of the notebook needs a bf16 GPU and a local Neuronpedia webapp, so it belongs to the opt-in contract lane.
+    Section H needs neither -- it fetches and registers -- and it is where every hub-delivery claim this notebook makes
+    actually lives. Running it is what would have caught the signature change that static parsing could not.
+    """
+
+    def test_fetch_trust_and_register_execute_end_to_end(self, dev_cells, monkeypatch):
+        monkeypatch.setenv("HF_TOKEN", os.environ.get("IT_HF_TOKEN") or os.environ["HF_TOKEN"])
+        monkeypatch.setenv("IT_TRUST_REMOTE_CODE", "1")
+
+        params_idx, params = _find_cell(dev_cells, "ADAPTER_REVISION")
+        imports_idx, imports = _find_cell(dev_cells, "import torch")
+        hub_idx, hub = _find_cell(dev_cells, "load_hub_adapter")
+
+        ns: dict = {}
+        exec(compile(params, "<parameters>", "exec"), ns)
+        ns["TRUST_HUB_ADAPTER_CODE"] = True  # the notebook's default refuses; the test opts in explicitly
+        exec(compile(imports, "<imports>", "exec"), ns)
+        exec(compile(hub, "<section-H>", "exec"), ns)
+
+        load = ns["load"]
+        assert [m.name for m in load.members] == ["interp_engine"], (
+            f"Section H registered {[m.name for m in load.members]} rather than interp_engine"
+        )
+        registry = ns["ADAPTER_REGISTRY"]
+        composed = [c for c in registry.available_compositions() if "interp_engine" in str(c)]
+        assert composed, "interp_engine registered but composes with nothing"
