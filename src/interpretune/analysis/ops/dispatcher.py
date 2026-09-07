@@ -89,7 +89,9 @@ class OpCandidate:
         if self.collection:
             detail.append(f"collection {self.collection} {self.version or '(unversioned)'}")
         if self.revision:
-            detail.append(f"revision {self.revision[:12]}")
+            from interpretune.hub.components import describe_revision
+
+            detail.append(f"revision {describe_revision(self.revision)}")
         return f"{self.name} [{', '.join(detail)}]"
 
 

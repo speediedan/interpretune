@@ -98,13 +98,20 @@ def pull_op_collection(
     import yaml
     from huggingface_hub import hf_hub_download
 
-    from interpretune.hub.components import _TELEMETRY, _snapshot_revision, enforce_component_requires
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    from interpretune.hub.components import _TELEMETRY, _explain_404, _snapshot_revision, enforce_component_requires
     from interpretune.hub.manifest import validate_component_manifest
 
     root = str(cache_dir or IT_ANALYSIS_HUB_CACHE)
-    manifest_path = Path(
-        hf_hub_download(repo_id, IT_COMPONENT_MANIFEST, revision=revision, cache_dir=root, token=token, **_TELEMETRY)
-    )
+    try:
+        manifest_path = Path(
+            hf_hub_download(
+                repo_id, IT_COMPONENT_MANIFEST, revision=revision, cache_dir=root, token=token, **_TELEMETRY
+            )
+        )
+    except RepositoryNotFoundError as exc:
+        raise _explain_404(repo_id, exc) from exc
     commit = _snapshot_revision(manifest_path)
     manifest = validate_component_manifest(
         yaml.safe_load(manifest_path.read_text(encoding="utf-8")), source=f"{repo_id}@{commit[:12]}"

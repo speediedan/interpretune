@@ -137,6 +137,18 @@ def load_hookmaps(repo_id: str, *, cache_dir: Path | None = None, replace: bool 
     return [cmap.architecture for cmap in load_hub_hookmaps(repo_id, cache_dir=cache_dir, replace=replace)]
 
 
+def hub_presence(repo_id: str, revision: str | None = None, *, token: str | None = None):
+    """Ask the Hub, explicitly, whether a repo (and revision) is reachable with this token. Network.
+
+    Loading never asks: resolution is cache-only, so a cached snapshot of a repo that was deleted, renamed, or is
+    invisible to the current token keeps loading. This is the verb for "is what I have still on the Hub?". A 404
+    is reported as absent OR not visible to the token, because HF does not distinguish the two.
+    """
+    from interpretune.hub.components import hub_presence as _hub_presence
+
+    return _hub_presence(repo_id, revision=revision, token=token)
+
+
 def unpin_ops(repo_id: str, *, cache_dir: Path | None = None, reload: bool = True) -> bool:
     """Release an op collection's revision pin; returns whether a pin existed.
 

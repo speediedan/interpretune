@@ -71,7 +71,9 @@ class AdapterCandidate:
     def __str__(self) -> str:
         if self.component is None:
             return f"{self.name} (bundled)"
-        detail = f"{self.component}@{self.revision[:12]}" if self.revision else str(self.component)
+        from interpretune.hub.components import describe_revision
+
+        detail = f"{self.component}@{describe_revision(self.revision)}" if self.revision else str(self.component)
         return f"{self.name} (hub: {detail})"
 
 
