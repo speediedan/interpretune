@@ -257,14 +257,22 @@ def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None)
     finally:
         _SUPPORTED_COMPOSITIONS.reset(token)
     added = set(registry.keys()) - before
+    # JUDGE WHAT IS REGISTERED, NOT WHAT THIS CALL ADDED. The registry keeps an existing composition rather than
+    # re-adding it, so on a second load of the same component into the same registry (re-running a notebook
+    # cell is the most ordinary case) the delta is empty while everything the component delivers is present.
+    # A guard on the delta then accuses a working artifact of delivering nothing, which makes "already loaded"
+    # and "registers nothing" indistinguishable: the same conflation the skip report exists to remove, in the
+    # other direction. The delta still answers the one question only it can: did THIS call register something
+    # that uses none of the declared adapters.
+    present = {key for key in registry.keys() if isinstance(key, tuple) and any(m in key for m in members)}
     unregistered = [m for m in members if not any(m in key for key in added)]
-    if unregistered and added:
+    if unregistered and added and not present:
         raise AdapterComponentError(
             f"{source}: entrypoint {entrypoint!r} registered {len(added)} composition(s), none of which use "
             f"the declared adapter(s) {[m.name for m in unregistered]!r}. The manifest advertises the adapter "
             "surface a component adds; code that registers something else is a mismatch worth failing on."
         )
-    if not added:
+    if not present:
         raise AdapterComponentError(
             f"{source}: entrypoint {entrypoint!r} registered no compositions. An adapters component whose "
             f"entrypoint registers nothing declares {names!r} and delivers nothing."
@@ -278,7 +286,7 @@ def load_hub_adapter(repo_id: str, cache_dir: Path | None = None, registry=None)
         # A registry composition key is (component_key, Adapter, ...) -- the component as a plain string
         # and the adapters as enum MEMBERS, so compare on `.value`. `str(Adapter.core)` is 'Adapter.core',
         # which silently matches nothing and would make this invariant fire on every correct component.
-        registered_keys = [{getattr(part, "value", part) for part in key} for key in added if isinstance(key, tuple)]
+        registered_keys = [{getattr(part, "value", part) for part in key} for key in present]
 
         def _covered(entry_key: tuple[str, ...]) -> bool:
             wanted = set(entry_key[1:])  # the component name is positional, not part of the adapter set
