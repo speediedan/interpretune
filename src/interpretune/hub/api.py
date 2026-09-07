@@ -149,6 +149,18 @@ def hub_presence(repo_id: str, revision: str | None = None, *, token: str | None
     return _hub_presence(repo_id, revision=revision, token=token)
 
 
+def unpin(repo_id: str, *, cache_dir: Path | None = None) -> bool:
+    """Release a component repo's revision pin; returns whether one existed.
+
+    A pinned ``pull`` (any revision other than ``main``) records its commit where cache-only resolution looks,
+    and resolution prefers it over ``refs/main`` so a republish cannot change what a pinned environment loads.
+    Releasing it is a trust decision, so it is an explicit verb rather than a side effect of an unpinned pull.
+    """
+    from interpretune.hub.components import clear_component_pin
+
+    return clear_component_pin(repo_id, cache_dir=cache_dir)
+
+
 def unpin_ops(repo_id: str, *, cache_dir: Path | None = None, reload: bool = True) -> bool:
     """Release an op collection's revision pin; returns whether a pin existed.
 
@@ -184,17 +196,22 @@ def op_pins(*, cache_dir: Path | None = None) -> dict[str, dict]:
     return pins
 
 
-def load(repo_id: str, key: str, *, cache_dir: Path | None = None, require_hub: bool = False) -> RegisteredCfg:
+def load(
+    repo_id: str, key: str, *, cache_dir: Path | None = None, revision: str | None = None, require_hub: bool = False
+) -> RegisteredCfg:
     """Cache-only hydration of one configuration — never touches the network.
 
     The component must already be in the local components cache, via an explicit :func:`pull` or the
     local-publish bridge (e.g. ``it_examples.seeds.ensure_local_seeds`` for the in-tree seeds); an
-    uncached component raises with the exact fetch command. ``require_hub=True`` refuses a local-publish
+    uncached component raises with the exact fetch command. ``revision`` addresses a cached snapshot
+    explicitly; otherwise the recorded pin, then ``refs/main``. ``require_hub=True`` refuses a local-publish
     snapshot, for a caller verifying what the Hub serves rather than what was last staged here.
     """
     from interpretune.hub.components import resolve_component_config
 
-    canonical, body = resolve_component_config(repo_id, key, cache_dir=cache_dir, require_hub=require_hub)
+    canonical, body = resolve_component_config(
+        repo_id, key, cache_dir=cache_dir, revision=revision, require_hub=require_hub
+    )
     return _hydrate_component_body(canonical, body)
 
 
