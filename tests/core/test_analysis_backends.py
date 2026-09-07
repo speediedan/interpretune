@@ -1433,10 +1433,13 @@ class TestFwdWInterventionSignature:
             hooks = kwargs.get("fwd_hooks", [])
             # Apply the hook to a known activation
             activation = torch.randn(1, 3, 100)
+            before = activation.clone()
             for _, hook_fn in hooks:
                 activation = hook_fn(activation, None)
-            # After replace mode, last position should equal the replacement vector
+            # After replace mode, last position should equal the replacement vector...
             assert torch.allclose(activation[0, 2, :], replacement_vec), "Replace mode should overwrite last position"
+            # ...and ONLY the last position: a hook that overwrote every position would pass the line above
+            assert torch.equal(activation[0, :2, :], before[0, :2, :]), "replace touched a non-last position"
             return torch.randn(1, 3, 100)
 
         mock_model.run_with_hooks.side_effect = capture_hooks
