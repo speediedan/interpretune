@@ -345,6 +345,90 @@ def graph_prune(module, analysis_batch: AnalysisBatch, batch: BatchEncoding, bat
 
 ct_graph_prune = graph_prune
 
+def jlens_concept_probe(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Cosine of activations against concept tokens' readout-faithful J-lens directions
+
+    Input Schema:
+        cache (object)
+        jlens_concept_token_ids (int64) (required)
+        jlens_apply_final_norm (bool)
+        jlens_layer (int64)
+        jlens_layer_percentile (float32)
+        jlens_cache_key (string)
+        jlens_positions (int64)
+        jlens_repo_id (string)
+        jlens_model_id (string)
+        jlens_lens_path (string)
+
+    Output Schema:
+        jlens_concept_cosine (float32)
+        jlens_concept_token_ids (int64)
+        jlens_layer (int64)
+        jlens_positions (int64)
+        jlens_provenance (object)
+    """
+    ...
+
+jacobian_lens_concept_probe = jlens_concept_probe
+
+def jlens_read(module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs) -> AnalysisBatch:
+    """Rank vocabulary tokens by the Jacobian-lens readout at a fitted layer and chosen positions
+
+    Input Schema:
+        cache (object)
+        jlens_layer (int64)
+        jlens_layer_percentile (float32)
+        jlens_cache_key (string)
+        jlens_positions (int64)
+        jlens_top_k (int64)
+        jlens_include_rms_scale (bool)
+        jlens_repo_id (string)
+        jlens_model_id (string)
+        jlens_lens_path (string)
+
+    Output Schema:
+        jlens_top_token_ids (int64)
+        jlens_top_token_scores (float32)
+        jlens_top_token_strings (object)
+        jlens_layer (int64)
+        jlens_positions (int64)
+        jlens_include_rms_scale (bool)
+        jlens_provenance (object)
+    """
+    ...
+
+jacobian_lens_read = jlens_read
+
+def jlens_sparse_inventory(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Sparse nonnegative decomposition of an activation over the J-lens dictionary, with its residual
+
+    Input Schema:
+        cache (object)
+        jlens_inventory_k (int64)
+        jlens_layer (int64)
+        jlens_layer_percentile (float32)
+        jlens_cache_key (string)
+        jlens_positions (int64)
+        jlens_repo_id (string)
+        jlens_model_id (string)
+        jlens_lens_path (string)
+
+    Output Schema:
+        jlens_inventory_token_ids (object)
+        jlens_inventory_coefficients (object)
+        jlens_inventory_residual_ratio (float32)
+        jlens_layer (int64)
+        jlens_positions (int64)
+        jlens_provenance (object)
+    """
+    ...
+
+jacobian_lens_sparse_inventory = jlens_sparse_inventory
+
 def labels_to_ids(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding
 ) -> DefaultAnalysisBatchProtocol:
