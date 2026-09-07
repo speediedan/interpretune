@@ -366,6 +366,18 @@ something pushed by hand) is reported by name and removed in the same commit, so
 pair and nothing arrives out of band. If you see that report and did not expect it, the named files came from a
 hand-push; declare what you want kept.
 
+### Verifying a publish from the same machine
+
+Resolution is cache-only and reads whichever revision `refs/main` names, and a `local_publish` snapshot (the
+in-tree seeds use it) is written there like any other. If you `local_publish` a component and later pull it from
+the Hub, or the reverse, the last writer wins and the loader serves it without consulting the Hub. When a local
+snapshot resolves for a repo whose cache also holds a Hub revision, interpretune says so (a `LocalSnapshotWarning`
+naming both). A verification of what the Hub serves should refuse the local one instead: `it.hub.load(...,
+require_hub=True)`, `load_hub_adapter(..., require_hub=True)` or `resolve_component_manifest(...,
+require_hub=True)` raise `LocalSnapshotShadowsHubError` with the fetch command, and `interpretune.hub.pull` moves
+`refs/main` back to the Hub revision. `HF_HUB_CACHE` does not redirect this cache; it is interpretune's own
+(`IT_COMPONENTS_HUB_CACHE`).
+
 ### Versioning your op collection
 
 Declare the collection's identity in a header at the top of its op YAML:

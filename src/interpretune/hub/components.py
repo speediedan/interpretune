@@ -191,12 +191,46 @@ def register_component_config(
     return namespaced
 
 
-def resolve_component_manifest(repo_id: str, cache_dir: Path | None = None) -> tuple[dict, Path, str]:
+#: Revisions written by :func:`local_publish` carry this prefix; Hub commits are bare hex.
+LOCAL_REVISION_PREFIX = "local"
+
+
+def is_local_revision(revision: str) -> bool:
+    """Whether a cached revision came from the local-publish bridge rather than the Hub."""
+    return revision.startswith(LOCAL_REVISION_PREFIX)
+
+
+class LocalSnapshotWarning(UserWarning):
+    """A local-publish snapshot resolved for a repo whose cache also holds a Hub revision, so the Hub is
+    shadowed."""
+
+
+class LocalSnapshotShadowsHubError(LookupError):
+    """``require_hub=True`` and the cached ``refs/main`` is a local-publish snapshot."""
+
+
+def _hub_snapshots(repo_dir: Path) -> list[str]:
+    snapshots = repo_dir / "snapshots"
+    if not snapshots.is_dir():
+        return []
+    return sorted(p.name for p in snapshots.iterdir() if p.is_dir() and not is_local_revision(p.name))
+
+
+def resolve_component_manifest(
+    repo_id: str, cache_dir: Path | None = None, *, require_hub: bool = False
+) -> tuple[dict, Path, str]:
     """CACHE-ONLY manifest read: returns ``(manifest, snapshot_dir, revision)``; never touches the network.
 
     Reads the repo's cached ``refs/main`` revision from the components cache — whether it got there via
     an explicit hub fetch or the local-publish bridge. Raises with the explicit fetch command when the
     component is not cached (the no-implicit-network invariant, design §3.2).
+
+    A local-publish snapshot and a Hub revision are indistinguishable to a caller at the moment it matters, and
+    the local one wins whenever it was written last: a verification of a publish once loaded days-old code that
+    way and reported success. So when ``refs/main`` is a local snapshot AND the cache also holds a Hub revision
+    of the same repo, the resolution says so (a :class:`LocalSnapshotWarning` naming both), and with
+    ``require_hub=True`` it refuses instead, for callers that are verifying what the Hub serves. A repo that
+    exists only locally (the in-tree seeds) resolves silently, as before.
     """
     root = Path(cache_dir or IT_COMPONENTS_HUB_CACHE)
     repo_dir = root / f"models--{repo_id.replace('/', '--')}"
@@ -207,6 +241,24 @@ def resolve_component_manifest(repo_id: str, cache_dir: Path | None = None) -> t
             f"interpretune.hub.pull({repo_id!r}) — local resolution never performs implicit network access."
         )
     revision = ref.read_text(encoding="utf-8").strip()
+    if is_local_revision(revision):
+        hub_revisions = _hub_snapshots(repo_dir)
+        if require_hub:
+            raise LocalSnapshotShadowsHubError(
+                f"{repo_id!r} resolves to the local-publish snapshot {revision[:12]} (cache-only; the Hub was not "
+                f"consulted), and require_hub=True. Cached Hub revisions: {[r[:12] for r in hub_revisions] or 'none'}. "
+                f"Fetch the Hub revision explicitly: interpretune.hub.pull({repo_id!r})."
+            )
+        if hub_revisions:
+            from interpretune.utils.logging import rank_zero_warn
+
+            rank_zero_warn(
+                f"{repo_id!r} resolved to the local-publish snapshot {revision[:12]}, which shadows the cached Hub "
+                f"revision(s) {[r[:12] for r in hub_revisions]}; the Hub was not consulted (resolution is cache-only). "
+                f"If you meant the published artifact, run interpretune.hub.pull({repo_id!r}) or resolve with "
+                "require_hub=True.",
+                category=LocalSnapshotWarning,
+            )
     snapshot = repo_dir / "snapshots" / revision
     manifest = validate_component_manifest(
         yaml.safe_load((snapshot / IT_COMPONENT_MANIFEST).read_text(encoding="utf-8")), source=f"{repo_id}@cache"
@@ -214,9 +266,11 @@ def resolve_component_manifest(repo_id: str, cache_dir: Path | None = None) -> t
     return manifest, snapshot, revision
 
 
-def resolve_component_config(repo_id: str, key: str, cache_dir: Path | None = None) -> tuple[str, dict]:
+def resolve_component_config(
+    repo_id: str, key: str, cache_dir: Path | None = None, *, require_hub: bool = False
+) -> tuple[str, dict]:
     """CACHE-ONLY resolution of one configuration: never touches the network (design invariant §3.2)."""
-    manifest, snapshot, _ = resolve_component_manifest(repo_id, cache_dir=cache_dir)
+    manifest, snapshot, _ = resolve_component_manifest(repo_id, cache_dir=cache_dir, require_hub=require_hub)
     enforce_component_requires(manifest, source=f"{repo_id}@cache")
     configs = (manifest.get("module") or {}).get("configs") or {}
     if key not in configs:

@@ -172,16 +172,17 @@ def op_pins(*, cache_dir: Path | None = None) -> dict[str, dict]:
     return pins
 
 
-def load(repo_id: str, key: str, *, cache_dir: Path | None = None) -> RegisteredCfg:
+def load(repo_id: str, key: str, *, cache_dir: Path | None = None, require_hub: bool = False) -> RegisteredCfg:
     """Cache-only hydration of one configuration — never touches the network.
 
     The component must already be in the local components cache, via an explicit :func:`pull` or the
     local-publish bridge (e.g. ``it_examples.seeds.ensure_local_seeds`` for the in-tree seeds); an
-    uncached component raises with the exact fetch command.
+    uncached component raises with the exact fetch command. ``require_hub=True`` refuses a local-publish
+    snapshot, for a caller verifying what the Hub serves rather than what was last staged here.
     """
     from interpretune.hub.components import resolve_component_config
 
-    canonical, body = resolve_component_config(repo_id, key, cache_dir=cache_dir)
+    canonical, body = resolve_component_config(repo_id, key, cache_dir=cache_dir, require_hub=require_hub)
     return _hydrate_component_body(canonical, body)
 
 
