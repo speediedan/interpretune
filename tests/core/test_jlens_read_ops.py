@@ -13,6 +13,7 @@ import torch
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.bundled.jlens import jlens_ops
 from interpretune.analysis.optools import JLensArtifact
+from tests.runif import RunIf
 
 VOCAB, D, LAYERS = 24, 8, (0, 4, 8)
 KEY = "blocks.4.hook_in"
@@ -213,3 +214,101 @@ class TestSparseInventory:
             _module(), _batch(torch.randn(1, 1, D)), None, 0, jlens_inventory_k=5, jlens_positions=[0]
         )
         assert all(c >= 0.0 for c in out["jlens_inventory_coefficients"][0])
+
+
+class TestCrossBackendReadoutAgreement:
+    """The readout must not depend on which backend resolved the unembed and the final norm.
+
+    This exercises the seam's TransformerLens row against a real TL model rather than a stub, which is
+    the gap the folding investigation left open: the row was asserted by construction and never
+    measured. Standalone-marked at the METHOD level, since class-level marks are invisible to the
+    collection filter and a real model load is too heavy for the default CPU lane.
+    """
+
+    @RunIf(standalone=True)
+    def test_tl_and_hf_resolved_readouts_agree_on_gpt2(self):
+        from transformer_lens import HookedTransformer
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        from interpretune.analysis.optools import resolve_unembed_and_norm_scale
+
+        torch.manual_seed(3)
+        # NO-processing load, and it is load-bearing here for the same reason it is in the patch
+        # tests: the default from_pretrained folds LayerNorm and centers weights, which changes both
+        # the unembed and the residual basis. Comparing a processed TL model against HF would measure
+        # that transformation rather than the seam, and would fail while nothing was wrong.
+        tl_model = HookedTransformer.from_pretrained_no_processing("gpt2", device="cpu")
+        hf_model = AutoModelForCausalLM.from_pretrained("gpt2")
+        hf_model.tokenizer = AutoTokenizer.from_pretrained("gpt2")
+
+        tl_module = type("M", (), {})()
+        tl_module.model = tl_model
+        tl_model.tokenizer = tl_model.tokenizer or AutoTokenizer.from_pretrained("gpt2")
+        hf_module = type("M", (), {})()
+        hf_module.model = hf_model
+
+        d_model = resolve_unembed_and_norm_scale(hf_module).w_u.shape[1]
+        lens = {6: torch.randn(d_model, d_model) * (1.0 / d_model**0.5)}
+        activations = torch.randn(1, 3, d_model)
+
+        def _read(module):
+            artifact = JLensArtifact(
+                j_by_layer=lens,
+                source_layers=[6],
+                d_model=d_model,
+                repo_id="synthetic",
+                path="synthetic",
+                hf_model_name="openai-community/gpt2",
+                provenance={},
+            )
+            batch = AnalysisBatch(cache={"blocks.6.hook_in": activations})
+            original = jlens_ops.resolve_jlens
+            jlens_ops.resolve_jlens = lambda m, **k: artifact
+            try:
+                return jlens_ops.jlens_read_impl(
+                    module, batch, None, 0, jlens_layer=6, jlens_cache_key="blocks.6.hook_in", jlens_top_k=20
+                )
+            finally:
+                jlens_ops.resolve_jlens = original
+
+        tl_out, hf_out = _read(tl_module), _read(hf_module)
+        torch.testing.assert_close(tl_out["jlens_top_token_ids"], hf_out["jlens_top_token_ids"])
+        torch.testing.assert_close(
+            tl_out["jlens_top_token_scores"], hf_out["jlens_top_token_scores"], rtol=1e-4, atol=1e-4
+        )
+
+
+class TestRealLensSmoke:
+    """One end-to-end pass against a published lens, so resolution and the readout are exercised together."""
+
+    @RunIf(min_cuda_gpus=1)
+    def test_a_published_gpt2_lens_resolves_and_reads(self):
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        from interpretune.analysis.optools import resolve_jlens
+
+        model = AutoModelForCausalLM.from_pretrained("gpt2").cuda().eval()
+        model.tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        module = type("M", (), {})()
+        module.model = model
+
+        artifact = resolve_jlens(module)
+        # The published gpt2 lens lives under `gpt2-small/` with a stem of `gpt2_...`, so resolving it
+        # at all is the discovery path working against the real repository rather than a recording.
+        assert artifact.hf_model_name == "openai-community/gpt2"
+        assert artifact.path.startswith("gpt2-small/")
+        assert artifact.d_model == model.config.n_embd
+        assert artifact.provenance.get("results", {}).get("prompts_fitted", 0) > 0
+
+        layer = jlens_ops.jlens_layer_for_percentile(artifact, 0.85)
+        activations = torch.randn(1, 4, artifact.d_model)
+        out = jlens_ops.jlens_read_impl(
+            module,
+            AnalysisBatch(cache={f"blocks.{layer}.hook_in": activations}),
+            None,
+            0,
+            jlens_layer=layer,
+            jlens_top_k=5,
+        )
+        assert out["jlens_top_token_ids"].shape == (1, 1, 5)
+        assert len(out["jlens_top_token_strings"][0][0]) == 5
