@@ -133,7 +133,14 @@ def pull_component_manifest(
     manifest = validate_component_manifest(
         yaml.safe_load(Path(path).read_text(encoding="utf-8")), source=f"{repo_id}@{revision}"
     )
-    return manifest, _snapshot_revision(Path(path))
+    commit = _snapshot_revision(Path(path))
+    if revision and revision != "main":
+        # A pinned fetch writes a complete snapshot that nothing could address: hf_hub_download writes
+        # `refs/main` only for an unpinned fetch, and resolution read nothing else, so following the trust
+        # posture's own advice (pin a revision) on a clean machine produced a component the loader reported as
+        # never cached while the snapshot sat beside the message. The pin is recorded where resolution looks.
+        record_component_pin(repo_id, commit, requested_revision=revision, cache_dir=cache_dir)
+    return manifest, commit
 
 
 def pull_component_config(
@@ -259,8 +266,57 @@ def _hub_snapshots(repo_dir: Path) -> list[str]:
     return sorted(p.name for p in snapshots.iterdir() if p.is_dir() and not is_local_revision(p.name))
 
 
+#: The ref a revision-pinned fetch records, inside the repo's HF cache layout beside `refs/main`. Resolution
+#: prefers it, so a pinned environment keeps executing what it pinned even after an unpinned fetch moves `main`.
+COMPONENT_PIN_REF = "it-pinned"
+
+
+def _repo_dir(repo_id: str, cache_dir: Path | None) -> Path:
+    return Path(cache_dir or IT_COMPONENTS_HUB_CACHE) / f"models--{repo_id.replace('/', '--')}"
+
+
+def record_component_pin(repo_id: str, commit: str, *, requested_revision: str, cache_dir: Path | None = None) -> Path:
+    """Write the pin marker for one component repo; re-pulling at another revision moves it."""
+    if not commit:
+        raise ValueError(f"refusing to record an empty commit for {repo_id!r}")
+    refs = _repo_dir(repo_id, cache_dir) / "refs"
+    refs.mkdir(parents=True, exist_ok=True)
+    path = refs / COMPONENT_PIN_REF
+    path.write_text(commit, encoding="utf-8")
+    return path
+
+
+def read_component_pin(repo_id: str, cache_dir: Path | None = None) -> str | None:
+    """The pinned commit for a component repo, or ``None`` when unpinned."""
+    path = _repo_dir(repo_id, cache_dir) / "refs" / COMPONENT_PIN_REF
+    try:
+        return path.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def clear_component_pin(repo_id: str, cache_dir: Path | None = None) -> bool:
+    """Release a component pin; returns whether one existed.
+
+    Resolution then reads ``refs/main`` again.
+    """
+    path = _repo_dir(repo_id, cache_dir) / "refs" / COMPONENT_PIN_REF
+    if not path.is_file():
+        return False
+    path.unlink()
+    return True
+
+
+def cached_component_revisions(repo_id: str, cache_dir: Path | None = None) -> list[str]:
+    """Every snapshot of a repo in the cache that carries a manifest, addressed or not."""
+    snapshots = _repo_dir(repo_id, cache_dir) / "snapshots"
+    if not snapshots.is_dir():
+        return []
+    return sorted(p.name for p in snapshots.iterdir() if (p / IT_COMPONENT_MANIFEST).is_file())
+
+
 def resolve_component_manifest(
-    repo_id: str, cache_dir: Path | None = None, *, require_hub: bool = False
+    repo_id: str, cache_dir: Path | None = None, *, revision: str | None = None, require_hub: bool = False
 ) -> tuple[dict, Path, str]:
     """CACHE-ONLY manifest read: returns ``(manifest, snapshot_dir, revision)``; never touches the network.
 
@@ -276,14 +332,49 @@ def resolve_component_manifest(
     exists only locally (the in-tree seeds) resolves silently, as before.
     """
     root = Path(cache_dir or IT_COMPONENTS_HUB_CACHE)
-    repo_dir = root / f"models--{repo_id.replace('/', '--')}"
-    ref = repo_dir / "refs" / "main"
-    if not ref.is_file():
-        raise KeyError(
-            f"Component {repo_id!r} is not in the local cache ({root}). Fetch it explicitly first: "
-            f"interpretune.hub.pull({repo_id!r}) — local resolution never performs implicit network access."
-        )
-    revision = ref.read_text(encoding="utf-8").strip()
+    repo_dir = _repo_dir(repo_id, cache_dir)
+    cached = cached_component_revisions(repo_id, cache_dir)
+    if revision is not None:
+        # An explicit revision: the caller knows what it wants; it must be in the cache, and nothing is fetched.
+        # A short sha is the natural thing to pin with and `pull` accepts one (the Hub resolves it), so `load`
+        # accepts any unambiguous prefix of a cached revision too, as git does; the snapshot directory carries
+        # the full sha, and an exact-match comparison rejected the very string a pull had just succeeded with.
+        matches = [r for r in cached if r == revision or r.startswith(revision)]
+        if len(matches) > 1:
+            raise KeyError(
+                f"Component {repo_id!r}: revision prefix {revision!r} is ambiguous among cached snapshots "
+                f"{matches}; give more characters."
+            )
+        if not matches:
+            raise KeyError(
+                f"Component {repo_id!r} has no cached revision matching {revision!r} ({root}); cached: "
+                f"{cached or 'none'}. Fetch it explicitly: interpretune.hub.pull({repo_id!r}, "
+                f"revision={revision!r}) — local resolution never performs implicit network access."
+            )
+        revision = matches[0]
+    else:
+        pinned = read_component_pin(repo_id, cache_dir)
+        ref = repo_dir / "refs" / "main"
+        if pinned and pinned in cached:
+            revision = pinned  # the pin beats `main`: a republish cannot change what a pinned environment loads
+        elif ref.is_file():
+            revision = ref.read_text(encoding="utf-8").strip()
+        elif cached:
+            # Cached but unaddressable: a snapshot written by something that recorded no ref (a pinned fetch
+            # before pins were recorded, or a raw hf_hub_download). Saying "not in the cache" here sent a
+            # reader hunting for a download that had succeeded; the message names what is on disk and the
+            # two ways to address it.
+            raise KeyError(
+                f"Component {repo_id!r} is cached ({root}) but no revision is addressed: cached snapshot(s) "
+                f"{[r[:12] for r in cached]}, no `refs/main` and no pin. Resolve one explicitly with "
+                f"revision={cached[0]!r}, or fetch unpinned once (interpretune.hub.pull({repo_id!r})) to set "
+                "`refs/main`; a pinned pull now records its pin, so this state comes from older caches."
+            )
+        else:
+            raise KeyError(
+                f"Component {repo_id!r} is not in the local cache ({root}). Fetch it explicitly first: "
+                f"interpretune.hub.pull({repo_id!r}) — local resolution never performs implicit network access."
+            )
     if is_local_revision(revision):
         hub_revisions = _hub_snapshots(repo_dir)
         if require_hub:
@@ -310,10 +401,12 @@ def resolve_component_manifest(
 
 
 def resolve_component_config(
-    repo_id: str, key: str, cache_dir: Path | None = None, *, require_hub: bool = False
+    repo_id: str, key: str, cache_dir: Path | None = None, *, revision: str | None = None, require_hub: bool = False
 ) -> tuple[str, dict]:
     """CACHE-ONLY resolution of one configuration: never touches the network (design invariant §3.2)."""
-    manifest, snapshot, _ = resolve_component_manifest(repo_id, cache_dir=cache_dir, require_hub=require_hub)
+    manifest, snapshot, _ = resolve_component_manifest(
+        repo_id, cache_dir=cache_dir, revision=revision, require_hub=require_hub
+    )
     enforce_component_requires(manifest, source=f"{repo_id}@cache")
     configs = (manifest.get("module") or {}).get("configs") or {}
     if key not in configs:

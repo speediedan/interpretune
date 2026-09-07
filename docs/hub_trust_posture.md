@@ -109,7 +109,7 @@ the resolved commit, and op discovery loads exactly that revision from then on, 
 `main` has moved to. A pinned revision evicted from the cache is refused with the restore gesture,
 never silently substituted. Inspect pins with `it.hub.op_pins()`; move one by pulling at another
 revision; release one, explicitly, with `it.hub.unpin_ops(repo)`. (`revision="main"` is not a pin:
-it means the moving default, exactly like omitting the argument.)
+it means the moving default, exactly like omitting the argument.) A pinned `it.hub.pull(repo, revision=...)` records its commit where cache-only resolution looks, and resolution prefers it over `refs/main` until `it.hub.unpin(repo)` releases it, so a later republish cannot change what your environment loads; a pinned pull into a clean cache is loadable on its own, and `load` / `load_hub_adapter` also take an explicit `revision`.
 
 **Run without remote code at all.** Set `IT_TRUST_REMOTE_CODE=0`. Everything that does not require
 executing publisher code keeps working: local modules and datamodules, hub-resident configurations
