@@ -454,6 +454,25 @@ def _resolve_model_name_for_lens(module: Any) -> str | None:
     return None
 
 
+def _model_names_agree(declared: str | None, model_name: str) -> bool:
+    """Whether a sidecar's ``hf_model_name`` corroborates the model we are resolving a lens for.
+
+    Sidecars record the fully qualified name (``openai-community/gpt2``), while a model loaded by its
+    short name self-reports ``gpt2``, so requiring string equality rejects the correct lens for every
+    model loaded the short way. When the caller's name carries no organization there is no
+    organization to compare, so the basenames are compared instead; that is weaker evidence, but it is
+    the strongest available and still far more than a formatted path, which checks nothing at all.
+
+    ``declared is None`` means the directory publishes no sidecar (one does not), which is accepted
+    rather than refused: the caller sees it as ``hf_model_name=None`` on the artifact.
+    """
+    if declared is None:
+        return True
+    if "/" in model_name:
+        return declared.lower() == model_name.lower()
+    return declared.rsplit("/", 1)[-1].lower() == model_name.lower()
+
+
 def resolve_jlens(
     module: Any,
     *,
@@ -512,13 +531,12 @@ def _discover_jlens_path(
             stem = candidate.rsplit("/", 1)[-1].lower()
             if stem.startswith(f"{basename}{_JLENS_STEM_SUFFIX}"):
                 sidecar = _read_jlens_sidecar(repo_id, candidate, revision, token)
-                declared = sidecar.get("hf_model_name")
-                if declared is None or declared.lower() == model_name.lower():
+                if _model_names_agree(sidecar.get("hf_model_name"), model_name):
                     return _select_jlens_artifact(candidates, model_dir)
     for model_dir, candidates in sorted(artifacts.items()):
         chosen = candidates[0]
         sidecar = _read_jlens_sidecar(repo_id, chosen, revision, token)
-        if str(sidecar.get("hf_model_name", "")).lower() == model_name.lower():
+        if sidecar.get("hf_model_name") and _model_names_agree(sidecar["hf_model_name"], model_name):
             return _select_jlens_artifact(candidates, model_dir)
     raise ValueError(
         f"{repo_id!r} publishes no lens whose `hf_model_name` is {model_name!r}; it covers "

@@ -93,6 +93,26 @@ class TestTheLayoutThisResolverExistsFor:
     def test_the_awkward_shapes_resolve(self, offline_repo, hf_name, expected):
         assert _discover(_Module(hf_name)) == expected
 
+    @pytest.mark.parametrize("short_name", ["gpt2", "gemma-2-2b", "Qwen3.5-4B"])
+    def test_a_model_loaded_by_its_SHORT_name_still_resolves(self, offline_repo, short_name):
+        """Regression: sidecars record `org/name` while a short-loaded model self-reports `name`.
+
+        This escaped the cases above by construction rather than by oversight. Every other test here
+        feeds a sidecar's own `hf_model_name` back in, so the two strings always matched and the
+        comparison could never be too strict. The real repository found it on the first pass because
+        `AutoModelForCausalLM.from_pretrained("gpt2")` reports `gpt2`, not `openai-community/gpt2`.
+        """
+        assert _discover(_Module(short_name)).split("/")[0] in ARTIFACTS
+
+    def test_a_qualified_name_from_the_WRONG_organization_is_still_refused(self, offline_repo):
+        """The positive control on the fix above: relaxing the comparison must not disarm it.
+
+        A basename-only comparison for every name would make this pass, which is the failure mode a
+        loosened check invites: it resolves everything, including the thing it exists to catch.
+        """
+        with pytest.raises(ValueError, match="publishes no lens whose `hf_model_name`"):
+            _discover(_Module("not-the-real-org/gpt2"))
+
     def test_a_non_wikitext_fitting_corpus_is_not_assumed_away(self, offline_repo):
         """One model was fit on a different corpus; a hard-coded corpus segment would miss it."""
         path = optools._select_jlens_artifact(ARTIFACTS["deepseek-v4-flash"], "deepseek-v4-flash")

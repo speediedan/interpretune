@@ -60,6 +60,18 @@ def _resolve_lens_layer(module: Any, analysis_batch: AnalysisBatch, kwargs: dict
     return artifact.j_by_layer[layer].float(), layer, artifact
 
 
+def _readout_device(info: UnembedNormInfo) -> torch.device:
+    """Where the readout runs: the unembed's device.
+
+    Activations arrive on CPU (they are detached out of the cache) while the unembed sits wherever the
+    model does, so the two have to be reconciled somewhere. Moving the small tensors to the unembed is
+    the cheap direction: activations and the ``d x d`` lens are kilobytes, while an unembed is hundreds
+    of megabytes and would be copied on every call. Results come back to CPU, which is where the rest
+    of an analysis batch lives.
+    """
+    return info.w_u.device
+
+
 def _activations(analysis_batch: AnalysisBatch, cache_key: str) -> torch.Tensor:
     """The cached activations at ``cache_key`` as float, shape ``(batch, position, d_model)``."""
     cache = analysis_batch.get("cache")
@@ -128,11 +140,13 @@ def jlens_read_impl(
     include_rms_scale = bool(kwargs.get("jlens_include_rms_scale", analysis_batch.get("jlens_include_rms_scale")))
     top_k = int(kwargs.get("jlens_top_k", analysis_batch.get("jlens_top_k") or 10))
 
+    device = _readout_device(info)
     activations = _activations(analysis_batch, cache_key)
     positions = _selected_positions(analysis_batch, kwargs, activations.shape[1])
-    selected = activations[:, positions, :]
-    logits = _lens_readout(selected, j, info, include_rms_scale)
+    selected = activations[:, positions, :].to(device)
+    logits = _lens_readout(selected, j.to(device), info, include_rms_scale)
     scores, ids = torch.topk(logits, k=min(top_k, logits.shape[-1]), dim=-1)
+    scores, ids = scores.detach().cpu(), ids.detach().cpu()
 
     tokenizer = resolve_tokenizer(module)
     strings = [[[tokenizer.decode([int(i)]) for i in row] for row in example] for example in ids]
@@ -165,8 +179,9 @@ def jlens_concept_probe_impl(
     if token_ids is None:
         raise ValueError("jlens_concept_probe requires jlens_concept_token_ids")
 
+    device = _readout_device(info)
     rows = fold_norm_into_unembed_rows(info, token_ids, apply_norm=True if apply_norm is None else bool(apply_norm))
-    directions = rows @ j  # (n_concepts, d_model), in the residual basis
+    directions = (rows @ j.to(device)).detach().cpu()  # (n_concepts, d_model), in the residual basis
     activations = _activations(analysis_batch, cache_key)
     positions = _selected_positions(analysis_batch, kwargs, activations.shape[1])
     selected = activations[:, positions, :]
@@ -243,10 +258,12 @@ def jlens_sparse_inventory_impl(
 
     activations = _activations(analysis_batch, cache_key)
     positions = _selected_positions(analysis_batch, kwargs, activations.shape[1])
+    device = _readout_device(info)
+    j = j.to(device)
     w_u = info.w_u.float().detach()
 
     def atom_of(token_id: int) -> torch.Tensor:
-        return (fold_norm_into_unembed_rows(info, [token_id])[0] @ j).detach()
+        return (fold_norm_into_unembed_rows(info, [token_id])[0] @ j).detach().cpu()
 
     ids_out, coefficients_out, residual_out = [], [], []
     for example in range(activations.shape[0]):
@@ -255,12 +272,12 @@ def jlens_sparse_inventory_impl(
 
             # correlation with every atom is `(W_U * s) @ J @ r`, which is the folded readout of r
             def correlate(r: torch.Tensor, _h=h) -> torch.Tensor:
-                y = r @ j.transpose(0, 1)
+                y = r.to(device) @ j.transpose(0, 1)
                 if info.norm_kind == "layernorm":
                     y = y - y.mean(dim=-1, keepdim=True)
                 if info.norm_scale is not None:
-                    y = y * info.norm_scale.float()
-                return (w_u @ y).detach()
+                    y = y * info.norm_scale.float().to(device)
+                return (w_u @ y).detach().cpu()
 
             chosen, coefficients = _gradient_pursuit(h, atom_of, correlate, k)
             reconstruction = coefficients @ torch.stack([atom_of(c) for c in chosen]) if chosen else torch.zeros_like(h)
