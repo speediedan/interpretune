@@ -196,6 +196,20 @@ class TestRMSNormOffsetIsPerFamilyNotPerPrefix:
         torch.testing.assert_close(plain.norm_scale, torch.full((D,), self.WEIGHT))
         assert offset.norm_kind == plain.norm_kind == "rmsnorm"
 
+    def test_a_gemma_family_with_no_rmsnorm_neither_warns_nor_reaches_for_one(self):
+        """Two gemma families ship no RMSNorm class at all, so the seam must not fire on their name.
+
+        The unrecognized-family warning keys on the family name, which makes it tempting to check the name first. It is
+        deliberately reachable only from inside the rmsnorm branch, so a gemma-family model whose final norm is absent
+        or of another kind passes through silently.
+        """
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            info = resolve_unembed_and_norm_scale(_hf_module("gemma4_assistant", object()))
+        assert info.norm_scale is None and info.norm_kind == "none"
+
     def test_a_layernorm_is_untouched_by_the_rmsnorm_rule(self):
         """The offset question is RMSNorm-only; a LayerNorm in any family applies its weight directly."""
         norm = torch.nn.LayerNorm(D)
