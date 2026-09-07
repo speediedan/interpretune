@@ -12,6 +12,12 @@ models:
     allow_patterns: ["*.json", "*.txt", "model.safetensors"]
   - repo_id: openai-community/gpt2
     allow_patterns: ["*.json", "*.txt", "model.safetensors"]
+  # Attention SAEs the SAE-Lens adapter tests load (layers 9 and 10 only).
+  - repo_id: ckkissane/attn-saes-gpt2-small-all-layers
+    allow_patterns: ["*_L9_*", "*_L10_*"]
 datasets:
   - path: aps/super_glue
     config_name: rte
+  # The debug-generation extension's default corpus.
+  - path: Salesforce/wikitext
+    config_name: wikitext-2-raw-v1
