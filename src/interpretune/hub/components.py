@@ -336,12 +336,22 @@ def resolve_component_manifest(
     cached = cached_component_revisions(repo_id, cache_dir)
     if revision is not None:
         # An explicit revision: the caller knows what it wants; it must be in the cache, and nothing is fetched.
-        if revision not in cached:
+        # A short sha is the natural thing to pin with and `pull` accepts one (the Hub resolves it), so `load`
+        # accepts any unambiguous prefix of a cached revision too, as git does; the snapshot directory carries
+        # the full sha, and an exact-match comparison rejected the very string a pull had just succeeded with.
+        matches = [r for r in cached if r == revision or r.startswith(revision)]
+        if len(matches) > 1:
             raise KeyError(
-                f"Component {repo_id!r} has no cached revision {revision!r} ({root}); cached: "
-                f"{[r[:12] for r in cached] or 'none'}. Fetch it explicitly: interpretune.hub.pull({repo_id!r}, "
+                f"Component {repo_id!r}: revision prefix {revision!r} is ambiguous among cached snapshots "
+                f"{matches}; give more characters."
+            )
+        if not matches:
+            raise KeyError(
+                f"Component {repo_id!r} has no cached revision matching {revision!r} ({root}); cached: "
+                f"{cached or 'none'}. Fetch it explicitly: interpretune.hub.pull({repo_id!r}, "
                 f"revision={revision!r}) — local resolution never performs implicit network access."
             )
+        revision = matches[0]
     else:
         pinned = read_component_pin(repo_id, cache_dir)
         ref = repo_dir / "refs" / "main"

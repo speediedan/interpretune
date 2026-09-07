@@ -99,8 +99,32 @@ class TestPinnedPullIsAddressable:
         it.hub.pull(REPO, revision=SHA_A, cache_dir=hub)
         assert sorted(cached_component_revisions(REPO, cache_dir=hub)) == [SHA_A, SHA_B]
         assert resolve_component_manifest(REPO, cache_dir=hub, revision=SHA_B)[2] == SHA_B
-        with pytest.raises(KeyError, match=r"no cached revision 'c+'.*pull\('org/pinned', revision='c+'\)"):
+        with pytest.raises(KeyError, match=r"no cached revision matching 'c+'.*pull\('org/pinned', revision='c+'\)"):
             resolve_component_manifest(REPO, cache_dir=hub, revision="c" * 40)
+
+    def test_a_short_revision_that_pull_accepted_is_accepted_by_load(self, hub):
+        """The natural pin is a short sha; the snapshot directory carries the full one.
+
+        `pull` resolved the short
+        form through the Hub, and an exact-match `load` rejected it with a message listing the same 12 characters
+        as present, which read as a corrupt cache.
+        """
+        import interpretune as it
+
+        it.hub.pull(REPO, revision=SHA_A, cache_dir=hub)
+        it.hub.pull(REPO, cache_dir=hub)
+        assert resolve_component_manifest(REPO, cache_dir=hub, revision=SHA_A[:12])[2] == SHA_A
+        assert resolve_component_manifest(REPO, cache_dir=hub, revision="b" * 7)[2] == SHA_B
+        # an ambiguous prefix is refused naming the candidates rather than picking one
+        (hub / "models--org--pinned" / "snapshots" / ("a" * 39 + "c")).mkdir()
+        (hub / "models--org--pinned" / "snapshots" / ("a" * 39 + "c") / "it_component.yaml").write_text(
+            yaml.safe_dump(MANIFEST_A)
+        )
+        with pytest.raises(KeyError, match="ambiguous among cached snapshots"):
+            resolve_component_manifest(REPO, cache_dir=hub, revision="a" * 12)
+        # the error for an absent revision lists FULL shas, so it cannot name a revision as both absent and present
+        with pytest.raises(KeyError, match="a" * 39 + "c"):
+            resolve_component_manifest(REPO, cache_dir=hub, revision="d" * 40)
 
     def test_cached_but_unaddressable_is_named_with_both_fixes(self, hub):
         """The state older caches are in: a snapshot with no ref of any kind."""
