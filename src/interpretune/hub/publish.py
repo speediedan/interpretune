@@ -15,6 +15,10 @@ from interpretune.hub.cards import generate_component_card
 from interpretune.hub.manifest import IT_COMPONENT_MANIFEST, check_config_key_parity, load_component_manifest
 
 
+#: Never staged, whatever a declared directory contains: bytecode and tool caches are not part of any artifact.
+STAGING_IGNORES = ("__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".DS_Store")
+
+
 def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Path | None = None) -> dict:
     """Build a publishable Hub tree from an in-repo component dir; returns the validated manifest.
 
@@ -73,6 +77,24 @@ def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Pat
         dest = out_dir / adapters_entrypoint
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
+
+    # Declared supplementary files (`extra_files`): a collection's tests, a README fragment, fixture data. The
+    # publish path is a strict allowlist of manifest-declared paths, so before this the only way to publish a
+    # tests/ directory was a hand-push, which carries whatever else sits in the working directory (a
+    # .pytest_cache/ tree reached the first published collection that way). Declared here, they are staged by
+    # the same builder, so local_publish, the card and the Hub tree all agree on what the artifact contains.
+    for rel in manifest.get("extra_files") or []:
+        src = (component_dir / rel).resolve()
+        if component_dir.resolve() not in src.parents and src != component_dir.resolve():
+            raise ValueError(f"extra_files entry {rel!r} resolves outside {component_dir}; refusing to publish it")
+        if not src.exists():
+            raise FileNotFoundError(f"Manifest declares extra file {rel!r}, which is not present in {component_dir}.")
+        dest = out_dir / rel
+        if src.is_dir():
+            shutil.copytree(src, dest, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*STAGING_IGNORES))
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
 
     entrypoint = module_section.get("entrypoint")
     if entrypoint:
@@ -242,7 +264,13 @@ def publish_component(
     token: str | None = None,
     commit_message: str | None = None,
 ) -> str:
-    """Build the Hub tree, generate its card, and upload; returns the commit sha."""
+    """Build the Hub tree, generate its card, and upload; returns the commit sha.
+
+    The published artifact is exactly the manifest's allowlist (its declared payloads and entrypoints) plus the
+    manifest's ``extra_files``, plus the generated card. Files already on the Hub that this publish would not
+    produce are reported and removed, so a rename cannot leave its old name published and nothing arrives out
+    of band.
+    """
     import tempfile
 
     from interpretune.hub.manager import COMPONENT_KIND, ITHubResourceManager
@@ -252,9 +280,13 @@ def publish_component(
         manifest = build_component_tree(component_dir, out_dir, entrypoint_src=entrypoint_src)
         generate_component_card(manifest, repo_id).save(out_dir / "README.md")
         manager = ITHubResourceManager(kind=COMPONENT_KIND, token=token)
+        # The published tree is made to MATCH the staged one, not merely to receive it: an upload that only
+        # adds leaves a renamed entrypoint's old name live beside the new one, and a hand-pushed cache
+        # directory live forever. Anything the current publish would not produce is reported and removed.
         return manager.upload(
             out_dir,
             repo_id,
             private=private,
+            match_staged=True,
             commit_message=commit_message or f"Publish interpretune component {component_dir.name}",
         )

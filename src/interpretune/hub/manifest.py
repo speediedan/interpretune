@@ -38,6 +38,24 @@ def derive_config_key(cfg: dict) -> str:
     return f"{cfg['task_variant']}.{cfg['model']}.{comp_str}" + (f".{node4}" if node4 else "")
 
 
+def _is_relative_inside(rel: str) -> bool:
+    """Whether a declared path is relative and stays inside the component directory, on EVERY platform.
+
+    Evaluated under both path flavours: a manifest is authored on one platform and consumed on another, and
+    `Path(rel)` judges by the consumer's rules only. `WindowsPath("/etc/passwd").is_absolute()` is False (no
+    drive), so a POSIX-absolute entry passed the allowlist on a Windows consumer; `PosixPath("..\\sibling")` is one
+    component, so a Windows parent reference passed on POSIX. Either flavour saying absolute, or either yielding a
+    `..` part, refuses; that also catches a leading backslash and a drive letter.
+    """
+    from pathlib import PurePosixPath, PureWindowsPath
+
+    for flavour in (PurePosixPath, PureWindowsPath):
+        parsed = flavour(rel)
+        if parsed.is_absolute() or parsed.drive or parsed.root or ".." in parsed.parts:
+            return False
+    return True
+
+
 def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> dict:
     """Validate the coarse shape of a parsed component manifest, returning it on success."""
     if not isinstance(manifest, dict):
@@ -119,6 +137,20 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
                 raise ComponentManifestError(
                     f"{source}: `adapters.compositions[].requires` must be a mapping in the same vocabulary as "
                     f"the component-wide `requires` (interpretune / adapters / pip), got {entry_requires!r}"
+                )
+    extra = manifest.get("extra_files")
+    if extra is not None:
+        if not isinstance(extra, list) or not all(isinstance(f, str) and f for f in extra):
+            raise ComponentManifestError(
+                f"{source}: `extra_files` must be a list of repo-relative paths (files or directories) to publish "
+                "alongside the manifest-declared payloads, got " + repr(extra)
+            )
+        for rel in extra:
+            if rel == IT_COMPONENT_MANIFEST or not _is_relative_inside(rel):
+                raise ComponentManifestError(
+                    f"{source}: `extra_files` entry {rel!r} must be a relative path inside the component directory "
+                    "and not the manifest itself. The published artifact is the manifest's allowlist plus these "
+                    "declared extras; nothing outside the component directory is ever published."
                 )
     if "hookmaps" in kinds:
         hm = manifest.get("hookmaps") or {}

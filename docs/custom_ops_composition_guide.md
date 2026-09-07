@@ -347,6 +347,25 @@ one transformation publishing requires: bundled YAMLs address implementations by
 path, while the hub loader resolves a repo-relative `<module>.<function>` pair. A family published
 verbatim is a repo whose every op fails to import.
 
+### What the published tree contains
+
+The published artifact is exactly the manifest's allowlist (its declared payloads and entrypoints), plus the
+manifest's `extra_files`, plus the generated card. Nothing else in your working directory is published, and
+`.gitignore` is not consulted: the builder stages declared paths only. To publish your tests, a fixture, or a
+README fragment alongside the collection, declare them:
+
+```yaml
+extra_files:
+  - tests          # a directory publishes its tree, minus bytecode and tool caches
+  - NOTES.md
+```
+
+Entries must exist and sit inside the component directory. On republish the Hub tree is made to **match** the
+staged tree: any file already published that the current publish would not produce (a renamed file's old name, or
+something pushed by hand) is reported by name and removed in the same commit, so a rename cannot leave a drift
+pair and nothing arrives out of band. If you see that report and did not expect it, the named files came from a
+hand-push; declare what you want kept.
+
 ### Versioning your op collection
 
 Declare the collection's identity in a header at the top of its op YAML:
