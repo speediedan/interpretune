@@ -1,0 +1,15 @@
+# Hub artifacts the hosted CI matrix warms into the Hugging Face cache before running the suite with
+# HF_HUB_OFFLINE=1 (see docs/ci_hub_cache.md). Warmed by scripts/warm_hf_cache.py; the actions cache is
+# keyed on this file's hash, so editing it (including cache_version) refreshes every runner's cache.
+#
+# A test that needs an artifact not listed here fails offline with a message naming this file. Add the
+# repository (and for datasets the config name the test loads) rather than lifting offline mode; a test
+# that must reach the live Hub is marked @pytest.mark.hf_live and runs in the separate online pass.
+cache_version: 1
+models:
+  # Both spellings are used in the tree and cache under separate directories, so both are warmed.
+  - repo_id: gpt2
+  - repo_id: openai-community/gpt2
+datasets:
+  - path: aps/super_glue
+    config_name: rte

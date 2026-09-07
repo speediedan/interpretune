@@ -458,6 +458,9 @@ norecursedirs = [
 ]
 #addopts = "--strict-markers --doctest-modules --color=yes --disable-pytest-warnings --ignore-glob='src/fts_examples/*/ipynb_src/*.py' --ignore='.actions/assistant.py'"
 addopts = "--strict-markers --doctest-modules --color=yes --disable-pytest-warnings --ignore-glob='tests/*_parity/*.py' --ignore-glob='src/it_examples/notebooks/**/*.py'"
+markers = [
+    "hf_live: the test must reach the live Hugging Face Hub (skipped when HF_HUB_OFFLINE=1; hosted CI runs these in a separate online pass)",
+]
 junit_duration_report = "call"
 tmp_path_retention_count = 30  # allow retention of more successful runs during profiling result generation (default 3)
 
