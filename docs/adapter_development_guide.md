@@ -489,3 +489,22 @@ Understanding when each is appropriate is important for adapter development.
 
 **Important:** Setting `use_bridge=True` with `ITLensCustomConfig` is silently ignored — IT
 will warn and force `use_bridge=False` because TransformerBridge requires an HF model instance.
+
+
+## Naming a hub-delivered adapter's classes from YAML
+
+A bundled adapter's config classes have a stable dotted path (`interpretune.adapters.nnsight.config.ITNNsightConfig`)
+that a YAML `class_path` can name. A hub-delivered adapter is imported under a revision-scoped synthetic module
+name so two cached revisions never collide, and that name changes on every publish. Each load therefore also
+binds the entrypoint under a stable alias, `it_hub_adapters.<org>__<repo>` with `-` and `.` replaced by `_`:
+
+```yaml
+module_cfg:
+  my_adapter_cfg:
+    class_path: it_hub_adapters.org__my_adapter.MyAdapterConfig
+```
+
+The alias exists only after `load_hub_adapter` has run in the process (loading never happens implicitly), and it
+follows the most recent load of that component; with one revision loaded, the normal case, it is that revision.
+`interpretune.hub.stable_module_name(repo_id)` returns the alias, and `loaded_adapter_module(repo_id)` returns
+the same module object for callers in Python.
