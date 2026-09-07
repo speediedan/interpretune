@@ -48,6 +48,22 @@ class UnmetRequirement:
     message: str
 
 
+def install_command(entry: str) -> str:
+    """The command a user should run to satisfy one unmet ``requires.pip`` entry.
+
+    ALWAYS the `uv` form, never bare `pip`, and that is a project rule rather than a preference. This
+    project's environments depend on `[tool.uv] override-dependencies`, which pip ignores; `AGENTS.md`
+    states that `pip install` into a dev venv is never acceptable, "not even for a one-off repair", and
+    records a case where a pip repair layered two dist-infos for one package. A diagnostic that printed a
+    pip command would be telling users to do the one thing the project documents most carefully against.
+
+    Quoted because specifiers contain characters a shell treats as its own: `interp-engine~=1.5.1` is
+    fine unquoted, `interp-engine>=1.5,<2` is not, and the difference is invisible until someone pastes
+    the second one.
+    """
+    return f"uv pip install {entry!r}"
+
+
 def requirement_status(requires: dict, source: str = "<component>") -> list[UnmetRequirement]:
     """Evaluate a ``requires`` block against this environment, returning EVERY unmet requirement.
 
@@ -126,13 +142,19 @@ def requirement_status(requires: dict, source: str = "<component>") -> list[Unme
         if installed is None:
             unmet.append(
                 UnmetRequirement(
-                    "pip", str(entry), f"{source}: requires pip package {entry!r}, which is not installed."
+                    "pip",
+                    str(entry),
+                    f"{source}: requires pip package {entry!r}, which is not installed. "
+                    f"Install it with: {install_command(str(entry))}",
                 )
             )
         elif r.specifier and not r.specifier.contains(installed, prereleases=True):
             unmet.append(
                 UnmetRequirement(
-                    "pip", str(entry), f"{source}: requires {entry!r} but {r.name} {installed!r} is installed."
+                    "pip",
+                    str(entry),
+                    f"{source}: requires {entry!r} but {r.name} {installed!r} is installed. "
+                    f"Change it with: {install_command(str(entry))}",
                 )
             )
     return unmet
