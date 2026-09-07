@@ -378,6 +378,14 @@ collection:
     interpretune: ">=0.1.0.dev0"    # optional; one window, checked at load
 ```
 
+The same `requires` vocabulary serves every kind, component-wide and per adapter composition: `interpretune`
+(a version specifier), `adapters` (adapter names this interpretune must provide), `pip` (distributions, with an
+optional specifier) and `modules` (importable dotted names, evaluated with `importlib.util.find_spec` so nothing
+is imported). Declare `modules` when a composition depends on one module of a package that moves faster than its
+releases, or on a git-pinned package no specifier can express: a distribution can be installed at a checkout that
+lacks the module, and without the declaration the composition registers and then breaks on first use instead of
+being skipped with the module named.
+
 Four things to internalize before you pick a version or a window:
 
 1. **The version versions the CONTRACT SET, not your package.** It describes the names, schemas and
