@@ -117,10 +117,11 @@ def _cache_size() -> str:
     from huggingface_hub.constants import HF_HOME
 
     total = 0
+    # lstat: snapshot directories hold symlinks into blobs, and following them counts every file twice.
     for root, _dirs, files in os.walk(HF_HOME):
         for name in files:
             try:
-                total += (Path(root) / name).stat().st_size
+                total += (Path(root) / name).lstat().st_size
             except OSError:
                 continue
     return f"{total / 2**30:.2f} GiB under {HF_HOME}"
