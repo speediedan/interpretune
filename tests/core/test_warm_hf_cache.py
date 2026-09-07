@@ -70,6 +70,32 @@ class TestWarmScript:
         with pytest.raises(ConnectionError, match="still 429"):
             script._retry("thing", broken, attempts=2)
 
+    def test_a_permanent_http_error_is_not_retried(self, monkeypatch):
+        script = _load_script()
+        monkeypatch.setattr(script.time, "sleep", lambda _s: pytest.fail("a 404 must not be retried"))
+
+        class Response:
+            status_code = 404
+
+        class NotFound(Exception):
+            response = Response()
+
+        calls = {"n": 0}
+
+        def missing():
+            calls["n"] += 1
+            raise NotFound("404")
+
+        with pytest.raises(NotFound):
+            script._retry("thing", missing, attempts=4)
+        assert calls["n"] == 1
+
+    def test_patterns_select_files(self):
+        script = _load_script()
+        assert script._matches("model.safetensors", ["*.json", "model.safetensors"])
+        assert not script._matches("tf_model.h5", ["*.json", "model.safetensors"])
+        assert script._matches("anything", None)
+
 
 class TestOfflineSkip:
     """The conftest skips hf_live tests under HF_HUB_OFFLINE=1; a probe marked hf_live proves it in a

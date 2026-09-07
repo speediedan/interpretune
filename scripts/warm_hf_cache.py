@@ -17,6 +17,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import os
 import sys
 import time
@@ -38,6 +39,13 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     return manifest
 
 
+def _is_permanent_http_error(exc: Exception) -> bool:
+    """A 4xx other than 408/429 will not change on retry; report it at once instead of burning the backoff."""
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    return isinstance(status, int) and 400 <= status < 500 and status not in (408, 429)
+
+
 def _retry(label: str, fn, attempts: int = ATTEMPTS) -> None:
     """Run ``fn`` with exponential backoff.
 
@@ -50,29 +58,46 @@ def _retry(label: str, fn, attempts: int = ATTEMPTS) -> None:
             fn()
             return
         except Exception as exc:  # - any failure here is retried, the last one is re-raised
-            if attempt == attempts:
+            if attempt == attempts or _is_permanent_http_error(exc):
                 raise
             print(f"  {label}: attempt {attempt} failed ({type(exc).__name__}: {exc}); retrying in {delay:.0f}s")
             time.sleep(delay)
             delay *= 2
 
 
+def _matches(filename: str, patterns: list[str] | None) -> bool:
+    return not patterns or any(fnmatch.fnmatch(filename, pattern) for pattern in patterns)
+
+
 def warm_models(entries: list[dict[str, Any]], dry_run: bool) -> None:
+    """Download each model repository file by file.
+
+    Per file rather than ``snapshot_download`` for two reasons. It is the call shape transformers and the
+    adapters use, so the cache layout the tests look up offline is exactly the one written. And
+    ``snapshot_download`` fails on an aliased repository such as ``gpt2`` (canonical ``openai-community/gpt2``)
+    under the xet backend: it asks for the xet read token with the alias and the resolved commit, which the Hub
+    answers 404, while ``hf_hub_download`` follows the redirect (measured against huggingface_hub 1.30).
+    """
     for entry in entries:
         repo_id = entry["repo_id"]
-        kwargs = {
-            "repo_id": repo_id,
-            "repo_type": entry.get("repo_type", "model"),
-            "revision": entry.get("revision"),
-            "allow_patterns": entry.get("allow_patterns"),
-        }
-        print(
-            f"model {repo_id} (revision={kwargs['revision'] or 'main'}, patterns={kwargs['allow_patterns'] or 'all'})"
-        )
-        if not dry_run:
-            from huggingface_hub import snapshot_download
+        repo_type = entry.get("repo_type", "model")
+        revision = entry.get("revision")
+        patterns = entry.get("allow_patterns")
+        print(f"model {repo_id} (revision={revision or 'main'}, patterns={patterns or 'all'})")
+        if dry_run:
+            continue
+        from huggingface_hub import hf_hub_download, list_repo_files
 
-            _retry(repo_id, lambda: snapshot_download(**kwargs))
+        filenames: list[str] = []
+        _retry(repo_id, lambda: filenames.extend(list_repo_files(repo_id, repo_type=repo_type, revision=revision)))
+        for filename in filenames:
+            if not _matches(filename, patterns):
+                continue
+            print(f"  {filename}")
+            _retry(
+                f"{repo_id}/{filename}",
+                lambda: hf_hub_download(repo_id, filename, repo_type=repo_type, revision=revision),
+            )
 
 
 def warm_datasets(entries: list[dict[str, Any]], dry_run: bool) -> None:

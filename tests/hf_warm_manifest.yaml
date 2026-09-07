@@ -9,7 +9,9 @@ cache_version: 1
 models:
   # Both spellings are used in the tree and cache under separate directories, so both are warmed.
   - repo_id: gpt2
+    allow_patterns: ["*.json", "*.txt", "model.safetensors"]
   - repo_id: openai-community/gpt2
+    allow_patterns: ["*.json", "*.txt", "model.safetensors"]
 datasets:
   - path: aps/super_glue
     config_name: rte
