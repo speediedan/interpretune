@@ -21,6 +21,9 @@ interp-engine's point names, with three additions.
 | `attn_out`, `mlp_out` | the raw sublayer outputs | `attn_out`, `mlp_out` | `blocks.{i}.attn.hook_out`, `blocks.{i}.mlp.hook_out` |
 | `attn_contribution`, `mlp_contribution` *(added)* | what the sublayer adds to the residual: the post-norm output on a sandwich-norm model, the raw output otherwise | `attn_out_post` / `attn_out`, by architecture | `blocks.{i}.hook_attn_out`, `blocks.{i}.hook_mlp_out` |
 | `z` | attention output before the output projection | `z` | `blocks.{i}.attn.o.hook_in` |
+| `cross_attn_in`, `cross_attn_out` *(added)* | an encoder-decoder block's third sublayer: its argument, and its raw output | none | `blocks.{i}.hook_cross_attn_in`, `blocks.{i}.cross_attn.hook_out` |
+| `cross_attn_contribution` *(added)* | what cross-attention adds to the residual, post-norm where one exists | none | `blocks.{i}.hook_cross_attn_out` |
+| `resid_after_{k}` *(added)* | the residual after sublayer k's write (0-based); `resid_after_0` is `resid_mid` | none | `blocks.{i}.hook_resid_after_{k}` |
 | `unembed_in` *(added as a name)* | the final norm's output, the unembed's input | `final_norm` | `unembed.hook_in` |
 | `logits` *(added)* | the output distribution | `lm_head` | `unembed.hook_out` |
 
@@ -29,6 +32,10 @@ TransformerBridge grammar: `blocks.{i}.{component}.hook_{slot}` inside the block
 outside it. Every component has `hook_in` and `hook_out`; a norm additionally has `hook_normalized` (the
 normalized tensor before the learned gain) and `hook_scale` (the per-token denominator). A norm is therefore
 three tensors, and no two of them are aliases.
+
+A contribution is keyed by the sublayer's **kind name** and routes to that sublayer's post-norm by its position in the
+document's `properties.sublayers` (sublayer k reads from `ln{k+1}_post` where the block has one), so a third sublayer
+kind, cross-attention or a declared mixer, needs no new vocabulary machinery.
 
 Both levels parse to one record, `ActivationPoint(component, slot, layer, contribution, subhook, caution)`, whose
 string form is the component spelling. The `hook_resid_*` and contribution names are semantic, not legacy; two
