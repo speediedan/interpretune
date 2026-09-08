@@ -371,7 +371,10 @@ violated by people who had read them because the wrong form was the shorter one 
    prints the wrapper PID at launch — capture it and wait with
    `until ! kill -0 <PID> 2>/dev/null; do sleep 60; done`. Output-grep watchers silently hang
    when the terminal line's wording changes (a `grep -qE "COVERAGE RUN COMPLETE|..."` watcher
-   missed a run that ended with `Exiting with status code 1`).
+   missed a run that ended with `Exiting with status code 1`). One caveat the bare form hides: a
+   process that has exited but not been reaped (a child whose parent never waited) is a zombie, and
+   `kill -0` still succeeds on it, so that loop never ends. `watch_run.sh` reads the process state
+   instead; if you write the loop by hand, check `ps -o stat=` for `Z` as well.
 3. **Cover every terminal state.** A run can end green, end red, or die — the watch condition
    must fire for all three (PID-exit does this for free); then read the log tail to classify.
 
