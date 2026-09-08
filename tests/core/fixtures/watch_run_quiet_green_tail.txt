@@ -1,0 +1,9 @@
+sssss....................                                 [100%]
+--------------------------------- conformance ----------------------------------
+conformance selection report
+  declared:            GRADIENTS, INTERVENTION, LATENT_MODELS
+  ran:                 52
+  skipped (undeclared):14
+  skipped (other):     0
+  failed:              0
+2646 passed, 202 skipped, 464 warnings in 1773.76s (0:29:33)
