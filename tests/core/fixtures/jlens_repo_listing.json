@@ -1,0 +1,163 @@
+{
+ "_comment": "Recorded file listing of neuronpedia/jacobian-lens (2026-09-06), used to exercise lens resolution offline. Kept as a recording rather than a hand-built sample because the awkward cases are the point: a stem that is not the directory name, a directory with two artifacts, two directories whose only artifact is suffixed, one fitting corpus that is not wikitext, and one directory that publishes no config.yaml at all.",
+ "artifacts": {
+  "deepseek-v4-flash": [
+   "deepseek-v4-flash/jlens/NeelNanda-pile-10k/deepseek-v4-flash_jacobian_lens_cblank.pt"
+  ],
+  "gemma-2-27b": [
+   "gemma-2-27b/jlens/Salesforce-wikitext/gemma-2-27b_jacobian_lens.pt"
+  ],
+  "gemma-2-2b": [
+   "gemma-2-2b/jlens/Salesforce-wikitext/gemma-2-2b_jacobian_lens.pt"
+  ],
+  "gemma-2-2b-it": [
+   "gemma-2-2b-it/jlens/Salesforce-wikitext/gemma-2-2b-it_jacobian_lens.pt"
+  ],
+  "gemma-2-9b": [
+   "gemma-2-9b/jlens/Salesforce-wikitext/gemma-2-9b_jacobian_lens.pt"
+  ],
+  "gemma-2-9b-it": [
+   "gemma-2-9b-it/jlens/Salesforce-wikitext/gemma-2-9b-it_jacobian_lens.pt"
+  ],
+  "gemma-3-12b": [
+   "gemma-3-12b/jlens/Salesforce-wikitext/gemma-3-12b-pt_jacobian_lens.pt"
+  ],
+  "gemma-3-12b-it": [
+   "gemma-3-12b-it/jlens/Salesforce-wikitext/gemma-3-12b-it_jacobian_lens.pt"
+  ],
+  "gemma-3-1b": [
+   "gemma-3-1b/jlens/Salesforce-wikitext/gemma-3-1b-pt_jacobian_lens.pt"
+  ],
+  "gemma-3-1b-it": [
+   "gemma-3-1b-it/jlens/Salesforce-wikitext/gemma-3-1b-it_jacobian_lens.pt"
+  ],
+  "gemma-3-270m": [
+   "gemma-3-270m/jlens/Salesforce-wikitext/gemma-3-270m_jacobian_lens.pt"
+  ],
+  "gemma-3-270m-it": [
+   "gemma-3-270m-it/jlens/Salesforce-wikitext/gemma-3-270m-it_jacobian_lens.pt"
+  ],
+  "gemma-3-27b": [
+   "gemma-3-27b/jlens/Salesforce-wikitext/gemma-3-27b-pt_jacobian_lens.pt"
+  ],
+  "gemma-3-27b-it": [
+   "gemma-3-27b-it/jlens/Salesforce-wikitext/gemma-3-27b-it_jacobian_lens.pt"
+  ],
+  "gemma-3-4b": [
+   "gemma-3-4b/jlens/Salesforce-wikitext/gemma-3-4b-pt_jacobian_lens.pt"
+  ],
+  "gemma-3-4b-it": [
+   "gemma-3-4b-it/jlens/Salesforce-wikitext/gemma-3-4b-it_jacobian_lens.pt"
+  ],
+  "gemma-4-31b": [
+   "gemma-4-31b/jlens/Salesforce-wikitext/gemma-4-31B_jacobian_lens.pt"
+  ],
+  "gemma-4-e2b": [
+   "gemma-4-e2b/jlens/Salesforce-wikitext/gemma-4-E2B_jacobian_lens.pt"
+  ],
+  "gemma-4-e4b": [
+   "gemma-4-e4b/jlens/Salesforce-wikitext/gemma-4-E4B_jacobian_lens.pt"
+  ],
+  "gpt-oss-20b": [
+   "gpt-oss-20b/jlens/Salesforce-wikitext/gpt-oss-20b_jacobian_lens.pt"
+  ],
+  "gpt2-small": [
+   "gpt2-small/jlens/Salesforce-wikitext/gpt2_jacobian_lens.pt"
+  ],
+  "llama3.1-8b": [
+   "llama3.1-8b/jlens/Salesforce-wikitext/Llama-3.1-8B_jacobian_lens.pt"
+  ],
+  "llama3.1-8b-it": [
+   "llama3.1-8b-it/jlens/Salesforce-wikitext/Llama-3.1-8B-Instruct_jacobian_lens.pt"
+  ],
+  "llama3.3-70b-it": [
+   "llama3.3-70b-it/jlens/Salesforce-wikitext/Llama-3.3-70B-Instruct_jacobian_lens.pt"
+  ],
+  "olmo-3-1025-7b": [
+   "olmo-3-1025-7b/jlens/Salesforce-wikitext/Olmo-3-1025-7B_jacobian_lens.pt"
+  ],
+  "olmo-3-1125-32b": [
+   "olmo-3-1125-32b/jlens/Salesforce-wikitext/Olmo-3-1125-32B_jacobian_lens.pt"
+  ],
+  "pythia-70m-deduped": [
+   "pythia-70m-deduped/jlens/Salesforce-wikitext/pythia-70m-deduped_jacobian_lens.pt"
+  ],
+  "qwen2.5-7b-it": [
+   "qwen2.5-7b-it/jlens/Salesforce-wikitext/Qwen2.5-7B-Instruct_jacobian_lens.pt"
+  ],
+  "qwen3-1.7b": [
+   "qwen3-1.7b/jlens/Salesforce-wikitext/Qwen3-1.7B_jacobian_lens.pt"
+  ],
+  "qwen3-14b": [
+   "qwen3-14b/jlens/Salesforce-wikitext/Qwen3-14B_jacobian_lens.pt"
+  ],
+  "qwen3-32b": [
+   "qwen3-32b/jlens/Salesforce-wikitext/Qwen3-32B_jacobian_lens.pt"
+  ],
+  "qwen3-4b": [
+   "qwen3-4b/jlens/Salesforce-wikitext/Qwen3-4B_jacobian_lens.pt"
+  ],
+  "qwen3-8b": [
+   "qwen3-8b/jlens/Salesforce-wikitext/Qwen3-8B_jacobian_lens.pt"
+  ],
+  "qwen3.5-0.8b": [
+   "qwen3.5-0.8b/jlens/Salesforce-wikitext/Qwen3.5-0.8B_jacobian_lens.pt"
+  ],
+  "qwen3.5-27b": [
+   "qwen3.5-27b/jlens/Salesforce-wikitext/Qwen3.5-27B_jacobian_lens.pt"
+  ],
+  "qwen3.5-2b-pt": [
+   "qwen3.5-2b-pt/jlens/Salesforce-wikitext/Qwen3.5-2B-Base_jacobian_lens.pt"
+  ],
+  "qwen3.5-4b": [
+   "qwen3.5-4b/jlens/Salesforce-wikitext/Qwen3.5-4B_jacobian_lens.pt",
+   "qwen3.5-4b/jlens/Salesforce-wikitext/Qwen3.5-4B_jacobian_lens_n1000.pt"
+  ],
+  "qwen3.5-9b-pt": [
+   "qwen3.5-9b-pt/jlens/Salesforce-wikitext/Qwen3.5-9B-Base_jacobian_lens.pt"
+  ],
+  "qwen3.6-27b": [
+   "qwen3.6-27b/jlens/Salesforce-wikitext/Qwen3.6-27B_jacobian_lens_n1000.pt"
+  ]
+ },
+ "hf_model_names": {
+  "deepseek-v4-flash": "deepseek-ai/DeepSeek-V4-Flash",
+  "gemma-2-27b": "google/gemma-2-27b",
+  "gemma-2-2b": "google/gemma-2-2b",
+  "gemma-2-2b-it": "google/gemma-2-2b-it",
+  "gemma-2-9b": "google/gemma-2-9b",
+  "gemma-2-9b-it": "google/gemma-2-9b-it",
+  "gemma-3-12b": "google/gemma-3-12b-pt",
+  "gemma-3-12b-it": "google/gemma-3-12b-it",
+  "gemma-3-1b": "google/gemma-3-1b-pt",
+  "gemma-3-1b-it": "google/gemma-3-1b-it",
+  "gemma-3-270m": "google/gemma-3-270m",
+  "gemma-3-270m-it": "google/gemma-3-270m-it",
+  "gemma-3-27b": "google/gemma-3-27b-pt",
+  "gemma-3-27b-it": "google/gemma-3-27b-it",
+  "gemma-3-4b": "google/gemma-3-4b-pt",
+  "gemma-3-4b-it": "google/gemma-3-4b-it",
+  "gemma-4-31b": "google/gemma-4-31B",
+  "gemma-4-e2b": "google/gemma-4-E2B",
+  "gemma-4-e4b": "google/gemma-4-E4B",
+  "gpt-oss-20b": "openai/gpt-oss-20b",
+  "gpt2-small": "openai-community/gpt2",
+  "llama3.1-8b": "meta-llama/Llama-3.1-8B",
+  "llama3.1-8b-it": "meta-llama/Llama-3.1-8B-Instruct",
+  "llama3.3-70b-it": "meta-llama/Llama-3.3-70B-Instruct",
+  "olmo-3-1025-7b": "allenai/Olmo-3-1025-7B",
+  "olmo-3-1125-32b": "allenai/Olmo-3-1125-32B",
+  "pythia-70m-deduped": "EleutherAI/pythia-70m-deduped",
+  "qwen2.5-7b-it": "Qwen/Qwen2.5-7B-Instruct",
+  "qwen3-1.7b": "Qwen/Qwen3-1.7B",
+  "qwen3-14b": "Qwen/Qwen3-14B",
+  "qwen3-32b": "Qwen/Qwen3-32B",
+  "qwen3-4b": "Qwen/Qwen3-4B",
+  "qwen3-8b": "Qwen/Qwen3-8B",
+  "qwen3.5-0.8b": "Qwen/Qwen3.5-0.8B",
+  "qwen3.5-27b": "Qwen/Qwen3.5-27B",
+  "qwen3.5-2b-pt": "Qwen/Qwen3.5-2B-Base",
+  "qwen3.5-4b": "Qwen/Qwen3.5-4B",
+  "qwen3.5-9b-pt": "Qwen/Qwen3.5-9B-Base"
+ }
+}

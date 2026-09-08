@@ -13,6 +13,7 @@ caveats); anything not exported is internal. Backend-specific behavior stays beh
 from __future__ import annotations
 
 import json
+import pathlib
 from typing import Any, Callable, Literal, NamedTuple
 
 import torch
@@ -350,6 +351,247 @@ def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
     )
 
 
+DEFAULT_JLENS_REPO = "neuronpedia/jacobian-lens"
+# Every published artifact lives at `{np_model_id}/jlens/{fitting-corpus}/{stem}.pt`. The corpus segment is
+# NOT constant (one model was fit on pile-10k rather than wikitext) and the stem is NOT the directory name
+# (it tracks the HF model name, so `gpt2-small/` holds `gpt2_...` and `gemma-4-e2b/` holds `gemma-4-E2B_...`).
+# Measured over the default repo, the obvious `{dir}/jlens/Salesforce-wikitext/{dir}_jacobian_lens.pt` shape
+# matches 13 of 40 artifacts, so this resolver discovers rather than formats.
+_JLENS_KIND_DIR = "jlens"
+_JLENS_STEM_SUFFIX = "_jacobian_lens"
+_JLENS_SIDECAR = "config.yaml"
+
+
+class JLensArtifact(NamedTuple):
+    """One resolved Jacobian lens, with the provenance a reader needs to interpret a weak result.
+
+    Attributes:
+        j_by_layer: ``{layer_index: Tensor[d_model, d_model]}``, the averaged causal Jacobians.
+        source_layers: The layer indices the lens was fit at, ascending.
+        d_model: Residual width the lens expects; a mismatch against the model is a hard error, not a
+            broadcast.
+        repo_id: Repository the artifact came from.
+        path: Repo-relative path of the artifact actually loaded, so a caller can quote what it used.
+        hf_model_name: The HF model the lens was fit against, read from the sidecar rather than inferred.
+        provenance: The sidecar's ``fit`` and ``results`` blocks when present. ``results.prompts_fitted``
+            is the count actually used (fitting stops on a convergence delta, so it is usually well below
+            the configured ``n_prompts``), and ``results.final_identity_distance`` says how far the lens
+            ended up from the identity, the degenerate case where a J-lens reduces to a logit lens. A weak
+            probe against a barely-converged lens is a different finding from a weak probe against a
+            well-separated one, which a caller can only tell if these travel with the artifact.
+    """
+
+    j_by_layer: dict[int, torch.Tensor]
+    source_layers: list[int]
+    d_model: int
+    repo_id: str
+    path: str
+    hf_model_name: str | None
+    provenance: dict[str, Any]
+
+
+def _jlens_repo_artifacts(repo_id: str, revision: str | None, token: str | None) -> dict[str, list[str]]:
+    """``{np_model_id: [artifact paths]}`` for a lens repository, discovered from its file listing."""
+    from huggingface_hub import HfApi
+
+    grouped: dict[str, list[str]] = {}
+    for name in HfApi().list_repo_files(repo_id, revision=revision, token=token):
+        parts = name.split("/")
+        if len(parts) == 4 and parts[1] == _JLENS_KIND_DIR and name.endswith(".pt"):
+            grouped.setdefault(parts[0], []).append(name)
+    return {k: sorted(v) for k, v in grouped.items()}
+
+
+def _select_jlens_artifact(candidates: list[str], model_dir: str) -> str:
+    """Pick one artifact from a model directory, or refuse naming the alternatives.
+
+    Prefers the unsuffixed stem, accepts a lone candidate whatever its suffix, and raises when several
+    remain. Both halves are load-bearing on the published repository: one directory carries a default and
+    an ``_n1000`` variant, so "take the only one" is wrong there, and two directories carry ONLY a
+    suffixed artifact, so "require the unsuffixed name" is wrong there. Picking by sort order would
+    silently prefer whichever name sorts first, which is not a property anyone chose.
+    """
+    plain = [c for c in candidates if c.rsplit("/", 1)[-1].endswith(f"{_JLENS_STEM_SUFFIX}.pt")]
+    if len(plain) == 1:
+        return plain[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    raise ValueError(
+        f"{model_dir!r} publishes {len(candidates)} lens artifacts and none is unambiguously the default: "
+        f"{[c.rsplit('/', 1)[-1] for c in candidates]}. Pass `path=` to choose one."
+    )
+
+
+def _read_jlens_sidecar(repo_id: str, artifact_path: str, revision: str | None, token: str | None) -> dict:
+    """The ``config.yaml`` beside an artifact, or ``{}`` when the repository publishes none."""
+    import yaml
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.errors import EntryNotFoundError
+
+    sidecar = f"{artifact_path.rsplit('/', 1)[0]}/{_JLENS_SIDECAR}"
+    try:
+        text = pathlib.Path(hf_hub_download(repo_id, sidecar, revision=revision, token=token)).read_text(
+            encoding="utf-8"
+        )
+    except (EntryNotFoundError, OSError):
+        return {}
+    # The sidecar leads with a provenance comment block; strip it so the YAML body parses on its own.
+    body = "\n".join(line for line in text.splitlines() if not line.startswith("#"))
+    return yaml.safe_load(body) or {}
+
+
+def _resolve_model_name_for_lens(module: Any) -> str | None:
+    """Best-effort HF model name for the module, used only to PROPOSE a lens directory."""
+    for path in (
+        ("model", "config", "_name_or_path"),
+        ("model", "config", "name_or_path"),
+        ("model", "cfg", "model_name"),
+        ("model", "name_or_path"),
+    ):
+        value = _resolve_attr_path(module, *path)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _model_names_agree(declared: str | None, model_name: str) -> bool:
+    """Whether a sidecar's ``hf_model_name`` corroborates the model we are resolving a lens for.
+
+    Sidecars record the fully qualified name (``openai-community/gpt2``), while a model loaded by its
+    short name self-reports ``gpt2``, so requiring string equality rejects the correct lens for every
+    model loaded the short way. When the caller's name carries no organization there is no
+    organization to compare, so the basenames are compared instead; that is weaker evidence, but it is
+    the strongest available and still far more than a formatted path, which checks nothing at all.
+
+    ``declared is None`` means the directory publishes no sidecar (one does not), which is accepted
+    rather than refused: the caller sees it as ``hf_model_name=None`` on the artifact.
+    """
+    if declared is None:
+        return True
+    if "/" in model_name:
+        return declared.lower() == model_name.lower()
+    return declared.rsplit("/", 1)[-1].lower() == model_name.lower()
+
+
+def resolve_jlens(
+    module: Any,
+    *,
+    repo_id: str = DEFAULT_JLENS_REPO,
+    model_id: str | None = None,
+    path: str | None = None,
+    revision: str | None = None,
+    token: str | None = None,
+) -> JLensArtifact:
+    """Resolve a pre-fitted Jacobian lens for ``module``, verifying the match rather than assuming it.
+
+    Resolution is deliberately propose-then-verify. A candidate directory comes from the model's HF name,
+    matched against artifact STEMS rather than directory names (the stem tracks the HF name and the
+    directory does not), and the candidate is then checked against the sidecar's ``hf_model_name`` before
+    anything loads. If it disagrees, every sidecar is scanned and the right directory is used.
+
+    The verification is the point. A mismatched lens does not fail: it produces a readout that is entirely
+    plausible and quietly wrong, which a formatted path cannot detect and a checked one cannot miss.
+
+    ``model_id`` names the repository directory directly and ``path`` names the artifact outright; both
+    skip discovery, so a lens this resolver cannot place never blocks a caller.
+
+    A sidecar is not guaranteed: 38 of the 39 model directories in the default repository publish one,
+    and the remaining directory publishes none. A resolution that could not be confirmed is not refused,
+    because refusing would make one model unreachable for no safety gain, but it is not silent either:
+    the returned artifact's ``hf_model_name`` is ``None`` exactly when nothing corroborated the match, so
+    a caller that cares can tell a verified resolution from a merely plausible one.
+    """
+    if path is None:
+        artifacts = _jlens_repo_artifacts(repo_id, revision, token)
+        if not artifacts:
+            raise ValueError(f"{repo_id!r} publishes no `*/{_JLENS_KIND_DIR}/*/*.pt` lens artifacts")
+        if model_id is not None:
+            if model_id not in artifacts:
+                raise ValueError(f"{repo_id!r} has no lens directory {model_id!r}; it publishes {sorted(artifacts)}")
+            path = _select_jlens_artifact(artifacts[model_id], model_id)
+        else:
+            path = _discover_jlens_path(module, repo_id, artifacts, revision, token)
+    sidecar = _read_jlens_sidecar(repo_id, path, revision, token)
+    return _load_jlens_artifact(repo_id, path, revision, token, sidecar)
+
+
+def _discover_jlens_path(
+    module: Any, repo_id: str, artifacts: dict[str, list[str]], revision: str | None, token: str | None
+) -> str:
+    """Propose a directory from the model name, then confirm it against the sidecar before loading."""
+    model_name = _resolve_model_name_for_lens(module)
+    if not model_name:
+        raise ValueError(
+            f"could not determine a model name to match against {repo_id!r}; pass `model_id=` (one of "
+            f"{sorted(artifacts)}) or `path=`"
+        )
+    basename = model_name.rsplit("/", 1)[-1].lower()
+    for model_dir, candidates in sorted(artifacts.items()):
+        for candidate in candidates:
+            stem = candidate.rsplit("/", 1)[-1].lower()
+            if stem.startswith(f"{basename}{_JLENS_STEM_SUFFIX}"):
+                sidecar = _read_jlens_sidecar(repo_id, candidate, revision, token)
+                if _model_names_agree(sidecar.get("hf_model_name"), model_name):
+                    return _select_jlens_artifact(candidates, model_dir)
+    for model_dir, candidates in sorted(artifacts.items()):
+        chosen = candidates[0]
+        sidecar = _read_jlens_sidecar(repo_id, chosen, revision, token)
+        if sidecar.get("hf_model_name") and _model_names_agree(sidecar["hf_model_name"], model_name):
+            return _select_jlens_artifact(candidates, model_dir)
+    raise ValueError(
+        f"{repo_id!r} publishes no lens whose `hf_model_name` is {model_name!r}; it covers "
+        f"{sorted(artifacts)}. Pass `model_id=` or `path=` to select one explicitly."
+    )
+
+
+def _load_jlens_artifact(
+    repo_id: str, path: str, revision: str | None, token: str | None, sidecar: dict
+) -> JLensArtifact:
+    """Load a resolved artifact, memory-mapped so a single layer does not materialize the whole lens."""
+    from huggingface_hub import hf_hub_download
+
+    local = hf_hub_download(repo_id, path, revision=revision, token=token)
+    try:
+        ckpt = torch.load(local, map_location="cpu", weights_only=True, mmap=True)
+    except (RuntimeError, ValueError):  # not a zipfile-serialized checkpoint; mmap is unavailable
+        ckpt = torch.load(local, map_location="cpu", weights_only=True)
+    j_by_layer = {int(k): v for k, v in (ckpt.get("J") or {}).items()}
+    if not j_by_layer:
+        raise ValueError(f"{repo_id}:{path} carries no `J` layer mapping, so it is not a usable lens")
+    source_layers = sorted(int(x) for x in (ckpt.get("source_layers") or j_by_layer))
+    d_model = int(ckpt.get("d_model") or next(iter(j_by_layer.values())).shape[0])
+    provenance = {k: sidecar[k] for k in ("fit", "results", "dataset") if k in sidecar}
+    if "n_prompts" in ckpt:
+        provenance.setdefault("checkpoint", {})["n_prompts"] = int(ckpt["n_prompts"])
+    return JLensArtifact(
+        j_by_layer=j_by_layer,
+        source_layers=source_layers,
+        d_model=d_model,
+        repo_id=repo_id,
+        path=path,
+        hf_model_name=sidecar.get("hf_model_name"),
+        provenance=provenance,
+    )
+
+
+def jlens_layer_for_percentile(artifact: JLensArtifact, percentile: float) -> int:
+    """The fitted layer at ``percentile`` through the fitted set, ``percentile`` in [0, 1].
+
+    Lenses are fit at a sampled subset of layers, so a caller asking for "85%" needs a layer that was
+    actually fit rather than the nearest layer index.
+
+    This indexes POSITION IN THE FITTED SET, not depth in the model, and the two differ once rounding
+    enters: five layers fit at 0, 6, 12, 18, 24 put ``percentile=0.85`` at index 3, which is layer 18 and
+    therefore 75% of the way down. Position is the definition the published steering recipes were tuned
+    against, so it is kept deliberately rather than quietly upgraded to true depth: changing it would move
+    which layer a validated demo patches. A caller who means depth should compute the layer directly.
+    """
+    if not 0.0 <= percentile <= 1.0:
+        raise ValueError(f"percentile must be in [0, 1], got {percentile}")
+    layers = artifact.source_layers
+    return layers[round(percentile * (len(layers) - 1))]
+
+
 def fold_norm_into_unembed_rows(info: UnembedNormInfo, token_ids: Any, *, apply_norm: bool = True) -> torch.Tensor:
     """Readout-faithful unembed rows for ``token_ids``, with the final norm folded in per kind.
 
@@ -527,6 +769,10 @@ __all__ = [
     "boolean_logits_to_avg_logit_diff",
     "decode_token_ids",
     "extract_logits",
+    "resolve_jlens",
+    "jlens_layer_for_percentile",
+    "JLensArtifact",
+    "DEFAULT_JLENS_REPO",
     "fold_norm_into_unembed_rows",
     "FEATURE_SCORE_SOURCE_ALIASES",
     "get_loss_preds_diffs",

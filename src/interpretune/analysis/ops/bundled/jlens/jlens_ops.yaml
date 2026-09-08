@@ -1,0 +1,254 @@
+# Collection header: versions this family's op CONTRACT SET (names, schemas, traits), not the
+# interpretune package. Bundled families declare no `requires:` window because they ship inside the
+# wheel, so a window against the installed package is vacuous by construction and a naive one is
+# harmful (a `>=0.1` floor does not match the `0.1.0.devN+g<sha>` versions setuptools_scm produces
+# between tags, so every bundled op would be skipped in a source checkout).
+collection:
+  name: jlens
+  version: 0.1.0
+
+# These ops declare NO `required_capabilities`, and the absence is deliberate rather than an
+# oversight. They read a populated activation cache and the model's unembed, both ordinary parts of
+# the analysis flow; they perform no intervention, so neither `required_intervention_modes` nor
+# `required_position_scopes` applies. Declaring an intervention axis here would refuse backends that
+# can in fact serve these ops.
+
+jlens_read:
+  # Kept to one short line: the stub generator emits it as a single-line docstring, and a folded
+  # multi-line description there exceeds the line limit. The reasoning lives in the impl docstring.
+  description: Rank vocabulary tokens by the Jacobian-lens readout at a fitted layer and chosen positions
+  implementation: interpretune.analysis.ops.bundled.jlens.jlens_ops.jlens_read_impl
+  aliases: [jacobian_lens_read]
+  input_schema:
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    jlens_layer:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_layer_percentile:
+      datasets_dtype: float32
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_positions:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+    jlens_top_k:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_include_rms_scale:
+      datasets_dtype: bool
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_repo_id:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_model_id:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_lens_path:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+  output_schema:
+    jlens_top_token_ids:
+      datasets_dtype: int64
+      array_shape: [null, null]
+      sequence_type: false
+    jlens_top_token_scores:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    jlens_top_token_strings:
+      datasets_dtype: object
+      non_tensor: true
+      sequence_type: false
+    jlens_layer:
+      datasets_dtype: int64
+      non_tensor: true
+      sequence_type: false
+    jlens_positions:
+      datasets_dtype: int64
+      array_shape: [null]
+      sequence_type: false
+    jlens_include_rms_scale:
+      datasets_dtype: bool
+      non_tensor: true
+      sequence_type: false
+    jlens_provenance:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+      sequence_type: false
+
+jlens_concept_probe:
+  description: Cosine of activations against concept tokens' readout-faithful J-lens directions
+  implementation: interpretune.analysis.ops.bundled.jlens.jlens_ops.jlens_concept_probe_impl
+  aliases: [jacobian_lens_concept_probe]
+  input_schema:
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    jlens_concept_token_ids:
+      datasets_dtype: int64
+      required: true
+      array_shape: [null]
+      sequence_type: false
+    jlens_apply_final_norm:
+      datasets_dtype: bool
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_layer:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_layer_percentile:
+      datasets_dtype: float32
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_positions:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+    jlens_repo_id:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_model_id:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_lens_path:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+  output_schema:
+    jlens_concept_cosine:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    jlens_concept_token_ids:
+      datasets_dtype: int64
+      array_shape: [null]
+      sequence_type: false
+    jlens_layer:
+      datasets_dtype: int64
+      non_tensor: true
+      sequence_type: false
+    jlens_positions:
+      datasets_dtype: int64
+      array_shape: [null]
+      sequence_type: false
+    jlens_provenance:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+      sequence_type: false
+
+jlens_sparse_inventory:
+  description: Sparse nonnegative decomposition of an activation over the J-lens dictionary, with its residual
+  implementation: interpretune.analysis.ops.bundled.jlens.jlens_ops.jlens_sparse_inventory_impl
+  aliases: [jacobian_lens_sparse_inventory]
+  input_schema:
+    cache:
+      datasets_dtype: object
+      non_tensor: true
+      intermediate_only: true
+    jlens_inventory_k:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_layer:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_layer_percentile:
+      datasets_dtype: float32
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_positions:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null]
+      sequence_type: false
+    jlens_repo_id:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_model_id:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_lens_path:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+  output_schema:
+    jlens_inventory_token_ids:
+      datasets_dtype: object
+      non_tensor: true
+      sequence_type: false
+    jlens_inventory_coefficients:
+      datasets_dtype: object
+      non_tensor: true
+      sequence_type: false
+    jlens_inventory_residual_ratio:
+      datasets_dtype: float32
+      array_shape: [null]
+      sequence_type: false
+    jlens_layer:
+      datasets_dtype: int64
+      non_tensor: true
+      sequence_type: false
+    jlens_positions:
+      datasets_dtype: int64
+      array_shape: [null]
+      sequence_type: false
+    jlens_provenance:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+      sequence_type: false
