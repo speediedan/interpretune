@@ -60,17 +60,23 @@ class InterventionMode(str, Enum):
 
     A ``str`` enum for the same reason as :class:`PositionScope`. The mode is the second axis of the
     intervention contract (scope is the first): a backend can implement ``fwd_w_intervention`` and still
-    be unable to express most modes, because ``replace``, ``patch`` and ``project`` all need the CURRENT
-    activation while an additive steering primitive never observes it. A mode a backend has not declared
-    is refused by :func:`~interpretune.analysis.backends.interventions.require_intervention_mode` rather
-    than applied as a different mode, since every mode returns plausible logits and the substitution is
-    undetectable from the result.
+    be unable to express most modes. Every mode but ``add`` reads the CURRENT activation, and the
+    additional thing they need is that the READ HAPPENS DURING THE FORWARD PASS: ``patch`` and ``reject``
+    compute coordinates from the activation itself, so no parameter fixed when the spec was built can
+    stand in for them. A steering surface whose parameters are all static scalars can observe the
+    activation and still express none of these, which is the shape of the interp-engine boundary.
+
+    A mode a backend has not declared is refused by
+    :func:`~interpretune.analysis.backends.interventions.require_intervention_mode` rather than applied
+    as a different mode, since every mode returns plausible logits and the substitution is undetectable
+    from the result.
     """
 
     REPLACE = "replace"
     ADD = "add"
     PATCH = "patch"
     PROJECT = "project"
+    REJECT = "reject"
 
 
 @dataclass(frozen=True)

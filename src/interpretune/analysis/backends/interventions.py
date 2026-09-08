@@ -597,6 +597,48 @@ def _apply_lens_coordinate_patch(
     return patched.reshape(input_value.shape).to(dtype=input_value.dtype)
 
 
+def _apply_span_rejection(
+    spec: InterventionSpec,
+    *,
+    input_value: torch.Tensor,
+    target: torch.Tensor,
+) -> torch.Tensor:
+    """Remove the activation's component inside ``span(V)``, leaving the orthogonal complement.
+
+    Implements ``h <- h - alpha * V V^+ h``. This is the OPPOSITE of ``project``, which keeps the
+    component in the span and discards the rest, and the two are complementary rather than inverse: at
+    ``alpha = 1`` the results of the two modes sum to ``h``. Naming them as opposites matters because a
+    caller who reaches for "project out" and finds ``project`` gets exactly the complement of what they
+    asked for, with no error and a plausible activation.
+
+    ``V`` is ``(k, d_model)`` stacked on a leading axis, any ``k >= 1``, unlike ``patch`` which requires
+    exactly two because a swap needs a partner. The pseudoinverse is used for the same reason it is used
+    there: lens vectors are not orthonormal, and with ``V^T`` the removed component is not the one in the
+    span. Unlike ``patch``, orthogonal preservation is not automatic here, it IS the operation, so
+    getting the coordinates wrong changes the answer rather than merely the coordinates.
+
+    ``spec.scale_factor`` is the removal FRACTION rather than a magnitude: 1.0 removes the component
+    entirely, 0.5 halves it, 0.0 is the identity. That is what makes the paper's graded ablation bands
+    expressible as one mode with a parameter instead of three modes.
+    """
+    batch = input_value.shape[0]
+    flat = input_value.reshape(batch, -1).to(dtype=torch.float32)
+    basis = target.reshape(1, -1) if target.ndim == 1 else target.reshape(target.shape[0], -1)
+    basis = basis.to(dtype=torch.float32)
+    if basis.shape[1] != flat.shape[1]:
+        raise ValueError(
+            f"intervention mode 'reject' basis vectors have width {basis.shape[1]} but the hook "
+            f"activation is {flat.shape[1]}-dimensional"
+        )
+
+    v_matrix = basis.transpose(0, 1)  # (d, k), basis vectors as columns
+    coords = flat @ torch.linalg.pinv(v_matrix).transpose(0, 1)  # (batch, k) == (V^+ h)^T
+    in_span = coords @ v_matrix.transpose(0, 1)
+    rejected = flat - in_span * spec.scale_factor
+
+    return rejected.reshape(input_value.shape).to(dtype=input_value.dtype)
+
+
 def _apply_mode_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
     """Apply one intervention mode to a selected REGION, returning the edited region.
 
@@ -618,6 +660,9 @@ def _apply_mode_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> 
 
     if mode is InterventionMode.PATCH:
         return _apply_lens_coordinate_patch(spec, input_value=input_value, target=target)
+
+    if mode is InterventionMode.REJECT:
+        return _apply_span_rejection(spec, input_value=input_value, target=target)
 
     assert mode is InterventionMode.PROJECT, f"unreachable: normalize_intervention_mode admitted {mode!r}"
 
