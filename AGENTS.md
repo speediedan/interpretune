@@ -34,6 +34,70 @@ Interpretune is a flexible framework for collaborative AI world model analysis a
   whose own extra requires it. The guard and its tests were removed. Reproduce against the fixed
   version before deleting a guard, and keep the guard only if the bug survives the upgrade.
 
+## Verification: a check is evidence only if the fact can make it fail
+
+Two principles, learned from a run of defects that all had the same shape. Every one of them was a check
+that returned a plausible positive for a reason unrelated to the fact it was supposed to measure.
+
+### 1. Bind the check to what only the fact can produce
+
+Ask, before trusting any check: **if the thing I am verifying had not happened, would this still pass?**
+When the answer is yes, the check is not evidence. The tells, each measured here at least once:
+
+- **The check matches an echo of itself.** A greppable marker matched the runner's echo of the step source,
+  placeholders unexpanded, on a run where the step never executed. Match the thing only the real run
+  produces (the resolved 40-character sha), never the label chosen to make it greppable.
+- **The predicate names the queue, not the subject.** A watcher waiting for "zero builds in flight" never
+  fired, because unrelated work kept the count up after the watched build had finished, and its timeout
+  read as "never happened". Watch the build id, the PID, the file: the one thing whose state is the fact.
+- **The check covers part of the space and reports the whole.** A sync helper compared one file of five and
+  said "in sync"; a `head -N` truncated a sorted check list and a check that was present read as missing.
+  Enumerate the space, then compare the count you selected against the count that exists.
+- **The check was disabled by configuration and reports success.** A pre-commit `exclude:` emptied the file
+  list of the guard written for those files, which then reported "(no files to check) Skipped" forever.
+  A negative assertion needs a positive control: prove the check can fail on a planted defect.
+- **The query answers a narrower question than the one asked.** A listing of *pending* approvals concluded
+  a released gate had never needed one; a listing of *completed* builds hid the gated one. State the
+  command's contract before reading its answer as yours.
+- **The instrument was silently disabled mid-run.** A request-log capture that worked on one test file
+  recorded nothing across a full-suite session; the cause was never isolated, and the remedy was measured
+  rather than reasoned: an instrument that owns its handler and re-arms its loggers before every test
+  recorded the whole run. An instrument that must survive a whole run is built that way from the start.
+- **The answer is a cold cache that the query itself warms.** A pull request's mergeability read `UNKNOWN`
+  and was cited as neglect; the second query returned `CLEAN`. Read a state that is computed on demand
+  twice before drawing a conclusion from its first value.
+- **A filename is evidence of neither impact nor safety.** A file list under-reports reach, since a module
+  can be reached without appearing in any diff, and over-reports risk, since a project file in a drift can
+  look disqualifying when the whole delta is one marker. Both cost one diff to avoid: read the change, not
+  the path.
+
+Two of these are worth telling apart, because the remedies differ. A check that **cannot fail** (the echo,
+the emptied guard) is broken and needs replacing. A check that is **correct but narrower than the question**
+(the pending-approvals query, the completed-builds listing, a gated pipeline rendered as "skipping" when its
+trigger declined a prose-only diff by design) is fine as it stands; the defect is reading its answer as the
+answer to a broader question. For the first, replace the instrument. For the second, state the command's
+contract before reading its output, and name the phase or scope you actually checked rather than the whole.
+
+What to do instead: name the fact, find the artifact only the fact produces, and check that artifact. Print
+the identifiers in full. When a check for an *absence* passes, ask whether it ran at all.
+
+### 2. Refuse by name; never accept and guess
+
+When an input is outside what the code understands, refuse it with a message naming what was met and what
+would be accepted. Do not fall through to a default, a family prefix, a cached copy, or the nearest match.
+The asymmetry that makes this general: **the cost of a refusal is always visible, and the cost of a guess
+never is.** A refusal costs one message and one fix. A guess produces plausible output that is wrong, and
+nothing downstream can tell.
+
+Measured instances: a document version the reader did not know loaded as the version it did know; a
+model-family prefix test applied one family's normalization to three architectures that do not use it, and
+every direction built on them was quietly wrong; a warm cache let a test pass without ever exercising the
+network path it existed to test. Each fix was the same: an explicit check that refuses, by name, what it
+cannot vouch for.
+
+The reflex to resist is softening a check so it passes. If an assertion has to be weakened to go green, the
+thing it asserted is not true, and the weakened form carries a false premise forward.
+
 ## Build & Dev Environment
 
 ### Three install flows, and only three (read this before creating any venv)
