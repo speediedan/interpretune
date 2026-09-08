@@ -88,6 +88,13 @@ component mapping. Two sources for one architecture must agree, and a test says 
 map is the independent oracle the bundled documents are checked against, because a convergence test that resolves
 both sides through the same resolver cannot see a wrong row.
 
+One of the five bundled documents covers less than its model has, and says so here because this document
+is what an outside reader agrees to: the map for `Gemma3ForConditionalGeneration` describes the **language
+model only**. The vision tower and the multimodal projector are not mapped, so a point inside either has no
+spelling today and resolves to nothing rather than to a refusal with a reason. A second stack is the case
+the vocabulary's architecture spike classifies as its one grammar extension; until that lands, treat the
+multimodal map as the text map with the language model one level down.
+
 ## What this asks of interp-engine
 
 Four reconciliations, two of them already measured and drafted as issues:
