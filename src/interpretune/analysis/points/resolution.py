@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from interpretune.analysis.points.component_map import KIND_TUPLE_OUTPUT, ComponentMap
+from interpretune.analysis.points.component_map import ComponentMap
 from interpretune.analysis.points.vocabulary import ActivationPoint, Contribution, Slot
 
 
@@ -50,10 +50,11 @@ Resolution = TensorRef | Unresolvable
 
 def _contribution_component(point: ActivationPoint, cmap: ComponentMap) -> str:
     """Where a sublayer's residual contribution is read: the post-norm when the block has one, else the module."""
+    stack = point.stack
     if point.contribution is Contribution.ATTN:
-        return "ln1_post" if cmap.sandwich_norms and cmap.kind_of("ln1_post", 0) == "norm" else "attn"
+        return "ln1_post" if cmap.sandwich_norms and cmap.kind_of("ln1_post", 0, stack) == "norm" else "attn"
     if point.contribution is Contribution.MLP:
-        return "ln2_post" if cmap.sandwich_norms and cmap.kind_of("ln2_post", 0) == "norm" else "mlp"
+        return "ln2_post" if cmap.sandwich_norms and cmap.kind_of("ln2_post", 0, stack) == "norm" else "mlp"
     return point.component
 
 
@@ -64,17 +65,30 @@ def resolve(point: ActivationPoint, cmap: ComponentMap) -> Resolution:
     lookup_layer = layer if not point.is_global else None
     if point.is_global and not component:
         return Unresolvable("a global point needs a component (e.g. 'unembed.hook_out')")
-    module = cmap.module_for(component, lookup_layer)
-    kind = cmap.kind_of(component, lookup_layer)
+    stack = point.stack
+    if stack is not None and stack not in cmap.stacks:
+        return Unresolvable(
+            f"{cmap.architecture} declares no block stack {stack!r}; known stacks: {list(cmap.stack_names())}"
+        )
+    module = cmap.module_for(component, lookup_layer, stack)
+    kind = cmap.kind_of(component, lookup_layer, stack)
     if module is None or kind is None:
-        where = f"blocks.{layer}" if layer is not None else "the model"
-        known = sorted(c for c in (cmap.block_components() if layer is not None else cmap.global_components()) if c)
+        # A row that exists but does not cover this layer is refused BY NAME: the alternative, resolving the
+        # template for every layer, produces a plausible module path that does not exist on a heterogeneous stack.
+        excluded = cmap.unmapped_reason(component, lookup_layer, stack)
+        if excluded is not None:
+            return Unresolvable(f"{cmap.architecture}: {excluded}")
+        head = f"{stack}." if stack else ""
+        where = f"{head}blocks.{layer}" if layer is not None else "the model"
+        known = sorted(
+            c for c in (cmap.block_components(stack) if layer is not None else cmap.global_components()) if c
+        )
         return Unresolvable(
             f"{cmap.architecture} has no component {component or '<block>'!r} under {where}; known: {known}",
             alternatives=tuple(f"{c}.hook_{point.slot.value}" for c in known[:6]),
         )
 
-    tuple_output = KIND_TUPLE_OUTPUT[kind]
+    tuple_output = cmap.tuple_output(kind)
     if point.slot is Slot.IN:
         return TensorRef(module, "input", tuple_output=False)
     if point.slot is Slot.OUT:

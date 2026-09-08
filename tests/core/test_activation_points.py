@@ -153,13 +153,11 @@ class TestBundledMapAgreesWithTransformerLens:
         return from_transformer_lens(bridge.adapter, "GPT2LMHeadModel")
 
     def test_the_derived_map_carries_the_same_schema_version(self, tl_gpt2_map):
-        from interpretune.analysis.points.component_map import COMPONENT_MAP_SCHEMA_VERSION, component_map_for
+        """The derived map uses no schema-2 key, so it declares schema 1, as the bundled GPT-2 document does; the
+        two sources stay comparable by declaring the schema of the shape they actually use."""
+        from interpretune.analysis.points.component_map import component_map_for
 
-        assert (
-            tl_gpt2_map.schema_version
-            == COMPONENT_MAP_SCHEMA_VERSION
-            == component_map_for("GPT2LMHeadModel").schema_version
-        )
+        assert tl_gpt2_map.schema_version == component_map_for("GPT2LMHeadModel").schema_version == 1
 
     def test_every_shared_component_names_the_same_module_and_kind(self, tl_gpt2_map):
         bundled = component_map_for("GPT2LMHeadModel")
@@ -229,16 +227,24 @@ class TestDocumentsAreVersioned:
         path.write_text(yaml.safe_dump({**doc, "schema_version": 1}))
         assert load_component_map_file(path).schema_version == 1
 
-    def test_every_bundled_document_carries_the_current_version(self):
+    def test_every_bundled_document_is_inside_the_readable_window(self):
+        """A bundled document declares the schema of the shape it uses: schema 1 unless it needs a schema-2 key.
+
+        At least one bundled document must exercise the current version, otherwise the current version ships with
+        no in-tree example and the frozen fixture is the only document of its kind.
+        """
         from interpretune.analysis.points.component_map import (
+            COMPONENT_MAP_SCHEMA_MIN_READABLE,
             COMPONENT_MAP_SCHEMA_VERSION,
-            component_map_for,
             known_architectures,
         )
 
-        assert known_architectures()
-        for arch in known_architectures():
-            assert component_map_for(arch).schema_version == COMPONENT_MAP_SCHEMA_VERSION, arch
+        versions = {arch: component_map_for(arch).schema_version for arch in known_architectures()}
+        for arch, version in versions.items():
+            assert COMPONENT_MAP_SCHEMA_MIN_READABLE <= version <= COMPONENT_MAP_SCHEMA_VERSION, (arch, version)
+        assert COMPONENT_MAP_SCHEMA_VERSION in versions.values(), (
+            f"no bundled document is written at the current schema {COMPONENT_MAP_SCHEMA_VERSION}: {versions}"
+        )
 
     def test_the_publisher_refuses_an_unversioned_document(self, tmp_path):
         import yaml

@@ -1,3 +1,5 @@
+# Frozen schema-2 component map, copied VERBATIM from the bundled Gemma 3 multimodal document when the version was 2.
+# Never edit: it is what stops a silent change to a mandatory field. A bump adds component_map_schema<N>.yaml beside it.
 # Gemma 3 multimodal (`Gemma3ForConditionalGeneration`): the language model lives one level down and is the primary
 # stack, with the same layout as Gemma 3 text. Sandwich norms: a post-norm after each sublayer, so a sublayer's
 # CONTRIBUTION to the residual is the post-norm's output, not the raw module output.
