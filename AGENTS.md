@@ -352,6 +352,15 @@ ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
 tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
 ```
 
+**Watching a background run: use `scripts/watch_run.sh`.** It prints exactly one terminal line and exits,
+so a watch cannot report nothing: `GREEN`, `RED`, `DEAD` (the subject went away without a verdict),
+`TIMEOUT` (the deadline passed first; the subject is not known to be done) or `QUERY-FAILED` (the probe
+itself broke; the state is unknown). Subjects: `--pid PID --log FILE` (a pytest log classifies), `-- CMD`
+(a child's exit status classifies; a signal is `DEAD`), `--azure-build ID`, `--pr-checks N`, and
+`--find PATTERN [--uid me]`, which resolves a PID once while excluding the watcher's own process chain and,
+with `--uid`, the CI container's subuid. The three rules below are why it has that shape; they kept being
+violated by people who had read them because the wrong form was the shorter one to type.
+
 **Watcher rules for background runs (added after two missed completions, 2026-07-22):**
 
 1. **Never `pgrep -f` a pattern your own watcher command contains** — the watcher matches
@@ -362,7 +371,10 @@ tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
    prints the wrapper PID at launch — capture it and wait with
    `until ! kill -0 <PID> 2>/dev/null; do sleep 60; done`. Output-grep watchers silently hang
    when the terminal line's wording changes (a `grep -qE "COVERAGE RUN COMPLETE|..."` watcher
-   missed a run that ended with `Exiting with status code 1`).
+   missed a run that ended with `Exiting with status code 1`). One caveat the bare form hides: a
+   process that has exited but not been reaped (a child whose parent never waited) is a zombie, and
+   `kill -0` still succeeds on it, so that loop never ends. `watch_run.sh` reads the process state
+   instead; if you write the loop by hand, check `ps -o stat=` for `Z` as well.
 3. **Cover every terminal state.** A run can end green, end red, or die — the watch condition
    must fire for all three (PID-exit does this for free); then read the log tail to classify.
 
