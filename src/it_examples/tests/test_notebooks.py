@@ -232,6 +232,7 @@ _hf_token_available = bool(os.environ.get("HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY")
 _published_collection_token_available = bool(os.environ.get("IT_HF_TOKEN") or os.environ.get("HF_TOKEN"))
 
 
+@pytest.mark.hf_live
 @pytest.mark.skipif(not _published_collection_token_available, reason="IT_HF_TOKEN or HF_TOKEN required")
 @pytest.mark.parametrize("notebook_file", ["bundled_ops_hub_optin.ipynb"])
 def test_bundled_ops_hub_optin_notebook(notebook_file: str, tmp_path: Path):
@@ -250,6 +251,7 @@ def test_bundled_ops_hub_optin_notebook(notebook_file: str, tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+@pytest.mark.hf_live
 @pytest.mark.skipif(not _hf_token_available, reason="HF_TRIVIAL_OP_REPO_EXAMPLE_AUTH_KEY or HF_TOKEN required")
 @pytest.mark.parametrize("notebook_file", ["op_collection_example.ipynb"])
 def test_op_collection_notebooks(notebook_file: str, tmp_path: Path):

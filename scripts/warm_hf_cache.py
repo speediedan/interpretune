@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--dry-run", action="store_true", help="print the plan without fetching anything")
     args = parser.parse_args(argv)
-    if os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in {"1", "true", "yes"}:
+    if not args.dry_run and os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in {"1", "true", "yes"}:
         raise SystemExit("HF_HUB_OFFLINE is set; the warm step must run online (unset it for this step only)")
     manifest = _load_manifest(args.manifest)
     print(f"warming from {args.manifest} (cache_version={manifest.get('cache_version')})")

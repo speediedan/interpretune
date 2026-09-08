@@ -24,14 +24,17 @@ COMPONENT_ENV_VAR = "IT_HUB_ADAPTER_CONTRACT_REPO"
 #: Set to the revision the contract was verified against. Required: an unpinned run is not a contract.
 REVISION_ENV_VAR = "IT_HUB_ADAPTER_CONTRACT_REVISION"
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get(COMPONENT_ENV_VAR) or not os.environ.get(REVISION_ENV_VAR),
-    reason=(
-        f"set {COMPONENT_ENV_VAR} and {REVISION_ENV_VAR} to exercise a published adapter component. "
-        "Skipped by default: it needs the network, executes remote code, and depends on an artifact "
-        "this repository does not control."
+pytestmark = [
+    pytest.mark.hf_live,
+    pytest.mark.skipif(
+        not os.environ.get(COMPONENT_ENV_VAR) or not os.environ.get(REVISION_ENV_VAR),
+        reason=(
+            f"set {COMPONENT_ENV_VAR} and {REVISION_ENV_VAR} to exercise a published adapter component. "
+            "Skipped by default: it needs the network, executes remote code, and depends on an artifact "
+            "this repository does not control."
+        ),
     ),
-)
+]
 
 
 @pytest.fixture(scope="module")

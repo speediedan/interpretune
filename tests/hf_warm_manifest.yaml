@@ -12,9 +12,17 @@ models:
     allow_patterns: ["*.json", "*.txt", "model.safetensors"]
   - repo_id: openai-community/gpt2
     allow_patterns: ["*.json", "*.txt", "model.safetensors"]
-  # Attention SAEs the SAE-Lens adapter tests load (layers 9 and 10 only).
+  # SAE-Lens releases the adapter tests load: `gpt2-small-res-jb` (residual SAEs, three layers) and
+  # `gpt2-small-hook-z-kk` (attention SAEs; the file names carry the layer as `_L<n>_`).
+  - repo_id: jbloom/GPT2-Small-SAEs-Reformatted
+    allow_patterns: ["blocks.0.hook_resid_pre/*", "blocks.1.hook_resid_pre/*", "blocks.9.hook_resid_pre/*"]
   - repo_id: ckkissane/attn-saes-gpt2-small-all-layers
-    allow_patterns: ["*_L9_*", "*_L10_*"]
+    allow_patterns: ["gpt2-small_L1_*", "gpt2-small_L2_*", "gpt2-small_L9_*", "gpt2-small_L10_*"]
+  # TransformerLens' `tiny-stories-1M` alias, used by the transcoder tests.
+  - repo_id: roneneldan/TinyStories-1M
+  # The dynamic-module load test reads falcon's config and remote-code modules, not its weights.
+  - repo_id: tiiuae/falcon-7b
+    allow_patterns: ["*.json", "*.py"]
 datasets:
   - path: aps/super_glue
     config_name: rte

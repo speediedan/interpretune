@@ -47,8 +47,11 @@ class TestWarmScript:
     def test_refuses_to_run_with_the_hub_client_offline(self, monkeypatch):
         script = _load_script()
         monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setitem(sys.modules, "huggingface_hub", None)
         with pytest.raises(SystemExit, match="HF_HUB_OFFLINE"):
-            script.main(["--dry-run"])
+            script.main([])
+        # A dry run fetches nothing, so it is allowed offline (the offline CI pass itself may plan one).
+        assert script.main(["--dry-run"]) == 0
 
     def test_retry_backs_off_then_reraises_the_last_error(self, monkeypatch):
         script = _load_script()
