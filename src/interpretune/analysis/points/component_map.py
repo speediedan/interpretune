@@ -14,6 +14,8 @@ mapping when it is installed. Two sources for one architecture must agree, and a
 
 from __future__ import annotations
 
+import warnings
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,11 +24,24 @@ import yaml
 
 _DATA_DIR = Path(__file__).parent / "data"
 
-#: The component-map document schema version. 1: `architecture`, `components` (component path -> {module, kind}),
-#: optional `facts`. Bump on a change a reader written against the previous number would misread. What a reader
-#: does with a version it does not recognise is the evolution policy's business (interpretune#477); this slice
-#: only makes every document say which schema it was written against.
+#: The component-map document schema this code WRITES and reads by default. 1: `architecture`, `components`
+#: (component path -> {module, kind}), optional `facts`, optional `deprecated_since` / `replacement`.
+#:
+#: A single integer, deliberately: an additive DESCRIPTIVE key (a fact, an annotation) never bumps it, because
+#: readers ignore unknown keys of that class; an APPLICABILITY key (one that changes which rows apply or how a
+#: row resolves, such as a per-row layer predicate or a second block stack) always bumps it, because a reader
+#: that skipped one would resolve the wrong rows silently. The version is therefore the only thing that keeps
+#: "ignore what you do not understand" safe. The policy is published in `docs/activation_point_vocabulary.md`.
 COMPONENT_MAP_SCHEMA_VERSION = 1
+
+#: The oldest schema this code READS. Published maps outlive the code that wrote them, so the reader accepts a
+#: window, never a single version; raising this floor retires published maps and is a documented, deliberate act.
+COMPONENT_MAP_SCHEMA_MIN_READABLE = 1
+
+#: The declared `facts` vocabulary: name -> type. A known fact of the wrong type is refused; an unknown fact is
+#: ignored, because facts describe the architecture and never select rows (an older reader loses nothing it
+#: would have used). New facts are added here with their type.
+KNOWN_FACTS: dict[str, type] = {"sandwich_norms": bool}
 
 #: Component kinds and whether their module returns a tuple whose element 0 is the tensor (the static
 #: default; the nnsight backend measures this per model because transformers 5.x changed decoder blocks).
@@ -50,7 +65,11 @@ class ComponentEntry:
 
     def __post_init__(self) -> None:
         if self.kind not in KIND_TUPLE_OUTPUT:
-            raise ValueError(f"unknown component kind {self.kind!r}; expected one of {sorted(KIND_TUPLE_OUTPUT)}")
+            raise ValueError(
+                f"unknown component kind {self.kind!r}; expected one of {sorted(KIND_TUPLE_OUTPUT)}. A kind decides "
+                "the slot rule and whether the module's output is a tuple, so it is refused rather than defaulted: a "
+                "guess would resolve to a plausible wrong tensor."
+            )
 
 
 @dataclass(frozen=True)
@@ -67,6 +86,9 @@ class ComponentMap:
     Required on every document: a map published without
     it is permanently unversioned and can never be told apart from one written against an unknown revision.
     """
+    deprecated_since: str | None = None
+    """Set when the map is retired: loading it warns, strict mode refuses, and ``replacement`` names what to use."""
+    replacement: str | None = None
 
     @property
     def sandwich_norms(self) -> bool:
@@ -111,9 +133,17 @@ class ComponentMap:
         return [k for k in self.components if not k.startswith("blocks.")]
 
 
-def _from_document(doc: dict[str, Any], *, source: str) -> ComponentMap:
-    if not isinstance(doc, dict):
-        raise ValueError(f"{source}: a component map document must be a mapping, got {type(doc).__name__}")
+class ComponentMapDeprecationWarning(UserWarning):
+    """A retired component map was loaded; ``replacement`` names what to use instead."""
+
+
+def _validate_schema_version(doc: dict[str, Any], source: str) -> int:
+    """Enforce the readable window, telling too-new from too-old from malformed.
+
+    The three cases need three different actions from the reader, so they get three messages: too new means upgrade
+    interpretune, too old means the map predates the supported floor and needs re-publishing, malformed means the
+    document does not say which schema it was written against at all.
+    """
     version = doc.get("schema_version")
     if not isinstance(version, int) or isinstance(version, bool):
         raise ValueError(
@@ -121,19 +151,71 @@ def _from_document(doc: dict[str, Any], *, source: str) -> ComponentMap:
             f"{COMPONENT_MAP_SCHEMA_VERSION}). Every map must say which schema it was written against; one "
             "published without it can never be told apart from one written against an unknown revision."
         )
+    if version > COMPONENT_MAP_SCHEMA_VERSION:
+        raise ValueError(
+            f"{source}: component map schema {version} was written by a newer interpretune than this one (this "
+            f"build reads {COMPONENT_MAP_SCHEMA_MIN_READABLE}-{COMPONENT_MAP_SCHEMA_VERSION}). Upgrade interpretune "
+            "to read it; an older reader cannot safely guess what a newer schema means, because a newer schema may "
+            "carry keys that change which rows apply."
+        )
+    if version < COMPONENT_MAP_SCHEMA_MIN_READABLE:
+        raise ValueError(
+            f"{source}: component map schema {version} is older than the minimum readable schema "
+            f"({COMPONENT_MAP_SCHEMA_MIN_READABLE}). Re-publish the map against a current schema."
+        )
+    return version
+
+
+def _validate_facts(facts: Any, source: str) -> dict[str, Any]:
+    """Type-check the declared facts; ignore unknown ones (they describe, they never select rows)."""
+    if facts is None:
+        return {}
+    if not isinstance(facts, dict):
+        raise ValueError(f"{source}: `facts` must be a mapping, got {type(facts).__name__}")
+    for name, expected in KNOWN_FACTS.items():
+        if name in facts and (
+            not isinstance(facts[name], expected) or isinstance(facts[name], bool) != (expected is bool)
+        ):
+            raise ValueError(
+                f"{source}: fact {name!r} must be {expected.__name__}, got {type(facts[name]).__name__} "
+                f"({facts[name]!r}); a mistyped fact would otherwise degrade silently to the default."
+            )
+    return dict(facts)
+
+
+def _from_document(doc: dict[str, Any], *, source: str) -> ComponentMap:
+    if not isinstance(doc, dict):
+        raise ValueError(f"{source}: a component map document must be a mapping, got {type(doc).__name__}")
+    version = _validate_schema_version(doc, source)
     try:
         architecture = doc["architecture"]
         rows = doc["components"]
     except KeyError as e:
         raise ValueError(f"{source}: component map is missing the {e.args[0]!r} key") from None
+    if not isinstance(rows, dict):
+        raise ValueError(f"{source}: `components` must be a mapping of component path -> {{module, kind}}")
+    # Only `module` and `kind` are read from a row; any other row key is ignored by contract (a later schema may
+    # annotate rows, and an annotation an older reader does not use costs it nothing). The same holds for unknown
+    # top-level keys. A key that would change which rows apply arrives with a schema bump, refused above.
     components = {name: ComponentEntry(module=row["module"], kind=row["kind"]) for name, row in rows.items()}
-    return ComponentMap(
+    cmap = ComponentMap(
         architecture=architecture,
         components=components,
-        facts=dict(doc.get("facts", {})),
+        facts=_validate_facts(doc.get("facts"), source),
         source=source,
         schema_version=version,
+        deprecated_since=doc.get("deprecated_since"),
+        replacement=doc.get("replacement"),
     )
+    if cmap.deprecated_since is not None:
+        warnings.warn(
+            f"{source}: the component map for {architecture!r} is deprecated since {cmap.deprecated_since}"
+            + (f"; use {cmap.replacement!r}" if cmap.replacement else "")
+            + ". It still loads until the readable floor moves; strict mode refuses it.",
+            ComponentMapDeprecationWarning,
+            stacklevel=3,
+        )
+    return cmap
 
 
 def load_component_map_file(path: Path) -> ComponentMap:
@@ -163,16 +245,27 @@ def register(cmap: ComponentMap) -> None:
     _REGISTRY[cmap.architecture] = cmap
 
 
-def component_map_for(architecture: str) -> ComponentMap:
-    """The map for an HF architecture class name, or a ``KeyError`` naming what is known."""
+def component_map_for(architecture: str, *, strict: bool = False) -> ComponentMap:
+    """The map for an HF architecture class name, or a ``KeyError`` naming what is known.
+
+    ``strict`` refuses a retired map (one carrying ``deprecated_since``) instead of serving it with a warning, the
+    same contract the alias table's strict mode applies to deprecated spellings.
+    """
     _load_bundled()
     try:
-        return _REGISTRY[architecture]
+        cmap = _REGISTRY[architecture]
     except KeyError:
         raise KeyError(
             f"no component map for architecture {architecture!r}; known: {sorted(_REGISTRY)}. Register one, or add a "
             "document under interpretune/analysis/points/data/."
         ) from None
+    if strict and cmap.deprecated_since is not None:
+        raise ValueError(
+            f"the component map for {architecture!r} is deprecated since {cmap.deprecated_since}"
+            + (f"; use {cmap.replacement!r}" if cmap.replacement else "")
+            + " (refused in strict mode)"
+        )
+    return cmap
 
 
 def known_architectures() -> list[str]:

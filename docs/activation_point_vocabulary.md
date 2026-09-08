@@ -75,8 +75,8 @@ components:                              # component path -> module path templat
 
 `schema_version` is required on every document and names the schema it was written against (currently `1`);
 a document without it is refused at read and therefore at publish, since a map published unversioned can never
-be told apart from one written against an unknown revision. What a reader does with a version it does not
-recognise, and the `facts` vocabulary, are the evolution policy's business and are not decided here.
+be told apart from one written against an unknown revision. What a reader does with every other case is the
+evolution policy below.
 
 Kinds: `block`, `attn`, `mlp`, `norm`, `linear`, `embed`, `unembed`. A sandwich-norm architecture adds
 `ln1_post` and `ln2_post` rows and sets `facts.sandwich_norms`, which is what routes the contribution points.
@@ -103,6 +103,34 @@ And one of TransformerLens: `docs/source/content/model_structure.md` states that
 `hook_scale` are aliases of `hook_out`, and that `hook_mlp_in` aliases two differently shaped tensors; the
 implementation fires three distinct tensors. That paragraph is the plausible common ancestor of the same defect in
 several downstream tables.
+
+## Evolution policy: how a map changes once other people hold copies
+
+The schema version is one integer and the reader accepts a **window** of them, `[min readable, current]`, the
+same shape the artifact envelope uses. Keys fall into two classes with opposite rules, and the class is what the
+version protects:
+
+- a **descriptive** key (a fact, an annotation on a row) is safe for an older reader to ignore: it loses nothing
+  it would have used. Adding one never bumps the version.
+- an **applicability** key (one that changes which rows apply or how a row resolves: a per-row layer predicate,
+  a second block stack, a declared kind) is unsafe to ignore: a reader that skipped it would resolve the wrong
+  rows silently. Adding one always bumps the version, so an older reader refuses the document before it can
+  misread it.
+
+| document | reader behaviour |
+| --- | --- |
+| version inside the window | read; unknown top-level and row keys ignored |
+| version newer than the reader | refused: "written by a newer interpretune, upgrade" |
+| version older than the floor | refused: "re-publish against a current schema" |
+| no integer version | refused as malformed (told apart from unsupported) |
+| unknown `facts` key | ignored; a known fact of the wrong type is refused |
+| unknown component `kind` | refused, never defaulted: the kind decides the slot and tuple-output rules |
+| `deprecated_since` set | loads with a warning naming `replacement`; strict lookup refuses |
+
+Retirement is a document-level `deprecated_since` and `replacement`, the alias table's own vocabulary applied to
+a map rather than a name. A retired map keeps loading until the readable floor moves; moving the floor is the
+deliberate act that withdraws it. Every version inside the window has a frozen document in the test suite,
+derived from the window so a bump cannot be made without freezing one.
 
 ## Legacy names
 
