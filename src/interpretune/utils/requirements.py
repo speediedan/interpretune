@@ -57,9 +57,15 @@ def install_command(entry: str) -> str:
     records a case where a pip repair layered two dist-infos for one package. A diagnostic that printed a
     pip command would be telling users to do the one thing the project documents most carefully against.
 
-    Quoted because specifiers contain characters a shell treats as its own: `interp-engine~=1.5.1` is
-    fine unquoted, `interp-engine>=1.5,<2` is not, and the difference is invisible until someone pastes
+    Quoted because specifiers contain characters a shell treats as its own: `example-pkg~=1.5.1` is
+    fine unquoted, `example-pkg>=1.5,<2` is not, and the difference is invisible until someone pastes
     the second one.
+
+    That example name is a PLACEHOLDER deliberately, and the two below are a BUNDLED adapter.
+    `TestCoreKnowsNothingOfAnyHubAdapter` forbids a core module from naming a hub adapter, because core
+    knowing one is what would make it privileged rather than third-party. Writing an actionable
+    diagnostic is precisely when a familiar hub name comes to hand, so the rule is easiest to break in
+    the course of improving the message -- this docstring named one and the invariant caught it.
 
     THE ENTRY IS EMITTED VERBATIM, which is what makes a non-PyPI dependency work. A PEP 508 direct
     reference carries its own source, so `circuit-tracer @ git+https://.../repo.git@<sha>` round-trips
