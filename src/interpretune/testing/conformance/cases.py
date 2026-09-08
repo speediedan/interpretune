@@ -456,6 +456,9 @@ class ModelBackendConformance:
             "replace": (vector, 1.0),
             "project": (vector, 1.0),
             "patch": (torch.stack([vector, self._second_vector(vector)]), 1.0),
+            # `reject` removes the component in the span where `project` keeps it, so the same vector at
+            # the same scale distinguishes them: they partition the activation rather than agreeing.
+            "reject": (vector, 1.0),
         }
         declared = sorted(m.value for m in suite.capabilities.intervention.modes)
         results = {

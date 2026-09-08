@@ -63,8 +63,13 @@ class InterventionMode(str, Enum):
     be unable to express most modes. Every mode but ``add`` reads the CURRENT activation, and the
     additional thing they need is that the READ HAPPENS DURING THE FORWARD PASS: ``patch`` and ``reject``
     compute coordinates from the activation itself, so no parameter fixed when the spec was built can
-    stand in for them. A steering surface whose parameters are all static scalars can observe the
-    activation and still express none of these, which is the shape of the interp-engine boundary.
+    stand in for them.
+
+    The requirement is therefore sharper than "can observe the activation": **a steering surface whose
+    parameters are all static scalars satisfies that and still expresses none of these modes.** What a
+    backend must support is a parameter COMPUTED AT FORWARD TIME. Stated as a capability rather than by
+    naming a backend, because core must not know which adapters exist, and because a rule about what an
+    implementation needs stays true when the next one appears.
 
     A mode a backend has not declared is refused by
     :func:`~interpretune.analysis.backends.interventions.require_intervention_mode` rather than applied
