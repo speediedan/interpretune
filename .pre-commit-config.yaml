@@ -119,6 +119,17 @@ repos:
         language: system
         files: ^tests/benchmarks/benchmark_registry\.yaml$
         pass_filenames: false
+      - id: check-vendored-skills
+        name: Vendored skills must not be edited here
+        entry: python scripts/check_vendored_skills.py
+        language: system
+        # The repo-level `exclude:` above covers `.claude/skills/`, which is precisely this hook's
+        # subject. Without `always_run` a commit touching ONLY a vendored skill -- the exact case this
+        # exists to catch -- leaves pre-commit with an empty file list and it reports "(no files to
+        # check) Skipped", a guard born skipped. The check reads the manifest itself, not argv, so it
+        # needs no file list to do its job.
+        always_run: true
+        pass_filenames: false
 
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: 'v0.12.10'
