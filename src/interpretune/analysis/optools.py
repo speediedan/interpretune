@@ -221,6 +221,56 @@ def resolve_tokenizer(module: Any) -> Any:
     raise ValueError("A tokenizer is required for this analysis operation")
 
 
+# HF RMSNorm families that apply ``(1 + weight)`` rather than ``weight``. Membership is EXACT, not a
+# prefix test, because the convention is not a property of the name: `gemma3` carries the offset and
+# `gemma3n` does not, so any prefix wide enough to catch the first also catches the second. An earlier
+# `startswith("gemma")` rule was correct for every family that existed when it was written and silently
+# wrong for `gemma3n` and the whole `gemma4` line, producing a plausible direction rather than an error.
+_RMSNORM_OFFSET_MODEL_TYPES = frozenset({"gemma", "gemma2", "gemma3", "gemma3_text"})
+# Families in the same namespace that are KNOWN to apply weight directly. Listed rather than left to the
+# default so that an unrecognized `gemma*` type is distinguishable from a checked one.
+_RMSNORM_NO_OFFSET_MODEL_TYPES = frozenset(
+    {
+        "gemma3n",
+        "gemma3n_text",
+        "gemma3n_audio",
+        "gemma3n_vision",
+        "gemma4",
+        "gemma4_text",
+        "gemma4_audio",
+        "gemma4_vision",
+        "gemma4_assistant",
+        "gemma4_unified",
+        "gemma4_unified_text",
+        "gemma4_unified_audio",
+        "gemma4_unified_vision",
+        "gemma4_unified_assistant",
+    }
+)
+
+
+def _rmsnorm_scale(weight: torch.Tensor, model_type: str) -> torch.Tensor:
+    """The elementwise scale an RMSNorm APPLIES, given its stored weight and the model's family.
+
+    Most families apply ``weight``; the gemma line splits, and the split does not follow the name. An
+    unrecognized family in that namespace warns rather than guessing, because both guesses are wrong for
+    some member of it and neither failure is visible in the output: the direction stays plausible and
+    only the answer changes.
+    """
+    if model_type in _RMSNORM_OFFSET_MODEL_TYPES:
+        return 1.0 + weight
+    if model_type not in _RMSNORM_NO_OFFSET_MODEL_TYPES and model_type.startswith("gemma"):
+        from interpretune.utils.logging import rank_zero_warn
+
+        rank_zero_warn(
+            f"unrecognized gemma-family model_type {model_type!r}: the gemma line splits on whether its "
+            "RMSNorm applies `(1 + weight)` or `weight`, and this one is in neither list, so `weight` is "
+            "assumed. If that is wrong every readout-faithful direction built here is silently off; check "
+            "the family's `RMSNorm.forward` and add it to the right set in `interpretune.analysis.optools`."
+        )
+    return weight
+
+
 class UnembedNormInfo(NamedTuple):
     """Unembed matrix plus the final norm's elementwise scale, in readout orientation.
 
@@ -278,8 +328,7 @@ def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
                     if isinstance(weight, torch.Tensor):
                         kind = "layernorm" if "LayerNorm" in type(norm).__name__ else "rmsnorm"
                         model_type = str(getattr(getattr(model, "config", None), "model_type", ""))
-                        # HF gemma RMSNorm applies (1 + weight); other families apply weight directly
-                        scale = (1.0 + weight) if (kind == "rmsnorm" and model_type.startswith("gemma")) else weight
+                        scale = weight if kind != "rmsnorm" else _rmsnorm_scale(weight, model_type)
                         return UnembedNormInfo(w_u=w_u, norm_scale=scale, norm_kind=kind)
                 return UnembedNormInfo(w_u=w_u, norm_scale=None, norm_kind="none")
         w_u = getattr(model, "W_U", None)
