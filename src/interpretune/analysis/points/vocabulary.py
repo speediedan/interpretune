@@ -46,10 +46,12 @@ class Slot(str, Enum):
 
 
 class Contribution(str, Enum):
-    """A sublayer's contribution to the residual stream: post-norm output where a post-norm exists, else the raw
-    module output.
+    """The two classic sublayer kinds, as string constants.
 
-    The one meaning no single component spelling names across architectures.
+    A point's ``contribution`` field holds the SUBLAYER KIND NAME (``"attn"``, ``"mlp"``, ``"cross_attn"``, a declared
+    kind), not a member of this enum: contributions are keyed by kind name over a document's ``properties.sublayers``
+    so a new sublayer kind needs no enum member and no resolver branch. This enum survives because it is a ``str``
+    enum, so ``point.contribution == Contribution.ATTN`` keeps working for the two kinds it names.
     """
 
     ATTN = "attn"
@@ -67,9 +69,10 @@ class ActivationPoint:
     component: str
     slot: Slot
     layer: int | None = None
-    contribution: Contribution | None = None
-    """Set when the point is a semantic contribution (``hook_attn_out`` / ``hook_mlp_out``); the component field
-    then names the raw module and the resolver picks the post-norm when the architecture has one."""
+    contribution: str | None = None
+    """The sublayer kind name when the point is a semantic contribution (``hook_attn_out``, ``hook_mlp_out``,
+    ``hook_cross_attn_out``); the component field then names the raw module and the resolver picks that sublayer's
+    post-norm when the architecture has one, by the kind's position in ``properties.sublayers``."""
     subhook: str | None = None
     """An SAE sub-hook suffix (``hook_sae_acts_post``) carried through unchanged."""
     caution: str | None = None
@@ -101,12 +104,20 @@ class ActivationPoint:
 
 #: Semantic points: what a tensor IS in the forward. These names survive an architecture change and are what
 #: analysis code should ask for; they are not legacy. Normalized to (component, slot, contribution, caution).
-_SEMANTIC: dict[str, tuple[str, Slot, Contribution | None, str | None]] = {
+# `hook_resid_after_<k>`: the residual after sublayer k's write (0-based), the input of norm k+2. `after_0` is
+# `hook_resid_mid`; `after_1` is the residual after an encoder-decoder block's cross-attention write.
+_RESID_AFTER_RE = re.compile(r"^hook_resid_after_(?P<k>\d+)$")
+
+_SEMANTIC: dict[str, tuple[str, Slot, str | None, str | None]] = {
     "hook_resid_pre": ("", Slot.IN, None, None),
     "hook_resid_post": ("", Slot.OUT, None, None),
     "hook_resid_mid": ("ln2", Slot.IN, None, None),
-    "hook_attn_out": ("attn", Slot.OUT, Contribution.ATTN, None),
-    "hook_mlp_out": ("mlp", Slot.OUT, Contribution.MLP, None),
+    "hook_attn_out": ("attn", Slot.OUT, "attn", None),
+    "hook_mlp_out": ("mlp", Slot.OUT, "mlp", None),
+    # An encoder-decoder block's third sublayer. No legacy spelling exists, so `hook_cross_attn_in` names the
+    # sublayer's actual argument without the caution the attention and MLP inputs carry.
+    "hook_cross_attn_in": ("cross_attn", Slot.IN, None, None),
+    "hook_cross_attn_out": ("cross_attn", Slot.OUT, "cross_attn", None),
     "hook_attn_in": (
         "ln1",
         Slot.IN,
@@ -281,6 +292,8 @@ def parse(name: str, *, strict: bool = False) -> ActivationPoint:
     if base in _SEMANTIC:
         component, slot, contribution, caution = _SEMANTIC[base]
         return ActivationPoint(component, slot, layer, contribution, subhook, caution, stack=stack)
+    if (after := _RESID_AFTER_RE.match(base)) is not None:
+        return ActivationPoint(f"ln{int(after.group('k')) + 2}", Slot.IN, layer, None, subhook, None, stack=stack)
     if (entry := ALIASES.get(base)) is not None:
         if strict:
             raise DeprecatedPointError(
@@ -343,7 +356,8 @@ def spellings(name: str) -> tuple[str, ...]:
     sandwich-norm model. Consumers that need the component ask the resolver with a map.
     """
     point = parse(name)
-    head = f"blocks.{point.layer}." if point.layer is not None else ""
+    stack = f"{point.stack}." if point.stack else ""
+    head = f"{stack}blocks.{point.layer}." if point.layer is not None else ""
     tail = f".{point.subhook}" if point.subhook else ""
     given = name[len(head) : len(name) - len(tail)] if tail else name[len(head) :]
     bases: list[str] = [given]

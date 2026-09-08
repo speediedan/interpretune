@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from interpretune.analysis.points.component_map import ComponentMap
-from interpretune.analysis.points.vocabulary import ActivationPoint, Contribution, Slot
+from interpretune.analysis.points.vocabulary import ActivationPoint, Slot
 
 
 @dataclass(frozen=True)
@@ -49,13 +49,21 @@ Resolution = TensorRef | Unresolvable
 
 
 def _contribution_component(point: ActivationPoint, cmap: ComponentMap) -> str:
-    """Where a sublayer's residual contribution is read: the post-norm when the block has one, else the module."""
-    stack = point.stack
-    if point.contribution is Contribution.ATTN:
-        return "ln1_post" if cmap.sandwich_norms and cmap.kind_of("ln1_post", 0, stack) == "norm" else "attn"
-    if point.contribution is Contribution.MLP:
-        return "ln2_post" if cmap.sandwich_norms and cmap.kind_of("ln2_post", 0, stack) == "norm" else "mlp"
-    return point.component
+    """Where a sublayer's residual contribution is read: the post-norm when the block has one, else the module.
+
+    Keyed by the sublayer KIND NAME and its position in ``properties.sublayers``: sublayer k's post-norm is
+    ``ln{k+1}_post``. For the classic ``(attn, mlp)`` that is ``ln1_post`` / ``ln2_post`` exactly as before; a
+    third sublayer kind (``cross_attn``, a declared ``mixer``) needs no enum member and no branch here.
+    """
+    kind = point.contribution
+    if kind is None:
+        return point.component
+    sublayers = cmap.sublayers
+    if cmap.sandwich_norms and kind in sublayers:
+        post = f"ln{sublayers.index(kind) + 1}_post"
+        if cmap.kind_of(post, 0, point.stack) == "norm":
+            return post
+    return kind
 
 
 def resolve(point: ActivationPoint, cmap: ComponentMap) -> Resolution:
