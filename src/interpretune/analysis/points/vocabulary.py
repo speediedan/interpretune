@@ -77,6 +77,8 @@ class ActivationPoint:
     alias: str | None = None
     """The deprecated spelling this point was parsed from, when it came through the alias table, so a caller or a
     linter can report "you wrote X, this means Y"."""
+    stack: str | None = None
+    """The block stack for an indexed point when it is not the primary one (``"encoder"``, ``"vision"``)."""
 
     @property
     def is_global(self) -> bool:
@@ -91,7 +93,8 @@ class ActivationPoint:
     @property
     def canonical(self) -> str:
         """The bridge-grammar string form, with the layer."""
-        head = f"blocks.{self.layer}." if self.layer is not None else ""
+        stack = f"{self.stack}." if self.stack else ""
+        head = f"{stack}blocks.{self.layer}." if self.layer is not None else ""
         tail = f".{self.subhook}" if self.subhook else ""
         return f"{head}{self.base}{tail}"
 
@@ -125,7 +128,10 @@ _SEMANTIC: dict[str, tuple[str, Slot, Contribution | None, str | None]] = {
     "attn.hook_in": ("ln1", Slot.OUT, None, None),
 }
 
-_BLOCK_RE = re.compile(r"^blocks\.(\d+)\.(.+)$")
+# An optional leading stack name (`encoder.blocks.3.attn.hook_out`, `vision.blocks.0.mlp.hook_in`) is the
+# one grammar extension for architectures with more than one block stack; bare `blocks.` is the primary stack,
+# so every existing string keeps its meaning.
+_BLOCK_RE = re.compile(r"^(?:(?P<stack>[a-z][a-z0-9_]*)\.)?blocks\.(?P<layer>\d+)\.(?P<rest>.+)$")
 _SLOT_RE = re.compile(r"^(?:(?P<component>.+)\.)?hook_(?P<slot>in|out|normalized|scale)$")
 
 
@@ -254,12 +260,14 @@ def parse(name: str, *, strict: bool = False) -> ActivationPoint:
     it parses to its canonical point with ``alias`` set to the spelling used.
     """
     match = _BLOCK_RE.match(name)
+    stack: str | None = None
     if match is None:
-        if name.startswith("blocks."):
-            raise UnknownPointError(f"cannot parse {name!r}: expected 'blocks.<layer>.<point>'")
+        if name.startswith("blocks.") or ".blocks." in name:
+            raise UnknownPointError(f"cannot parse {name!r}: expected '[<stack>.]blocks.<layer>.<point>'")
         layer, rest = None, name
     else:
-        layer, rest = int(match.group(1)), match.group(2)
+        layer, rest = int(match.group("layer")), match.group("rest")
+        stack = match.group("stack")
     parts = rest.split(".")
     subhook: str | None = None
     for i, part in enumerate(parts):
@@ -272,7 +280,7 @@ def parse(name: str, *, strict: bool = False) -> ActivationPoint:
         raise UnknownPointError(f"cannot parse {name!r}: no point name after the layer")
     if base in _SEMANTIC:
         component, slot, contribution, caution = _SEMANTIC[base]
-        return ActivationPoint(component, slot, layer, contribution, subhook, caution)
+        return ActivationPoint(component, slot, layer, contribution, subhook, caution, stack=stack)
     if (entry := ALIASES.get(base)) is not None:
         if strict:
             raise DeprecatedPointError(
@@ -288,6 +296,7 @@ def parse(name: str, *, strict: bool = False) -> ActivationPoint:
             subhook,
             entry.caution or canonical.caution,
             alias=base,
+            stack=stack,
         )
     slot_match = _SLOT_RE.match(base)
     if slot_match is None:
@@ -299,7 +308,7 @@ def parse(name: str, *, strict: bool = False) -> ActivationPoint:
     slot = Slot(slot_match.group("slot"))
     if slot in (Slot.NORMALIZED, Slot.SCALE) and not component:
         raise UnknownPointError(f"{name!r}: hook_{slot.value} needs a norm component (e.g. 'ln2.hook_{slot.value}')")
-    return ActivationPoint(component, slot, layer, None, subhook, None)
+    return ActivationPoint(component, slot, layer, None, subhook, None, stack=stack)
 
 
 def register_alias(

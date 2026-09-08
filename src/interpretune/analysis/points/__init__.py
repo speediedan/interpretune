@@ -11,6 +11,8 @@ the other vocabularies that address the same activations.
 from __future__ import annotations
 
 from interpretune.analysis.points.component_map import (
+    KindSpec,
+    LayerSet,
     ComponentEntry,
     ComponentMap,
     component_map_for,
@@ -23,6 +25,13 @@ from interpretune.analysis.points.component_map import (
 # the resolver module is `resolution`, not `resolve`: a submodule sharing the name of a re-exported function
 # gets rebound over it whenever the submodule is (re)imported, which the test suite's module reloads do
 from interpretune.analysis.points.resolution import Resolution, TensorRef, Unresolvable, describe_unresolvable, resolve
+from interpretune.analysis.points.validation import (
+    ComponentMapModelMismatch,
+    MapProblem,
+    check_map_against_model,
+    derive_rmsnorm_offset,
+    validate_map_against_model,
+)
 from interpretune.analysis.points.vocabulary import (
     ActivationPoint,
     Contribution,
@@ -36,6 +45,10 @@ __all__ = [
     "ActivationPoint",
     "ComponentEntry",
     "ComponentMap",
+    "ComponentMapModelMismatch",
+    "KindSpec",
+    "LayerSet",
+    "MapProblem",
     "Contribution",
     "Resolution",
     "Slot",
@@ -45,10 +58,13 @@ __all__ = [
     "component_map_for",
     "from_transformer_lens",
     "describe_unresolvable",
+    "check_map_against_model",
+    "derive_rmsnorm_offset",
     "known_architectures",
     "load_component_map_file",
     "parse",
     "register",
     "resolve",
     "semantic_names",
+    "validate_map_against_model",
 ]

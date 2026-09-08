@@ -100,11 +100,22 @@ class TestUnknownKeys:
         cmap = load_component_map_file(_write(tmp_path, _doc(components=rows)))
         assert cmap.kind_of("blocks.{i}.attn", None) == "attn"
 
-    def test_an_unknown_fact_is_ignored_and_a_mistyped_known_fact_is_refused(self, tmp_path):
-        cmap = load_component_map_file(_write(tmp_path, _doc(facts={"sandwich_norms": False, "later_fact": 3})))
-        assert cmap.facts["later_fact"] == 3 and cmap.sandwich_norms is False
-        with pytest.raises(ValueError, match="fact 'sandwich_norms' must be bool"):
-            load_component_map_file(_write(tmp_path, _doc(facts={"sandwich_norms": "yes"})))
+    def test_an_unknown_property_is_ignored_and_a_mistyped_known_one_is_refused(self, tmp_path):
+        cmap = load_component_map_file(
+            _write(tmp_path, _doc(properties={"sandwich_norms": False, "later_property": 3}))
+        )
+        assert cmap.properties["later_property"] == 3 and cmap.sandwich_norms is False
+        with pytest.raises(ValueError, match="property 'sandwich_norms' must be bool"):
+            load_component_map_file(_write(tmp_path, _doc(properties={"sandwich_norms": "yes"})))
+
+    def test_a_schema_1_document_spells_properties_as_facts_and_still_reads(self, tmp_path):
+        doc = _doc(schema_version=1, facts={"sandwich_norms": True})
+        cmap = load_component_map_file(_write(tmp_path, doc))
+        assert cmap.sandwich_norms is True and cmap.facts is cmap.properties
+
+    def test_a_schema_2_document_using_the_old_spelling_is_told_the_new_one(self, tmp_path):
+        with pytest.raises(ValueError, match="renamed to `properties`"):
+            load_component_map_file(_write(tmp_path, _doc(facts={"sandwich_norms": True})))
 
     def test_an_unknown_kind_is_refused_with_the_reason(self, tmp_path):
         rows = dict(ROWS)

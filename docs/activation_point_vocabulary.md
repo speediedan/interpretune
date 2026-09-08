@@ -88,12 +88,10 @@ component mapping. Two sources for one architecture must agree, and a test says 
 map is the independent oracle the bundled documents are checked against, because a convergence test that resolves
 both sides through the same resolver cannot see a wrong row.
 
-One of the five bundled documents covers less than its model has, and says so here because this document
-is what an outside reader agrees to: the map for `Gemma3ForConditionalGeneration` describes the **language
-model only**. The vision tower and the multimodal projector are not mapped, so a point inside either has no
-spelling today and resolves to nothing rather than to a refusal with a reason. A second stack is the case
-the vocabulary's architecture spike classifies as its one grammar extension; until that lands, treat the
-multimodal map as the text map with the language model one level down.
+The bundled map for `Gemma3ForConditionalGeneration` is a schema-2 document: the language model is the
+primary stack and keeps the bare spelling, the vision tower is a second stack (`vision.blocks.{i}...`,
+`vision.embed`, `vision.ln_final`) and the multimodal projector is a declared kind (`projector`). A point under
+an undeclared stack name is refused by name.
 
 ## What this asks of interp-engine
 
@@ -110,6 +108,47 @@ And one of TransformerLens: `docs/source/content/model_structure.md` states that
 `hook_scale` are aliases of `hook_out`, and that `hook_mlp_in` aliases two differently shaped tensors; the
 implementation fires three distinct tensors. That paragraph is the plausible common ancestor of the same defect in
 several downstream tables.
+
+## Schema 2: admitting an architecture nobody anticipated
+
+A standard decoder transformer's document is unchanged from schema 1. Schema 2 adds four optional keys, each of
+which moves something out of code and into the document so a new architecture needs no release:
+
+```yaml
+schema_version: 2
+architecture: JambaForCausalLM
+properties:                      # schema 1 spelled this `facts`; typed, unknown names ignored
+  sandwich_norms: false
+  sublayers: [attn, mlp]         # the order sublayers write to the residual; this is the default
+kinds:                           # a kind the bundled set lacks, with its output rule
+  mixer: {output: tensor, sublayer: true}
+stacks:                          # additional block stacks; the primary one is implied and stays bare
+  encoder: {module: "encoder.block.{i}"}
+components:
+  blocks.{i}.attn:  {module: "model.layers.{i}.self_attn", kind: attn,  layers: odd}    # row applicability
+  blocks.{i}.mixer: {module: "model.layers.{i}.mamba",     kind: mixer, layers: even}
+  encoder.blocks.{i}.attn: {module: "encoder.block.{i}.layer.0.SelfAttention", kind: attn}
+```
+
+- **`kinds`**: a declared kind carries what the resolver needs (`output: tensor | tuple0`, `sublayer`), so a
+  reader resolves every hook of a kind it has never heard of. An undeclared unknown kind is refused, because
+  the kind decides the output rule and a default would be a guess.
+- **`layers`** on a row: a list, an inclusive range `"4-11"`, or `odd` / `even`; absent means every layer. A
+  point on a layer the row excludes resolves to a refusal naming the predicate, never to a plausible module
+  path that does not exist.
+- **`stacks`**: additional block stacks by name. The point grammar gains an optional leading stack name
+  (`encoder.blocks.3.attn.hook_out`); bare `blocks.` and bare globals keep meaning the primary stack, so every
+  existing string keeps its meaning. A stack the document does not declare is refused by name.
+- **`properties`** (renamed from `facts`): each name in the vocabulary is **declared** (the document is the
+  source) or **derived** (the model is the source, and a document value is only a cross-check). The RMSNorm
+  offset is derived from the norm module's own arithmetic, which is right for every gemma family without a
+  table naming them.
+
+**A document is checked against its model, once, at load** (`validate_map_against_model`): every row's module
+exists for every layer it covers and does not exist for a layer its predicate excludes, every declared stack
+addresses at least one layer, and every derived property the document states agrees with the model. A map
+that is wrong about its model fails there, named, rather than at bind time. `architecture` matches the model
+class exactly; there is no family-prefix fallback, so an unknown architecture is detectably unknown.
 
 ## Evolution policy: how a map changes once other people hold copies
 
