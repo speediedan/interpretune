@@ -21,7 +21,14 @@ default_language_version:
 # `autofix_prs: true` would push commits onto contributor branches.
 
 # benchmark_baseline_patches: vendored .patch files must stay byte-exact (hooks would corrupt hunks)
-exclude: 'tests/(ioi_parity|mech_interp_parity|concept_direction_approach_parity)/.*|scripts/benchmark_baseline_patches/.*\.patch'
+#
+# .claude/skills: vendored copies of skills whose canonical form lives in speediedan/skills. Linting
+# them is not merely unnecessary, it is actively wrong three ways: the hooks REWRITE them (docformatter
+# reflowed two scripts here), which desyncs `.shared-skills.sha256` whose entire purpose is to assert
+# the copies match the master; the rewrite is discarded at the next sync, so the churn buys nothing;
+# and ruff's docstring rules would impose this repo's authoring standards on a repo-neutral master
+# shared with other consumers. Corrections belong upstream, never to the vendored copy.
+exclude: 'tests/(ioi_parity|mech_interp_parity|concept_direction_approach_parity)/.*|scripts/benchmark_baseline_patches/.*\.patch|\.claude/skills/.*'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
