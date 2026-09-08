@@ -234,6 +234,7 @@ class TestTheNotebookMatchesTheApiItCalls:
         )
 
 
+@pytest.mark.hf_live
 @pytest.mark.skipif(
     not (os.environ.get("IT_HF_TOKEN") or os.environ.get("HF_TOKEN")),
     reason="IT_HF_TOKEN or HF_TOKEN required to fetch the component",
@@ -244,6 +245,15 @@ class TestTheHubDeliveryCellActuallyRuns:
     The rest of the notebook needs a bf16 GPU and a local Neuronpedia webapp, so it belongs to the opt-in contract lane.
     Section H needs neither -- it fetches and registers -- and it is where every hub-delivery claim this notebook makes
     actually lives. Running it is what would have caught the signature change that static parsing could not.
+
+
+    **Marked ``hf_live`` rather than added to ``tests/hf_warm_manifest.yaml``, and the distinction is
+    the point of the test.** Warming the component into the cache would make this pass without ever
+    exercising the fetch -- precisely the state that hid #490, where a pinned pull wrote a snapshot but
+    no ``refs/main`` and every local run was green because an earlier unpinned pull had left the ref
+    behind. A test whose subject is "the documented pull-then-load works from nothing" cannot be given a
+    warm cache without becoming a test of something else. Verified both ways: clean caches online, 9
+    passed; clean caches with ``HF_HUB_OFFLINE=1``, ``LocalEntryNotFoundError``.
     """
 
     def test_fetch_trust_and_register_execute_end_to_end(self, dev_cells, monkeypatch):
