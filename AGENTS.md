@@ -352,6 +352,15 @@ ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
 tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
 ```
 
+**Watching a background run: use `scripts/watch_run.sh`.** It prints exactly one terminal line and exits,
+so a watch cannot report nothing: `GREEN`, `RED`, `DEAD` (the subject went away without a verdict),
+`TIMEOUT` (the deadline passed first; the subject is not known to be done) or `QUERY-FAILED` (the probe
+itself broke; the state is unknown). Subjects: `--pid PID --log FILE` (a pytest log classifies), `-- CMD`
+(a child's exit status classifies; a signal is `DEAD`), `--azure-build ID`, `--pr-checks N`, and
+`--find PATTERN [--uid me]`, which resolves a PID once while excluding the watcher's own process chain and,
+with `--uid`, the CI container's subuid. The three rules below are why it has that shape; they kept being
+violated by people who had read them because the wrong form was the shorter one to type.
+
 **Watcher rules for background runs (added after two missed completions, 2026-07-22):**
 
 1. **Never `pgrep -f` a pattern your own watcher command contains** — the watcher matches
