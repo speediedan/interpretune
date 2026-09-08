@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable
+
+from interpretune.utils.notebook_experiments import bootstrap_experiment_imports
 
 
 def bootstrap_notebook_imports(
@@ -11,25 +12,20 @@ def bootstrap_notebook_imports(
     *,
     extra_paths: Iterable[str | Path] | None = None,
 ) -> SimpleNamespace:
-    """Ensure experiment notebooks can import the repo, tests, and shared harness modules."""
+    """Put this repository's root and any declared harness paths on ``sys.path`` for a notebook.
 
-    resolved_cwd = (cwd or Path.cwd()).resolve()
-    repo_root = resolved_cwd if (resolved_cwd / "pyproject.toml").exists() else resolved_cwd.parents[1]
-    tests_dir = repo_root / "tests"
-    harness_dir = tests_dir / "nb_experiments"
+    A thin adapter over the shared rails, kept so in-tree notebooks importing this name keep working.
+    The rails themselves live in the core package, so an out-of-tree experiment uses them directly
+    rather than reaching into `it_examples`.
 
-    path_candidates = [repo_root, tests_dir, harness_dir, resolved_cwd]
-    if extra_paths is not None:
-        path_candidates.extend(Path(path).expanduser().resolve() for path in extra_paths)
-
-    for path in path_candidates:
-        path_str = str(path)
-        if path_str not in sys.path:
-            sys.path.insert(0, path_str)
-
+    Two behaviours changed with the move, both deliberate. The root is found by walking up to the
+    nearest `pyproject.toml` rather than assuming the notebook sits two levels below it, and the
+    unconditional `tests/` and `tests/nb_experiments/` appends are gone: the latter no longer exists
+    even here, which is the argument against encoding a layout instead of reading one.
+    """
+    config = bootstrap_experiment_imports(cwd, extra_paths=extra_paths)
     return SimpleNamespace(
-        repo_root=repo_root,
-        tests_dir=tests_dir,
-        harness_dir=harness_dir,
-        working_dir=resolved_cwd,
+        repo_root=config.root,
+        harness_paths=config.harness_paths,
+        working_dir=(cwd or Path.cwd()).resolve(),
     )

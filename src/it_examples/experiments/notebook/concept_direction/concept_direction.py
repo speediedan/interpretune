@@ -115,12 +115,10 @@ _SIGNED_FEATURE_SCORE_SOURCE_KEYS = frozenset({"node_signed_influence_scores", "
 
 DEFAULT_CONCEPT_PAIR_CONFIG_DIR = Path(__file__).with_name("configs")
 DEFAULT_NOTEBOOK_PATH = Path(__file__).resolve().with_name("concept_direction_template.ipynb")
-DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT = Path(
-    os.getenv(
-        "LOCAL_NEURONPEDIA_EXPORT_ROOT",
-        "/home/speediedan/repos/neuronpedia/utils/neuronpedia-utils/neuronpedia_utils/exports",
-    )
-)
+# No default: this fell back to an absolute path under one contributor's home directory, which exists on
+# no other machine. See the same constant in `nb_harness_utils` for the reasoning; the two are kept in
+# step because either one being wrong produces the same confusing empty result rather than an error.
+DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT = Path(raw) if (raw := os.getenv("LOCAL_NEURONPEDIA_EXPORT_ROOT")) else None
 NULL_BATCH: Any = cast(Any, None)
 
 
@@ -1456,6 +1454,11 @@ class LocalExplanationPreparationResult:
 
 
 def _resolve_local_export_roots(local_export_roots: Iterable[Path | str] | None = None) -> tuple[Path, ...]:
+    if local_export_roots is None and DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT is None:
+        raise ValueError(
+            "no local Neuronpedia export root is configured: pass `local_export_roots=` or set "
+            "$LOCAL_NEURONPEDIA_EXPORT_ROOT to the directory holding the exports."
+        )
     candidate_roots = tuple(Path(root) for root in (local_export_roots or (DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT,)))
     return tuple(root for root in candidate_roots if root.exists())
 

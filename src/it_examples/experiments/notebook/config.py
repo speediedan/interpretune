@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+
+from interpretune.utils.notebook_experiments import resolve_extends_path
 from typing import Any, Mapping
 
 import yaml  # type: ignore[import-untyped]
@@ -138,13 +140,10 @@ def _resolve_extends_paths(config_path: Path, extends_value: Any) -> list[Path]:
     else:
         raise ValueError(f"{CONFIG_EXTENDS_KEY} in {config_path} must be a string or list of strings.")
 
-    resolved_paths: list[Path] = []
-    for raw_value in raw_values:
-        candidate = Path(raw_value).expanduser()
-        if not candidate.is_absolute():
-            candidate = (config_path.parent / candidate).resolve()
-        resolved_paths.append(candidate)
-    return resolved_paths
+    # `package.module:resource` reaches a base config shipped inside an installed package, which is how
+    # an out-of-tree experiment extends these shared configs without a relative path into this tree.
+    # Relative and absolute paths behave exactly as before.
+    return [resolve_extends_path(config_path, raw_value) for raw_value in raw_values]
 
 
 def load_experiment_config(config_path: str | Path, *, _seen: tuple[Path, ...] = ()) -> dict[str, Any]:

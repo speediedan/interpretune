@@ -10,6 +10,37 @@ The shared harness owns:
 - the generic papermill launcher
 - shared resource/session utilities that are not specific to one experiment family
 
+## Running an experiment from outside this repository
+
+The rails live in the core package (`interpretune.utils.notebook_experiments`), so an experiment in
+another repository consumes them rather than copying them. Configure it with a table in that
+repository's `pyproject.toml`; every key has a default, so a repository that writes no table still
+works:
+
+```toml
+[tool.interpretune.experiments]
+config_dir    = "my_configs"   # default: the directory beside the notebook
+output_root   = "artifacts"    # default: <notebook dir>/generated_experiments
+harness_paths = ["shared"]     # extra sys.path entries, relative to the repository root
+```
+
+**Extending the shared base configs from outside this tree.** `EXTENDS` accepts a
+`package.module:resource` form resolved through `importlib.resources`, so a config anywhere can name a
+base that ships inside an installed package:
+
+```yaml
+EXTENDS: it_examples.experiments.notebook:configs/base.yaml
+```
+
+Relative and absolute paths behave exactly as before. A package-resource base is **read-only**, since
+resources may live inside a wheel and have no stable location on disk; a config that expects to write
+next to its base must name it by path.
+
+**Experiment-specific helpers are supplied, not imported.** The shared harness takes the callables it
+needs through `ExperimentHooks`, which the experiment registers (see `concept_direction/__init__.py`).
+The harness previously imported them from one particular experiment, which meant importing the shared
+rails required that experiment to be installed.
+
 ## Core Files
 
 - `config.py`: layered YAML loading plus shared config-section dataclasses

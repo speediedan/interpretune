@@ -12,10 +12,8 @@ from typing import Any
 import torch
 import yaml  # type: ignore[import-untyped]
 
+from interpretune.utils.notebook_experiments import ExperimentsConfig, default_config_dir, default_output_dir
 from it_examples.experiments.notebook.config import load_experiment_config
-
-
-CONCEPT_DIRECTION_OUTPUT_ROOT = Path("/tmp/it_concept_direction_experiments")
 
 
 def parse_args() -> argparse.Namespace:
@@ -94,14 +92,19 @@ def _resolve_config_path(raw_value: str, config_dir: Path) -> Path:
     raise FileNotFoundError(f"Could not resolve config path from '{raw_value}'")
 
 
+def _experiments_config() -> ExperimentsConfig:
+    """The consuming repository's `[tool.interpretune.experiments]`, read once per invocation."""
+    return ExperimentsConfig.from_pyproject()
+
+
 def _default_output_dir(notebook_path: Path) -> Path:
-    parts = notebook_path.resolve().parts
-    for index in range(len(parts)):
-        if parts[index : index + 4] == ("tests", "nb_experiments", "concept_direction", "analysis"):
-            return CONCEPT_DIRECTION_OUTPUT_ROOT / "analysis"
-        if parts[index : index + 3] == ("tests", "nb_experiments", "concept_direction"):
-            return CONCEPT_DIRECTION_OUTPUT_ROOT
-    return notebook_path.parent / "generated_experiments"
+    """Artifacts go to the configured root, else beside the notebook.
+
+    This used to pattern-match one experiment's directory names out of the path and redirect those runs to a hard-coded
+    `/tmp` root, which is invisible to anyone whose experiment lives elsewhere and put one experiment's layout inside
+    the shared launcher.
+    """
+    return default_output_dir(notebook_path, _experiments_config())
 
 
 def discover_config_paths(args: argparse.Namespace, config_dir: Path) -> list[Path]:
@@ -162,7 +165,9 @@ def execute_config(
 def main() -> int:
     args = parse_args()
     notebook_path = Path(args.notebook).resolve()
-    config_dir = Path(args.config_dir).resolve() if args.config_dir else notebook_path.parent / "configs"
+    config_dir = (
+        Path(args.config_dir).resolve() if args.config_dir else default_config_dir(notebook_path, _experiments_config())
+    )
     output_dir = Path(args.output_dir).resolve() if args.output_dir else _default_output_dir(notebook_path)
     output_dir.mkdir(parents=True, exist_ok=True)
 
