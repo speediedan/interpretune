@@ -1,7 +1,8 @@
 # Folding the final norm into lens directions
 
-A Jacobian-lens readout is `softmax(W_U . norm(J h))`. A common shorthand describes the lens
-directions as "the rows of `W_U J`", which drops the `norm` the readout contains. The two agree only
+A Jacobian-lens readout is $\mathrm{softmax}(W_U \cdot \mathrm{norm}(J h))$. A common shorthand
+describes the lens directions as "the rows of $W_U J$", which drops the $\mathrm{norm}$ the readout
+contains. The two agree only
 in a special case, and where they disagree the difference is large enough to decide whether a
 concept-steering intervention works at all.
 
@@ -12,31 +13,36 @@ re-deriving a convention.
 
 ## The derivation
 
-**RMSNorm.** With elementwise scale `s`, `norm(x) = s * x / rms(x)`. Pushing `s` through the dot
-product:
+**RMSNorm.** With elementwise scale $s$, the norm is $\mathrm{norm}(x) = s \odot x / \mathrm{rms}(x)$.
+Pushing $s$ through the dot product:
 
-```
-W_U[c] . norm(x) = (W_U[c] * s) . x / rms(x)
-```
+$$
+W_U[c] \cdot \mathrm{norm}(x) = (W_U[c] \odot s) \cdot x / \mathrm{rms}(x)
+$$
 
-So the readout's own direction for token `c` is `W_U[c] * s`, and composing with the lens gives
-`v_c = (W_U[c] * s) @ J`. The `1/rms(x)` factor is a positive per-input scalar: it changes the
-logit's magnitude and never its direction, so it is correctly ignored when what you want is a basis.
-The shorthand is exact when `s` is identically 1, and only then.
+So the readout's own direction for token $c$ is $W_U[c] \odot s$, and composing with the lens gives
+$v_c = (W_U[c] \odot s) J$. The $1/\mathrm{rms}(x)$ factor is a positive per-input scalar: it changes
+the logit's magnitude and never its direction, so it is correctly ignored when what you want is a
+basis. The shorthand is exact when $s$ is identically 1, and only then.
 
-**LayerNorm.** A LayerNorm additionally subtracts the mean, `norm(x) = s * (x - mean(x)1)/std(x) + b`.
-Pushing `s` through as before and then absorbing the centering:
+**LayerNorm.** A LayerNorm additionally subtracts the mean, so
+$\mathrm{norm}(x) = s \odot (x - \mu(x) \mathbf{1}) / \sigma(x) + b$ with $\mu$ the mean and
+$\sigma$ the standard deviation. Pushing $s$ through as before and then absorbing the centering:
 
-```
-(W_U[c] * s) . (x - mean(x)1) = (W_U[c] * s) . x - mean(x) * ((W_U[c] * s) . 1)
-                              = C(W_U[c] * s) . x,        C = I - 11^T/d
-```
+$$
+\begin{aligned}
+(W_U[c] \odot s) \cdot (x - \mu(x)\mathbf{1})
+  &= (W_U[c] \odot s) \cdot x - \mu(x)\bigl((W_U[c] \odot s) \cdot \mathbf{1}\bigr) \\
+  &= C(W_U[c] \odot s) \cdot x,
+  \qquad C = I - \mathbf{1}\mathbf{1}^\top / d
+\end{aligned}
+$$
 
-so the faithful direction carries a centering projector as well as the scale. The learned bias `b`
+so the faithful direction carries a centering projector as well as the scale. The learned bias $b$
 adds an input-independent logit offset and drops out of a direction entirely.
 
 **Why the centering is not optional in the way a rescaling is.** A uniform rescaling of a lens basis
-cancels exactly under a patch-mode swap: scaling `V` to `cV` scales the pseudoinverse to `V+/c`, so
+cancels exactly under a patch-mode swap: scaling $V$ to $cV$ scales the pseudoinverse to $V^+/c$, so
 the reconstruction is unchanged. Centering is not a rescaling. It removes an additive uniform
 component, which moves the direction and therefore the plane the swap happens in. The two are easy to
 conflate, and conflating them predicts that centering is harmless, which it is not.
@@ -57,17 +63,29 @@ and warns when it meets a family in that namespace it does not recognize.
 **Folding is not uniformly beneficial, and the naive predictor is wrong.** A four-model sweep in
 patch mode at scale 1.0 on a concept-contrast task:
 
-| model | rms(s - 1) | cos(folded, unfolded) | late layers |
+| model | $\mathrm{rms}(s - 1)$ | $\cos$(folded, unfolded) | late layers |
 | --- | --- | --- | --- |
 | gemma-2-2b | 2.54 | 0.20 to 0.52 | unfolded about 3x stronger (L24 +17.77 vs +5.69; both flip) |
 | gemma-3-1b-it | 8.79 | 0.65 to 0.87 | folded essential (unfolded never flips) |
 | gpt2 | 1.48 | 0.49 to 0.70 | at the capability floor for this task |
 | pythia-70m | 12.61 | 1.000 | folding is provably a no-op here |
 
-pythia-70m has the largest scale deviation of the four and a folded-versus-unfolded cosine of exactly
-1.000, which is the uniform-cancellation result above showing up empirically. So the size of
-`s - 1` predicts nothing; only the anisotropy of `s`, and specifically its alignment with the task
-pathway, can matter.
+pythia-70m has the largest scale deviation of the four and a folded-versus-unfolded cosine that rounds
+to 1.000. **An earlier version of this page attributed that to the uniform-cancellation result above.
+That attribution is wrong, and it is corrected here rather than annotated below**, because the row it
+explains is still correct and a reader who accepts the explanation stops looking.
+
+Three measurements rule it out. Pythia's final norm is a **LayerNorm**, so folding applies the centering
+projector as well as the scale, which is precisely not the bare rescale the cancellation argument
+covers: this page argues two paragraphs above that centering moves the direction where a rescale does
+not. The scale is not uniform either, since $\mathrm{rms}(s-1)$ is 12.61 and the folded-versus-unfolded
+cosine measured **before** composing with the lens is 0.987. The near-parallelism appears only **after**
+composition, at 0.99988 to 0.99993.
+
+So the correct reading is narrower and the cause is open: for this checkpoint the lens composition
+collapses a direction difference that is plainly present beforehand, and why it does is not established
+here. What the row still supports is the conclusion it was cited for. The size of $s - 1$ predicts
+nothing; only the anisotropy of $s$, and specifically its alignment with the task pathway, can matter.
 
 **The mechanism is coordinate alignment, confirmed by destroying it.** Folding with a permuted copy
 of the model's own scale vector preserves its distribution and destroys its coordinate
@@ -104,8 +122,8 @@ In practice:
 1. **Default to folding**, because it is the readout-faithful form and because the failure it avoids
    (a direction the readout cannot express) is worse than the one it risks.
 2. **Check, do not assume.** The cheap check is first-order: for a two-pole swap with displacement
-   `D`, compare `D . grad_h(logit_target - logit_other)` between the folded and unfolded bases and
-   take the larger. Measured against real patched deltas this predicted three of four cases within
+   $D$, compare $D \cdot \nabla_h(\mathrm{logit}_{\text{target}} - \mathrm{logit}_{\text{other}})$
+   between the folded and unfolded bases and take the larger. Measured against real patched deltas this predicted three of four cases within
    3%, the fourth being the largest displacement, where a first-order estimate is expected to drift.
 3. **Keep the option.** The opt-out is the stronger setting on at least one major model, so it is a
    supported configuration rather than legacy. Op collections building lens directions expose this as
