@@ -322,11 +322,19 @@ def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
             head = getattr(model, head_attr, None)
             if head is not None and isinstance(getattr(head, "weight", None), torch.Tensor):
                 w_u = head.weight
-                inner = (
-                    getattr(model, "model", None)
-                    or getattr(model, "transformer", None)
-                    or getattr(model, "gpt_neox", None)
-                    or model
+                # Selected by `is not None` rather than by truthiness, and that is load-bearing rather
+                # than stylistic: a module is not a safe thing to truth-test. `nn.Sequential` and
+                # `nn.ModuleList` define `__len__`, so an empty one is FALSY and an `or` chain would
+                # silently skip a real submodule; and a wrapper whose `__len__` delegates to a module
+                # that has none (nnsight's `Envoy` over an HF model) makes the truth-test itself raise
+                # `TypeError: object of type '...' has no len()`. Both failures land far from here.
+                inner = next(
+                    (
+                        candidate
+                        for attr in ("model", "transformer", "gpt_neox")
+                        if (candidate := getattr(model, attr, None)) is not None
+                    ),
+                    model,
                 )
                 for norm_attr in ("norm", "ln_f", "final_layer_norm"):
                     norm = getattr(inner, norm_attr, None)
