@@ -48,6 +48,40 @@ class UnmetRequirement:
     message: str
 
 
+def install_command(entry: str) -> str:
+    """The command a user should run to satisfy one unmet ``requires.pip`` entry.
+
+    ALWAYS the `uv` form, never bare `pip`, and that is a project rule rather than a preference. This
+    project's environments depend on `[tool.uv] override-dependencies`, which pip ignores; `AGENTS.md`
+    states that `pip install` into a dev venv is never acceptable, "not even for a one-off repair", and
+    records a case where a pip repair layered two dist-infos for one package. A diagnostic that printed a
+    pip command would be telling users to do the one thing the project documents most carefully against.
+
+    Quoted because specifiers contain characters a shell treats as its own: `example-pkg~=1.5.1` is
+    fine unquoted, `example-pkg>=1.5,<2` is not, and the difference is invisible until someone pastes
+    the second one.
+
+    That example name is a PLACEHOLDER deliberately, and the two below are a BUNDLED adapter.
+    `TestCoreKnowsNothingOfAnyHubAdapter` forbids a core module from naming a hub adapter, because core
+    knowing one is what would make it privileged rather than third-party. Writing an actionable
+    diagnostic is precisely when a familiar hub name comes to hand, so the rule is easiest to break in
+    the course of improving the message -- this docstring named one and the invariant caught it.
+
+    THE ENTRY IS EMITTED VERBATIM, which is what makes a non-PyPI dependency work. A PEP 508 direct
+    reference carries its own source, so `circuit-tracer @ git+https://.../repo.git@<sha>` round-trips
+    into a command that installs the right thing from the right place. That is the form an author whose
+    dependency is not on the configured index should declare.
+
+    A BARE NAME IS A GUESS, and the caller should know it. `circuit-tracer>=0.5.3` produces
+    `uv pip install 'circuit-tracer>=0.5.3'`, which is only correct if that distribution resolves from
+    the configured index. If it does not, the command fails loudly, which is survivable -- but if the
+    name happens to belong to an unrelated project on the index, it installs that instead. Nothing here
+    can tell the two apart without the network, so the remedy is the direct-reference form above rather
+    than a cleverer message.
+    """
+    return f"uv pip install {entry!r}"
+
+
 def requirement_status(requires: dict, source: str = "<component>") -> list[UnmetRequirement]:
     """Evaluate a ``requires`` block against this environment, returning EVERY unmet requirement.
 
@@ -126,13 +160,19 @@ def requirement_status(requires: dict, source: str = "<component>") -> list[Unme
         if installed is None:
             unmet.append(
                 UnmetRequirement(
-                    "pip", str(entry), f"{source}: requires pip package {entry!r}, which is not installed."
+                    "pip",
+                    str(entry),
+                    f"{source}: requires pip package {entry!r}, which is not installed. "
+                    f"Install it with: {install_command(str(entry))}",
                 )
             )
         elif r.specifier and not r.specifier.contains(installed, prereleases=True):
             unmet.append(
                 UnmetRequirement(
-                    "pip", str(entry), f"{source}: requires {entry!r} but {r.name} {installed!r} is installed."
+                    "pip",
+                    str(entry),
+                    f"{source}: requires {entry!r} but {r.name} {installed!r} is installed. "
+                    f"Change it with: {install_command(str(entry))}",
                 )
             )
     return unmet
