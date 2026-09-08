@@ -151,7 +151,8 @@ fi
 if [ -n "$azure_id" ]; then
   qf=0
   while :; do
-    out=$(az pipelines build show --id "$azure_id" --query "[status,result]" -o tsv 2>/dev/null | tr '\t' ' ')
+    # `-o tsv` prints a list query one element per LINE (measured), so fold every whitespace run to one space.
+    out=$(az pipelines build show --id "$azure_id" --query "[status,result]" -o tsv 2>/dev/null | tr -s '\n\t ' ' ' | sed 's/ $//')
     if [ -z "$out" ]; then
       qf=$((qf + 1))
       if [ "$qf" -ge "$max_qf" ]; then say "build=$azure_id QUERY-FAILED $qf consecutive probe failures (az returned nothing); state unknown"; exit 4; fi

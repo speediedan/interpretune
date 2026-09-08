@@ -115,7 +115,9 @@ class TestBrokenProbe:
 
     def test_a_completed_build_is_classified_from_its_result(self, tmp_path):
         fake = tmp_path / "az"
-        fake.write_text("#!/usr/bin/env bash\nprintf 'completed\\tcanceled\\n'\n")
+        # The real `az ... --query "[status,result]" -o tsv` prints one element per LINE (captured, not assumed);
+        # the first fake wrote them tab-separated and passed while the live command was misread.
+        fake.write_text("#!/usr/bin/env bash\nprintf 'completed\\ncanceled\\n'\n")
         fake.chmod(0o755)
         env = {**os.environ, "PATH": f"{tmp_path}:{os.environ.get('PATH', '')}"}
         code, lines = _run("--azure-build", "1", "--interval", "0", env=env)
