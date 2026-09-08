@@ -97,23 +97,33 @@ classify_log() {
 
 # ---- subjects ---------------------------------------------------------------------------------------------
 if [ -n "$pattern" ]; then
-  mapfile -t exempt < <(self_and_ancestor_pids)
-  IFS='|'; exempt_alt="${exempt[*]}"; unset IFS
+  # bash 3.2 (macOS) has no mapfile and treats an empty array expansion as unbound under set -u, so the arrays
+  # are filled with `read` loops and expanded through the ${arr[@]+"${arr[@]}"} idiom.
+  exempt=()
+  while IFS= read -r line; do exempt+=("$line"); done < <(self_and_ancestor_pids)
+  exempt_alt=$(IFS='|'; printf '%s' "${exempt[*]}")
   want_uid=""
   case "$uid_filter" in
     "") ;;
     me) want_uid=$(id -u) ;;
     *) want_uid="$uid_filter" ;;
   esac
-  mapfile -t found < <(for p in $(pgrep -f -- "$pattern" | grep -Ev "^(${exempt_alt})$"); do
-    if ! is_descendant_of_self "$p" && alive "$p"; then echo "$p"; fi; done)
-  if [ -n "$want_uid" ] && [ "${#found[@]}" -gt 0 ]; then
-    mapfile -t found < <(for p in "${found[@]}"; do
-      u=$(ps -o uid= -p "$p" 2>/dev/null | tr -d '[:space:]'); [ "$u" = "$want_uid" ] && echo "$p"; done)
+  found=()
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if is_descendant_of_self "$p" || ! alive "$p"; then continue; fi
+    if [ -n "$want_uid" ]; then
+      u=$(ps -o uid= -p "$p" 2>/dev/null | tr -d '[:space:]')
+      [ "$u" = "$want_uid" ] || continue
+    fi
+    found+=("$p")
+  done < <(pgrep -f -- "$pattern" 2>/dev/null | grep -Ev "^(${exempt_alt})$")
+  n=${#found[@]}
+  if [ "$n" -eq 0 ]; then
+    say "find=$pattern DEAD no process matches outside this watcher's own chain$([ -n "$want_uid" ] && echo " with uid $want_uid")"; exit 3
   fi
-  if [ "${#found[@]}" -eq 0 ]; then say "find=$pattern DEAD no process matches outside this watcher's own chain$([ -n "$want_uid" ] && echo " with uid $want_uid")"; exit 3; fi
-  if [ "${#found[@]}" -gt 1 ]; then
-    say "find=$pattern QUERY-FAILED ambiguous: ${#found[@]} processes match (${found[*]}); name a PID"; exit 4
+  if [ "$n" -gt 1 ]; then
+    say "find=$pattern QUERY-FAILED ambiguous: $n processes match (${found[*]}); name a PID"; exit 4
   fi
   pid="${found[0]}"
   echo "watch_run.sh: resolved pattern to pid $pid (uid $(ps -o uid= -p "$pid" | tr -d '[:space:]'))" >&2
