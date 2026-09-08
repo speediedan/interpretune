@@ -1196,10 +1196,18 @@ test_op:
 
         # Verify
         assert result == mock_function
+        # `revision=None` is the unpinned half of the contract: an op whose definition did not come from
+        # a pinned hub revision must not acquire one at import. The pinned half cannot be checked here,
+        # because asserting the arguments a loader was called with cannot distinguish a loader that
+        # honours them from one that ignores them -- which is exactly how the defect this expectation
+        # just changed survived: the loader always accepted `revision`, and nothing passed it. The
+        # behavioural check is test_the_executed_module_comes_from_the_pinned_revision..., which asserts
+        # on the path of the module actually executed.
         mock_get_function.assert_called_once_with(
             function_reference="module.submodule.function_name",
             op_repo_name_or_path="user.repo",
             cache_dir=custom_cache_path,
+            revision=None,
         )
 
     @patch("interpretune.analysis.ops.dispatcher.rank_zero_debug")
