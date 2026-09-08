@@ -59,9 +59,17 @@ When the answer is yes, the check is not evidence. The tells, each measured here
 - **The query answers a narrower question than the one asked.** A listing of *pending* approvals concluded
   a released gate had never needed one; a listing of *completed* builds hid the gated one. State the
   command's contract before reading its answer as yours.
-- **The instrument was silently disabled mid-run.** A log handler that worked on one file recorded nothing
-  across a full session, because something in the session reset logging. An instrument that must survive a
-  whole run owns its handler and re-arms itself.
+- **The instrument was silently disabled mid-run.** A request-log capture that worked on one test file
+  recorded nothing across a full-suite session; the cause was never isolated, and the remedy was measured
+  rather than reasoned: an instrument that owns its handler and re-arms its loggers before every test
+  recorded the whole run. An instrument that must survive a whole run is built that way from the start.
+- **The answer is a cold cache that the query itself warms.** A pull request's mergeability read `UNKNOWN`
+  and was cited as neglect; the second query returned `CLEAN`. Read a state that is computed on demand
+  twice before drawing a conclusion from its first value.
+- **A filename is evidence of neither impact nor safety.** A file list under-reports reach, since a module
+  can be reached without appearing in any diff, and over-reports risk, since a project file in a drift can
+  look disqualifying when the whole delta is one marker. Both cost one diff to avoid: read the change, not
+  the path.
 
 Two of these are worth telling apart, because the remedies differ. A check that **cannot fail** (the echo,
 the emptied guard) is broken and needs replacing. A check that is **correct but narrower than the question**
