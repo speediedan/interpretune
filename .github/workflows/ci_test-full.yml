@@ -170,10 +170,36 @@ jobs:
         with:
           show_pip_list: "true"
 
+      # The three matrix jobs share one Hub API rate limit, and the Hub client re-validates every cached
+      # file (and lists repository trees on every tokenizer load) even when the cache is warm, so the
+      # suite runs offline against a cache warmed here. The cache is keyed on the manifest so an edit to
+      # it refreshes every runner; it is saved right after warming so a test failure keeps the warm cache.
+      - name: Restore the Hub cache
+        id: hf-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-cache-${{ runner.os }}-${{ hashFiles('tests/hf_warm_manifest.yaml') }}
+
+      # Skipped entirely on an exact cache hit: re-validating a warm cache is itself a burst of metadata
+      # requests per job, and the whole point is that a steady-state job makes none.
+      - name: Warm the Hub cache from the manifest
+        if: steps.hf-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: python scripts/warm_hf_cache.py
+
+      - name: Save the Hub cache
+        if: steps.hf-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-cache-${{ runner.os }}-${{ hashFiles('tests/hf_warm_manifest.yaml') }}
+
       - name: Run pytest coverage w/ configured instrumentation
         id: run-pytest-coverage
         uses: ./.github/actions/run-pytest-instrumented
         with:
+          hub_offline: "1"
           pytest_filter_pattern: ${{ needs.log-dispatch-inputs.outputs.pytest_filter_pattern }}
           python_version: ${{ matrix.python-version }}
           runner_os: ${{ runner.os }}
@@ -187,7 +213,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pytest-results-${{ runner.os }}-${{ matrix.python-version }}
-          path: junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}.xml
+          path: junit/test-results-${{ runner.os }}-py${{ matrix.python-version }}*.xml
         if: failure()
 
       - name: Load analysis debug dump directory path (on failure)

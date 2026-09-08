@@ -26,6 +26,12 @@ inputs:
     description: 'Run CI resource monitor (env value)'
     required: false
     default: ''
+  hub_offline:
+    description: >-
+      When "1", run the suite with HF_HUB_OFFLINE=1 against the cache warmed by scripts/warm_hf_cache.py, then
+      run the @pytest.mark.hf_live tests in a second, online pass. Ignored when pytest_filter_pattern is set.
+    required: false
+    default: ''
   run_w_grafana:
     description: 'Run Grafana Alloy resource monitoring (Linux only)'
     required: false
@@ -99,6 +105,7 @@ runs:
         PYTHONPATH: ${{ inputs.workspace }}/src
         PYTEST_ADDOPTS: "--log-cli-level=${{ inputs.it_ci_log_level }} --log-cli-format='%(asctime)s [%(levelname)8s] %(name)s: %(message)s' --capture=no"
         PYTEST_FILTER_PATTERN: ${{ inputs.pytest_filter_pattern }}
+        HUB_OFFLINE: ${{ inputs.hub_offline }}
         IT_RESOURCE_DEBUG: ${{ runner.os == 'Linux' && inputs.run_resource_monitor == '1' && '1' || '0' }}
       run: |
         if [ -n "$PYTEST_FILTER_PATTERN" ]; then
@@ -109,7 +116,17 @@ runs:
           # --reruns/--reruns-delay handle transient httpx read timeouts with HF transformers v5
           PYTEST_CMD="python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v --durations=50 --reruns 2 --reruns-delay 10 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}.xml"
         fi
-        eval $PYTEST_CMD
+        if [ "$HUB_OFFLINE" = "1" ] && [ -z "$PYTEST_FILTER_PATTERN" ]; then
+          # The matrix jobs run concurrently and the Hub rate limit is shared across them, so the suite runs
+          # with the Hub client offline against the cache warmed by scripts/warm_hf_cache.py. Tests marked
+          # hf_live skip in this pass (tests/conftest.py) and run in the online pass below.
+          echo "Running the suite with HF_HUB_OFFLINE=1 against the warmed Hub cache."
+          HF_HUB_OFFLINE=1 eval $PYTEST_CMD
+          echo "Running the hf_live tests online."
+          python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v -m hf_live --reruns 2 --reruns-delay 10 --junitxml=junit/test-results-${{ inputs.runner_os }}-py${{ inputs.python_version }}-live.xml
+        else
+          eval $PYTEST_CMD
+        fi
 
     - name: Check disk space after tests
       if: always()

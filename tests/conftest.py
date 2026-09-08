@@ -1446,6 +1446,48 @@ def pytest_collection_modifyitems(items):
             # has `@RunIf(benchmark=True)`
             if marker.name == "skipif" and marker.kwargs.get("benchmark")
         ]
+    # The hosted matrix runs the suite with the Hub client offline against a warmed cache (see
+    # docs/ci_hub_cache.md); a test that must reach the live Hub declares it and runs in the online pass.
+    if _hub_offline():
+        for item in items:
+            if item.get_closest_marker("hf_live") is not None:
+                item.add_marker(pytest.mark.skip(reason="needs the live Hub, and HF_HUB_OFFLINE=1 is set"))
+
+
+def _hub_offline() -> bool:
+    return os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_OFFLINE_MISS_HINT = (
+    "This test asked the Hub for something the local cache does not hold while HF_HUB_OFFLINE=1 was set. "
+    "The hosted matrix runs the suite offline against a cache warmed from tests/hf_warm_manifest.yaml: add the "
+    "repository (for a dataset, also the config name) this test loads to that manifest. If the test genuinely "
+    "needs the live Hub, mark it @pytest.mark.hf_live so it runs in the online pass instead."
+)
+
+
+def _is_offline_cache_miss(exc: BaseException | None) -> bool:
+    """Whether an exception chain bottoms out in the Hub client refusing to go online."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        name = type(exc).__name__
+        text = str(exc)
+        if name in {"OfflineModeIsEnabled", "LocalEntryNotFoundError"} or "outgoing traffic has been disabled" in text:
+            return True
+        if "HF_HUB_OFFLINE" in text or "offline mode is enabled" in text.lower():
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Name the cause when a test fails only because the warmed Hub cache is missing an artifact."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.failed and _hub_offline() and call.excinfo is not None and _is_offline_cache_miss(call.excinfo.value):
+        report.sections.append(("Hub cache miss under HF_HUB_OFFLINE", _OFFLINE_MISS_HINT))
 
 
 def _check_module_identity(item) -> None:

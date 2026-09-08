@@ -554,6 +554,9 @@ Serialization details matter here:
   2. `Testing: standard gpu cuda-marked` runs regular CUDA-gated tests under `IT_RUN_CUDA_TESTS=1`
   3. `Testing: standalone gpu` runs standalone GPU tests
   4. `Testing: CI Profiling` runs `profile_ci` GPU tests
+- **Hub access in hosted CI:** each matrix job warms the Hugging Face cache from `tests/hf_warm_manifest.yaml`
+  and runs the suite with `HF_HUB_OFFLINE=1`; tests that must reach the live Hub are marked `hf_live` and run in
+  a separate online pass. A new Hub artifact goes in the manifest. See `docs/ci_hub_cache.md`.
 - **Coverage target:** 90% on commits, 50% on patches (`.codecov.yml`)
 - **Torch prerelease:** Configured via `requirements/ci/torch-pre.txt` (version, CUDA target, channel)
 - **Dependencies:** Locked in `requirements/ci/requirements.txt`; regenerate with `./requirements/utils/lock_ci_requirements.sh`
