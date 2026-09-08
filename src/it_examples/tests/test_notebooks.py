@@ -569,15 +569,19 @@ def test_sae_lens_notebooks(params: dict[str, Any], tmp_path: Path):
 
 
 def test_notebook_discovery():
-    """Test that notebooks can be discovered in the publish directory."""
+    """The published notebook set and the roster below must agree in BOTH directions.
+
+    One direction catches a notebook being removed or renamed. The other catches a notebook being added without
+    anyone deciding what coverage it needs: before this test compared both ways, a published notebook missing
+    from the roster left every notebook test green while asserting nothing about it. Adding a notebook is now a
+    deliberate act: extend the roster, and in doing so decide which test executes it.
+    """
     assert NOTEBOOKS_DIR.exists(), f"Notebooks directory not found: {NOTEBOOKS_DIR}"
 
-    # Find all .ipynb files
-    notebook_files = list(NOTEBOOKS_DIR.rglob("*.ipynb"))
-    assert len(notebook_files) > 0, f"No notebooks found in {NOTEBOOKS_DIR}"
+    published = {path.relative_to(NOTEBOOKS_DIR).as_posix() for path in NOTEBOOKS_DIR.rglob("*.ipynb")}
+    assert published, f"No notebooks found in {NOTEBOOKS_DIR}"
 
-    # Verify expected notebooks exist
-    expected_notebooks = [
+    roster = {
         "attribution_analysis/attribution_analysis.ipynb",
         "circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb",
         "circuit_tracer_examples/ct_analysis_backend_demo.ipynb",
@@ -587,8 +591,13 @@ def test_notebook_discovery():
         "example_op_collections/op_collection_example.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",
-    ]
+        "shared_analysis/shared_analysis_roundtrip.ipynb",
+    }
 
-    for expected in expected_notebooks:
-        expected_path = NOTEBOOKS_DIR / expected
-        assert expected_path.exists(), f"Expected notebook not found: {expected_path}"
+    missing = sorted(roster - published)
+    assert not missing, f"rostered notebooks are not published (removed or renamed?): {missing}"
+    unrostered = sorted(published - roster)
+    assert not unrostered, (
+        f"published notebooks are not in the roster: {unrostered}. Add each to `roster` in "
+        f"{Path(__file__).name} and decide which test executes it; a notebook outside the roster has no coverage."
+    )
