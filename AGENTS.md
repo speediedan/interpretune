@@ -63,6 +63,13 @@ When the answer is yes, the check is not evidence. The tells, each measured here
   across a full session, because something in the session reset logging. An instrument that must survive a
   whole run owns its handler and re-arms itself.
 
+Two of these are worth telling apart, because the remedies differ. A check that **cannot fail** (the echo,
+the emptied guard) is broken and needs replacing. A check that is **correct but narrower than the question**
+(the pending-approvals query, the completed-builds listing, a gated pipeline rendered as "skipping" when its
+trigger declined a prose-only diff by design) is fine as it stands; the defect is reading its answer as the
+answer to a broader question. For the first, replace the instrument. For the second, state the command's
+contract before reading its output, and name the phase or scope you actually checked rather than the whole.
+
 What to do instead: name the fact, find the artifact only the fact produces, and check that artifact. Print
 the identifiers in full. When a check for an *absence* passes, ask whether it ran at all.
 
