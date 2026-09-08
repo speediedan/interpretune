@@ -71,6 +71,9 @@ class InterventionMode(str, Enum):
     naming a backend, because core must not know which adapters exist, and because a rule about what an
     implementation needs stays true when the next one appears.
 
+    Such a backend declares ``InterventionSupport(modes={ADD})``; the declaration, not the
+    implementation, is what the dispatcher consults, so the refusal is by name rather than by trial.
+
     A mode a backend has not declared is refused by
     :func:`~interpretune.analysis.backends.interventions.require_intervention_mode` rather than applied
     as a different mode, since every mode returns plausible logits and the substitution is undetectable
@@ -106,7 +109,13 @@ class InterventionSupport:
 
     @classmethod
     def every(cls) -> InterventionSupport:
-        """Every scope and every mode: the declaration of a backend whose hook sees the whole activation."""
+        """Every scope and every mode: for a backend whose hook can compute its edit from the activation it
+        sees, during the pass.
+
+        Seeing the activation is not the criterion, which is worth stating because it reads like one: a
+        steering surface can receive the activation and still express only ``add``, if every parameter it
+        takes was fixed before the pass began. See :class:`InterventionMode`.
+        """
         return cls(position_scopes=frozenset(PositionScope), modes=frozenset(InterventionMode))
 
 
