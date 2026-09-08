@@ -31,6 +31,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import re
 import shutil
@@ -83,6 +84,82 @@ def load_notebook(path: Path) -> dict[str, Any]:
 def save_notebook(notebook: dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(notebook, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+_PATH_MARKERS = ("src/it_examples/", "docs/notebook_artifacts/")
+
+
+def _repo_relative(path_str: str) -> str:
+    """Trim an absolute path down to its in-repo tail, or return it unchanged."""
+    for marker in _PATH_MARKERS:
+        i = path_str.find(marker)
+        if i != -1:
+            return path_str[i:]
+    return path_str
+
+
+def _user_root_pattern(user: str) -> re.Pattern[str]:
+    """Match the executing user's root wherever it lives, and ONLY as a filesystem path.
+
+    Their files are not all under `/home`. Measured on this project's own artifacts: worktrees under
+    `/mnt/cache/<user>/worktrees/<name>/`, virtualenvs under `/mnt/cache/<user>/.venvs/`, and a Hub
+    cache under `/mnt/cache_extended/<user>/.cache/`. A `/home`-only rule silently misses every one,
+    which is how the first version of this function passed its own check while leaving 22 paths in
+    place: the pattern had been written from the examples that had already been noticed.
+
+    The leading lookbehind is what keeps this safe. `huggingface.co/<user>/rte` names a real published
+    Hub repository, and the segment after the host looks exactly like a path component. Requiring the
+    match to begin at a `/` that does not follow a word character, a colon OR ANOTHER SLASH means a
+    URL cannot match, while a path appearing after a space, a quote or a bracket can. The slash in
+    that list is not defensive padding: without it `https://github.com/<user>/interpretune` matched
+    from the second slash of `//` and became `https:/~/interpretune`, corrupting a working link. A
+    test case for exactly that string is what caught it.
+    """
+    return re.compile(r"(?<![\w.:/])/(?:[\w.\-]+/)*?" + re.escape(user) + r"/")
+
+
+def normalize_host_paths(notebook: dict[str, Any], *, user: str | None = None) -> int:
+    """Strip the executing host's identity out of what gets published.
+
+    An artifact records WHERE it was rendered, which is whoever ran the GPU host that day. Two places
+    carry it, and they need different treatment because only one has any value to a reader.
+
+    `metadata.papermill.input_path` / `output_path` are absolute paths into the renderer's own working
+    copy. Measured examples name a scratch worktree (`/mnt/.../worktrees/it-stale/...`), which says
+    nothing about the example. Rewritten to the repo-relative tail, the part true for every reader.
+
+    Output TEXT carries absolute paths inside warning locations, e.g.
+    `.../src/interpretune/config/shared.py:222: UserWarning ...`. Only the user's root is replaced,
+    leaving the rest intact, because the file and line ARE the useful content of a warning.
+
+    What this deliberately does NOT touch: `owner/repo` identifiers such as
+    `speediedan/concept_direction_ops`, which name real published Hub repositories the examples
+    genuinely use, and the prose in source cells telling a reader to substitute their own org.
+    Rewriting those would break working references in order to fix a cosmetic one. **They look alike
+    to a grep and are opposites in intent**, which is why this works on parsed notebook structure and
+    on anchored path patterns rather than on the file's raw text.
+    """
+    user = user or getpass.getuser()
+    user_root = _user_root_pattern(user)
+    changed = 0
+    pm_meta = (notebook.get("metadata") or {}).get("papermill") or {}
+    for key in ("input_path", "output_path"):
+        val = pm_meta.get(key)
+        if isinstance(val, str):
+            rel = user_root.sub("~/", _repo_relative(val))
+            if rel != val:
+                pm_meta[key] = rel
+                changed += 1
+    for cell in notebook.get("cells", []):
+        for output in cell.get("outputs", []) or []:
+            for field in ("text", "traceback"):
+                lines = output.get(field)
+                if isinstance(lines, list):
+                    swapped = [user_root.sub("~/", ln) if isinstance(ln, str) else ln for ln in lines]
+                    if swapped != lines:
+                        output[field] = swapped
+                        changed += 1
+    return changed
 
 
 def strip_docs_excluded_cells(notebook: dict[str, Any]) -> tuple[dict[str, Any], int]:
@@ -410,6 +487,9 @@ def main() -> int:
             # the surface those outputs were produced against is still the one recorded here; refusing to
             # stamp then would leave artifacts permanently unstampable without a GPU re-render.
             stamp_op_surface(notebook, bundled_op_names())
+            # Same reasoning as the stamp above: normalize on EVERY write, including --no-execute, so
+            # an artifact lands identically regardless of whose working copy rendered it.
+            normalize_host_paths(notebook)
             save_notebook(notebook, artifact)
             outputs = "with outputs" if has_outputs(notebook) else "NO outputs"
             print(f"  wrote {rel} ({outputs}, {removed} cell(s) removed)")

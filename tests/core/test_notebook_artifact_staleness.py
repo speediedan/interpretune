@@ -242,3 +242,86 @@ class TestStampUnderRecording:
         kept = json.loads((artifacts / "demo" / "dead.ipynb").read_text())
         assert restamped["metadata"][renderer.OP_SURFACE_KEY] == ["live_op"]
         assert "dead_op" in kept["metadata"][renderer.OP_SURFACE_KEY]
+
+
+class TestHostPathNormalization:
+    """An artifact must not publish the identity of whoever rendered it.
+
+    The renderer bakes absolute paths into published docs twice over: papermill records its own
+    input/output paths in metadata, and captured warnings carry the file they fired from. Both name the
+    working copy of whoever ran the GPU host that day, which for this project has included scratch
+    worktrees (`.../worktrees/it-stale/...`).
+    """
+
+    def test_rewrites_the_users_root_wherever_it_lives(self, renderer):
+        """A `/home`-only rule misses most of them, which is how the first version of this passed while leaving 22
+        paths in place."""
+        rx = renderer._user_root_pattern("someuser")
+        for original in (
+            "/home/someuser/repos/interpretune/src/interpretune/config/shared.py:222: UserWarning",
+            "/mnt/cache/someuser/worktrees/it-opdocs/src/interpretune/analysis/core.py",
+            "/mnt/cache_extended/someuser/.cache/huggingface/hub",
+            "/mnt/cache/someuser/.venvs/it_latest/lib/python3.13/site-packages/x.py",
+            '  File "/home/someuser/repos/x/y.py", line 3',
+        ):
+            assert rx.sub("~/", original) != original, original
+            assert "someuser" not in rx.sub("~/", original)
+
+    def test_leaves_hub_and_git_references_alone(self, renderer):
+        """`owner/repo` names real published repositories the examples depend on.
+
+        These look identical to a path component in a grep and are the opposite in intent, so rewriting them would break
+        working references in order to fix a cosmetic one.
+        """
+        rx = renderer._user_root_pattern("someuser")
+        for untouched in (
+            "Downloading from huggingface.co/someuser/rte to cache",
+            "https://huggingface.co/someuser/jlens_steering_ops",
+            "see https://github.com/someuser/interpretune/pull/1",
+            "resolves to someuser.concept_direction_ops.concept",
+            "models--someuser--concept_direction_ops/116271f2",
+            "repo_id='someuser/trivial_op_repo'",
+        ):
+            assert rx.sub("~/", untouched) == untouched, untouched
+
+    def test_a_url_is_not_a_path_even_after_a_double_slash(self, renderer):
+        """REGRESSION.
+
+        The first pattern excluded a preceding word character and colon but not another SLASH, so `
+        https://github.com/<user>/interpretune`
+        matched from the second slash of `//` and
+        became `https:/~/interpretune`, silently corrupting a link in published docs.
+        """
+        rx = renderer._user_root_pattern("someuser")
+        url = "see https://github.com/someuser/interpretune/pull/1"
+        assert rx.sub("~/", url) == url
+
+    def test_papermill_metadata_becomes_repo_relative(self, renderer):
+        notebook = {
+            "cells": [],
+            "metadata": {
+                "papermill": {
+                    "input_path": "/mnt/cache/someuser/worktrees/it-stale/src/it_examples/notebooks/publish/a.ipynb",
+                    "output_path": "/home/someuser/repos/interpretune/docs/notebook_artifacts/a.ipynb",
+                }
+            },
+        }
+        assert renderer.normalize_host_paths(notebook, user="someuser") == 2
+        pm = notebook["metadata"]["papermill"]
+        assert pm["input_path"] == "src/it_examples/notebooks/publish/a.ipynb"
+        assert pm["output_path"] == "docs/notebook_artifacts/a.ipynb"
+
+    def test_normalizes_output_text_and_is_idempotent(self, renderer):
+        """Idempotence is what lets this run on EVERY write, including `--no-execute`, without churn."""
+        notebook = {
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "outputs": [{"text": ["/home/someuser/repos/interpretune/src/x.py:9: UserWarning\n"]}],
+                }
+            ],
+            "metadata": {},
+        }
+        assert renderer.normalize_host_paths(notebook, user="someuser") == 1
+        assert notebook["cells"][0]["outputs"][0]["text"] == ["~/repos/interpretune/src/x.py:9: UserWarning\n"]
+        assert renderer.normalize_host_paths(notebook, user="someuser") == 0
