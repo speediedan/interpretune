@@ -5,6 +5,17 @@
 # A test that needs an artifact not listed here fails offline with a message naming this file. Add the
 # repository (and for datasets the config name the test loads) rather than lifting offline mode; a test
 # that must reach the live Hub is marked @pytest.mark.hf_live and runs in the separate online pass.
+#
+# WHICH of the two applies is the part worth stating, because the mechanism above does not decide it, and
+# two lanes reached the same criterion independently on the same day while making that choice:
+#
+#   Warm it here     when the artifact is INPUT the test needs in order to exercise something else.
+#   Mark it hf_live  when reaching the Hub IS what the test exercises.
+#
+# The question that decides it: would a warm cache make this test pass WITHOUT exercising the thing it
+# exists to exercise? A resolution test that discovers a repository's real layout and a pinned-pull test
+# that verifies a fetch both fail that question, and warming either would leave a green test that checks
+# nothing. A tokenizer that a session fixture happens to load passes it easily.
 cache_version: 1
 models:
   # Both spellings are used in the tree and cache under separate directories, so both are warmed.
