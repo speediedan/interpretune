@@ -1,4 +1,6 @@
-# Gemma 3 multimodal (`Gemma3ForConditionalGeneration`): the language model lives one level down. Sandwich norms: a post-norm after each sublayer, so a
+# Gemma 3 multimodal (`Gemma3ForConditionalGeneration`): the language model lives one level down. LANGUAGE MODEL ONLY:
+# the vision tower and the multimodal projector are not mapped, so a point inside either has no spelling (a second
+# stack needs the grammar extension the architecture spike classifies). Sandwich norms: a post-norm after each sublayer, so a
 # sublayer's CONTRIBUTION to the residual is the post-norm's output, not the raw module output.
 schema_version: 1
 architecture: Gemma3ForConditionalGeneration
