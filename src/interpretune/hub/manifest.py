@@ -200,7 +200,7 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
             if entry_requires is not None and not isinstance(entry_requires, dict):
                 raise ComponentManifestError(
                     f"{source}: `adapters.compositions[].requires` must be a mapping in the same vocabulary as "
-                    f"the component-wide `requires` (interpretune / adapters / pip), got {entry_requires!r}"
+                    f"the component-wide `requires` (axes: {_REQUIRES_AXES}), got {entry_requires!r}"
                 )
     extra = manifest.get("extra_files")
     if extra is not None:

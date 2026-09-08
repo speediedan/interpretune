@@ -69,6 +69,21 @@ class TestManifestValidationOfTheAxis:
                 self._manifest({"modules": ["circuit-tracer"]}, per_composition=per_composition), source="t"
             )
 
+    @pytest.mark.parametrize("per_composition", [False, True])
+    def test_a_non_mapping_requires_names_every_axis(self, per_composition):
+        """Both shape messages derive from the axis tuple, so neither can fall behind it.
+
+        The per-composition message once restated the axes by hand and lost `modules` when that axis was added,
+        so an author who had correctly reached for `modules` was told the vocabulary excluded it. The expectation
+        here is derived from the same value the messages must derive from.
+        """
+        from interpretune.hub.manifest import _REQUIRES_AXES
+
+        with pytest.raises(ComponentManifestError, match="must be a mapping") as excinfo:
+            validate_component_manifest(self._manifest("not-a-mapping", per_composition=per_composition), source="t")
+        for axis in _REQUIRES_AXES:
+            assert axis in str(excinfo.value), f"the message must name the {axis!r} axis"
+
     def test_an_unknown_axis_is_ignored_for_forward_compatibility(self):
         """A manifest written for a newer interpretune may carry an axis this one does not evaluate."""
         validate_component_manifest(self._manifest({"module": ["x"], "modules": ["json"]}), source="t")
