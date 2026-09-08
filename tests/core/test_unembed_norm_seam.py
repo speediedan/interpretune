@@ -291,3 +291,80 @@ class TestFoldNormIntoUnembedRows:
         info = UnembedNormInfo(w_u=torch.randn(VOCAB, D), norm_scale=None, norm_kind="none")
         with pytest.raises(ValueError, match="at least one token id"):
             fold_norm_into_unembed_rows(info, [])
+
+
+class TestInnerModelSelectionNeverTruthTestsAModule:
+    """The inner-model selection must not truth-test a module, in either failing direction.
+
+    Both are silent-at-the-seam and loud somewhere else: an `or` chain skips a falsy-but-real submodule
+    and resolves the wrong norm, or raises inside a wrapper whose `__len__` delegates to a module that
+    has none. The first was latent for every zero-length container; the second took down a notebook test
+    on the nnsight path when a published op collection began calling this seam.
+    """
+
+    def test_a_wrapper_whose_len_raises_does_not_break_selection(self):
+        """The nnsight `Envoy` shape: `__len__` delegates to a module that has no length.
+
+        Fails against a truthiness-based selection with `TypeError: ... has no len()`, raised by the
+        `or` itself rather than by anything this seam meant to do.
+        """
+        from transformers.models.llama.modeling_llama import LlamaRMSNorm
+
+        class RaisesOnLen(torch.nn.Module):
+            def __init__(self, norm):
+                super().__init__()
+                self.norm = norm
+
+            def __len__(self):
+                raise TypeError("object of type 'Gemma2Model' has no len()")
+
+        norm = LlamaRMSNorm(D)
+        norm.weight.data = torch.full((D,), 0.5)
+        model = type("Model", (), {})()
+        model.config = _Cfg("llama")
+        model.lm_head = _Head()
+        model.model = RaisesOnLen(norm)
+        module = type("Module", (), {})()
+        module.model = model
+
+        info = resolve_unembed_and_norm_scale(module)
+        assert info.norm_kind == "rmsnorm"
+        torch.testing.assert_close(info.norm_scale, torch.full((D,), 0.5))
+
+    def test_an_empty_container_submodule_is_not_skipped(self):
+        """A real submodule that happens to be falsy must still be selected.
+
+        `nn.Sequential` and `nn.ModuleList` define `__len__`, so an empty one is falsy. An `or` chain
+        falls through to the next candidate and resolves a norm from the wrong object, with no error.
+        """
+        assert not bool(torch.nn.Sequential()), "premise: a zero-length container is falsy"
+
+        class FalsyButReal(torch.nn.Module):
+            """Length zero, like an empty container, while still carrying the norm.
+
+            Subclassing `nn.Sequential` does NOT work here: assigning the norm registers it in
+            `_modules`, so `len()` becomes 1 and the object is truthy. That version of this test passed
+            against the unfixed code, which is the only reason it was caught.
+            """
+
+            def __len__(self):
+                return 0
+
+        inner = FalsyButReal()
+        inner.norm = torch.nn.LayerNorm(D)
+        inner.norm.weight.data = torch.full((D,), 0.25)
+        assert not bool(inner), "premise: this stand-in is falsy"
+        model = type("Model", (), {})()
+        model.config = _Cfg("gpt2")
+        model.lm_head = _Head()
+        model.model = inner
+        # a decoy on the fallback path: if selection truth-tests, it lands here instead
+        model.transformer = type("Decoy", (), {})()
+        model.transformer.ln_f = torch.nn.LayerNorm(D)
+        model.transformer.ln_f.weight.data = torch.full((D,), 99.0)
+        module = type("Module", (), {})()
+        module.model = model
+
+        info = resolve_unembed_and_norm_scale(module)
+        torch.testing.assert_close(info.norm_scale, torch.full((D,), 0.25))
+        assert float(info.norm_scale.max()) != 99.0, "selection fell through to the decoy"
