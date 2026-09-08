@@ -74,8 +74,24 @@ if autodoc_mock_imports:
     _MockObject.__or__ = lambda self, other: _Any  # type: ignore[assignment]
     _MockObject.__ror__ = lambda self, other: _Any  # type: ignore[assignment]
 
-myst_enable_extensions = ["colon_fence", "deflist", "fieldlist", "linkify"]
+myst_enable_extensions = ["colon_fence", "deflist", "fieldlist", "linkify", "dollarmath"]
 myst_heading_anchors = 3
+
+# `dollarmath` is what makes `$...$` math rather than literal dollar signs; MyST enables NO extensions
+# by default, so without it every equation on this site renders as text with nothing in the build log.
+#
+# The two settings below narrow what counts as a math span, and they are a hazard control rather than a
+# style preference. Once math is on, a `$` in ordinary prose opens a span that closes at the next `$`
+# anywhere on the line -- including one inside a code span -- so `Set $HOME and $PATH now.` silently
+# renders as prose, math, prose. Refusing spaced and digit-adjacent delimiters removes most of that
+# surface at the parser. It does NOT remove all of it: an adjacent pair like `$TMPDIR/$SLURM_JOB_ID`
+# has no whitespace against a delimiter and still parses, which is why the pre-enablement scan
+# (`check_math.py --collision-scan`) is a prerequisite rather than a formality. It was run over
+# `docs/`, `docs/source/`, `README.md` and `src/` before this was enabled, and found none.
+#
+# The cost is two authoring forms: `$ x $` and `2$x$`. Neither is a form to write anyway.
+myst_dmath_allow_space = False
+myst_dmath_allow_digits = False
 
 # --- Example notebooks -------------------------------------------------------------------------
 # NEVER execute notebooks at build time. The demos need bf16 CUDA, gated gemma weights, the

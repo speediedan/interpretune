@@ -113,10 +113,10 @@ implementation, paired with a positive control so an identity cannot pass becaus
 | --- | --- | --- |
 | `add` | a zero-scale intervention is the identity | (`STEER_SCALE` moves the logits, checked by the scope cases) |
 | `replace` | the result is independent of `scale_factor` | replace moves the logits |
-| `patch` | `(v, v)` is the identity; `(s, t)` and `(t, s)` give the same result | `(s, t)` moves the logits |
-| `project` | projecting onto `v` and onto `-2v` is the same projection | project moves the logits |
+| `patch` | $(v, v)$ is the identity; $(s, t)$ and $(t, s)$ give the same result | $(s, t)$ moves the logits |
+| `project` | projecting onto $v$ and onto $-2v$ is the same projection | project moves the logits |
 
-The pair-order symmetry of `patch` follows from the update `h + V(sigma(c) - c)`: both orders exchange the same two
+The pair-order symmetry of `patch` follows from the update $h + V(\sigma(c) - c)$: both orders exchange the same two
 coordinates, so the pair is unordered. Every declared mode must also be distinguishable, for the same vector and
 point, from every other declared mode and from the baseline. That case is the one a backend that ignored `mode` and
 applied the one it has would fail.
