@@ -281,6 +281,16 @@ class TestCrossBackendReadoutAgreement:
 class TestRealLensSmoke:
     """One end-to-end pass against a published lens, so resolution and the readout are exercised together."""
 
+    # `hf_live` rather than a `hf_warm_manifest.yaml` entry, deliberately. This test exists to exercise
+    # discovery against the REAL repository rather than against the recorded fixture the other resolution
+    # tests use, which is the one thing that fixture structurally cannot check: it was built from the
+    # repository, so it agrees with it by construction. Warming the lens into a cache would make this pass
+    # while removing the only reason it exists.
+    #
+    # It passes today without the mark only by a coincidence of two configurations that neither file
+    # records: the GPU pipeline has no offline treatment, and the pipeline that does run offline never
+    # runs CUDA-marked tests. Declaring the intent means it stays correct if either changes.
+    @pytest.mark.hf_live
     @RunIf(min_cuda_gpus=1)
     def test_a_published_gpt2_lens_resolves_and_reads(self):
         from transformers import AutoModelForCausalLM, AutoTokenizer
