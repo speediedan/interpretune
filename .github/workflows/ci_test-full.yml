@@ -181,7 +181,10 @@ jobs:
           path: ~/.cache/huggingface
           key: hf-cache-${{ runner.os }}-${{ hashFiles('tests/hf_warm_manifest.yaml') }}
 
+      # Skipped entirely on an exact cache hit: re-validating a warm cache is itself a burst of metadata
+      # requests per job, and the whole point is that a steady-state job makes none.
       - name: Warm the Hub cache from the manifest
+        if: steps.hf-cache.outputs.cache-hit != 'true'
         shell: bash
         run: python scripts/warm_hf_cache.py
 
