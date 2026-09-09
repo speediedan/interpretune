@@ -705,13 +705,18 @@ class ModelBackendConformance:
                 hook_configs=configs,
             )
         assert len(batched) == len(configs), f"{len(batched)} results for {len(configs)} hook configs"
+        # The padded (relative) tolerance rather than the exact one: a backend that fuses the configs runs a larger
+        # batch through different kernels, and the same arithmetic in another order reaches the logits as roundoff.
+        # Measured on the macOS runner with the nnsight backend: 3 of 26,334,668 elements at 1.07e-4 absolute and
+        # 1.5e-6 relative, on logits of magnitude ~100; Linux agreed exactly. The positive control below is what
+        # keeps this from being satisfiable by two runs that ignored their hooks.
         for k, config in enumerate(configs):
             sequential = self._forward_with_hooks(suite, index, config)
             torch.testing.assert_close(
                 batched[k],
                 sequential,
-                rtol=0,
-                atol=CONVERGENCE_ATOL,
+                rtol=PADDED_RTOL,
+                atol=PADDED_ATOL,
                 msg=lambda detail, k=k: f"config {k}: batched and sequential logits differ\n{detail}",
             )
         assert not torch.allclose(batched[0], batched[1], rtol=0, atol=CONVERGENCE_ATOL), (
