@@ -1693,8 +1693,8 @@ class TestTLCaptureNamesThroughTheVocabulary:
         )
         assert names == ["blocks.0.hook_resid_pre", "blocks.0.attn.hook_z", "blocks.0.attn.hook_pattern"]
         assert reverse == {
-            "blocks.0.hook_resid_pre": "blocks.0.hook_in",
-            "blocks.0.attn.hook_z": "blocks.0.attn.o.hook_in",
+            "blocks.0.hook_resid_pre": ["blocks.0.hook_in"],
+            "blocks.0.attn.hook_z": ["blocks.0.attn.o.hook_in"],
         }
 
     def test_a_single_name_resolves_and_a_callable_is_widened_to_every_spelling(self):
@@ -1708,7 +1708,7 @@ class TestTLCaptureNamesThroughTheVocabulary:
 
         assert _normalize_names_filter(self._Model(), "blocks.0.hook_in") == (
             "blocks.0.hook_resid_pre",
-            {"blocks.0.hook_resid_pre": "blocks.0.hook_in"},
+            {"blocks.0.hook_resid_pre": ["blocks.0.hook_in"]},
         )
         assert _normalize_names_filter(self._Model(), "blocks.0.hook_resid_pre") == ("blocks.0.hook_resid_pre", {})
         wrapped, requested = _normalize_names_filter(self._Model(), lambda name: name == "blocks.0.hook_in")
@@ -1731,11 +1731,11 @@ class TestTLCaptureNamesThroughTheVocabulary:
         from interpretune.adapters.transformer_lens.backends import _restore_requested_names
 
         cache = {"blocks.0.hook_resid_pre": "tensor"}
-        out = _restore_requested_names(cache, {"blocks.0.hook_resid_pre": "blocks.0.hook_in"})
+        out = _restore_requested_names(cache, {"blocks.0.hook_resid_pre": ["blocks.0.hook_in"]})
         assert out["blocks.0.hook_in"] == "tensor" and out["blocks.0.hook_resid_pre"] == "tensor"
 
         class _Cache:
             cache_dict = {"blocks.0.attn.hook_z": "z"}
 
-        out = _restore_requested_names(_Cache(), {"blocks.0.attn.hook_z": "blocks.0.attn.o.hook_in"})
+        out = _restore_requested_names(_Cache(), {"blocks.0.attn.hook_z": ["blocks.0.attn.o.hook_in"]})
         assert out.cache_dict["blocks.0.attn.o.hook_in"] == "z"

@@ -936,7 +936,7 @@ class ModelBackendConformance:
         key = f"attribution_graph:{prompt}"
         if key not in suite.memo:
             suite.memo[key] = it.compute_attribution_graph(
-                suite.module, AnalysisBatch(prompts=[prompt]), batch=None, batch_idx=0
+                suite.module, AnalysisBatch(prompts=[prompt]), batch=cast(Any, None), batch_idx=0
             )
         return suite.memo[key]
 
@@ -970,7 +970,11 @@ class ModelBackendConformance:
         kept: dict[float, set[int]] = {}
         for threshold in (0.3, 0.6, 0.9):
             pruned = it.graph_prune(
-                suite.module, AnalysisBatch(**dict(result)), batch=None, batch_idx=0, node_threshold=threshold
+                suite.module,
+                AnalysisBatch(**dict(result)),
+                batch=cast(Any, None),
+                batch_idx=0,
+                node_threshold=threshold,
             )
             kept[threshold] = {int(i) for i in torch.as_tensor(pruned.selected_features).flatten().tolist()}
         assert kept[0.3] <= kept[0.6] <= kept[0.9], {t: len(v) for t, v in kept.items()}
@@ -998,11 +1002,15 @@ class ModelBackendConformance:
         if ct_cfg is not None and n_layers is not None:
             ct_cfg.intervention_constrained_layers = list(range(n_layers))
             ct_cfg.intervention_apply_activation_function = False
-        influence = it.graph_node_influence(suite.module, result, batch=None, batch_idx=0)
+        influence = it.graph_node_influence(suite.module, result, batch=cast(Any, None), batch_idx=0)
         payload = dict(result)
         payload.update(dict(influence))
         top = it.extract_top_features(
-            suite.module, AnalysisBatch(**payload), batch=None, batch_idx=0, top_n=suite.inputs.attribution_top_n
+            suite.module,
+            AnalysisBatch(**payload),
+            batch=cast(Any, None),
+            batch_idx=0,
+            top_n=suite.inputs.attribution_top_n,
         )
         feature_rows = torch.as_tensor(top.top_feature_ids, dtype=torch.long)
         assert feature_rows.shape[0] > 0, "no top feature to intervene on"
@@ -1028,7 +1036,7 @@ class ModelBackendConformance:
                 logit_target_ids=logit_tokens,
             )
             out = it.feature_intervention_forward(
-                suite.module, single, batch=None, batch_idx=0, intervention_return_activations=True
+                suite.module, single, batch=cast(Any, None), batch_idx=0, intervention_return_activations=True
             )
             new_value = float(torch.as_tensor(out.intervention_values, dtype=torch.float32)[0])
             scale = (new_value - baseline) / baseline

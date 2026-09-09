@@ -41,7 +41,7 @@ def _iter_hook_aliases(model: Any) -> dict[str, list[str]]:
 
 def _normalize_names_filter(
     model: Any, names_filter: NamesFilter, latent_model_handles: list[Any] | None = None
-) -> tuple[NamesFilter, dict[str, str | list[str]]]:
+) -> tuple[NamesFilter, dict[str, list[str]]]:
     """Map requested capture names onto the hooks this model exposes, through the vocabulary's spellings.
 
     A caller asks for a point in any accepted spelling (``blocks.5.hook_in``); a TransformerBridge exposes that name
@@ -77,7 +77,7 @@ def _normalize_names_filter(
     if not actual_for:
         return names_filter, {}
     resolved = [actual_for.get(n, n) for n in requested_names]
-    reverse = {actual: requested for actual, requested in actual_for.items()}
+    reverse = {actual: [requested] for actual, requested in actual_for.items()}
     for n in requested_names:
         actual = next((a for a, r in actual_for.items() if r == n), None)
         resolved[requested_names.index(n)] = actual or n
@@ -132,7 +132,7 @@ def _wrap_callable_filter(
     return wrapped, requested
 
 
-def _restore_requested_names(cache: Any, requested: dict[str, str | list[str]]) -> Any:
+def _restore_requested_names(cache: Any, requested: dict[str, list[str]]) -> Any:
     """Re-key cached activations captured under a model-specific spelling back to the name(s) the caller used."""
     if not requested:
         return cache
@@ -141,7 +141,7 @@ def _restore_requested_names(cache: Any, requested: dict[str, str | list[str]]) 
     if not isinstance(target, dict):
         return cache
     for actual, names in requested.items():
-        for name in [names] if isinstance(names, str) else names:
+        for name in names:
             if actual in target and name not in target:
                 target[name] = target[actual]
     return cache
