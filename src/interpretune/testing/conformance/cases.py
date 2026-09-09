@@ -144,7 +144,19 @@ def _attribution_failure_context(suite, exc: BaseException) -> str:
 
             eager = ALL_ATTENTION_FUNCTIONS["eager"]
             where = f"{getattr(eager, '__module__', '?')}.{getattr(eager, '__qualname__', '?')}"
-            lines.append(f"  ALL_ATTENTION_FUNCTIONS['eager']: {where} (wrapped={hasattr(eager, '__wrapped__')})")
+            # names survive functools.wraps and __wrapped__ misses a hand-rolled wrapper; identity against the
+            # function imported from its defining module is what tells pristine from either kind of wrapper
+            try:
+                from transformers.integrations.sdpa_attention import sdpa_attention_forward  # noqa: F401
+                from transformers.models.gemma3.modeling_gemma3 import eager_attention_forward as pristine
+
+                same = eager is pristine
+            except Exception:
+                same = "unknown (no pristine reference importable)"
+            lines.append(
+                f"  ALL_ATTENTION_FUNCTIONS['eager']: {where} (wrapped={hasattr(eager, '__wrapped__')}, "
+                f"is the pristine eager function: {same})"
+            )
         except Exception as reg_exc:
             lines.append(f"  (attention registry probe failed: {type(reg_exc).__name__})")
     except Exception as probe_exc:  # the probe must not hide the original failure
