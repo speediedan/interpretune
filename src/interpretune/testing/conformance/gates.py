@@ -136,6 +136,8 @@ class SelectionReport:
     """
 
     declared: list[str] = field(default_factory=list)
+    capture: dict[str, str] = field(default_factory=dict)
+    """Each target class's capture declaration, rendered; ``"undeclared"`` when the backend has none."""
     ran: list[str] = field(default_factory=list)
     skipped_undeclared: list[str] = field(default_factory=list)
     skipped_other: list[str] = field(default_factory=list)
@@ -154,6 +156,8 @@ class SelectionReport:
         """The four counts, as printed at the end of every run."""
         lines = ["conformance selection report"]
         lines.append(f"  declared:            {', '.join(self.declared) or '-'}")
+        for target, declaration in self.capture.items():
+            lines.append(f"  capture ({target}): {declaration}")
         lines.append(f"  ran:                 {len(self.ran)}")
         lines.append(f"  skipped (undeclared):{len(self.skipped_undeclared)}")
         lines.append(

@@ -65,6 +65,25 @@ class ConformanceSession:
         """
         return self.runner.run_analysis(analysis_cfgs=analysis_cfg)
 
+    def capturable_points(self) -> list[str]:
+        """The suite's capture points the backend declares it can capture, in the suite's order.
+
+        The declaration decides, not a per-target override: a target that cannot capture a point says so through its
+        record and the value cases run over what is left. At least one point must remain, else the cases would be
+        vacuous, and a backend with no declaration gets the full list (its capture cases then fail by name if a point is
+        missing, which is the old contract).
+        """
+        support = self.capabilities.capture
+        points = list(self.inputs.capture_points)
+        if support is None:
+            return points
+        kept = [p for p in points if support.can_capture(p)]
+        assert kept, (
+            f"{self.backend_name} declares none of the suite's capture points capturable: {points}; "
+            f"declared: {support.describe()}"
+        )
+        return kept
+
     def run_once(self, key: str, analysis_cfg):
         """``run``, memoized under ``key`` for the life of the target class.
 

@@ -23,6 +23,7 @@ import torch
 
 from interpretune.analysis.backends import (
     BackendCapability,
+    CaptureSupport,
     InterventionSupport,
     LatentModelSupport,
     InterventionDict,
@@ -274,12 +275,18 @@ _BLOCK_RANK = {
     "ln1": 1,
     "attn": 2,
     "hook_attn_out": 2,
-    "hook_resid_mid": 3,
-    "ln2": 3,
-    "mlp": 4,
-    "hook_mlp_out": 4,
-    "hook_out": 5,
-    "hook_resid_post": 5,
+    # sandwich-norm architectures (Gemma 2 and 3) apply a post-norm after each sublayer; unranked, `ln1_post`
+    # sorted after the MLP and a declared MLP input was read after execution had finished
+    "ln1_post": 3,
+    "cross_attn": 4,
+    "hook_cross_attn_out": 4,
+    "hook_resid_mid": 5,
+    "ln2": 5,
+    "mlp": 6,
+    "hook_mlp_out": 6,
+    "ln2_post": 7,
+    "hook_out": 8,
+    "hook_resid_post": 8,
 }
 
 
@@ -293,13 +300,47 @@ def _forward_order(hook_names: Any, resolver: HookNameResolver) -> list[str]:
     reverse failed until this sort existed.
     """
 
-    def key(name: str) -> tuple[int, int, str]:
+    from interpretune.analysis.points import component_map_for
+    from interpretune.analysis.points.vocabulary import UnknownPointError, parse
+
+    cmap = component_map_for(resolver.architecture)
+
+    def key(name: str) -> tuple[int, int, int, str]:
         layer, base, _sub = resolver.parse_hook_name(name)
         if layer < 0:
             # global hooks: embeddings run before every block, everything else (ln_final, unembed) after
-            return (-1 if base.startswith(("embed", "pos_embed", "hook_embed", "hook_pos_embed")) else 10**6, 0, name)
+            return (
+                -1 if base.startswith(("embed", "pos_embed", "hook_embed", "hook_pos_embed")) else 10**6,
+                0,
+                0,
+                name,
+            )
+        # A semantic contribution (`hook_attn_out`, `hook_mlp_out`) resolves to the POST-norm's output on a
+        # sandwich-norm architecture, so it must sort with that norm rather than with the sublayer it names:
+        # ranked with attention, `hook_attn_out` read `post_attention_layernorm.output` before that norm's input
+        # had been provided, and the input then read as never called.
+        try:
+            point = parse(f"blocks.{layer}.{base}")
+        except UnknownPointError:
+            point = None
+        if point is not None and point.contribution is not None and cmap.sandwich_norms:
+            post = {"attn": "ln1_post", "mlp": "ln2_post", "cross_attn": "cross_attn_post"}.get(point.contribution)
+            if post is not None:
+                base = f"{post}.hook_out"
         head = base.split(".")[0]
-        return (layer, _BLOCK_RANK.get(head, _BLOCK_RANK.get(base, 5)), name)
+        # Within one sublayer, nnsight provides the parent's input, then each child in forward order (its input,
+        # then its output), then the parent's output. Reading `attn.hook_out` before `attn.o.hook_in` raised
+        # MissedProviderError for `c_proj.input` once the attention output had been consumed, and depth alone was
+        # not enough either: `mlp.out.hook_in` (c_proj) comes after `mlp.in.hook_out` (c_fc), a later sibling's
+        # input after an earlier sibling's output. So children carry their forward rank.
+        parts = base.split(".")
+        leaf, children = parts[-1], parts[1:-1]
+        is_input = leaf in ("hook_in", "hook_resid_pre", "hook_attn_in", "hook_mlp_in")
+        if not children:
+            within = -1 if is_input else 10**3
+        else:
+            within = _CHILD_RANK.get(children[0], 5) * 2 + (0 if is_input else 1)
+        return (layer, _BLOCK_RANK.get(head, _BLOCK_RANK.get(base, 8)), within, name)
 
     return sorted(hook_names, key=key)
 
@@ -379,6 +420,28 @@ def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
     return tracer.invoke(**invoke_kwargs)
 
 
+#: Forward order of a sublayer's children, for the trace-order sort. Distinct ranks in execution order, because
+#: nnsight wants each child's input and output adjacent: two children sharing a rank interleaved their inputs
+#: before their outputs (`up_proj.input` requested before `gate_proj.output`, which the forward had already
+#: produced) and the earlier output then read as never provided. Attention projections in order, then the query
+#: and key norms, then the output projection; a gated MLP's gate, then its activation, then the up projection
+#: (`mlp.in`, which is the first projection on an ungated MLP), then the down projection.
+_CHILD_RANK = {
+    "q": 0,
+    "k": 1,
+    "v": 2,
+    "qkv": 0,
+    "q_norm": 3,
+    "k_norm": 4,
+    "o": 5,
+    "gate": 0,
+    "act": 1,
+    "in": 2,
+    "up": 2,
+    "out": 3,
+}
+
+
 class NNsightModelBackend:
     """NNsight model execution backend.
 
@@ -423,6 +486,33 @@ class NNsightModelBackend:
     def latent_model_support(self) -> LatentModelSupport:
         """The batched-hooks path genuinely fuses its configs into one trace (multi-invoke)."""
         return LatentModelSupport(batched_hooks=True)
+
+    def capture_support(self, model: Any) -> CaptureSupport:
+        """What this backend can capture on ``model``: every vocabulary point the hook resolver maps to a module.
+
+        The resolver is derived from the architecture's component map, so a norm's derived tensors (`hook_normalized`,
+        `hook_scale`) are the standing gap: nnsight reads module boundaries and those are computed inside the norm.
+        The resolver's own refusal text is the reason the declaration carries.
+        """
+        from interpretune.analysis.points import component_map_for
+        from interpretune.analysis.points.inventory import inventory, spelled_at
+
+        architecture = self._resolver.architecture
+        cmap = component_map_for(architecture)
+        capturable: set[str] = set()
+        uncapturable: dict[str, str] = {}
+        for base in inventory(cmap):
+            try:
+                self._resolver.resolve(spelled_at(base, cmap))
+                capturable.add(base)
+            except ValueError as exc:
+                uncapturable[base] = str(exc)
+        return CaptureSupport(
+            capturable=frozenset(capturable),
+            uncapturable=uncapturable,
+            n_layers=_infer_num_layers(model),
+            architecture=architecture,
+        )
 
     def supports(self, capability: BackendCapability) -> bool:
         """Check whether this backend supports a given capability."""

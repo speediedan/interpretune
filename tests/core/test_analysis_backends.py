@@ -1693,8 +1693,8 @@ class TestTLCaptureNamesThroughTheVocabulary:
         )
         assert names == ["blocks.0.hook_resid_pre", "blocks.0.attn.hook_z", "blocks.0.attn.hook_pattern"]
         assert reverse == {
-            "blocks.0.hook_resid_pre": "blocks.0.hook_in",
-            "blocks.0.attn.hook_z": "blocks.0.attn.o.hook_in",
+            "blocks.0.hook_resid_pre": ["blocks.0.hook_in"],
+            "blocks.0.attn.hook_z": ["blocks.0.attn.o.hook_in"],
         }
 
     def test_a_single_name_resolves_and_a_callable_is_widened_to_every_spelling(self):
@@ -1708,30 +1708,34 @@ class TestTLCaptureNamesThroughTheVocabulary:
 
         assert _normalize_names_filter(self._Model(), "blocks.0.hook_in") == (
             "blocks.0.hook_resid_pre",
-            {"blocks.0.hook_resid_pre": "blocks.0.hook_in"},
+            {"blocks.0.hook_resid_pre": ["blocks.0.hook_in"]},
         )
         assert _normalize_names_filter(self._Model(), "blocks.0.hook_resid_pre") == ("blocks.0.hook_resid_pre", {})
         wrapped, requested = _normalize_names_filter(self._Model(), lambda name: name == "blocks.0.hook_in")
         assert wrapped("blocks.0.hook_resid_pre") is True
-        assert requested == {"blocks.0.hook_resid_pre": "blocks.0.hook_in"}
+        assert requested == {"blocks.0.hook_resid_pre": ["blocks.0.hook_in"]}
         assert wrapped("blocks.0.attn.hook_pattern") is False
         accept_all, untouched = _normalize_names_filter(self._Model(), lambda name: True)
         assert accept_all("blocks.0.hook_resid_pre") is True and untouched == {}
 
-    def test_a_name_the_model_lacks_is_left_for_transformer_lens_to_refuse(self):
+    def test_a_name_the_model_lacks_is_refused_by_name(self):
+        """TransformerLens drops a list entry it does not know without a word (measured on both wrappers with
+        gpt2), so leaving an unknown name for it to refuse left the caller a cache one entry short; the seam
+        refuses."""
         from interpretune.adapters.transformer_lens.backends import _normalize_names_filter
 
-        assert _normalize_names_filter(self._Model(), ["blocks.7.hook_in"]) == (["blocks.7.hook_in"], {})
+        with pytest.raises(ValueError, match="'blocks.7.hook_in' names no hook this model exposes"):
+            _normalize_names_filter(self._Model(), ["blocks.7.hook_in"])
 
     def test_the_cache_is_rekeyed_as_requested(self):
         from interpretune.adapters.transformer_lens.backends import _restore_requested_names
 
         cache = {"blocks.0.hook_resid_pre": "tensor"}
-        out = _restore_requested_names(cache, {"blocks.0.hook_resid_pre": "blocks.0.hook_in"})
+        out = _restore_requested_names(cache, {"blocks.0.hook_resid_pre": ["blocks.0.hook_in"]})
         assert out["blocks.0.hook_in"] == "tensor" and out["blocks.0.hook_resid_pre"] == "tensor"
 
         class _Cache:
             cache_dict = {"blocks.0.attn.hook_z": "z"}
 
-        out = _restore_requested_names(_Cache(), {"blocks.0.attn.hook_z": "blocks.0.attn.o.hook_in"})
+        out = _restore_requested_names(_Cache(), {"blocks.0.attn.hook_z": ["blocks.0.attn.o.hook_in"]})
         assert out.cache_dict["blocks.0.attn.o.hook_in"] == "z"

@@ -155,6 +155,35 @@ class TestReportAndVacuity:
         assert UNDECLARED == "undeclared"
 
 
+class TestTheMarkerIsSilentWhenNoCaseWasInScope:
+    """A run that collected no conformance case (an unrelated file, a `-k` on ordinary tests) gets no report and no
+    marker: on the first hub adapter the marker printed on every targeted run, was read past for hours, and a real
+    conformance failure reached CI that way."""
+
+    def test_no_case_collected_means_no_report(self):
+        from interpretune.testing.conformance.plugin import collected_any_case
+
+        assert not collected_any_case(SelectionReport())
+        assert collected_any_case(SelectionReport(skipped_undeclared=["a"]))
+        assert collected_any_case(SelectionReport(ran=["a"]))
+
+    def test_the_terminal_summary_prints_nothing_for_such_a_run(self):
+        from unittest.mock import MagicMock
+
+        from interpretune.testing.conformance.plugin import _REPORT_KEY, pytest_terminal_summary
+
+        config = MagicMock()
+        config.stash.get.return_value = SelectionReport()
+        reporter = MagicMock()
+        pytest_terminal_summary(reporter, 0, config)
+        reporter.write_sep.assert_not_called()
+        reporter.write_line.assert_not_called()
+        config.stash.get.return_value = SelectionReport(skipped_undeclared=["a"])
+        pytest_terminal_summary(reporter, 0, config)
+        assert any("VACUITY" in str(c) for c in reporter.write_line.call_args_list), "a real vacuity still prints"
+        assert _REPORT_KEY is not None
+
+
 class TestExpectRefusal:
     def test_finds_a_wrapped_refusal(self):
         from interpretune.testing.conformance.oracles import expect_refusal

@@ -268,3 +268,45 @@ def deterministic_context(warn_only: bool = False, fill_uninitialized_memory: bo
         except Exception:
             pass
         torch.backends.cudnn.benchmark = original_cudnn_benchmark
+
+
+#: transformers' gemma modeling modules whose module-level eager attention TransformerLens replaces process-wide.
+GEMMA_MODELING_MODULES = ("transformers.models.gemma2.modeling_gemma2", "transformers.models.gemma3.modeling_gemma3")
+
+
+def snapshot_gemma_eager_attention() -> Dict[str, Callable]:
+    """Transformers' own ``eager_attention_forward`` per gemma modeling module, taken before anything replaces it.
+
+    TransformerLens's position-embedding attention bridge (llama, qwen, gemma and about twenty-five more
+    architectures) assigns a hook-firing wrapper over ``eager_attention_forward`` in BOTH gemma modeling modules the
+    first time any such bridge is built, keeps only gemma-2's original in a private global, and never restores
+    either. Refuses by name when a function is already foreign, since a snapshot taken then would preserve the
+    patch rather than the original.
+    """
+    originals: Dict[str, Callable] = {}
+    for name in GEMMA_MODELING_MODULES:
+        fn = importlib.import_module(name).eager_attention_forward
+        if fn.__module__ != name:
+            raise RuntimeError(
+                f"{name}.eager_attention_forward is already {fn.__module__}.{fn.__qualname__}; a snapshot taken now"
+                " cannot vouch for the original, so take it before any TransformerLens bridge is built"
+            )
+        originals[name] = fn
+    return originals
+
+
+def restore_gemma_eager_attention(originals: Dict[str, Callable]) -> Callable[[], None]:
+    """Put ``originals`` back on the gemma modeling modules; returns the call that reinstates what was there.
+
+    Symmetric on purpose: a bridge alive from an earlier fixture keeps its rotary hooks once the caller is done.
+    """
+    modules = {name: importlib.import_module(name) for name in originals}
+    found = {name: module.eager_attention_forward for name, module in modules.items()}
+    for name, module in modules.items():
+        module.eager_attention_forward = originals[name]
+
+    def put_back() -> None:
+        for name, module in modules.items():
+            module.eager_attention_forward = found[name]
+
+    return put_back

@@ -132,6 +132,112 @@ class LatentModelSupport:
     batched_hooks: bool = False
 
 
+@dataclass(frozen=True)
+class CaptureSupport:
+    """Which vocabulary points a backend can capture on the model it wraps, as a declaration a case can check.
+
+    Capture is a base method every model backend has, so it is not a :class:`BackendCapability` member: that enum
+    answers "is the surface implemented at all", and a backend that captures 181 of 298 points implements it. What
+    varies is WHICH points, so the shape is a support record beside :class:`InterventionSupport`, keyed by the
+    vocabulary's layer-free base spellings (``ln2.hook_out``, ``hook_resid_pre``, ``unembed.hook_in``) so one
+    declaration covers every layer. ``uncapturable`` carries the reason per base, because a point a backend cannot
+    capture must be refused by name with that reason rather than returned as a cache that is silently short.
+
+    **Valid for one model instance as it stands when asked.** The record is derived from the backend AND the model
+    it wraps, and a wrapper's hooks change with what is attached to it (a HookedSAETransformer with a latent model
+    attached exposes points the bare HookedTransformer does not), so a backend provides ``capture_support(model)``
+    as a method rather than a property, ``get_module_capabilities`` recomputes it on every call, and a consumer that
+    caches one must re-query after attaching or removing a latent model or swapping the wrapper. A cached record is
+    the declaration-versus-delivery gap one level out.
+    """
+
+    capturable: frozenset[str]
+    uncapturable: dict[str, str]
+    n_layers: int
+    architecture: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "capturable", frozenset(self.capturable))
+        object.__setattr__(self, "uncapturable", dict(self.uncapturable))
+        overlap = self.capturable & set(self.uncapturable)
+        if overlap:
+            raise ValueError(f"a point cannot be both capturable and uncapturable: {sorted(overlap)}")
+        if not self.capturable:
+            raise ValueError("CaptureSupport must declare at least one capturable point")
+        # A declaration decides EVERY point of the architecture's inventory, or it is refused by name. Otherwise the
+        # fraction it reports is self-referential (a record that omits points shrinks its own denominator, so
+        # omission reads as completeness), and the understating direction is the one no capture case catches: an
+        # omitted point is neither captured nor refused, only unknown.
+        from interpretune.analysis.points import component_map_for
+        from interpretune.analysis.points.inventory import inventory
+
+        expected = set(inventory(component_map_for(self.architecture)))
+        declared = self.capturable | set(self.uncapturable)
+        undecided = sorted(expected - declared)
+        if undecided:
+            raise ValueError(
+                f"the capture declaration for {self.architecture} decides {len(declared)} of {len(expected)} inventory "
+                f"points; undecided (declare each capturable or uncapturable with a reason): {undecided}"
+            )
+        foreign = sorted(declared - expected)
+        if foreign:
+            raise ValueError(
+                f"the capture declaration for {self.architecture} names points outside the architecture's inventory: "
+                f"{foreign}"
+            )
+
+    @property
+    def inventory_size(self) -> int:
+        """How many base points the architecture's inventory has: the denominator, equal to the declaration's size
+        by the construction invariant above."""
+        return len(self.capturable) + len(self.uncapturable)
+
+    def refusal(self, name: str) -> str | None:
+        """Why ``name`` cannot be captured here, or ``None`` when it can.
+
+        Parsed through the vocabulary: a layer beyond the model is refused as such, an SAE sub-hook is judged by the
+        point it hangs off, a spelling outside the vocabulary is refused as unknown, and a vocabulary point the
+        architecture does not define is refused as the architecture's fact rather than the backend's, since the
+        declaration decides every point of the inventory and so cannot be silent about one.
+        """
+        from interpretune.analysis.points.vocabulary import UnknownPointError, parse
+
+        try:
+            point = parse(name)
+        except UnknownPointError as exc:
+            return str(exc)
+        if point.layer is not None and point.layer >= self.n_layers:
+            return f"{name!r} names layer {point.layer}, and this model has {self.n_layers} blocks"
+        from interpretune.analysis.points.vocabulary import declaration_key
+
+        base = declaration_key(name)
+        if base in self.capturable:
+            return None
+        reason = self.uncapturable.get(base)
+        if reason is not None:
+            return f"{name!r} cannot be captured here: {reason}"
+        # A declaration decides every point of the architecture's inventory, so a base that is in neither set is not
+        # a gap in the declaration: the architecture defines no such point. That is the resolver's refusal, an
+        # architecture-scoped fact, and the record says so rather than presenting a backend gap it does not have.
+        return (
+            f"{name!r} is not defined on {self.architecture}: the vocabulary resolves {base!r} to no tensor position"
+            " in this architecture, so no backend could capture it; this is the resolver's refusal, not a gap in the"
+            " backend's capture declaration"
+        )
+
+    def can_capture(self, name: str) -> bool:
+        """Whether ``name`` is capturable here."""
+        return self.refusal(name) is None
+
+    def describe(self) -> str:
+        """One line for a report: the fraction and the gaps by name."""
+        gaps = ", ".join(sorted(self.uncapturable)) or "-"
+        return (
+            f"captures {len(self.capturable)} of {self.inventory_size} base points on {self.architecture} "
+            f"({self.n_layers} blocks); cannot capture: {gaps}"
+        )
+
+
 class AnalysisBackendCapability(Enum):
     """Capabilities exposed by analysis adapters/backends rather than model execution backends."""
 
@@ -158,6 +264,9 @@ class ModuleCapabilities:
     analysis: frozenset[AnalysisBackendCapability]
     intervention: InterventionSupport | None = None
     latent_models: LatentModelSupport | None = None
+    capture: CaptureSupport | None = None
+    """What the attached model backend declares it can capture on this module's model; ``None`` only when no model
+    backend is attached or the backend predates the declaration (a conformance case fails the latter by name)."""
 
     def __post_init__(self) -> None:
         for capability, record, name in (
@@ -353,7 +462,23 @@ def get_module_capabilities(module: Any) -> ModuleCapabilities:
         latent_models=_support_record(
             backend, BackendCapability.LATENT_MODELS, model_capabilities, "latent_model_support"
         ),
+        capture=_capture_record(backend, module),
     )
+
+
+def _capture_record(backend: Any, module: Any) -> CaptureSupport | None:
+    """The backend's capture declaration for ``module.model``, or ``None`` when the backend has none to give.
+
+    Capturability is a property of the backend AND the model it wraps (a TransformerLens backend captures different
+    points on a bridge than on a HookedTransformer), so the declaration is a method taking the model rather than a
+    property. A backend without the method is not refused here, because this aggregation feeds the adapter card and
+    ``adapter_info`` on a bare install; the conformance suite is where its absence fails by name.
+    """
+    declare = getattr(backend, "capture_support", None) if backend is not None else None
+    model = getattr(module, "model", None)
+    if declare is None or model is None:
+        return None
+    return declare(model)
 
 
 def _support_record(backend: Any, capability: BackendCapability, declared: set[BackendCapability], attr: str) -> Any:

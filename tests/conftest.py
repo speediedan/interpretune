@@ -64,7 +64,12 @@ from tests.analysis_resource_utils import (
     log_resource_delta,
     log_resource_snapshot,
 )
-from tests.utils import kwargs_from_cfg_obj, deterministic_context
+from tests.utils import (
+    kwargs_from_cfg_obj,
+    deterministic_context,
+    snapshot_gemma_eager_attention,
+    restore_gemma_eager_attention,
+)
 
 from tests.core.cfg_aliases import (
     TEST_CONFIGS_CLI_UNIT,
@@ -125,6 +130,35 @@ test_cli_cfgs["exp_cfgs"].update(unit_exp_cli_cfgs)
 def _force_gc():
     """Run Python garbage collection."""
     gc.collect()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def gemma_eager_attention_originals():
+    """Transformers' own gemma eager attention functions, recorded before any test can replace them.
+
+    Session-scoped and autouse so the snapshot precedes the first TransformerLens bridge of the run; see
+    ``tests.utils.snapshot_gemma_eager_attention`` for what replaces them and why nothing restores them.
+    """
+    return snapshot_gemma_eager_attention()
+
+
+@pytest.fixture(scope="class")
+def unpatched_gemma_eager_attention(gemma_eager_attention_originals):
+    """Transformers' own gemma eager attention for the duration of one class, whatever ran before it.
+
+    nnsight's recursive source tracing parses the function bound at the call site, and TransformerLens's wrapper
+    has no dropout call in its body, so once any bridge using its position-embedding attention component has been
+    built, circuit-tracer's attention-pattern location on a gemma model
+    (``...attention_interface_0.source.nn_functional_dropout_0``) does not exist for the rest of the process and
+    every attribution case fails with an AttributeError deep in circuit-tracer. The failure appears only when such
+    a bridge was built earlier in the session, which is why it reached CI from a target that was green alone. The
+    class gets the originals back and whatever was there is reinstated afterwards.
+    """
+    put_back = restore_gemma_eager_attention(gemma_eager_attention_originals)
+    try:
+        yield
+    finally:
+        put_back()
 
 
 def _cleanup_cuda_memory():
@@ -1390,62 +1424,51 @@ def tmpdir_server(tmpdir):
 # - To run all profiling tests, set `IT_RUN_PROFILING_TESTS` to `2`
 
 
+def _marked(item, predicate) -> bool:
+    """Whether ``item`` carries a ``RunIf`` mark whose kwargs satisfy ``predicate``, at ANY level.
+
+    ``iter_markers`` rather than ``own_markers``: the latter sees only marks on the test function itself, so a
+    class-level ``@RunIf(standalone=True)`` or ``@RunIf(min_cuda_gpus=1)`` was invisible to every phase selector
+    below and those tests silently dropped out of the phase they were marked for. A conformance target class is
+    the live case: its cases are inherited methods, so the class is the only place a mark can go.
+    """
+    return any(marker.name == "skipif" and predicate(marker.kwargs) for marker in item.iter_markers())
+
+
 def pytest_collection_modifyitems(items):
     # select special tests, all special tests run standalone
     # non-specific standalone tests and profiling_ci tests run in CI by default
     # all other special tests do not run in CI unless explicitly selected
     if os.getenv("IT_RUN_STANDALONE_TESTS", "0") == "1":
-        items[:] = [
-            item
-            for item in items
-            for marker in item.own_markers
-            # has `@RunIf(standalone=True)`
-            if marker.name == "skipif" and marker.kwargs.get("standalone")
-        ]
+        # has `@RunIf(standalone=True)`
+        items[:] = [item for item in items if _marked(item, lambda kw: kw.get("standalone"))]
     elif os.getenv("IT_RUN_CUDA_TESTS", "0") == "1":
         items[:] = [
             item
             for item in items
-            for marker in item.own_markers
-            if marker.name == "skipif"
-            and not marker.kwargs.get("standalone")
-            and not marker.kwargs.get("profiling")
-            and not marker.kwargs.get("profiling_ci")
-            and not marker.kwargs.get("optional")
-            and (marker.kwargs.get("min_cuda_gpus") or marker.kwargs.get("bf16_cuda"))
+            if _marked(
+                item,
+                lambda kw: (
+                    not kw.get("standalone")
+                    and not kw.get("profiling")
+                    and not kw.get("profiling_ci")
+                    and not kw.get("optional")
+                    and (kw.get("min_cuda_gpus") or kw.get("bf16_cuda"))
+                ),
+            )
         ]
     elif os.getenv("IT_RUN_PROFILING_TESTS", "0") == "2":
-        items[:] = [
-            item
-            for item in items
-            for marker in item.own_markers
-            # has `@RunIf(profiling=True)`
-            if marker.name == "skipif" and marker.kwargs.get("profiling")
-        ]
+        # has `@RunIf(profiling=True)`
+        items[:] = [item for item in items if _marked(item, lambda kw: kw.get("profiling"))]
     elif os.getenv("IT_RUN_PROFILING_TESTS", "0") == "1":
-        items[:] = [
-            item
-            for item in items
-            for marker in item.own_markers
-            # has `@RunIf(profiling_ci=True)`
-            if marker.name == "skipif" and marker.kwargs.get("profiling_ci")
-        ]
+        # has `@RunIf(profiling_ci=True)`
+        items[:] = [item for item in items if _marked(item, lambda kw: kw.get("profiling_ci"))]
     elif os.getenv("IT_RUN_OPTIONAL_TESTS", "0") == "1":
-        items[:] = [
-            item
-            for item in items
-            for marker in item.own_markers
-            # has `@RunIf(optional=True)`
-            if marker.name == "skipif" and marker.kwargs.get("optional")
-        ]
+        # has `@RunIf(optional=True)`
+        items[:] = [item for item in items if _marked(item, lambda kw: kw.get("optional"))]
     elif os.getenv("IT_RUN_BENCHMARK_TESTS", "0") == "1":
-        items[:] = [
-            item
-            for item in items
-            for marker in item.own_markers
-            # has `@RunIf(benchmark=True)`
-            if marker.name == "skipif" and marker.kwargs.get("benchmark")
-        ]
+        # has `@RunIf(benchmark=True)`
+        items[:] = [item for item in items if _marked(item, lambda kw: kw.get("benchmark"))]
     # The hosted matrix runs the suite with the Hub client offline against a warmed cache (see
     # docs/ci_hub_cache.md); a test that must reach the live Hub declares it and runs in the online pass.
     if _hub_offline():

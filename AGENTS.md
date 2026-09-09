@@ -304,19 +304,16 @@ IT_RUN_PROFILING_TESTS=1 python -m pytest tests/parity_acceptance/test_it_l.py::
 unset IT_RUN_PROFILING_TESTS
 ```
 
-**⚠️ Standalone marks must be at the test METHOD level, not the class level.**
-`pytest_collection_modifyitems` in `tests/conftest.py` uses `item.own_markers` — which only contains
-markers on the test *function* itself, not inherited from a parent class.  Class-level `@RunIf(standalone=True)`
-decorators are invisible to the standalone collection filter, so those tests are silently excluded from
-standalone runs.
+**Phase marks (`standalone`, `min_cuda_gpus`, `bf16_cuda`, `profiling`, ...) may sit on a test method or on its class.**
+`pytest_collection_modifyitems` in `tests/conftest.py` reads `item.iter_markers()`, so a class-level
+`@RunIf(...)` selects every test the class collects, including inherited ones (a conformance target class is
+the live case: its cases are inherited methods, so the class is the only place a mark can go). It once read
+`item.own_markers`, which sees only marks on the function itself, and class-level standalone marks were silently
+excluded from standalone runs for as long as that lasted.
 
-- Always apply `@RunIf(standalone=True)` (or `marks="standalone"` / `marks="l_standalone"`) to **individual
-  test methods**, never to the class.
 - For memory-intensive tests that previously used standalone as a workaround, prefer
   `@pytest.mark.usefixtures("cleanup_memory")` at the method level — this triggers `gc.collect()` after
   each test without sacrificing cross-platform CI signal.
-- **TODO/BUG:** Fix `pytest_collection_modifyitems` in `tests/conftest.py` to use `item.iter_markers()`
-  instead of `item.own_markers` so class-level standalone marks are properly collected.
 
 Test reruns (`--reruns 2 --reruns-delay 5`) are used in CI for transient httpx/HF timeouts.
 
