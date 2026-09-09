@@ -515,3 +515,31 @@ class TestAnalysisGeneratorRefusesZeroEpochs:
 
         with pytest.raises(ValueError, match="max_epochs >= 1"):
             next(analysis_store_generator(module=object(), datamodule=_DM(), max_epochs=max_epochs))
+
+
+class TestGradStateAcrossAFailingRun:
+    def test_an_op_raising_inside_dataset_generation_leaves_grad_state_as_it_found_it(self, tmp_path):
+        """The start hook sets the global grad state from the active op and the end hook restores it; an op raising
+        in between used to skip the end hook and leak the state into whatever ran next.
+
+        The generator here disables grad the way the start hook does and then raises, so the assertion can only pass if
+        the loop restores in a finally.
+        """
+        from interpretune.runners import analysis as runner
+
+        module = MagicMock()
+        module.analysis_cfg.output_store.save_dir = str(tmp_path)
+
+        def _disable_grad_then_raise(*_args, **_kwargs):
+            torch.set_grad_enabled(False)
+            raise RuntimeError("the op failed mid-run")
+
+        assert torch.is_grad_enabled(), "the control needs the default state to start from"
+        with (
+            patch.object(runner, "maybe_init_analysis_cfg", return_value={}),
+            patch.object(runner, "dataset_features_and_format", return_value=({}, {}, {})),
+            patch.object(runner, "generate_analysis_dataset", side_effect=_disable_grad_then_raise),
+            pytest.raises(RuntimeError, match="the op failed mid-run"),
+        ):
+            runner.core_analysis_loop(module, MagicMock())
+        assert torch.is_grad_enabled(), "a failing run leaked a disabled grad state"
