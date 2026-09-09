@@ -112,6 +112,36 @@ def _captured_under(captured: dict[str, torch.Tensor], name: str, cmap: Any) -> 
     return None
 
 
+def _attribution_failure_context(suite, exc: BaseException) -> str:
+    """What the two model handles are bound to, for a graph op that failed inside the analysis backend."""
+    lines = [f"attribution graph op failed: {type(exc).__name__}: {str(exc).splitlines()[-1][:200]}"]
+    module = suite.module
+    for label in ("model", "replacement_model"):
+        handle = getattr(module, label, None)
+        inner = handle
+        for attr in ("_model", "model", "hf_model"):
+            inner = getattr(inner, attr, inner) if inner is not None else None
+        cfg = getattr(inner, "config", None) or getattr(handle, "config", None)
+        impl = getattr(cfg, "_attn_implementation", None)
+        lines.append(
+            f"  module.{label}: {type(handle).__name__} (inner {type(inner).__name__}), attn_implementation="
+            f"{impl!r}, training={getattr(inner, 'training', None)}"
+        )
+    rm = getattr(module, "replacement_model", None)
+    try:
+        layer0 = rm.model.layers[0].self_attn  # the path circuit-tracer's attention pattern starts from
+        names = [n for n in dir(layer0.source) if not n.startswith("_")]
+        lines.append(f"  replacement_model layer 0 self_attn source nodes: {names}")
+        attn = getattr(layer0.source, "attention_interface_0", None)
+        if attn is not None:
+            lines.append(
+                f"  attention_interface_0 nested nodes: {[n for n in dir(attn.source) if not n.startswith('_')]}"
+            )
+    except Exception as probe_exc:  # the probe must not hide the original failure
+        lines.append(f"  (node probe failed: {type(probe_exc).__name__}: {str(probe_exc)[:120]})")
+    return "\n".join(lines)
+
+
 def _base_of(name: str) -> str:
     from interpretune.analysis.points.vocabulary import parse
 
@@ -935,9 +965,16 @@ class ModelBackendConformance:
         prompt = self._attribution_prompt(suite)
         key = f"attribution_graph:{prompt}"
         if key not in suite.memo:
-            suite.memo[key] = it.compute_attribution_graph(
-                suite.module, AnalysisBatch(prompts=[prompt]), batch=cast(Any, None), batch_idx=0
-            )
+            try:
+                suite.memo[key] = it.compute_attribution_graph(
+                    suite.module, AnalysisBatch(prompts=[prompt]), batch=cast(Any, None), batch_idx=0
+                )
+            except Exception as exc:
+                # A source-node lookup that fails names what was expected and not what was met; the facts that
+                # decide the cause are which attention function each model handle is bound to (the eager one is
+                # the only one whose source calls dropout), the owning module's mode, and the node set the
+                # accessor actually holds. Report them beside the error rather than leaving them to a bisect.
+                raise AssertionError(_attribution_failure_context(suite, exc)) from exc
         return suite.memo[key]
 
     @conformance_case(capability=AnalysisBackendCapability.ATTRIBUTION_GRAPH)
