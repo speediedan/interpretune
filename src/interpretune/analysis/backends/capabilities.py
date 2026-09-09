@@ -60,17 +60,31 @@ class InterventionMode(str, Enum):
 
     A ``str`` enum for the same reason as :class:`PositionScope`. The mode is the second axis of the
     intervention contract (scope is the first): a backend can implement ``fwd_w_intervention`` and still
-    be unable to express most modes, because ``replace``, ``patch`` and ``project`` all need the CURRENT
-    activation while an additive steering primitive never observes it. A mode a backend has not declared
-    is refused by :func:`~interpretune.analysis.backends.interventions.require_intervention_mode` rather
-    than applied as a different mode, since every mode returns plausible logits and the substitution is
-    undetectable from the result.
+    be unable to express most modes. Every mode but ``add`` reads the CURRENT activation, and the
+    additional thing they need is that the READ HAPPENS DURING THE FORWARD PASS: ``patch`` and ``reject``
+    compute coordinates from the activation itself, so no parameter fixed when the spec was built can
+    stand in for them.
+
+    The requirement is therefore sharper than "can observe the activation": **a steering surface whose
+    parameters are all static scalars satisfies that and still expresses none of these modes.** What a
+    backend must support is a parameter COMPUTED AT FORWARD TIME. Stated as a capability rather than by
+    naming a backend, because core must not know which adapters exist, and because a rule about what an
+    implementation needs stays true when the next one appears.
+
+    Such a backend declares ``InterventionSupport(modes={ADD})``; the declaration, not the
+    implementation, is what the dispatcher consults, so the refusal is by name rather than by trial.
+
+    A mode a backend has not declared is refused by
+    :func:`~interpretune.analysis.backends.interventions.require_intervention_mode` rather than applied
+    as a different mode, since every mode returns plausible logits and the substitution is undetectable
+    from the result.
     """
 
     REPLACE = "replace"
     ADD = "add"
     PATCH = "patch"
     PROJECT = "project"
+    REJECT = "reject"
 
 
 @dataclass(frozen=True)
@@ -95,7 +109,13 @@ class InterventionSupport:
 
     @classmethod
     def every(cls) -> InterventionSupport:
-        """Every scope and every mode: the declaration of a backend whose hook sees the whole activation."""
+        """Every scope and every mode: for a backend whose hook can compute its edit from the activation it
+        sees, during the pass.
+
+        Seeing the activation is not the criterion, which is worth stating because it reads like one: a
+        steering surface can receive the activation and still express only ``add``, if every parameter it
+        takes was fixed before the pass began. See :class:`InterventionMode`.
+        """
         return cls(position_scopes=frozenset(PositionScope), modes=frozenset(InterventionMode))
 
 
