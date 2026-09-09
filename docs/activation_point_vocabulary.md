@@ -185,6 +185,27 @@ a map rather than a name. A retired map keeps loading until the readable floor m
 deliberate act that withdraws it. Every version inside the window has a frozen document in the test suite,
 derived from the window so a bump cannot be made without freezing one.
 
+## Entering and leaving the bundled set
+
+**Entering.** A bundled map is a document under `interpretune/analysis/points/data/` plus two things that make it
+checked rather than asserted: a tiny builder for its transformers class in the suite, so the document is checked
+against the class on every run (rows exist for the layers they cover and not for the layers they exclude; a
+derived property agrees with the model), and, where TransformerLens has an adapter for the architecture, the
+oracle comparison against that adapter's component mapping. A document added without the builder fails the suite
+by name.
+
+**Leaving.** A retiring map gains `deprecated_since` and `replacement`; it keeps loading with a warning, strict
+lookup refuses it, and after its stated horizon the document is deleted. From then on the architecture has no
+bundled map: a lookup refuses by name, listing what is known, and a map pulled as a `hookmaps` component becomes
+the source for it with nothing to conflict against.
+
+**While both exist.** Precedence is enforced at load, not by order: a pulled map for an architecture that already
+has a registered one must be identical (same rows, same properties) or the load is refused naming both sources;
+`replace=True` shadows the registered map deliberately. An identical pull is a no-op. A cached third-party map
+therefore never silently displaces a bundled one, and never silently loses to one either: withdrawal of the
+bundled document is the moment the pulled map takes effect, and it takes effect by the same lookup that
+refused the architecture the day before.
+
 ## Legacy names
 
 The legacy `HookedTransformer` vocabulary is deprecated except for the semantic names above. Deprecated spellings
