@@ -32,20 +32,19 @@ def store_capture_points_impl(module, analysis_batch, batch, batch_idx: int, **_
         if not isinstance(value, torch.Tensor):
             raise TypeError(f"cached point {name!r} is a {type(value).__name__}, not a tensor")
         tensors.append(value.detach().to("cpu", torch.float32))
-    if tensors:
-        shapes = {tuple(t.shape) for t in tensors}
-        if len(shapes) != 1:
-            raise ValueError(f"captured points differ in shape ({sorted(shapes)}); one capture per shape")
-        stacked = torch.stack(tensors)
-        analysis_batch.update(
-            captured_values=stacked.flatten(),
-            captured_shape=torch.tensor(stacked.shape, dtype=torch.int64),
-            captured_point_names=names,
-        )
-    else:
-        analysis_batch.update(
-            captured_values=torch.empty(0), captured_shape=torch.tensor([0], dtype=torch.int64), captured_point_names=[]
-        )
+    # Points differ in shape (a norm's scale is [batch, pos, 1], an attention input is [batch, pos, heads, d_head],
+    # the unembed input is [batch, pos, d_model]), so each is flattened and concatenated, with the shapes encoded
+    # beside them as one int64 sequence: `[n_points, ndim_0, dims_0..., ndim_1, dims_1..., ...]`.
+    shape_code: list[int] = [len(tensors)]
+    for t in tensors:
+        shape_code.append(t.ndim)
+        shape_code.extend(int(d) for d in t.shape)
+    values = torch.cat([t.flatten() for t in tensors]) if tensors else torch.empty(0)
+    analysis_batch.update(
+        captured_values=values,
+        captured_shape=torch.tensor(shape_code, dtype=torch.int64),
+        captured_point_names=names,
+    )
     return analysis_batch
 
 
@@ -53,9 +52,21 @@ def captured_points(store: Any, index: int) -> dict[str, torch.Tensor]:
     """Rebuild ``{point name: tensor}`` for batch ``index`` from the three flat columns."""
     # Item access: the store serves only protocol-declared columns as attributes, and these are the suite's own.
     values = torch.as_tensor(store["captured_values"][index], dtype=torch.float32)
-    shape = [int(d) for d in torch.as_tensor(store["captured_shape"][index]).flatten().tolist()]
+    code = [int(d) for d in torch.as_tensor(store["captured_shape"][index]).flatten().tolist()]
     names = list(store["captured_point_names"][index])
     if not names:
         return {}
-    stacked = values.reshape(shape)
-    return {name: stacked[i] for i, name in enumerate(names)}
+    n_points, pos = code[0], 1
+    assert n_points == len(names), f"{n_points} shapes for {len(names)} names"
+    out: dict[str, torch.Tensor] = {}
+    offset = 0
+    for name in names:
+        ndim = code[pos]
+        shape = code[pos + 1 : pos + 1 + ndim]
+        pos += 1 + ndim
+        numel = 1
+        for d in shape:
+            numel *= d
+        out[name] = values[offset : offset + numel].reshape(shape)
+        offset += numel
+    return out

@@ -9,6 +9,7 @@ import torch
 
 from interpretune.analysis.backends import (
     BackendCapability,
+    CaptureSupport,
     InterventionSupport,
     LatentModelSupport,
     InterventionDict,
@@ -40,7 +41,7 @@ def _iter_hook_aliases(model: Any) -> dict[str, list[str]]:
 
 def _normalize_names_filter(
     model: Any, names_filter: NamesFilter, latent_model_handles: list[Any] | None = None
-) -> tuple[NamesFilter, dict[str, str]]:
+) -> tuple[NamesFilter, dict[str, str | list[str]]]:
     """Map requested capture names onto the hooks this model exposes, through the vocabulary's spellings.
 
     A caller asks for a point in any accepted spelling (``blocks.5.hook_in``); a TransformerBridge exposes that name
@@ -64,7 +65,13 @@ def _normalize_names_filter(
         try:
             matches = expand_intervention_patterns([name], available)[name]
         except ValueError:
-            continue  # unknown to the model too; TransformerLens reports it as before
+            # TransformerLens drops a list entry it does not know without a word (measured on both wrappers), and
+            # a cache one entry short is indistinguishable from a complete one at the call site; refuse by name.
+            sample = sorted(n for n in available if n.startswith(name.split(".")[0]))[:6]
+            raise ValueError(
+                f"{name!r} names no hook this model exposes, in any spelling the vocabulary knows; nearby names: "
+                f"{sample}"
+            ) from None
         if len(matches) == 1 and matches[0] != name:
             actual_for[matches[0]] = name
     if not actual_for:
@@ -79,7 +86,7 @@ def _normalize_names_filter(
 
 def _wrap_callable_filter(
     model: Any, accept: Callable[[str], bool], latent_model_handles: list[Any] | None = None
-) -> tuple[Callable[[str], bool], dict[str, str]]:
+) -> tuple[Callable[[str], bool], dict[str, list[str]]]:
     """A callable filter written in one spelling matches the hook this model exposes under another.
 
     TransformerLens applies a callable filter to the names in its own ``hook_dict``: a legacy HookedTransformer
@@ -98,7 +105,7 @@ def _wrap_callable_filter(
     for spelling, actual in available.items():
         if spelling != actual:
             aliases_of.setdefault(actual, []).append(spelling)
-    requested: dict[str, str] = {}
+    requested: dict[str, list[str]] = {}
     decided: dict[str, bool] = {}
 
     def wrapped(name: str) -> bool:
@@ -112,28 +119,31 @@ def _wrap_callable_filter(
             candidates.extend(s for s in spellings(name) if s != name)
         except UnknownPointError:
             pass
-        for spelling in candidates:
-            if accept(spelling):
-                requested[name] = spelling
-                decided[name] = True
-                return True
+        # every accepted spelling, not the first: a caller asking for two spellings of one tensor (`ln2.hook_out`
+        # and `mlp.hook_in`) gets the cache keyed under both, else the second reads as uncaptured
+        accepted = [spelling for spelling in candidates if accept(spelling)]
+        if accepted:
+            requested[name] = accepted
+            decided[name] = True
+            return True
         decided[name] = False
         return False
 
     return wrapped, requested
 
 
-def _restore_requested_names(cache: Any, requested: dict[str, str]) -> Any:
-    """Re-key cached activations captured under a model-specific spelling back to the name the caller used."""
+def _restore_requested_names(cache: Any, requested: dict[str, str | list[str]]) -> Any:
+    """Re-key cached activations captured under a model-specific spelling back to the name(s) the caller used."""
     if not requested:
         return cache
     store = getattr(cache, "cache_dict", None)
     target = store if isinstance(store, dict) else cache
     if not isinstance(target, dict):
         return cache
-    for actual, name in requested.items():
-        if actual in target and name not in target:
-            target[name] = target[actual]
+    for actual, names in requested.items():
+        for name in [names] if isinstance(names, str) else names:
+            if actual in target and name not in target:
+                target[name] = target[actual]
     return cache
 
 
@@ -198,6 +208,22 @@ def _build_available_hook_map(model: Any, latent_model_handles: list[Any] | None
     return candidate_map
 
 
+def _hf_architecture(model: Any) -> str:
+    """The HuggingFace class name the component maps are keyed by, from either TransformerLens wrapper."""
+    cfg = getattr(model, "cfg", None)
+    for attr in ("architecture", "original_architecture"):
+        value = getattr(cfg, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    original = getattr(model, "original_model", None)
+    if original is not None:
+        return type(original).__name__
+    raise ValueError(
+        f"cannot tell which HuggingFace architecture {type(model).__name__} wraps: its cfg carries neither "
+        "'architecture' nor 'original_architecture'"
+    )
+
+
 class TLModelBackend:
     """TransformerLens model execution backend.
 
@@ -230,6 +256,40 @@ class TLModelBackend:
     def latent_model_support(self) -> LatentModelSupport:
         """The batched-hooks path here is a sequential loop, not a fused execution."""
         return LatentModelSupport(batched_hooks=False)
+
+    def capture_support(self, model: Any) -> CaptureSupport:
+        """What this backend can capture on ``model``: every vocabulary point some hook of the wrapper spells.
+
+        Derived from the model rather than written down, because the two TransformerLens wrappers differ: a bridge
+        exposes the vocabulary's own spellings, a HookedTransformer exposes legacy names that the vocabulary maps to
+        them where the tensor is the same, and deliberately does not map where it is not (its `hook_mlp_out` /
+        `hook_attn_out` are the post-norm outputs on a sandwich-norm architecture, so `mlp.hook_out` / `attn.hook_out`
+        stay unaliased and are uncapturable there by those spellings). The declaration reports that gap by name.
+        """
+        from interpretune.analysis.points import component_map_for
+        from interpretune.analysis.points.inventory import inventory, spelled_at
+
+        architecture = _hf_architecture(model)
+        cmap = component_map_for(architecture)
+        available = _build_available_hook_map(model)
+        capturable: set[str] = set()
+        uncapturable: dict[str, str] = {}
+        for base in inventory(cmap):
+            name = spelled_at(base, cmap)
+            try:
+                expand_intervention_patterns([name], available)
+                capturable.add(base)
+            except ValueError:
+                uncapturable[base] = (
+                    f"no hook of this {type(model).__name__} matches any spelling of {name!r}; the wrapper's grammar "
+                    "has no tensor the vocabulary equates with it"
+                )
+        return CaptureSupport(
+            capturable=frozenset(capturable),
+            uncapturable=uncapturable,
+            n_layers=int(model.cfg.n_layers),
+            architecture=architecture,
+        )
 
     def supports(self, capability: BackendCapability) -> bool:
         """Check whether this backend supports a given capability."""

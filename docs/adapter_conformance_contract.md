@@ -91,6 +91,27 @@ Always on:
 | answer logits converge on the forward | HF reference, `hf_native` | the store's logits match the HF forward on real positions |
 | the scope discriminator tells the scopes apart | positive control | on the HF model alone, a last-token edit moves exactly the final position and a whole-prompt edit moves all of them |
 
+The capture declaration (every model backend):
+
+| case | oracle | asserts |
+| --- | --- | --- |
+| the backend declares what it can capture | structural | `capture_support(model)` returns a `CaptureSupport`; every suite capture point is either declared capturable or declared uncapturable with a reason, never undeclared |
+| every declared point is captured | structural | every capturable base point, spelled at the capture layer, reaches the store as a non-degenerate tensor |
+| a point outside the declaration is refused by name | negative | asking for a declared gap (or a layer the model lacks) through the runner path raises, naming the point and the reason, rather than returning a cache that is silently short |
+
+Capture is a base method every model backend has, so it is not a `BackendCapability` member: that enum answers
+"is the surface implemented at all". What varies is WHICH vocabulary points a backend can capture on the model it
+wraps, and that is a typed record beside `InterventionSupport`, keyed by layer-free base spellings over the
+architecture's inventory (`interpretune.analysis.points.inventory`), whose keys collapse the semantic names for one
+tensor into its component spelling and keep a semantic contribution (`hook_mlp_out`) distinct. Measured on gpt2,
+whose inventory is 30 base points: the TransformerLens bridge captures 30 of 30, the nnsight backend 26 of 30 (a
+norm's derived `hook_normalized` / `hook_scale` are computed inside the module it reads at the boundary), the
+legacy HookedTransformer with an SAE attached 18 of 30 (its grammar has no tensor the vocabulary equates with
+`mlp.hook_out` / `attn.hook_out`, since on a sandwich-norm architecture those are different tensors, so they stay
+unaliased and uncapturable there by those spellings, and likewise the norms' inputs and outputs), and the first
+hub backend 181 of 298 named points. The value cases run over the suite's capture points the declaration admits; a target that cannot capture a
+point says so through its record rather than through a per-target override.
+
 Gate `INTERVENTION` (with `intervention_support`):
 
 | case | oracle | asserts |

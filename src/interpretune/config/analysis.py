@@ -95,6 +95,42 @@ def _extend_names_for_bridge(module, names_list: list[str]) -> tuple[list[str], 
     return extended, canonical_to_alias
 
 
+def _refuse_uncapturable(module, names: list[str]) -> None:
+    """Refuse, by name and with the backend's reason, any listed point the attached backend declares it cannot
+    capture.
+
+    Here rather than in the backend because this is the last place the caller's list is still a list: the resolved
+    callable that reaches the backend cannot say what was asked for, so a point the backend lacks would come back as a
+    cache one entry short, which is indistinguishable from a complete one downstream. A backend that declares no capture
+    support is left to its own refusals. SAE sub-hooks and names outside the vocabulary are not judged here.
+    """
+    from interpretune.analysis.backends.capabilities import get_model_backend
+    from interpretune.analysis.points.vocabulary import UnknownPointError, parse
+
+    backend = get_model_backend(module)
+    declare = getattr(backend, "capture_support", None) if backend is not None else None
+    model = getattr(module, "model", None)
+    if declare is None or model is None:
+        return
+    support = declare(model)
+    refused: list[str] = []
+    for name in names:
+        try:
+            point = parse(name)
+        except UnknownPointError:
+            continue
+        if point.subhook:
+            continue
+        reason = support.refusal(name)
+        if reason is not None:
+            refused.append(reason)
+    if refused:
+        raise ValueError(
+            "names_filter asks for points this backend cannot capture; " + "; ".join(refused) + ". "
+            f"Declared: {support.describe()}"
+        )
+
+
 @dataclass(kw_only=True)
 class AnalysisCfg(ITSerializableCfg):
     """Configuration for one analysis invocation: which op runs, over what inputs, into which store.
@@ -374,6 +410,7 @@ class AnalysisCfg(ITSerializableCfg):
         # cleaner approach would be to resolve the naming scheme once at config time so downstream
         # code only ever sees one consistent set of hook names.
         if isinstance(self.names_filter, list):
+            _refuse_uncapturable(module, self.names_filter)
             self.names_filter, self._canonical_to_alias_names = _extend_names_for_bridge(module, self.names_filter)
         else:
             self._canonical_to_alias_names = {}

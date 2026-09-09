@@ -342,6 +342,20 @@ def register_alias(
     return entry
 
 
+def declaration_key(name: str) -> str:
+    """The layer-free key a capture declaration files a point under.
+
+    A component spelling and the semantic names that mean the same tensor share a key (``hook_resid_pre`` files
+    under ``hook_in``), but a semantic CONTRIBUTION keeps its own (``hook_mlp_out``): on a sandwich-norm architecture
+    it is the post-norm output and not ``mlp.hook_out``, and a legacy HookedTransformer can capture the one and
+    not the other, so a declaration keyed by the component base alone could not say which.
+    """
+    point = parse(name)
+    if point.contribution is not None:
+        return f"hook_{point.contribution}_out"
+    return point.base
+
+
 def semantic_names() -> tuple[str, ...]:
     """Every semantic spelling plus every registered alias: the non-component names the parser accepts."""
     return tuple(sorted({*_SEMANTIC, *(e.alias for e in ALIASES)}))

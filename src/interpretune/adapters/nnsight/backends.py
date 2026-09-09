@@ -23,6 +23,7 @@ import torch
 
 from interpretune.analysis.backends import (
     BackendCapability,
+    CaptureSupport,
     InterventionSupport,
     LatentModelSupport,
     InterventionDict,
@@ -293,13 +294,30 @@ def _forward_order(hook_names: Any, resolver: HookNameResolver) -> list[str]:
     reverse failed until this sort existed.
     """
 
-    def key(name: str) -> tuple[int, int, str]:
+    def key(name: str) -> tuple[int, int, int, str]:
         layer, base, _sub = resolver.parse_hook_name(name)
         if layer < 0:
             # global hooks: embeddings run before every block, everything else (ln_final, unembed) after
-            return (-1 if base.startswith(("embed", "pos_embed", "hook_embed", "hook_pos_embed")) else 10**6, 0, name)
+            return (
+                -1 if base.startswith(("embed", "pos_embed", "hook_embed", "hook_pos_embed")) else 10**6,
+                0,
+                0,
+                name,
+            )
         head = base.split(".")[0]
-        return (layer, _BLOCK_RANK.get(head, _BLOCK_RANK.get(base, 5)), name)
+        # Within one sublayer, nnsight provides the parent's input, then each child in forward order (its input,
+        # then its output), then the parent's output. Reading `attn.hook_out` before `attn.o.hook_in` raised
+        # MissedProviderError for `c_proj.input` once the attention output had been consumed, and depth alone was
+        # not enough either: `mlp.out.hook_in` (c_proj) comes after `mlp.in.hook_out` (c_fc), a later sibling's
+        # input after an earlier sibling's output. So children carry their forward rank.
+        parts = base.split(".")
+        leaf, children = parts[-1], parts[1:-1]
+        is_input = leaf in ("hook_in", "hook_resid_pre", "hook_attn_in", "hook_mlp_in")
+        if not children:
+            within = -1 if is_input else 10**3
+        else:
+            within = _CHILD_RANK.get(children[0], 5) * 2 + (0 if is_input else 1)
+        return (layer, _BLOCK_RANK.get(head, _BLOCK_RANK.get(base, 5)), within, name)
 
     return sorted(hook_names, key=key)
 
@@ -379,6 +397,11 @@ def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
     return tracer.invoke(**invoke_kwargs)
 
 
+#: Forward order of a sublayer's children, for the trace-order sort: attention projections before the output
+#: projection, an MLP's input projection before its output projection.
+_CHILD_RANK = {"q": 0, "k": 0, "v": 0, "qkv": 0, "q_norm": 1, "k_norm": 1, "o": 2, "in": 0, "act": 1, "out": 2}
+
+
 class NNsightModelBackend:
     """NNsight model execution backend.
 
@@ -423,6 +446,33 @@ class NNsightModelBackend:
     def latent_model_support(self) -> LatentModelSupport:
         """The batched-hooks path genuinely fuses its configs into one trace (multi-invoke)."""
         return LatentModelSupport(batched_hooks=True)
+
+    def capture_support(self, model: Any) -> CaptureSupport:
+        """What this backend can capture on ``model``: every vocabulary point the hook resolver maps to a module.
+
+        The resolver is derived from the architecture's component map, so a norm's derived tensors (`hook_normalized`,
+        `hook_scale`) are the standing gap: nnsight reads module boundaries and those are computed inside the norm.
+        The resolver's own refusal text is the reason the declaration carries.
+        """
+        from interpretune.analysis.points import component_map_for
+        from interpretune.analysis.points.inventory import inventory, spelled_at
+
+        architecture = self._resolver.architecture
+        cmap = component_map_for(architecture)
+        capturable: set[str] = set()
+        uncapturable: dict[str, str] = {}
+        for base in inventory(cmap):
+            try:
+                self._resolver.resolve(spelled_at(base, cmap))
+                capturable.add(base)
+            except ValueError as exc:
+                uncapturable[base] = str(exc)
+        return CaptureSupport(
+            capturable=frozenset(capturable),
+            uncapturable=uncapturable,
+            n_layers=_infer_num_layers(model),
+            architecture=architecture,
+        )
 
     def supports(self, capability: BackendCapability) -> bool:
         """Check whether this backend supports a given capability."""

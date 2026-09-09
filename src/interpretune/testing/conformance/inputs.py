@@ -24,6 +24,8 @@ SEED_REPO = "speediedan/rte"
 SEED_CONFIGS = {
     "bridge": "rte_demo.gpt2.sae_lens",
     "nnsight": "rte_demo.gpt2.nnsight+sae_lens",
+    # gemma-3-1b-it with circuit-tracer over the nnsight backend: the analysis-backend cases' composition
+    "circuit_tracer": "rte_demo.gemma3.circuit_tracer.neuronpedia",
 }
 #: The adapter-free flavour: the seed's STANDALONE datamodule entry plus a module config built here from
 #: core classes only. What a hub adapter starts from, because the bridge and nnsight seed configs carry their
@@ -46,10 +48,12 @@ CAPTURE_POINTS = (
 
 @dataclass(frozen=True)
 class LatentModelSpec:
-    """One pretrained latent model the suite attaches, named the way sae_lens names a release and an id."""
+    """One pretrained latent model the suite attaches, named the way sae_lens names a release and an id, and the
+    model it fits: a spec is attached only to a session over that model."""
 
     release: str
     sae_id: str
+    model_id: str = MODEL_ID
 
 
 #: The latent model the LATENT_MODELS and GRADIENTS cases run over: one gpt2 residual SAE at the first block,
@@ -90,7 +94,16 @@ class ConformanceInputs:
     observe_point: str = OBSERVE_POINT
     prompts: Sequence[str] = PROMPTS
     latent_models: Sequence[LatentModelSpec] = LATENT_MODELS
+    attribution_prompt: str | None = None
+    """The prompt the analysis-backend cases attribute; ``None`` means the suite carries none for this model and
+    those cases skip with that reason (a suite input gap, not the backend's)."""
+    attribution_top_n: int = 4
+    attribution_scale_factor: float = 2.0
     workdir: Path = field(default_factory=lambda: Path(tempfile.mkdtemp(prefix="it_conformance_")))
+
+    def latent_models_for_model(self) -> list[LatentModelSpec]:
+        """The latent specs that fit ``model_id``."""
+        return [spec for spec in self.latent_models if spec.model_id == self.model_id]
 
     def seed_config(self, flavour: str = "hf"):
         """The seed's ``(datamodule_cfg, module_cfg, datamodule_cls, module_cls)`` for a data-pipeline flavour.
@@ -210,7 +223,7 @@ class ConformanceInputs:
             SAELensFromPretrainedConfig(
                 release=spec.release, sae_id=spec.sae_id, device=self.device_type, dtype=self.precision
             )
-            for spec in self.latent_models
+            for spec in self.latent_models_for_model()
         ]
 
     def _place(self, it_cfg: Any) -> None:
@@ -231,6 +244,18 @@ class ConformanceInputs:
         tl = getattr(it_cfg, "tl_cfg", None)
         if tl is not None and hasattr(tl, "__dict__"):
             tl.__dict__.update(device=self.device_type, dtype=self.precision)
+        ct = getattr(it_cfg, "circuit_tracer_cfg", None)
+        if ct is not None:
+            import torch
+
+            # the suite fixes precision; the seed example uploads to neuronpedia, which a conformance run never does
+            ct.dtype = getattr(torch, self.precision)
+            for name, value in (("use_neuronpedia", False), ("verbose", False)):
+                if hasattr(ct, name):
+                    setattr(ct, name, value)
+            np_cfg = getattr(it_cfg, "neuronpedia_cfg", None)
+            if np_cfg is not None and hasattr(np_cfg, "enabled"):
+                np_cfg.enabled = False
 
     def runner_kwargs(self) -> dict[str, Any]:
         """The runner settings every case shares.

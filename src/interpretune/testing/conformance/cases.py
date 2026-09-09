@@ -13,6 +13,7 @@ import pytest
 import torch
 
 from interpretune.analysis.backends import (
+    AnalysisBackendCapability,
     BackendCapability,
     InterventionMode,
     PositionScope,
@@ -93,6 +94,30 @@ def _real_effect(effect: torch.Tensor, attention_mask: torch.Tensor | None) -> t
     return effect * attention_mask.to(effect.dtype)
 
 
+def _captured_under(captured: dict[str, torch.Tensor], name: str, cmap: Any) -> str | None:
+    """The key ``name`` was captured under: itself, or its canonical spelling on ``cmap``'s architecture."""
+    from interpretune.analysis.points import TensorRef, parse, resolve
+
+    if name in captured:
+        return name
+    point = parse(name)
+    ref = resolve(point, cmap)
+    if not isinstance(ref, TensorRef):
+        return None
+    for key in captured:
+        other = resolve(parse(key), cmap)
+        if isinstance(other, TensorRef) and other.module_path == ref.module_path and other.io == ref.io:
+            if getattr(other, "derived", False) == getattr(ref, "derived", False):
+                return key
+    return None
+
+
+def _base_of(name: str) -> str:
+    from interpretune.analysis.points.vocabulary import parse
+
+    return parse(name).base
+
+
 def _real_positions(attention_mask: torch.Tensor | None, tensor: torch.Tensor) -> torch.Tensor:
     if attention_mask is None:
         return torch.ones(tensor.shape[:2], dtype=torch.bool)
@@ -138,6 +163,11 @@ class ModelBackendConformance:
         if report is not None and not report.declared:
             report.declared = sorted(c.name for c in suite.capabilities.model) + sorted(
                 c.name for c in suite.capabilities.analysis
+            )
+        if report is not None:
+            report.capture.setdefault(
+                type(self).__name__,
+                suite.capabilities.capture.describe() if suite.capabilities.capture else "undeclared",
             )
         if not gate.selects(suite.capabilities, family=suite.family, single_prompt=suite.target.single_prompt):
             pytest.skip(f"{UNDECLARED}: needs {gate.describe()}")
@@ -195,12 +225,76 @@ class ModelBackendConformance:
         for ld in store.logit_diffs:
             assert isinstance(ld, torch.Tensor), "logit_diffs must be tensors"
 
+    # -- capture declaration ---------------------------------------------------------------------------
+    #
+    # A backend declares which vocabulary points it can capture on the model it wraps (`capture_support`), and the
+    # capture cases select from that declaration rather than assuming every point. The declaration binds because a
+    # point outside it is refused by name through the runner path, and because every point inside it is captured.
+
+    @conformance_case()
+    def test_the_backend_declares_what_it_can_capture(self, suite):
+        """The attached backend declares a capture record for this model, and every suite capture point is decided
+        by it (capturable or refused with a reason), never undeclared."""
+        support = suite.capabilities.capture
+        assert support is not None, (
+            f"{suite.backend_name} declares no capture support: a model backend must say which vocabulary points "
+            "it can capture on the model it wraps (a `capture_support(model)` method returning CaptureSupport)"
+        )
+        assert support.capturable, "the declaration names no capturable point"
+        undeclared = [
+            p for p in suite.inputs.capture_points if _base_of(p) not in support.capturable | set(support.uncapturable)
+        ]
+        assert not undeclared, f"suite capture points the declaration neither admits nor refuses: {undeclared}"
+
+    @conformance_case()
+    def test_every_declared_point_is_captured(self, suite):
+        """Every base point the backend declares capturable is captured at the capture layer, as a non-degenerate
+        tensor: the positive half of the declaration."""
+        from interpretune import AnalysisCfg
+        from interpretune.analysis.points import component_map_for
+        from interpretune.analysis.points.inventory import spelled_at
+
+        support = suite.capabilities.capture
+        assert support is not None
+        cmap = component_map_for(support.architecture)
+        names = sorted(spelled_at(base, cmap, suite.inputs.capture_layer) for base in support.capturable)
+        store = suite.run(AnalysisCfg(target_op="store_capture_points", names_filter=names, save_tokens=True))
+        captured = captured_points(store, 0)
+        # A backend may key the cache by the point's canonical spelling on this architecture rather than the one
+        # asked for (a bridge answers `hook_mlp_out` as `mlp.hook_out` where no post-norm exists), which is the
+        # same tensor by the vocabulary's own resolution; a name is missing only if neither spelling is there.
+        found = {n: _captured_under(captured, n, cmap) for n in names}
+        missing = [n for n, key in found.items() if key is None]
+        assert not missing, f"declared capturable but not captured: {missing}; captured: {sorted(captured)}"
+        for n, key in found.items():
+            assert_non_degenerate(captured[cast(str, key)], what=n)
+
+    @conformance_case()
+    def test_a_point_outside_the_declaration_is_refused_by_name(self, suite):
+        """The negative half: asking for a point the backend declares it cannot capture (or a layer the model lacks)
+        is refused by name through the runner path, never answered with a cache that is silently short."""
+        from interpretune import AnalysisCfg
+        from interpretune.analysis.points import component_map_for
+        from interpretune.analysis.points.inventory import spelled_at
+
+        support = suite.capabilities.capture
+        assert support is not None
+        if support.uncapturable:
+            base = sorted(support.uncapturable)[0]
+            name = spelled_at(base, component_map_for(support.architecture), suite.inputs.capture_layer)
+        else:
+            name = f"blocks.{support.n_layers + 5}.hook_in"
+        import re
+
+        with expect_refusal(ValueError, match=re.escape(name)):
+            suite.run(AnalysisCfg(target_op="store_capture_points", names_filter=[name], save_tokens=True))
+
     @conformance_case()
     def test_cache_op_stores_logits_and_every_requested_point(self, suite):
         """The cache path returns logits and every requested point reaches the store as a tensor."""
         from interpretune import AnalysisCfg
 
-        points = list(suite.inputs.capture_points)
+        points = suite.capturable_points()
         store = suite.run(AnalysisCfg(target_op="store_capture_points", names_filter=points, save_tokens=True))
         columns = list(store.dataset.column_names)
         for column in ("captured_values", "captured_shape", "captured_point_names"):
@@ -235,7 +329,7 @@ class ModelBackendConformance:
         """Every captured point matches the HF module's tensor on the real positions of each batch."""
         from interpretune import AnalysisCfg
 
-        points = list(suite.inputs.capture_points)
+        points = suite.capturable_points()
         store = suite.run(AnalysisCfg(target_op="store_capture_points", names_filter=points, save_tokens=True))
         for i in range(len(store["captured_values"])):
             captured = captured_points(store, i)
@@ -252,9 +346,7 @@ class ModelBackendConformance:
         from interpretune import AnalysisCfg
 
         store = suite.run(
-            AnalysisCfg(
-                target_op="store_capture_points", names_filter=[suite.inputs.capture_points[0]], save_tokens=True
-            )
+            AnalysisCfg(target_op="store_capture_points", names_filter=[suite.capturable_points()[0]], save_tokens=True)
         )
         for i, al in enumerate(store.answer_logits):
             ids, mask = suite.batch_inputs(i)
@@ -583,6 +675,9 @@ class ModelBackendConformance:
     def _latent_hook(self, suite) -> tuple[Any, str]:
         """The first attached latent model and the point its activations are cached under."""
         handles = list(getattr(suite.module, "sae_handles", None) or [])
+        if not handles and not suite.inputs.latent_models_for_model():
+            # the suite's gap, not the backend's: nothing to attach for this model, so the case cannot decide
+            pytest.skip(f"the suite carries no latent model for {suite.inputs.model_id!r}; the latent cases need one")
         assert handles, (
             f"{suite.backend_name} declares LATENT_MODELS but the session attached no latent model; a target "
             f"declaring it attaches inputs.latent_models ({[s.sae_id for s in suite.inputs.latent_models]}) in "
@@ -819,6 +914,137 @@ class ModelBackendConformance:
         assert abs(measured - predicted) <= 0.1 * abs(predicted) + CONVERGENCE_ATOL, (
             f"first-order prediction {predicted:.4e} vs measured {measured:.4e} for latent {latent} (eps={eps})"
         )
+
+    # -- analysis backend: ATTRIBUTION_GRAPH / FEATURE_INTERVENTION -------------------------------------
+    #
+    # The graph ops take a prompt rather than a datamodule batch, so these cases call the ops the way every caller
+    # does (an analysis batch carrying the prompt, no dataloader batch), which is the ops' own entry rather than a
+    # detour around it. Everything compared is read off op outputs: no case reaches the analysis backend's model.
+
+    def _attribution_prompt(self, suite) -> str:
+        prompt = suite.inputs.attribution_prompt
+        if prompt is None:
+            pytest.skip(f"the suite carries no attribution prompt for {suite.inputs.model_id!r}")
+        return prompt
+
+    def _graph(self, suite):
+        """The attribution graph op's output for the suite prompt, computed once per target class."""
+        import interpretune as it
+        from interpretune.analysis.ops.base import AnalysisBatch
+
+        prompt = self._attribution_prompt(suite)
+        key = f"attribution_graph:{prompt}"
+        if key not in suite.memo:
+            suite.memo[key] = it.compute_attribution_graph(
+                suite.module, AnalysisBatch(prompts=[prompt]), batch=None, batch_idx=0
+            )
+        return suite.memo[key]
+
+    @conformance_case(capability=AnalysisBackendCapability.ATTRIBUTION_GRAPH)
+    def test_attribution_graph_round_trips_through_the_store(self, suite):
+        """The graph the op writes as store columns hydrates back to the graph it computed: same adjacency, same
+        active features, and the selected features index into them."""
+        from interpretune.analysis.backends import require_analysis_backend
+
+        result = self._graph(suite)
+        backend = require_analysis_backend(suite.module)
+        graph = backend.hydrate_graph_from_batch(result)
+        adjacency = torch.as_tensor(result.adjacency_matrix, dtype=torch.float32)
+        active = torch.as_tensor(result.active_features)
+        assert adjacency.ndim == 2 and adjacency.shape[0] == adjacency.shape[1], tuple(adjacency.shape)
+        assert active.ndim == 2 and active.shape[1] == 3 and active.shape[0] > 0, tuple(active.shape)
+        assert_non_degenerate(adjacency, what="adjacency matrix")
+        torch.testing.assert_close(torch.as_tensor(graph.adjacency_matrix, dtype=torch.float32).cpu(), adjacency)
+        assert torch.equal(torch.as_tensor(graph.active_features).cpu(), active)
+        selected = torch.as_tensor(graph.selected_features).cpu()
+        assert selected.numel() > 0 and int(selected.max()) < int(active.shape[0])
+
+    @conformance_case(capability=AnalysisBackendCapability.ATTRIBUTION_GRAPH)
+    def test_pruning_is_monotone(self, suite):
+        """A stricter node threshold keeps a subset of what a looser one keeps, and keeps strictly fewer at some
+        pair (positive control: a pruning that ignored its threshold would pass the subset claim vacuously)."""
+        import interpretune as it
+        from interpretune.analysis.ops.base import AnalysisBatch
+
+        result = self._graph(suite)
+        kept: dict[float, set[int]] = {}
+        for threshold in (0.3, 0.6, 0.9):
+            pruned = it.graph_prune(
+                suite.module, AnalysisBatch(**dict(result)), batch=None, batch_idx=0, node_threshold=threshold
+            )
+            kept[threshold] = {int(i) for i in torch.as_tensor(pruned.selected_features).flatten().tolist()}
+        assert kept[0.3] <= kept[0.6] <= kept[0.9], {t: len(v) for t, v in kept.items()}
+        assert len(kept[0.3]) < len(kept[0.9]), f"pruning kept {len(kept[0.9])} nodes at every threshold"
+
+    @conformance_case(capability=AnalysisBackendCapability.FEATURE_INTERVENTION)
+    def test_the_edge_predicts_the_measured_feature_intervention(self, suite):
+        """Scaling a top feature's activation moves the other active features and the target logits by the graph's
+        edge weights into that feature, times the scale: the graph is a linear model of the intervention it
+        describes, checked on the feature intervention op's own outputs."""
+        import interpretune as it
+        from interpretune.analysis.backends import require_analysis_backend
+        from interpretune.analysis.ops.base import AnalysisBatch
+
+        result = self._graph(suite)
+        backend = require_analysis_backend(suite.module)
+        graph = backend.hydrate_graph_from_batch(result)
+        influence = it.graph_node_influence(suite.module, result, batch=None, batch_idx=0)
+        payload = dict(result)
+        payload.update(dict(influence))
+        top = it.extract_top_features(
+            suite.module, AnalysisBatch(**payload), batch=None, batch_idx=0, top_n=suite.inputs.attribution_top_n
+        )
+        feature_rows = torch.as_tensor(top.top_feature_ids, dtype=torch.long)
+        assert feature_rows.shape[0] > 0, "no top feature to intervene on"
+        active = torch.as_tensor(graph.active_features).cpu()
+        adjacency = torch.as_tensor(graph.adjacency_matrix, dtype=torch.float32).cpu()
+        logit_tokens = torch.as_tensor(graph.logit_tokens).long().cpu()
+        baseline_acts = torch.as_tensor(result.activation_values, dtype=torch.float32).cpu()
+        assert baseline_acts.shape[0] == active.shape[0], "one baseline activation per active feature"
+        checked = 0
+        for index, row in enumerate(feature_rows):
+            layer, position, feature = (int(v) for v in row.tolist())
+            node = int(((active[:, 0] == layer) & (active[:, 1] == position) & (active[:, 2] == feature)).nonzero()[0])
+            baseline = float(baseline_acts[node])
+            if abs(baseline) < 1e-12:
+                continue
+            single = AnalysisBatch(
+                prompts=[self._attribution_prompt(suite)],
+                top_feature_ids=row.unsqueeze(0),
+                top_feature_scores=torch.as_tensor(top.top_feature_scores, dtype=torch.float32)[index : index + 1],
+                top_feature_activation_values=torch.as_tensor(top.top_feature_activation_values, dtype=torch.float32)[
+                    index : index + 1
+                ],
+                logit_target_ids=logit_tokens,
+            )
+            out = it.feature_intervention_forward(
+                suite.module, single, batch=None, batch_idx=0, intervention_return_activations=True
+            )
+            new_value = float(torch.as_tensor(out.intervention_values, dtype=torch.float32)[0])
+            scale = (new_value - baseline) / baseline
+            expected = adjacency[:, node] * scale
+            cache = torch.as_tensor(out.intervention_activation_cache, dtype=torch.float32).cpu()
+            measured_acts = cache[active[:, 0], active[:, 1], active[:, 2]]
+            torch.testing.assert_close(
+                measured_acts,
+                baseline_acts + expected[: active.shape[0]],
+                rtol=1e-5,
+                atol=1e-3,
+                msg=lambda d, f=(layer, position, feature): f"feature {f}: active features moved off the edges\n{d}",
+            )
+            pre = torch.as_tensor(out.pre_intervention_logits, dtype=torch.float32).cpu().reshape(-1)
+            post = torch.as_tensor(out.post_intervention_logits, dtype=torch.float32).cpu().reshape(-1)
+            pre_d = pre[logit_tokens] - pre.mean()
+            post_d = post[logit_tokens] - post.mean()
+            torch.testing.assert_close(
+                post_d,
+                pre_d + expected[-len(logit_tokens) :],
+                rtol=1e-3,
+                atol=1e-5,
+                msg=lambda d, f=(layer, position, feature): f"feature {f}: target logits moved off the edges\n{d}",
+            )
+            checked += 1
+        assert checked > 0, "every top feature had a zero baseline activation; nothing was checked"
 
     # -- single-prompt backends ----------------------------------------------------------------------
 

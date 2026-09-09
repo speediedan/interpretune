@@ -132,6 +132,77 @@ class LatentModelSupport:
     batched_hooks: bool = False
 
 
+@dataclass(frozen=True)
+class CaptureSupport:
+    """Which vocabulary points a backend can capture on the model it wraps, as a declaration a case can check.
+
+    Capture is a base method every model backend has, so it is not a :class:`BackendCapability` member: that enum
+    answers "is the surface implemented at all", and a backend that captures 181 of 298 points implements it. What
+    varies is WHICH points, so the shape is a support record beside :class:`InterventionSupport`, keyed by the
+    vocabulary's layer-free base spellings (``ln2.hook_out``, ``hook_resid_pre``, ``unembed.hook_in``) so one
+    declaration covers every layer. ``uncapturable`` carries the reason per base, because a point a backend cannot
+    capture must be refused by name with that reason rather than returned as a cache that is silently short.
+    """
+
+    capturable: frozenset[str]
+    uncapturable: dict[str, str]
+    n_layers: int
+    architecture: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "capturable", frozenset(self.capturable))
+        object.__setattr__(self, "uncapturable", dict(self.uncapturable))
+        overlap = self.capturable & set(self.uncapturable)
+        if overlap:
+            raise ValueError(f"a point cannot be both capturable and uncapturable: {sorted(overlap)}")
+        if not self.capturable:
+            raise ValueError("CaptureSupport must declare at least one capturable point")
+
+    @property
+    def inventory_size(self) -> int:
+        """How many base points the declaration covers, capturable or not: the denominator of the fraction."""
+        return len(self.capturable) + len(self.uncapturable)
+
+    def refusal(self, name: str) -> str | None:
+        """Why ``name`` cannot be captured here, or ``None`` when it can.
+
+        Parsed through the vocabulary: a layer beyond the model is refused as such, an SAE sub-hook is judged by the
+        point it hangs off, and a spelling outside the vocabulary is refused as unknown.
+        """
+        from interpretune.analysis.points.vocabulary import UnknownPointError, parse
+
+        try:
+            point = parse(name)
+        except UnknownPointError as exc:
+            return str(exc)
+        if point.layer is not None and point.layer >= self.n_layers:
+            return f"{name!r} names layer {point.layer}, and this model has {self.n_layers} blocks"
+        from interpretune.analysis.points.vocabulary import declaration_key
+
+        base = declaration_key(name)
+        if base in self.capturable:
+            return None
+        reason = self.uncapturable.get(base)
+        if reason is not None:
+            return f"{name!r} cannot be captured here: {reason}"
+        return (
+            f"{name!r} is not in this backend's capture declaration for {self.architecture} ({base!r} is neither "
+            "declared capturable nor declared uncapturable)"
+        )
+
+    def can_capture(self, name: str) -> bool:
+        """Whether ``name`` is capturable here."""
+        return self.refusal(name) is None
+
+    def describe(self) -> str:
+        """One line for a report: the fraction and the gaps by name."""
+        gaps = ", ".join(sorted(self.uncapturable)) or "-"
+        return (
+            f"captures {len(self.capturable)} of {self.inventory_size} base points on {self.architecture} "
+            f"({self.n_layers} blocks); cannot capture: {gaps}"
+        )
+
+
 class AnalysisBackendCapability(Enum):
     """Capabilities exposed by analysis adapters/backends rather than model execution backends."""
 
@@ -158,6 +229,9 @@ class ModuleCapabilities:
     analysis: frozenset[AnalysisBackendCapability]
     intervention: InterventionSupport | None = None
     latent_models: LatentModelSupport | None = None
+    capture: CaptureSupport | None = None
+    """What the attached model backend declares it can capture on this module's model; ``None`` only when no model
+    backend is attached or the backend predates the declaration (a conformance case fails the latter by name)."""
 
     def __post_init__(self) -> None:
         for capability, record, name in (
@@ -353,7 +427,23 @@ def get_module_capabilities(module: Any) -> ModuleCapabilities:
         latent_models=_support_record(
             backend, BackendCapability.LATENT_MODELS, model_capabilities, "latent_model_support"
         ),
+        capture=_capture_record(backend, module),
     )
+
+
+def _capture_record(backend: Any, module: Any) -> CaptureSupport | None:
+    """The backend's capture declaration for ``module.model``, or ``None`` when the backend has none to give.
+
+    Capturability is a property of the backend AND the model it wraps (a TransformerLens backend captures different
+    points on a bridge than on a HookedTransformer), so the declaration is a method taking the model rather than a
+    property. A backend without the method is not refused here, because this aggregation feeds the adapter card and
+    ``adapter_info`` on a bare install; the conformance suite is where its absence fails by name.
+    """
+    declare = getattr(backend, "capture_support", None) if backend is not None else None
+    model = getattr(module, "model", None)
+    if declare is None or model is None:
+        return None
+    return declare(model)
 
 
 def _support_record(backend: Any, capability: BackendCapability, declared: set[BackendCapability], attr: str) -> Any:

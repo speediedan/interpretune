@@ -56,10 +56,20 @@ def pytest_runtest_makereport(item, call):
         selection.record(item.name, "skipped-undeclared" if UNDECLARED in reason else "skipped-other")
 
 
+def collected_any_case(selection: SelectionReport) -> bool:
+    """Whether this run had a conformance case in scope at all.
+
+    The report and the vacuity guards are meaningless for a run that collected no case (a targeted run of an unrelated
+    file, `-k` selecting ordinary tests): printing "no conformance case ran" there asserts something false about the run
+    and trains the reader to skip the marker, which is how a real vacuity then reads as noise.
+    """
+    return bool(selection.ran or selection.skipped_undeclared or selection.skipped_other or selection.failed)
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    """Print the selection report and any vacuity problem after the summary."""
+    """Print the selection report and any vacuity problem after the summary, for a run that had cases in scope."""
     selection = config.stash.get(_REPORT_KEY, None)
-    if selection is None:
+    if selection is None or not collected_any_case(selection):
         return
     terminalreporter.write_sep("-", "conformance")
     terminalreporter.write_line(selection.render())
@@ -73,7 +83,7 @@ def pytest_sessionfinish(session, exitstatus):
     selection = session.config.stash.get(_REPORT_KEY, None)
     if selection is None:
         return
-    if not (selection.ran or selection.skipped_undeclared or selection.skipped_other or selection.failed):
+    if not collected_any_case(selection):
         return  # no conformance cases were collected at all: this run was not a conformance run
     if vacuity_problems(selection, strict=os.getenv(STRICT_ENV, "0") == "1") and exitstatus == 0:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED

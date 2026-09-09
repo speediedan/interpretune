@@ -12,6 +12,7 @@ import pytest
 from interpretune.testing.conformance import ConformanceTarget, ModelBackendConformance, OpCollectionConformance
 from interpretune.testing.conformance.inputs import CAPTURE_LAYER, ConformanceInputs
 from interpretune.utils.import_utils import package_available
+from tests.runif import RunIf
 
 pytest_plugins = ["interpretune.testing.conformance.plugin"]
 
@@ -38,6 +39,53 @@ class TestConceptCollectionOnBridge(OpCollectionConformance):
         composition=("core", "sae_lens"), forward_family="hf_native", datamodule_flavour="bridge"
     )
     collection = "concept"
+
+
+GEMMA3_ATTRIBUTION_PROMPT = "<bos><start_of_turn>user\nThe National Digital Analytics Group (ND"
+
+
+def _gemma3_circuit_tracer(inputs):
+    """The seed's gemma-3-1b-it circuit-tracer config (nnsight backend), with the intervention settings the
+    analysis-backend cases assume: value from the top feature's activation, sign-aware scale, every layer
+    constrained, no activation function on the intervened value."""
+
+    def _settings(_dm_cfg, it_cfg):
+        ct = it_cfg.circuit_tracer_cfg
+        ct.analysis_target_tokens = None
+        ct.target_token_ids = None
+        ct.max_feature_nodes = None
+        ct.offload = None
+        ct.intervention_value_source = "top_feature_activation_values"
+        ct.intervention_scale_factor = inputs.attribution_scale_factor
+        ct.intervention_max_influence_norm_scale = False
+        ct.intervention_sign_aware_scale = True
+        ct.intervention_apply_activation_function = False
+        ct.intervention_freeze_attention = None
+        ct.intervention_sparse = False
+
+    return inputs.session_cfg(("core", "nnsight", "circuit_tracer"), flavour="circuit_tracer", prepare=_settings)
+
+
+@RunIf(min_cuda_gpus=1)
+class TestCircuitTracerConformance(ModelBackendConformance):
+    """circuit-tracer over the nnsight backend on gemma-3-1b-it: the analysis-backend gates' first consumer.
+
+    Marked at the class: its cases are inherited, so the class is the only place the mark can go, and the phase
+    selector reads class-level marks for exactly this reason. The model backend cases run too, on a model the
+    suite carries no latent model for, so the latent cases skip with that reason.
+    """
+
+    target = ConformanceTarget(
+        composition=("core", "nnsight", "circuit_tracer"),
+        session_cfg_factory=_gemma3_circuit_tracer,
+        forward_family="hf_native",
+        datamodule_flavour="circuit_tracer",
+    )
+    inputs = ConformanceInputs(
+        model_id="google/gemma-3-1b-it",
+        device_type="cuda",
+        attribution_prompt=GEMMA3_ATTRIBUTION_PROMPT,
+    )
 
 
 def _legacy_hooked_transformer(inputs):
