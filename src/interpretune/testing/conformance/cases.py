@@ -137,28 +137,35 @@ def _attribution_failure_context(suite, exc: BaseException) -> str:
             lines.append(
                 f"  attention_interface_0 nested nodes: {[n for n in dir(attn.source) if not n.startswith('_')]}"
             )
-        # the function the op is bound to, and the registry entry it came from: a wrapper installed by an earlier
-        # test in the same process parses to a different node set than the eager function itself
+        # the function the attention op binds to for the model's configured implementation: under eager the
+        # selector returns the modeling module's own function, whose source is what the nested accessor parses,
+        # so its identity and its source's dropout count are the parsed node set's provenance
         try:
+            import inspect
+
             from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 
-            eager = ALL_ATTENTION_FUNCTIONS["eager"]
-            where = f"{getattr(eager, '__module__', '?')}.{getattr(eager, '__qualname__', '?')}"
-            # names survive functools.wraps and __wrapped__ misses a hand-rolled wrapper; identity against the
-            # function imported from its defining module is what tells pristine from either kind of wrapper
-            try:
-                from transformers.integrations.sdpa_attention import sdpa_attention_forward  # noqa: F401
-                from transformers.models.gemma3.modeling_gemma3 import eager_attention_forward as pristine
-
-                same = eager is pristine
-            except Exception:
-                same = "unknown (no pristine reference importable)"
-            lines.append(
-                f"  ALL_ATTENTION_FUNCTIONS['eager']: {where} (wrapped={hasattr(eager, '__wrapped__')}, "
-                f"is the pristine eager function: {same})"
-            )
+            inner = rm.model if hasattr(rm, "model") else rm
+            cfg = getattr(inner, "config", None)
+            impl = getattr(cfg, "_attn_implementation", None)
+            modeling = inspect.getmodule(type(inner))
+            module_fn = getattr(modeling, "eager_attention_forward", None)
+            bound = ALL_ATTENTION_FUNCTIONS.get_interface(impl, module_fn) if module_fn is not None else None
+            for label, fn in (("modeling.eager_attention_forward", module_fn), ("selected interface", bound)):
+                if fn is None:
+                    lines.append(f"  {label}: None")
+                    continue
+                unwrapped = inspect.unwrap(fn)
+                try:
+                    dropout = inspect.getsource(fn).count("dropout")
+                except (OSError, TypeError):
+                    dropout = "unreadable"
+                lines.append(
+                    f"  {label}: {getattr(fn, '__module__', '?')}.{getattr(fn, '__qualname__', '?')} "
+                    f"(is its own unwrap: {unwrapped is fn}; source mentions dropout: {dropout}; config impl {impl!r})"
+                )
         except Exception as reg_exc:
-            lines.append(f"  (attention registry probe failed: {type(reg_exc).__name__})")
+            lines.append(f"  (attention function probe failed: {type(reg_exc).__name__}: {str(reg_exc)[:100]})")
     except Exception as probe_exc:  # the probe must not hide the original failure
         lines.append(f"  (node probe failed: {type(probe_exc).__name__}: {str(probe_exc)[:120]})")
     return "\n".join(lines)
