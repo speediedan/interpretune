@@ -92,6 +92,13 @@ class TestCaptureSupport:
     def test_a_spelling_outside_the_vocabulary_is_refused_as_unknown(self):
         assert _record().refusal("blocks.5.attn.hook_pattern_weird") is not None
 
+    def test_a_point_the_architecture_does_not_define_is_refused_as_the_architectures_fact(self):
+        """A cross-attention point on a decoder parses but resolves to no tensor: the record must not present that as
+        a gap in the backend's declaration, which decides every inventory point and so has no gaps."""
+        why = _record().refusal("blocks.5.hook_cross_attn_out")
+        assert why is not None and "not defined on GPT2LMHeadModel" in why and "resolver's refusal" in why
+        assert "neither declared" not in why
+
     def test_a_point_cannot_be_both(self):
         with pytest.raises(ValueError, match="both capturable and uncapturable"):
             _record(uncapturable={"hook_in": "x", "mlp.hook_out": "y"})

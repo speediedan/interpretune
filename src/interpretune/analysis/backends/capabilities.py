@@ -196,7 +196,9 @@ class CaptureSupport:
         """Why ``name`` cannot be captured here, or ``None`` when it can.
 
         Parsed through the vocabulary: a layer beyond the model is refused as such, an SAE sub-hook is judged by the
-        point it hangs off, and a spelling outside the vocabulary is refused as unknown.
+        point it hangs off, a spelling outside the vocabulary is refused as unknown, and a vocabulary point the
+        architecture does not define is refused as the architecture's fact rather than the backend's, since the
+        declaration decides every point of the inventory and so cannot be silent about one.
         """
         from interpretune.analysis.points.vocabulary import UnknownPointError, parse
 
@@ -214,9 +216,13 @@ class CaptureSupport:
         reason = self.uncapturable.get(base)
         if reason is not None:
             return f"{name!r} cannot be captured here: {reason}"
+        # A declaration decides every point of the architecture's inventory, so a base that is in neither set is not
+        # a gap in the declaration: the architecture defines no such point. That is the resolver's refusal, an
+        # architecture-scoped fact, and the record says so rather than presenting a backend gap it does not have.
         return (
-            f"{name!r} is not in this backend's capture declaration for {self.architecture} ({base!r} is neither "
-            "declared capturable nor declared uncapturable)"
+            f"{name!r} is not defined on {self.architecture}: the vocabulary resolves {base!r} to no tensor position"
+            " in this architecture, so no backend could capture it; this is the resolver's refusal, not a gap in the"
+            " backend's capture declaration"
         )
 
     def can_capture(self, name: str) -> bool:
