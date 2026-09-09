@@ -275,12 +275,18 @@ _BLOCK_RANK = {
     "ln1": 1,
     "attn": 2,
     "hook_attn_out": 2,
-    "hook_resid_mid": 3,
-    "ln2": 3,
-    "mlp": 4,
-    "hook_mlp_out": 4,
-    "hook_out": 5,
-    "hook_resid_post": 5,
+    # sandwich-norm architectures (Gemma 2 and 3) apply a post-norm after each sublayer; unranked, `ln1_post`
+    # sorted after the MLP and a declared MLP input was read after execution had finished
+    "ln1_post": 3,
+    "cross_attn": 4,
+    "hook_cross_attn_out": 4,
+    "hook_resid_mid": 5,
+    "ln2": 5,
+    "mlp": 6,
+    "hook_mlp_out": 6,
+    "ln2_post": 7,
+    "hook_out": 8,
+    "hook_resid_post": 8,
 }
 
 
@@ -317,7 +323,7 @@ def _forward_order(hook_names: Any, resolver: HookNameResolver) -> list[str]:
             within = -1 if is_input else 10**3
         else:
             within = _CHILD_RANK.get(children[0], 5) * 2 + (0 if is_input else 1)
-        return (layer, _BLOCK_RANK.get(head, _BLOCK_RANK.get(base, 5)), within, name)
+        return (layer, _BLOCK_RANK.get(head, _BLOCK_RANK.get(base, 8)), within, name)
 
     return sorted(hook_names, key=key)
 

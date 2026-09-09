@@ -988,6 +988,16 @@ class ModelBackendConformance:
         result = self._graph(suite)
         backend = require_analysis_backend(suite.module)
         graph = backend.hydrate_graph_from_batch(result)
+        # The graph is a linear model of an intervention only when every layer is constrained (downstream features
+        # frozen at their baseline rather than re-activated nonlinearly), so the case states that requirement on
+        # the module's settings rather than assuming the target set it: measured unconstrained on gemma-3-1b-it, the
+        # active features moved off the edges by up to 126 where the edges predicted under 1e-3.
+        support = suite.capabilities.capture
+        n_layers = support.n_layers if support is not None else None
+        ct_cfg = getattr(suite.module, "circuit_tracer_cfg", None)
+        if ct_cfg is not None and n_layers is not None:
+            ct_cfg.intervention_constrained_layers = list(range(n_layers))
+            ct_cfg.intervention_apply_activation_function = False
         influence = it.graph_node_influence(suite.module, result, batch=None, batch_idx=0)
         payload = dict(result)
         payload.update(dict(influence))
