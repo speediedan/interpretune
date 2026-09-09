@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import torch
 
@@ -156,7 +156,8 @@ def _normalize_hooks(
     for selector, fn in hooks:
         if callable(selector):
             # a predicate selector has the spelling gap a callable names_filter has; same wrapper, no re-keying
-            resolved.append((_wrap_callable_filter(model, selector, latent_model_handles)[0], fn))
+            predicate = cast(Callable[[str], bool], selector)
+            resolved.append((_wrap_callable_filter(model, predicate, latent_model_handles)[0], fn))
             continue
         if available is None:
             available = _build_available_hook_map(model, latent_model_handles=latent_model_handles)

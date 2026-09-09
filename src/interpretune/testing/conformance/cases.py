@@ -7,7 +7,7 @@ exception.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import pytest
 import torch
@@ -767,8 +767,9 @@ class ModelBackendConformance:
         positions = torch.as_tensor(store.answer_indices[index]).reshape(-1)
         answer_logits = logits[torch.arange(logits.shape[0]), positions]
         batch = AnalysisBatch(label_ids=store.label_ids[index], orig_labels=store.orig_labels[index])
+        # typed for the module's analysis-batch protocol; a bare AnalysisBatch carries the two fields it reads
         _loss, logit_diffs, _preds, _ = get_loss_preds_diffs(
-            suite.module, batch, answer_logits, boolean_logits_to_avg_logit_diff
+            suite.module, cast(Any, batch), answer_logits, boolean_logits_to_avg_logit_diff
         )
         return float(logit_diffs.sum())
 
