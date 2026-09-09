@@ -1075,26 +1075,29 @@ if _FTS_AVAILABLE:
             - b_in -> mlp.in.bias
             - etc.
             """
-            if param_name == "W_in":
-                comp = getattr(mlp, "in", None) or getattr(mlp, "input", None)
-                return getattr(comp, "weight", None) if comp else None
-            elif param_name == "b_in":
-                comp = getattr(mlp, "in", None) or getattr(mlp, "input", None)
-                return getattr(comp, "bias", None) if comp else None
-            elif param_name == "W_out":
-                comp = getattr(mlp, "out", None)
-                return getattr(comp, "weight", None) if comp else None
-            elif param_name == "b_out":
-                comp = getattr(mlp, "out", None)
-                return getattr(comp, "bias", None) if comp else None
-            elif param_name == "W_gate":
-                comp = getattr(mlp, "gate", None)
-                return getattr(comp, "weight", None) if comp else None
-            elif param_name == "b_gate":
-                comp = getattr(mlp, "gate", None)
-                return getattr(comp, "bias", None) if comp else None
 
-            return None
+            # a module is never truth-tested here: a container is falsy when empty and a delegating wrapper can raise
+            # on `len()`, so `or` and `if comp` both fall through a real component; `is not None` is the only test
+            def _first(*names: str) -> Any:
+                for name in names:
+                    found = getattr(mlp, name, None)
+                    if found is not None:
+                        return found
+                return None
+
+            components = {
+                "W_in": ("weight", ("in", "input")),
+                "b_in": ("bias", ("in", "input")),
+                "W_out": ("weight", ("out",)),
+                "b_out": ("bias", ("out",)),
+                "W_gate": ("weight", ("gate",)),
+                "b_gate": ("bias", ("gate",)),
+            }
+            if param_name not in components:
+                return None
+            attr, names = components[param_name]
+            comp = _first(*names)
+            return getattr(comp, attr, None) if comp is not None else None
 
         def _get_ln_component_tensor(self, ln: Any, param_name: str) -> torch.Tensor | None:
             """Get LayerNorm/RMSNorm component tensor.

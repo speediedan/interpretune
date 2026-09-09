@@ -262,7 +262,11 @@ def _infer_num_layers(model: Any) -> int:
         getattr(getattr(hf_model, "language_model", None), "model", None),
     ]
     for candidate in candidate_modules:
-        layers = getattr(candidate, "layers", None) or getattr(candidate, "h", None)
+        # `is not None`, never `or`: a torch container is falsy when empty and an nnsight Envoy raises on `len()`,
+        # so a truth-test on a module either falls through a real submodule or throws
+        layers = getattr(candidate, "layers", None)
+        if layers is None:
+            layers = getattr(candidate, "h", None)
         if layers is not None:
             return int(len(layers))
     raise ValueError("Unable to infer model layer count for NNsight activation caching")
