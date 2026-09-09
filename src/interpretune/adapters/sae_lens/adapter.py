@@ -141,7 +141,7 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
     This mixin is composed with BaseSAELensModule and BaseITLensModule when using the TransformerLens backend to
     provide _convert_hf_to_tl, tl_config_model_init, and TLModelBackend initialization.
 
-    Supports model wrapper selection via ``it_cfg.use_bridge``:
+    Supports model wrapper selection via ``it_cfg.tl_cfg.use_bridge``:
     - ``True`` (default) → ``SAETransformerBridge`` (memory-efficient)
     - ``False`` → ``HookedSAETransformer.from_pretrained()``
     """
@@ -167,9 +167,8 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
         return f"{sae_handle.cfg.metadata.hook_name}.{internal}"
 
     def _convert_hf_to_tl(self) -> None:
-        """Convert HF model to SAETransformerBridge or HookedSAETransformer based on use_bridge config."""
-        use_bridge = getattr(self.it_cfg, "use_bridge", True)
-        if use_bridge:
+        """Convert HF model to SAETransformerBridge or HookedSAETransformer, as ``tl_cfg.use_bridge`` decides."""
+        if self.it_cfg.tl_cfg.use_bridge:  # type: ignore[attr-defined]  # the TL backend requires a tl_cfg
             self._convert_hf_to_bridge()
         else:
             self._convert_hf_to_hooked()

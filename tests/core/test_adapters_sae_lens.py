@@ -523,18 +523,9 @@ class TestBridgeSAEBackend:
             release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre", device="cpu"
         )
         bridge_cfg = ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left")
-        it_cfg = SAELensConfig(backend="transformerlens", tl_cfg=bridge_cfg, sae_cfgs=sae_cfg, use_bridge=True)
+        it_cfg = SAELensConfig(backend="transformerlens", tl_cfg=bridge_cfg, sae_cfgs=sae_cfg)
         assert it_cfg.backend == "transformerlens"
         assert isinstance(it_cfg.tl_cfg, ITLensBridgeConfig)
-
-    def test_use_bridge_with_from_pretrained_cfg_warns(self):
-        """Verify warning when use_bridge=True but tl_cfg is ITLensFromPretrainedConfig."""
-        sae_cfg = SAELensFromPretrainedConfig(
-            release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre", device="cpu"
-        )
-        tl_cfg = ITLensFromPretrainedConfig(model_name="gpt2-small", use_bridge=False)
-        with pytest.warns(UserWarning, match=r"use_bridge=True but tl_cfg is an ITLensFromPretrainedConfig"):
-            SAELensConfig(backend="transformerlens", tl_cfg=tl_cfg, sae_cfgs=sae_cfg, use_bridge=True)
 
     def test_bridge_module_model_type(self, sl_br_gpt2_module):
         """Verify Bridge SAE module wraps an SAETransformerBridge."""
@@ -705,3 +696,17 @@ class TestLatentModelHandleLifecycle:
             assert len(model.acts_to_saes) == 0
         baseline_post = backend.fwd(model, batch)
         assert torch.allclose(baseline_pre, baseline_post)
+
+
+class TestOneBridgeFlag:
+    def test_the_sae_lens_config_carries_no_use_bridge_of_its_own(self):
+        """``tl_cfg.use_bridge`` is the one flag; a second on this config was the one the adapter read while every
+        example set the other, so a weight-converted target ran as a bridge.
+
+        Construction with the retired name is refused rather than accepted and ignored.
+        """
+        from interpretune.adapters.sae_lens.config import SAELensConfig
+
+        assert "use_bridge" not in SAELensConfig.__dataclass_fields__
+        with pytest.raises(TypeError, match="use_bridge"):
+            SAELensConfig(use_bridge=False)  # type: ignore[call-arg]

@@ -95,14 +95,13 @@ class TestCircuitTracerConformance(ModelBackendConformance):
 def _legacy_hooked_transformer(inputs):
     """The bridge seed's session config with the weight-converted HookedTransformer instead of the bridge.
 
-    Both flags are set because two exist: the sae_lens module config carries its own ``use_bridge`` and the
-    adapter reads that one when latent models are composed, so setting only ``tl_cfg.use_bridge`` built a bridge
-    under this target's weight-converted label for as long as nothing checked the class.
+    One flag decides the wrapper, ``tl_cfg.use_bridge``, and the family case below checks the class it produced: this
+    target once ran as a bridge under its weight-converted label because a second flag on the sae_lens module config
+    was the one the adapter read.
     """
 
     def _no_bridge(_dm_cfg, it_cfg):
         it_cfg.tl_cfg.use_bridge = False
-        it_cfg.use_bridge = False
 
     return inputs.session_cfg(("core", "sae_lens"), flavour="bridge", prepare=_no_bridge)
 

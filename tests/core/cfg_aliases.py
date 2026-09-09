@@ -624,7 +624,6 @@ class CoreSLHTGPT2(BaseCfg):
     phase: str | None = "test"
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
-    use_bridge: bool = False  # Explicitly use legacy HookedSAETransformer path
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
             model_name="gpt2-small", default_padding_side="left", use_bridge=False
@@ -690,7 +689,6 @@ class CoreSLHTGPT2Analysis(AnalysisBaseCfg):
     phase: str | None = "analysis"
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
-    use_bridge: bool = False  # Explicitly use legacy HookedSAETransformer path
     generative_step_cfg: GenerativeClassificationConfig = field(
         default_factory=lambda: GenerativeClassificationConfig(
             enabled=True,
@@ -882,7 +880,6 @@ class CoreSLBridgeGPT2Analysis(AnalysisBaseCfg):
     phase: str | None = "analysis"
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
-    use_bridge: bool = True
     generative_step_cfg: GenerativeClassificationConfig = field(
         default_factory=lambda: GenerativeClassificationConfig(
             enabled=True,
@@ -981,7 +978,6 @@ class CoreSLCust(BaseCfg):
 class LightningSLHTGPT2(BaseCfg):
     phase: str | None = "test"
     model_src_key: str | None = "gpt2"
-    use_bridge: bool = False
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.sae_lens)
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(

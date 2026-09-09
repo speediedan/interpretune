@@ -30,7 +30,6 @@ w_l_tl = {"adapter_ctx": (Adapter.lightning, Adapter.transformer_lens)}
 # Lightning + SAE lens using legacy HookedTransformer path
 w_l_sl = {
     "adapter_ctx": (Adapter.lightning, Adapter.sae_lens),
-    "use_bridge": False,
     "tl_cfg": ITLensFromPretrainedConfig(use_bridge=False),
 }
 # NNsight adapter contexts
