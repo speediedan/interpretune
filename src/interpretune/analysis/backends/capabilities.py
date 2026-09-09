@@ -164,10 +164,32 @@ class CaptureSupport:
             raise ValueError(f"a point cannot be both capturable and uncapturable: {sorted(overlap)}")
         if not self.capturable:
             raise ValueError("CaptureSupport must declare at least one capturable point")
+        # A declaration decides EVERY point of the architecture's inventory, or it is refused by name. Otherwise the
+        # fraction it reports is self-referential (a record that omits points shrinks its own denominator, so
+        # omission reads as completeness), and the understating direction is the one no capture case catches: an
+        # omitted point is neither captured nor refused, only unknown.
+        from interpretune.analysis.points import component_map_for
+        from interpretune.analysis.points.inventory import inventory
+
+        expected = set(inventory(component_map_for(self.architecture)))
+        declared = self.capturable | set(self.uncapturable)
+        undecided = sorted(expected - declared)
+        if undecided:
+            raise ValueError(
+                f"the capture declaration for {self.architecture} decides {len(declared)} of {len(expected)} inventory "
+                f"points; undecided (declare each capturable or uncapturable with a reason): {undecided}"
+            )
+        foreign = sorted(declared - expected)
+        if foreign:
+            raise ValueError(
+                f"the capture declaration for {self.architecture} names points outside the architecture's inventory: "
+                f"{foreign}"
+            )
 
     @property
     def inventory_size(self) -> int:
-        """How many base points the declaration covers, capturable or not: the denominator of the fraction."""
+        """How many base points the architecture's inventory has: the denominator, equal to the declaration's size
+        by the construction invariant above."""
         return len(self.capturable) + len(self.uncapturable)
 
     def refusal(self, name: str) -> str | None:

@@ -45,29 +45,17 @@ class TestInventory:
 
 
 def _record(**kw) -> CaptureSupport:
+    """A declaration over gpt2's real inventory: everything capturable but one declared gap."""
+    bases = set(inventory(component_map_for("GPT2LMHeadModel")))
+    gap = "mlp.hook_out"
     base = dict(
-        capturable={"hook_in", "hook_out", "ln2.hook_out", "unembed.hook_in"},
-        uncapturable={
-            "mlp.hook_out": "the legacy grammar spells this hook_mlp_out, a different tensor on a sandwich-norm model"
-        },
+        capturable=bases - {gap},
+        uncapturable={gap: "the legacy grammar spells this hook_mlp_out, a different tensor on a sandwich-norm model"},
         n_layers=12,
         architecture="GPT2LMHeadModel",
     )
     base.update(kw)
     return CaptureSupport(**base)
-
-
-class TestDeclarationKey:
-    def test_semantic_names_for_one_tensor_share_the_component_key(self):
-        from interpretune.analysis.points.vocabulary import declaration_key
-
-        assert declaration_key("blocks.0.hook_resid_pre") == declaration_key("blocks.0.hook_in") == "hook_in"
-        assert declaration_key("blocks.3.hook_attn_in") == "ln1.hook_in"
-
-    def test_a_contribution_keeps_its_own_key(self):
-        from interpretune.analysis.points.vocabulary import declaration_key
-
-        assert declaration_key("blocks.0.hook_mlp_out") == "hook_mlp_out" != declaration_key("blocks.0.mlp.hook_out")
 
 
 class TestCaptureSupport:
@@ -85,16 +73,28 @@ class TestCaptureSupport:
         why = _record().refusal("blocks.12.hook_in")
         assert why is not None and "layer 12" in why and "12 blocks" in why
 
-    def test_an_undeclared_point_is_refused_as_undeclared_not_guessed(self):
-        why = _record().refusal("blocks.5.attn.hook_out")
-        assert why is not None and "neither declared capturable nor declared uncapturable" in why
+    def test_a_declaration_must_decide_every_inventory_point(self):
+        """The understating direction: a record that omits points would shrink its own denominator, so omission
+        read as completeness ("captures 20 of 20") until this refusal existed."""
+        bases = set(inventory(component_map_for("GPT2LMHeadModel")))
+        with pytest.raises(ValueError, match=r"decides 29 of 30 inventory points; undecided .*'unembed.hook_out'"):
+            CaptureSupport(
+                capturable=bases - {"unembed.hook_out"}, uncapturable={}, n_layers=12, architecture="GPT2LMHeadModel"
+            )
+
+    def test_a_declaration_cannot_name_points_outside_the_inventory(self):
+        bases = set(inventory(component_map_for("GPT2LMHeadModel")))
+        with pytest.raises(ValueError, match="outside the architecture's inventory: \\['vision.hook_in'\\]"):
+            CaptureSupport(
+                capturable=bases | {"vision.hook_in"}, uncapturable={}, n_layers=12, architecture="GPT2LMHeadModel"
+            )
 
     def test_a_spelling_outside_the_vocabulary_is_refused_as_unknown(self):
         assert _record().refusal("blocks.5.attn.hook_pattern_weird") is not None
 
     def test_a_point_cannot_be_both(self):
         with pytest.raises(ValueError, match="both capturable and uncapturable"):
-            _record(uncapturable={"hook_in": "x"})
+            _record(uncapturable={"hook_in": "x", "mlp.hook_out": "y"})
 
     def test_an_empty_declaration_is_refused(self):
         with pytest.raises(ValueError, match="at least one capturable point"):
@@ -102,4 +102,4 @@ class TestCaptureSupport:
 
     def test_describe_carries_the_fraction_and_the_gaps_by_name(self):
         text = _record().describe()
-        assert "captures 4 of 5 base points on GPT2LMHeadModel (12 blocks)" in text and "mlp.hook_out" in text
+        assert "captures 29 of 30 base points on GPT2LMHeadModel (12 blocks)" in text and "mlp.hook_out" in text
