@@ -113,7 +113,13 @@ def _captured_under(captured: dict[str, torch.Tensor], name: str, cmap: Any) -> 
 
 
 def _attribution_failure_context(suite, exc: BaseException) -> str:
-    """What the two model handles are bound to, for a graph op that failed inside the analysis backend."""
+    """What the two model handles are bound to, for a graph op that failed inside the analysis backend.
+
+    Three probes, each on its own so one failing does not hide the others: the handles and their configured attention
+    implementation; the provenance of the attention function the modeling module binds at its call site, since that is
+    the source nnsight's recursive tracing parses, and a wrapper installed there by another library is what circuit-
+    tracer's attention-pattern location fails on; and the layer-0 attention source nodes.
+    """
     lines = [f"attribution graph op failed: {type(exc).__name__}: {str(exc).splitlines()[-1][:200]}"]
     module = suite.module
     for label in ("model", "replacement_model"):
@@ -127,45 +133,38 @@ def _attribution_failure_context(suite, exc: BaseException) -> str:
             f"  module.{label}: {type(handle).__name__} (inner {type(inner).__name__}), attn_implementation="
             f"{impl!r}, training={getattr(inner, 'training', None)}"
         )
-    rm = getattr(module, "replacement_model", None)
+    rm: Any = getattr(module, "replacement_model", None)
+    try:
+        import inspect
+
+        from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+        inner = rm.model if hasattr(rm, "model") else rm
+        cfg = getattr(inner, "config", None)
+        impl = getattr(cfg, "_attn_implementation", None)
+        modeling = inspect.getmodule(type(inner))
+        module_fn = getattr(modeling, "eager_attention_forward", None)
+        bound = ALL_ATTENTION_FUNCTIONS.get_interface(str(impl), module_fn) if module_fn is not None else None
+        for label, fn in (("modeling.eager_attention_forward", module_fn), ("selected interface", bound)):
+            if fn is None:
+                lines.append(f"  {label}: None")
+                continue
+            try:
+                dropout = inspect.getsource(fn).count("dropout(")
+            except (OSError, TypeError):
+                dropout = "unreadable"
+            own = modeling is not None and getattr(fn, "__module__", None) == modeling.__name__
+            lines.append(
+                f"  {label}: {getattr(fn, '__module__', '?')}.{getattr(fn, '__qualname__', '?')} (the modeling"
+                f" module's own: {own}; has __wrapped__: {hasattr(fn, '__wrapped__')}; dropout calls in source:"
+                f" {dropout}; config impl {impl!r})"
+            )
+    except Exception as fn_exc:
+        lines.append(f"  (attention function probe failed: {type(fn_exc).__name__}: {str(fn_exc)[:100]})")
     try:
         layer0 = rm.model.layers[0].self_attn  # the path circuit-tracer's attention pattern starts from
         names = [n for n in dir(layer0.source) if not n.startswith("_")]
         lines.append(f"  replacement_model layer 0 self_attn source nodes: {names}")
-        attn = getattr(layer0.source, "attention_interface_0", None)
-        if attn is not None:
-            lines.append(
-                f"  attention_interface_0 nested nodes: {[n for n in dir(attn.source) if not n.startswith('_')]}"
-            )
-        # the function the attention op binds to for the model's configured implementation: under eager the
-        # selector returns the modeling module's own function, whose source is what the nested accessor parses,
-        # so its identity and its source's dropout count are the parsed node set's provenance
-        try:
-            import inspect
-
-            from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
-
-            inner = rm.model if hasattr(rm, "model") else rm
-            cfg = getattr(inner, "config", None)
-            impl = getattr(cfg, "_attn_implementation", None)
-            modeling = inspect.getmodule(type(inner))
-            module_fn = getattr(modeling, "eager_attention_forward", None)
-            bound = ALL_ATTENTION_FUNCTIONS.get_interface(impl, module_fn) if module_fn is not None else None
-            for label, fn in (("modeling.eager_attention_forward", module_fn), ("selected interface", bound)):
-                if fn is None:
-                    lines.append(f"  {label}: None")
-                    continue
-                unwrapped = inspect.unwrap(fn)
-                try:
-                    dropout = inspect.getsource(fn).count("dropout")
-                except (OSError, TypeError):
-                    dropout = "unreadable"
-                lines.append(
-                    f"  {label}: {getattr(fn, '__module__', '?')}.{getattr(fn, '__qualname__', '?')} "
-                    f"(is its own unwrap: {unwrapped is fn}; source mentions dropout: {dropout}; config impl {impl!r})"
-                )
-        except Exception as reg_exc:
-            lines.append(f"  (attention function probe failed: {type(reg_exc).__name__}: {str(reg_exc)[:100]})")
     except Exception as probe_exc:  # the probe must not hide the original failure
         lines.append(f"  (node probe failed: {type(probe_exc).__name__}: {str(probe_exc)[:120]})")
     return "\n".join(lines)
