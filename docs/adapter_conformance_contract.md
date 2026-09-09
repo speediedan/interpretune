@@ -109,7 +109,10 @@ norm's derived `hook_normalized` / `hook_scale` are computed inside the module i
 legacy HookedTransformer with an SAE attached 18 of 30 (its grammar has no tensor the vocabulary equates with
 `mlp.hook_out` / `attn.hook_out`, since on a sandwich-norm architecture those are different tensors, so they stay
 unaliased and uncapturable there by those spellings, and likewise the norms' inputs and outputs), and the first
-hub backend 181 of 298 named points. The value cases run over the suite's capture points the declaration admits; a target that cannot capture a
+hub backend 181 of 298 named points. The record is valid for one model instance as it stands when asked (the
+legacy wrapper declares more with a latent model attached than bare), which is why the backend provides it as a
+method taking the model and `get_module_capabilities` recomputes it on every call; a consumer that caches one must
+re-query after attaching or removing a latent model. The value cases run over the suite's capture points the declaration admits; a target that cannot capture a
 point says so through its record rather than through a per-target override.
 
 Gate `INTERVENTION` (with `intervention_support`):

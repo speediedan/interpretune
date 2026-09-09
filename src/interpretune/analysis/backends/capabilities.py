@@ -142,6 +142,13 @@ class CaptureSupport:
     vocabulary's layer-free base spellings (``ln2.hook_out``, ``hook_resid_pre``, ``unembed.hook_in``) so one
     declaration covers every layer. ``uncapturable`` carries the reason per base, because a point a backend cannot
     capture must be refused by name with that reason rather than returned as a cache that is silently short.
+
+    **Valid for one model instance as it stands when asked.** The record is derived from the backend AND the model
+    it wraps, and a wrapper's hooks change with what is attached to it (a HookedSAETransformer with a latent model
+    attached exposes points the bare HookedTransformer does not), so a backend provides ``capture_support(model)``
+    as a method rather than a property, ``get_module_capabilities`` recomputes it on every call, and a consumer that
+    caches one must re-query after attaching or removing a latent model or swapping the wrapper. A cached record is
+    the declaration-versus-delivery gap one level out.
     """
 
     capturable: frozenset[str]
