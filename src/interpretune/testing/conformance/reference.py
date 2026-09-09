@@ -133,24 +133,46 @@ class HFReference:
         it is trusted on any backend. ``edit`` receives the selected region (``[batch, d]`` for last-token,
         ``[batch, pos, d]`` for all positions) and returns the edited region.
         """
-        resolved = self.resolve(point)
-        module = self.model.get_submodule(resolved.module_path)
+        return self.steered_many(input_ids, [(point, edit, scope)], observe=observe, attention_mask=attention_mask)
 
-        def apply(tensor: torch.Tensor) -> torch.Tensor:
-            tensor = tensor.clone()
-            if scope == "last_token":
-                tensor[:, -1, ...] = edit(tensor[:, -1, ...])
-            elif scope == "all_positions":
-                tensor = edit(tensor)
-            else:
-                raise ValueError(f"unknown scope {scope!r}")
-            return tensor
+    def steered_many(
+        self,
+        input_ids: torch.Tensor,
+        edits: Sequence[tuple[str, Callable[[torch.Tensor], torch.Tensor], str]],
+        *,
+        observe: Sequence[str] = (),
+        attention_mask: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """``steered`` for several ``(point, edit, scope)`` at once, each edit under its own scope.
 
+        The reference for a payload that names two points with different scopes: a backend applying one scope to
+        both would still match a single-point reference at one of them.
+        """
         handles = []
-        if resolved.io == "input":
-            handles.append(module.register_forward_pre_hook(lambda _m, args: (apply(args[0]),) + tuple(args[1:])))
-        else:
-            handles.append(module.register_forward_hook(lambda _m, _a, out: _rewrap(out, apply(_unwrap(out)))))
+        for point, edit, scope in edits:
+            resolved = self.resolve(point)
+            module = self.model.get_submodule(resolved.module_path)
+
+            def apply(tensor: torch.Tensor, _edit=edit, _scope=scope) -> torch.Tensor:
+                tensor = tensor.clone()
+                if _scope == "last_token":
+                    tensor[:, -1, ...] = _edit(tensor[:, -1, ...])
+                elif _scope == "all_positions":
+                    tensor = _edit(tensor)
+                else:
+                    raise ValueError(f"unknown scope {_scope!r}")
+                return tensor
+
+            if resolved.io == "input":
+                handles.append(
+                    module.register_forward_pre_hook(
+                        lambda _m, args, _apply=apply: (_apply(args[0]),) + tuple(args[1:])
+                    )
+                )
+            else:
+                handles.append(
+                    module.register_forward_hook(lambda _m, _a, out, _apply=apply: _rewrap(out, _apply(_unwrap(out))))
+                )
 
         captured: dict[str, torch.Tensor] = {}
 

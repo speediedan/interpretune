@@ -86,6 +86,19 @@ class TestGateSelection:
         )
         assert Gate(capability=BackendCapability.INTERVENTION, scope=PositionScope.LAST_TOKEN).selects(caps, family="x")
 
+    def test_a_scopes_gate_needs_every_scope_declared(self):
+        """A mixed-scope case selects only when the target declared BOTH scopes; one of two is undeclared."""
+        both = InterventionSupport(
+            position_scopes={PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS}, modes={InterventionMode.ADD}
+        )
+        g = Gate(
+            capability=BackendCapability.INTERVENTION, scopes=(PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS)
+        )
+        assert g.selects(_caps(intervention=both), family="x")
+        assert not g.selects(_caps(intervention=ADD_LAST), family="x")
+        assert not g.selects(_caps(), family="x")
+        assert g.describe() == "INTERVENTION, scopes=last_token+all_positions"
+
     def test_single_prompt_gate_reads_the_target_not_the_backend(self):
         g = Gate(single_prompt=True)
         assert g.selects(_caps(), family="x", single_prompt=True)

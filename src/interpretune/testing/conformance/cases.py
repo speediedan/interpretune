@@ -27,6 +27,7 @@ from .plugin import _REPORT_KEY
 from .inputs import ConformanceInputs, ConformanceTarget
 from .oracles import (
     expect_refusal,
+    CHANGED_ATOL,
     CONVERGENCE_ATOL,
     STEER_SCALE,
     assert_non_degenerate,
@@ -510,6 +511,308 @@ class ModelBackendConformance:
                 ref["logits"][0, -1, :],
                 what=f"batch {i}: steered last-token logits against the HF reference edit",
             )
+
+    # -- INTERVENTION: mixed scopes -------------------------------------------------------------------
+
+    @conformance_case(
+        capability=BackendCapability.INTERVENTION,
+        scopes=(PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS),
+        mode=InterventionMode.ADD,
+        family="hf_native",
+    )
+    def test_mixed_scopes_produce_the_per_scope_result(self, suite, hf):
+        """A payload naming two points under different scopes applies each point's own scope: it matches two HF
+        hooks, one per point, and differs from either point's single-scope payload.
+
+        The two edits are additive at different points, so their order does not matter and the reference applies
+        them in any order. A non-commutative mode (``replace``, ``project``) at two points on one path would make
+        the backend's application order part of the result, and this case does not claim anything about it.
+        """
+        import interpretune as it
+        from interpretune import AnalysisCfg
+
+        first = suite.inputs.intervention_point
+        second = f"blocks.{suite.inputs.capture_layer + 1}.hook_in"
+        vector = self._vector(suite)
+        payload = {
+            first: {
+                "intervention_tensor": vector,
+                "mode": "add",
+                "scale_factor": STEER_SCALE,
+                "position_scope": "last_token",
+                "use_intervention_tensor_as_basis": True,
+            },
+            second: {
+                "intervention_tensor": vector,
+                "mode": "add",
+                "scale_factor": STEER_SCALE,
+                "position_scope": "all_positions",
+                "use_intervention_tensor_as_basis": True,
+            },
+        }
+        mixed = suite.run(
+            AnalysisCfg(target_op=it.model_fwd_intervention, run_inputs={"interventions": payload}, save_tokens=True)
+        )
+        for i, post in enumerate(mixed["post_intervention_logits"]):
+            ids, mask = suite.batch_inputs(i)
+            ref = hf.steered_many(
+                ids,
+                [
+                    (first, lambda t: t + vector * STEER_SCALE, "last_token"),
+                    (second, lambda t: t + vector * STEER_SCALE, "all_positions"),
+                ],
+                attention_mask=mask,
+            )
+            _assert_close_padded(post, ref["logits"][0, -1, :], what=f"batch {i}: mixed-scope last-token logits")
+        # positive control: the mixed payload is not either single-scope payload at the first point in disguise
+        for scope in ("last_token", "all_positions"):
+            alone = self._intervene(suite, scope=scope, vector=vector)
+            same = all(
+                torch.allclose(a, b, rtol=0, atol=CONVERGENCE_ATOL)
+                for a, b in zip(alone["post_intervention_logits"], mixed["post_intervention_logits"])
+            )
+            assert not same, f"the mixed-scope payload gave the logits of a {scope!r}-only payload at {first!r}"
+
+    # -- LATENT_MODELS ------------------------------------------------------------------------------
+    #
+    # These run over `inputs.latent_models`, which the target's session config attaches. The latent model is an
+    # sae_lens handle today (`release` + `sae_id`, the activations cached under `<hook>.hook_sae_acts_post`); a
+    # backend declaring LATENT_MODELS with no handle attached fails here by name rather than skipping, because a
+    # skip would read as "undeclared" in the report and the declaration is exactly what was made.
+
+    def _latent_hook(self, suite) -> tuple[Any, str]:
+        """The first attached latent model and the point its activations are cached under."""
+        handles = list(getattr(suite.module, "sae_handles", None) or [])
+        assert handles, (
+            f"{suite.backend_name} declares LATENT_MODELS but the session attached no latent model; a target "
+            f"declaring it attaches inputs.latent_models ({[s.sae_id for s in suite.inputs.latent_models]}) in "
+            "its session config"
+        )
+        handle = handles[0]
+        return handle, f"{handle.cfg.metadata.hook_name}.hook_sae_acts_post"
+
+    def _latent_store(self, suite, op_name: str, hook: str):
+        """One memoized run of a latent composite over the attached model's activation point."""
+        import interpretune as it
+        from interpretune import AnalysisCfg
+
+        op = getattr(it, op_name)
+        return suite.run_once(f"{op_name}:{hook}", AnalysisCfg(target_op=op, names_filter=[hook], save_tokens=True))
+
+    @staticmethod
+    def _per_hook(store, column: str, index: int, hook: str):
+        """One batch's value of a per-latent-hook column, refusing an absent entry by name."""
+        row = store[column][index]
+        assert isinstance(row, dict) and hook in row, (
+            f"{column}[{index}] carries no entry for {hook!r}: {sorted(row) if isinstance(row, dict) else row!r}"
+        )
+        value = row[hook]
+        assert value is not None, (
+            f"{column}[{index}][{hook!r}] is None: the op wrote nothing for the latent model the target attached, "
+            "which is what an activation point the backend never matched looks like"
+        )
+        return value
+
+    def _latent_batch(self, suite, hook: str) -> tuple[int, torch.Tensor, list[int], int]:
+        """The batch with the most correct rows, its answer positions, its two strongest alive latents at the
+        answer position, and one dead latent; from the memoized latent run, so no case re-derives them."""
+        store = self._latent_store(suite, "logit_diffs_latent", hook)
+        best, best_rows = 0, -1
+        for i in range(len(store.logit_diffs)):
+            rows = torch.as_tensor(self._per_hook(store, "correct_activations", i, hook)).shape[0]
+            if rows > best_rows:
+                best, best_rows = i, rows
+        assert best_rows > 0, "no batch has a correct row, so no answer-position activation is available"
+        acts = torch.as_tensor(self._per_hook(store, "correct_activations", best, hook))
+        alive = {int(a) for a in self._per_hook(store, "alive_latents", best, hook)}
+        strongest = [int(j) for j in acts.abs().amax(dim=0).topk(2).indices.tolist()]
+        dead = next(j for j in range(acts.shape[-1]) if j not in alive)
+        answer_positions = torch.as_tensor(store.answer_indices[best]).reshape(-1)
+        return best, answer_positions, strongest, dead
+
+    def _hook_batch(self, suite, index: int) -> dict[str, torch.Tensor]:
+        """The runner's batch as the backend's forward takes it: model inputs only."""
+        return {k: v for k, v in suite.batches[index].items() if k != "labels"}
+
+    @staticmethod
+    def _ablate(latent: int, positions: torch.Tensor):
+        """The bundled ablation hook, bound to one latent at the answer positions: the hook signature every
+        LATENT_MODELS backend must honour, taken from the op that uses it rather than restated here."""
+        from functools import partial
+
+        from interpretune.analysis.ops.bundled.sae.sae_ops import ablate_sae_latent
+
+        return partial(ablate_sae_latent, latent_idx=latent, seq_pos=positions)
+
+    def _forward_with_hooks(self, suite, index: int, fwd_hooks: list) -> torch.Tensor:
+        """The backend's hooked forward with the attached latent models, no gradient."""
+        with torch.no_grad():
+            return suite.backend.fwd_w_hooks_and_latent_models(
+                model=suite.module.model,
+                batch=self._hook_batch(suite, index),
+                latent_model_handles=list(suite.module.sae_handles),
+                fwd_hooks=fwd_hooks,
+            )
+
+    @conformance_case(capability=BackendCapability.LATENT_MODELS)
+    def test_latent_op_stores_the_declared_schema(self, suite):
+        """`logit_diffs_latent` yields, per batch and per attached model, a non-empty alive-latent set and the
+        answer-position activations of the correct rows, `[rows, d_sae]`."""
+        handle, hook = self._latent_hook(suite)
+        store = self._latent_store(suite, "logit_diffs_latent", hook)
+        n = suite.inputs.limit_batches
+        assert len(store.logit_diffs) == n, f"{len(store.logit_diffs)} rows for {n} batches"
+        for i in range(n):
+            alive = self._per_hook(store, "alive_latents", i, hook)
+            assert len(alive) > 0, (
+                f"batch {i}: no alive latent at the answer position; the latent cases would be vacuous"
+            )
+            acts = torch.as_tensor(self._per_hook(store, "correct_activations", i, hook))
+            assert acts.ndim == 2 and acts.shape[-1] == handle.cfg.d_sae, f"batch {i}: {tuple(acts.shape)}"
+            assert torch.isfinite(acts).all(), f"batch {i}: non-finite activations"
+
+    @conformance_case(capability=BackendCapability.LATENT_MODELS)
+    def test_alive_latents_are_the_positive_latents_at_the_answer(self, suite):
+        """Internal consistency, with no reference: every latent positive in a correct row's answer-position
+        activation is in the batch's alive set, and some batch has such a latent (else the claim is vacuous)."""
+        _handle, hook = self._latent_hook(suite)
+        store = self._latent_store(suite, "logit_diffs_latent", hook)
+        checked = 0
+        for i in range(len(store.logit_diffs)):
+            alive = {int(a) for a in self._per_hook(store, "alive_latents", i, hook)}
+            acts = torch.as_tensor(self._per_hook(store, "correct_activations", i, hook))
+            positive = {int(j) for j in torch.nonzero(acts > 0)[:, -1].tolist()}
+            assert positive <= alive, f"batch {i}: {len(positive - alive)} latents positive at the answer but not alive"
+            checked += len(positive)
+        assert checked > 0, "no correct row had a positive latent, so the subset claim held vacuously"
+
+    @conformance_case(capability=BackendCapability.LATENT_MODELS)
+    def test_batched_hooks_agree_with_sequential(self, suite):
+        """`fwd_w_hooks_batched` returns, per config, what one `fwd_w_hooks_and_latent_models` call returns.
+
+        Reaches the backend directly, by design: the claim is on the method pair. `batched_hooks` says only
+        whether the backend fuses the configs into one execution, which a caller cannot observe, so the equality
+        is the contract under either declaration. Positive control: the two configs differ from each other.
+        """
+        _handle, hook = self._latent_hook(suite)
+        index, positions, (first, second), _dead = self._latent_batch(suite, hook)
+        configs = [[(hook, self._ablate(first, positions))], [(hook, self._ablate(second, positions))]]
+        with torch.no_grad():
+            batched = suite.backend.fwd_w_hooks_batched(
+                model=suite.module.model,
+                batch=self._hook_batch(suite, index),
+                latent_model_handles=list(suite.module.sae_handles),
+                hook_configs=configs,
+            )
+        assert len(batched) == len(configs), f"{len(batched)} results for {len(configs)} hook configs"
+        for k, config in enumerate(configs):
+            sequential = self._forward_with_hooks(suite, index, config)
+            torch.testing.assert_close(
+                batched[k],
+                sequential,
+                rtol=0,
+                atol=CONVERGENCE_ATOL,
+                msg=lambda detail, k=k: f"config {k}: batched and sequential logits differ\n{detail}",
+            )
+        assert not torch.allclose(batched[0], batched[1], rtol=0, atol=CONVERGENCE_ATOL), (
+            f"ablating latent {first} and latent {second} gave the same logits, so the agreement above is vacuous"
+        )
+
+    @conformance_case(capability=BackendCapability.LATENT_MODELS)
+    def test_ablating_a_dead_latent_is_identity(self, suite):
+        """Zeroing a latent that is already zero at the answer position leaves the logits unchanged, and zeroing
+        the strongest alive one moves them (positive control).
+
+        Reaches the backend directly, by design.
+        """
+        _handle, hook = self._latent_hook(suite)
+        index, positions, (strongest, _), dead = self._latent_batch(suite, hook)
+        base = self._forward_with_hooks(suite, index, [])
+        dead_run = self._forward_with_hooks(suite, index, [(hook, self._ablate(dead, positions))])
+        torch.testing.assert_close(
+            dead_run, base, rtol=0, atol=CONVERGENCE_ATOL, msg=f"ablating dead latent {dead} changed the logits"
+        )
+        alive_run = self._forward_with_hooks(suite, index, [(hook, self._ablate(strongest, positions))])
+        assert not torch.allclose(alive_run, base, rtol=0, atol=CONVERGENCE_ATOL), (
+            f"ablating the strongest alive latent {strongest} changed nothing; the edit never reached the forward"
+        )
+
+    # -- GRADIENTS ----------------------------------------------------------------------------------
+
+    @conformance_case(capability=BackendCapability.GRADIENTS)
+    def test_gradient_op_stores_the_declared_schema(self, suite):
+        """`logit_diffs_attr_grad` yields per-hook attribution values `[rows, d_sae]`, finite, zero off the alive
+        set, and non-zero somewhere (positive control)."""
+        handle, hook = self._latent_hook(suite)
+        store = self._latent_store(suite, "logit_diffs_attr_grad", hook)
+        nonzero = 0
+        for i in range(len(store.logit_diffs)):
+            attr = torch.as_tensor(self._per_hook(store, "attribution_values", i, hook))
+            rows = suite.batch_inputs(i)[0].shape[0]
+            assert attr.shape == (rows, handle.cfg.d_sae), f"batch {i}: {tuple(attr.shape)}"
+            assert torch.isfinite(attr).all(), f"batch {i}: non-finite attribution"
+            alive = {int(a) for a in self._per_hook(store, "alive_latents", i, hook)}
+            off = {int(j) for j in torch.nonzero(attr != 0)[:, 1].tolist()}
+            assert off <= alive, f"batch {i}: attribution on {len(off - alive)} latents that are not alive"
+            nonzero += len(off)
+        assert nonzero > 0, "every attribution is zero; the gradient never reached the latent activations"
+
+    def _logit_diff_sum(self, suite, store, index: int, fwd_hooks: list) -> float:
+        """The scalar the gradient op backpropagates (the summed logit difference), recomputed from a hooked
+        forward with the labels and answer positions the op itself stored."""
+        from interpretune.analysis.ops.base import AnalysisBatch
+        from interpretune.analysis.optools import boolean_logits_to_avg_logit_diff, get_loss_preds_diffs
+
+        logits = self._forward_with_hooks(suite, index, fwd_hooks)
+        positions = torch.as_tensor(store.answer_indices[index]).reshape(-1)
+        answer_logits = logits[torch.arange(logits.shape[0]), positions]
+        batch = AnalysisBatch(label_ids=store.label_ids[index], orig_labels=store.orig_labels[index])
+        _loss, logit_diffs, _preds, _ = get_loss_preds_diffs(
+            suite.module, batch, answer_logits, boolean_logits_to_avg_logit_diff
+        )
+        return float(logit_diffs.sum())
+
+    @conformance_case(capability=BackendCapability.GRADIENTS)
+    def test_gradient_predicts_a_small_perturbation_to_first_order(self, suite):
+        """Scaling the strongest latent by `1 + eps` at the answer position moves the summed logit difference by
+        `eps` times its stored attribution, to first order.
+
+        The attribution the op stores is activation times gradient, so it IS the first-order coefficient of a relative
+        perturbation. Reaches the backend directly for the perturbed forward, by design: the op path has no slot for a
+        caller's edit. The unperturbed sum is recomputed the same way and checked against the op's own logit differences
+        first, so the two paths are known to see one forward before the prediction is scored.
+        """
+        _handle, hook = self._latent_hook(suite)
+        store = self._latent_store(suite, "logit_diffs_attr_grad", hook)
+        totals = {
+            i: torch.as_tensor(self._per_hook(store, "attribution_values", i, hook)).sum(dim=0)
+            for i in range(len(store.logit_diffs))
+        }
+        index = max(totals, key=lambda i: float(totals[i].abs().max()))
+        latent = int(totals[index].abs().argmax())
+        coefficient = float(totals[index][latent])
+        assert abs(coefficient) > CHANGED_ATOL, "no latent carries a first-order effect above the noise floor"
+        positions = torch.as_tensor(store.answer_indices[index]).reshape(-1)
+
+        def scale(acts: torch.Tensor, hook: Any, *, _eps: float) -> torch.Tensor:
+            acts[torch.arange(acts.shape[0]), positions, latent] *= 1.0 + _eps
+            return acts
+
+        eps = 0.02
+        unperturbed = self._logit_diff_sum(suite, store, index, [])
+        torch.testing.assert_close(
+            torch.tensor(unperturbed),
+            torch.as_tensor(store.logit_diffs[index]).sum().to(torch.float32),
+            rtol=PADDED_RTOL,
+            atol=PADDED_ATOL,
+            msg="the recomputed logit-difference sum differs from the op's own; the two paths see different forwards",
+        )
+        perturbed = self._logit_diff_sum(suite, store, index, [(hook, lambda acts, hook: scale(acts, hook, _eps=eps))])
+        measured = perturbed - unperturbed
+        predicted = eps * coefficient
+        assert abs(measured - predicted) <= 0.1 * abs(predicted) + CONVERGENCE_ATOL, (
+            f"first-order prediction {predicted:.4e} vs measured {measured:.4e} for latent {latent} (eps={eps})"
+        )
 
     # -- single-prompt backends ----------------------------------------------------------------------
 

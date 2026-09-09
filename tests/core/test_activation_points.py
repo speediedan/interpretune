@@ -134,49 +134,6 @@ class TestResolve:
         assert isinstance(res, TensorRef) and res.io == "output" and res.module_path == cmap.module_for("mlp.in", 0)
 
 
-class TestBundledMapAgreesWithTransformerLens:
-    """The independent oracle for the bundled documents: TransformerLens' own per-architecture component mapping.
-
-    A convergence case that resolves both sides through the same resolver cannot catch a wrong row (both sides
-    move together), and the cross-backend parity module never touches the resolver. This does: every component
-    both sources carry must name the same module with the same kind.
-    """
-
-    @pytest.fixture(scope="class")
-    def tl_gpt2_map(self):
-        pytest.importorskip("transformer_lens")
-        from transformer_lens.model_bridge import TransformerBridge
-
-        from interpretune.analysis.points import from_transformer_lens
-
-        bridge = TransformerBridge.boot_transformers("gpt2", device="cpu")
-        return from_transformer_lens(bridge.adapter, "GPT2LMHeadModel")
-
-    def test_the_derived_map_carries_the_same_schema_version(self, tl_gpt2_map):
-        """The derived map uses no schema-2 key, so it declares schema 1, as the bundled GPT-2 document does; the
-        two sources stay comparable by declaring the schema of the shape they actually use."""
-        from interpretune.analysis.points.component_map import component_map_for
-
-        assert tl_gpt2_map.schema_version == component_map_for("GPT2LMHeadModel").schema_version == 1
-
-    def test_every_shared_component_names_the_same_module_and_kind(self, tl_gpt2_map):
-        bundled = component_map_for("GPT2LMHeadModel")
-        shared = sorted(set(bundled.components) & set(tl_gpt2_map.components))
-        assert len(shared) >= 10, f"too few shared components to be a meaningful check: {shared}"
-        mismatches = [
-            (k, bundled.components[k], tl_gpt2_map.components[k])
-            for k in shared
-            if bundled.components[k] != tl_gpt2_map.components[k]
-        ]
-        assert not mismatches, mismatches
-
-    def test_the_bundled_map_carries_nothing_transformer_lens_does_not(self, tl_gpt2_map):
-        """A bundled row with no TL counterpart is a row nothing independent vouches for; there should be none on
-        gpt2."""
-        extra = sorted(set(component_map_for("GPT2LMHeadModel").components) - set(tl_gpt2_map.components))
-        assert not extra, extra
-
-
 class TestResolverLayerShape:
     """The resolver refuses a layer on a global point and a missing layer on a block point.
 

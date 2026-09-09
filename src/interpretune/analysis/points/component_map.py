@@ -501,21 +501,39 @@ def known_architectures() -> list[str]:
     return sorted(_REGISTRY)
 
 
-#: TransformerLens bridge component classes -> component kinds. Unlisted classes (virtual q/k/v splits, rotary,
-#: routing) have no module of their own and are skipped: a map row must name a real module.
+#: TransformerLens bridge component classes -> component kinds, for the classes that wrap an HF module the
+#: vocabulary addresses. A component without a module of its own (a virtual q/k/v split) has no ``name`` and is
+#: skipped: a map row must name a real module.
 _TL_KINDS: dict[str, str] = {
     "EmbeddingBridge": "embed",
     "PosEmbedBridge": "embed",
     "BlockBridge": "block",
     "NormalizationBridge": "norm",
+    "RMSNormalizationBridge": "norm",
     "AttentionBridge": "attn",
     "JointQKVAttentionBridge": "attn",
+    "PositionEmbeddingsAttentionBridge": "attn",
     "JointGateUpMLPBridge": "mlp",
     "MLPBridge": "mlp",
     "GatedMLPBridge": "mlp",
     "LinearBridge": "linear",
     "UnembeddingBridge": "unembed",
 }
+
+#: Bridge classes that wrap a module the vocabulary has no point for, left out of a derived map on purpose: a
+#: rotary table carries no activation, and TransformerLens bridges a vision tower as one opaque component where
+#: the multimodal document addresses its blocks. A class in NEITHER table is refused by name rather than
+#: skipped. Skipping is how two RMSNorm-era classes were once dropped, so four bundled maps were compared with
+#: TransformerLens on seven rows of fourteen and the oracle reported agreement over the whole.
+_TL_UNADDRESSED: frozenset[str] = frozenset(
+    {
+        "RotaryEmbeddingBridge",
+        "SiglipVisionEncoderBridge",
+        "SiglipVisionEncoderLayerBridge",
+        "VisionProjectionBridge",
+        "GeneralizedComponent",
+    }
+)
 
 
 def from_transformer_lens(adapter: Any, architecture: str) -> ComponentMap:
@@ -525,14 +543,25 @@ def from_transformer_lens(adapter: Any, architecture: str) -> ComponentMap:
     is an INDEPENDENT source for the same facts the bundled documents carry: a test compares the two where
     both exist, which is what keeps a bundled row from drifting the way the five hand-written tables did.
     Components without a real module (virtual attention splits) are left out; ``kind`` follows the bridge
-    class. The block list becomes ``blocks.{i}`` and its children ``blocks.{i}.<name>``.
+    class. The block list becomes ``blocks.{i}`` and its children ``blocks.{i}.<name>``. A bridge class known
+    neither as a kind nor as deliberately unaddressed raises, naming both tables, because a silently skipped
+    class narrows every comparison built on the result.
     """
     rows: dict[str, ComponentEntry] = {}
 
     def walk(path: str, comp: Any, module_prefix: str) -> None:
-        kind = _TL_KINDS.get(type(comp).__name__)
+        cls_name = type(comp).__name__
+        if cls_name in _TL_UNADDRESSED:
+            return
+        kind = _TL_KINDS.get(cls_name)
+        if kind is None:
+            raise ValueError(
+                f"from_transformer_lens: {cls_name!r} at {path!r} is a bridge class this derivation does not know; "
+                f"add it to _TL_KINDS with its kind, or to _TL_UNADDRESSED with a reason. Known kinds: "
+                f"{sorted(_TL_KINDS)}; unaddressed: {sorted(_TL_UNADDRESSED)}"
+            )
         name = getattr(comp, "name", None)
-        if kind is None or not name:
+        if not name:
             return
         if path == "blocks":
             module = f"{name}.{{i}}"

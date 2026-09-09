@@ -391,6 +391,124 @@ class TestEveryBundledMapDescribesItsModel:
         )
 
 
+def _tl_adapter(architecture: str):
+    """TransformerLens' own architecture adapter for a bundled architecture, built from the tiny config alone.
+
+    No weights and no Hub call: the adapter is selected from a bridge config mapped off the HF config, the same
+    way the bridge's boot path selects it, so the oracle covers every bundled map at the cost of a config.
+    """
+    pytest.importorskip("transformer_lens")
+    from transformer_lens.config import TransformerBridgeConfig
+    from transformer_lens.factories.architecture_adapter_factory import ArchitectureAdapterFactory
+    from transformer_lens.model_bridge.sources.transformers import map_default_transformer_lens_config
+
+    hf_config = _tiny(architecture).config
+    cfg = TransformerBridgeConfig.from_dict(dict(map_default_transformer_lens_config(hf_config).__dict__))
+    cfg.architecture = architecture
+    for nested in ("text_config", "vision_config"):
+        if hasattr(hf_config, nested):
+            setattr(cfg, nested, getattr(hf_config, nested))
+    return ArchitectureAdapterFactory.select_architecture_adapter(cfg)
+
+
+#: Bundled rows that have no TransformerLens counterpart, by architecture, each with the reason it is expected.
+#: TransformerLens bridges a vision tower as one opaque component, so the multimodal document's vision stack and
+#: projector are ours alone. Every other bundled row must have a counterpart: a row nothing independent vouches
+#: for is the drift this oracle exists to catch, so a new unmatched row fails by name rather than being allowed.
+EXPECTED_WITHOUT_TL_COUNTERPART = {
+    "GPT2LMHeadModel": set(),
+    "LlamaForCausalLM": set(),
+    "Gemma2ForCausalLM": set(),
+    "Gemma3ForCausalLM": set(),
+    "Gemma3ForConditionalGeneration": {
+        "projector",
+        "vision.blocks.{i}",
+        "vision.blocks.{i}.attn",
+        "vision.blocks.{i}.attn.o",
+        "vision.blocks.{i}.ln1",
+        "vision.blocks.{i}.ln2",
+        "vision.blocks.{i}.mlp",
+        "vision.blocks.{i}.mlp.in",
+        "vision.blocks.{i}.mlp.out",
+        "vision.embed",
+        "vision.ln_final",
+    },
+}
+
+
+class TestEveryBundledMapAgreesWithTransformerLens:
+    """The independent oracle for the bundled documents: TransformerLens' own per-architecture component mapping.
+
+    A convergence case that resolves both sides through the same component map cannot catch a wrong row, because
+    both sides move together; the nnsight backend's hook names derive from these documents, so its HF-reference
+    cases have exactly that shape. This test compares each document with a source that shares nothing with it.
+
+    It once covered gpt2 only, from a full weight-loading boot, and the derivation silently skipped two bridge
+    classes the RMSNorm architectures use, so extending it to the other four maps compared seven rows of fourteen
+    and would have reported agreement over the whole. The derivation now refuses a class it does not know, and
+    the row counts are asserted here, so the oracle's own coverage is a measured number rather than a belief.
+    """
+
+    @pytest.mark.parametrize("architecture", sorted(EXPECTED_RMSNORM_OFFSET))
+    def test_every_shared_row_names_the_same_module_and_kind(self, architecture):
+        from interpretune.analysis.points.component_map import from_transformer_lens
+
+        bundled = component_map_for(architecture)
+        derived = from_transformer_lens(_tl_adapter(architecture), architecture)
+        shared = sorted(set(bundled.components) & set(derived.components))
+        mismatches = [
+            (k, bundled.components[k], derived.components[k])
+            for k in shared
+            if bundled.components[k] != derived.components[k]
+        ]
+        assert not mismatches, mismatches
+        # the oracle's reach, as a number: every text row is compared, not a subset that happens to overlap
+        expected_shared = set(bundled.components) - EXPECTED_WITHOUT_TL_COUNTERPART[architecture]
+        assert set(shared) == expected_shared, (
+            f"{architecture}: TransformerLens vouches for {len(shared)} of {len(expected_shared)} bundled rows; "
+            f"uncompared: {sorted(expected_shared - set(shared))}"
+        )
+        assert bundled.properties.get("sandwich_norms", False) == derived.properties["sandwich_norms"]
+
+    @pytest.mark.parametrize("architecture", sorted(EXPECTED_RMSNORM_OFFSET))
+    def test_the_bundled_map_carries_nothing_unvouched_for(self, architecture):
+        """A bundled row with no TransformerLens counterpart is expected only where the table above says why."""
+        from interpretune.analysis.points.component_map import from_transformer_lens
+
+        derived = from_transformer_lens(_tl_adapter(architecture), architecture)
+        extra = set(component_map_for(architecture).components) - set(derived.components)
+        assert extra == EXPECTED_WITHOUT_TL_COUNTERPART[architecture], sorted(
+            extra ^ EXPECTED_WITHOUT_TL_COUNTERPART[architecture]
+        )
+
+    def test_every_bundled_architecture_has_an_expectation_here(self):
+        from interpretune.analysis.points.component_map import known_architectures
+
+        assert set(known_architectures()) == set(EXPECTED_WITHOUT_TL_COUNTERPART)
+
+    def test_an_unknown_bridge_class_is_refused_by_name(self):
+        """The derivation names a class it cannot place instead of skipping it, which is how its coverage once
+        shrank without a symptom."""
+        from interpretune.analysis.points.component_map import from_transformer_lens
+
+        class NovelBridge:
+            name = "novel"
+            submodules = {}
+
+        class _Adapter:
+            component_mapping = {"novel": NovelBridge()}
+
+        with pytest.raises(ValueError, match="'NovelBridge' at 'novel' is a bridge class this derivation does not"):
+            from_transformer_lens(_Adapter(), "GPT2LMHeadModel")
+
+    def test_the_derived_map_is_a_schema_one_document(self):
+        """The derived map uses no schema-2 key, so it declares schema 1 whatever the bundled document declares;
+        the comparison is row by row and does not depend on the two agreeing on a version."""
+        from interpretune.analysis.points.component_map import from_transformer_lens
+
+        assert from_transformer_lens(_tl_adapter("GPT2LMHeadModel"), "GPT2LMHeadModel").schema_version == 1
+
+
 class TestAdditiveChangesNeedNoBump:
     def test_adding_semantic_points_left_the_version_at_two(self):
         """The additive-change rule, pinned: four semantic points landed after schema 2 with no bump, because a
