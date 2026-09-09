@@ -300,6 +300,11 @@ def _forward_order(hook_names: Any, resolver: HookNameResolver) -> list[str]:
     reverse failed until this sort existed.
     """
 
+    from interpretune.analysis.points import component_map_for
+    from interpretune.analysis.points.vocabulary import UnknownPointError, parse
+
+    cmap = component_map_for(resolver.architecture)
+
     def key(name: str) -> tuple[int, int, int, str]:
         layer, base, _sub = resolver.parse_hook_name(name)
         if layer < 0:
@@ -310,6 +315,18 @@ def _forward_order(hook_names: Any, resolver: HookNameResolver) -> list[str]:
                 0,
                 name,
             )
+        # A semantic contribution (`hook_attn_out`, `hook_mlp_out`) resolves to the POST-norm's output on a
+        # sandwich-norm architecture, so it must sort with that norm rather than with the sublayer it names:
+        # ranked with attention, `hook_attn_out` read `post_attention_layernorm.output` before that norm's input
+        # had been provided, and the input then read as never called.
+        try:
+            point = parse(f"blocks.{layer}.{base}")
+        except UnknownPointError:
+            point = None
+        if point is not None and point.contribution is not None and cmap.sandwich_norms:
+            post = {"attn": "ln1_post", "mlp": "ln2_post", "cross_attn": "cross_attn_post"}.get(point.contribution)
+            if post is not None:
+                base = f"{post}.hook_out"
         head = base.split(".")[0]
         # Within one sublayer, nnsight provides the parent's input, then each child in forward order (its input,
         # then its output), then the parent's output. Reading `attn.hook_out` before `attn.o.hook_in` raised
@@ -403,9 +420,26 @@ def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
     return tracer.invoke(**invoke_kwargs)
 
 
-#: Forward order of a sublayer's children, for the trace-order sort: attention projections before the output
-#: projection, an MLP's input projection before its output projection.
-_CHILD_RANK = {"q": 0, "k": 0, "v": 0, "qkv": 0, "q_norm": 1, "k_norm": 1, "o": 2, "in": 0, "act": 1, "out": 2}
+#: Forward order of a sublayer's children, for the trace-order sort. Distinct ranks in execution order, because
+#: nnsight wants each child's input and output adjacent: two children sharing a rank interleaved their inputs
+#: before their outputs (`up_proj.input` requested before `gate_proj.output`, which the forward had already
+#: produced) and the earlier output then read as never provided. Attention projections in order, then the query
+#: and key norms, then the output projection; a gated MLP's gate, then its activation, then the up projection
+#: (`mlp.in`, which is the first projection on an ungated MLP), then the down projection.
+_CHILD_RANK = {
+    "q": 0,
+    "k": 1,
+    "v": 2,
+    "qkv": 0,
+    "q_norm": 3,
+    "k_norm": 4,
+    "o": 5,
+    "gate": 0,
+    "act": 1,
+    "in": 2,
+    "up": 2,
+    "out": 3,
+}
 
 
 class NNsightModelBackend:
