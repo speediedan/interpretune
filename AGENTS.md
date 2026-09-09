@@ -89,6 +89,13 @@ Two reach mistakes from the same week, both about letting a green gate ride acro
 - **Reach says whether drift can harm you, not whether it repairs something your gate depends on.** A gate
   cut before a repair landed reproduces the defect `main` no longer has. When `main` went red and was fixed
   inside your drift window, rebase regardless of reach; the two questions are independent.
+- **A ride has three strengths, and only the weakest needs a ruling.** No path: the rider's tests import
+  nothing from the drifted package. Reached but not exercised: the drift's modules are in the module graph
+  and the changed names are referenced nowhere in the rider. Exercised: the drift's own tests run through
+  the code the rider changes. The first two ride on the argument; the third is the case the reach test
+  exists to flag, and a local run of the intersection measures the one combination you found and none you
+  did not. Ride it only when a red `main` is cheap to repair; with the maintainer unreachable, re-gate, and
+  keep the measurement in the PR body as the record that the intersection was checked before the gate.
 
 ### 2. Refuse by name; never accept and guess
 
