@@ -229,28 +229,6 @@ class TestTheBundledMultimodalMapUnderSchema2:
         projector = resolve(parse("projector.hook_out"), cmap)
         assert isinstance(projector, TensorRef) and cmap.kinds["projector"].tuple_output is False
 
-    def test_the_map_describes_the_real_class(self):
-        torch = pytest.importorskip("torch")
-        tr = pytest.importorskip("transformers")
-        small = dict(hidden_size=16, intermediate_size=32, num_attention_heads=2, num_key_value_heads=2, vocab_size=64)
-        with torch.device("meta"):
-            model = tr.Gemma3ForConditionalGeneration(
-                tr.Gemma3Config(
-                    text_config=dict(num_hidden_layers=2, **small),
-                    vision_config=dict(
-                        hidden_size=16,
-                        intermediate_size=32,
-                        num_hidden_layers=3,
-                        num_attention_heads=2,
-                        image_size=16,
-                        patch_size=8,
-                    ),
-                )
-            )
-        cmap = component_map_for("Gemma3ForConditionalGeneration")
-        assert check_map_against_model(cmap, model) == []
-        assert derive_rmsnorm_offset(model, cmap) is True
-
 
 class TestContributionsAreKeyedBySublayerKind:
     """Contributions route to a sublayer's post-norm by the kind's position in `properties.sublayers`, so a third
@@ -339,3 +317,90 @@ class TestSpellingsUnderAStack:
         assert all(s.startswith("vision.blocks.2.") for s in out), out
         bare = spellings("blocks.2.attn.hook_out")
         assert all(s.startswith("blocks.2.") for s in bare), bare
+
+
+def _tiny(architecture: str):
+    """The transformers class for a bundled architecture, instantiated tiny on the meta device."""
+    torch = pytest.importorskip("torch")
+    tr = pytest.importorskip("transformers")
+    small = dict(hidden_size=16, intermediate_size=32, num_attention_heads=2, num_key_value_heads=2, vocab_size=64)
+    builders = {
+        "GPT2LMHeadModel": lambda: tr.GPT2LMHeadModel(tr.GPT2Config(n_layer=3, n_embd=16, n_head=2, vocab_size=64)),
+        "LlamaForCausalLM": lambda: tr.LlamaForCausalLM(tr.LlamaConfig(num_hidden_layers=3, **small)),
+        "Gemma2ForCausalLM": lambda: tr.Gemma2ForCausalLM(tr.Gemma2Config(num_hidden_layers=3, head_dim=8, **small)),
+        "Gemma3ForCausalLM": lambda: tr.Gemma3ForCausalLM(
+            tr.Gemma3TextConfig(num_hidden_layers=3, head_dim=8, **small)
+        ),
+        "Gemma3ForConditionalGeneration": lambda: tr.Gemma3ForConditionalGeneration(
+            tr.Gemma3Config(
+                text_config=dict(num_hidden_layers=2, head_dim=8, **small),
+                vision_config=dict(
+                    hidden_size=16,
+                    intermediate_size=32,
+                    num_hidden_layers=2,
+                    num_attention_heads=2,
+                    image_size=16,
+                    patch_size=8,
+                ),
+            )
+        ),
+    }
+    if architecture not in builders:
+        pytest.fail(
+            f"{architecture} is bundled but has no tiny builder here: entering the bundled set means adding one, so "
+            "the document is checked against its class on every run (docs/activation_point_vocabulary.md, "
+            "'Entering and leaving the bundled set')."
+        )
+    with torch.device("meta"):
+        return builders[architecture]()
+
+
+EXPECTED_RMSNORM_OFFSET = {
+    "GPT2LMHeadModel": False,
+    "LlamaForCausalLM": False,
+    "Gemma2ForCausalLM": True,
+    "Gemma3ForCausalLM": True,
+    "Gemma3ForConditionalGeneration": True,
+}
+
+
+class TestEveryBundledMapDescribesItsModel:
+    """The entry gate for the bundled set: a document is checked against its transformers class on every run.
+
+    Before this test the claim "every bundled map describes its model" rested on one ad hoc meta-device run, which
+    is indistinguishable from nobody having checked to anyone reading the suite.
+    """
+
+    @pytest.mark.parametrize("architecture", sorted(EXPECTED_RMSNORM_OFFSET))
+    def test_the_document_describes_the_class(self, architecture):
+        from interpretune.analysis.points.component_map import known_architectures
+
+        assert architecture in known_architectures()
+        cmap = component_map_for(architecture)
+        model = _tiny(architecture)
+        assert check_map_against_model(cmap, model) == []
+        assert derive_rmsnorm_offset(model, cmap) is EXPECTED_RMSNORM_OFFSET[architecture]
+
+    def test_every_bundled_architecture_is_covered_here(self):
+        """A document added under data/ without a builder above fails this test by name, which is the point."""
+        from interpretune.analysis.points.component_map import known_architectures
+
+        assert set(known_architectures()) == set(EXPECTED_RMSNORM_OFFSET), (
+            "a bundled map has no entry in EXPECTED_RMSNORM_OFFSET / _tiny; entering the bundled set means adding "
+            "both so the document is checked against its class"
+        )
+
+
+class TestAdditiveChangesNeedNoBump:
+    def test_adding_semantic_points_left_the_version_at_two(self):
+        """The additive-change rule, pinned: four semantic points landed after schema 2 with no bump, because a
+        semantic point is a code-only addition that no reader must understand to resolve the rows it has.
+
+        A change that makes an older reader resolve the WRONG rows (a new applicability key) is what bumps; a name is
+        not.
+        """
+        from interpretune.analysis.points.component_map import COMPONENT_MAP_SCHEMA_VERSION
+        from interpretune.analysis.points.vocabulary import semantic_names
+
+        assert COMPONENT_MAP_SCHEMA_VERSION == 2
+        assert {"hook_cross_attn_in", "hook_cross_attn_out"} <= set(semantic_names())
