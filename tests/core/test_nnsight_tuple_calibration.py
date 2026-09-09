@@ -94,3 +94,52 @@ class TestTupleOutputCalibration:
         backend._ensure_tuple_calibration(object())
         backend._ensure_tuple_calibration(object())
         assert calls["n"] == 1
+
+
+class TestTheMapIsValidatedAgainstTheModelAtAttach:
+    """A component map that is wrong about its model is refused at attach, naming the row, rather than surfacing at
+    bind time as a plausible module path that does not exist."""
+
+    def test_the_bundled_gpt2_map_describes_the_tiny_model(self, tiny_gpt2):
+        HookNameResolver("GPT2LMHeadModel").validate_against_model(tiny_gpt2)
+
+    def test_a_wrong_map_is_refused_naming_the_row(self, tiny_gpt2, monkeypatch):
+        from interpretune.analysis.points import ComponentMapModelMismatch
+        from interpretune.analysis.points import component_map as cm
+
+        wrong = cm._from_document(
+            {
+                "schema_version": 1,
+                "architecture": "GPT2LMHeadModel",
+                "components": {
+                    "blocks.{i}": {"module": "transformer.h.{i}", "kind": "block"},
+                    "blocks.{i}.attn": {"module": "transformer.h.{i}.attention", "kind": "attn"},  # no such module
+                    "unembed": {"module": "lm_head", "kind": "unembed"},
+                },
+            },
+            source="wrong",
+        )
+        monkeypatch.setattr(cm, "_REGISTRY", {**cm._REGISTRY, "GPT2LMHeadModel": wrong})
+        with pytest.raises(ComponentMapModelMismatch, match=r"(?s)blocks\.\{i\}\.attn at layer 0.*does not exist"):
+            HookNameResolver("GPT2LMHeadModel").validate_against_model(tiny_gpt2)
+
+    def test_the_backend_checks_before_it_probes(self, tiny_gpt2, monkeypatch):
+        from interpretune.adapters.nnsight.backends import NNsightModelBackend, get_default_configs_per_pass
+        from interpretune.analysis.points import ComponentMapModelMismatch
+
+        backend = NNsightModelBackend(
+            HookNameResolver("GPT2LMHeadModel"), configs_per_pass=get_default_configs_per_pass()
+        )
+        monkeypatch.setattr(NNsightModelBackend, "_get_hf_model", staticmethod(lambda m: tiny_gpt2))
+        probed = {"n": 0}
+        monkeypatch.setattr(
+            HookNameResolver,
+            "validate_against_model",
+            lambda self, model: (_ for _ in ()).throw(ComponentMapModelMismatch("wrong map")),
+        )
+        monkeypatch.setattr(
+            HookNameResolver, "calibrate_tuple_outputs", lambda self, model: probed.__setitem__("n", probed["n"] + 1)
+        )
+        with pytest.raises(ComponentMapModelMismatch):
+            backend._ensure_tuple_calibration(object())
+        assert probed["n"] == 0, "a refused map must not be probed"

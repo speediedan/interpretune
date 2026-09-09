@@ -442,8 +442,13 @@ class NNsightModelBackend:
         """
         if getattr(self, "_tuple_calibration_done", False):
             return
+        hf_model = self._get_hf_model(model)
+        # The component map is checked against the model BEFORE the probe forward: a map that is wrong about
+        # its model is refused here, naming every row, rather than surfacing later as a plausible module path
+        # that does not exist. The check raises; the probe below may not.
+        self._resolver.validate_against_model(hf_model)
         try:
-            self._resolver.calibrate_tuple_outputs(self._get_hf_model(model))
+            self._resolver.calibrate_tuple_outputs(hf_model)
         finally:
             # a failed probe leaves static flags in force; do not retry per call
             self._tuple_calibration_done = True

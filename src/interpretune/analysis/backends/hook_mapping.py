@@ -291,6 +291,21 @@ class HookNameResolver:
         resolved_path = hook_mapping.envoy_path.format(layer=layer)
         return resolved_path, hook_mapping.io_type
 
+    def validate_against_model(self, hf_model: Any) -> None:
+        """Refuse, by name, a component map that does not describe THIS model.
+
+        A hand-registered mapping has no component map and is not checked. A derived one is checked once against the
+        model's module tree: every row's module must exist for every layer it covers and must not exist for a layer its
+        predicate excludes, and a derived property the document states must agree with the model. A map that is wrong
+        about its model fails here, listing every problem, rather than at bind time as a plausible module path that does
+        not exist.
+        """
+        if self._architecture in _ARCHITECTURE_REGISTRY:
+            return
+        from interpretune.analysis.points import component_map_for, validate_map_against_model
+
+        validate_map_against_model(component_map_for(self._architecture), hf_model)
+
     def calibrate_tuple_outputs(self, hf_model: Any) -> dict[str, bool]:
         """Measure, per output-io base hook, whether its module returns a tuple in THIS environment.
 
