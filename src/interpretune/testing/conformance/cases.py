@@ -137,6 +137,16 @@ def _attribution_failure_context(suite, exc: BaseException) -> str:
             lines.append(
                 f"  attention_interface_0 nested nodes: {[n for n in dir(attn.source) if not n.startswith('_')]}"
             )
+        # the function the op is bound to, and the registry entry it came from: a wrapper installed by an earlier
+        # test in the same process parses to a different node set than the eager function itself
+        try:
+            from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+            eager = ALL_ATTENTION_FUNCTIONS["eager"]
+            where = f"{getattr(eager, '__module__', '?')}.{getattr(eager, '__qualname__', '?')}"
+            lines.append(f"  ALL_ATTENTION_FUNCTIONS['eager']: {where} (wrapped={hasattr(eager, '__wrapped__')})")
+        except Exception as reg_exc:
+            lines.append(f"  (attention registry probe failed: {type(reg_exc).__name__})")
     except Exception as probe_exc:  # the probe must not hide the original failure
         lines.append(f"  (node probe failed: {type(probe_exc).__name__}: {str(probe_exc)[:120]})")
     return "\n".join(lines)
