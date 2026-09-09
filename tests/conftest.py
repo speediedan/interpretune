@@ -64,7 +64,12 @@ from tests.analysis_resource_utils import (
     log_resource_delta,
     log_resource_snapshot,
 )
-from tests.utils import kwargs_from_cfg_obj, deterministic_context
+from tests.utils import (
+    kwargs_from_cfg_obj,
+    deterministic_context,
+    snapshot_gemma_eager_attention,
+    restore_gemma_eager_attention,
+)
 
 from tests.core.cfg_aliases import (
     TEST_CONFIGS_CLI_UNIT,
@@ -125,6 +130,35 @@ test_cli_cfgs["exp_cfgs"].update(unit_exp_cli_cfgs)
 def _force_gc():
     """Run Python garbage collection."""
     gc.collect()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def gemma_eager_attention_originals():
+    """Transformers' own gemma eager attention functions, recorded before any test can replace them.
+
+    Session-scoped and autouse so the snapshot precedes the first TransformerLens bridge of the run; see
+    ``tests.utils.snapshot_gemma_eager_attention`` for what replaces them and why nothing restores them.
+    """
+    return snapshot_gemma_eager_attention()
+
+
+@pytest.fixture(scope="class")
+def unpatched_gemma_eager_attention(gemma_eager_attention_originals):
+    """Transformers' own gemma eager attention for the duration of one class, whatever ran before it.
+
+    nnsight's recursive source tracing parses the function bound at the call site, and TransformerLens's wrapper
+    has no dropout call in its body, so once any bridge using its position-embedding attention component has been
+    built, circuit-tracer's attention-pattern location on a gemma model
+    (``...attention_interface_0.source.nn_functional_dropout_0``) does not exist for the rest of the process and
+    every attribution case fails with an AttributeError deep in circuit-tracer. The failure appears only when such
+    a bridge was built earlier in the session, which is why it reached CI from a target that was green alone. The
+    class gets the originals back and whatever was there is reinstated afterwards.
+    """
+    put_back = restore_gemma_eager_attention(gemma_eager_attention_originals)
+    try:
+        yield
+    finally:
+        put_back()
 
 
 def _cleanup_cuda_memory():

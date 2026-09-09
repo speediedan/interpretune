@@ -67,12 +67,16 @@ def _gemma3_circuit_tracer(inputs):
 
 
 @RunIf(min_cuda_gpus=1)
+@pytest.mark.usefixtures("unpatched_gemma_eager_attention")
 class TestCircuitTracerConformance(ModelBackendConformance):
     """circuit-tracer over the nnsight backend on gemma-3-1b-it: the analysis-backend gates' first consumer.
 
     Marked at the class: its cases are inherited, so the class is the only place the mark can go, and the phase
-    selector reads class-level marks for exactly this reason. The model backend cases run too, on a model the
-    suite carries no latent model for, so the latent cases skip with that reason.
+    selector reads class-level marks for exactly this reason. The unpatched-attention fixture is class-scoped for
+    the same reason: circuit-tracer resolves its attention locations through nnsight's source tracing, which a
+    TransformerLens bridge built earlier in the session breaks for every gemma model in the process (see the
+    fixture). The model backend cases run too, on a model the suite carries no latent model for, so the latent
+    cases skip with that reason.
     """
 
     target = ConformanceTarget(
