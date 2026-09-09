@@ -229,3 +229,64 @@ class TestPulledOpParity:
         assert flipped.resolved == f"{NAMESPACE}.concept_direction"
         assert flipped.active.collection == "concept_direction_ops"
         assert flipped.is_shadowing_bundled
+
+
+class TestThePinnedImplementationIsTheOneExecuted:
+    """Pinned is a property of the artifact that ran, not of the request that asked for it.
+
+    The definitions consulted the pin; the implementation import did not, so a pinned environment executed
+    whatever had been published most recently and reached the network at op-call time to find out which. The
+    assertion here is on the imported module's path (the executed artifact), never on how the loader was
+    called: a test that the loader was called with the pin passes whether or not the loader honours it.
+    """
+
+    PINNED = "a" * 40
+    REPUBLISHED = "b" * 40
+
+    def _two_revisions(self, published_tree, tmp_path, monkeypatch) -> AnalysisOpDispatcher:
+        from interpretune.hub.pins import record_op_pin
+
+        hub_cache = tmp_path / "hub"
+        repo_dir = hub_cache / f"models--{REPO_ID.replace('/', '--')}"
+        for rev in (self.PINNED, self.REPUBLISHED):
+            snapshot = repo_dir / "snapshots" / rev
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(published_tree, snapshot)
+        # the republish changes the implementation's source so the two revisions are distinguishable
+        for module in (repo_dir / "snapshots" / self.REPUBLISHED).rglob("*.py"):
+            module.write_text(module.read_text(encoding="utf-8") + "\nREPUBLISHED_MARKER = True\n", encoding="utf-8")
+        refs = repo_dir / "refs"
+        refs.mkdir()
+        (refs / "main").write_text(self.REPUBLISHED, encoding="utf-8")
+        record_op_pin(REPO_ID, self.PINNED, self.PINNED, cache_root=hub_cache)
+        monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_HUB_CACHE", hub_cache)
+        monkeypatch.setattr(dispatcher_module, "IT_ANALYSIS_HUB_CACHE", hub_cache)
+        monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_OP_PATHS", [])
+        monkeypatch.delenv("IT_OP_PRECEDENCE", raising=False)
+        dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
+        (tmp_path / "cache").mkdir()
+        dispatcher._cache_manager.cache_dir = tmp_path / "cache"
+        dispatcher.load_definitions()
+        return dispatcher
+
+    def test_the_executed_module_comes_from_the_pinned_revision_without_touching_the_network(
+        self, published_tree, tmp_path, monkeypatch
+    ):
+        import socket
+        import sys
+
+        dispatcher = self._two_revisions(published_tree, tmp_path, monkeypatch)
+        name, op_def = next((n, d) for n, d in dispatcher._op_definitions.items() if n.startswith(NAMESPACE + "."))
+        assert dispatcher._revision_for(op_def) == self.PINNED, "the definition itself must come from the pin"
+        # any attempt to reach the Hub during the import is a failure in its own right
+        monkeypatch.setattr(
+            socket.socket,
+            "connect",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("import reached the network")),
+        )
+        for mod in [m for m in sys.modules if REPO_ID.split("/")[1] in m]:
+            sys.modules.pop(mod, None)
+        implementation = dispatcher._import_hub_callable(name, op_def)
+        executed = Path(sys.modules[implementation.__module__].__file__).as_posix()
+        assert self.PINNED in executed, f"executed {executed}, which is not the pinned snapshot"
+        assert self.REPUBLISHED not in executed

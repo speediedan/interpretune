@@ -1040,10 +1040,15 @@ class AnalysisOpDispatcher:
 
         function_reference = f"{module_name}.{function_name}"
 
+        # The implementation is imported from the SAME revision the definition was loaded from. Without it the
+        # loader resolves `main`, so a pinned environment read the definitions it pinned and executed whatever
+        # was published most recently, and reached the network at op-call time to find out which that was. A
+        # commit revision that is already in the cache imports without any request.
         implementation = get_function_from_dynamic_module(
             function_reference=function_reference,
             op_repo_name_or_path=repo_name,
             cache_dir=IT_ANALYSIS_HUB_CACHE,
+            revision=self._revision_for(op_def),
         )
         rank_zero_debug(f"Successfully loaded dynamic operation: {op_name}")
         return implementation
