@@ -81,6 +81,15 @@ contract before reading its output, and name the phase or scope you actually che
 What to do instead: name the fact, find the artifact only the fact produces, and check that artifact. Print
 the identifiers in full. When a check for an *absence* passes, ask whether it ran at all.
 
+Two reach mistakes from the same week, both about letting a green gate ride across drift on `main`:
+
+- **Reach is the module graph, not a grep over import statements.** Importing one submodule imports its
+  package's whole closure; a `sys.modules` diff around the import is the instrument, and the ride-licensing
+  claim after it is behavioural (the changed names are referenced nowhere in the rider's package or tests).
+- **Reach says whether drift can harm you, not whether it repairs something your gate depends on.** A gate
+  cut before a repair landed reproduces the defect `main` no longer has. When `main` went red and was fixed
+  inside your drift window, rebase regardless of reach; the two questions are independent.
+
 ### 2. Refuse by name; never accept and guess
 
 When an input is outside what the code understands, refuse it with a message naming what was met and what

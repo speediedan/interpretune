@@ -90,8 +90,16 @@ classify_log() {
   local f="$1" tail
   [ -r "$f" ] || { echo "DEAD"; return; }
   tail=$(tail -c 4000 "$f" | sed 's/\x1b\[[0-9;]*m//g')
-  if printf '%s' "$tail" | grep -qE '=+ .*[0-9]+ (failed|error)'; then echo "RED"; return; fi
-  if printf '%s' "$tail" | grep -qE '=+ .*[0-9]+ passed.* =+|=+ .*no tests ran'; then echo "GREEN"; return; fi
+  # pytest's final line reads `N passed, M skipped in 12.3s` and is wrapped in `=` bars EXCEPT under -q, where it is
+  # bare; the first cut matched only the barred form and reported a green quiet run as DEAD (measured on a 2646-test
+  # run). Match the summary itself, on the last lines, and let a failure count win.
+  summary=$(printf '%s' "$tail" | grep -E '(^|=+ )[0-9]+ (passed|failed|error|skipped|deselected|warning)' | tail -1)
+  if [ -z "$summary" ]; then
+    printf '%s' "$tail" | grep -qE 'no tests ran' && { echo "GREEN"; return; }
+    echo "DEAD"; return
+  fi
+  if printf '%s' "$summary" | grep -qE '[0-9]+ (failed|error)'; then echo "RED"; return; fi
+  if printf '%s' "$summary" | grep -qE '[0-9]+ passed'; then echo "GREEN"; return; fi
   echo "DEAD"
 }
 

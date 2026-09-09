@@ -78,6 +78,28 @@ class TestPidWithLog:
         assert code == 3 and len(lines) == 1 and "DEAD not running at watch start" in lines[0]
 
 
+class TestQuietModeSummary:
+    """Under -q pytest prints the summary without the `=` bars; the first classifier matched only the barred form
+    and reported a green 2646-test run as DEAD.
+
+    The fixture is that run's real tail, captured rather than typed.
+    """
+
+    FIXTURE = Path(__file__).parent / "fixtures" / "watch_run_quiet_green_tail.txt"
+
+    def test_a_quiet_green_summary_is_green(self):
+        p = subprocess.Popen(["sleep", "1"])
+        code, lines = _run("--pid", str(p.pid), "--log", str(self.FIXTURE), "--interval", "1")
+        assert code == 0 and len(lines) == 1 and " GREEN " in lines[0] and "2646 passed" in lines[0]
+
+    def test_a_quiet_red_summary_is_red(self, tmp_path):
+        log = tmp_path / "run.log"
+        log.write_text("...\n3 failed, 40 passed, 2 skipped in 3.00s\n")
+        p = subprocess.Popen(["sleep", "1"])
+        code, lines = _run("--pid", str(p.pid), "--log", str(log), "--interval", "1")
+        assert code == 1 and len(lines) == 1 and " RED " in lines[0] and "3 failed" in lines[0]
+
+
 class TestFind:
     def test_a_pattern_in_the_watchers_own_command_line_does_not_match_itself(self):
         """Rule 1 as a property: the pattern is spelled on this very command line and must resolve to nothing."""
