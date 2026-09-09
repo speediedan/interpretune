@@ -250,3 +250,92 @@ class TestTheBundledMultimodalMapUnderSchema2:
         cmap = component_map_for("Gemma3ForConditionalGeneration")
         assert check_map_against_model(cmap, model) == []
         assert derive_rmsnorm_offset(model, cmap) is True
+
+
+class TestContributionsAreKeyedBySublayerKind:
+    """Contributions route to a sublayer's post-norm by the kind's position in `properties.sublayers`, so a third
+    sublayer kind needs no enum member and no resolver branch; the classic two route exactly as before."""
+
+    def _three_sublayers(self, tmp_path, sandwich: bool):
+        rows = {
+            **ROWS,
+            "blocks.{i}.cross_attn": {"module": "model.layers.{i}.cross_attn", "kind": "attn"},
+            "blocks.{i}.ln2": {"module": "model.layers.{i}.ln2", "kind": "norm"},
+            "blocks.{i}.ln3": {"module": "model.layers.{i}.ln3", "kind": "norm"},
+        }
+        if sandwich:
+            rows.update(
+                {
+                    "blocks.{i}.ln1_post": {"module": "model.layers.{i}.ln1_post", "kind": "norm"},
+                    "blocks.{i}.ln2_post": {"module": "model.layers.{i}.ln2_post", "kind": "norm"},
+                    "blocks.{i}.ln3_post": {"module": "model.layers.{i}.ln3_post", "kind": "norm"},
+                }
+            )
+        props = {"sandwich_norms": sandwich, "sublayers": ["attn", "cross_attn", "mlp"]}
+        return _load(tmp_path, _doc(properties=props, components=rows))
+
+    def test_the_four_points_parse_and_keep_every_existing_spelling(self):
+        p = parse("blocks.2.hook_cross_attn_out")
+        assert (p.component, p.slot.value, p.contribution) == ("cross_attn", "out", "cross_attn")
+        assert parse("blocks.2.hook_cross_attn_in").component == "cross_attn"
+        assert parse("blocks.2.hook_resid_after_1").component == "ln3"
+        assert parse("blocks.2.hook_resid_after_0").component == parse("blocks.2.hook_resid_mid").component == "ln2"
+        assert (
+            parse("blocks.2.hook_attn_out").contribution == "attn"
+            and parse("blocks.2.hook_mlp_out").contribution == "mlp"
+        )
+
+    def test_routing_follows_the_declared_order_on_a_sandwich_norm_block(self, tmp_path):
+        cmap = self._three_sublayers(tmp_path, sandwich=True)
+        attn = resolve(parse("blocks.0.hook_attn_out"), cmap)
+        cross = resolve(parse("blocks.0.hook_cross_attn_out"), cmap)
+        mlp = resolve(parse("blocks.0.hook_mlp_out"), cmap)
+        assert [r.module_path for r in (attn, cross, mlp)] == [
+            "model.layers.0.ln1_post",
+            "model.layers.0.ln2_post",
+            "model.layers.0.ln3_post",
+        ]
+
+    def test_a_pre_norm_block_reads_the_raw_sublayer_output(self, tmp_path):
+        cmap = self._three_sublayers(tmp_path, sandwich=False)
+        cross = resolve(parse("blocks.0.hook_cross_attn_out"), cmap)
+        assert isinstance(cross, TensorRef) and cross.module_path == "model.layers.0.cross_attn"
+        after = resolve(parse("blocks.0.hook_resid_after_1"), cmap)
+        assert isinstance(after, TensorRef) and after.module_path == "model.layers.0.ln3" and after.io == "input"
+
+    def test_the_classic_two_route_exactly_as_before(self):
+        gemma = component_map_for("Gemma2ForCausalLM")
+        assert resolve(parse("blocks.3.hook_attn_out"), gemma).module_path.endswith("post_attention_layernorm")
+        assert resolve(parse("blocks.3.hook_mlp_out"), gemma).module_path.endswith("post_feedforward_layernorm")
+        gpt2 = component_map_for("GPT2LMHeadModel")
+        assert resolve(parse("blocks.3.hook_mlp_out"), gpt2).module_path == "transformer.h.3.mlp"
+
+    def test_a_declared_kind_can_be_a_contribution_without_any_enum_change(self, tmp_path):
+        rows = {
+            **ROWS,
+            "blocks.{i}.mixer": {"module": "model.layers.{i}.mixer", "kind": "mixer"},
+            "blocks.{i}.ln1_post": {"module": "model.layers.{i}.ln1_post", "kind": "norm"},
+        }
+        cmap = _load(
+            tmp_path,
+            _doc(
+                kinds={"mixer": {"sublayer": True}},
+                properties={"sandwich_norms": True, "sublayers": ["mixer", "mlp"]},
+                components=rows,
+            ),
+        )
+        from interpretune.analysis.points.vocabulary import ActivationPoint, Slot
+
+        point = ActivationPoint("mixer", Slot.OUT, 0, "mixer")
+        assert resolve(point, cmap).module_path == "model.layers.0.ln1_post"
+
+
+class TestSpellingsUnderAStack:
+    def test_a_stacked_name_keeps_its_prefix_in_every_spelling(self):
+        from interpretune.analysis.points.vocabulary import spellings
+
+        out = spellings("vision.blocks.2.attn.hook_out")
+        assert "vision.blocks.2.attn.hook_out" in out
+        assert all(s.startswith("vision.blocks.2.") for s in out), out
+        bare = spellings("blocks.2.attn.hook_out")
+        assert all(s.startswith("blocks.2.") for s in bare), bare

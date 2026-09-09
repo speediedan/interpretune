@@ -72,7 +72,7 @@ class TestParse:
 
     def test_contributions_are_semantic_not_component(self):
         p = parse("blocks.5.hook_mlp_out")
-        assert p.contribution is Contribution.MLP and p.component == "mlp"
+        assert p.contribution == Contribution.MLP and p.component == "mlp"
         assert parse("blocks.5.mlp.hook_out").contribution is None
 
     def test_pre_norm_legacy_inputs_carry_a_caution(self):
