@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import torch
 
@@ -50,7 +50,7 @@ def _normalize_names_filter(
     ``{actual hook name: requested name}`` so the cache can be re-keyed as the caller spelled it.
     """
     if callable(names_filter):
-        return names_filter, {}
+        return _wrap_callable_filter(model, names_filter, latent_model_handles)
     requested_names = [names_filter] if isinstance(names_filter, str) else list(names_filter or [])
     if not requested_names:
         return names_filter, {}
@@ -77,6 +77,52 @@ def _normalize_names_filter(
     return (resolved[0] if isinstance(names_filter, str) else resolved), reverse
 
 
+def _wrap_callable_filter(
+    model: Any, accept: Callable[[str], bool], latent_model_handles: list[Any] | None = None
+) -> tuple[Callable[[str], bool], dict[str, str]]:
+    """A callable filter written in one spelling matches the hook this model exposes under another.
+
+    TransformerLens applies a callable filter to the names in its own ``hook_dict``: a legacy HookedTransformer
+    spells the block input ``blocks.5.hook_resid_pre`` and a bridge ``blocks.5.hook_in``, and an SAE's activations
+    are ``<the SAE's hook_name>.hook_sae_acts_post`` on one and ``<canonical>.hook_sae_acts_post`` on the other. A
+    filter resolved from a caller's list accepts the caller's spellings only, so on the other model it matched
+    nothing: the cache came back empty and nothing raised. The wrapper accepts a hook when the filter accepts the
+    hook's own name or any spelling of it (the vocabulary's, and the model's alias registry with SAE sub-hooks),
+    and records ``{actual: accepted spelling}`` so the cache is re-keyed as the caller spelled it. The mapping
+    fills during the forward, which is why it is returned as the same object the restore step reads.
+    """
+    from interpretune.analysis.points.vocabulary import UnknownPointError, spellings
+
+    available = _build_available_hook_map(model, latent_model_handles=latent_model_handles)
+    aliases_of: dict[str, list[str]] = {}
+    for spelling, actual in available.items():
+        if spelling != actual:
+            aliases_of.setdefault(actual, []).append(spelling)
+    requested: dict[str, str] = {}
+    decided: dict[str, bool] = {}
+
+    def wrapped(name: str) -> bool:
+        if name in decided:
+            return decided[name]
+        if accept(name):
+            decided[name] = True
+            return True
+        candidates = list(aliases_of.get(name, ()))
+        try:
+            candidates.extend(s for s in spellings(name) if s != name)
+        except UnknownPointError:
+            pass
+        for spelling in candidates:
+            if accept(spelling):
+                requested[name] = spelling
+                decided[name] = True
+                return True
+        decided[name] = False
+        return False
+
+    return wrapped, requested
+
+
 def _restore_requested_names(cache: Any, requested: dict[str, str]) -> Any:
     """Re-key cached activations captured under a model-specific spelling back to the name the caller used."""
     if not requested:
@@ -89,6 +135,42 @@ def _restore_requested_names(cache: Any, requested: dict[str, str]) -> Any:
         if actual in target and name not in target:
             target[name] = target[actual]
     return cache
+
+
+def _normalize_hooks(
+    model: Any, hooks: Sequence[tuple[Any, Any]], latent_model_handles: list[Any] | None = None
+) -> list[tuple[Any, Any]]:
+    """Resolve each string hook name in ``hooks`` to the hook this model exposes, or refuse it by name.
+
+    The same spellings the cache and intervention paths accept apply to a hook: a caller may name an SAE's
+    activations as the SAE's own metadata spells them (``blocks.0.hook_resid_pre.hook_sae_acts_post``) while a
+    TransformerBridge exposes ``blocks.0.hook_in.hook_sae_acts_post``. TransformerLens applies a string hook only
+    when the exact name is in its ``hook_dict`` or its alias registry and otherwise SKIPS it without raising, so
+    an unresolved spelling was a forward with no edit and plausible logits. Callables select hooks by predicate
+    and pass through unchanged.
+    """
+    if not hooks:
+        return list(hooks)
+    available: dict[str, str] | None = None
+    resolved: list[tuple[Any, Any]] = []
+    for selector, fn in hooks:
+        if callable(selector):
+            # a predicate selector has the spelling gap a callable names_filter has; same wrapper, no re-keying
+            predicate = cast(Callable[[str], bool], selector)
+            resolved.append((_wrap_callable_filter(model, predicate, latent_model_handles)[0], fn))
+            continue
+        if available is None:
+            available = _build_available_hook_map(model, latent_model_handles=latent_model_handles)
+        try:
+            matches = expand_intervention_patterns([selector], available)[selector]
+        except ValueError:
+            sample = sorted(n for n in available if n.startswith(selector.split(".")[0]))[:8]
+            raise ValueError(
+                f"hook {selector!r} names no hook this model exposes, in any spelling the vocabulary knows; "
+                f"nearby names: {sample}"
+            ) from None
+        resolved.extend((actual, fn) for actual in matches)
+    return resolved
 
 
 def _build_available_hook_map(model: Any, latent_model_handles: list[Any] | None = None) -> dict[str, str]:
@@ -193,7 +275,7 @@ class TLModelBackend:
             **batch,
             saes=latent_model_handles,
             clear_contexts=clear_contexts,
-            fwd_hooks=fwd_hooks,
+            fwd_hooks=_normalize_hooks(model, fwd_hooks, latent_model_handles),
         )
 
     def fwd_w_hooks_batched(
@@ -261,6 +343,8 @@ class TLModelBackend:
         Returns:
             Raw model output logits.
         """
+        fwd_hooks = _normalize_hooks(model, fwd_hooks, latent_model_handles)
+        bwd_hooks = _normalize_hooks(model, bwd_hooks, latent_model_handles)
         with torch.set_grad_enabled(True):
             with model.saes(saes=latent_model_handles):
                 with model.hooks(fwd_hooks=fwd_hooks, bwd_hooks=bwd_hooks):

@@ -35,6 +35,8 @@ class ConformanceSession:
     runner: Any
     capabilities: ModuleCapabilities
     batches: list[dict[str, torch.Tensor]] = field(default_factory=list)
+    memo: dict[str, Any] = field(default_factory=dict)
+    """Stores computed once per target class and shared by the cases that read them (``run_once``)."""
 
     @property
     def module(self):
@@ -62,6 +64,16 @@ class ConformanceSession:
         Every case goes through here.
         """
         return self.runner.run_analysis(analysis_cfgs=analysis_cfg)
+
+    def run_once(self, key: str, analysis_cfg):
+        """``run``, memoized under ``key`` for the life of the target class.
+
+        For a store several cases read and none edits (a latent or gradient run costs a dataset generation each
+        time); a case that needs a fresh run calls ``run``.
+        """
+        if key not in self.memo:
+            self.memo[key] = self.run(analysis_cfg)
+        return self.memo[key]
 
     def batch_inputs(self, index: int) -> tuple[torch.Tensor, torch.Tensor | None]:
         """The ids and attention mask the runner fed for batch ``index``."""

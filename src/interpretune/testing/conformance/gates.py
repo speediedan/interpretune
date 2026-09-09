@@ -32,6 +32,8 @@ class Gate:
 
     capability: BackendCapability | AnalysisBackendCapability | None = None
     scope: PositionScope | None = None
+    scopes: tuple[PositionScope, ...] = ()
+    """Every scope a case needs declared at once (a mixed-scope payload); ``scope`` is the one-scope form."""
     mode: InterventionMode | None = None
     batched_hooks: bool | None = None
     family: str | None = None
@@ -48,6 +50,8 @@ class Gate:
             parts.append(self.capability.name)
         if self.scope is not None:
             parts.append(f"scope={self.scope.value}")
+        if self.scopes:
+            parts.append("scopes=" + "+".join(s.value for s in self.scopes))
         if self.mode is not None:
             parts.append(f"mode={self.mode.value}")
         if self.batched_hooks is not None:
@@ -68,10 +72,12 @@ class Gate:
             return False
         # Compare by VALUE: the capabilities module can be loaded twice under a test runner, leaving
         # value-equal, identity-distinct members on either side.
-        if self.scope is not None:
-            if caps.intervention is None or self.scope.value not in {
-                s.value for s in caps.intervention.position_scopes
-            }:
+        needed = tuple(self.scopes) + ((self.scope,) if self.scope is not None else ())
+        if needed:
+            if caps.intervention is None:
+                return False
+            declared_scopes = {s.value for s in caps.intervention.position_scopes}
+            if any(s.value not in declared_scopes for s in needed):
                 return False
         if self.mode is not None:
             if caps.intervention is None or self.mode.value not in {m.value for m in caps.intervention.modes}:

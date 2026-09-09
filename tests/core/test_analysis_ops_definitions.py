@@ -385,8 +385,10 @@ class TestGradientOperations:
         mock_module.analysis_cfg.cache_dict = {"hook1": torch.ones(1, 5, 3), "hook1_grad": torch.ones(1, 5, 3) * 0.5}
         mock_module.analysis_cfg.add_default_cache_hooks = MagicMock()
 
-        # Set up model with SAEs
+        # Set up model with SAEs; the backend resolves a hook against what the model exposes, so the mock exposes it
         mock_module.model = MagicMock()
+        mock_module.model.hook_dict = {"hook1": None}
+        mock_module.model.hook_aliases = {}
         mock_module.sae_handles = [MagicMock()]
 
         # Create mock batch with BatchEncoding
@@ -500,6 +502,9 @@ class TestGradientOperations:
         mock_logits[:, :, :] = torch.tensor([1.0, 0.0])  # Set default values
         mock_logits[1, :, :] = torch.tensor([0.0, 1.0])  # Different values for second example
         mock_module.model.run_with_hooks_with_saes.return_value = mock_logits
+        # the backend resolves each ablation hook against what the model exposes, so the mock exposes both
+        mock_module.model.hook_dict = {"hook1": None, "hook2": None}
+        mock_module.model.hook_aliases = {}
 
         # Make sure we have SAE handles for the test
         mock_module.sae_handles = [MagicMock()]

@@ -31,16 +31,32 @@ SEED_CONFIGS = {
 SEED_DATAMODULE = "rte_boolq"
 
 #: Canonical capture points, spelled in the TransformerLens bridge grammar every backend accepts through
-#: `names_filter`. Restricted to what the HF-side resolver covers on gpt2 today; the norm point joins when the
-#: activation-point vocabulary lands.
+#: `names_filter`. The norm's module output is a point; its derived tensors (`hook_normalized`, `hook_scale`)
+#: are not, because the reference captures what a module emits and a derived tensor is computed.
 CAPTURE_LAYER = 5
 CAPTURE_POINTS = (
     f"blocks.{CAPTURE_LAYER}.hook_in",
     f"blocks.{CAPTURE_LAYER}.hook_out",
+    f"blocks.{CAPTURE_LAYER}.ln2.hook_out",
     f"blocks.{CAPTURE_LAYER}.mlp.hook_out",
     f"blocks.{CAPTURE_LAYER}.attn.hook_out",
     "unembed.hook_in",
 )
+
+
+@dataclass(frozen=True)
+class LatentModelSpec:
+    """One pretrained latent model the suite attaches, named the way sae_lens names a release and an id."""
+
+    release: str
+    sae_id: str
+
+
+#: The latent model the LATENT_MODELS and GRADIENTS cases run over: one gpt2 residual SAE at the first block,
+#: from the release core's own adapter tests load. A target that declares LATENT_MODELS attaches
+#: ``inputs.latent_models`` in its session config (the seed path does so whenever the module config carries
+#: ``sae_cfgs``); a declaration with no handle attached fails those cases by name rather than skipping them.
+LATENT_MODELS = (LatentModelSpec(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre"),)
 #: The point interventions are applied at, and the downstream point the scope discriminator observes.
 INTERVENTION_POINT = f"blocks.{CAPTURE_LAYER}.hook_in"
 OBSERVE_POINT = "blocks.11.hook_out"
@@ -73,6 +89,7 @@ class ConformanceInputs:
     intervention_point: str = INTERVENTION_POINT
     observe_point: str = OBSERVE_POINT
     prompts: Sequence[str] = PROMPTS
+    latent_models: Sequence[LatentModelSpec] = LATENT_MODELS
     workdir: Path = field(default_factory=lambda: Path(tempfile.mkdtemp(prefix="it_conformance_")))
 
     def seed_config(self, flavour: str = "hf"):
@@ -158,8 +175,7 @@ class ConformanceInputs:
         from interpretune import ITSessionConfig
 
         dm_cfg, it_cfg, dm_cls, m_cls = self.seed_config(flavour)
-        if hasattr(it_cfg, "sae_cfgs"):
-            it_cfg.sae_cfgs = []
+        self._attach_latent_models(it_cfg)
         it_cfg.optimizer_init = {}
         it_cfg.lr_scheduler_init = {}
         it_cfg.core_log_dir = str(self.workdir / "logs")
@@ -178,6 +194,24 @@ class ConformanceInputs:
             datamodule_cls=dm_cls,
             module_cls=m_cls,
         )
+
+    def _attach_latent_models(self, it_cfg: Any) -> None:
+        """Replace the seed's latent models with the suite's, on the suite's device and precision.
+
+        Only a module config carrying ``sae_cfgs`` (the sae_lens adapter's field) can attach one. The adapter-free
+        config has no such field and its backend declares no LATENT_MODELS, so nothing is attached and the gated
+        cases skip as undeclared. The import is deferred so this module stays importable on a bare core install.
+        """
+        if not hasattr(it_cfg, "sae_cfgs"):
+            return
+        from interpretune.adapters.sae_lens.config import SAELensFromPretrainedConfig
+
+        it_cfg.sae_cfgs = [
+            SAELensFromPretrainedConfig(
+                release=spec.release, sae_id=spec.sae_id, device=self.device_type, dtype=self.precision
+            )
+            for spec in self.latent_models
+        ]
 
     def _place(self, it_cfg: Any) -> None:
         """Put every bundled config the seed carries on the suite's device and precision.

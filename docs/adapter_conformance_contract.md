@@ -71,7 +71,10 @@ gated case executed fails: a suite that proved nothing must not read as green.
 
 Every case constructs its inputs the way a caller does and goes through the runner. Hand-built payloads
 that reach a backend directly are the tempting isolation, and they are how a scope-dropping canonicalization
-once survived a parity suite that tested the primitive and the engine but not the path between them.
+once survived a parity suite that tested the primitive and the engine but not the path between them. The
+exceptions say so in their docstring and are limited to claims about a backend method itself (two methods
+agree; an edit at a dead latent is inert; a gradient predicts a perturbation), where the runner has no slot for
+what the case must do; each still takes its inputs from a store the op path wrote.
 
 ## The cases
 
@@ -99,10 +102,28 @@ Gate `INTERVENTION` (with `intervention_support`):
 | zero intervention is identity | causal | scale 0 leaves the logits unchanged |
 | the baseline is an unsteered forward | HF reference, `hf_native` | the pre-intervention half equals the plain forward |
 | steered logits converge on the forward | HF reference, `hf_native` | adding a vector at the last token matches an HF hook doing the same |
+| mixed scopes produce the per-scope result (both scopes declared) | HF reference, `hf_native` | a payload naming two points under different scopes matches two HF hooks, one per point, and differs from either single-scope payload; order-independent only because the edits are additive at different points |
 
-`LATENT_MODELS`, `GRADIENTS` and the analysis-backend gates (`ATTRIBUTION_GRAPH`, `FEATURE_INTERVENTION`)
-have their cases listed on the tracking issue and land as the suite grows; a repository declaring them runs
-whatever exists at its Interpretune version.
+Gate `LATENT_MODELS`, over the latent model the suite attaches (`inputs.latent_models`, one gpt2 residual SAE at
+the first block; a target that declares the gate attaches it in its session config, and a declaration with no
+handle attached fails these cases by name rather than skipping them):
+
+| case | oracle | asserts |
+| --- | --- | --- |
+| the latent op stores the declared schema | structural | `logit_diffs_latent` yields, per batch and per attached model, a non-empty alive-latent set and the correct rows' answer-position activations, `[rows, d_sae]` |
+| alive latents are the positive latents at the answer | internal consistency | every latent positive in a correct row's answer activation is in the batch's alive set, and some batch has one |
+| batched hooks agree with sequential | method pair (direct) | `fwd_w_hooks_batched` returns per config what one `fwd_w_hooks_and_latent_models` call returns; positive control: the two configs differ. `batched_hooks` only says whether the backend fuses, which is unobservable, so the equality holds under either declaration |
+| ablating a dead latent is identity | causal (direct) | zeroing a latent already at zero leaves the logits unchanged; zeroing the strongest alive one moves them |
+
+Gate `GRADIENTS`:
+
+| case | oracle | asserts |
+| --- | --- | --- |
+| the gradient op stores the declared schema | structural | `logit_diffs_attr_grad` yields per-hook attribution `[rows, d_sae]`, finite, zero off the alive set, non-zero somewhere |
+| the gradient predicts a small perturbation to first order | causal (direct) | scaling the strongest latent by $1 + \varepsilon$ at the answer position moves the summed logit difference by $\varepsilon$ times its stored attribution (activation times gradient), within ten percent; the unperturbed sum is first checked against the op's own, so both paths are known to see one forward |
+
+The analysis-backend gates (`ATTRIBUTION_GRAPH`, `FEATURE_INTERVENTION`) have their cases listed on the tracking
+issue and land as the suite grows; a repository declaring them runs whatever exists at its Interpretune version.
 
 ## Per-mode invariants and distinguishability
 

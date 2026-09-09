@@ -190,9 +190,13 @@ derived from the window so a bump cannot be made without freezing one.
 **Entering.** A bundled map is a document under `interpretune/analysis/points/data/` plus two things that make it
 checked rather than asserted: a tiny builder for its transformers class in the suite, so the document is checked
 against the class on every run (rows exist for the layers they cover and not for the layers they exclude; a
-derived property agrees with the model), and, where TransformerLens has an adapter for the architecture, the
-oracle comparison against that adapter's component mapping. A document added without the builder fails the suite
-by name.
+derived property agrees with the model), and the oracle comparison against TransformerLens' adapter for the
+architecture, built from the same tiny config with no weights and no Hub call, so it runs for every bundled map.
+A document added without the builder, or without a row in the oracle's table of rows expected to have no
+TransformerLens counterpart (today: the multimodal document's vision stack and projector, which TransformerLens
+bridges as one opaque component), fails the suite by name. The derivation itself refuses a bridge class it does
+not know rather than skipping it: skipping once dropped two RMSNorm-era classes, so four documents were compared
+on seven rows of fourteen while the oracle reported agreement over the whole.
 
 **Leaving.** A retiring map gains `deprecated_since` and `replacement`; it keeps loading with a warning, strict
 lookup refuses it, and after its stated horizon the document is deleted. From then on the architecture has no

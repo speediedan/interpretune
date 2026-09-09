@@ -1061,9 +1061,14 @@ class TestTLFwdWHooksBatched:
     def test_calls_fwd_w_hooks_per_config(self, backend):
         """TL backend should call fwd_w_hooks_and_latent_models once per config."""
         mock_model = MagicMock()
+        # a hook is resolved against what the model exposes (and refused by name otherwise), so the mock exposes it
+        mock_model.hook_dict = {"blocks.0.hook_resid_post.hook_sae_acts_post": None}
+        mock_model.hook_aliases = {}
         fake_logits_1 = torch.randn(2, 5, 100)
         fake_logits_2 = torch.randn(2, 5, 100)
         mock_model.run_with_hooks_with_saes.side_effect = [fake_logits_1, fake_logits_2]
+        sae_handle = MagicMock()
+        sae_handle.cfg.metadata.hook_name = "blocks.0.hook_resid_post"
 
         hook_configs = [
             [("blocks.0.hook_resid_post.hook_sae_acts_post", lambda t, h: t)],
@@ -1073,7 +1078,7 @@ class TestTLFwdWHooksBatched:
         result = backend.fwd_w_hooks_batched(
             model=mock_model,
             batch={"input": torch.randn(2, 5)},
-            latent_model_handles=["sae_handle"],
+            latent_model_handles=[sae_handle],
             hook_configs=hook_configs,
             clear_contexts=True,
         )
@@ -1086,6 +1091,8 @@ class TestTLFwdWHooksBatched:
     def test_configs_per_pass_ignored(self, backend):
         """configs_per_pass should be accepted but have no effect on TL backend."""
         mock_model = MagicMock()
+        mock_model.hook_dict = {"hook": None}
+        mock_model.hook_aliases = {}
         mock_model.run_with_hooks_with_saes.return_value = torch.randn(2, 5, 100)
 
         hook_configs = [
@@ -1690,7 +1697,13 @@ class TestTLCaptureNamesThroughTheVocabulary:
             "blocks.0.attn.hook_z": "blocks.0.attn.o.hook_in",
         }
 
-    def test_a_single_name_and_a_callable_pass_through(self):
+    def test_a_single_name_resolves_and_a_callable_is_widened_to_every_spelling(self):
+        """A callable written in one spelling accepts the hook the model exposes under another, and the spelling it
+        accepted is recorded so the cache is re-keyed as the caller spelled it.
+
+        A callable that passed through untouched matched nothing on the other model's grammar, and the cache came back
+        empty with nothing raised.
+        """
         from interpretune.adapters.transformer_lens.backends import _normalize_names_filter
 
         assert _normalize_names_filter(self._Model(), "blocks.0.hook_in") == (
@@ -1698,8 +1711,12 @@ class TestTLCaptureNamesThroughTheVocabulary:
             {"blocks.0.hook_resid_pre": "blocks.0.hook_in"},
         )
         assert _normalize_names_filter(self._Model(), "blocks.0.hook_resid_pre") == ("blocks.0.hook_resid_pre", {})
-        fn = lambda name: True  # noqa: E731
-        assert _normalize_names_filter(self._Model(), fn) == (fn, {})
+        wrapped, requested = _normalize_names_filter(self._Model(), lambda name: name == "blocks.0.hook_in")
+        assert wrapped("blocks.0.hook_resid_pre") is True
+        assert requested == {"blocks.0.hook_resid_pre": "blocks.0.hook_in"}
+        assert wrapped("blocks.0.attn.hook_pattern") is False
+        accept_all, untouched = _normalize_names_filter(self._Model(), lambda name: True)
+        assert accept_all("blocks.0.hook_resid_pre") is True and untouched == {}
 
     def test_a_name_the_model_lacks_is_left_for_transformer_lens_to_refuse(self):
         from interpretune.adapters.transformer_lens.backends import _normalize_names_filter

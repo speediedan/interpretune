@@ -351,27 +351,24 @@ class AnalysisCfg(ITSerializableCfg):
             module: The module to construct the names_filter for.
             fallback_sae_targets: Optional fallback LatentAnalysisTargets to use if this config doesn't have one.
         """
-        # Skip if names_filter is already set
-        if self.names_filter is not None:
-            self.names_filter = resolve_names_filter(self.names_filter)
-            return
+        if self.names_filter is None:
+            # Choose the appropriate LatentAnalysisTargets
+            sae_targets = self.latent_analysis_targets or fallback_sae_targets
 
-        # Choose the appropriate LatentAnalysisTargets
-        sae_targets = self.latent_analysis_targets or fallback_sae_targets
+            if sae_targets is not None:
+                target_layers = sae_targets.target_layers
+                match_fn = sae_targets.sae_hook_match_fn
+                self.names_filter = module.construct_names_filter(target_layers, match_fn)
+            else:
+                raise ValueError("No LatentAnalysisTargets available to create names_filter")
 
-        if sae_targets is not None:
-            target_layers = sae_targets.target_layers
-            match_fn = sae_targets.sae_hook_match_fn
-            self.names_filter = module.construct_names_filter(target_layers, match_fn)
-        else:
-            raise ValueError("No LatentAnalysisTargets available to create names_filter")
-
-        # For TransformerBridge models, extend the filter list with canonical-name equivalents.
-        # construct_names_filter builds alias-based names (e.g. blocks.9.attn.hook_z.hook_sae_acts_post)
-        # but Bridge's hook_dict and run_with_cache use canonical names
-        # (e.g. blocks.9.attn.o.hook_in.hook_sae_acts_post).
-        # Without this, the callable names_filter doesn't match canonical names → cache is empty →
-        # alive_latents empty.
+        # For TransformerBridge models, extend a list filter with canonical-name equivalents, whether the list
+        # was constructed from latent targets or written by the caller. Alias-based names
+        # (`blocks.9.attn.hook_z.hook_sae_acts_post`, or an SAE's own `blocks.0.hook_resid_pre.hook_sae_acts_post`)
+        # never match the bridge's canonical `hook_dict` keys, and the resolved callable is applied to those keys
+        # by `run_with_cache`: without the extension the cache comes back empty, `alive_latents` is `{}`, and
+        # every per-hook column of the latent, ablation and gradient composites is written as None with nothing
+        # raised. A caller-written list took the early-return path here and was the way that happened.
         # TODO: revisit names_filter handling for TransformerBridge — currently we extend the list
         # with both alias and canonical names and remap keys post-hoc (_remap_bridge_hook_keys). A
         # cleaner approach would be to resolve the naming scheme once at config time so downstream

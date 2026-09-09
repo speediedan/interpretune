@@ -1,40 +1,19 @@
-"""Every execution backend we ship must observe, and edit, the same HuggingFace forward.
+"""What is left of the set-level parity module after its capture, scope and logits layers moved into the suite.
 
-`docs/adapter_parity_governance.md` places TransformerBridge, NNsight and interp-engine in one family: all
-three execute the HF forward and differ only in how they observe and modify it. This module is the
-**set-level** parity suite for that family, parameterized over whichever participants are installed.
+`docs/adapter_parity_governance.md` places TransformerBridge, NNsight and interp-engine in one family: all three
+execute the HF forward and differ only in how they observe and modify it. The family-wide claims (every backend
+sees the same activation, applies an edit to the positions it was asked to, and reduces to the same logits) are
+now conformance cases in `interpretune.testing.conformance`, selected per target from its live declarations and
+compared against the same library-independent HF reference this module introduced. Core runs them over the
+bundled compositions in `tests/core/test_backend_conformance.py`; a hub adapter runs them in its own repository.
 
-**Why a set compared to a reference, and not pairs compared to each other.** Pairwise comparison scales
-quadratically, which is the boring objection. The real one is that a pair that agrees cannot distinguish
-"both correct" from "both wrong in the same way" -- the two implementations share the very forward they
-are being used to check. Comparing every participant against a library-independent capture of the HF
-forward makes agreement evidence about the forward rather than about the pair.
+Two things stay here because the suite is the wrong place for them:
 
-**The reference is never a participant.** If it were, a participant agreeing with itself would count as
-convergence, which is the failure mode this whole file exists to exclude.
-
-**Three layers, deliberately separate, because their failures mean different things.**
-
-1. **Capture** -- does the backend see the same activation? A divergence here explains any divergence at
-   layers 2 and 3, so testing it separately localizes the fault instead of reporting three failures for
-   one cause.
-2. **Intervention** -- does the backend apply the same edit, to the positions it was ASKED to? Backends
-   differ in which position scopes they can express at all: some can restrict an edit to the final token,
-   some only steer every position. Neither is wrong, but a caller who asked for one and silently received
-   the other gets plausible activations and no error, so the scope has to be part of the contract and a
-   backend that cannot honour one has to refuse rather than substitute.
-3. **Analysis ops** -- do ops built on those backends produce the same values?
-
-**Layer 2 asserts the changed-position SET, not the values and not a count.** A whole-prompt intervention
-produces entirely plausible activations, which is why the conflation went unnoticed. A count is no better:
-a bug steering position 0 under a last-token spec gives a count of 1 and passes, and a whole-prompt
-intervention that happens to be inert at some position also gives a count of 1 while operating on the wrong
-scope. The set *is* the claim, and it costs the same to assert.
-
-**Skip discipline.** Participants are contingent on installation, but this module FAILS rather than skips
-when NONE is available. A parity suite that silently tests nothing is the worst instance of the
-"green summary answering a narrower question" class, because parity is exactly the property people quote
-without re-deriving.
+1. **The interp-engine steering leg.** It pins a fact about a specific third-party engine (its native steering is
+   whole-prompt) against the HF reference, which is a parity assertion about that engine rather than a case every
+   adapter must satisfy. The engine's adapter carries the conformance cases; this leg stays as the record of WHY
+   the position-scope axis exists, with the measurement that motivated it.
+2. **The op-purity guard.** It asserts a property of the op layer, not of any backend, and needs no session.
 """
 
 from __future__ import annotations
@@ -45,6 +24,7 @@ import pytest
 import torch
 from torch.testing import assert_close
 
+from interpretune.testing.conformance.oracles import changed_positions
 from interpretune.utils.import_utils import package_available
 
 MODEL_ID = "gpt2"
@@ -55,44 +35,14 @@ PROMPT = "The capital of France is"
 # edit mechanism, which is what is under test, and not from arithmetic drift.
 RTOL, ATOL = 1e-4, 1e-4
 
-# "Changed" needs a stated tolerance or the position set goes noisy from nondeterminism at ~1e-9 and the
-# pressure becomes to loosen the assertion until it passes -- a guard decaying into decoration. This is far
-# above numerical noise and far below any real intervention's effect.
-CHANGED_ATOL = 1e-3
-
-#: Participants, each a name plus the package that must be importable. Asked HERE rather than exported from
-#: core: the bundled availability flags name BUNDLED adapters, and `interp_engine` is hub-delivered. A test
-#: may know which optional package it needs; core may not.
-PARTICIPANTS = {
-    "interp_engine": "interp_engine",
-    "transformer_lens": "transformer_lens",
-    "nnsight": "nnsight",
-}
-AVAILABLE = sorted(name for name, pkg in PARTICIPANTS.items() if package_available(pkg))
-
 # Imported at COLLECTION rather than inside a test. `interp_engine` pulls in a compiler/runtime stack that
 # sets TORCHINDUCTOR_*, TRITON_* and TILELANG_* as an import side effect, and the suite fails any test that
 # leaves the environment dirtier than it found it. That check is PER-TEST, so an import inside the first
 # test is attributed to it no matter how carefully it cleans up -- the variables are set before the test
 # body can restore anything. Module scope puts the side effect outside every test's snapshot.
-if "interp_engine" in AVAILABLE:  # pragma: no cover - imported for side-effect ordering, not for the name
+INTERP_ENGINE_AVAILABLE = package_available("interp_engine")
+if INTERP_ENGINE_AVAILABLE:  # pragma: no cover - imported for side-effect ordering, not for the name
     import interp_engine  # noqa: F401
-
-
-class TestTheParticipantSetIsNonEmpty:
-    """This module must never pass by having nothing to compare.
-
-    Every other test here is gated on a participant being installed. If the whole set were absent, they would all skip
-    and the file would report success while asserting nothing about parity -- and parity is precisely the kind of
-    property that gets quoted later without being re-derived.
-    """
-
-    def test_at_least_one_participant_is_installed(self):
-        assert AVAILABLE, (
-            "no execution backend from "
-            f"{sorted(PARTICIPANTS)} is installed, so this module compared nothing. Parity cannot be "
-            "reported from this environment; install at least one participant."
-        )
 
 
 @pytest.fixture(scope="module")
@@ -113,10 +63,7 @@ def hf_model():
 
 @pytest.fixture(scope="module")
 def hf_reference(hf_model, prompt_ids):
-    """Library-independent ground truth: the block's input and the resulting logits, off the HF module.
-
-    Captured with a plain forward pre-hook so nothing under test participates in producing the reference.
-    """
+    """Library-independent ground truth: the block's input off the HF module, by a plain forward pre-hook."""
     captured: dict[str, torch.Tensor] = {}
 
     def hook(_module, args):
@@ -125,143 +72,23 @@ def hf_reference(hf_model, prompt_ids):
     handle = hf_model.transformer.h[LAYER].register_forward_pre_hook(hook)
     try:
         with torch.no_grad():
-            out = hf_model(prompt_ids)
+            hf_model(prompt_ids)
     finally:
         handle.remove()
     assert "resid_pre" in captured, "the pre-hook never fired; the reference would be vacuous"
-    return {"resid_pre": captured["resid_pre"][0], "logits": out.logits.detach().clone()}
-
-
-class TestTheReferenceIsLive:
-    """Positive control for the whole module.
-
-    Every comparison below is against `hf_reference`. A degenerate reference would let all of them pass
-    while measuring nothing, so pin that it is real before believing anything compared to it.
-    """
-
-    def test_the_captured_activation_is_non_degenerate(self, hf_reference, prompt_ids):
-        resid = hf_reference["resid_pre"]
-        assert resid.shape[0] == prompt_ids.shape[1], "one position per input token"
-        assert torch.isfinite(resid).all()
-        assert resid.abs().max() > 0, "reference is all zeros; comparisons against it prove nothing"
-
-    def test_the_reference_logits_are_non_degenerate(self, hf_reference, prompt_ids):
-        logits = hf_reference["logits"]
-        assert logits.shape[:2] == (1, prompt_ids.shape[1])
-        assert torch.isfinite(logits).all()
+    assert captured["resid_pre"].abs().max() > 0, "reference is all zeros; comparisons against it prove nothing"
+    return {"resid_pre": captured["resid_pre"][0]}
 
 
 # --------------------------------------------------------------------------------------------------
-# Layer 1: capture
-# --------------------------------------------------------------------------------------------------
-
-
-def _capture_interp_engine(prompt_ids, layer):
-    """Interp-engine's capture is async-only, takes a FLAT token sequence, and returns Address-keyed dict."""
-    from interp_engine.model import EagerModel
-
-    model = EagerModel(MODEL_ID, dtype="float32")
-    out = asyncio.run(model.capture(prompt_ids[0], [f"resid_pre.{layer}"]))
-    assert out, "capture returned nothing"
-    return next(iter(out.values()))
-
-
-def _capture_transformer_lens(prompt_ids, layer):
-    """**TransformerBridge, not `HookedTransformer.from_pretrained`** -- and the difference is the point.
-
-    The governance doc's HF-native family is defined by *executing the HF forward*, and the bridge is the
-    TransformerLens member that does. `HookedTransformer.from_pretrained` is the LEGACY path: it converts
-    weights, folding LayerNorm and centering writing weights by default. Those transforms preserve model
-    OUTPUTS while changing the residual stream, so its `hook_resid_pre` is a differently-scaled tensor
-    wearing the same name.
-
-    Measured here rather than reasoned about: the first version of this function used
-    `HookedTransformer.from_pretrained` and failed this module's own convergence assertion, while
-    interp-engine and NNsight passed. That is "Matching names is not matching tensors" (governance doc)
-    catching a real instance on its first run -- and it is exactly the failure a value-tolerance nudge would
-    have buried, since the natural response to one participant disagreeing is to widen the tolerance.
-    """
-    from transformer_lens.model_bridge import TransformerBridge
-
-    model = TransformerBridge.boot_transformers(MODEL_ID, device="cpu")
-    _, cache = model.run_with_cache(prompt_ids, names_filter=f"blocks.{layer}.hook_resid_pre")
-    return cache[f"blocks.{layer}.hook_resid_pre"][0]
-
-
-def _capture_nnsight(prompt_ids, layer):
-    """Two NNsight idioms matter here, and both are documented in our own nnsight backend.
-
-    ``nnsight.save(value)`` is the save call in 0.6+, not ``value.save()`` -- the latter raises
-    ``AttributeError: 'Tensor' object has no attribute 'save'``, because ``.input`` already resolves to a
-    real tensor rather than a proxy. That is the second idiom: ``.input`` returns the **first positional
-    argument** directly, so it IS the residual stream entering the block, with no tuple to index.
-    """
-    import nnsight
-    from nnsight import LanguageModel
-
-    model = LanguageModel(MODEL_ID, device_map="cpu", dispatch=True)
-    with model.trace(prompt_ids):
-        saved = nnsight.save(model.transformer.h[layer].input)
-    return saved[0].detach()
-
-
-CAPTURERS = {
-    "interp_engine": _capture_interp_engine,
-    "transformer_lens": _capture_transformer_lens,
-    "nnsight": _capture_nnsight,
-}
-
-
-@pytest.mark.parametrize("participant", sorted(PARTICIPANTS))
-class TestCaptureConvergesOnTheForward:
-    """Layer 1. Generalizes the interp-engine-only forward leg to the whole family.
-
-    Kept as its own layer because a capture divergence would explain an intervention divergence: reporting
-    both would be one cause presented as two failures, and the intervention one would be the misleading
-    half.
-    """
-
-    def test_resid_pre_matches_the_hf_reference(self, participant, hf_reference, prompt_ids):
-        if participant not in AVAILABLE:
-            pytest.skip(f"{participant} is not installed")
-        got = CAPTURERS[participant](prompt_ids, LAYER)
-        assert_close(
-            got.to(hf_reference["resid_pre"].dtype),
-            hf_reference["resid_pre"],
-            rtol=RTOL,
-            atol=ATOL,
-            msg=f"{participant}'s resid_pre diverged from the HF forward it is supposed to be observing",
-        )
-
-    def test_a_different_layer_is_a_different_tensor(self, participant, prompt_ids):
-        """Negative control on capture itself, per participant.
-
-        Without it, a capture that ignored the requested point and returned a fixed tensor would pass the comparison
-        above. Two layers must disagree for that agreement to mean anything.
-        """
-        if participant not in AVAILABLE:
-            pytest.skip(f"{participant} is not installed")
-        a = CAPTURERS[participant](prompt_ids, LAYER)
-        b = CAPTURERS[participant](prompt_ids, LAYER + 1)
-        assert not torch.allclose(a, b, rtol=RTOL, atol=ATOL), (
-            f"{participant} returned the same activation for two different layers, so it is not honouring "
-            "the requested point and its convergence result above is meaningless"
-        )
-
-
-# --------------------------------------------------------------------------------------------------
-# Layer 2: intervention scope
+# The interp-engine steering leg
 # --------------------------------------------------------------------------------------------------
 #
 # The discriminator is CAUSALITY, not introspection, which is what makes it backend-agnostic. In a causal
 # LM, editing the residual stream at position p can only affect positions >= p downstream. So a last-token
 # intervention moves exactly the final position of a later activation, and a whole-prompt intervention
-# moves all of them. That turns "which positions were steered" -- an internal question each backend answers
-# differently, if at all -- into one observable available identically to every participant.
-#
-# The observable is the FINAL layer's `resid_post` rather than logits, because that is a point every
-# participant actually has: interp-engine's vocabulary is activation points and carries no `logits` entry.
-# Reference and participant are read at the same point, so the comparison stays apples-to-apples.
+# moves all of them. The observable is the FINAL layer's `resid_post` rather than logits, because that is a
+# point interp-engine has: its vocabulary is activation points and carries no `logits` entry.
 
 STEER_SCALE = 12.0
 LAST_LAYER = 11  # gpt2 has 12 blocks; the last one's output is the observable
@@ -271,21 +98,6 @@ def _steering_vector(hf_reference):
     """A unit direction with real effect, derived from the reference so it is meaningful for this model."""
     resid = hf_reference["resid_pre"]
     return (resid[-1] / resid[-1].norm()).clone()
-
-
-def changed_positions(baseline, intervened, atol=CHANGED_ATOL):
-    """Positions that moved by more than a STATED tolerance.
-
-    The tolerance is not decoration. Exact inequality flags positions that moved ~1e-9 from
-    nondeterminism, the set goes noisy, and the pressure becomes to loosen the assertion until it passes --
-    a guard decaying into decoration on a schedule nobody notices. `CHANGED_ATOL` sits far above numerical
-    noise and far below any real intervention's effect.
-    """
-    delta = (intervened - baseline).abs()
-    delta = delta.amax(dim=-1)
-    while delta.ndim > 1:
-        delta = delta.amax(dim=0)
-    return {int(i) for i in torch.nonzero(delta > atol).flatten().tolist()}
 
 
 @pytest.fixture(scope="module")
@@ -332,32 +144,7 @@ def _hf_steered_final_resid(hf_model, prompt_ids, vector, *, all_positions: bool
     return captured["out"][0]
 
 
-class TestTheScopeDiscriminatorWorks:
-    """Validate the instrument before using it, in BOTH directions.
-
-    A test that only checks the last-token case cannot distinguish "the discriminator works" from "the discriminator
-    always returns the last position". Asserting the whole-prompt case too is what makes the instrument able to tell the
-    scopes apart -- which is the entire claim it is used for below.
-    """
-
-    def test_a_last_token_intervention_moves_exactly_the_final_position(
-        self, hf_model, hf_reference, hf_final_resid, prompt_ids
-    ):
-        vector = _steering_vector(hf_reference)
-        steered = _hf_steered_final_resid(hf_model, prompt_ids, vector, all_positions=False)
-        assert changed_positions(hf_final_resid, steered) == {prompt_ids.shape[1] - 1}
-
-    def test_a_whole_prompt_intervention_moves_every_position(self, hf_model, hf_reference, hf_final_resid, prompt_ids):
-        """The negative control.
-
-        Without it the assertion above is satisfiable by a broken discriminator.
-        """
-        vector = _steering_vector(hf_reference)
-        steered = _hf_steered_final_resid(hf_model, prompt_ids, vector, all_positions=True)
-        assert changed_positions(hf_final_resid, steered) == set(range(prompt_ids.shape[1]))
-
-
-@pytest.mark.skipif("interp_engine" not in AVAILABLE, reason="interp-engine is not installed")
+@pytest.mark.skipif(not INTERP_ENGINE_AVAILABLE, reason="interp-engine is not installed")
 class TestInterpEngineSteeringIsAllPositions:
     """Interp-engine steers EVERY prompt position, and that is a capability we now express (#441).
 
@@ -373,7 +160,8 @@ class TestInterpEngineSteeringIsAllPositions:
     a backend cannot honour rather than substituting the one it can.
 
     So these tests are PARITY assertions, not a bug record: interp-engine's native steering must match our
-    ``all_positions`` semantics exactly, and must be distinguishable from ``last_token``.
+    ``all_positions`` semantics exactly, and must be distinguishable from ``last_token``. The discriminator
+    is validated on the HF reference alone first, in both directions, so a broken instrument cannot pass it.
     """
 
     @staticmethod
@@ -389,6 +177,17 @@ class TestInterpEngineSteeringIsAllPositions:
         out = asyncio.run(model.capture(prompt_ids[0], [f"resid_post.{LAST_LAYER}"], steering_spec=spec))
         assert out, "steered capture returned nothing"
         return next(iter(out.values()))
+
+    def test_the_discriminator_tells_the_scopes_apart_on_the_reference(
+        self, hf_model, hf_reference, hf_final_resid, prompt_ids
+    ):
+        """Positive control, in both directions: a test that only checked one scope could not tell "the
+        discriminator works" from "the discriminator always returns that scope's set"."""
+        vector = _steering_vector(hf_reference)
+        last = _hf_steered_final_resid(hf_model, prompt_ids, vector, all_positions=False)
+        whole = _hf_steered_final_resid(hf_model, prompt_ids, vector, all_positions=True)
+        assert changed_positions(hf_final_resid, last) == {prompt_ids.shape[1] - 1}
+        assert changed_positions(hf_final_resid, whole) == set(range(prompt_ids.shape[1]))
 
     def test_native_steering_matches_our_all_positions_semantics(
         self, hf_model, hf_reference, hf_final_resid, prompt_ids
@@ -427,84 +226,24 @@ class TestInterpEngineSteeringIsAllPositions:
 
 
 # --------------------------------------------------------------------------------------------------
-# Layer 3: analysis ops
+# The op layer is backend-independent
 # --------------------------------------------------------------------------------------------------
 #
-# Layer 3 decomposes, and the decomposition is worth stating because it says where the risk actually is.
 # `logit_diffs_impl` derives everything it returns from `analysis_batch.answer_logits` and
 # `answer_indices`; it never touches the backend. So "do analysis ops agree across backends" is really
-# two questions:
-#
-#   (a) do backends produce the same ANSWER LOGITS?   <- varies by backend; this is where risk lives
-#   (b) given identical inputs, is the op DETERMINISTIC and backend-independent?  <- pure by construction
-#
-# Both are asserted, because (b) being true by construction today is exactly the kind of property that
-# stops being true when someone adds a backend-conditional branch to an op, and nothing else would catch
-# that. Asserting only (a) would leave the op layer unguarded; asserting only (b) would test arithmetic
-# nobody doubts.
-
-
-def _final_logits_transformer_lens(prompt_ids):
-    from transformer_lens.model_bridge import TransformerBridge
-
-    model = TransformerBridge.boot_transformers(MODEL_ID, device="cpu")
-    return model(prompt_ids)[0, -1, :].detach()
-
-
-def _final_logits_nnsight(prompt_ids):
-    import nnsight
-    from nnsight import LanguageModel
-
-    model = LanguageModel(MODEL_ID, device_map="cpu", dispatch=True)
-    with model.trace(prompt_ids):
-        saved = nnsight.save(model.output.logits)
-    return saved[0, -1, :].detach()
-
-
-#: interp-engine is deliberately ABSENT here, and the reason is a VOCABULARY gap, not a capability gap.
-#: It can produce the output distribution perfectly well -- it runs a HuggingFace model with a real
-#: unembed. What is missing is a NAME to ask for that tensor by: its vocabulary is activation points and
-#: carries no `logits` entry, so the one tensor every analysis op reduces to cannot be addressed. Layers 1
-#: and 2 work around this by observing the final layer's residual instead, which is the same workaround an
-#: adapter has to make.
-#:
-#: The distinction matters to one reader in particular: someone deciding whether to build an adapter.
-#: "Exposes no logits point" reads as *the engine is limited*, when the true statement is *our addressing
-#: scheme is* -- and only the second is true.
-FINAL_LOGITS = {
-    "transformer_lens": _final_logits_transformer_lens,
-    "nnsight": _final_logits_nnsight,
-}
-
-
-@pytest.mark.parametrize("participant", sorted(FINAL_LOGITS))
-class TestAnswerLogitsConvergeOnTheForward:
-    """(a) The half that can actually differ: the tensor every analysis op reduces to."""
-
-    def test_final_position_logits_match_the_hf_reference(self, participant, hf_reference, prompt_ids):
-        if participant not in AVAILABLE:
-            pytest.skip(f"{participant} is not installed")
-        got = FINAL_LOGITS[participant](prompt_ids)
-        ref = hf_reference["logits"][0, -1, :]
-        assert_close(
-            got.to(ref.dtype),
-            ref,
-            rtol=RTOL,
-            atol=ATOL,
-            msg=(
-                f"{participant}'s final-position logits diverged from the HF forward. Every analysis op "
-                "reduces to this tensor, so a divergence here propagates to all of them."
-            ),
-        )
+# two questions: (a) do backends produce the same ANSWER LOGITS, which varies by backend and is now the
+# suite's `test_answer_logits_converge_on_the_forward`; and (b) given identical inputs, is the op
+# DETERMINISTIC and backend-independent, which is pure by construction and asserted here so it cannot
+# quietly stop being.
 
 
 class TestTheOpLayerIsBackendIndependent:
-    """(b) The half that is pure by construction -- asserted so it cannot quietly stop being.
+    """The half that is pure by construction -- asserted so it cannot quietly stop being.
 
     `logit_diffs_impl` takes its inputs from the analysis batch and never consults the backend. That is a
     design property, not an accident, and it is what lets one op serve every backend. A future
     backend-conditional branch inside an op would break it silently: the op would still run, still return
-    plausible numbers, and no existing parity test would notice, because they all compare backends running
+    plausible numbers, and no conformance case would notice, because they all compare backends running
     THEIR OWN ops rather than one op over fixed inputs.
     """
 
