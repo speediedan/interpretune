@@ -600,7 +600,7 @@ def jlens_layer_for_percentile(artifact: JLensArtifact, percentile: float) -> in
     return layers[round(percentile * (len(layers) - 1))]
 
 
-def fold_norm_into_unembed_rows(info: UnembedNormInfo, token_ids: Any, *, apply_norm: bool = True) -> torch.Tensor:
+def fold_norm_into_unembed_rows(info: UnembedNormInfo, token_ids: Any, *, apply_norm: bool) -> torch.Tensor:
     """Readout-faithful unembed rows for ``token_ids``, with the final norm folded in per kind.
 
     Returns ``(n_tokens, d_model)`` float rows, one per id, in the order given. Composing a lens
@@ -618,6 +618,13 @@ def fold_norm_into_unembed_rows(info: UnembedNormInfo, token_ids: Any, *, apply_
     ``apply_norm=False`` returns the raw rows, which is the paper's probing shorthand ("rows of
     ``W_U J``") rather than its readout formula. The two agree only when the scale is uniform, and
     which one steers better is model-dependent, so neither is a safe default to hard-code.
+
+    **`apply_norm` is required, and that is what this paragraph used to only assert.** The signature
+    carried `= True` while the sentence above said no default is safe, so a caller could pick a basis by
+    omission and one did: an op composed its atoms through this function without passing the flag, taking
+    the basis from a default two layers away, with nothing in its schema or output recording the choice.
+    Changing that default would have silently changed that op's basis. A required parameter makes the
+    omission unrepresentable rather than merely wrong.
     """
     ids = torch.as_tensor(token_ids, dtype=torch.long).reshape(-1)
     if ids.numel() == 0:
@@ -629,6 +636,38 @@ def fold_norm_into_unembed_rows(info: UnembedNormInfo, token_ids: Any, *, apply_
     if info.norm_kind == "layernorm":
         rows = rows - rows.mean(dim=-1, keepdim=True)
     return rows
+
+
+#: The two named bases, as the values an artifact records and #420's selector resolves to. Keyed by
+#: whether the final norm is folded in, because that is the only thing that distinguishes them.
+JLENS_BASIS_NAMES = {True: "jlens_norm_aware", False: "jlens_paper"}
+
+
+def jlens_basis_name(apply_norm: bool) -> str:
+    """The name of the basis ``apply_norm`` selects, for recording in an op's output.
+
+    A result that cannot say which basis produced it is not interpretable: the folded and unfolded
+    bases are not related by a coefficient, so two results differing only in this choice are not
+    comparable and are indistinguishable after the fact.
+    """
+    return JLENS_BASIS_NAMES[bool(apply_norm)]
+
+
+def jlens_direction_rows(
+    info: UnembedNormInfo, token_ids: Any, j_matrix: torch.Tensor, *, apply_norm: bool
+) -> torch.Tensor:
+    """``(n_tokens, d_model)`` J-lens directions for ``token_ids``, in the basis ``apply_norm`` names.
+
+    THE one construction. It existed in three places that did not agree on how the basis was chosen: one passed the flag
+    through, one omitted it and inherited a default two layers away, and a third lived in a published op collection
+    where the choice was decided by whichever revision a caller had pulled. Composing `rows @ J` is two lines, which is
+    exactly why it was rewritten rather than shared, and why the three drifted on the part that is not the arithmetic.
+
+    Callers wanting a single direction take row 0; callers wanting a group's mean direction may average the rows or the
+    result, since the composition is linear and the two agree exactly.
+    """
+    rows = fold_norm_into_unembed_rows(info, token_ids, apply_norm=apply_norm)
+    return rows @ j_matrix.to(rows.device)
 
 
 def resolve_embedding_weight(module: Any) -> torch.Tensor:
@@ -782,6 +821,9 @@ __all__ = [
     "JLensArtifact",
     "DEFAULT_JLENS_REPO",
     "fold_norm_into_unembed_rows",
+    "jlens_basis_name",
+    "jlens_direction_rows",
+    "JLENS_BASIS_NAMES",
     "FEATURE_SCORE_SOURCE_ALIASES",
     "get_loss_preds_diffs",
     "last_token_logits",

@@ -368,6 +368,7 @@ def jlens_concept_probe(
         jlens_layer (int64)
         jlens_positions (int64)
         jlens_provenance (object)
+        jlens_basis (string)
     """
     ...
 
@@ -407,6 +408,7 @@ def jlens_sparse_inventory(
     """Sparse nonnegative decomposition of an activation over the J-lens dictionary, with its residual
 
     Input Schema:
+        jlens_apply_final_norm (bool)
         cache (object)
         jlens_inventory_k (int64)
         jlens_layer (int64)
@@ -424,6 +426,7 @@ def jlens_sparse_inventory(
         jlens_layer (int64)
         jlens_positions (int64)
         jlens_provenance (object)
+        jlens_basis (string)
     """
     ...
 
