@@ -41,7 +41,7 @@ from .oracles import (
 )
 from .ops import captured_points
 from .reference import HFReference
-from .session import ConformanceSession, build_conformance_session, tokenized_prompts
+from .session import build_conformance_session, tokenized_prompts
 
 #: Tolerances for the real positions of a left-padded dataset batch, looser than the unpadded calibration
 #: (1e-4) and RELATIVE as well as absolute. Measured: on Linux the bridge and a plain HF forward agree to 4.6e-4
@@ -202,11 +202,13 @@ class ModelBackendConformance:
     # -- fixtures ----------------------------------------------------------------------------------
 
     @pytest.fixture(scope="class")
-    def suite(self, request) -> ConformanceSession:
-        """One composed session and runner per target class."""
+    def suite(self, request):
+        """One composed session and runner per target class; its working directory is removed when the class
+        ends."""
         cls = request.cls
         inputs = cls.inputs or ConformanceInputs()
-        return build_conformance_session(cls.target, inputs)
+        yield build_conformance_session(cls.target, inputs)
+        inputs.cleanup()
 
     @pytest.fixture(scope="class")
     def hf(self, suite) -> HFReference:

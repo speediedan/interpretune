@@ -18,6 +18,7 @@ from interpretune.analysis.backends import (
     PositionScope,
 )
 from interpretune.testing.conformance.gates import UNDECLARED, Gate, SelectionReport, conformance_case, gate_of
+from interpretune.testing.conformance.inputs import ConformanceInputs
 from interpretune.testing.conformance.plugin import vacuity_problems
 
 
@@ -318,3 +319,33 @@ class TestSuppliedSettingsSurviveComposition:
     def test_no_extras_skips_rather_than_passing(self):
         with pytest.raises(pytest.skip.Exception):
             self._run({}, object())
+
+
+class TestWorkingDirectoryLifetime:
+    """An inputs object creates no directory until a session needs one, and removes it on cleanup.
+
+    Measured before the fix: one ``it_conformance_*`` directory per run, created at import for every class that
+    declares its inputs, never removed, tens of gigabytes each, 451 GB after five days on a shared host.
+    """
+
+    def test_construction_creates_nothing_and_first_use_creates_one(self, tmp_path, monkeypatch):
+        import tempfile
+
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        inputs = ConformanceInputs()
+        assert inputs.workdir is None and not list(tmp_path.glob("it_conformance_*"))
+        created = inputs._ensure_workdir()
+        assert created.is_dir() and created.parent == tmp_path and created is inputs._ensure_workdir()
+
+    def test_cleanup_removes_the_directory_and_a_later_use_creates_a_fresh_one(self, tmp_path, monkeypatch):
+        import tempfile
+
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        inputs = ConformanceInputs()
+        first = inputs._ensure_workdir()
+        (first / "cache").mkdir()
+        inputs.cleanup()
+        assert not first.exists() and inputs.workdir is None
+        inputs.cleanup()  # idempotent
+        second = inputs._ensure_workdir()
+        assert second.is_dir() and second != first
