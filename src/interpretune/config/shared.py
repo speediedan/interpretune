@@ -221,7 +221,35 @@ def find_adapter_subclasses(
                     subclasses[adapter] = member
                 elif issubclass(target_type, member):
                     superclasses[adapter] = member
+
+    # A hub-delivered adapter executes from a revision-scoped synthetic module, so the templates above
+    # cannot name it and it is absent from everything they find. Its entrypoint registers a config class
+    # instead. Consulted AFTER the templates so an adapter reachable both ways resolves the same as it
+    # always did, and registration cannot change what a bundled adapter composes.
+    for adapter, member in _registered_cfg_classes(adapter_space).items():
+        if adapter in subclasses or adapter in superclasses:
+            continue
+        if issubclass(member, target_type) and member is not target_type:
+            subclasses[adapter] = member
+        elif issubclass(target_type, member):
+            superclasses[adapter] = member
     return subclasses, superclasses
+
+
+def _registered_cfg_classes(adapter_space) -> dict[Adapter, type]:
+    """Config classes adapters registered with the composition registry, keyed by adapter.
+
+    Empty in a session where nothing registered one, which is every bundled-only session, so this costs a dict lookup
+    per adapter and changes no existing resolution.
+    """
+    from interpretune.adapter_registry import ADAPTER_REGISTRY
+
+    registered = {}
+    for adapter in adapter_space:
+        cfg_cls = ADAPTER_REGISTRY.module_cfg_class(adapter)
+        if cfg_cls is not None:
+            registered[adapter] = cfg_cls
+    return registered
 
 
 def search_candidate_subclass_attrs(
