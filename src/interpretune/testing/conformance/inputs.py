@@ -300,6 +300,9 @@ class ConformanceTarget:
     session_cfg_factory: Callable[[ConformanceInputs], Any] | None = None
     forward_family: str = "hf_native"
     load: Callable[[], Any] | None = None
+    module_cfg_extras: dict[str, Any] | None = None
+    """Settings the default factory supplies on the seed module config, each a field the composed config class
+    declares; the always-on composition case checks every one reached the composed config as the same object."""
     datamodule_flavour: str = "hf"
     batch_size: int | None = None
     """Override the suite's rows-per-batch.
@@ -317,4 +320,6 @@ class ConformanceTarget:
         """The target's session config, from its factory or the seed default."""
         if self.session_cfg_factory is not None:
             return self.session_cfg_factory(inputs)
-        return inputs.session_cfg(self.composition, flavour=self.datamodule_flavour)
+        return inputs.session_cfg(
+            self.composition, flavour=self.datamodule_flavour, module_cfg_extras=self.module_cfg_extras
+        )
