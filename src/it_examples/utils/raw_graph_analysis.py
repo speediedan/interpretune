@@ -558,4 +558,6 @@ def gen_raw_graph_overview(
 
 
 # NOTE: For a complete example of using these functions with Circuit Tracer graphs,
-# see raw_graph_analysis_example_incomplete.py (TODO: requires local demo data to be made public)
+# An end-to-end example of these helpers needs public demo graphs, and none is bundled; the archived draft
+# that used local data is outside the repository until one exists or the example is parameterised for a
+# user-supplied graph.
