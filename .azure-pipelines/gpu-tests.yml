@@ -29,7 +29,10 @@ trigger:
     exclude:
       - scripts/**
       - docs/**
-      - "*.md"
+      # `**/*.md` and not `*.md`: Azure matches a path filter against the whole root-relative path, so
+      # the bare form covers only the repository root and a Markdown file under `src/**` still matched
+      # the include above it. Thirteen such files exist, and each spent a full serial slot per edit.
+      - "**/*.md"
 
 pr:
   branches:
@@ -49,10 +52,11 @@ pr:
       - .azure-pipelines/**
     exclude:
       - scripts/**
-      # Skips a PR whose ENTIRE diff is documentation. It does not skip a docs push to a PR that also
-      # touches src -- see the note above the `trigger:` block for why that is not achievable here.
+      # Skips a PR whose ENTIRE diff is documentation, Markdown at any depth included (same reason as
+      # the `**/*.md` form under `trigger:`). It does not skip a docs push to a PR that also touches
+      # src -- see the note above the `trigger:` block for why that is not achievable here.
       - docs/**
-      - "*.md"
+      - "**/*.md"
   drafts: false  # Only run for PRs that are "ready for review"
   #
   # Observed reporting behaviour, which is worth knowing when a PR seems not to have run:
