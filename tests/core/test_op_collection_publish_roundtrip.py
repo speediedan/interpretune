@@ -38,7 +38,38 @@ CONCEPT_FAMILY = (
 )
 REPO_ID = "speediedan/concept_direction_ops"
 NAMESPACE = "speediedan.concept_direction_ops"
-REVISION = "f" * 40
+
+
+def _fresh_revision() -> str:
+    """A revision no earlier run can have cached.
+
+    The dispatcher copies an executed module into a module cache keyed by revision and, correctly, serves that copy
+    thereafter: a revision is immutable in real use. A constant synthetic revision broke that invariant here, so a
+    copy written by an earlier run on an older tree was executed instead of the tree just published, and the first
+    change to the collection's imports since that copy surfaced as an ImportError in the executed module. Minting the
+    revision per run keeps the cache's invariant true for the test as well.
+    """
+    from uuid import uuid4
+
+    return (uuid4().hex + uuid4().hex)[:40]
+
+
+REVISION = _fresh_revision()
+
+
+def _isolate_module_cache(tmp_path: Path, monkeypatch) -> None:
+    """Point the executed-module cache at the test's own directory, on both module objects that hold the constant.
+
+    ``IT_MODULES_CACHE`` is imported by value into the loader, so patching the analysis package alone leaves the loader
+    writing into the shared cache under the HF home, which persists across runs here and across builds on the CI
+    agent's bind-mounted cache.
+    """
+    from interpretune.analysis.ops import dynamic_module_utils
+
+    modules = tmp_path / "modules"
+    modules.mkdir(exist_ok=True)
+    monkeypatch.setattr("interpretune.analysis.IT_MODULES_CACHE", str(modules))
+    monkeypatch.setattr(dynamic_module_utils, "IT_MODULES_CACHE", str(modules))
 
 
 @pytest.fixture(scope="module")
@@ -64,6 +95,7 @@ def pulled_dispatcher(published_tree, tmp_path, monkeypatch) -> AnalysisOpDispat
     monkeypatch.setattr(dispatcher_module, "IT_ANALYSIS_HUB_CACHE", hub_cache)
     monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_OP_PATHS", [])
     monkeypatch.delenv("IT_OP_PRECEDENCE", raising=False)
+    _isolate_module_cache(tmp_path, monkeypatch)
 
     dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
     (tmp_path / "cache").mkdir()
@@ -240,8 +272,8 @@ class TestThePinnedImplementationIsTheOneExecuted:
     called: a test that the loader was called with the pin passes whether or not the loader honours it.
     """
 
-    PINNED = "a" * 40
-    REPUBLISHED = "b" * 40
+    PINNED = _fresh_revision()
+    REPUBLISHED = _fresh_revision()
 
     def _two_revisions(self, published_tree, tmp_path, monkeypatch) -> AnalysisOpDispatcher:
         from interpretune.hub.pins import record_op_pin
@@ -263,6 +295,7 @@ class TestThePinnedImplementationIsTheOneExecuted:
         monkeypatch.setattr(dispatcher_module, "IT_ANALYSIS_HUB_CACHE", hub_cache)
         monkeypatch.setattr("interpretune.analysis.IT_ANALYSIS_OP_PATHS", [])
         monkeypatch.delenv("IT_OP_PRECEDENCE", raising=False)
+        _isolate_module_cache(tmp_path, monkeypatch)
         dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
         (tmp_path / "cache").mkdir()
         dispatcher._cache_manager.cache_dir = tmp_path / "cache"
