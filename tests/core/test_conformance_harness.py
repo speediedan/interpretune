@@ -18,6 +18,7 @@ from interpretune.analysis.backends import (
     PositionScope,
 )
 from interpretune.testing.conformance.gates import UNDECLARED, Gate, SelectionReport, conformance_case, gate_of
+from interpretune.testing.conformance.inputs import ConformanceInputs
 from interpretune.testing.conformance.plugin import vacuity_problems
 
 
@@ -268,3 +269,83 @@ class TestCollectionSelection:
         # a composite that mixes families belongs to none of them: `intervention_from_concept` composes concept
         # ops with circuit-tracer ops, so validating it "as the concept collection" would judge the wrong thing
         assert "intervention_from_concept" not in ops and "attribution_from_concept" not in ops
+
+
+class TestSuppliedSettingsSurviveComposition:
+    """The case is a plain method carrying its gate as an attribute, so it runs on a stub suite."""
+
+    @staticmethod
+    def _run(extras, cfg):
+        from types import SimpleNamespace
+
+        from interpretune.testing.conformance import ModelBackendConformance
+
+        suite = SimpleNamespace(inputs=SimpleNamespace(supplied_extras=extras), module=SimpleNamespace(it_cfg=cfg))
+        ModelBackendConformance.test_supplied_settings_survive_composition(ModelBackendConformance(), suite)
+
+    def test_a_declared_field_holding_the_supplied_object_passes(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class _Cfg:
+            my_adapter_cfg: object = None
+
+        value = object()
+        self._run({"my_adapter_cfg": value}, _Cfg(my_adapter_cfg=value))
+
+    def test_a_stray_attribute_fails_by_name(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class _Cfg:
+            other: int = 0
+
+        cfg = _Cfg()
+        value = object()
+        cfg.my_adapter_cfg = value  # type: ignore[attr-defined]  # the seam this case exists to catch
+        with pytest.raises(AssertionError, match="'my_adapter_cfg' was supplied .* _Cfg declares no such field"):
+            self._run({"my_adapter_cfg": value}, cfg)
+
+    def test_a_copied_object_fails_by_identity(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class _Cfg:
+            my_adapter_cfg: object = None
+
+        with pytest.raises(AssertionError, match="reached the composed config as a different object"):
+            self._run({"my_adapter_cfg": object()}, _Cfg(my_adapter_cfg=object()))
+
+    def test_no_extras_skips_rather_than_passing(self):
+        with pytest.raises(pytest.skip.Exception):
+            self._run({}, object())
+
+
+class TestWorkingDirectoryLifetime:
+    """An inputs object creates no directory until a session needs one, and removes it on cleanup.
+
+    Measured before the fix: one ``it_conformance_*`` directory per run, created at import for every class that
+    declares its inputs, never removed, tens of gigabytes each, 451 GB after five days on a shared host.
+    """
+
+    def test_construction_creates_nothing_and_first_use_creates_one(self, tmp_path, monkeypatch):
+        import tempfile
+
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        inputs = ConformanceInputs()
+        assert inputs.workdir is None and not list(tmp_path.glob("it_conformance_*"))
+        created = inputs._ensure_workdir()
+        assert created.is_dir() and created.parent == tmp_path and created is inputs._ensure_workdir()
+
+    def test_cleanup_removes_the_directory_and_a_later_use_creates_a_fresh_one(self, tmp_path, monkeypatch):
+        import tempfile
+
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        inputs = ConformanceInputs()
+        first = inputs._ensure_workdir()
+        (first / "cache").mkdir()
+        inputs.cleanup()
+        assert not first.exists() and inputs.workdir is None
+        inputs.cleanup()  # idempotent
+        second = inputs._ensure_workdir()
+        assert second.is_dir() and second != first

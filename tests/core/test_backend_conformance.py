@@ -21,7 +21,11 @@ class TestBridgeConformance(ModelBackendConformance):
     """TransformerBridge over gpt2: executes the HF forward in place, so the value cases apply."""
 
     target = ConformanceTarget(
-        composition=("core", "sae_lens"), forward_family="hf_native", datamodule_flavour="bridge"
+        composition=("core", "sae_lens"),
+        forward_family="hf_native",
+        datamodule_flavour="bridge",
+        # a declared field, so the composition-survival case fires on an in-tree target rather than only downstream
+        module_cfg_extras={"experiment_tag": "conformance-bridge"},
     )
 
 

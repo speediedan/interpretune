@@ -99,11 +99,39 @@ class ConformanceInputs:
     those cases skip with that reason (a suite input gap, not the backend's)."""
     attribution_top_n: int = 4
     attribution_scale_factor: float = 2.0
-    workdir: Path = field(default_factory=lambda: Path(tempfile.mkdtemp(prefix="it_conformance_")))
+    workdir: Path | None = None
+    """Where a session's dataset, logs, op cache and store outputs go.
+
+    Created on first use, not at construction,
+    since an inputs object is often built at import time for a class whose cases may never run; removed at process
+    exit and by :meth:`cleanup`, because a run's cache and outputs reach tens of gigabytes and a directory per run that
+    nothing removes fills a shared host (measured: 277 of them, 451 GB, in five days).
+    """
+    supplied_extras: dict[str, Any] = field(default_factory=dict)
+    """Every ``module_cfg_extras`` entry the last ``session_cfg`` call set, so a coherence case can check that each
+    reached the composed config as a declared field with the same object, rather than as a stray attribute."""
 
     def latent_models_for_model(self) -> list[LatentModelSpec]:
         """The latent specs that fit ``model_id``."""
         return [spec for spec in self.latent_models if spec.model_id == self.model_id]
+
+    def _ensure_workdir(self) -> Path:
+        """The working directory, created on first use and registered for removal at process exit."""
+        if self.workdir is None:
+            import atexit
+            import shutil
+
+            self.workdir = Path(tempfile.mkdtemp(prefix="it_conformance_"))
+            atexit.register(shutil.rmtree, str(self.workdir), ignore_errors=True)
+        return self.workdir
+
+    def cleanup(self) -> None:
+        """Remove the working directory now, if one was created; the class-scoped session fixture calls this."""
+        import shutil
+
+        if self.workdir is not None:
+            shutil.rmtree(self.workdir, ignore_errors=True)
+            self.workdir = None
 
     def seed_config(self, flavour: str = "hf"):
         """The seed's ``(datamodule_cfg, module_cfg, datamodule_cls, module_cls)`` for a data-pipeline flavour.
@@ -191,12 +219,13 @@ class ConformanceInputs:
         self._attach_latent_models(it_cfg)
         it_cfg.optimizer_init = {}
         it_cfg.lr_scheduler_init = {}
-        it_cfg.core_log_dir = str(self.workdir / "logs")
-        dm_cfg.dataset_path = str(self.workdir / "dataset")
+        it_cfg.core_log_dir = str(self._ensure_workdir() / "logs")
+        dm_cfg.dataset_path = str(self._ensure_workdir() / "dataset")
         dm_cfg.eval_batch_size = self.batch_size
         dm_cfg.train_batch_size = self.batch_size
         self._place(it_cfg)
-        for name, value in (module_cfg_extras or {}).items():
+        self.supplied_extras = dict(module_cfg_extras or {})
+        for name, value in self.supplied_extras.items():
             setattr(it_cfg, name, value)
         if prepare is not None:
             prepare(dm_cfg, it_cfg)
@@ -267,8 +296,8 @@ class ConformanceInputs:
             limit_analysis_batches=self.limit_batches,
             max_epochs=self.max_epochs,
             ignore_manual=True,
-            cache_dir=str(self.workdir / "cache"),
-            op_output_dataset_path=str(self.workdir / "out"),
+            cache_dir=str(self._ensure_workdir() / "cache"),
+            op_output_dataset_path=str(self._ensure_workdir() / "out"),
         )
 
 
@@ -296,6 +325,9 @@ class ConformanceTarget:
     session_cfg_factory: Callable[[ConformanceInputs], Any] | None = None
     forward_family: str = "hf_native"
     load: Callable[[], Any] | None = None
+    module_cfg_extras: dict[str, Any] | None = None
+    """Settings the default factory supplies on the seed module config, each a field the composed config class
+    declares; the always-on composition case checks every one reached the composed config as the same object."""
     datamodule_flavour: str = "hf"
     batch_size: int | None = None
     """Override the suite's rows-per-batch.
@@ -313,4 +345,6 @@ class ConformanceTarget:
         """The target's session config, from its factory or the seed default."""
         if self.session_cfg_factory is not None:
             return self.session_cfg_factory(inputs)
-        return inputs.session_cfg(self.composition, flavour=self.datamodule_flavour)
+        return inputs.session_cfg(
+            self.composition, flavour=self.datamodule_flavour, module_cfg_extras=self.module_cfg_extras
+        )

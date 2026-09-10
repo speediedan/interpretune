@@ -18,7 +18,7 @@ from interpretune.analysis.ops.base import AnalysisOp
 
 from .inputs import ConformanceInputs, ConformanceTarget
 from .oracles import expect_refusal
-from .session import ConformanceSession, build_conformance_session
+from .session import build_conformance_session
 
 BUNDLED_PREFIX = "interpretune.analysis.ops.bundled."
 
@@ -64,10 +64,12 @@ class OpCollectionConformance:
     inputs: ClassVar[ConformanceInputs | None] = None
 
     @pytest.fixture(scope="class")
-    def suite(self, request) -> ConformanceSession:
-        """One composed session per target class, exactly as for the model-backend cases."""
+    def suite(self, request):
+        """One composed session per target class, exactly as for the model-backend cases; cleaned up with it."""
         cls = request.cls
-        return build_conformance_session(cls.target, cls.inputs or ConformanceInputs())
+        inputs = cls.inputs or ConformanceInputs()
+        yield build_conformance_session(cls.target, inputs)
+        inputs.cleanup()
 
     @pytest.fixture(scope="class")
     def collection_ops(self, request, suite) -> dict[str, Any]:
