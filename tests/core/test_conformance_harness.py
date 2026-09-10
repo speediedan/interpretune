@@ -349,3 +349,62 @@ class TestWorkingDirectoryLifetime:
         inputs.cleanup()  # idempotent
         second = inputs._ensure_workdir()
         assert second.is_dir() and second != first
+
+
+class TestReportArtifact:
+    """The selection report as data: per-target declarations rendered field by field, with provenance."""
+
+    def _caps(self):
+        from interpretune.analysis.backends import (
+            AnalysisBackendCapability,
+            FeatureInterventionSupport,
+            InterventionMode,
+            InterventionSupport,
+            ModelBackendCapability,
+            ModuleCapabilities,
+            PositionScope,
+        )
+
+        return ModuleCapabilities(
+            model=frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION}),
+            analysis=frozenset({AnalysisBackendCapability.FEATURE_INTERVENTION}),
+            intervention=InterventionSupport(
+                modes=frozenset({InterventionMode.ADD}), position_scopes=frozenset({PositionScope.LAST_TOKEN})
+            ),
+            attribution_graph=None,
+            feature_intervention=FeatureInterventionSupport(value_sources=frozenset({"constant"})),
+        )
+
+    def test_describe_capabilities_is_plain_data_with_absent_surfaces_absent(self):
+        import json
+
+        from interpretune.testing.conformance.gates import describe_capabilities
+
+        data = describe_capabilities(self._caps(), composition=("core", "x"), model_id="gpt2")
+        json.dumps(data)  # serializable
+        assert data["model_capabilities"] == ["activation_intervention"]
+        assert data["analysis_capabilities"] == ["feature_intervention"]
+        assert data["intervention"]["modes"] == ["add"] and data["intervention"]["position_scopes"] == ["last_token"]
+        assert data["feature_intervention"]["value_sources"] == ["constant"]
+        assert "latent_models" not in data and "capture" not in data and "attribution_graph" not in data
+        assert data["composition"] == ["core", "x"] and data["model_id"] == "gpt2"
+
+    def test_the_artifact_carries_targets_outcomes_and_provenance(self, tmp_path):
+        import json
+
+        from interpretune.testing.conformance.gates import SelectionReport, describe_capabilities
+        from interpretune.testing.conformance.plugin import write_report_artifact
+
+        report = SelectionReport()
+        report.targets["TestX"] = describe_capabilities(self._caps(), composition=("core", "x"), model_id="gpt2")
+        report.record("TestX::case_a", "ran")
+        report.record("TestX::case_b", "skipped-undeclared")
+        path = tmp_path / "out" / "report.json"
+        write_report_artifact(report, str(path), exitstatus=0)
+        artifact = json.loads(path.read_text())
+        assert artifact["format"] == "interpretune.conformance.report/1"
+        assert artifact["targets"]["TestX"]["intervention"]["modes"] == ["add"]
+        assert artifact["ran"] == ["TestX::case_a"] and artifact["skipped_undeclared"] == ["TestX::case_b"]
+        prov = artifact["provenance"]
+        assert prov["exit_status"] == 0 and prov["interpretune_version"] and prov["measured_at"].endswith("+00:00")
+        assert "git_head" in prov

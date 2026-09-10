@@ -138,6 +138,9 @@ class SelectionReport:
     declared: list[str] = field(default_factory=list)
     capture: dict[str, str] = field(default_factory=dict)
     """Each target class's capture declaration, rendered; ``"undeclared"`` when the backend has none."""
+    targets: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Each target class's measured declaration as data (:func:`describe_capabilities`), for the report
+    artifact."""
     ran: list[str] = field(default_factory=list)
     skipped_undeclared: list[str] = field(default_factory=list)
     skipped_other: list[str] = field(default_factory=list)
@@ -151,6 +154,22 @@ class SelectionReport:
             "skipped-other": self.skipped_other,
             "failed": self.failed,
         }[outcome].append(name)
+
+    def as_artifact(self, **provenance: Any) -> dict[str, Any]:
+        """The report as data: per-target declarations plus the four outcome lists, with the caller's provenance.
+
+        A consumer of this artifact (a card, an adapter's CI, a debugging session) gets what the suite MEASURED on a
+        composed session, never what a manifest declared; provenance says which tree and which run measured it.
+        """
+        return {
+            "format": "interpretune.conformance.report/1",
+            "provenance": dict(provenance),
+            "targets": {name: dict(record) for name, record in self.targets.items()},
+            "ran": list(self.ran),
+            "skipped_undeclared": list(self.skipped_undeclared),
+            "skipped_other": list(self.skipped_other),
+            "failed": list(self.failed),
+        }
 
     def render(self) -> str:
         """The four counts, as printed at the end of every run."""
@@ -166,3 +185,40 @@ class SelectionReport:
         )
         lines.append(f"  failed:              {len(self.failed)}")
         return "\n".join(lines)
+
+
+def describe_capabilities(caps: Any, *, composition: tuple[str, ...] = (), model_id: str = "") -> dict[str, Any]:
+    """A module's :class:`~interpretune.analysis.backends.ModuleCapabilities` as plain data.
+
+    Enums become their values, sets become sorted lists, and each support record is rendered field by field, so the
+    result serializes as JSON and reads the same way the records describe themselves. A surface the module does not
+    declare is absent rather than present-and-empty, so a consumer cannot mistake "not declared" for "declared with
+    nothing".
+    """
+    import dataclasses
+    from enum import Enum
+
+    def plain(value: Any) -> Any:
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, (frozenset, set)):
+            return sorted(plain(v) for v in value)
+        if isinstance(value, (list, tuple)):
+            return [plain(v) for v in value]
+        if isinstance(value, dict):
+            return {str(k): plain(v) for k, v in value.items()}
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            return {f.name: plain(getattr(value, f.name)) for f in dataclasses.fields(value)}
+        return value
+
+    out: dict[str, Any] = {
+        "composition": list(composition),
+        "model_id": model_id,
+        "model_capabilities": sorted(c.value for c in caps.model),
+        "analysis_capabilities": sorted(c.value for c in caps.analysis),
+    }
+    for name in ("intervention", "latent_models", "capture", "attribution_graph", "feature_intervention"):
+        record = getattr(caps, name, None)
+        if record is not None:
+            out[name] = plain(record)
+    return out

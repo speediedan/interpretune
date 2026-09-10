@@ -26,7 +26,7 @@ from interpretune.analysis.backends import (
 )
 from interpretune.analysis.optools import require_backend_capability
 
-from .gates import UNDECLARED, conformance_case, gate_of
+from .gates import UNDECLARED, conformance_case, describe_capabilities, gate_of
 from .plugin import _REPORT_KEY
 from .inputs import ConformanceInputs, ConformanceTarget
 from .oracles import (
@@ -235,6 +235,12 @@ class ModelBackendConformance:
             report.capture.setdefault(
                 type(self).__name__,
                 suite.capabilities.capture.describe() if suite.capabilities.capture else "undeclared",
+            )
+            report.targets.setdefault(
+                type(self).__name__,
+                describe_capabilities(
+                    suite.capabilities, composition=tuple(suite.target.composition), model_id=suite.inputs.model_id
+                ),
             )
         if not gate.selects(suite.capabilities, family=suite.family, single_prompt=suite.target.single_prompt):
             pytest.skip(f"{UNDECLARED}: needs {gate.describe()}")
