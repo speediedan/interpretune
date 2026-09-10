@@ -18,6 +18,8 @@ from interpretune.analysis.optools import (
     UnembedNormInfo,
     _rmsnorm_scale,
     fold_norm_into_unembed_rows,
+    jlens_basis_name,
+    jlens_direction_rows,
     resolve_unembed_and_norm_scale,
 )
 
@@ -242,7 +244,7 @@ class TestFoldNormIntoUnembedRows:
 
         rms = x.pow(2).mean().sqrt()
         readout = w_u[c] @ (scale * x / rms)
-        folded = fold_norm_into_unembed_rows(info, [c])[0]
+        folded = fold_norm_into_unembed_rows(info, [c], apply_norm=True)[0]
 
         torch.testing.assert_close(folded @ x / rms, readout)
 
@@ -254,7 +256,7 @@ class TestFoldNormIntoUnembedRows:
 
         std = x.var(unbiased=False).sqrt()
         readout = w_u[c] @ (scale * (x - x.mean()) / std)
-        folded = fold_norm_into_unembed_rows(info, [c])[0]
+        folded = fold_norm_into_unembed_rows(info, [c], apply_norm=True)[0]
         torch.testing.assert_close(folded @ x / std, readout)
 
         # The positive control: the same row WITHOUT centering does not reproduce it, so the
@@ -265,8 +267,12 @@ class TestFoldNormIntoUnembedRows:
     def test_rmsnorm_rows_are_not_centered(self):
         w_u = torch.randn(VOCAB, D)
         scale = torch.linspace(0.3, 2.7, D)
-        rms_row = fold_norm_into_unembed_rows(UnembedNormInfo(w_u=w_u, norm_scale=scale, norm_kind="rmsnorm"), [3])[0]
-        ln_row = fold_norm_into_unembed_rows(UnembedNormInfo(w_u=w_u, norm_scale=scale, norm_kind="layernorm"), [3])[0]
+        rms_row = fold_norm_into_unembed_rows(
+            UnembedNormInfo(w_u=w_u, norm_scale=scale, norm_kind="rmsnorm"), [3], apply_norm=True
+        )[0]
+        ln_row = fold_norm_into_unembed_rows(
+            UnembedNormInfo(w_u=w_u, norm_scale=scale, norm_kind="layernorm"), [3], apply_norm=True
+        )[0]
         assert rms_row.mean().abs() > 1e-3, "an RMSNorm row must keep its uniform component"
         torch.testing.assert_close(ln_row.mean(), torch.zeros(()), atol=1e-6, rtol=0)
 
@@ -278,19 +284,19 @@ class TestFoldNormIntoUnembedRows:
     def test_absent_scale_returns_raw_rows_rather_than_guessing_one(self):
         w_u = torch.randn(VOCAB, D)
         info = UnembedNormInfo(w_u=w_u, norm_scale=None, norm_kind="none")
-        torch.testing.assert_close(fold_norm_into_unembed_rows(info, [1]), w_u[[1]])
+        torch.testing.assert_close(fold_norm_into_unembed_rows(info, [1], apply_norm=True), w_u[[1]])
 
     def test_rows_are_returned_per_id_in_order(self):
         w_u = torch.randn(VOCAB, D)
         info = UnembedNormInfo(w_u=w_u, norm_scale=None, norm_kind="none")
-        rows = fold_norm_into_unembed_rows(info, [4, 1, 4])
+        rows = fold_norm_into_unembed_rows(info, [4, 1, 4], apply_norm=True)
         assert rows.shape == (3, D)
         torch.testing.assert_close(rows[0], rows[2])
 
     def test_empty_token_group_raises(self):
         info = UnembedNormInfo(w_u=torch.randn(VOCAB, D), norm_scale=None, norm_kind="none")
         with pytest.raises(ValueError, match="at least one token id"):
-            fold_norm_into_unembed_rows(info, [])
+            fold_norm_into_unembed_rows(info, [], apply_norm=True)
 
 
 class TestInnerModelSelectionNeverTruthTestsAModule:
@@ -368,3 +374,61 @@ class TestInnerModelSelectionNeverTruthTestsAModule:
         info = resolve_unembed_and_norm_scale(module)
         torch.testing.assert_close(info.norm_scale, torch.full((D,), 0.25))
         assert float(info.norm_scale.max()) != 99.0, "selection fell through to the decoy"
+
+
+class TestTheBasisMustBeStated:
+    """`apply_norm` is required, and the one construction is shared rather than rewritten.
+
+    The signature carried `= True` while the docstring said no default is safe. An op took the basis
+    from that default without passing the flag, two layers away, so it could not be asked for the other
+    basis and recorded neither. Requiring the parameter makes the omission unrepresentable rather than
+    merely wrong: a call site that does not state its basis does not run.
+    """
+
+    @staticmethod
+    def _info():
+        w_u = torch.arange(12, dtype=torch.float32).reshape(4, 3)
+        return UnembedNormInfo(w_u=w_u, norm_scale=torch.tensor([2.0, 0.5, 1.0]), norm_kind="rmsnorm")
+
+    def test_omitting_the_basis_is_a_type_error_not_a_default(self):
+        with pytest.raises(TypeError):
+            fold_norm_into_unembed_rows(self._info(), [1])  # type: ignore[call-arg]
+
+    @pytest.mark.parametrize("apply_norm,expected", [(True, "jlens_norm_aware"), (False, "jlens_paper")])
+    def test_the_basis_has_a_name_to_record(self, apply_norm, expected):
+        assert jlens_basis_name(apply_norm) == expected
+
+    @pytest.mark.parametrize("apply_norm", [True, False])
+    def test_the_shared_construction_matches_the_expression_it_replaced(self, apply_norm):
+        """`jlens_direction_rows` is `fold(...) @ J`, which is what all three sites open-coded."""
+        info, j = self._info(), torch.randn(3, 5)
+
+        got = jlens_direction_rows(info, [0, 2], j, apply_norm=apply_norm)
+        want = fold_norm_into_unembed_rows(info, [0, 2], apply_norm=apply_norm) @ j
+
+        torch.testing.assert_close(got, want)
+
+    def test_the_two_bases_actually_differ(self):
+        """The complement: if they agreed, recording which one produced a result would be pointless.
+
+        They coincide only when the scale is uniform, so this uses a non-uniform one -- otherwise the
+        test would pass while asserting nothing about the distinction it exists to protect.
+        """
+        info, j = self._info(), torch.randn(3, 5)
+
+        folded = jlens_direction_rows(info, [0, 2], j, apply_norm=True)
+        raw = jlens_direction_rows(info, [0, 2], j, apply_norm=False)
+
+        assert not torch.allclose(folded, raw), (
+            "the folded and unfolded bases produced identical directions, so this fixture cannot "
+            "distinguish them and the surrounding assertions prove nothing"
+        )
+
+    def test_a_group_mean_is_the_same_before_or_after_the_lens(self):
+        """The collection averaged rows then composed; composing then averaging is the same map."""
+        info, j = self._info(), torch.randn(3, 5)
+
+        rows_first = fold_norm_into_unembed_rows(info, [0, 2, 3], apply_norm=True).mean(dim=0) @ j
+        lens_first = jlens_direction_rows(info, [0, 2, 3], j, apply_norm=True).mean(dim=0)
+
+        torch.testing.assert_close(rows_first, lens_first)

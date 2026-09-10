@@ -26,7 +26,8 @@ from transformers import BatchEncoding
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.optools import (
     UnembedNormInfo,
-    fold_norm_into_unembed_rows,
+    jlens_basis_name,
+    jlens_direction_rows,
     jlens_layer_for_percentile,
     resolve_jlens,
     resolve_tokenizer,
@@ -180,8 +181,9 @@ def jlens_concept_probe_impl(
         raise ValueError("jlens_concept_probe requires jlens_concept_token_ids")
 
     device = _readout_device(info)
-    rows = fold_norm_into_unembed_rows(info, token_ids, apply_norm=True if apply_norm is None else bool(apply_norm))
-    directions = (rows @ j.to(device)).detach().cpu()  # (n_concepts, d_model), in the residual basis
+    apply_norm = True if apply_norm is None else bool(apply_norm)
+    # (n_concepts, d_model), in the residual basis
+    directions = jlens_direction_rows(info, token_ids, j.to(device), apply_norm=apply_norm).detach().cpu()
     activations = _activations(analysis_batch, cache_key)
     positions = _selected_positions(analysis_batch, kwargs, activations.shape[1])
     selected = activations[:, positions, :]
@@ -194,6 +196,7 @@ def jlens_concept_probe_impl(
         jlens_layer=layer,
         jlens_positions=positions,
         jlens_provenance=artifact.provenance,
+        jlens_basis=jlens_basis_name(apply_norm),
     )
     return analysis_batch
 
@@ -261,9 +264,14 @@ def jlens_sparse_inventory_impl(
     device = _readout_device(info)
     j = j.to(device)
     w_u = info.w_u.float().detach()
+    # Stated rather than inherited. This call previously omitted the flag and took the basis from
+    # `fold_norm_into_unembed_rows`' default two layers away, so the op had no way to be asked for the
+    # other basis and nothing recorded which one it used.
+    raw_apply = kwargs.get("jlens_apply_final_norm", analysis_batch.get("jlens_apply_final_norm"))
+    apply_norm = True if raw_apply is None else bool(raw_apply)
 
     def atom_of(token_id: int) -> torch.Tensor:
-        return (fold_norm_into_unembed_rows(info, [token_id])[0] @ j).detach().cpu()
+        return jlens_direction_rows(info, [token_id], j, apply_norm=apply_norm)[0].detach().cpu()
 
     ids_out, coefficients_out, residual_out = [], [], []
     for example in range(activations.shape[0]):
@@ -292,5 +300,6 @@ def jlens_sparse_inventory_impl(
         jlens_layer=layer,
         jlens_positions=positions,
         jlens_provenance=artifact.provenance,
+        jlens_basis=jlens_basis_name(apply_norm),
     )
     return analysis_batch

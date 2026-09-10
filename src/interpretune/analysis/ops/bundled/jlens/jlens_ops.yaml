@@ -176,12 +176,22 @@ jlens_concept_probe:
       required: false
       non_tensor: true
       sequence_type: false
+    jlens_basis:
+      datasets_dtype: string
+      # Which named basis produced this result. Recorded because the folded and unfolded bases
+      # are not related by a coefficient, so two results differing only in that choice are not
+      # comparable -- and without this field they are indistinguishable after the fact.
 
 jlens_sparse_inventory:
   description: Sparse nonnegative decomposition of an activation over the J-lens dictionary, with its residual
   implementation: interpretune.analysis.ops.bundled.jlens.jlens_ops.jlens_sparse_inventory_impl
   aliases: [jacobian_lens_sparse_inventory]
   input_schema:
+    jlens_apply_final_norm:
+      datasets_dtype: bool
+      required: false
+      non_tensor: true
+      sequence_type: false
     cache:
       datasets_dtype: object
       non_tensor: true
@@ -252,3 +262,8 @@ jlens_sparse_inventory:
       required: false
       non_tensor: true
       sequence_type: false
+    jlens_basis:
+      datasets_dtype: string
+      # Which named basis produced this result. Recorded because the folded and unfolded bases
+      # are not related by a coefficient, so two results differing only in that choice are not
+      # comparable -- and without this field they are indistinguishable after the fact.
