@@ -14,7 +14,7 @@ import torch
 
 from interpretune.analysis.backends import (
     AnalysisBackendCapability,
-    BackendCapability,
+    ModelBackendCapability,
     InterventionMode,
     PositionScope,
     SupportsGradients,
@@ -50,9 +50,9 @@ PADDED_RTOL = 1e-3
 PADDED_ATOL = 1e-3
 
 _PROTOCOL_FOR = {
-    BackendCapability.LATENT_MODELS: SupportsLatentModels,
-    BackendCapability.GRADIENTS: SupportsGradients,
-    BackendCapability.INTERVENTION: SupportsIntervention,
+    ModelBackendCapability.LATENT_MODELS: SupportsLatentModels,
+    ModelBackendCapability.GRADIENTS: SupportsGradients,
+    ModelBackendCapability.ACTIVATION_INTERVENTION: SupportsIntervention,
 }
 
 
@@ -239,15 +239,17 @@ class ModelBackendConformance:
         assert backend is not None, "the composed module attaches no model backend"
         assert isinstance(backend.capabilities, frozenset)
         for cap in backend.capabilities:
-            assert isinstance(cap, BackendCapability), f"{cap!r} is not a BackendCapability member"
+            assert isinstance(cap, ModelBackendCapability), f"{cap!r} is not a ModelBackendCapability member"
             protocol = _PROTOCOL_FOR[cap]
             assert isinstance(backend, protocol), (
                 f"{suite.backend_name} declares {cap.name} but is not a {protocol.__name__}"
             )
         # the present-iff-declared invariant, from the live objects rather than the enum
-        assert (suite.capabilities.intervention is not None) == (BackendCapability.INTERVENTION in backend.capabilities)
+        assert (suite.capabilities.intervention is not None) == (
+            ModelBackendCapability.ACTIVATION_INTERVENTION in backend.capabilities
+        )
         assert (suite.capabilities.latent_models is not None) == (
-            BackendCapability.LATENT_MODELS in backend.capabilities
+            ModelBackendCapability.LATENT_MODELS in backend.capabilities
         )
 
     @conformance_case()
@@ -259,7 +261,7 @@ class ModelBackendConformance:
         latent models configured, which would fail first.
         """
         backend = suite.backend
-        undeclared = [c for c in BackendCapability if c not in backend.capabilities]
+        undeclared = [c for c in ModelBackendCapability if c not in backend.capabilities]
         # A backend declaring every surface has nothing to refuse; that is a pass, not a skip, because the
         # claim "every surface is declared" is itself checked above and a skip here would count as "other".
         for cap in undeclared:
@@ -444,7 +446,9 @@ class ModelBackendConformance:
         return steering_vector(captured_points(store, 0)[point])
 
     @conformance_case(
-        capability=BackendCapability.INTERVENTION, scope=PositionScope.LAST_TOKEN, mode=InterventionMode.ADD
+        capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
+        scope=PositionScope.LAST_TOKEN,
+        mode=InterventionMode.ADD,
     )
     def test_last_token_scope_moves_exactly_the_final_position(self, suite):
         """The changed-position SET under `last_token` is exactly the final position."""
@@ -458,7 +462,9 @@ class ModelBackendConformance:
             assert got == expected_positions("last_token", seq), f"batch {i}: changed {sorted(got)}"
 
     @conformance_case(
-        capability=BackendCapability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, mode=InterventionMode.ADD
+        capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
+        scope=PositionScope.ALL_POSITIONS,
+        mode=InterventionMode.ADD,
     )
     def test_all_positions_scope_moves_every_real_position(self, suite):
         """Every real position is in the changed set under `all_positions`."""
@@ -472,19 +478,23 @@ class ModelBackendConformance:
             expected = {int(p) for p in torch.nonzero(real.any(dim=0)).flatten().tolist()}
             assert got == expected, f"batch {i}: changed {sorted(got)} but the real positions are {sorted(expected)}"
 
-    @conformance_case(capability=BackendCapability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, negative=True)
+    @conformance_case(
+        capability=ModelBackendCapability.ACTIVATION_INTERVENTION, scope=PositionScope.ALL_POSITIONS, negative=True
+    )
     def test_undeclared_all_positions_is_refused(self, suite):
         """A scope the backend did not declare is refused by name, never narrowed."""
         with expect_refusal(NotImplementedError, match="position_scope='all_positions'"):
             self._intervene(suite, scope="all_positions")
 
-    @conformance_case(capability=BackendCapability.INTERVENTION, scope=PositionScope.LAST_TOKEN, negative=True)
+    @conformance_case(
+        capability=ModelBackendCapability.ACTIVATION_INTERVENTION, scope=PositionScope.LAST_TOKEN, negative=True
+    )
     def test_undeclared_last_token_is_refused(self, suite):
         """A scope the backend did not declare is refused by name, never widened."""
         with expect_refusal(NotImplementedError, match="position_scope='last_token'"):
             self._intervene(suite, scope="last_token")
 
-    @conformance_case(capability=BackendCapability.INTERVENTION)
+    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION)
     def test_undeclared_modes_are_refused_on_the_mode_axis(self, suite):
         """Each undeclared mode is refused naming the mode axis, never applied as another mode."""
         declared = {m.value for m in suite.capabilities.intervention.modes}
@@ -495,7 +505,7 @@ class ModelBackendConformance:
             with expect_refusal(NotImplementedError, match=f"mode='{mode.value}'"):
                 self._intervene(suite, scope=scope, mode=mode.value)
 
-    @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.ADD)
+    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.ADD)
     def test_zero_intervention_is_identity(self, suite):
         """A zero-scale intervention leaves the logits unchanged."""
         scope = next(iter(suite.capabilities.intervention.position_scopes)).value
@@ -540,7 +550,7 @@ class ModelBackendConformance:
                 y, x, rtol=PADDED_RTOL, atol=PADDED_ATOL, msg=lambda detail, i=i: f"{what} (batch {i})\n{detail}"
             )
 
-    @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.REPLACE)
+    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.REPLACE)
     def test_replace_ignores_the_scale_factor(self, suite):
         """`replace` installs the tensor as-is: the result is independent of `scale_factor`, and it moves."""
         scope = next(iter(suite.capabilities.intervention.position_scopes)).value
@@ -550,7 +560,7 @@ class ModelBackendConformance:
         self._assert_moved(unit, what="replace")
         self._assert_same_logits(unit, scaled, what="replace changed with scale_factor, which it must ignore")
 
-    @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.PATCH)
+    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.PATCH)
     def test_patch_of_a_pair_with_itself_is_identity(self, suite):
         """Swapping a concept's coordinates with its own leaves the activation, and the logits, unchanged."""
         scope = next(iter(suite.capabilities.intervention.position_scopes)).value
@@ -567,7 +577,7 @@ class ModelBackendConformance:
                 msg=lambda detail, i=i: f"patch (v, v) changed the logits (batch {i})\n{detail}",
             )
 
-    @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.PATCH)
+    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.PATCH)
     def test_patch_is_symmetric_in_pair_order(self, suite):
         """``h + V(sigma(c) - c)`` is the same update for ``(s, t)`` and ``(t, s)``, and it moves the logits.
 
@@ -582,7 +592,7 @@ class ModelBackendConformance:
         self._assert_moved(forward, what="patch (s, t)")
         self._assert_same_logits(forward, reverse, what="patch (s, t) and patch (t, s) differ")
 
-    @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.PROJECT)
+    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.PROJECT)
     def test_project_depends_only_on_the_basis_span(self, suite):
         """Projecting onto ``v`` and onto ``-2v`` is the same projection, and it moves the logits."""
         scope = next(iter(suite.capabilities.intervention.position_scopes)).value
@@ -592,7 +602,7 @@ class ModelBackendConformance:
         self._assert_moved(onto_v, what="project")
         self._assert_same_logits(onto_v, onto_span, what="project onto v and onto -2v differ")
 
-    @conformance_case(capability=BackendCapability.INTERVENTION)
+    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION)
     def test_declared_modes_are_distinguishable(self, suite):
         """Every declared mode, given the same vector and point, yields logits distinguishable from every other
         declared mode and from the baseline.
@@ -626,7 +636,9 @@ class ModelBackendConformance:
                 )
                 assert not same, f"modes {a!r} and {b!r} produced the same logits for the same vector and point"
 
-    @conformance_case(capability=BackendCapability.INTERVENTION, mode=InterventionMode.ADD, family="hf_native")
+    @conformance_case(
+        capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.ADD, family="hf_native"
+    )
     def test_baseline_is_an_unsteered_forward(self, suite, hf):
         """The pre-intervention half equals the plain forward."""
         scope = next(iter(suite.capabilities.intervention.position_scopes)).value
@@ -638,7 +650,7 @@ class ModelBackendConformance:
             _assert_close_padded(pre, ref, what=f"batch {i}: the baseline half against the plain forward")
 
     @conformance_case(
-        capability=BackendCapability.INTERVENTION,
+        capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
         scope=PositionScope.LAST_TOKEN,
         mode=InterventionMode.ADD,
         family="hf_native",
@@ -665,7 +677,7 @@ class ModelBackendConformance:
     # -- INTERVENTION: mixed scopes -------------------------------------------------------------------
 
     @conformance_case(
-        capability=BackendCapability.INTERVENTION,
+        capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
         scopes=(PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS),
         mode=InterventionMode.ADD,
         family="hf_native",
@@ -807,7 +819,7 @@ class ModelBackendConformance:
                 fwd_hooks=fwd_hooks,
             )
 
-    @conformance_case(capability=BackendCapability.LATENT_MODELS)
+    @conformance_case(capability=ModelBackendCapability.LATENT_MODELS)
     def test_latent_op_stores_the_declared_schema(self, suite):
         """`logit_diffs_latent` yields, per batch and per attached model, a non-empty alive-latent set and the
         answer-position activations of the correct rows, `[rows, d_sae]`."""
@@ -824,7 +836,7 @@ class ModelBackendConformance:
             assert acts.ndim == 2 and acts.shape[-1] == handle.cfg.d_sae, f"batch {i}: {tuple(acts.shape)}"
             assert torch.isfinite(acts).all(), f"batch {i}: non-finite activations"
 
-    @conformance_case(capability=BackendCapability.LATENT_MODELS)
+    @conformance_case(capability=ModelBackendCapability.LATENT_MODELS)
     def test_alive_latents_are_the_positive_latents_at_the_answer(self, suite):
         """Internal consistency, with no reference: every latent positive in a correct row's answer-position
         activation is in the batch's alive set, and some batch has such a latent (else the claim is vacuous)."""
@@ -839,7 +851,7 @@ class ModelBackendConformance:
             checked += len(positive)
         assert checked > 0, "no correct row had a positive latent, so the subset claim held vacuously"
 
-    @conformance_case(capability=BackendCapability.LATENT_MODELS)
+    @conformance_case(capability=ModelBackendCapability.LATENT_MODELS)
     def test_batched_hooks_agree_with_sequential(self, suite):
         """`fwd_w_hooks_batched` returns, per config, what one `fwd_w_hooks_and_latent_models` call returns.
 
@@ -876,7 +888,7 @@ class ModelBackendConformance:
             f"ablating latent {first} and latent {second} gave the same logits, so the agreement above is vacuous"
         )
 
-    @conformance_case(capability=BackendCapability.LATENT_MODELS)
+    @conformance_case(capability=ModelBackendCapability.LATENT_MODELS)
     def test_ablating_a_dead_latent_is_identity(self, suite):
         """Zeroing a latent that is already zero at the answer position leaves the logits unchanged, and zeroing
         the strongest alive one moves them (positive control).
@@ -897,7 +909,7 @@ class ModelBackendConformance:
 
     # -- GRADIENTS ----------------------------------------------------------------------------------
 
-    @conformance_case(capability=BackendCapability.GRADIENTS)
+    @conformance_case(capability=ModelBackendCapability.GRADIENTS)
     def test_gradient_op_stores_the_declared_schema(self, suite):
         """`logit_diffs_attr_grad` yields per-hook attribution values `[rows, d_sae]`, finite, zero off the alive
         set, and non-zero somewhere (positive control)."""
@@ -931,7 +943,7 @@ class ModelBackendConformance:
         )
         return float(logit_diffs.sum())
 
-    @conformance_case(capability=BackendCapability.GRADIENTS)
+    @conformance_case(capability=ModelBackendCapability.GRADIENTS)
     def test_gradient_predicts_a_small_perturbation_to_first_order(self, suite):
         """Scaling the strongest latent by `1 + eps` at the answer position moves the summed logit difference by
         `eps` times its stored attribution, to first order.

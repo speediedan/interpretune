@@ -30,7 +30,7 @@ from __future__ import annotations
 from interpretune.analysis.backends.capabilities import (
     ANALYSIS_BACKEND_REGISTRY,
     AnalysisBackendCapability,
-    BackendCapability,
+    ModelBackendCapability,
     Capability,
     InterventionMode,
     InterventionSupport,
@@ -83,7 +83,7 @@ __all__ = [
     "ANALYSIS_BACKEND_REGISTRY",
     "AnalysisBackend",
     "AnalysisBackendCapability",
-    "BackendCapability",
+    "ModelBackendCapability",
     "Capability",
     "FeatureSelectionSpec",
     "InterventionDict",

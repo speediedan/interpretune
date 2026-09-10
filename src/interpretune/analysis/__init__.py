@@ -30,7 +30,7 @@ from interpretune.hub.manager import HubAnalysisOpManager
 from interpretune.analysis.backends import (
     AnalysisBackend,
     AnalysisBackendCapability,
-    BackendCapability,
+    ModelBackendCapability,
     InterventionMode,
     InterventionSupport,
     LatentModelSupport,
@@ -99,7 +99,7 @@ __all__ = [
     "IT_ANALYSIS_OP_PATHS",
     # Formatters
     "ITAnalysisFormatter",
-    "BackendCapability",
+    "ModelBackendCapability",
     "AnalysisBackendCapability",
     "AnalysisBackend",
     "ModuleCapabilities",

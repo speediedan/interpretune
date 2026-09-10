@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from interpretune.analysis.backends.protocols import AnalysisBackend, ModelBackend
 
 
-class BackendCapability(Enum):
+class ModelBackendCapability(Enum):
     """The gated METHOD GROUPS of a model backend: one member per ``Supports*`` protocol, no more.
 
     Ops and the dispatcher query ``backend.capabilities`` before calling an optional method group
@@ -34,7 +34,7 @@ class BackendCapability(Enum):
     GRADIENTS = "gradients"
     """``SupportsGradients``: forward + backward with gradient caching."""
 
-    INTERVENTION = "intervention"
+    ACTIVATION_INTERVENTION = "activation_intervention"
     """``SupportsIntervention``: baseline-vs-intervention paired execution (``fwd_w_intervention``)."""
 
 
@@ -124,7 +124,7 @@ class LatentModelSupport:
     """How ``LATENT_MODELS`` runs on this backend.
 
     ``batched_hooks`` says whether ``fwd_w_hooks_batched`` fuses its hook configs into one execution
-    (nnsight's multi-invoke) or loops. It lives here rather than in :class:`BackendCapability` because it
+    (nnsight's multi-invoke) or loops. It lives here rather than in :class:`ModelBackendCapability` because it
     is a property of HOW a method in that group runs, not a surface of its own: every latent-models
     backend implements the method, and a sequential loop is a valid implementation.
     """
@@ -136,7 +136,7 @@ class LatentModelSupport:
 class CaptureSupport:
     """Which vocabulary points a backend can capture on the model it wraps, as a declaration a case can check.
 
-    Capture is a base method every model backend has, so it is not a :class:`BackendCapability` member: that enum
+    Capture is a base method every model backend has, so it is not a :class:`ModelBackendCapability` member: that enum
     answers "is the surface implemented at all", and a backend that captures 181 of 298 points implements it. What
     varies is WHICH points, so the shape is a support record beside :class:`InterventionSupport`, keyed by the
     vocabulary's layer-free base spellings (``ln2.hook_out``, ``hook_resid_pre``, ``unembed.hook_in``) so one
@@ -248,7 +248,7 @@ class AnalysisBackendCapability(Enum):
     """Module exposes feature intervention support via an attached analysis backend."""
 
 
-Capability: TypeAlias = BackendCapability | AnalysisBackendCapability
+Capability: TypeAlias = ModelBackendCapability | AnalysisBackendCapability
 
 
 @dataclass(frozen=True)
@@ -260,7 +260,7 @@ class ModuleCapabilities:
     ``adapter_info``, a conformance report) can rely on the record being there when the surface is.
     """
 
-    model: frozenset[BackendCapability]
+    model: frozenset[ModelBackendCapability]
     analysis: frozenset[AnalysisBackendCapability]
     intervention: InterventionSupport | None = None
     latent_models: LatentModelSupport | None = None
@@ -270,8 +270,8 @@ class ModuleCapabilities:
 
     def __post_init__(self) -> None:
         for capability, record, name in (
-            (BackendCapability.INTERVENTION, self.intervention, "intervention"),
-            (BackendCapability.LATENT_MODELS, self.latent_models, "latent_models"),
+            (ModelBackendCapability.ACTIVATION_INTERVENTION, self.intervention, "intervention"),
+            (ModelBackendCapability.LATENT_MODELS, self.latent_models, "latent_models"),
         ):
             declared = capability in self.model
             if declared and record is None:
@@ -298,39 +298,48 @@ class ModuleCapabilities:
         A model capability is looked up only among model capabilities and an analysis capability only among analysis
         ones, so the two namespaces cannot satisfy each other by coincidence.
         """
-        if isinstance(capability, BackendCapability):
+        if isinstance(capability, ModelBackendCapability):
             return capability in self.model
         return capability in self.analysis
 
 
-def normalize_backend_capability(capability: Any) -> Capability:
-    """Normalize capability-like values to the local execution or analysis capability enums."""
+#: Spellings that once named a capability and no longer do, each with the spelling that replaced it. Refused by
+#: name rather than translated: a caller carrying the old spelling has a manifest or a config to update, and a
+#: silent translation would leave it carrying a name nothing else in the vocabulary recognizes.
+_RETIRED_CAPABILITY_SPELLINGS: dict[str, str] = {
+    "intervention": ModelBackendCapability.ACTIVATION_INTERVENTION.value,
+    "attribution": AnalysisBackendCapability.ATTRIBUTION_GRAPH.value,
+}
 
-    if isinstance(capability, (BackendCapability, AnalysisBackendCapability)):
+
+def normalize_backend_capability(capability: Any) -> Capability:
+    """Normalize capability-like values to the local execution or analysis capability enums.
+
+    Accepts a member of either enum, a member's value, or a dotted spelling whose last segment is a member name
+    (``"ModelBackendCapability.GRADIENTS"``). A retired spelling is refused by name with its replacement; an unknown one
+    is refused with both vocabularies listed.
+    """
+    if isinstance(capability, (ModelBackendCapability, AnalysisBackendCapability)):
         return capability
 
     raw_value = getattr(capability, "value", capability)
-    normalized_value = str(raw_value)
-    if normalized_value == "attribution":
-        normalized_value = AnalysisBackendCapability.ATTRIBUTION_GRAPH.value
-
-    try:
-        return BackendCapability(normalized_value)
-    except ValueError:
-        pass
-
-    try:
-        return AnalysisBackendCapability(normalized_value)
-    except ValueError:
-        if isinstance(raw_value, str) and "." in raw_value:
-            suffix = raw_value.split(".")[-1].lower()
-            if suffix == "attribution":
-                suffix = AnalysisBackendCapability.ATTRIBUTION_GRAPH.value
-            try:
-                return BackendCapability(suffix)
-            except ValueError:
-                return AnalysisBackendCapability(suffix)
-        raise
+    spelling = str(raw_value)
+    candidate = spelling.split(".")[-1].lower() if "." in spelling else spelling
+    if candidate in _RETIRED_CAPABILITY_SPELLINGS:
+        raise ValueError(
+            f"{spelling!r} is a retired capability spelling; the surface it named is now"
+            f" {_RETIRED_CAPABILITY_SPELLINGS[candidate]!r}. Update the declaration rather than relying on a"
+            " translation."
+        )
+    for enum_cls in (ModelBackendCapability, AnalysisBackendCapability):
+        try:
+            return enum_cls(candidate)
+        except ValueError:
+            continue
+    raise ValueError(
+        f"{spelling!r} is not a capability: model-level spellings are {[m.value for m in ModelBackendCapability]},"
+        f" analysis-level spellings are {[m.value for m in AnalysisBackendCapability]}"
+    )
 
 
 def get_model_backend(module: Any) -> ModelBackend | None:
@@ -422,7 +431,7 @@ def require_analysis_backend(module: Any) -> AnalysisBackend:
 def get_module_capabilities(module: Any) -> ModuleCapabilities:
     """Aggregate execution and analysis capabilities exposed by a module."""
 
-    model_capabilities: set[BackendCapability] = set()
+    model_capabilities: set[ModelBackendCapability] = set()
     analysis_capabilities: set[AnalysisBackendCapability] = set()
     backend = get_model_backend(module)
 
@@ -430,7 +439,7 @@ def get_module_capabilities(module: Any) -> ModuleCapabilities:
         model_capabilities.update(
             capability
             for capability in (normalize_backend_capability(raw_capability) for raw_capability in backend.capabilities)
-            if isinstance(capability, BackendCapability)
+            if isinstance(capability, ModelBackendCapability)
         )
 
     analysis_backend = get_analysis_backend(module)
@@ -457,10 +466,10 @@ def get_module_capabilities(module: Any) -> ModuleCapabilities:
         model=frozenset(model_capabilities),
         analysis=frozenset(analysis_capabilities),
         intervention=_support_record(
-            backend, BackendCapability.INTERVENTION, model_capabilities, "intervention_support"
+            backend, ModelBackendCapability.ACTIVATION_INTERVENTION, model_capabilities, "intervention_support"
         ),
         latent_models=_support_record(
-            backend, BackendCapability.LATENT_MODELS, model_capabilities, "latent_model_support"
+            backend, ModelBackendCapability.LATENT_MODELS, model_capabilities, "latent_model_support"
         ),
         capture=_capture_record(backend, module),
     )
@@ -481,7 +490,9 @@ def _capture_record(backend: Any, module: Any) -> CaptureSupport | None:
     return declare(model)
 
 
-def _support_record(backend: Any, capability: BackendCapability, declared: set[BackendCapability], attr: str) -> Any:
+def _support_record(
+    backend: Any, capability: ModelBackendCapability, declared: set[ModelBackendCapability], attr: str
+) -> Any:
     """The support record a backend attaches for ``capability``, or ``None`` when it does not declare it.
 
     Read with ``getattr`` rather than through the protocol so a backend that declares the surface and

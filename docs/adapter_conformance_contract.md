@@ -99,7 +99,7 @@ The capture declaration (every model backend):
 | every declared point is captured | structural | every capturable base point, spelled at the capture layer, reaches the store as a non-degenerate tensor |
 | a point outside the declaration is refused by name | negative | asking for a declared gap (or a layer the model lacks) through the runner path raises, naming the point and the reason, rather than returning a cache that is silently short |
 
-Capture is a base method every model backend has, so it is not a `BackendCapability` member: that enum answers
+Capture is a base method every model backend has, so it is not a `ModelBackendCapability` member: that enum answers
 "is the surface implemented at all". What varies is WHICH vocabulary points a backend can capture on the model it
 wraps, and that is a typed record beside `InterventionSupport`, keyed by layer-free base spellings over the
 architecture's inventory (`interpretune.analysis.points.inventory`), whose keys collapse the semantic names for one
@@ -293,7 +293,7 @@ only after the seed stopped needing TransformerLens, which had been pulling it i
 
 **Derive complements; never transcribe the vocabulary.** A test that lists the capabilities a backend does
 NOT claim by name goes red the moment the enum changes, with no opinion about the change. Derive the
-complement (`set(BackendCapability) - backend.capabilities`) so a member added upstream is asserted absent
+complement (`set(ModelBackendCapability) - backend.capabilities`) so a member added upstream is asserted absent
 automatically and a removed one simply disappears. The suite's own refusal case is written that way.
 
 **Adding a component slot changes the arity of every adapter-set-keyed helper.** The first adopter hit this

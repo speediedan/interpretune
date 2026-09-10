@@ -13,7 +13,7 @@ from typing import Any, ClassVar, cast
 
 import pytest
 
-from interpretune.analysis.backends import BackendCapability
+from interpretune.analysis.backends import ModelBackendCapability
 from interpretune.analysis.ops.base import AnalysisOp
 
 from .inputs import ConformanceInputs, ConformanceTarget
@@ -98,7 +98,7 @@ class OpCollectionConformance:
             missing: list[str] = [c.value for c in op.required_capabilities if not caps.supports(c)]
             if op.requires_intervention_axes:
                 if record is None:
-                    missing.append(BackendCapability.INTERVENTION.value)
+                    missing.append(ModelBackendCapability.ACTIVATION_INTERVENTION.value)
                 else:
                     declared_modes = {m.value for m in record.modes}
                     declared_scopes = {s.value for s in record.position_scopes}

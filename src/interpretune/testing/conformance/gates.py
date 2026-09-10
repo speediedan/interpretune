@@ -13,7 +13,7 @@ from typing import Any
 
 from interpretune.analysis.backends import (
     AnalysisBackendCapability,
-    BackendCapability,
+    ModelBackendCapability,
     InterventionMode,
     ModuleCapabilities,
     PositionScope,
@@ -30,7 +30,7 @@ class Gate:
     Empty means always-on.
     """
 
-    capability: BackendCapability | AnalysisBackendCapability | None = None
+    capability: ModelBackendCapability | AnalysisBackendCapability | None = None
     scope: PositionScope | None = None
     scopes: tuple[PositionScope, ...] = ()
     """Every scope a case needs declared at once (a mixed-scope payload); ``scope`` is the one-scope form."""
@@ -109,7 +109,7 @@ _CASE_GATES: dict[str, Gate] = {}
 def conformance_case(gate: Gate | None = None, **kw: Any) -> Callable:
     """Mark a test method as a conformance case with the declaration it needs.
 
-    ``conformance_case()`` is always-on; ``conformance_case(capability=BackendCapability.INTERVENTION,
+    ``conformance_case()`` is always-on; ``conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
     scope=PositionScope.ALL_POSITIONS)`` needs both; ``negative=True`` inverts the selection.
     """
     resolved = gate if gate is not None else Gate(**kw)

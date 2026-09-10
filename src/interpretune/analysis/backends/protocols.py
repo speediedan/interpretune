@@ -14,7 +14,7 @@ import torch
 
 from interpretune.analysis.backends.capabilities import (
     AnalysisBackendCapability,
-    BackendCapability,
+    ModelBackendCapability,
     InterventionSupport,
     LatentModelSupport,
 )
@@ -158,7 +158,7 @@ class ModelBackendCore(Protocol):
     Every model backend implements this much: plain forward, cached forward, and cache wrapping,
     plus the capability introspection ops use to gate everything beyond it. The optional method
     groups live in the ``Supports*`` protocols below, each tied to the
-    :class:`~interpretune.analysis.backends.capabilities.BackendCapability` member of the same name;
+    :class:`~interpretune.analysis.backends.capabilities.ModelBackendCapability` member of the same name;
     ops call an optional method only after ``backend.supports(...)`` says so (see
     ``require_backend_capability``). A partial backend (e.g. a hub-delivered adapter's) implements
     this core plus whichever groups it truthfully claims.
@@ -173,7 +173,7 @@ class ModelBackendCore(Protocol):
     """
 
     @property
-    def capabilities(self) -> frozenset[BackendCapability]:
+    def capabilities(self) -> frozenset[ModelBackendCapability]:
         """Return the set of capabilities this backend supports.
 
         Backends must override this property to declare their capabilities. Analysis ops can check capabilities before
@@ -181,7 +181,7 @@ class ModelBackendCore(Protocol):
         """
         ...
 
-    def supports(self, capability: BackendCapability) -> bool:
+    def supports(self, capability: ModelBackendCapability) -> bool:
         """Check whether this backend supports a given capability.
 
         Default implementation checks ``capability in self.capabilities``.
@@ -249,7 +249,7 @@ class ModelBackendCore(Protocol):
 
 @runtime_checkable
 class SupportsLatentModels(Protocol):
-    """Methods gated by ``BackendCapability.LATENT_MODELS``: execution with latent-model handles attached.
+    """Methods gated by ``ModelBackendCapability.LATENT_MODELS``: execution with latent-model handles attached.
 
     ``fwd_w_hooks_batched`` is part of this group: every latent-models backend implements it, and a
     sequential loop is a valid implementation. Whether the backend FUSES the configs into one execution
@@ -321,7 +321,7 @@ class SupportsLatentModels(Protocol):
 
         Each element of ``hook_configs`` is a ``fwd_hooks`` list (as passed to
         ``fwd_w_hooks_and_latent_models``).  Backends that support
-        :attr:`BackendCapability.BATCHED_HOOKS` may batch all configs into a single
+        :attr:`ModelBackendCapability.BATCHED_HOOKS` may batch all configs into a single
         execution context (e.g., NNsight multi-invoke within one trace) for efficiency.
         Other backends loop over configs sequentially.
 
@@ -352,7 +352,7 @@ class SupportsLatentModels(Protocol):
 
 @runtime_checkable
 class SupportsGradients(Protocol):
-    """Methods gated by ``BackendCapability.GRADIENTS``: forward + backward with gradient caching."""
+    """Methods gated by ``ModelBackendCapability.GRADIENTS``: forward + backward with gradient caching."""
 
     def fwd_w_grads_and_latent_models(
         self,
@@ -397,7 +397,8 @@ class SupportsGradients(Protocol):
 
 @runtime_checkable
 class SupportsIntervention(Protocol):
-    """Methods gated by ``BackendCapability.INTERVENTION``: baseline-vs-intervention paired execution.
+    """Methods gated by ``ModelBackendCapability.ACTIVATION_INTERVENTION``: baseline-vs-intervention paired
+    execution.
 
     Claiming the surface is not the whole contract. Which position scopes and which modes a backend can
     honour are declared on :attr:`intervention_support`, and ``require_intervention_support`` refuses a
