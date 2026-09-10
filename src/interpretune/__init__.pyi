@@ -4,35 +4,107 @@
 from typing import Callable, Optional
 import torch
 from transformers import BatchEncoding
-from interpretune.protocol import DefaultAnalysisBatchProtocol
 
-# Main module exports - added for static analysis
-# These imports resolve pyright 'unknown import symbol' errors caused by the complex import hook
-# mechanism used for analysis operations.
-from interpretune.base.datamodules import ITDataModule as ITDataModule
-from interpretune.base.components.mixins import MemProfilerHooks as MemProfilerHooks
-from interpretune.analysis.ops import AnalysisBatch as AnalysisBatch
+# The public surface, DERIVED from `interpretune.__all__` rather than listed here.
+# A .pyi shadows the module it names, so every public name absent from this file is invisible
+# to a type checker even though it exists and is exported.
+from importlib.metadata import version as version
+from interpretune.adapter_registry import ADAPTER_REGISTRY as ADAPTER_REGISTRY
+from interpretune.adapters.core import ITModule as ITModule
+from interpretune.adapters.lightning import (
+    LightningDataModule as LightningDataModule,
+    LightningModule as LightningModule,
+)
+from interpretune.adapters.registration import CompositionRegistry as CompositionRegistry
+from interpretune.adapters.sae_lens.adapter import (
+    SAELensNNsightModule as SAELensNNsightModule,
+    SAELensTLModule as SAELensTLModule,
+)
+from interpretune.adapters.transformer_lens.adapter import ITLensModule as ITLensModule
 from interpretune.analysis import (
+    AnalysisBatch as AnalysisBatch,
     AnalysisStore as AnalysisStore,
     DISPATCHER as DISPATCHER,
     LatentAnalysisTargets as LatentAnalysisTargets,
 )
-from interpretune.config import (
-    ITLensConfig as ITLensConfig,
-    SAELensConfig as SAELensConfig,
-    PromptConfig as PromptConfig,
-    ITDataModuleConfig as ITDataModuleConfig,
-    ITConfig as ITConfig,
-    GenerativeClassificationConfig as GenerativeClassificationConfig,
-    BaseGenerationConfig as BaseGenerationConfig,
-    HFGenerationConfig as HFGenerationConfig,
-    SAELensFromPretrainedConfig as SAELensFromPretrainedConfig,
-    AnalysisCfg as AnalysisCfg,
+from interpretune.base import (
+    ITCLI as ITCLI,
+    ITDataModule as ITDataModule,
+    IT_BASE as IT_BASE,
+    MemProfilerHooks as MemProfilerHooks,
+    it_init as it_init,
+    it_session_end as it_session_end,
 )
-from interpretune.session import ITSessionConfig as ITSessionConfig, ITSession as ITSession
-from interpretune.runners import AnalysisRunner as AnalysisRunner
-from interpretune.utils import rank_zero_warn as rank_zero_warn, sanitize_input_name as sanitize_input_name
-from interpretune.protocol import STEP_OUTPUT as STEP_OUTPUT
+from interpretune.config import (
+    AnalysisArtifactCfg as AnalysisArtifactCfg,
+    AnalysisCfg as AnalysisCfg,
+    AnalysisRunnerCfg as AnalysisRunnerCfg,
+    AutoCompConfig as AutoCompConfig,
+    BaseGenerationConfig as BaseGenerationConfig,
+    ChatTemplatePromptConfig as ChatTemplatePromptConfig,
+    CircuitTracerConfig as CircuitTracerConfig,
+    CoreGenerationConfig as CoreGenerationConfig,
+    GenerativeClassificationConfig as GenerativeClassificationConfig,
+    HFFromPretrainedConfig as HFFromPretrainedConfig,
+    HFGenerationConfig as HFGenerationConfig,
+    ITConfig as ITConfig,
+    ITDataModuleConfig as ITDataModuleConfig,
+    ITLensConfig as ITLensConfig,
+    ITLensFromPretrainedNoProcessingConfig as ITLensFromPretrainedNoProcessingConfig,
+    ITSerializableCfg as ITSerializableCfg,
+    ITSharedConfig as ITSharedConfig,
+    PromptConfig as PromptConfig,
+    SAELensConfig as SAELensConfig,
+    SAELensFromPretrainedConfig as SAELensFromPretrainedConfig,
+    TLensGenerationConfig as TLensGenerationConfig,
+)
+from interpretune.extensions import (
+    DebugGeneration as DebugGeneration,
+    DebugLMConfig as DebugLMConfig,
+    MemProfiler as MemProfiler,
+    MemProfilerCfg as MemProfilerCfg,
+    NeuronpediaConfig as NeuronpediaConfig,
+    NeuronpediaIntegration as NeuronpediaIntegration,
+)
+from interpretune.protocol import (
+    Adapter as Adapter,
+    AllPhases as AllPhases,
+    AllSteps as AllSteps,
+    AnalysisOpProtocol as AnalysisOpProtocol,
+    AnalysisStoreProtocol as AnalysisStoreProtocol,
+    BaseAnalysisBatchProtocol as BaseAnalysisBatchProtocol,
+    CorePhases as CorePhases,
+    CoreSteps as CoreSteps,
+    DefaultAnalysisBatchProtocol as DefaultAnalysisBatchProtocol,
+    ITDataModuleProtocol as ITDataModuleProtocol,
+    ITModuleProtocol as ITModuleProtocol,
+    STEP_OUTPUT as STEP_OUTPUT,
+)
+from interpretune.registry import (
+    ModuleRegistry as ModuleRegistry,
+    RegKeyType as RegKeyType,
+    RegisteredCfg as RegisteredCfg,
+    apply_defaults as apply_defaults,
+    gen_module_registry as gen_module_registry,
+    instantiate_and_register as instantiate_and_register,
+    it_cfg_factory as it_cfg_factory,
+)
+from interpretune.runners import (
+    AnalysisRunner as AnalysisRunner,
+    SessionRunner as SessionRunner,
+)
+from interpretune.session import (
+    ITSession as ITSession,
+    ITSessionConfig as ITSessionConfig,
+)
+from interpretune.utils import (
+    MisconfigurationException as MisconfigurationException,
+    move_data_to_device as move_data_to_device,
+    rank_zero_info as rank_zero_info,
+    rank_zero_warn as rank_zero_warn,
+    sanitize_input_name as sanitize_input_name,
+    to_device as to_device,
+)
 
 # Basic operations
 

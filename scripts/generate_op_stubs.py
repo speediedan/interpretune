@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """Generate type stubs for analysis operations to improve IDE support."""
 
+import ast
 import sys
 import inspect
 import importlib
@@ -379,6 +380,144 @@ def load_bundled_definitions(yaml_paths: List[Path]) -> Dict[str, Any]:
     return merged
 
 
+def _binds_statically(tree: ast.Module, attr: str) -> bool:
+    """Whether ``attr`` is bound in this module by something a type checker can see."""
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == attr:
+            return True
+        if isinstance(node, ast.ImportFrom) and any((a.asname or a.name) == attr for a in node.names):
+            return True
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == attr for t in node.targets):
+            return True
+        if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == attr:
+            return True
+    return False
+
+
+def _follow_lazy_reexports(init_path: Path, module: str, attr: str, _limit: int = 8) -> tuple:
+    """Follow ``module.attr`` through any package that re-exports it lazily, to the one that defines it.
+
+    A PEP 562 package binds nothing statically, so a type checker cannot resolve ``from that_package import
+    X`` at all. `interpretune.adapters` is one, and eight public names route through it, so pointing the stub
+    at the intermediate package produces re-exports that read fine and resolve to nothing. Followed to the
+    defining module instead.
+    """
+    package_root = init_path.parent.parent  # .../src
+    for _ in range(_limit):
+        candidate = package_root.joinpath(*module.split(".")) / "__init__.py"
+        if not candidate.is_file():
+            return module, attr
+        try:
+            sub = ast.parse(candidate.read_text())
+        except SyntaxError:
+            return module, attr
+        # The map's NAME varies by package (`_LAZY_MODULE_ATTRS`, `_LAZY_ADAPTER_ATTRS`), so match the
+        # convention rather than one spelling. Getting this wrong is silent: the follower returns the
+        # intermediate package unchanged and the stub re-exports from something that binds nothing.
+        mapping = {}
+        lazy_package = False
+        for node in ast.walk(sub):
+            if isinstance(node, ast.FunctionDef) and node.name == "__getattr__":
+                lazy_package = True
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
+                for target in node.targets:
+                    tid = getattr(target, "id", "")
+                    if tid.startswith("_LAZY_") and tid.endswith("_ATTRS"):
+                        mapping.update({k.value: v.value for k, v in zip(node.value.keys, node.value.values)})
+        if attr not in mapping:
+            # A package can be lazy for SOME names and bind others statically (`interpretune.config`
+            # imports ITConfig outright while exporting adapter configs lazily). A static binding
+            # resolves for a type checker, so only an attr with NEITHER is unreachable.
+            if lazy_package and not _binds_statically(sub, attr):
+                # A package that binds nothing statically cannot satisfy `from <pkg> import <attr>` for a
+                # type checker. Emitting it anyway is what produced ten unresolvable re-exports that every
+                # AST-level check called present. Refuse so a renamed map fails loudly.
+                raise RuntimeError(
+                    f"{module!r} exports lazily and no `_LAZY_*_ATTRS` mapping in it names {attr!r}, so the "
+                    "stub cannot point at a module that actually binds it. If that package's mapping was "
+                    "renamed, teach `_follow_lazy_reexports` the new name."
+                )
+            return module, attr
+        nxt = mapping[attr]
+        nxt_module, _, nxt_attr = nxt.rpartition(".")
+        if not nxt_module or (nxt_module, nxt_attr) == (module, attr):
+            return module, attr
+        module, attr = nxt_module, nxt_attr
+    return module, attr
+
+
+def public_surface_imports(init_path: Path) -> List[str]:
+    """Re-export lines covering every name in ``interpretune.__all__``, derived rather than listed.
+
+    A ``.pyi`` SHADOWS the module it names for a type checker rather than adding to it, so any public
+    name the stub omits is invisible to a typed consumer even though it exists and is exported. This
+    list was hand-maintained inside the generator and had drifted to 23 of 75.
+
+    Read STATICALLY from ``__init__.py``'s own ``__all__``, ``_LAZY_MODULE_ATTRS`` and top-level
+    imports, with no import of interpretune: resolving the lazy names would import every optional
+    framework as a side effect of generating stubs, and the stale-stubs CI check has to stay hermetic
+    and runnable without them.
+    """
+    tree = ast.parse(init_path.read_text())
+    lazy: Dict[str, str] = {}
+    exported: List[str] = []
+    from_imports: Dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                name = getattr(target, "id", "")
+                if name == "_LAZY_MODULE_ATTRS" and isinstance(node.value, ast.Dict):
+                    lazy = {k.value: v.value for k, v in zip(node.value.keys, node.value.values)}
+                elif name == "__all__" and isinstance(node.value, (ast.List, ast.Tuple)):
+                    exported = [e.value for e in node.value.elts]
+    # `ast.walk`, not `tree.body`: `__init__.py` imports much of the public surface inside an
+    # `if TYPE_CHECKING:` block, which is a nested node. Reading only the top level silently misses those.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                from_imports.setdefault(alias.asname or alias.name, node.module)
+
+    by_module: Dict[str, List[str]] = {}
+    unresolved: List[str] = []
+    for name in exported:
+        if name in lazy:
+            target = lazy[name]
+            module, _, attr = target.rpartition(".")
+            # A direct submodule (`it.hub`) is spelled `from interpretune import hub`, not
+            # `from interpretune.hub import hub`, which would not resolve.
+            module, attr = (module, attr) if attr == name else (target, name)
+            module, attr = _follow_lazy_reexports(init_path, module, attr)
+        elif name in from_imports:
+            module, attr = from_imports[name], name
+        else:
+            unresolved.append(name)
+            continue
+        by_module.setdefault(module, []).append(attr)
+
+    if unresolved:
+        # Refused rather than skipped: a silently omitted name is exactly the defect this function
+        # exists to remove, and it would be invisible in the generated file.
+        raise RuntimeError(
+            f"cannot resolve a module for these `__all__` names: {sorted(unresolved)}. Add them to "
+            "`_LAZY_MODULE_ATTRS` or import them at the top of `interpretune/__init__.py`."
+        )
+
+    lines = [
+        "# The public surface, DERIVED from `interpretune.__all__` rather than listed here.",
+        "# A .pyi shadows the module it names, so every public name absent from this file is invisible",
+        "# to a type checker even though it exists and is exported.",
+    ]
+    for module in sorted(by_module):
+        names = sorted(set(by_module[module]))
+        if len(names) == 1:
+            lines.append(f"from {module} import {names[0]} as {names[0]}")
+        else:
+            lines.append(f"from {module} import (")
+            lines.extend(f"    {n} as {n}," for n in names)
+            lines.append(")")
+    return lines
+
+
 def generate_stubs(yaml_paths: Union[Path, List[Path]], output_path: Path) -> None:
     """Generate type stubs for all operations in the bundled op-family YAML files."""
     # Load YAML definitions (committed stubs are derived from the bundled op set only, so the
@@ -395,39 +534,21 @@ def generate_stubs(yaml_paths: Union[Path, List[Path]], output_path: Path) -> No
         "from typing import Callable, Optional",
         "import torch",
         "from transformers import BatchEncoding",
-        "from interpretune.protocol import BaseAnalysisBatchProtocol, DefaultAnalysisBatchProtocol",
-        "",
-        "# Main module exports - added for static analysis",
-        "# These imports resolve pyright 'unknown import symbol' errors caused by the complex import hook",
-        "# mechanism used for analysis operations.",
-        "from interpretune.base.datamodules import ITDataModule as ITDataModule",
-        "from interpretune.base.components.mixins import MemProfilerHooks as MemProfilerHooks",
-        "from interpretune.analysis.ops import AnalysisBatch as AnalysisBatch",
-        "from interpretune.analysis import (",
-        "    AnalysisStore as AnalysisStore,",
-        "    DISPATCHER as DISPATCHER,",
-        "    LatentAnalysisTargets as LatentAnalysisTargets,",
-        ")",
-        "from interpretune.config import (",
-        "    ITLensConfig as ITLensConfig,",
-        "    SAELensConfig as SAELensConfig,",
-        "    PromptConfig as PromptConfig,",
-        "    ITDataModuleConfig as ITDataModuleConfig,",
-        "    ITConfig as ITConfig,",
-        "    GenerativeClassificationConfig as GenerativeClassificationConfig,",
-        "    BaseGenerationConfig as BaseGenerationConfig,",
-        "    HFGenerationConfig as HFGenerationConfig,",
-        "    SAELensFromPretrainedConfig as SAELensFromPretrainedConfig,",
-        "    AnalysisCfg as AnalysisCfg,",
-        ")",
-        "from interpretune.session import ITSessionConfig as ITSessionConfig, ITSession as ITSession",
-        "from interpretune.runners import AnalysisRunner as AnalysisRunner",
-        "from interpretune.utils import rank_zero_warn as rank_zero_warn, sanitize_input_name as sanitize_input_name",
-        "from interpretune.protocol import STEP_OUTPUT as STEP_OUTPUT",
-        "",
-        "# Basic operations",
+        # `BaseAnalysisBatchProtocol` / `DefaultAnalysisBatchProtocol` are NOT imported here even though the
+        # op signatures below use them. Both are in `__all__`, so the derived public surface immediately
+        # below emits them in the `X as X` form a stub needs to re-export a name. Importing them here too
+        # made the generator emit each twice; ruff then removed one copy on commit, so the committed file
+        # stopped matching a fresh generation and the stale-stubs check went red on a no-op.
         "",
     ]
+    stubs.extend(public_surface_imports(Path(__file__).parent.parent / "src" / "interpretune" / "__init__.py"))
+    stubs.extend(
+        [
+            "",
+            "# Basic operations",
+            "",
+        ]
+    )
 
     # Process individual operations
     for op_name, op_def in sorted(yaml_content.items()):
