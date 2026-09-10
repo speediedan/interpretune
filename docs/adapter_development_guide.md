@@ -204,22 +204,23 @@ class ITMyConfig(ITConfig):
 
 ### Pattern 3: Model Wrapper Selection (SAE Lens)
 
-The SAE Lens adapter selects its TL model wrapper via the boolean ``use_bridge`` field on
-``SAELensConfig`` (default ``True``).  This pattern enables adapters to dispatch to different
-model initialization paths from a single configuration:
+The SAE Lens adapter selects its TL model wrapper from the one flag every TransformerLens-backed config carries,
+``tl_cfg.use_bridge`` (``ITLensSharedConfig``; ``True`` on ``ITLensBridgeConfig`` and ``ITLensFromPretrainedConfig``,
+``False`` on ``ITLensCustomConfig``). ``SAELensConfig`` carries no flag of its own: two flags once decided one
+wrapper, the adapter read the one no example config set, and a weight-converted target ran as a bridge under its
+label until a conformance case checked the class. One field, read by both adapters, is the pattern.
 
-| ``use_bridge`` value | Model class | Notes |
-|----------------------|-------------|-------|
-| ``True`` (default) | ``SAETransformerBridge`` | Wraps HF model without weight conversion; more memory efficient |
+| ``tl_cfg.use_bridge`` | Model class | Notes |
+|-----------------------|-------------|-------|
+| ``True`` | ``SAETransformerBridge`` | Wraps HF model without weight conversion; more memory efficient |
 | ``False`` | ``HookedSAETransformer`` | Legacy path with weight conversion (``from_pretrained``) |
 
-**Dispatch implementation** (in ``SAELensTLModuleMixin``, ``src/interpretune/adapters/sae_lens.py``):
+**Dispatch implementation** (in ``SAELensTLModuleMixin``, ``src/interpretune/adapters/sae_lens/adapter.py``):
 
 ```python
 def _convert_hf_to_tl(self) -> None:
-    """Convert HF model to SAETransformerBridge or HookedSAETransformer based on use_bridge config."""
-    use_bridge = getattr(self.it_cfg, "use_bridge", True)
-    if use_bridge:
+    """Convert HF model to SAETransformerBridge or HookedSAETransformer, as ``tl_cfg.use_bridge`` decides."""
+    if self.it_cfg.tl_cfg.use_bridge:
         ...  # SAETransformerBridge path
     else:
         ...  # HookedSAETransformer.from_pretrained() path
@@ -227,15 +228,15 @@ def _convert_hf_to_tl(self) -> None:
 
 **Key constraints:**
 
-- ``use_bridge`` is only meaningful when ``backend="transformerlens"`` — other backends warn and
-  ignore it (see the validation in ``SAELensConfig``).
+- The flag lives on ``tl_cfg`` and is read only on the TransformerLens backend; the nnsight backend has no
+  ``tl_cfg`` and no wrapper choice.
 - TransformerBridge requires an HF model instance — it **cannot** be initialized from a
   config dict alone.  Config-based initialization (``ITLensCustomConfig``) always uses
-  ``HookedSAETransformer`` regardless of ``use_bridge``.
-- When using the hooked path, set ``use_bridge=False`` explicitly in your test or production
-  config since the default is ``True``.
+  ``HookedSAETransformer``, and the TransformerLens config init forces ``use_bridge=False`` there with a warning.
+- Passing ``use_bridge`` to ``SAELensConfig`` itself is refused at construction (an unexpected keyword), never
+  accepted and ignored.
 
-**Configuration example (Bridge — default):**
+**Configuration example (Bridge):**
 
 ```python
 from interpretune.config import SAELensConfig, ITLensBridgeConfig
@@ -250,8 +251,7 @@ cfg = SAELensConfig(
 
 ```python
 cfg = SAELensConfig(
-    use_bridge=False,
-    tl_cfg=ITLensFromPretrainedNoProcessingConfig(model_name="gpt2-small"),
+    tl_cfg=ITLensFromPretrainedNoProcessingConfig(model_name="gpt2-small", use_bridge=False),
     sae_cfgs=[SAELensFromPretrainedConfig(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre")],
 )
 ```
@@ -381,8 +381,8 @@ def test_parity_my_adapter(recwarn, tmp_path, request, test_alias, test_cfg):
 ## Example: Full Adapter Implementation
 
 See the following files for complete examples:
-- `src/interpretune/adapters/nnsight.py` - NNsight adapter
-- `src/interpretune/adapters/transformer_lens.py` - TransformerLens adapter
+- `src/interpretune/adapters/nnsight/` - NNsight adapter
+- `src/interpretune/adapters/transformer_lens/` - TransformerLens adapter
 - `src/interpretune/config/nnsight.py` - NNsight configuration
 - `tests/parity_acceptance/test_it_ns.py` - NNsight parity tests
 

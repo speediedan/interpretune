@@ -79,13 +79,13 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
     at the type level.  TL-specific initialization logic is provided by
     :class:`TLConfigInitMixin`, which is shared with ``ITLensConfig``.
 
-    The ``use_bridge`` field is only meaningful when ``backend="transformerlens"``
-    and controls whether a SAETransformerBridge (True) or HookedSAETransformer (False) is used.
+    One flag decides the wrapper: ``tl_cfg.use_bridge`` selects SAETransformerBridge (True) or HookedSAETransformer
+    (False), the same field the TransformerLens adapter reads. This config carries no ``use_bridge`` of its own, so a
+    reader sets it in one place and the adapter cannot read the other.
     """
 
     # Backend selection
     backend: str = "transformerlens"
-    use_bridge: bool = True
 
     # TL backend configuration (required when backend="transformerlens")
     tl_cfg: ITLensFromPretrainedConfig | ITLensCustomConfig | ITLensBridgeConfig | None = None
@@ -130,12 +130,6 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
         # Validate backend
         if self.backend not in _VALID_SAE_BACKENDS:
             raise ValueError(f"Invalid backend '{self.backend}'. Must be one of {_VALID_SAE_BACKENDS}")
-        if self.backend != "transformerlens" and self.use_bridge:
-            rank_zero_warn(
-                "use_bridge=True is only meaningful when backend='transformerlens'. This setting will be ignored.",
-                category=ITInstantiationFeedbackWarning,
-            )
-
         # Validate and normalize sae_cfgs (backend-agnostic)
         if not self.sae_cfgs:
             raise MisconfigurationException(
@@ -157,20 +151,6 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
             raise MisconfigurationException(
                 "A valid tl_cfg (ITLensFromPretrainedConfig, ITLensCustomConfig, or ITLensBridgeConfig) must be "
                 "provided when backend='transformerlens'."
-            )
-
-        # Warn if use_bridge=True but tl_cfg is not ITLensBridgeConfig (likely misconfiguration)
-        if (
-            self.use_bridge
-            and isinstance(self.tl_cfg, ITLensFromPretrainedConfig)
-            and not isinstance(self.tl_cfg, ITLensBridgeConfig)
-        ):
-            rank_zero_warn(
-                "use_bridge=True but tl_cfg is an ITLensFromPretrainedConfig (HookedTransformer config), "
-                "not an ITLensBridgeConfig. This will initialize a HookedTransformer, not a TransformerBridge. "
-                "To use TransformerBridge, set tl_cfg to ITLensBridgeConfig. "
-                "To silence this warning, set use_bridge=False explicitly.",
-                category=ITInstantiationFeedbackWarning,
             )
 
         # Warn if nnsight_cfg is set but not used

@@ -520,8 +520,7 @@
     ],
     "padding_side": "left"
    },
-   "tokenizer_name": null,
-   "use_bridge": true
+   "tokenizer_name": null
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
@@ -808,8 +807,7 @@
     ],
     "padding_side": "left"
    },
-   "tokenizer_name": null,
-   "use_bridge": false
+   "tokenizer_name": null
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },
@@ -1096,8 +1094,7 @@
     ],
     "padding_side": "left"
    },
-   "tokenizer_name": null,
-   "use_bridge": true
+   "tokenizer_name": null
   },
   "module_cls": "it_examples.experiments.rte_boolq.RTEBoolqModule"
  },

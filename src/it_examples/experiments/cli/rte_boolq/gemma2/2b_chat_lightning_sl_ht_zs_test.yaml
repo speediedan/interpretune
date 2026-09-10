@@ -35,7 +35,6 @@ registered_cfg:
     class_path: it_examples.experiments.rte_boolq.RTEBoolqSLConfig
     init_args:
       experiment_tag: gemma2_2b_chat_lightning_sl_ht_zs_test
-      use_bridge: false
       model_cfg:
         _attn_implementation: eager
       tl_cfg:

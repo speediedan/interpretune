@@ -74,7 +74,6 @@ def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: St
         "latent_analysis_targets",
         "analysis_cfgs",
         "logging_level",
-        "use_bridge",
         "nnsight_cfg",
     ]
     default_extensions = ExtensionsContext().DEFAULT_EXTENSIONS

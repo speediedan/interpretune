@@ -1,4 +1,6 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
+
+import torch
 from typing import Any, TYPE_CHECKING
 import logging
 from functools import partialmethod
@@ -193,33 +195,36 @@ def core_analysis_loop(
     if analysis_cfg is not None:
         step_fn = analysis_cfg.step_fn
 
-    # Run analysis start hooks
-    # TODO: execute on_analysis_start/end hooks toggle grad based on functional config rather than op based filter
+    # The runner owns the process-global grad state for the whole run: the start hook sets it from the active op and
+    # the end hook restores it, but an op raising inside dataset generation used to skip the end hook and leak the
+    # state into whatever ran next. Restoring in a `finally` leaves the process as the run found it on every exit.
+    grad_enabled_before = torch.is_grad_enabled()
     _call_itmodule_hook(module, hook_name="on_analysis_start", hook_msg="Running analysis start hooks")
+    try:
+        # Generate features and format parameters
+        features, it_format_kwargs, kwargs = dataset_features_and_format(module, kwargs)
 
-    # Generate features and format parameters
-    features, it_format_kwargs, kwargs = dataset_features_and_format(module, kwargs)
+        # Create generator kwargs dictionary
+        gen_kwargs = dict(
+            module=module,
+            datamodule=datamodule,
+            limit_analysis_batches=limit_analysis_batches,
+            step_fn=step_fn,
+            max_epochs=max_epochs,
+        )
 
-    # Create generator kwargs dictionary
-    gen_kwargs = dict(
-        module=module,
-        datamodule=datamodule,
-        limit_analysis_batches=limit_analysis_batches,
-        step_fn=step_fn,
-        max_epochs=max_epochs,
-    )
+        # Generate the dataset
+        dataset = generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, **kwargs)
 
-    # Generate the dataset
-    dataset = generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, **kwargs)
+        save_dir = Path(module.analysis_cfg.output_store.save_dir)  # type: ignore[attr-defined]  # protocol provides output_store
+        dataset.save_to_disk(save_dir)
+        # Assign dataset to analysis store
+        module.analysis_cfg.output_store.dataset = dataset  # type: ignore[attr-defined]  # protocol provides output_store
 
-    save_dir = Path(module.analysis_cfg.output_store.save_dir)  # type: ignore[attr-defined]  # protocol provides output_store
-    dataset.save_to_disk(save_dir)
-    # Assign dataset to analysis store
-    module.analysis_cfg.output_store.dataset = dataset  # type: ignore[attr-defined]  # protocol provides output_store
-
-    # Run analysis end hooks
-    _call_itmodule_hook(module, hook_name="on_analysis_end", hook_msg="Running analysis end hooks")
-
+        # Run analysis end hooks
+        _call_itmodule_hook(module, hook_name="on_analysis_end", hook_msg="Running analysis end hooks")
+    finally:
+        torch.set_grad_enabled(grad_enabled_before)
     return module.analysis_cfg.output_store  # type: ignore[attr-defined]  # protocol provides output_store
 
 
