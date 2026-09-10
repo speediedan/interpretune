@@ -19,6 +19,28 @@ from interpretune.hub.manifest import IT_COMPONENT_MANIFEST, check_config_key_pa
 STAGING_IGNORES = ("__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".DS_Store")
 
 
+def source_revision_of(component_dir: Path) -> str | None:
+    """The git head of the tree ``component_dir`` sits in, or ``None`` when it is not a checkout.
+
+    The card's measured-capabilities block compares a published conformance report's revision against this; a
+    ``None`` makes the block treat the report as absent, since a comparison that cannot be made must not pass.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(component_dir), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    head = result.stdout.strip()
+    return head if result.returncode == 0 and len(head) == 40 else None
+
+
 def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Path | None = None) -> dict:
     """Build a publishable Hub tree from an in-repo component dir; returns the validated manifest.
 
@@ -278,7 +300,9 @@ def publish_component(
     with tempfile.TemporaryDirectory() as tmp:
         out_dir = Path(build_dir) if build_dir is not None else Path(tmp) / "build"
         manifest = build_component_tree(component_dir, out_dir, entrypoint_src=entrypoint_src)
-        generate_component_card(manifest, repo_id).save(out_dir / "README.md")
+        generate_component_card(
+            manifest, repo_id, tree=out_dir, source_revision=source_revision_of(component_dir)
+        ).save(out_dir / "README.md")
         manager = ITHubResourceManager(kind=COMPONENT_KIND, token=token)
         # The published tree is made to MATCH the staged one, not merely to receive it: an upload that only
         # adds leaves a renamed entrypoint's old name live beside the new one, and a hand-pushed cache

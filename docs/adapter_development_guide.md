@@ -528,3 +528,25 @@ The alias exists only after `load_hub_adapter` has run in the process (loading n
 follows the most recent load of that component; with one revision loaded, the normal case, it is that revision.
 `interpretune.hub.stable_module_name(repo_id)` returns the alias, and `loaded_adapter_module(repo_id)` returns
 the same module object for callers in Python.
+
+## Publishing what the conformance suite measured
+
+The adapter card renders the validated manifest and says what it cannot tell a reader: the capabilities an adapter
+declares at runtime and the patterns it refuses live in the code, and the publisher never executes the entrypoint.
+The way to put a capability section on the card is therefore to publish a **measured** report beside the component:
+
+1. In the adapter's CI, run the conformance suite with `IT_CONFORMANCE_REPORT=conformance_report.json` set. At
+   session finish the suite writes the selection report as JSON: per target, the declared surfaces and every
+   support record field by field; the outcome lists; and provenance (interpretune version, the git head of the tree
+   that ran, the time, the exit status). It holds what the suite measured on a composed session, never a claim.
+2. Declare `conformance_report.json` in the manifest's `extra_files`, so the builder stages it and the published
+   tree carries it.
+3. Publish from the same checkout the report measured. The card compares the report's git head with the revision
+   of the component source being published, and renders the measured block only when they are equal and the run
+   exited zero. A report for an earlier revision, or from a red run, is named in one line and **not shown**: a
+   measurement of a revision the component has moved past would read as a measurement of this one, which is worse
+   than no measurement.
+
+The block distinguishes a **vocabulary gap** (a point the backend declares it cannot capture because interpretune
+has no spelling the engine can address) from a **capability gap** (a surface not declared at all), using the
+record's own reason. Write those reasons for the reader who is deciding whether to build on your adapter.

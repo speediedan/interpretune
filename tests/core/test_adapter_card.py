@@ -151,3 +151,80 @@ class TestTheCardNamesWhatItCannotReport:
         """Naming a gap without a next step just relocates the reader's problem."""
         card = str(generate_component_card(_manifest(TWO_COMPOSITIONS), REPO))
         assert "documentation" in card or "registered backend" in card
+
+
+class TestMeasuredCapabilitiesAreRenderedOnlyWhenTrustworthy:
+    """The measured block renders from a published conformance report, and never by the report's mere presence."""
+
+    HEAD = "a" * 40
+
+    def _report(self, *, head=None, exit_status=0, fmt="interpretune.conformance.report/1"):
+        return {
+            "format": fmt,
+            "provenance": {
+                "interpretune_version": "0.1.0",
+                "git_head": self.HEAD if head is None else head,
+                "measured_at": "2026-09-10T15:00:00+00:00",
+                "exit_status": exit_status,
+            },
+            "targets": {
+                "TestX": {
+                    "composition": ["core", "interp_engine"],
+                    "model_id": "gpt2",
+                    "model_capabilities": ["activation_intervention"],
+                    "analysis_capabilities": [],
+                    "intervention": {"modes": ["add"], "position_scopes": ["last_token"]},
+                    "capture": {
+                        "capturable": ["hook_in", "hook_out"],
+                        "uncapturable": {"ln2.hook_scale": "the vocabulary has no spelling this engine can address"},
+                        "n_layers": 12,
+                        "architecture": "GPT2LMHeadModel",
+                    },
+                }
+            },
+            "ran": ["TestX::a"],
+            "skipped_undeclared": ["TestX::b"],
+            "skipped_other": [],
+            "failed": [],
+        }
+
+    def _card(self, tmp_path, report, source_revision):
+        import json
+
+        from interpretune.hub.cards import CONFORMANCE_REPORT_FILE
+
+        if report is not None:
+            (tmp_path / CONFORMANCE_REPORT_FILE).write_text(json.dumps(report), encoding="utf-8")
+        return str(
+            generate_component_card(_manifest(TWO_COMPOSITIONS), REPO, tree=tmp_path, source_revision=source_revision)
+        )
+
+    def test_no_report_keeps_the_cannot_tell_sentence(self, tmp_path):
+        body = self._card(tmp_path, None, self.HEAD)
+        assert "What this card cannot tell you" in body and "Measured capabilities" not in body
+
+    def test_a_matching_green_report_renders_the_measured_block(self, tmp_path):
+        body = self._card(tmp_path, self._report(), self.HEAD)
+        assert "### Measured capabilities" in body and "What this card cannot tell you" not in body
+        assert "component revision `aaaaaaaaaaaa`" in body and "exit status 0" in body
+        assert "modes `add`" in body and "2 of 3 base points on `GPT2LMHeadModel`" in body
+        assert "cannot capture `ln2.hook_scale`: the vocabulary has no spelling" in body
+        assert "**vocabulary gap**" in body and "**capability gap**" in body
+        assert "1 ran, 1 skipped because the surface is undeclared" in body
+
+    def test_a_stale_report_is_named_and_not_shown(self, tmp_path):
+        body = self._card(tmp_path, self._report(head="b" * 40), self.HEAD)
+        assert "Measured capabilities" not in body and "What this card cannot tell you" in body
+        assert "exists for component revision `bbbbbbbbbbbb`, not the one published (`aaaaaaaaaaaa`)" in body
+
+    def test_a_red_run_is_named_and_not_shown(self, tmp_path):
+        body = self._card(tmp_path, self._report(exit_status=1), self.HEAD)
+        assert "Measured capabilities" not in body and "did not pass, so it is not shown" in body
+
+    def test_an_unknown_publishing_revision_treats_the_report_as_absent(self, tmp_path):
+        body = self._card(tmp_path, self._report(), None)
+        assert "Measured capabilities" not in body and "could not be determined, so it is not shown" in body
+
+    def test_an_unknown_format_is_not_read(self, tmp_path):
+        body = self._card(tmp_path, self._report(fmt="something/else"), self.HEAD)
+        assert "Measured capabilities" not in body and "its format is not one this card reads" in body
