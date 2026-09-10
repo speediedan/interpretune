@@ -14,9 +14,12 @@ import torch
 
 from interpretune.analysis.backends import (
     AnalysisBackendCapability,
-    ModelBackendCapability,
+    get_analysis_backend,
     InterventionMode,
+    ModelBackendCapability,
     PositionScope,
+    SupportsAttributionGraph,
+    SupportsFeatureInterventions,
     SupportsGradients,
     SupportsIntervention,
     SupportsLatentModels,
@@ -53,6 +56,10 @@ _PROTOCOL_FOR = {
     ModelBackendCapability.LATENT_MODELS: SupportsLatentModels,
     ModelBackendCapability.GRADIENTS: SupportsGradients,
     ModelBackendCapability.ACTIVATION_INTERVENTION: SupportsIntervention,
+}
+_ANALYSIS_PROTOCOL_FOR = {
+    AnalysisBackendCapability.ATTRIBUTION_GRAPH: SupportsAttributionGraph,
+    AnalysisBackendCapability.FEATURE_INTERVENTION: SupportsFeatureInterventions,
 }
 
 
@@ -250,6 +257,21 @@ class ModelBackendConformance:
         )
         assert (suite.capabilities.latent_models is not None) == (
             ModelBackendCapability.LATENT_MODELS in backend.capabilities
+        )
+        # the analysis level under the same rule: each declared group satisfies its protocol and carries its record
+        analysis_backend = get_analysis_backend(suite.module)
+        declared_analysis = frozenset(analysis_backend.capabilities) if analysis_backend is not None else frozenset()
+        for cap in declared_analysis:
+            assert isinstance(cap, AnalysisBackendCapability), f"{cap!r} is not an AnalysisBackendCapability member"
+            protocol = _ANALYSIS_PROTOCOL_FOR[cap]
+            assert isinstance(analysis_backend, protocol), (
+                f"{type(analysis_backend).__name__} declares {cap.name} but is not a {protocol.__name__}"
+            )
+        assert (suite.capabilities.attribution_graph is not None) == (
+            AnalysisBackendCapability.ATTRIBUTION_GRAPH in declared_analysis
+        )
+        assert (suite.capabilities.feature_intervention is not None) == (
+            AnalysisBackendCapability.FEATURE_INTERVENTION in declared_analysis
         )
 
     @conformance_case()
