@@ -39,6 +39,7 @@ from it_examples.experiments.notebook.nb_harness_utils import (
     resolve_target_tokens,
 )
 from tests.configuration import config_modules
+from tests.runif import RunIf
 from it_examples.tests.notebook._harness.session import build_test_cfg
 
 
@@ -90,11 +91,7 @@ _ANSWER_BASIS_ORANGE_FS_CONFIG_PATH = (
     Path(__file__).resolve().parent / "configs" / "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_answer_basis.yaml"
 ).resolve()
 
-_OPTIONAL_TEST_MARK = pytest.mark.skipif(
-    os.getenv("IT_RUN_OPTIONAL_TESTS", "0") != "1",
-    reason="Requires: [Optional/extended test execution]",
-    optional=True,
-)
+_OPTIONAL_TEST_MARK = RunIf(optional=True)
 
 
 def _build_cfg(
@@ -2099,11 +2096,14 @@ def test_pipeline_run_direction_probes_allows_missing_group_b(monkeypatch) -> No
     assert results["Store"]["mean_b"] is None
 
 
-for _test_name, _test_obj in list(globals().items()):
-    if _test_name.startswith("test_") and callable(_test_obj):
-        globals()[_test_name] = _OPTIONAL_TEST_MARK(_test_obj)
+def _mark_every_test_optional(namespace: dict[str, Any]) -> None:
+    """Apply the optional mark to every test in this module, so a new test cannot be added unmarked."""
+    for name, obj in list(namespace.items()):
+        if name.startswith("test_") and callable(obj):
+            namespace[name] = _OPTIONAL_TEST_MARK(obj)
 
-del _test_name, _test_obj
+
+_mark_every_test_optional(globals())
 
 
 def test_best_variant_token_ids_picks_higher_reference_logit() -> None:

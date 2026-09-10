@@ -1528,12 +1528,14 @@ class LocalExplanationPreparationResult:
 
 
 def _resolve_local_export_roots(local_export_roots: Iterable[Path | str] | None = None) -> tuple[Path, ...]:
-    if local_export_roots is None and DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT is None:
-        raise ValueError(
-            "no local Neuronpedia export root is configured: pass `local_export_roots=` or set "
-            f"${_LOCAL_NEURONPEDIA_EXPORT_ROOT_ENV} to the directory holding the exports."
-        )
-    candidate_roots = tuple(Path(root) for root in (local_export_roots or (DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT,)))
+    if local_export_roots is None:
+        if DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT is None:
+            raise ValueError(
+                "no local Neuronpedia export root is configured: pass `local_export_roots=` or set "
+                f"${_LOCAL_NEURONPEDIA_EXPORT_ROOT_ENV} to the directory holding the exports."
+            )
+        local_export_roots = (DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT,)
+    candidate_roots = tuple(Path(root) for root in local_export_roots)
     return tuple(root for root in candidate_roots if root.exists())
 
 

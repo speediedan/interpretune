@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Callable, Literal, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, cast, overload
 
 import torch
 
@@ -1454,12 +1454,14 @@ class LocalExplanationPreparationResult:
 
 
 def _resolve_local_export_roots(local_export_roots: Iterable[Path | str] | None = None) -> tuple[Path, ...]:
-    if local_export_roots is None and DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT is None:
-        raise ValueError(
-            "no local Neuronpedia export root is configured: pass `local_export_roots=` or set "
-            "$LOCAL_NEURONPEDIA_EXPORT_ROOT to the directory holding the exports."
-        )
-    candidate_roots = tuple(Path(root) for root in (local_export_roots or (DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT,)))
+    if local_export_roots is None:
+        if DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT is None:
+            raise ValueError(
+                "no local Neuronpedia export root is configured: pass `local_export_roots=` or set "
+                "$LOCAL_NEURONPEDIA_EXPORT_ROOT to the directory holding the exports."
+            )
+        local_export_roots = (DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT,)
+    candidate_roots = tuple(Path(root) for root in local_export_roots)
     return tuple(root for root in candidate_roots if root.exists())
 
 
@@ -2579,6 +2581,38 @@ def construct_concept_pair_analysis_inputs(
         prediction_info,
         prompt_examples,
     )
+
+
+@overload
+def execute_concept_latent_extraction_ops(
+    module: Any,
+    cfg: NotebookHarnessConfig,
+    cached_batches: list[dict[str, torch.Tensor]],
+    answer_indices: list[torch.Tensor],
+    context_token_indices: list[torch.Tensor],
+    orig_labels: list[torch.Tensor],
+    logit_diffs: list[torch.Tensor],
+    n_prompts: int,
+    *,
+    extraction_mode: StoreLatentExtractionMode = ...,
+    return_analysis_inputs: Literal[False] = ...,
+) -> list[Any]: ...
+
+
+@overload
+def execute_concept_latent_extraction_ops(
+    module: Any,
+    cfg: NotebookHarnessConfig,
+    cached_batches: list[dict[str, torch.Tensor]],
+    answer_indices: list[torch.Tensor],
+    context_token_indices: list[torch.Tensor],
+    orig_labels: list[torch.Tensor],
+    logit_diffs: list[torch.Tensor],
+    n_prompts: int,
+    *,
+    extraction_mode: StoreLatentExtractionMode = ...,
+    return_analysis_inputs: Literal[True],
+) -> tuple[list[Any], AnalysisInputs]: ...
 
 
 def execute_concept_latent_extraction_ops(

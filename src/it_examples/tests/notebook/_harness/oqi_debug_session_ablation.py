@@ -374,7 +374,8 @@ def _make_experiment_session(override: SessionSurfaceOverride):
         session_fixture_hook_exec(it_session, FixtPhase.setup)
         module = it_session.module
         assert module is not None
-        replacement_model = module.replacement_model
+        # attached by the circuit-tracer adapter at composition time, not a base-module attribute
+        replacement_model = cast(Any, module).replacement_model
         tokenizer = replacement_model.tokenizer
 
         try:
