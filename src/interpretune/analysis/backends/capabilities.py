@@ -7,6 +7,8 @@ adapter class names.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -248,6 +250,103 @@ class AnalysisBackendCapability(Enum):
     """Module exposes feature intervention support via an attached analysis backend."""
 
 
+@dataclass(frozen=True)
+class FeatureInterventionSupport:
+    """Which configurations of the feature-intervention surface an analysis backend honours.
+
+    The settings ``resolve_feature_intervention_settings`` reads are the configuration space; the record is what
+    lets a caller's settings be refused by name at the seam instead of at the first tensor op that disagrees.
+    """
+
+    value_sources: frozenset[str]
+    """Accepted ``value_source`` spellings (``"constant"`` requires an explicit value)."""
+    constrainable_layers: bool = True
+    """Whether ``constrained_layers`` can restrict the intervention to a layer subset."""
+    returns_activations: bool = False
+    """Whether the intervened activations can be returned beside the logits."""
+
+    def __post_init__(self) -> None:
+        if not self.value_sources:
+            raise ValueError("a feature-intervention support record must accept at least one value source")
+
+    def refusal(self, settings: Mapping[str, Any]) -> str | None:
+        """Why ``settings`` cannot be honoured here, or ``None`` when every configuration they name is declared."""
+        source = settings.get("value_source")
+        if source not in self.value_sources:
+            return f"value_source {source!r} is not honoured here; declared: {sorted(self.value_sources)}"
+        if source == "constant" and settings.get("value") is None:
+            return "value_source 'constant' needs an explicit intervention value, and none was given"
+        if settings.get("constrained_layers") is not None and not self.constrainable_layers:
+            return (
+                "constrained_layers was given, and this backend cannot restrict a feature intervention to a"
+                " layer subset"
+            )
+        if settings.get("return_activations") and not self.returns_activations:
+            return "return_activations was requested, and this backend cannot return the intervened activations"
+        return None
+
+    def describe(self) -> str:
+        """One line for a card or a report."""
+        return (
+            f"value sources {sorted(self.value_sources)}, constrainable layers {self.constrainable_layers}, "
+            f"returns activations {self.returns_activations}"
+        )
+
+
+@dataclass(frozen=True)
+class AttributionGraphSupport:
+    """What attribution-graph construction requires of the model it runs on, checked before construction.
+
+    ``requires_own_eager_attention`` is the measured requirement: circuit-tracer resolves gemma's attention-pattern
+    location through nnsight's source tracing of the function bound at the attention call site, so the modeling
+    module's own ``eager_attention_forward`` must be what is bound there. A TransformerLens bridge of any llama,
+    qwen or gemma model replaces that function in both gemma modeling modules for the rest of the process, with the
+    config still reading ``eager``; the failure that produced is an ``AttributeError`` deep in circuit-tracer, so the
+    check happens here, by provenance, where the name of the foreign function is still available.
+    """
+
+    requires_own_eager_attention: bool = True
+
+    def refusal(self, model: Any) -> str | None:
+        """Why a graph cannot be built on ``model`` here, or ``None`` when its attention is what construction
+        needs."""
+        if not self.requires_own_eager_attention:
+            return None
+        import inspect
+
+        inner = model
+        for attr in ("model", "_model", "hf_model"):
+            candidate = getattr(inner, attr, None)
+            if candidate is not None and hasattr(candidate, "config"):
+                inner = candidate
+                break
+        modeling = inspect.getmodule(type(inner))
+        fn = getattr(modeling, "eager_attention_forward", None) if modeling is not None else None
+        if fn is None or modeling is None:
+            return None  # an architecture without a module-level eager attention resolves its locations another way
+        modeling_name = modeling.__name__
+        impl = getattr(getattr(inner, "config", None), "_attn_implementation", None)
+        if impl not in (None, "eager"):
+            return f"attribution graphs need the eager attention implementation and the model is configured as {impl!r}"
+        if getattr(fn, "__module__", None) != modeling_name:
+            return (
+                f"{modeling_name}.eager_attention_forward is {getattr(fn, '__module__', '?')}."
+                f"{getattr(fn, '__qualname__', '?')}, not the modeling module's own: another library replaced it for"
+                " this process, and the attention-pattern location is resolved from that function's source. Restore"
+                " the original before building a graph (a TransformerLens bridge of a llama, qwen or gemma model is"
+                " the known cause)"
+            )
+        return None
+
+    def describe(self) -> str:
+        """One line for a card or a report."""
+        return (
+            "requires the modeling module's own eager attention"
+            if self.requires_own_eager_attention
+            else "no model requirement"
+        )
+
+
 Capability: TypeAlias = ModelBackendCapability | AnalysisBackendCapability
 
 
@@ -255,9 +354,11 @@ Capability: TypeAlias = ModelBackendCapability | AnalysisBackendCapability
 class ModuleCapabilities:
     """Execution and analysis capabilities exposed by a module, with each surface's support record.
 
-    ``intervention`` is present iff ``INTERVENTION`` is declared and ``latent_models`` iff
-    ``LATENT_MODELS`` is; the constructor enforces that, so a consumer rendering this (the adapter card,
-    ``adapter_info``, a conformance report) can rely on the record being there when the surface is.
+    Each support record is present iff its surface is declared, on either level: ``intervention`` with
+    ``ACTIVATION_INTERVENTION``, ``latent_models`` with ``LATENT_MODELS``, ``attribution_graph`` with
+    ``ATTRIBUTION_GRAPH``, ``feature_intervention`` with ``FEATURE_INTERVENTION``. The constructor enforces that, so
+    a consumer rendering this (the adapter card, ``adapter_info``, a conformance report) can rely on the record
+    being there when the surface is.
     """
 
     model: frozenset[ModelBackendCapability]
@@ -267,13 +368,17 @@ class ModuleCapabilities:
     capture: CaptureSupport | None = None
     """What the attached model backend declares it can capture on this module's model; ``None`` only when no model
     backend is attached or the backend predates the declaration (a conformance case fails the latter by name)."""
+    attribution_graph: AttributionGraphSupport | None = None
+    feature_intervention: FeatureInterventionSupport | None = None
 
     def __post_init__(self) -> None:
         for capability, record, name in (
             (ModelBackendCapability.ACTIVATION_INTERVENTION, self.intervention, "intervention"),
             (ModelBackendCapability.LATENT_MODELS, self.latent_models, "latent_models"),
+            (AnalysisBackendCapability.ATTRIBUTION_GRAPH, self.attribution_graph, "attribution_graph"),
+            (AnalysisBackendCapability.FEATURE_INTERVENTION, self.feature_intervention, "feature_intervention"),
         ):
-            declared = capability in self.model
+            declared = capability in self.model or capability in self.analysis
             if declared and record is None:
                 raise ValueError(
                     f"{capability.name} is declared but no {name} support record accompanies it; a backend "
@@ -452,14 +557,15 @@ def get_module_capabilities(module: Any) -> ModuleCapabilities:
             if isinstance(capability, AnalysisBackendCapability)
         )
 
-    legacy_analysis_capabilities = getattr(module, "analysis_capabilities", None)
-    if legacy_analysis_capabilities:
-        analysis_capabilities.update(
-            capability
-            for capability in (
-                normalize_backend_capability(raw_capability) for raw_capability in legacy_analysis_capabilities
-            )
-            if isinstance(capability, AnalysisBackendCapability)
+    module_declared = getattr(module, "analysis_capabilities", None)
+    if module_declared and analysis_backend is None:
+        # A capability declared on the module alone has no backend to carry its support record, and a record is
+        # what makes the declaration checkable; refused by name rather than aggregated as a bare set.
+        raise ValueError(
+            f"{type(module).__name__} declares analysis capabilities"
+            f" {sorted(str(getattr(c, 'value', c)) for c in module_declared)}"
+            " on the module with no analysis backend attached; attach the backend that implements them, which"
+            " carries their support records"
         )
 
     return ModuleCapabilities(
@@ -472,6 +578,18 @@ def get_module_capabilities(module: Any) -> ModuleCapabilities:
             backend, ModelBackendCapability.LATENT_MODELS, model_capabilities, "latent_model_support"
         ),
         capture=_capture_record(backend, module),
+        attribution_graph=_support_record(
+            analysis_backend,
+            AnalysisBackendCapability.ATTRIBUTION_GRAPH,
+            analysis_capabilities,
+            "attribution_graph_support",
+        ),
+        feature_intervention=_support_record(
+            analysis_backend,
+            AnalysisBackendCapability.FEATURE_INTERVENTION,
+            analysis_capabilities,
+            "feature_intervention_support",
+        ),
     )
 
 
@@ -490,9 +608,7 @@ def _capture_record(backend: Any, module: Any) -> CaptureSupport | None:
     return declare(model)
 
 
-def _support_record(
-    backend: Any, capability: ModelBackendCapability, declared: set[ModelBackendCapability], attr: str
-) -> Any:
+def _support_record(backend: Any, capability: Capability, declared: set[Any], attr: str) -> Any:
     """The support record a backend attaches for ``capability``, or ``None`` when it does not declare it.
 
     Read with ``getattr`` rather than through the protocol so a backend that declares the surface and

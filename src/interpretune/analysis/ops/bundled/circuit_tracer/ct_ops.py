@@ -14,11 +14,11 @@ from transformers import BatchEncoding
 
 from interpretune.analysis.backends import (
     FeatureSelectionSpec,
+    apply_feature_selection_filter,
     apply_optional_feature_sign_filter,
     augment_feature_rows_for_selection,
-    select_top_feature_indices,
-    apply_feature_selection_filter,
     require_analysis_backend,
+    select_top_feature_indices,
 )
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.optools import (
@@ -72,6 +72,10 @@ def compute_attribution_graph_impl(
         if name in kwargs
     }
 
+    support = analysis_backend.attribution_graph_support
+    why = support.refusal(getattr(module, "replacement_model", None) or module.model)
+    if why is not None:
+        raise ValueError(f"attribution graph refused for {type(module).__name__}: {why}")
     graph = module.generate_attribution_graph(prompt, **attribution_graph_kwargs)
     extra_metadata: dict[str, Any] = {}
     extra_metadata["batch_idx"] = batch_idx
@@ -239,10 +243,9 @@ def graph_node_influence_impl(
         "node_influence_scores": node_scores,
         "node_feature_ids": node_feature_ids,
     }
-    signed_score_fn = getattr(analysis_backend, "compute_signed_node_influence_scores", None)
-    if callable(signed_score_fn):
-        signed_scores = signed_score_fn(graph)
-        update_payload["node_signed_influence_scores"] = signed_scores
+    # a gated method is reached directly: the gate already said the group is declared, and a lookup with a default
+    # would turn a backend that lacks the method into a batch silently missing its signed scores
+    update_payload["node_signed_influence_scores"] = analysis_backend.compute_signed_node_influence_scores(graph)
     analysis_batch.update(
         **update_payload,
     )

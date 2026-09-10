@@ -35,6 +35,8 @@ from interpretune.analysis.backends.capabilities import (
     InterventionMode,
     InterventionSupport,
     CaptureSupport,
+    FeatureInterventionSupport,
+    AttributionGraphSupport,
     LatentModelSupport,
     ModuleCapabilities,
     PositionScope,
@@ -72,6 +74,9 @@ from interpretune.analysis.backends.interventions import (
 )
 from interpretune.analysis.backends.protocols import (
     AnalysisBackend,
+    SupportsFeatureInterventions,
+    SupportsAttributionGraph,
+    AnalysisBackendCore,
     ModelBackend,
     ModelBackendCore,
     SupportsGradients,
@@ -82,6 +87,9 @@ from interpretune.analysis.backends.protocols import (
 __all__ = [
     "ANALYSIS_BACKEND_REGISTRY",
     "AnalysisBackend",
+    "SupportsFeatureInterventions",
+    "SupportsAttributionGraph",
+    "AnalysisBackendCore",
     "AnalysisBackendCapability",
     "ModelBackendCapability",
     "Capability",
@@ -108,6 +116,8 @@ __all__ = [
     "LatentModelSupport",
     "InterventionSupport",
     "CaptureSupport",
+    "FeatureInterventionSupport",
+    "AttributionGraphSupport",
     "InterventionMode",
     "apply_optional_feature_sign_filter",
     "augment_feature_rows_for_selection",

@@ -6,7 +6,13 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-from interpretune.analysis.backends import AnalysisBackendCapability, ModelBackendCapability, get_module_capabilities
+from interpretune.analysis.backends import (
+    AnalysisBackendCapability,
+    AttributionGraphSupport,
+    FeatureInterventionSupport,
+    ModelBackendCapability,
+    get_module_capabilities,
+)
 from interpretune.analysis.ops.base import AnalysisBatch, AnalysisOp, CompositeAnalysisOp
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 
@@ -14,6 +20,15 @@ from interpretune.analysis.ops.dispatcher import DISPATCHER
 class _DummyBackend:
     def __init__(self, capabilities: frozenset[ModelBackendCapability]):
         self.capabilities = capabilities
+
+
+class _DummyAnalysisBackend:
+    """Declares analysis surfaces with the records that must travel with them."""
+
+    def __init__(self, capabilities: frozenset[AnalysisBackendCapability]):
+        self.capabilities = capabilities
+        self.attribution_graph_support = AttributionGraphSupport(requires_own_eager_attention=False)
+        self.feature_intervention_support = FeatureInterventionSupport(value_sources=frozenset({"constant"}))
 
 
 class _DummyModule(torch.nn.Module):
@@ -24,7 +39,8 @@ class _DummyModule(torch.nn.Module):
     ) -> None:
         super().__init__()
         self._model_backend = _DummyBackend(backend_capabilities or frozenset())
-        self.analysis_capabilities = analysis_capabilities or frozenset()
+        if analysis_capabilities:
+            self._analysis_backend = _DummyAnalysisBackend(analysis_capabilities)
 
 
 def test_analysis_level_ops_are_discoverable() -> None:
@@ -229,3 +245,13 @@ class TestInterventionRequirementAxes:
         # by VALUE: the suite can load the capabilities module twice, leaving value-equal, identity-distinct members
         assert ModelBackendCapability.ACTIVATION_INTERVENTION.value in {c.value for c in op.required_capabilities}
         assert not op.requires_intervention_axes, "the bundled op is payload-driven and fixes no mode itself"
+
+
+def test_analysis_capabilities_declared_on_the_module_alone_are_refused() -> None:
+    """A declaration with no backend has no record to check against, so it is refused rather than aggregated."""
+
+    class _Bare(torch.nn.Module):
+        analysis_capabilities = frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH})
+
+    with pytest.raises(ValueError, match="declares analysis capabilities .* with no analysis backend attached"):
+        get_module_capabilities(_Bare())
