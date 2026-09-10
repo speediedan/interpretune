@@ -100,6 +100,9 @@ class ConformanceInputs:
     attribution_top_n: int = 4
     attribution_scale_factor: float = 2.0
     workdir: Path = field(default_factory=lambda: Path(tempfile.mkdtemp(prefix="it_conformance_")))
+    supplied_extras: dict[str, Any] = field(default_factory=dict)
+    """Every ``module_cfg_extras`` entry the last ``session_cfg`` call set, so a coherence case can check that each
+    reached the composed config as a declared field with the same object, rather than as a stray attribute."""
 
     def latent_models_for_model(self) -> list[LatentModelSpec]:
         """The latent specs that fit ``model_id``."""
@@ -196,7 +199,8 @@ class ConformanceInputs:
         dm_cfg.eval_batch_size = self.batch_size
         dm_cfg.train_batch_size = self.batch_size
         self._place(it_cfg)
-        for name, value in (module_cfg_extras or {}).items():
+        self.supplied_extras = dict(module_cfg_extras or {})
+        for name, value in self.supplied_extras.items():
             setattr(it_cfg, name, value)
         if prepare is not None:
             prepare(dm_cfg, it_cfg)

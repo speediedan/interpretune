@@ -275,6 +275,30 @@ class ModelBackendConformance:
         )
 
     @conformance_case()
+    def test_supplied_settings_survive_composition(self, suite):
+        """Every ``module_cfg_extras`` entry the target supplied is a declared field of the composed config,
+        holding the same object.
+
+        The helper sets extras as attributes on the seed config before the session composes it; a name the composed
+        config class does not declare rides as a stray attribute that an adapter can read back through a default, so the
+        target looks composed while its config never was (the first hub adapter's two-way composition worked that way).
+        Checked by field and by identity, so a setting that composition dropped or copied fails by name.
+        """
+        import dataclasses
+
+        supplied = suite.inputs.supplied_extras
+        if not supplied:
+            pytest.skip("the target supplied no module_cfg_extras")
+        cfg = suite.module.it_cfg
+        declared = {f.name for f in dataclasses.fields(cfg)} if dataclasses.is_dataclass(cfg) else set()
+        for name, value in supplied.items():
+            assert name in declared, (
+                f"{name!r} was supplied as a module_cfg_extras entry but {type(cfg).__name__} declares no such field;"
+                " it reached the module as a stray attribute, which is not a composed setting"
+            )
+            assert getattr(cfg, name) is value, f"{name!r} reached the composed config as a different object"
+
+    @conformance_case()
     def test_undeclared_capabilities_are_refused_by_name(self, suite):
         """Every surface the backend does NOT claim must be refused by the shared gate, naming the backend and what
         it does claim.
