@@ -78,6 +78,8 @@ class InterventionSpec(NamedTuple):
     mode: InterventionMode | str = InterventionMode.REPLACE
     scale_factor: float = 1.0
     use_intervention_tensor_as_basis: bool = True
+    clamp_min: float | None = None
+    clamp_max: float | None = None
     position_scope: PositionScope | str = PositionScope.LAST_TOKEN
 
 
@@ -597,6 +599,63 @@ def _apply_lens_coordinate_patch(
     return patched.reshape(input_value.shape).to(dtype=input_value.dtype)
 
 
+def _apply_span_clamp(
+    spec: InterventionSpec,
+    *,
+    input_value: torch.Tensor,
+    target: torch.Tensor,
+) -> torch.Tensor:
+    """Bound the activation's coordinates along ``span(V)`` into ``[clamp_min, clamp_max]``.
+
+    Implements ``c <- clip(c, lo, hi)`` with ``c = V^+ h``, writing back ``h + V^T (c' - c)``. A
+    coordinate already inside its range is left ALONE, which is what distinguishes this from assigning a
+    value: the operation is a no-op on activations that were never out of bounds, and that is the
+    property the paper's coordinate-clamping ablation depends on.
+
+    ``clamp`` and assign-to-value are deliberately different modes rather than one with a degenerate
+    parameterization. No choice of bounds makes a clamp swap two coordinates, so ``patch`` is a special
+    case of ASSIGNMENT and not of this. They share an English word and nothing else.
+
+    ``V`` is ``(k, d_model)`` for any ``k >= 1``, and the coordinates are pseudoinverse coefficients
+    rather than dot products, matching ``patch`` and ``reject``: lens vectors are not orthonormal, and
+    with ``V^T`` the bounded quantity is not the coordinate the caller named.
+    """
+    lo, hi = spec.clamp_min, spec.clamp_max
+    if lo is None and hi is None:
+        raise ValueError(
+            "intervention mode 'clamp' was given neither `clamp_min` nor `clamp_max`, which is the "
+            "identity for every input: the coordinate is clipped into an unbounded range, the delta is "
+            "zero, and the intervention completes returning plausible logits for an edit that never "
+            "happened. Pass at least one bound, or use a mode that expresses what you meant."
+        )
+    if lo is not None and hi is not None and lo > hi:
+        raise ValueError(
+            f"intervention mode 'clamp' was given clamp_min={lo} greater than clamp_max={hi}, which "
+            "bounds every coordinate into an empty range. Refused rather than silently ordered."
+        )
+
+    batch = input_value.shape[0]
+    flat = input_value.reshape(batch, -1).to(dtype=torch.float32)
+    basis = target.reshape(1, -1) if target.ndim == 1 else target.reshape(target.shape[0], -1)
+    basis = basis.to(dtype=torch.float32)
+    if basis.shape[1] != flat.shape[1]:
+        raise ValueError(
+            f"intervention mode 'clamp' basis vectors have width {basis.shape[1]} but the hook slice is "
+            f"{flat.shape[1]} wide; refused rather than broadcast, since a width mismatch here yields a "
+            "plausible activation rather than an error."
+        )
+
+    pinv = torch.linalg.pinv(basis.transpose(0, 1))
+    coords = flat @ pinv.transpose(0, 1)
+    bounded = coords
+    if lo is not None:
+        bounded = torch.clamp(bounded, min=float(lo))
+    if hi is not None:
+        bounded = torch.clamp(bounded, max=float(hi))
+    edited = flat + (bounded - coords) @ basis
+    return edited.reshape(input_value.shape).to(dtype=input_value.dtype)
+
+
 def _apply_span_rejection(
     spec: InterventionSpec,
     *,
@@ -663,6 +722,9 @@ def _apply_mode_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> 
 
     if mode is InterventionMode.REJECT:
         return _apply_span_rejection(spec, input_value=input_value, target=target)
+
+    if mode is InterventionMode.CLAMP:
+        return _apply_span_clamp(spec, input_value=input_value, target=target)
 
     assert mode is InterventionMode.PROJECT, f"unreachable: normalize_intervention_mode admitted {mode!r}"
 
