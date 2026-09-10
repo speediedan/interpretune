@@ -459,6 +459,16 @@ container (`flock` works on the inode, so container and host processes interlock
 identifiable by its holder metadata: project tag `azure-it-<buildId>` plus a `[container]` marker. Never
 force-reset a lease showing that attribution; cancel the pipeline run instead.
 
+There are two lease keys, because the host is contended for two resources: `gpu`, and `cpu-heavy`, which
+serializes HOST MEMORY (a full suite peaks far above what two of them fit in at once, GPU or not). The CI
+job holds only `cpu-heavy` through its install and its CPU-only phase, which is more than half of every
+build, and takes `gpu` (then `cpu-heavy` again, in the host tool's fixed order) only when its GPU phases
+begin; the `Acquire host GPU lease` task's position in a build's timeline, at about the minute the CPU phase
+ends, is the evidence that split is in effect. Locally the two self-wrapping scripts default to both keys
+(`GPU_LEASE_ARGS=--cpu-heavy`), so a full suite or coverage run stays serialized with every CI phase, while
+GPU-only work wrapped with the plain lease (`$GPU_LEASE_CMD -- <cmd>`: a notebook, a benchmark leg, one test
+file on a GPU) may overlap the CI job's CPU phase.
+
 The `gpu-lease` skill under `.claude/skills/` is a VENDORED copy of the repo-neutral master in
 [speediedan/skills](https://github.com/speediedan/skills) (plugin `common-infra-skills`); the vendored copy
 is canonical for this repo so a bare clone works with nothing installed. Do not edit it here: change the

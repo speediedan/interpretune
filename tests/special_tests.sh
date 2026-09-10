@@ -37,6 +37,11 @@ reruns_delay=5
 source $(dirname "$0")/test_utils.sh
 
 # Serialize this run against other GPU work on the host (no-op unless GPU_LEASE_CMD is set).
+# A full suite is HOST-MEMORY-heavy as well as GPU-heavy, so it takes both host leases (gpu, then cpu-heavy in the
+# host tool's order) and stays serialized with every phase of a CI job, whose CPU-only phase holds only cpu-heavy.
+# GPU-only work (a notebook, a benchmark leg) takes the plain lease and may overlap that phase. An explicit
+# GPU_LEASE_ARGS wins.
+GPU_LEASE_ARGS="${GPU_LEASE_ARGS:---cpu-heavy}"
 gpu_lease_reexec "$0" "$@"
 
 usage(){
