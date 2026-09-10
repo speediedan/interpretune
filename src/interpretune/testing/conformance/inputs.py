@@ -133,7 +133,7 @@ class ConformanceInputs:
             shutil.rmtree(self.workdir, ignore_errors=True)
             self.workdir = None
 
-    def seed_config(self, flavour: str = "hf"):
+    def seed_config(self, flavour: str = "hf", module_cfg_extras: dict | None = None):
         """The seed's ``(datamodule_cfg, module_cfg, datamodule_cls, module_cls)`` for a data-pipeline flavour.
 
         Cache-only after ``ensure_local_seeds``; never touches the network. The module cfg returned is the
@@ -145,7 +145,7 @@ class ConformanceInputs:
 
         ensure_local_seeds()
         if flavour == "hf":
-            return self._adapter_free_seed()
+            return self._adapter_free_seed(module_cfg_extras)
         try:
             key = SEED_CONFIGS[flavour]
         except KeyError:
@@ -154,7 +154,7 @@ class ConformanceInputs:
             ) from None
         return hub_load(SEED_REPO, key)
 
-    def _adapter_free_seed(self):
+    def _adapter_free_seed(self, module_cfg_extras: dict | None = None):
         """The standalone datamodule entry, pointed at the suite model, plus a core-only module config.
 
         Mirrors what the bridge seed config carries on the data side (the attention mask as a model input and a
@@ -184,7 +184,13 @@ class ConformanceInputs:
         dm_cfg.signature_columns = ["input", "attention_mask", "labels"]
         dm_cfg.enable_datasets_cache = True
         dm_cfg.prepare_data_map_cfg = {"batched": True}
+        # THROUGH THE CONSTRUCTOR, not set afterwards. Auto-composition runs in `__new__`, so a setting
+        # applied after construction never composes: it lands as a stray attribute on a class that does
+        # not declare it, which an adapter can still read back through a `getattr` default. The target
+        # then looks configured while its config never was, and nothing distinguishes that from a
+        # misspelled setting name.
         it_cfg = ITConfig(
+            **(module_cfg_extras or {}),
             model_name_or_path=self.model_id,
             task_name="rte",
             auto_comp_cfg=AutoCompConfig(module_cfg_name="RTEBoolqConfig", module_cfg_mixin=RTEBoolqEntailmentMapping),
@@ -208,14 +214,21 @@ class ConformanceInputs:
     ):
         """An ``ITSessionConfig`` for ``adapter_ctx`` over the suite's fixed inputs.
 
-        ``module_cfg_extras`` are set as attributes on the seed's module cfg (an adapter's own config field,
-        e.g. ``my_adapter_cfg``); ``prepare`` may edit ``(datamodule_cfg, module_cfg)`` in place for
-        anything more. Optimizer fields are cleared: an analysis run configures none, and leaving the seed's
-        makes ``configure_optimizers`` run for nothing.
+        ``module_cfg_extras`` are an adapter's own config settings (e.g. ``my_adapter_cfg``). They go
+        through the seed's CONSTRUCTOR where the seed is built here, so auto-composition sees them and the
+        composed class declares them as real fields. A seed loaded pre-composed from the hub has no
+        constructor left to pass them to, so there an extra naming a field the config does not declare is
+        REFUSED rather than set: setting it would inject a stray attribute an adapter could still read back
+        through a default, which is the failure this helper used to produce for every flavour.
+
+        ``prepare`` may edit ``(datamodule_cfg, module_cfg)`` in place for anything more. Optimizer fields
+        are cleared: an analysis run configures none, and leaving the seed's makes ``configure_optimizers``
+        run for nothing.
         """
         from interpretune import ITSessionConfig
 
-        dm_cfg, it_cfg, dm_cls, m_cls = self.seed_config(flavour)
+        self.supplied_extras = dict(module_cfg_extras or {})
+        dm_cfg, it_cfg, dm_cls, m_cls = self.seed_config(flavour, module_cfg_extras=self.supplied_extras)
         self._attach_latent_models(it_cfg)
         it_cfg.optimizer_init = {}
         it_cfg.lr_scheduler_init = {}
@@ -224,9 +237,7 @@ class ConformanceInputs:
         dm_cfg.eval_batch_size = self.batch_size
         dm_cfg.train_batch_size = self.batch_size
         self._place(it_cfg)
-        self.supplied_extras = dict(module_cfg_extras or {})
-        for name, value in self.supplied_extras.items():
-            setattr(it_cfg, name, value)
+        self._apply_extras(it_cfg)
         if prepare is not None:
             prepare(dm_cfg, it_cfg)
         return ITSessionConfig(
@@ -236,6 +247,31 @@ class ConformanceInputs:
             datamodule_cls=dm_cls,
             module_cls=m_cls,
         )
+
+    def _apply_extras(self, it_cfg: Any) -> None:
+        """Ensure every supplied extra is a DECLARED field of the composed config, refusing any that is not.
+
+        Where the seed was built here the extras already went through the constructor, so this is a check that
+        composition actually carried them rather than a second application. Where the seed arrived pre-composed there
+        was no constructor to use, and an undeclared name is refused by name: assigning it would produce exactly the
+        stray attribute a conformance case exists to catch, but at setup time where nothing reports it.
+        """
+        import dataclasses
+
+        if not self.supplied_extras:
+            return
+        declared = {f.name for f in dataclasses.fields(it_cfg)} if dataclasses.is_dataclass(it_cfg) else set()
+        undeclared = sorted(name for name in self.supplied_extras if name not in declared)
+        if undeclared:
+            raise ValueError(
+                f"module_cfg_extras {undeclared} are not fields of {type(it_cfg).__name__}, and this seed was "
+                "loaded pre-composed so there is no constructor left to compose them through. An adapter "
+                "whose config class auto-composition can discover gets them declared automatically; one it "
+                "cannot see needs its config class registered. Setting them anyway would inject a stray "
+                "attribute that reads back through a default and looks configured."
+            )
+        for name, value in self.supplied_extras.items():
+            setattr(it_cfg, name, value)
 
     def _attach_latent_models(self, it_cfg: Any) -> None:
         """Replace the seed's latent models with the suite's, on the suite's device and precision.
