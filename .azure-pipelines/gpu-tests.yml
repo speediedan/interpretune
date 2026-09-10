@@ -305,7 +305,7 @@ jobs:
         displayName: 'Testing: standard gpu cuda-marked'
         env:
           # gated-model tests (llama3/gemma) and the notebook/example tests run in this phase and
-          # read these secrets; without the mapping they fail with KeyError (see build 575)
+          # read these secrets; without the mapping they fail with a KeyError on the secret's name
           HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
           # HF_TOKEN feeds from HF_MCP_TOKEN_RW so the J-space steering section can pull the PRIVATE
           # speediedan/jlens_steering_ops collection (#273). The gated key cannot read it (probed).

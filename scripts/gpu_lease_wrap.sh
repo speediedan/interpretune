@@ -159,7 +159,7 @@ ci_gpu_lease_acquire() {
     #
     # Scope, so this is not read as fixing a recurring failure: the normal path never needs it, because
     # ci_gpu_lease_release below removes the holder outright and runs under `condition: always()`.
-    # Measured across builds 762/763/768 in both directions, handoffs are clean. It matters only when a
+    # Measured clean in both directions across consecutive builds; handoffs are clean. It matters only when a
     # termination bypasses that cleanup (container teardown mid-step, agent kill, host crash), which
     # would otherwise leave a 0644 container-owned holder that the next LOCAL acquire cannot overwrite,
     # so `--status` would misattribute a local hold to a finished build. That is the attribution the
