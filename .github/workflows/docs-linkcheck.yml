@@ -31,6 +31,15 @@ jobs:
           SPHINX_MOCK_REQUIREMENTS: "1"
         run: |
           python -m sphinx -b linkcheck --keep-going docs/source docs/build/linkcheck
+      # The alignment page records gaps as rows that name an open issue; a row outlives the issue it names unless
+      # something notices. This asks GitHub for each cited issue's state and fails by name on any that has closed.
+      # Online by construction and on the same weekly cadence, so the check cannot agree with itself.
+      - name: Check documentation issue rows are still open
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/check_doc_issue_rows.py --repo ${{ github.repository }} docs/jlens_paper_alignment.md
       - name: Upload linkcheck report
         if: always()
         uses: actions/upload-artifact@v4

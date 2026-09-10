@@ -139,6 +139,7 @@ usage/generation_precedence
 usage/custom_ops_composition_guide
 usage/interpretune_intervention_apis
 usage/jlens_norm_folding
+usage/jlens_paper_alignment
 usage/analysis_injection_usage
 ```
 
