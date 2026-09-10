@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from interpretune.analysis.backends.capabilities import BackendCapability
+from interpretune.analysis.backends.capabilities import ModelBackendCapability
 from interpretune.analysis.backends.protocols import (
     ModelBackend,
     ModelBackendCore,
@@ -26,10 +26,10 @@ class _CaptureOnlyBackend:
     """A truthful partial backend: core surface only, no optional groups."""
 
     @property
-    def capabilities(self) -> frozenset[BackendCapability]:
+    def capabilities(self) -> frozenset[ModelBackendCapability]:
         return frozenset()
 
-    def supports(self, capability: BackendCapability) -> bool:
+    def supports(self, capability: ModelBackendCapability) -> bool:
         return capability in self.capabilities
 
     def fwd(self, model, batch):
@@ -57,9 +57,9 @@ class TestDecomposition:
             for proto in (ModelBackendCore, SupportsLatentModels, SupportsGradients, SupportsIntervention):
                 assert isinstance(backend, proto)
             for cap in (
-                BackendCapability.LATENT_MODELS,
-                BackendCapability.GRADIENTS,
-                BackendCapability.INTERVENTION,
+                ModelBackendCapability.LATENT_MODELS,
+                ModelBackendCapability.GRADIENTS,
+                ModelBackendCapability.ACTIVATION_INTERVENTION,
             ):
                 assert backend.supports(cap)
 
@@ -77,12 +77,12 @@ class TestCapabilityGate:
     def test_gate_passes_silently_when_claimed(self):
         from interpretune.adapters.transformer_lens.backends import TLModelBackend
 
-        require_backend_capability(TLModelBackend(), BackendCapability.GRADIENTS, "gradient_attribution")
+        require_backend_capability(TLModelBackend(), ModelBackendCapability.GRADIENTS, "gradient_attribution")
 
     def test_gate_names_the_op_the_capability_and_what_the_backend_claims(self):
         backend = _CaptureOnlyBackend()
         with pytest.raises(ValueError, match=r"some_op requires .*LATENT_MODELS.*_CaptureOnlyBackend"):
-            require_backend_capability(backend, BackendCapability.LATENT_MODELS, "some_op")
+            require_backend_capability(backend, ModelBackendCapability.LATENT_MODELS, "some_op")
 
     def test_gate_is_value_based_across_module_identity_splits(self):
         """A reloaded capabilities module yields value-equal but identity-distinct enum members.
@@ -105,12 +105,12 @@ class TestCapabilityGate:
             spec.loader.exec_module(cap_copy)
         finally:
             sys.modules.pop("_cap_copy_for_test", None)
-        other_member = cap_copy.BackendCapability.GRADIENTS
-        assert other_member is not BackendCapability.GRADIENTS  # the split is real
+        other_member = cap_copy.ModelBackendCapability.GRADIENTS
+        assert other_member is not ModelBackendCapability.GRADIENTS  # the split is real
 
         class _SplitBackend(_CaptureOnlyBackend):
             @property
             def capabilities(self):
                 return frozenset({other_member})
 
-        require_backend_capability(_SplitBackend(), BackendCapability.GRADIENTS, "some_op")
+        require_backend_capability(_SplitBackend(), ModelBackendCapability.GRADIENTS, "some_op")

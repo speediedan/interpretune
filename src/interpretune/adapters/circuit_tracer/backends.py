@@ -12,13 +12,35 @@ from typing import Any, Mapping
 import torch
 from transformers import BatchEncoding
 
-from interpretune.analysis.backends import AnalysisBackendCapability, InterventionDict, InterventionSpec
+from interpretune.analysis.backends import (
+    AnalysisBackendCapability,
+    InterventionDict,
+    InterventionSpec,
+    AttributionGraphSupport,
+    FeatureInterventionSupport,
+)
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
 from interpretune.protocol import GraphComponentPayload
 
 
 class CircuitTracerAnalysisBackend:
     """Analysis backend for circuit-tracer graph generation and hydration."""
+
+    @property
+    def attribution_graph_support(self) -> AttributionGraphSupport:
+        """Graph construction resolves gemma's attention location through source tracing of the bound eager
+        function."""
+        return AttributionGraphSupport(requires_own_eager_attention=True)
+
+    @property
+    def feature_intervention_support(self) -> FeatureInterventionSupport:
+        """The three value sources circuit-tracer's feature intervention accepts, with layer constraints and
+        returns."""
+        return FeatureInterventionSupport(
+            value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"}),
+            constrainable_layers=True,
+            returns_activations=True,
+        )
 
     @property
     def capabilities(self) -> frozenset[AnalysisBackendCapability]:
@@ -199,13 +221,9 @@ class CircuitTracerAnalysisBackend:
             "return_activations": bool(_resolve("intervention_return_activations", False)),
         }
 
-        if settings["value_source"] not in {"top_feature_scores", "top_feature_activation_values", "constant"}:
-            raise ValueError(
-                "feature_intervention_forward only supports value_source values "
-                "'top_feature_scores', 'top_feature_activation_values', and 'constant'"
-            )
-        if settings["value_source"] == "constant" and settings["value"] is None:
-            raise ValueError("feature_intervention_forward requires a constant intervention_value for constant mode")
+        why = self.feature_intervention_support.refusal(settings)
+        if why is not None:
+            raise ValueError(f"feature intervention settings refused: {why}")
         return settings
 
     @staticmethod

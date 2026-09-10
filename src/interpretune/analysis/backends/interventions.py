@@ -15,7 +15,7 @@ from typing import Any, Callable, NamedTuple, TypeAlias
 import torch
 
 from interpretune.analysis.backends.capabilities import (
-    BackendCapability,
+    ModelBackendCapability,
     InterventionMode,
     PositionScope,
 )
@@ -765,7 +765,7 @@ def _declared_axes(backend: Any, *, backend_name: str) -> tuple[set[str], set[st
     record = getattr(backend, "intervention_support", None)
     if record is None:
         raise NotImplementedError(
-            f"backend {backend_name!r} claims {BackendCapability.INTERVENTION.name} but attaches no "
+            f"backend {backend_name!r} claims {ModelBackendCapability.ACTIVATION_INTERVENTION.name} but attaches no "
             "`intervention_support` record, so nothing says which position scopes or modes it can honour. "
             "Declare an InterventionSupport(position_scopes=..., modes=...) on the backend."
         )

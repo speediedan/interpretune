@@ -1,52 +1,77 @@
 # Interpretune Intervention APIs
 
-This note captures the current intervention split between model-level intervention mechanisms and interpretune's
-analysis-level intervention ops.
+Interpretune intervenes on two different objects, at two levels, and every name in this area says which.
+
+## Two levels, one rule
+
+| Level | Capability member | Object acted on | Entry op | Executed by | Support record |
+|---|---|---|---|---|---|
+| Model backend | `ModelBackendCapability.ACTIVATION_INTERVENTION` | a residual-stream tensor at a vocabulary point (the **embed path**) | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (modes, position scopes) |
+| Analysis backend | `AnalysisBackendCapability.FEATURE_INTERVENTION` | latent feature activations `(layer, position, feature_id) -> value` (the **store path**) | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `FeatureInterventionSupport` (value sources, constrainable layers, returned activations) |
+
+The table in `src/it_examples/experiments/notebook/intervention_capabilities_overview.md` is the definition both
+enums cite; this note is the API contract beneath it.
+
+**The rule, stated once for both levels.** A capability member names a protocol surface (a `Supports*` group of
+methods) and answers only whether the backend implements it. Which configurations of that surface the backend
+honours is a typed support record on the protocol, never a member and never an implicit default: a backend that
+implements `fwd_w_intervention` for `add` and `project` but not `patch` declares the surface and a record that
+says so, and a gate refuses `patch` by name before anything runs. The same rule covers the surfaces that are not
+interventions: `CaptureSupport` says which vocabulary points a model backend can capture, and
+`AttributionGraphSupport` says what graph construction requires of the model (the modeling module's own eager
+attention bound at the attention call site, a fact the configured `eager` does not establish because another
+library can replace that function for the whole process).
+
+**Basis is a configuration, not a capability.** Where an intervention is defined in a basis (the J-lens work's
+paper basis versus the norm-aware folded basis; the two are not interchangeable and are not related by a
+coefficient), the basis is a declared configuration of the intervention surface: stated on the op's spec, carried
+by the backend's record as honoured or not, and refused by name when unstated or unhonoured. A silent default is
+exactly the failure the results' non-interchangeability names.
 
 ## Current surfaces
 
-There are two distinct model-facing surfaces (a high-level tour with the full control matrix lives in
-`src/it_examples/experiments/notebook/intervention_capabilities_overview.md`):
+- `ModelBackend.fwd_w_intervention(...)` is the model-level API for hook-tensor (embed-path) interventions,
+  implemented with identical last-token math by both the TransformerLens and NNsight model backends (including
+  SAE/latent sub-hook targets via `use_latent_models`/`sae_handles`). Its record, `InterventionSupport`, declares
+  the modes and position scopes; an op declares what it needs through `required_intervention_modes` and
+  `required_position_scopes`, and the gate compares the two before the op runs.
+- `ReplacementModel.feature_intervention(...)` is the model-level primitive the analysis-level store path executes
+  on. Both circuit-tracer backend implementations consume canonical intervention tuples of the form
+  `(layer, position, feature_idx, value)` and support passthrough controls such as constrained layers, sparse
+  activation capture and optional activation return. `CircuitTracerAnalysisBackend` resolves the settings and
+  refuses, through `FeatureInterventionSupport`, a value source it does not honour, a constant source without a
+  value, a layer constraint or an activation return it cannot provide.
 
-- `ModelBackend.fwd_w_intervention(...)` is the shared model-level API for **hook-tensor ("embed"-path)
-  interventions**, implemented with identical last-token math by both the TransformerLens and NNsight model
-  backends (including SAE/latent sub-hook targets via `use_latent_models`/`sae_handles`).
-- `ReplacementModel.feature_intervention(...)` is the model-level API for **circuit-tracer feature ("store"-path)
-  interventions**. Both circuit-tracer backend implementations consume canonical intervention tuples of the form
-  `(layer, position, feature_idx, value)` and support overlapping passthrough controls such as constrained layers,
-  sparse activation capture, optional activation return, and backend-specific execution details.
+At this layer interpretune delegates to backend-native steering surfaces rather than inventing a second execution
+mechanism. The closest analogs are TransformerLens hook-driven flows such as `run_with_hooks(...)` and NNsight
+tracing that mutates activations inside a trace.
 
-At this layer, interpretune is delegating to backend-native steering surfaces rather than inventing a second execution
-mechanism. The closest analogs are TransformerLens hook-driven intervention flows such as `run_with_hooks(...)` and
-NNsight tracing/model-steering patterns that mutate activations inside a trace.
+`feature_intervention_forward` is the analysis-level op. It consumes `top_feature_ids` plus value inputs from
+`AnalysisStore`, constructs canonical intervention tuples, runs a clean forward pass and an intervened forward pass
+through `module.replacement_model`, and stores Arrow-safe intervention summaries back into `AnalysisStore`.
 
-`feature_intervention_forward` is the current interpretune analysis-level API. It consumes `top_feature_ids` plus
-value inputs from `AnalysisStore`, constructs canonical intervention tuples, runs a clean forward pass and an
-intervened forward pass through `module.replacement_model`, and stores Arrow-safe intervention summaries back into
-`AnalysisStore`.
-
-`model_fwd_intervention` is the current hook-level API for direct tensor interventions. It accepts either explicit
+`model_fwd_intervention` is the model-level op for direct tensor interventions. It accepts either explicit
 `interventions` / `interventions_json` mappings or the shorthand `intervention_hook_pattern`, `intervention_mode`,
-`intervention_scale_factor`, and `intervention_use_intervention_tensor_as_basis` fields. Explicit mappings take
-precedence. Concept-direction notebook experiments now use this surface for direct-projection phases, including
-configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook such
-as `blocks.0.hook_in` in `project` mode.
+`intervention_scale_factor` and `intervention_use_intervention_tensor_as_basis` fields; explicit mappings take
+precedence. Concept-direction notebook experiments use this surface for direct-projection phases, including
+configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
+such as `blocks.0.hook_in` in `project` mode.
 
-`model_fwd_intervention` dispatches four modes: `replace`, `add`, `project`, and `patch`. The `patch`
-mode (the J-space write approach, shipped with #320) takes exactly two direction vectors stacked on a
-leading axis and swaps the activation's coordinates along that pair, leaving the component orthogonal
-to the pair untouched. Mechanically it is basis-agnostic: any pair of directions can serve as the
-patch pair, so embed-basis concept poles are as valid a source as Jacobian lens rows.
+`model_fwd_intervention` dispatches four modes: `replace`, `add`, `project`, and `patch`. The `patch` mode (the
+J-space write) takes exactly two direction vectors stacked on a leading axis and swaps the activation's
+coordinates along that pair, leaving the component orthogonal to the pair untouched. Mechanically it is
+basis-agnostic: any pair of directions can serve as the patch pair, so embed-basis concept poles are as valid a
+source as Jacobian lens rows; which basis produced the pair is the configuration the paragraph above requires the
+op to state.
 
-> **The pair and the model must share a residual basis — and TransformerLens weight processing
-> changes it.** `HookedTransformer.from_pretrained` defaults to folding LayerNorm and centering
-> weights, which rewrites the residual stream's geometry at every `hook_resid_*` point: a patch
-> pair built from unprocessed weights (which is what lens artifacts and the circuit-tracer
-> `ReplacementModel` path use) then swaps in the wrong plane. Measured on gpt2: the same pair's
-> intervention delta disagrees between backends by a **0.948 relative gap** under default
-> processing, versus <10% with `from_pretrained_no_processing`. Load unprocessed when applying
-> patch pairs on TL, or build the pair from the processed model's own weights — never mix.
-> (Pinned by `tests/core/test_jlens_patch_validation.py`.)
+> **The pair and the model must share a residual basis, and TransformerLens weight processing changes it.**
+> `HookedTransformer.from_pretrained` defaults to folding LayerNorm and centering weights, which rewrites the
+> residual stream's geometry at every `hook_resid_*` point: a patch pair built from unprocessed weights (which is
+> what lens artifacts and the circuit-tracer `ReplacementModel` path use) then swaps in the wrong plane. Measured
+> on gpt2: the same pair's intervention delta disagrees between backends by a **0.948 relative gap** under default
+> processing, versus <10% with `from_pretrained_no_processing`. Load unprocessed when applying patch pairs on TL, or
+> build the pair from the processed model's own weights; never mix. (Pinned by
+> `tests/core/test_jlens_patch_validation.py`.)
 
 ## Op-level entry points and composites
 
@@ -78,56 +103,22 @@ These are ACTIVE runtime controls (not just config candidates): `intervention_va
 `test_analysis_backend_parity_feature_intervention_wrapper_sign_aware_top5_any_scaling`) is
 `value = sign(score) * abs(activation) * (scale_factor * abs(score)/max_abs_score)`.
 
-## Planned config split (aspirational — NOT yet implemented)
+## Config split: what exists and what is still planned
 
-As of 2026-07-11, `CircuitTracerConfig` still keeps all `intervention_*` knobs at the top level; the split
-below remains the target design, not the current state.
+`FeatureInterventionSupport` is now the analysis-level configuration space as a record: value sources, whether
+layers can be constrained, whether activations can be returned. What is still planned is the split of the
+`CircuitTracerConfig` fields themselves, which keep both levels' knobs at the top level behind `intervention_`
+prefixes:
 
-The current `CircuitTracerConfig` still mixes shared model-level intervention knobs with circuit-tracer-specific
-analysis-level feature-intervention settings by keeping them all at the top level behind `intervention_` prefixes.
-The next refactor should split that surface into:
+- a shared model-level intervention config dataclass reusable by `model_fwd_intervention`,
+  `resolve_interventions(...)` and both model backends: `hook_pattern(s)`, `interventions`, `mode`, `scale_factor`,
+  `use_intervention_tensor_as_basis`, `intervention_tensor`, and the basis where one applies, with the
+  non-prefixed spellings canonical and legacy prefixed spellings normalized at the op boundary;
+- a circuit-tracer analysis-level intervention config dataclass for `value`, `value_source`, `sign_aware_scale`,
+  `max_influence_norm_scale`, `constrained_layers`, `freeze_attention`, `apply_activation_function`, `sparse` and
+  `return_activations`, the fields the record already describes.
 
-- a shared model-level intervention config dataclass that can be reused by `model_fwd_intervention`,
-    `resolve_interventions(...)`, and both the TransformerLens and NNsight model backends
-- a circuit-tracer analysis-level intervention config dataclass for feature-selection and
-    `ReplacementModel.feature_intervention(...)`-specific controls
-
-### Model-level intervention config candidates
-
-These options are backend-agnostic because they describe how a resolved hook intervention should be applied after the
-hook target is known, regardless of whether execution happens through TransformerLens or NNsight:
-
-- `hook_pattern` or `hook_patterns`: the user-facing hook selector before wildcard expansion
-- `interventions`: explicit resolved-or-resolvable intervention mapping payloads
-- `mode`: canonical replacement/add/project selector aligned with `InterventionSpec.mode`
-- `scale_factor`: canonical scalar aligned with `InterventionSpec.scale_factor`
-- `use_intervention_tensor_as_basis`: canonical projection-basis selector aligned with
-    `InterventionSpec.use_intervention_tensor_as_basis`
-- `intervention_tensor`: optional shorthand tensor when the caller is not supplying an explicit mapping
-
-The important canonicalization rule is that the shared dataclass should prefer the non-prefixed field names above.
-For example, `use_intervention_tensor_as_basis` should become the single canonical config name in the shared
-model-level dataclass rather than preserving both `use_intervention_tensor_as_basis` and
-`intervention_use_intervention_tensor_as_basis` as parallel long-term surfaces. Any legacy prefixed spellings should
-be normalized at the op/config boundary rather than carried deeper into backend execution code.
-
-### Circuit-tracer analysis-level config candidates
-
-These options are not general hook-intervention controls. They are specific to the analysis-layer feature-selection
-and `ReplacementModel.feature_intervention(...)` flow and should live in a circuit-tracer-specific intervention config
-object instead of the shared model-level one:
-
-- `value` and `value_source`
-- `sign_aware_scale`
-- `max_influence_norm_scale`
-- `constrained_layers`
-- `freeze_attention`
-- `apply_activation_function`
-- `sparse`
-- `return_activations`
-
-This split keeps the shared model-backend contract focused on `InterventionSpec`-style hook semantics while letting
-the circuit-tracer analysis backend own its feature-intervention execution details.
+Until that lands, `resolve_feature_intervention_settings` reads the prefixed fields and the record is the check.
 
 ## Hook pattern contract
 

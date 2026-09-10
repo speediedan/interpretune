@@ -8,7 +8,7 @@ from typing import Any, Callable, cast
 import torch
 
 from interpretune.analysis.backends import (
-    BackendCapability,
+    ModelBackendCapability,
     CaptureSupport,
     InterventionSupport,
     LatentModelSupport,
@@ -236,13 +236,13 @@ class TLModelBackend:
     """
 
     @property
-    def capabilities(self) -> frozenset[BackendCapability]:
+    def capabilities(self) -> frozenset[ModelBackendCapability]:
         """TL implements every method group."""
         return frozenset(
             {
-                BackendCapability.GRADIENTS,
-                BackendCapability.LATENT_MODELS,
-                BackendCapability.INTERVENTION,
+                ModelBackendCapability.GRADIENTS,
+                ModelBackendCapability.LATENT_MODELS,
+                ModelBackendCapability.ACTIVATION_INTERVENTION,
             }
         )
 
@@ -291,7 +291,7 @@ class TLModelBackend:
             architecture=architecture,
         )
 
-    def supports(self, capability: BackendCapability) -> bool:
+    def supports(self, capability: ModelBackendCapability) -> bool:
         """Check whether this backend supports a given capability."""
         return capability in self.capabilities
 

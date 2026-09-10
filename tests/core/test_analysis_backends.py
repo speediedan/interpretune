@@ -1,7 +1,7 @@
 """Tests for analysis backend components.
 
 Covers:
-- BackendCapability: enum values and membership checks
+- ModelBackendCapability: enum values and membership checks
 - HookNameResolver: hook name parsing, resolution, SAE sub-hook stripping, architecture registry
 - NNsightActivationCacheAdapter: dict-like interface conformance
 - NNsightModelBackend: protocol conformance, capabilities, _splice_sae helper, fwd_w_hooks_batched
@@ -19,7 +19,7 @@ import torch
 
 from interpretune.analysis.backends import (
     AnalysisBackendCapability,
-    BackendCapability,
+    ModelBackendCapability,
     InterventionDict,
     InterventionMode,
     InterventionSpec,
@@ -775,18 +775,18 @@ class TestNNsightEnvoyHelpers:
 
 
 # ==============================================================================
-# BackendCapability enum tests
+# ModelBackendCapability enum tests
 # ==============================================================================
 
 
 class TestBackendCapability:
-    """Tests for the BackendCapability enum values and membership."""
+    """Tests for the ModelBackendCapability enum values and membership."""
 
     def test_latent_models_value(self):
-        assert BackendCapability.LATENT_MODELS.value == "latent_models"
+        assert ModelBackendCapability.LATENT_MODELS.value == "latent_models"
 
     def test_gradients_value(self):
-        assert BackendCapability.GRADIENTS.value == "gradients"
+        assert ModelBackendCapability.GRADIENTS.value == "gradients"
 
     def test_attribution_value(self):
         assert AnalysisBackendCapability.ATTRIBUTION_GRAPH.value == "attribution_graph"
@@ -801,9 +801,9 @@ class TestBackendCapability:
         record on the group's protocol. A flat member per configuration was tried (two scope members) and could not
         carry the mode axis without a member per mode as well.
         """
-        assert not hasattr(BackendCapability, "INTERVENTION_LAST_TOKEN")
-        assert not hasattr(BackendCapability, "INTERVENTION_ALL_POSITIONS")
-        assert not hasattr(BackendCapability, "BATCHED_HOOKS")
+        assert not hasattr(ModelBackendCapability, "INTERVENTION_LAST_TOKEN")
+        assert not hasattr(ModelBackendCapability, "INTERVENTION_ALL_POSITIONS")
+        assert not hasattr(ModelBackendCapability, "BATCHED_HOOKS")
         support = InterventionSupport(position_scopes={"last_token"}, modes={"add"})
         assert support.position_scopes == frozenset({PositionScope.LAST_TOKEN})
         assert support.modes == frozenset({InterventionMode.ADD})
@@ -821,22 +821,22 @@ class TestBackendCapability:
         flat members beside an efficiency flag; those were sub-modes of one surface, and they now live in the
         surface's support record instead.
         """
-        assert len(BackendCapability) == 3
+        assert len(ModelBackendCapability) == 3
         assert len(AnalysisBackendCapability) == 2
 
     def test_membership_in_frozenset(self):
-        caps = frozenset({BackendCapability.LATENT_MODELS, BackendCapability.GRADIENTS})
-        assert BackendCapability.LATENT_MODELS in caps
-        assert BackendCapability.GRADIENTS in caps
+        caps = frozenset({ModelBackendCapability.LATENT_MODELS, ModelBackendCapability.GRADIENTS})
+        assert ModelBackendCapability.LATENT_MODELS in caps
+        assert ModelBackendCapability.GRADIENTS in caps
 
     def test_module_capabilities_require_a_record_for_each_declared_surface(self):
         """The invariant a card or a conformance report relies on: the record is there iff the surface is."""
         with pytest.raises(ValueError, match="INTERVENTION is declared but no intervention support record"):
-            ModuleCapabilities(model=frozenset({BackendCapability.INTERVENTION}), analysis=frozenset())
+            ModuleCapabilities(model=frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION}), analysis=frozenset())
         with pytest.raises(ValueError, match="LATENT_MODELS is not declared"):
             ModuleCapabilities(model=frozenset(), analysis=frozenset(), latent_models=LatentModelSupport())
         ok = ModuleCapabilities(
-            model=frozenset({BackendCapability.INTERVENTION}),
+            model=frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION}),
             analysis=frozenset(),
             intervention=InterventionSupport.every(),
         )
@@ -863,13 +863,13 @@ class TestNNsightModelBackendCapabilities:
         assert backend.latent_model_support == LatentModelSupport(batched_hooks=True)
 
     def test_capabilities_includes_gradients(self, backend):
-        assert BackendCapability.GRADIENTS in backend.capabilities
+        assert ModelBackendCapability.GRADIENTS in backend.capabilities
 
     def test_intervention_record_declares_every_scope_and_mode(self, backend):
         assert backend.intervention_support == InterventionSupport.every()
 
     def test_supports_gradients(self, backend):
-        assert backend.supports(BackendCapability.GRADIENTS) is True
+        assert backend.supports(ModelBackendCapability.GRADIENTS) is True
 
 
 class TestNNsightSpliceSae:
@@ -1020,13 +1020,13 @@ class TestTLModelBackendCapabilities:
         assert isinstance(backend.capabilities, frozenset)
 
     def test_capabilities_includes_gradients(self, backend):
-        assert BackendCapability.GRADIENTS in backend.capabilities
+        assert ModelBackendCapability.GRADIENTS in backend.capabilities
 
     def test_batched_hooks_is_not_claimed(self, backend):
         assert backend.latent_model_support == LatentModelSupport(batched_hooks=False)
 
     def test_supports_gradients(self, backend):
-        assert backend.supports(BackendCapability.GRADIENTS) is True
+        assert backend.supports(ModelBackendCapability.GRADIENTS) is True
 
     def test_intervention_record_declares_every_scope_and_mode(self, backend):
         assert backend.intervention_support == InterventionSupport.every()
@@ -1466,12 +1466,12 @@ class TestFwdWInterventionSignature:
 class _AddOnlyLastTokenBackend:
     """A backend shaped like a hub-delivered steering adapter: INTERVENTION, one scope, one mode."""
 
-    capabilities = frozenset({BackendCapability.INTERVENTION})
+    capabilities = frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION})
     intervention_support = InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, modes={InterventionMode.ADD})
 
 
 class _UndeclaredBackend:
-    capabilities = frozenset({BackendCapability.INTERVENTION})
+    capabilities = frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION})
 
 
 class TestInterventionScopeSurvivesCanonicalization:
@@ -1598,7 +1598,7 @@ class TestRequireInterventionSupport:
             modes = frozenset({"add"})
 
         class _Backend:
-            capabilities = frozenset({BackendCapability.INTERVENTION})
+            capabilities = frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION})
             intervention_support = _LooksLikeARecord()
 
         require_intervention_support(
@@ -1617,7 +1617,7 @@ class TestRequireInterventionSupport:
 
     def test_an_empty_record_is_a_type_error(self):
         class _Backend:
-            capabilities = frozenset({BackendCapability.INTERVENTION})
+            capabilities = frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION})
             intervention_support = object()
 
         with pytest.raises(TypeError, match="must be an InterventionSupport"):
@@ -1739,3 +1739,35 @@ class TestTLCaptureNamesThroughTheVocabulary:
 
         out = _restore_requested_names(_Cache(), {"blocks.0.attn.hook_z": ["blocks.0.attn.o.hook_in"]})
         assert out.cache_dict["blocks.0.attn.o.hook_in"] == "z"
+
+
+class TestCapabilitySpellings:
+    """The normalizer refuses a retired spelling by name with its replacement, and accepts each vocabulary's
+    own."""
+
+    def test_a_retired_spelling_is_refused_with_its_replacement(self):
+        from interpretune.analysis.backends import normalize_backend_capability
+
+        with pytest.raises(
+            ValueError, match="'intervention' is a retired capability spelling.*'activation_intervention'"
+        ):
+            normalize_backend_capability("intervention")
+        with pytest.raises(ValueError, match="'attribution' is a retired capability spelling.*'attribution_graph'"):
+            normalize_backend_capability("attribution")
+
+    def test_each_vocabulary_and_the_dotted_form_are_accepted(self):
+        from interpretune.analysis.backends import (
+            AnalysisBackendCapability,
+            ModelBackendCapability,
+            normalize_backend_capability,
+        )
+
+        assert normalize_backend_capability("activation_intervention") is ModelBackendCapability.ACTIVATION_INTERVENTION
+        assert normalize_backend_capability("ModelBackendCapability.GRADIENTS") is ModelBackendCapability.GRADIENTS
+        assert normalize_backend_capability("feature_intervention") is AnalysisBackendCapability.FEATURE_INTERVENTION
+
+    def test_an_unknown_spelling_lists_both_vocabularies(self):
+        from interpretune.analysis.backends import normalize_backend_capability
+
+        with pytest.raises(ValueError, match="model-level spellings are .* analysis-level spellings are"):
+            normalize_backend_capability("steering")

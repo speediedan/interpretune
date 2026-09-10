@@ -14,17 +14,28 @@ import torch
 
 from interpretune.analysis.backends.capabilities import (
     AnalysisBackendCapability,
-    BackendCapability,
+    AttributionGraphSupport,
+    FeatureInterventionSupport,
     InterventionSupport,
     LatentModelSupport,
+    ModelBackendCapability,
 )
 from interpretune.analysis.backends.interventions import InterventionDict, InterventionValue
 from interpretune.protocol import NamesFilter
 
 
 @runtime_checkable
-class AnalysisBackend(Protocol):
-    """Protocol defining analysis-adapter functionality layered above model execution backends."""
+class AnalysisBackendCore(Protocol):
+    """The REQUIRED surface of an analysis backend, layered above a model execution backend.
+
+    Same rule as :class:`ModelBackendCore`: every analysis backend implements this much, and the optional method
+    groups live in the ``Supports*`` protocols below, each tied to the
+    :class:`~interpretune.analysis.backends.capabilities.AnalysisBackendCapability` member of the same name. A
+    member answers whether the backend implements a group; which configurations of the group it honours is the
+    typed support record on that protocol, never a member. An op reaches a gated method only after the gate says
+    the group is declared, and never through a default: a method looked up with a fallback is a method whose
+    absence produces a plausible partial result instead of a refusal.
+    """
 
     @property
     def capabilities(self) -> frozenset[AnalysisBackendCapability]:
@@ -64,6 +75,23 @@ class AnalysisBackend(Protocol):
         """
         ...
 
+
+@runtime_checkable
+class SupportsAttributionGraph(Protocol):
+    """Methods gated by ``AnalysisBackendCapability.ATTRIBUTION_GRAPH``: graph construction, storage and scoring.
+
+    The record says what the construction needs of the model it runs on. Its first measured requirement is the
+    attention implementation: circuit-tracer resolves gemma's attention-pattern location through nnsight's source
+    tracing of the function bound at the attention call site, so the modeling module's own eager attention must be
+    what is bound there. A configured ``eager`` is not that fact: another library can replace the module-level
+    function for the whole process and leave the config reading ``eager``.
+    """
+
+    @property
+    def attribution_graph_support(self) -> AttributionGraphSupport:
+        """What graph construction requires of the model, and the refusal when a model does not meet it."""
+        ...
+
     def build_concept_attribution_targets(
         self,
         module: Any,
@@ -80,6 +108,55 @@ class AnalysisBackend(Protocol):
         Returning None is a valid answer: a backend that cannot express concept-directed attribution
         targets says so here rather than raising, and the caller falls back.
         """
+        ...
+
+    def decompose_graph(self, graph: Any, extra_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Flatten a backend-native attribution graph into serializable, storable components.
+
+        The inverse of :meth:`hydrate_graph_from_batch`. Tensors are detached and moved to CPU so the
+        result can cross a process or land in an ``AnalysisStore`` without carrying device state.
+        """
+        ...
+
+    def hydrate_graph_from_batch(self, analysis_batch: Any) -> Any:
+        """Rebuild a backend-native graph from components previously stored on an analysis batch.
+
+        The inverse of :meth:`decompose_graph`, and the reason graph-consuming ops can run against a
+        replayed store rather than only against a live attribution pass.
+        """
+        ...
+
+    def build_pruned_graph(self, graph: Any, node_threshold: float, edge_threshold: float) -> Any:
+        """Return a copy of ``graph`` with nodes and edges below the given thresholds removed."""
+        ...
+
+    def compute_node_influence_scores(self, graph: Any) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute per-node influence over the graph, returning the influence and logit-gradient scores."""
+        ...
+
+    def compute_signed_node_influence_scores(self, graph: Any) -> torch.Tensor:
+        """Compute per-node influence that RETAINS sign, so promoting and suppressing nodes are distinguishable.
+
+        The unsigned counterpart is :meth:`compute_node_influence_scores`; sign-aware steering needs this
+        one, since magnitude alone cannot tell which direction a node pushes.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsFeatureInterventions(Protocol):
+    """Methods gated by ``AnalysisBackendCapability.FEATURE_INTERVENTION``: interventions on latent feature
+    activations.
+
+    Distinct from the model-level ``ACTIVATION_INTERVENTION`` surface, which edits a residual-stream tensor at a
+    point; this group edits the activations of features an attribution graph named. The record carries the
+    configuration space: which value sources exist, whether layers can be constrained, whether the intervened
+    activations can be returned.
+    """
+
+    @property
+    def feature_intervention_support(self) -> FeatureInterventionSupport:
+        """Which configurations of the feature-intervention surface this backend honours."""
         ...
 
     def resolve_feature_intervention_settings(
@@ -110,26 +187,6 @@ class AnalysisBackend(Protocol):
         """
         ...
 
-    def decompose_graph(self, graph: Any, extra_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Flatten a backend-native attribution graph into serializable, storable components.
-
-        The inverse of :meth:`hydrate_graph_from_batch`. Tensors are detached and moved to CPU so the
-        result can cross a process or land in an ``AnalysisStore`` without carrying device state.
-        """
-        ...
-
-    def hydrate_graph_from_batch(self, analysis_batch: Any) -> Any:
-        """Rebuild a backend-native graph from components previously stored on an analysis batch.
-
-        The inverse of :meth:`decompose_graph`, and the reason graph-consuming ops can run against a
-        replayed store rather than only against a live attribution pass.
-        """
-        ...
-
-    def build_pruned_graph(self, graph: Any, node_threshold: float, edge_threshold: float) -> Any:
-        """Return a copy of ``graph`` with nodes and edges below the given thresholds removed."""
-        ...
-
     def select_feature_rows(self, active_features: torch.Tensor, selected_features: torch.Tensor) -> torch.Tensor:
         """Index the active-feature table by selected feature indices, preserving its column layout.
 
@@ -138,17 +195,14 @@ class AnalysisBackend(Protocol):
         """
         ...
 
-    def compute_node_influence_scores(self, graph: Any) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute per-node influence over the graph, returning the influence and logit-gradient scores."""
-        ...
 
-    def compute_signed_node_influence_scores(self, graph: Any) -> torch.Tensor:
-        """Compute per-node influence that RETAINS sign, so promoting and suppressing nodes are distinguishable.
+@runtime_checkable
+class AnalysisBackend(AnalysisBackendCore, SupportsAttributionGraph, SupportsFeatureInterventions, Protocol):
+    """The full analysis surface: the core plus both optional groups, for a backend that implements everything.
 
-        The unsigned counterpart is :meth:`compute_node_influence_scores`; sign-aware steering needs this
-        one, since magnitude alone cannot tell which direction a node pushes.
-        """
-        ...
+    Callers type against this when they need the whole surface; a partial backend satisfies the core and whichever
+    groups it truthfully declares, and the gate refuses the rest by name.
+    """
 
 
 @runtime_checkable
@@ -158,7 +212,7 @@ class ModelBackendCore(Protocol):
     Every model backend implements this much: plain forward, cached forward, and cache wrapping,
     plus the capability introspection ops use to gate everything beyond it. The optional method
     groups live in the ``Supports*`` protocols below, each tied to the
-    :class:`~interpretune.analysis.backends.capabilities.BackendCapability` member of the same name;
+    :class:`~interpretune.analysis.backends.capabilities.ModelBackendCapability` member of the same name;
     ops call an optional method only after ``backend.supports(...)`` says so (see
     ``require_backend_capability``). A partial backend (e.g. a hub-delivered adapter's) implements
     this core plus whichever groups it truthfully claims.
@@ -173,7 +227,7 @@ class ModelBackendCore(Protocol):
     """
 
     @property
-    def capabilities(self) -> frozenset[BackendCapability]:
+    def capabilities(self) -> frozenset[ModelBackendCapability]:
         """Return the set of capabilities this backend supports.
 
         Backends must override this property to declare their capabilities. Analysis ops can check capabilities before
@@ -181,7 +235,7 @@ class ModelBackendCore(Protocol):
         """
         ...
 
-    def supports(self, capability: BackendCapability) -> bool:
+    def supports(self, capability: ModelBackendCapability) -> bool:
         """Check whether this backend supports a given capability.
 
         Default implementation checks ``capability in self.capabilities``.
@@ -249,7 +303,7 @@ class ModelBackendCore(Protocol):
 
 @runtime_checkable
 class SupportsLatentModels(Protocol):
-    """Methods gated by ``BackendCapability.LATENT_MODELS``: execution with latent-model handles attached.
+    """Methods gated by ``ModelBackendCapability.LATENT_MODELS``: execution with latent-model handles attached.
 
     ``fwd_w_hooks_batched`` is part of this group: every latent-models backend implements it, and a
     sequential loop is a valid implementation. Whether the backend FUSES the configs into one execution
@@ -321,7 +375,7 @@ class SupportsLatentModels(Protocol):
 
         Each element of ``hook_configs`` is a ``fwd_hooks`` list (as passed to
         ``fwd_w_hooks_and_latent_models``).  Backends that support
-        :attr:`BackendCapability.BATCHED_HOOKS` may batch all configs into a single
+        :attr:`ModelBackendCapability.BATCHED_HOOKS` may batch all configs into a single
         execution context (e.g., NNsight multi-invoke within one trace) for efficiency.
         Other backends loop over configs sequentially.
 
@@ -352,7 +406,7 @@ class SupportsLatentModels(Protocol):
 
 @runtime_checkable
 class SupportsGradients(Protocol):
-    """Methods gated by ``BackendCapability.GRADIENTS``: forward + backward with gradient caching."""
+    """Methods gated by ``ModelBackendCapability.GRADIENTS``: forward + backward with gradient caching."""
 
     def fwd_w_grads_and_latent_models(
         self,
@@ -397,7 +451,8 @@ class SupportsGradients(Protocol):
 
 @runtime_checkable
 class SupportsIntervention(Protocol):
-    """Methods gated by ``BackendCapability.INTERVENTION``: baseline-vs-intervention paired execution.
+    """Methods gated by ``ModelBackendCapability.ACTIVATION_INTERVENTION``: baseline-vs-intervention paired
+    execution.
 
     Claiming the surface is not the whole contract. Which position scopes and which modes a backend can
     honour are declared on :attr:`intervention_support`, and ``require_intervention_support`` refuses a

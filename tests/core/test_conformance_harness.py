@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from interpretune.analysis.backends import (
-    BackendCapability,
+    ModelBackendCapability,
     InterventionMode,
     InterventionSupport,
     LatentModelSupport,
@@ -24,9 +24,9 @@ from interpretune.testing.conformance.plugin import vacuity_problems
 def _caps(*, intervention=None, latent=None, analysis=frozenset()):
     model = set()
     if intervention is not None:
-        model.add(BackendCapability.INTERVENTION)
+        model.add(ModelBackendCapability.ACTIVATION_INTERVENTION)
     if latent is not None:
-        model.add(BackendCapability.LATENT_MODELS)
+        model.add(ModelBackendCapability.LATENT_MODELS)
     return ModuleCapabilities(
         model=frozenset(model), analysis=frozenset(analysis), intervention=intervention, latent_models=latent
     )
@@ -40,23 +40,25 @@ class TestGateSelection:
         assert Gate().selects(_caps(), family="hf_native")
 
     def test_capability_gate_follows_the_declaration(self):
-        g = Gate(capability=BackendCapability.INTERVENTION)
+        g = Gate(capability=ModelBackendCapability.ACTIVATION_INTERVENTION)
         assert g.selects(_caps(intervention=ADD_LAST), family="x")
         assert not g.selects(_caps(), family="x")
 
     def test_scope_and_mode_gates_read_the_support_record(self):
-        assert Gate(capability=BackendCapability.INTERVENTION, scope=PositionScope.LAST_TOKEN).selects(
+        assert Gate(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, scope=PositionScope.LAST_TOKEN).selects(
             _caps(intervention=ADD_LAST), family="x"
         )
-        assert not Gate(capability=BackendCapability.INTERVENTION, scope=PositionScope.ALL_POSITIONS).selects(
-            _caps(intervention=ADD_LAST), family="x"
-        )
-        assert not Gate(capability=BackendCapability.INTERVENTION, mode=InterventionMode.REPLACE).selects(
-            _caps(intervention=ADD_LAST), family="x"
-        )
+        assert not Gate(
+            capability=ModelBackendCapability.ACTIVATION_INTERVENTION, scope=PositionScope.ALL_POSITIONS
+        ).selects(_caps(intervention=ADD_LAST), family="x")
+        assert not Gate(
+            capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.REPLACE
+        ).selects(_caps(intervention=ADD_LAST), family="x")
 
     def test_negative_gate_inverts(self):
-        g = Gate(capability=BackendCapability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, negative=True)
+        g = Gate(
+            capability=ModelBackendCapability.ACTIVATION_INTERVENTION, scope=PositionScope.ALL_POSITIONS, negative=True
+        )
         assert g.selects(_caps(intervention=ADD_LAST), family="x")
         assert not g.selects(_caps(intervention=InterventionSupport.every()), family="x")
 
@@ -65,10 +67,10 @@ class TestGateSelection:
         assert not Gate(family="hf_native").selects(_caps(), family="weight_converted")
 
     def test_batched_hooks_gate(self):
-        assert Gate(capability=BackendCapability.LATENT_MODELS, batched_hooks=True).selects(
+        assert Gate(capability=ModelBackendCapability.LATENT_MODELS, batched_hooks=True).selects(
             _caps(latent=LatentModelSupport(True)), family="x"
         )
-        assert not Gate(capability=BackendCapability.LATENT_MODELS, batched_hooks=True).selects(
+        assert not Gate(capability=ModelBackendCapability.LATENT_MODELS, batched_hooks=True).selects(
             _caps(latent=LatentModelSupport(False)), family="x"
         )
 
@@ -80,11 +82,13 @@ class TestGateSelection:
             modes = frozenset({"add"})
 
         caps = ModuleCapabilities(
-            model=frozenset({BackendCapability.INTERVENTION}),
+            model=frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION}),
             analysis=frozenset(),
             intervention=InterventionSupport(position_scopes={"last_token"}, modes={"add"}),
         )
-        assert Gate(capability=BackendCapability.INTERVENTION, scope=PositionScope.LAST_TOKEN).selects(caps, family="x")
+        assert Gate(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, scope=PositionScope.LAST_TOKEN).selects(
+            caps, family="x"
+        )
 
     def test_a_scopes_gate_needs_every_scope_declared(self):
         """A mixed-scope case selects only when the target declared BOTH scopes; one of two is undeclared."""
@@ -92,12 +96,13 @@ class TestGateSelection:
             position_scopes={PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS}, modes={InterventionMode.ADD}
         )
         g = Gate(
-            capability=BackendCapability.INTERVENTION, scopes=(PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS)
+            capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
+            scopes=(PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS),
         )
         assert g.selects(_caps(intervention=both), family="x")
         assert not g.selects(_caps(intervention=ADD_LAST), family="x")
         assert not g.selects(_caps(), family="x")
-        assert g.describe() == "INTERVENTION, scopes=last_token+all_positions"
+        assert g.describe() == "ACTIVATION_INTERVENTION, scopes=last_token+all_positions"
 
     def test_single_prompt_gate_reads_the_target_not_the_backend(self):
         g = Gate(single_prompt=True)
@@ -107,21 +112,21 @@ class TestGateSelection:
 
     def test_describe_names_every_axis(self):
         g = Gate(
-            capability=BackendCapability.INTERVENTION,
+            capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
             scope=PositionScope.LAST_TOKEN,
             mode=InterventionMode.ADD,
             negative=True,
         )
-        assert g.describe() == "NOT INTERVENTION, scope=last_token, mode=add"
+        assert g.describe() == "NOT ACTIVATION_INTERVENTION, scope=last_token, mode=add"
 
 
 class TestDecorator:
     def test_marks_the_function(self):
-        @conformance_case(capability=BackendCapability.GRADIENTS)
+        @conformance_case(capability=ModelBackendCapability.GRADIENTS)
         def f():
             pass
 
-        assert gate_of(f) == Gate(capability=BackendCapability.GRADIENTS)
+        assert gate_of(f) == Gate(capability=ModelBackendCapability.GRADIENTS)
         assert gate_of(lambda: None) is None
 
 
@@ -145,7 +150,7 @@ class TestReportAndVacuity:
         assert vacuity_problems(r, strict=True)
 
     def test_render_prints_all_four_counts(self):
-        r = SelectionReport(declared=["INTERVENTION"])
+        r = SelectionReport(declared=["ACTIVATION_INTERVENTION"])
         r.record("a", "ran")
         text = r.render()
         for needle in ("declared", "ran", "undeclared", "other", "failed"):

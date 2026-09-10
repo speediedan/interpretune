@@ -17,7 +17,7 @@ from transformers import BatchEncoding
 
 from interpretune.analysis.backends import require_intervention_support, resolve_interventions
 from interpretune.analysis.ops.base import AnalysisBatch
-from interpretune.analysis.backends.capabilities import BackendCapability
+from interpretune.analysis.backends.capabilities import ModelBackendCapability
 from interpretune.analysis.optools import (
     require_backend_capability,
     last_token_logits,
@@ -1012,7 +1012,7 @@ def model_fwd_intervention_impl(
     """
 
     model_backend = require_model_backend(module)
-    require_backend_capability(model_backend, BackendCapability.INTERVENTION, "concept_intervention")
+    require_backend_capability(model_backend, ModelBackendCapability.ACTIVATION_INTERVENTION, "concept_intervention")
     interventions = resolve_interventions(
         analysis_batch=analysis_batch,
         resolve_field=lambda field_name: resolve_aggregate_input(module, analysis_batch, field_name),

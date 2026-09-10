@@ -445,7 +445,7 @@ the bundled TransformerLens backend probes the wrapper's hook names through the 
 nnsight backend asks its hook resolver, so the declaration and the refusal cannot drift apart. `AnalysisCfg` refuses
 a listed point the declaration excludes by name before any run, and the conformance suite checks the declaration in
 both directions: every declared point is captured, and a declared gap is refused through the runner path. It is not
-a `BackendCapability` member because capture is a base method every backend has; the record says which points, not
+a `ModelBackendCapability` member because capture is a base method every backend has; the record says which points, not
 whether at all. It is a method taking the model because the answer belongs to the backend and this model instance as
 it stands: a wrapper's hooks change with what is attached to it, so a consumer re-queries rather than caches.
 

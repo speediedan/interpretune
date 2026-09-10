@@ -13,7 +13,7 @@ import torch
 from transformers import BatchEncoding
 
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
-from interpretune.analysis.backends.capabilities import BackendCapability
+from interpretune.analysis.backends.capabilities import ModelBackendCapability
 from interpretune.analysis.optools import (
     require_backend_capability,
     boolean_logits_to_avg_logit_diff,
@@ -72,7 +72,7 @@ def model_gradient_impl(
 
     # ---- Run forward + backward via backend ----------------------------------
     model_backend = require_model_backend(module)
-    require_backend_capability(model_backend, BackendCapability.GRADIENTS, "gradient_attribution")
+    require_backend_capability(model_backend, ModelBackendCapability.GRADIENTS, "gradient_attribution")
     raw_logits = model_backend.fwd_w_grads_and_latent_models(
         model=module.model,
         batch=batch,

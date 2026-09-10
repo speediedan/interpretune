@@ -7,6 +7,8 @@ adapter class names.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -15,7 +17,7 @@ if TYPE_CHECKING:
     from interpretune.analysis.backends.protocols import AnalysisBackend, ModelBackend
 
 
-class BackendCapability(Enum):
+class ModelBackendCapability(Enum):
     """The gated METHOD GROUPS of a model backend: one member per ``Supports*`` protocol, no more.
 
     Ops and the dispatcher query ``backend.capabilities`` before calling an optional method group
@@ -34,8 +36,11 @@ class BackendCapability(Enum):
     GRADIENTS = "gradients"
     """``SupportsGradients``: forward + backward with gradient caching."""
 
-    INTERVENTION = "intervention"
-    """``SupportsIntervention``: baseline-vs-intervention paired execution (``fwd_w_intervention``)."""
+    ACTIVATION_INTERVENTION = "activation_intervention"
+    """``SupportsIntervention``: baseline-vs-intervention paired execution (``fwd_w_intervention``) on a residual-
+    stream tensor at a vocabulary point, the embed path of the two-path table in
+    ``src/it_examples/experiments/notebook/intervention_capabilities_overview.md``; the analysis-level
+    ``FEATURE_INTERVENTION`` acts on latent feature activations instead."""
 
 
 class PositionScope(str, Enum):
@@ -124,7 +129,7 @@ class LatentModelSupport:
     """How ``LATENT_MODELS`` runs on this backend.
 
     ``batched_hooks`` says whether ``fwd_w_hooks_batched`` fuses its hook configs into one execution
-    (nnsight's multi-invoke) or loops. It lives here rather than in :class:`BackendCapability` because it
+    (nnsight's multi-invoke) or loops. It lives here rather than in :class:`ModelBackendCapability` because it
     is a property of HOW a method in that group runs, not a surface of its own: every latent-models
     backend implements the method, and a sequential loop is a valid implementation.
     """
@@ -136,7 +141,7 @@ class LatentModelSupport:
 class CaptureSupport:
     """Which vocabulary points a backend can capture on the model it wraps, as a declaration a case can check.
 
-    Capture is a base method every model backend has, so it is not a :class:`BackendCapability` member: that enum
+    Capture is a base method every model backend has, so it is not a :class:`ModelBackendCapability` member: that enum
     answers "is the surface implemented at all", and a backend that captures 181 of 298 points implements it. What
     varies is WHICH points, so the shape is a support record beside :class:`InterventionSupport`, keyed by the
     vocabulary's layer-free base spellings (``ln2.hook_out``, ``hook_resid_pre``, ``unembed.hook_in``) so one
@@ -239,7 +244,14 @@ class CaptureSupport:
 
 
 class AnalysisBackendCapability(Enum):
-    """Capabilities exposed by analysis adapters/backends rather than model execution backends."""
+    """The gated method groups of an analysis backend, layered above a model execution backend.
+
+    Same rule as :class:`ModelBackendCapability`: a member names a ``Supports*`` protocol and answers whether it is
+    implemented; its configurations live in the record on that protocol (:class:`AttributionGraphSupport`,
+    :class:`FeatureInterventionSupport`). ``FEATURE_INTERVENTION`` acts on latent feature activations, the store
+    path of the two-path table in ``src/it_examples/experiments/notebook/intervention_capabilities_overview.md``;
+    the model-level ``ACTIVATION_INTERVENTION`` acts on a residual-stream tensor at a point.
+    """
 
     ATTRIBUTION_GRAPH = "attribution_graph"
     """Module exposes attribution graph analysis support via an attached analysis backend."""
@@ -248,32 +260,157 @@ class AnalysisBackendCapability(Enum):
     """Module exposes feature intervention support via an attached analysis backend."""
 
 
-Capability: TypeAlias = BackendCapability | AnalysisBackendCapability
+@dataclass(frozen=True)
+class FeatureInterventionSupport:
+    """Which configurations of the feature-intervention surface an analysis backend honours.
+
+    The settings ``resolve_feature_intervention_settings`` reads are the configuration space; the record is what
+    lets a caller's settings be refused by name at the seam instead of at the first tensor op that disagrees.
+    """
+
+    value_sources: frozenset[str]
+    """Accepted ``value_source`` spellings (``"constant"`` requires an explicit value)."""
+    constrainable_layers: bool = True
+    """Whether ``constrained_layers`` can restrict the intervention to a layer subset."""
+    returns_activations: bool = False
+    """Whether the intervened activations can be returned beside the logits."""
+
+    def __post_init__(self) -> None:
+        if not self.value_sources:
+            raise ValueError("a feature-intervention support record must accept at least one value source")
+
+    def refusal(self, settings: Mapping[str, Any]) -> str | None:
+        """Why ``settings`` cannot be honoured here, or ``None`` when every configuration they name is declared."""
+        source = settings.get("value_source")
+        if source not in self.value_sources:
+            return f"value_source {source!r} is not honoured here; declared: {sorted(self.value_sources)}"
+        if source == "constant" and settings.get("value") is None:
+            return "value_source 'constant' needs an explicit intervention value, and none was given"
+        if settings.get("constrained_layers") is not None and not self.constrainable_layers:
+            return (
+                "constrained_layers was given, and this backend cannot restrict a feature intervention to a"
+                " layer subset"
+            )
+        if settings.get("return_activations") and not self.returns_activations:
+            return "return_activations was requested, and this backend cannot return the intervened activations"
+        return None
+
+    def describe(self) -> str:
+        """One line for a card or a report."""
+        return (
+            f"value sources {sorted(self.value_sources)}, constrainable layers {self.constrainable_layers}, "
+            f"returns activations {self.returns_activations}"
+        )
+
+
+def _unwrap_execution_handle(model: Any) -> Any:
+    """The HF model an execution wrapper carries, or ``model`` itself when it is one.
+
+    Walks the private handle first (``_model``, which nnsight's wrapper and circuit-tracer's replacement model
+    keep as the raw module), then the public ``model`` and ``hf_model``; an nnsight envoy met on the way is unwrapped
+    to its module, since its type lives in nnsight and would make a provenance check look at the wrong modeling
+    module and pass vacuously. A truth-test is never applied to a candidate: an envoy delegates ``len`` to the
+    wrapped model.
+    """
+    inner = model
+    for _ in range(4):
+        module_attr = getattr(inner, "_module", None)
+        if module_attr is not None and type(inner).__module__.startswith("nnsight"):
+            inner = module_attr
+            continue
+        candidate = None
+        for attr in ("_model", "model", "hf_model"):
+            found = getattr(inner, attr, None)
+            if found is not None and hasattr(found, "config") and found is not inner:
+                candidate = found
+                break
+        if candidate is None:
+            break
+        inner = candidate
+    return inner
+
+
+@dataclass(frozen=True)
+class AttributionGraphSupport:
+    """What attribution-graph construction requires of the model it runs on, checked before construction.
+
+    ``requires_own_eager_attention`` is the measured requirement: circuit-tracer resolves gemma's attention-pattern
+    location through nnsight's source tracing of the function bound at the attention call site, so the modeling
+    module's own ``eager_attention_forward`` must be what is bound there. A TransformerLens bridge of any llama,
+    qwen or gemma model replaces that function in both gemma modeling modules for the rest of the process, with the
+    config still reading ``eager``; the failure that produced is an ``AttributeError`` deep in circuit-tracer, so the
+    check happens here, by provenance, where the name of the foreign function is still available.
+    """
+
+    requires_own_eager_attention: bool = True
+
+    def refusal(self, model: Any) -> str | None:
+        """Why a graph cannot be built on ``model`` here, or ``None`` when its attention is what construction
+        needs."""
+        if not self.requires_own_eager_attention:
+            return None
+        import inspect
+
+        inner = _unwrap_execution_handle(model)
+        modeling = inspect.getmodule(type(inner))
+        fn = getattr(modeling, "eager_attention_forward", None) if modeling is not None else None
+        if fn is None or modeling is None:
+            return None  # an architecture without a module-level eager attention resolves its locations another way
+        modeling_name = modeling.__name__
+        impl = getattr(getattr(inner, "config", None), "_attn_implementation", None)
+        if impl not in (None, "eager"):
+            return f"attribution graphs need the eager attention implementation and the model is configured as {impl!r}"
+        if getattr(fn, "__module__", None) != modeling_name:
+            return (
+                f"{modeling_name}.eager_attention_forward is {getattr(fn, '__module__', '?')}."
+                f"{getattr(fn, '__qualname__', '?')}, not the modeling module's own: another library replaced it for"
+                " this process, and the attention-pattern location is resolved from that function's source. Restore"
+                " the original before building a graph (a TransformerLens bridge of a llama, qwen or gemma model is"
+                " the known cause)"
+            )
+        return None
+
+    def describe(self) -> str:
+        """One line for a card or a report."""
+        return (
+            "requires the modeling module's own eager attention"
+            if self.requires_own_eager_attention
+            else "no model requirement"
+        )
+
+
+Capability: TypeAlias = ModelBackendCapability | AnalysisBackendCapability
 
 
 @dataclass(frozen=True)
 class ModuleCapabilities:
     """Execution and analysis capabilities exposed by a module, with each surface's support record.
 
-    ``intervention`` is present iff ``INTERVENTION`` is declared and ``latent_models`` iff
-    ``LATENT_MODELS`` is; the constructor enforces that, so a consumer rendering this (the adapter card,
-    ``adapter_info``, a conformance report) can rely on the record being there when the surface is.
+    Each support record is present iff its surface is declared, on either level: ``intervention`` with
+    ``ACTIVATION_INTERVENTION``, ``latent_models`` with ``LATENT_MODELS``, ``attribution_graph`` with
+    ``ATTRIBUTION_GRAPH``, ``feature_intervention`` with ``FEATURE_INTERVENTION``. The constructor enforces that, so
+    a consumer rendering this (the adapter card, ``adapter_info``, a conformance report) can rely on the record
+    being there when the surface is.
     """
 
-    model: frozenset[BackendCapability]
+    model: frozenset[ModelBackendCapability]
     analysis: frozenset[AnalysisBackendCapability]
     intervention: InterventionSupport | None = None
     latent_models: LatentModelSupport | None = None
     capture: CaptureSupport | None = None
     """What the attached model backend declares it can capture on this module's model; ``None`` only when no model
     backend is attached or the backend predates the declaration (a conformance case fails the latter by name)."""
+    attribution_graph: AttributionGraphSupport | None = None
+    feature_intervention: FeatureInterventionSupport | None = None
 
     def __post_init__(self) -> None:
         for capability, record, name in (
-            (BackendCapability.INTERVENTION, self.intervention, "intervention"),
-            (BackendCapability.LATENT_MODELS, self.latent_models, "latent_models"),
+            (ModelBackendCapability.ACTIVATION_INTERVENTION, self.intervention, "intervention"),
+            (ModelBackendCapability.LATENT_MODELS, self.latent_models, "latent_models"),
+            (AnalysisBackendCapability.ATTRIBUTION_GRAPH, self.attribution_graph, "attribution_graph"),
+            (AnalysisBackendCapability.FEATURE_INTERVENTION, self.feature_intervention, "feature_intervention"),
         ):
-            declared = capability in self.model
+            declared = capability in self.model or capability in self.analysis
             if declared and record is None:
                 raise ValueError(
                     f"{capability.name} is declared but no {name} support record accompanies it; a backend "
@@ -298,39 +435,48 @@ class ModuleCapabilities:
         A model capability is looked up only among model capabilities and an analysis capability only among analysis
         ones, so the two namespaces cannot satisfy each other by coincidence.
         """
-        if isinstance(capability, BackendCapability):
+        if isinstance(capability, ModelBackendCapability):
             return capability in self.model
         return capability in self.analysis
 
 
-def normalize_backend_capability(capability: Any) -> Capability:
-    """Normalize capability-like values to the local execution or analysis capability enums."""
+#: Spellings that once named a capability and no longer do, each with the spelling that replaced it. Refused by
+#: name rather than translated: a caller carrying the old spelling has a manifest or a config to update, and a
+#: silent translation would leave it carrying a name nothing else in the vocabulary recognizes.
+_RETIRED_CAPABILITY_SPELLINGS: dict[str, str] = {
+    "intervention": ModelBackendCapability.ACTIVATION_INTERVENTION.value,
+    "attribution": AnalysisBackendCapability.ATTRIBUTION_GRAPH.value,
+}
 
-    if isinstance(capability, (BackendCapability, AnalysisBackendCapability)):
+
+def normalize_backend_capability(capability: Any) -> Capability:
+    """Normalize capability-like values to the local execution or analysis capability enums.
+
+    Accepts a member of either enum, a member's value, or a dotted spelling whose last segment is a member name
+    (``"ModelBackendCapability.GRADIENTS"``). A retired spelling is refused by name with its replacement; an unknown one
+    is refused with both vocabularies listed.
+    """
+    if isinstance(capability, (ModelBackendCapability, AnalysisBackendCapability)):
         return capability
 
     raw_value = getattr(capability, "value", capability)
-    normalized_value = str(raw_value)
-    if normalized_value == "attribution":
-        normalized_value = AnalysisBackendCapability.ATTRIBUTION_GRAPH.value
-
-    try:
-        return BackendCapability(normalized_value)
-    except ValueError:
-        pass
-
-    try:
-        return AnalysisBackendCapability(normalized_value)
-    except ValueError:
-        if isinstance(raw_value, str) and "." in raw_value:
-            suffix = raw_value.split(".")[-1].lower()
-            if suffix == "attribution":
-                suffix = AnalysisBackendCapability.ATTRIBUTION_GRAPH.value
-            try:
-                return BackendCapability(suffix)
-            except ValueError:
-                return AnalysisBackendCapability(suffix)
-        raise
+    spelling = str(raw_value)
+    candidate = spelling.split(".")[-1].lower() if "." in spelling else spelling
+    if candidate in _RETIRED_CAPABILITY_SPELLINGS:
+        raise ValueError(
+            f"{spelling!r} is a retired capability spelling; the surface it named is now"
+            f" {_RETIRED_CAPABILITY_SPELLINGS[candidate]!r}. Update the declaration rather than relying on a"
+            " translation."
+        )
+    for enum_cls in (ModelBackendCapability, AnalysisBackendCapability):
+        try:
+            return enum_cls(candidate)
+        except ValueError:
+            continue
+    raise ValueError(
+        f"{spelling!r} is not a capability: model-level spellings are {[m.value for m in ModelBackendCapability]},"
+        f" analysis-level spellings are {[m.value for m in AnalysisBackendCapability]}"
+    )
 
 
 def get_model_backend(module: Any) -> ModelBackend | None:
@@ -422,7 +568,7 @@ def require_analysis_backend(module: Any) -> AnalysisBackend:
 def get_module_capabilities(module: Any) -> ModuleCapabilities:
     """Aggregate execution and analysis capabilities exposed by a module."""
 
-    model_capabilities: set[BackendCapability] = set()
+    model_capabilities: set[ModelBackendCapability] = set()
     analysis_capabilities: set[AnalysisBackendCapability] = set()
     backend = get_model_backend(module)
 
@@ -430,7 +576,7 @@ def get_module_capabilities(module: Any) -> ModuleCapabilities:
         model_capabilities.update(
             capability
             for capability in (normalize_backend_capability(raw_capability) for raw_capability in backend.capabilities)
-            if isinstance(capability, BackendCapability)
+            if isinstance(capability, ModelBackendCapability)
         )
 
     analysis_backend = get_analysis_backend(module)
@@ -443,26 +589,39 @@ def get_module_capabilities(module: Any) -> ModuleCapabilities:
             if isinstance(capability, AnalysisBackendCapability)
         )
 
-    legacy_analysis_capabilities = getattr(module, "analysis_capabilities", None)
-    if legacy_analysis_capabilities:
-        analysis_capabilities.update(
-            capability
-            for capability in (
-                normalize_backend_capability(raw_capability) for raw_capability in legacy_analysis_capabilities
-            )
-            if isinstance(capability, AnalysisBackendCapability)
+    module_declared = getattr(module, "analysis_capabilities", None)
+    if module_declared and analysis_backend is None:
+        # A capability declared on the module alone has no backend to carry its support record, and a record is
+        # what makes the declaration checkable; refused by name rather than aggregated as a bare set.
+        raise ValueError(
+            f"{type(module).__name__} declares analysis capabilities"
+            f" {sorted(str(getattr(c, 'value', c)) for c in module_declared)}"
+            " on the module with no analysis backend attached; attach the backend that implements them, which"
+            " carries their support records"
         )
 
     return ModuleCapabilities(
         model=frozenset(model_capabilities),
         analysis=frozenset(analysis_capabilities),
         intervention=_support_record(
-            backend, BackendCapability.INTERVENTION, model_capabilities, "intervention_support"
+            backend, ModelBackendCapability.ACTIVATION_INTERVENTION, model_capabilities, "intervention_support"
         ),
         latent_models=_support_record(
-            backend, BackendCapability.LATENT_MODELS, model_capabilities, "latent_model_support"
+            backend, ModelBackendCapability.LATENT_MODELS, model_capabilities, "latent_model_support"
         ),
         capture=_capture_record(backend, module),
+        attribution_graph=_support_record(
+            analysis_backend,
+            AnalysisBackendCapability.ATTRIBUTION_GRAPH,
+            analysis_capabilities,
+            "attribution_graph_support",
+        ),
+        feature_intervention=_support_record(
+            analysis_backend,
+            AnalysisBackendCapability.FEATURE_INTERVENTION,
+            analysis_capabilities,
+            "feature_intervention_support",
+        ),
     )
 
 
@@ -481,7 +640,7 @@ def _capture_record(backend: Any, module: Any) -> CaptureSupport | None:
     return declare(model)
 
 
-def _support_record(backend: Any, capability: BackendCapability, declared: set[BackendCapability], attr: str) -> Any:
+def _support_record(backend: Any, capability: Capability, declared: set[Any], attr: str) -> Any:
     """The support record a backend attaches for ``capability``, or ``None`` when it does not declare it.
 
     Read with ``getattr`` rather than through the protocol so a backend that declares the surface and

@@ -732,16 +732,17 @@ class AnalysisOp:
         """
         if not self.requires_intervention_axes:
             return
-        from interpretune.analysis.backends import BackendCapability, get_module_capabilities
+        from interpretune.analysis.backends import ModelBackendCapability, get_module_capabilities
 
         available = get_module_capabilities(module)
         record = available.intervention
-        if BackendCapability.INTERVENTION.value not in available.values or record is None:
+        if ModelBackendCapability.ACTIVATION_INTERVENTION.value not in available.values or record is None:
             raise ValueError(
                 f"Operation '{self.name}' requires intervention modes "
                 f"{sorted(m.value for m in self.required_intervention_modes)} and position scopes "
                 f"{sorted(s.value for s in self.required_position_scopes)}, but the module declares no "
-                f"{BackendCapability.INTERVENTION.value} surface (capabilities: {sorted(available.values) or 'none'})"
+                f"{ModelBackendCapability.ACTIVATION_INTERVENTION.value} surface"
+                f" (capabilities: {sorted(available.values) or 'none'})"
             )
         declared_modes = {getattr(m, "value", m) for m in record.modes}
         declared_scopes = {getattr(s, "value", s) for s in record.position_scopes}

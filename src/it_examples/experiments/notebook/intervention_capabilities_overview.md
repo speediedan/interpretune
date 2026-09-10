@@ -1,22 +1,25 @@
 # Intervention Capabilities Overview
 
-**Date:** 2026-07-11 (Phase 7 / 7c amendments; see `EXPERIMENT_STATUS.md` "7c Amendments" §2);
-J-space status refreshed 2026-09-01
-
-A high-level map of interpretune's current intervention/steering surface as exercised by the
-`concept_direction` experiment family and the circuit-tracer demo notebooks. Deeper reference:
-`docs/interpretune_intervention_apis.md` (API contract), `docs/interpretune_intervention_apis.md`
-cross-references, and the test anchors listed at the end.
+A map of interpretune's intervention surface as exercised by the `concept_direction` experiment family and the
+circuit-tracer demo notebooks. The table below is the definition the capability enums cite; the API contract
+beneath it is `docs/interpretune_intervention_apis.md`, and the test anchors are listed at the end.
 
 ## The two intervention paths at a glance
 
-| | **Embed path** (hook-tensor interventions) | **Store path** (CT feature interventions) |
+| | **Embed path** (hook-tensor interventions) | **Store path** (feature interventions) |
 |---|---|---|
-| What is adjusted | A residual-stream-space tensor added/projected/replaced at model hook points (last token) | Individual transcoder **feature activations** `(layer, position, feature_id) -> value` |
+| Level and capability | model backend, `ModelBackendCapability.ACTIVATION_INTERVENTION` | analysis backend, `AnalysisBackendCapability.FEATURE_INTERVENTION` |
+| What is adjusted | A residual-stream-space tensor added/projected/replaced/patched at model hook points | Individual transcoder **feature activations** `(layer, position, feature_id) -> value` |
+| Support record | `InterventionSupport`: modes and position scopes | `FeatureInterventionSupport`: value sources, constrainable layers, returned activations |
 | Entry op | `model_fwd_intervention` (aliases `direction_intervention`, `direct_concept_direction_intervention`) | `feature_intervention_forward` (alias `ct_feature_intervention`) |
-| Core primitive | `InterventionSpec` / `InterventionDict` (`interpretune.analysis.backends`) | canonical CT tuples built by `CircuitTracerAnalysisBackend.build_feature_interventions` |
-| Executed by | `ModelBackend.fwd_w_intervention` — identical math on TransformerLens **and** NNsight backends | `ReplacementModel.feature_intervention` (circuit-tracer model) |
+| Core primitive | `InterventionSpec` / `InterventionDict` (`interpretune.analysis.backends`) | canonical tuples built by `CircuitTracerAnalysisBackend.build_feature_interventions` |
+| Executed by | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens **and** NNsight backends | `ReplacementModel.feature_intervention` (circuit-tracer model) |
 | Typical source tensor | `concept_direction` op output (store-latent or embed-difference) | `extract_top_features` output (attribution-ranked, sign-aware-selected) |
+
+A capability member answers only whether the surface is implemented; the record beside it says which
+configurations are honoured, and a gate refuses the rest by name before anything runs. Basis, where an
+intervention has one, is a declared configuration of the surface (stated on the spec, honoured or not by the
+record), never a default.
 
 Both paths emit `pre_intervention_logits`, `post_intervention_logits`, and `logit_diff` into the
 `AnalysisStore`, so steering effect sizes are directly comparable across paths.
@@ -45,6 +48,10 @@ Both paths emit `pre_intervention_logits`, `post_intervention_logits`, and `logi
   nothing a consumer can check short of running it.
 
 ## Store-path controls (`CircuitTracerConfig.intervention_*` + per-call overrides)
+
+The settings below are the configuration space `FeatureInterventionSupport` describes; the circuit-tracer
+analysis backend refuses through that record a value source it does not honour, a constant source without a
+value, or a layer constraint or activation return it cannot provide.
 
 - `intervention_value_source`: `top_feature_scores` | `top_feature_activation_values` | `constant`
   (with `intervention_value` for the constant case) — the per-feature base value.
