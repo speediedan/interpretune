@@ -106,8 +106,11 @@ def measured_capabilities_lines(report: dict[str, Any] | None, source_revision: 
     if report is None:
         return ["", _CANNOT_TELL]
     prov = report.get("provenance") or {}
-    # the component's own revision when the suite was told which directory it measured; a report that carries only
-    # the repository head can match only a publish from that exact commit, which is the strict fallback
+    # Two comparisons with different tolerances, on purpose. The component's own revision (the last commit touching
+    # its directory) stays equal across unrelated commits elsewhere, so it matches whenever the component's source is
+    # as measured. A report written without the directory key carries only the repository head, which cannot tell an
+    # unrelated commit from a real change to the component; the only safe match for it is identity with the commit
+    # being published, so that path is strict where the primary one is not.
     head = prov.get("component_revision") or prov.get("git_head")
     if report.get("format") != CONFORMANCE_REPORT_FORMAT:
         return [
