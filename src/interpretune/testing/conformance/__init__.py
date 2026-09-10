@@ -20,8 +20,17 @@ Minimal consumer::
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from interpretune.testing.conformance.gates import Gate, SelectionReport, conformance_case
 from interpretune.testing.conformance.inputs import ConformanceInputs, ConformanceTarget
+
+if TYPE_CHECKING:
+    # The four names below resolve lazily at runtime (their modules import pytest); the checker sees them here.
+    from interpretune.testing.conformance.cases import ModelBackendConformance as ModelBackendConformance
+    from interpretune.testing.conformance.collections import OpCollectionConformance as OpCollectionConformance
+    from interpretune.testing.conformance.notebooks import NotebookFormConformance as NotebookFormConformance
+    from interpretune.testing.conformance.reference import HFReference as HFReference
 
 __all__ = [
     "ConformanceInputs",
