@@ -106,7 +106,9 @@ def measured_capabilities_lines(report: dict[str, Any] | None, source_revision: 
     if report is None:
         return ["", _CANNOT_TELL]
     prov = report.get("provenance") or {}
-    head = prov.get("git_head")
+    # the component's own revision when the suite was told which directory it measured; a report that carries only
+    # the repository head can match only a publish from that exact commit, which is the strict fallback
+    head = prov.get("component_revision") or prov.get("git_head")
     if report.get("format") != CONFORMANCE_REPORT_FORMAT:
         return [
             "",

@@ -20,25 +20,15 @@ STAGING_IGNORES = ("__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache", ".ruf
 
 
 def source_revision_of(component_dir: Path) -> str | None:
-    """The git head of the tree ``component_dir`` sits in, or ``None`` when it is not a checkout.
+    """The revision of the component source being published: the last commit touching ``component_dir``.
 
-    The card's measured-capabilities block compares a published conformance report's revision against this; a
-    ``None`` makes the block treat the report as absent, since a comparison that cannot be made must not pass.
+    Computed by :func:`interpretune.hub.revisions.directory_revision`, the same function the conformance suite uses
+    to key its report, so a report measured before an unrelated commit elsewhere in the repository still matches.
+    ``None`` when the directory is not tracked in a checkout, which makes the card's comparison fail closed.
     """
-    import subprocess
+    from interpretune.hub.revisions import directory_revision
 
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(component_dir), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    head = result.stdout.strip()
-    return head if result.returncode == 0 and len(head) == 40 else None
+    return directory_revision(component_dir)
 
 
 def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Path | None = None) -> dict:

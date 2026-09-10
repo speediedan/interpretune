@@ -535,15 +535,19 @@ The adapter card renders the validated manifest and says what it cannot tell a r
 declares at runtime and the patterns it refuses live in the code, and the publisher never executes the entrypoint.
 The way to put a capability section on the card is therefore to publish a **measured** report beside the component:
 
-1. In the adapter's CI, run the conformance suite with `IT_CONFORMANCE_REPORT=conformance_report.json` set. At
-   session finish the suite writes the selection report as JSON: per target, the declared surfaces and every
-   support record field by field; the outcome lists; and provenance (interpretune version, the git head of the tree
-   that ran, the time, the exit status). It holds what the suite measured on a composed session, never a claim.
+1. In the adapter's CI, run the conformance suite with `IT_CONFORMANCE_REPORT=conformance_report.json` and
+   `IT_CONFORMANCE_COMPONENT_DIR=<the component's source directory>` set. At session finish the suite writes the
+   selection report as JSON: per target, the declared surfaces and every support record field by field; the
+   outcome lists; and provenance (interpretune version, the repository head, the component directory and its own
+   revision, the time, the exit status). It holds what the suite measured on a composed session, never a claim.
 2. Declare `conformance_report.json` in the manifest's `extra_files`, so the builder stages it and the published
    tree carries it.
-3. Publish from the same checkout the report measured. The card compares the report's git head with the revision
-   of the component source being published, and renders the measured block only when they are equal and the run
-   exited zero. A report for an earlier revision, or from a red run, is named in one line and **not shown**: a
+3. Publish from a checkout in which the component's source is as the report measured it. The revision key on both
+   sides is the last commit that touched the component directory, computed by one helper
+   (`interpretune.hub.revisions.directory_revision`), so an unrelated commit elsewhere in the repository does not
+   invalidate the report; the card renders the measured block only when the two are equal and the run exited zero.
+   A report written without the component directory carries only the repository head and matches only a publish
+   from that exact commit. A report for an earlier revision, or from a red run, is named in one line and **not shown**: a
    measurement of a revision the component has moved past would read as a measurement of this one, which is worse
    than no measurement.
 

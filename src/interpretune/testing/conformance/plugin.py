@@ -79,17 +79,19 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
 
 REPORT_PATH_ENV = "IT_CONFORMANCE_REPORT"
+COMPONENT_DIR_ENV = "IT_CONFORMANCE_COMPONENT_DIR"
 
 
 def write_report_artifact(selection: SelectionReport, path: str, *, exitstatus: int) -> None:
     """Write the selection report as JSON to ``path``, with the provenance a consumer needs to judge it.
 
-    Provenance names the interpretune version, the git head of the tree that ran (when it is a checkout), the time, and
-    the exit status, so a reader can tell which tree measured the declaration and whether the run that produced it was
-    green. The artifact is what the suite measured on a composed session; it is never a manifest's claim.
+    Provenance names the interpretune version, the git head of the tree that ran (when it is a checkout), the component
+    directory and its own revision when ``IT_CONFORMANCE_COMPONENT_DIR`` names it (the last commit touching that
+    directory, the key a card compares at publish), the time, and the exit status, so a reader can tell which source
+    measured the declaration and whether the run that produced it was green. The artifact is what the suite measured on
+    a composed session; it is never a manifest's claim.
     """
     import json
-    import subprocess
     from datetime import datetime, timezone
     from pathlib import Path
 
@@ -97,19 +99,14 @@ def write_report_artifact(selection: SelectionReport, path: str, *, exitstatus: 
 
     __version__ = _pkg_version("interpretune")
 
-    head = None
-    try:
-        head = (
-            subprocess.run(
-                ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10, check=False
-            ).stdout.strip()
-            or None
-        )
-    except (OSError, subprocess.SubprocessError):
-        head = None
+    from interpretune.hub.revisions import directory_revision, repo_head
+
+    component_dir = os.getenv(COMPONENT_DIR_ENV)
     artifact = selection.as_artifact(
         interpretune_version=__version__,
-        git_head=head,
+        git_head=repo_head(Path.cwd()),
+        component_dir=component_dir,
+        component_revision=directory_revision(Path(component_dir)) if component_dir else None,
         measured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         exit_status=int(exitstatus),
     )
