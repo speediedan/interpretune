@@ -37,7 +37,10 @@ class ModelBackendCapability(Enum):
     """``SupportsGradients``: forward + backward with gradient caching."""
 
     ACTIVATION_INTERVENTION = "activation_intervention"
-    """``SupportsIntervention``: baseline-vs-intervention paired execution (``fwd_w_intervention``)."""
+    """``SupportsIntervention``: baseline-vs-intervention paired execution (``fwd_w_intervention``) on a residual-
+    stream tensor at a vocabulary point, the embed path of the two-path table in
+    ``src/it_examples/experiments/notebook/intervention_capabilities_overview.md``; the analysis-level
+    ``FEATURE_INTERVENTION`` acts on latent feature activations instead."""
 
 
 class PositionScope(str, Enum):
@@ -241,7 +244,14 @@ class CaptureSupport:
 
 
 class AnalysisBackendCapability(Enum):
-    """Capabilities exposed by analysis adapters/backends rather than model execution backends."""
+    """The gated method groups of an analysis backend, layered above a model execution backend.
+
+    Same rule as :class:`ModelBackendCapability`: a member names a ``Supports*`` protocol and answers whether it is
+    implemented; its configurations live in the record on that protocol (:class:`AttributionGraphSupport`,
+    :class:`FeatureInterventionSupport`). ``FEATURE_INTERVENTION`` acts on latent feature activations, the store
+    path of the two-path table in ``src/it_examples/experiments/notebook/intervention_capabilities_overview.md``;
+    the model-level ``ACTIVATION_INTERVENTION`` acts on a residual-stream tensor at a point.
+    """
 
     ATTRIBUTION_GRAPH = "attribution_graph"
     """Module exposes attribution graph analysis support via an attached analysis backend."""
