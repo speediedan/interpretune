@@ -154,7 +154,9 @@ published, genuinely non-bundled op collection, `speediedan/jlens_steering_ops`,
   stays a per-model option. The grounding is
   [interpretune#330](https://github.com/speediedan/interpretune/issues/330).
 
-**Remaining (the read path and the integrations), all tracked on #225 unless noted:**
+**Remaining, tracked on #225 unless noted.** The operation-by-operation status against the paper, with what is
+implemented and where, is kept current in `docs/jlens_paper_alignment.md`; the list below is the plan as it
+stood when this section was written and is superseded by that page where they differ.
 
 - A lens loader/config and the readout ops (`jlens_read`, `jlens_concept_probe`,
   `jlens_sparse_inventory`) behind the backend seam. Nothing in-tree can produce a J-lens readout
