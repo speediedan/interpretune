@@ -55,8 +55,18 @@ the applied scale either way.
 
 The naming is a trap worth stating outright, because it produced a real defect: `gemma3` takes the
 offset and `gemma3n` does not, so no name prefix separates them. Getting this wrong is silent, since
-every path still produces a plausible direction. The seam therefore selects on exact family membership
-and warns when it meets a family in that namespace it does not recognize.
+every path still produces a plausible direction.
+
+**So the seam does not decide it by name at all: it reads the scale out of the norm module.** Since
+`rms(c * 1) = c` for any constant `c`, evaluating the module on a constant vector returns the
+elementwise scale the module actually applies, whatever convention its family uses. There is no
+membership test to be exact about and no unrecognized family to warn on, because an unrecognized family
+is precisely the case this handles without special treatment. A norm that cannot be probed is refused by
+name rather than resolved to either convention, since choosing wrong is invisible in the output.
+
+The split above is not incidental detail retained for completeness. It is the reason the mechanism is a
+measurement rather than a declaration: a table would have to be right about every family that exists and
+every family that will exist, and being wrong about one is silent.
 
 ## What the measurements say
 

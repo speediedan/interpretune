@@ -29,7 +29,12 @@ def _spec(mode: str, scope: str) -> InterventionSpec:
     torch.manual_seed(1)
     vector = torch.randn(D)
     tensor = torch.stack([vector, torch.roll(vector, 3)]) if mode == "patch" else vector
-    return InterventionSpec(intervention_tensor=tensor, mode=mode, scale_factor=2.0, position_scope=scope)
+    # `clamp` needs a BAND, and a tight one: this test asserts which positions moved, so a band wide
+    # enough to leave the activation inside it would report "nothing changed" for the right positions
+    # and pass while testing nothing. A clamp with no band at all is refused by name rather than
+    # silently behaving as the identity, which is why it cannot simply be omitted here.
+    extra = {"clamp_min": -0.05, "clamp_max": 0.05} if mode == "clamp" else {}
+    return InterventionSpec(intervention_tensor=tensor, mode=mode, scale_factor=2.0, position_scope=scope, **extra)
 
 
 def _changed_positions(before: torch.Tensor, after: torch.Tensor) -> set[int]:
