@@ -590,7 +590,7 @@ Notes:
 
 ### Type-checking caveat
 
-We currently only exclude one file from type checking in the /src tree ("src/it_examples/utils/raw_graph_analysis.py") while all files in /tests are excluded.
+We currently only exclude one file from type checking in the /src tree ("src/it_examples/utils/graph_analysis_helpers.py") while all files in /tests are excluded.
 
 ## Special Dependencies and Known Issues
 
