@@ -19,6 +19,18 @@ from interpretune.hub.manifest import IT_COMPONENT_MANIFEST, check_config_key_pa
 STAGING_IGNORES = ("__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".DS_Store")
 
 
+def source_revision_of(component_dir: Path) -> str | None:
+    """The revision of the component source being published: the last commit touching ``component_dir``.
+
+    Computed by :func:`interpretune.hub.revisions.directory_revision`, the same function the conformance suite uses
+    to key its report, so a report measured before an unrelated commit elsewhere in the repository still matches.
+    ``None`` when the directory is not tracked in a checkout, which makes the card's comparison fail closed.
+    """
+    from interpretune.hub.revisions import directory_revision
+
+    return directory_revision(component_dir)
+
+
 def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Path | None = None) -> dict:
     """Build a publishable Hub tree from an in-repo component dir; returns the validated manifest.
 
@@ -278,7 +290,9 @@ def publish_component(
     with tempfile.TemporaryDirectory() as tmp:
         out_dir = Path(build_dir) if build_dir is not None else Path(tmp) / "build"
         manifest = build_component_tree(component_dir, out_dir, entrypoint_src=entrypoint_src)
-        generate_component_card(manifest, repo_id).save(out_dir / "README.md")
+        generate_component_card(
+            manifest, repo_id, tree=out_dir, source_revision=source_revision_of(component_dir)
+        ).save(out_dir / "README.md")
         manager = ITHubResourceManager(kind=COMPONENT_KIND, token=token)
         # The published tree is made to MATCH the staged one, not merely to receive it: an upload that only
         # adds leaves a renamed entrypoint's old name live beside the new one, and a hand-pushed cache

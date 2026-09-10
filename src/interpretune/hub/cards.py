@@ -10,6 +10,10 @@ at all, which made that discovery filter dead code; generation-at-publish fixes 
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 from huggingface_hub import ModelCard, ModelCardData
 
 LIBRARY_NAME = "interpretune"
@@ -66,7 +70,147 @@ def generate_artifact_card(envelope: dict, repo_id: str, summary: str | None = N
     return ModelCard(f"---\n{meta.to_yaml()}\n---\n\n" + "\n".join(lines) + "\n")
 
 
-def _adapter_card_sections(manifest: dict, source: str) -> list[str]:
+#: The conformance suite's report, published beside a component as a declared supplementary file.
+CONFORMANCE_REPORT_FILE = "conformance_report.json"
+CONFORMANCE_REPORT_FORMAT = "interpretune.conformance.report/1"
+
+_CANNOT_TELL = (
+    "**What this card cannot tell you:** the capabilities this adapter declares at runtime and the hook patterns "
+    "it refuses. Those live in the code, and the publisher does not execute it, so they are not derivable from the "
+    "manifest this card renders. Read the component's own documentation, or load it and ask the registered backend "
+    "directly. An absent section here is not a claim that the adapter has no limits."
+)
+
+
+def _load_conformance_report(tree: Path) -> dict[str, Any] | None:
+    """The staged report as a dict, or ``None`` when the tree carries none or it does not parse."""
+    path = tree / CONFORMANCE_REPORT_FILE
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def measured_capabilities_lines(report: dict[str, Any] | None, source_revision: str | None) -> list[str]:
+    """The measured-capabilities block for an adapter card, or the absence sentence with the reason, as lines.
+
+    **A report is never trusted by its presence.** An artifact keyed to a revision the component has moved past is worse
+    than none, because it reads as measured; a red run's artifact describes a declaration the suite did not accept. So
+    the block renders only when the report's format is known, its git head equals the revision being published, and its
+    run exited zero. Every other case renders the standing "cannot tell" sentence plus one line saying which report
+    exists and why it is not shown, so a reader is never left inferring that nothing was ever measured.
+    """
+    if report is None:
+        return ["", _CANNOT_TELL]
+    prov = report.get("provenance") or {}
+    # Two comparisons with different tolerances, on purpose. The component's own revision (the last commit touching
+    # its directory) stays equal across unrelated commits elsewhere, so it matches whenever the component's source is
+    # as measured. A report written without the directory key carries only the repository head, which cannot tell an
+    # unrelated commit from a real change to the component; the only safe match for it is identity with the commit
+    # being published, so that path is strict where the primary one is not.
+    head = prov.get("component_revision") or prov.get("git_head")
+    if report.get("format") != CONFORMANCE_REPORT_FORMAT:
+        return [
+            "",
+            _CANNOT_TELL,
+            "",
+            f"A `{CONFORMANCE_REPORT_FILE}` is published but its format is not one this card reads; it is not shown.",
+        ]
+    if source_revision is None or not head:
+        return [
+            "",
+            _CANNOT_TELL,
+            "",
+            f"A `{CONFORMANCE_REPORT_FILE}` is published, but the revision it measured or the revision being published "
+            "could not be determined, so it is not shown.",
+        ]
+    if head != source_revision:
+        return [
+            "",
+            _CANNOT_TELL,
+            "",
+            f"A `{CONFORMANCE_REPORT_FILE}` exists for component revision `{head[:12]}`, not the one published "
+            f"(`{source_revision[:12]}`); it is not shown, because a measurement of an earlier revision would read as "
+            "a measurement of this one.",
+        ]
+    if int(prov.get("exit_status", 1)) != 0:
+        return [
+            "",
+            _CANNOT_TELL,
+            "",
+            f"A `{CONFORMANCE_REPORT_FILE}` exists for this revision, but the run that produced it did not pass, so it "
+            "is not shown.",
+        ]
+    lines = ["", "### Measured capabilities", ""]
+    lines.append(
+        "Measured by interpretune's conformance suite on a composed session, not declared by the manifest: "
+        f"interpretune {prov.get('interpretune_version', '?')}, component revision `{head[:12]}`, "
+        f"run at {prov.get('measured_at', '?')}, exit status {prov.get('exit_status')}. "
+        f"The report is `{CONFORMANCE_REPORT_FILE}` in this repo."
+    )
+    lines.append("")
+    lines.append(
+        "A point a backend declares it cannot capture, with a reason naming a spelling the vocabulary lacks, is a "
+        "**vocabulary gap**: the model can produce the tensor and interpretune has no name to ask for it by. A "
+        "surface that is not declared at all is a **capability gap**. The two read differently to someone deciding "
+        "whether to build on this adapter, and only the record's own reason says which applies."
+    )
+    for target, decl in sorted((report.get("targets") or {}).items()):
+        comp = " + ".join(f"`{a}`" for a in decl.get("composition") or []) or "(composition not recorded)"
+        lines += ["", f"#### {target}", "", f"Composition {comp} on `{decl.get('model_id') or '?'}`.", ""]
+        model_caps = decl.get("model_capabilities") or []
+        analysis_caps = decl.get("analysis_capabilities") or []
+        lines.append(f"- declares: {', '.join(f'`{c}`' for c in model_caps + analysis_caps) or '(nothing)'}")
+        iv = decl.get("intervention")
+        if iv:
+            lines.append(
+                f"- activation intervention: modes {', '.join(f'`{m}`' for m in iv.get('modes') or [])}; "
+                f"position scopes {', '.join(f'`{m}`' for m in iv.get('position_scopes') or [])}"
+            )
+        lm = decl.get("latent_models")
+        if lm:
+            lines.append(f"- latent models: batched hooks {lm.get('batched_hooks')}")
+        cap = decl.get("capture")
+        if cap:
+            capturable = cap.get("capturable") or []
+            gaps = cap.get("uncapturable") or {}
+            total = len(capturable) + len(gaps)
+            lines.append(
+                f"- capture: {len(capturable)} of {total} base points on `{cap.get('architecture')}`"
+                f" ({cap.get('n_layers')} blocks)"
+            )
+            for point, why in sorted(gaps.items()):
+                lines.append(f"  - cannot capture `{point}`: {why}")
+        ag = decl.get("attribution_graph")
+        if ag:
+            lines.append(
+                "- attribution graphs: "
+                + (
+                    "require the modeling module's own eager attention"
+                    if ag.get("requires_own_eager_attention")
+                    else "no model requirement"
+                )
+            )
+        fi = decl.get("feature_intervention")
+        if fi:
+            lines.append(
+                f"- feature intervention: value sources {', '.join(f'`{v}`' for v in fi.get('value_sources') or [])}; "
+                f"constrainable layers {fi.get('constrainable_layers')};"
+                f" returns activations {fi.get('returns_activations')}"
+            )
+    lines += [
+        "",
+        f"Cases: {len(report.get('ran') or [])} ran, {len(report.get('skipped_undeclared') or [])} skipped because the "
+        f"surface is undeclared, {len(report.get('skipped_other') or [])} skipped for another reason, "
+        f"{len(report.get('failed') or [])} failed.",
+    ]
+    return lines
+
+
+def _adapter_card_sections(manifest: dict, source: str, measured: list[str] | None = None) -> list[str]:
     """The `adapters` kind's card sections: what it EXPOSES, declares, and composes.
 
     **Three blocks, not the five the design sketched, and the card now says so.** Capabilities and
@@ -103,14 +247,17 @@ def _adapter_card_sections(manifest: dict, source: str) -> list[str]:
         "into the MRO of the module your session runs. Inspect it before opting in: "
         f'`interpretune.hub.pull("{source}")` caches the repo without executing anything.'
     )
-    lines += [
-        "",
-        "**What this card cannot tell you:** the capabilities this adapter declares at runtime and the "
-        "hook patterns it refuses. Those live in the code, and the publisher does not execute it, so they "
-        "are not derivable from the manifest this card renders. Read the component's own documentation, "
-        "or load it and ask the registered backend directly. An absent section here is not a claim that "
-        "the adapter has no limits.",
-    ]
+    if measured:
+        lines += measured
+    else:
+        lines += [
+            "",
+            "**What this card cannot tell you:** the capabilities this adapter declares at runtime and the "
+            "hook patterns it refuses. Those live in the code, and the publisher does not execute it, so they "
+            "are not derivable from the manifest this card renders. Read the component's own documentation, "
+            "or load it and ask the registered backend directly. An absent section here is not a claim that "
+            "the adapter has no limits.",
+        ]
     lines += ["", "### Declares", ""]
     lines += [f"- `{name}`" for name in declares] or ["- (none)"]
 
@@ -166,8 +313,23 @@ def _check_adapter_manifest_coherence(manifest: dict, source: str) -> None:
             )
 
 
-def generate_component_card(manifest: dict, repo_id: str, summary: str | None = None) -> ModelCard:
-    """Generate the full card for a component repo from its manifest."""
+def generate_component_card(
+    manifest: dict,
+    repo_id: str,
+    summary: str | None = None,
+    *,
+    tree: Path | None = None,
+    source_revision: str | None = None,
+) -> ModelCard:
+    """Generate the full card for a component repo from its manifest.
+
+    ``tree`` is the staged publish tree; when it carries :data:`CONFORMANCE_REPORT_FILE` (declared in the
+    manifest's ``extra_files`` and written by the conformance suite in the component's own CI), the adapter
+    sections gain a measured-capabilities block, guarded by :func:`measured_capabilities_lines` against a report
+    that is stale or red. ``source_revision`` is the revision of the component source being published, the key
+    that guard compares against; ``None`` means the publisher could not determine it, and the report is then
+    treated as absent rather than trusted.
+    """
     meta = component_card_metadata(manifest)
     task = (manifest.get("module") or {}).get("task") or {}
     title = repo_id.split("/", 1)[-1]
@@ -228,5 +390,8 @@ def generate_component_card(manifest: dict, repo_id: str, summary: str | None = 
         ]
     if "adapters" in (manifest.get("kinds") or []):
         _check_adapter_manifest_coherence(manifest, repo_id)
-        lines += _adapter_card_sections(manifest, repo_id)
+        report = _load_conformance_report(tree) if tree is not None else None
+        lines += _adapter_card_sections(
+            manifest, repo_id, measured=measured_capabilities_lines(report, source_revision)
+        )
     return ModelCard(f"---\n{meta.to_yaml()}\n---\n\n" + "\n".join(lines) + "\n")

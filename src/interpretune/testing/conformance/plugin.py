@@ -78,11 +78,51 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         terminalreporter.write_line(f"VACUITY: {p}")
 
 
+REPORT_PATH_ENV = "IT_CONFORMANCE_REPORT"
+COMPONENT_DIR_ENV = "IT_CONFORMANCE_COMPONENT_DIR"
+
+
+def write_report_artifact(selection: SelectionReport, path: str, *, exitstatus: int) -> None:
+    """Write the selection report as JSON to ``path``, with the provenance a consumer needs to judge it.
+
+    Provenance names the interpretune version, the git head of the tree that ran (when it is a checkout), the component
+    directory and its own revision when ``IT_CONFORMANCE_COMPONENT_DIR`` names it (the last commit touching that
+    directory, the key a card compares at publish), the time, and the exit status, so a reader can tell which source
+    measured the declaration and whether the run that produced it was green. The artifact is what the suite measured on
+    a composed session; it is never a manifest's claim.
+    """
+    import json
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("interpretune")
+
+    from interpretune.hub.revisions import directory_revision, repo_head
+
+    component_dir = os.getenv(COMPONENT_DIR_ENV)
+    artifact = selection.as_artifact(
+        interpretune_version=__version__,
+        git_head=repo_head(Path.cwd()),
+        component_dir=component_dir,
+        component_revision=directory_revision(Path(component_dir)) if component_dir else None,
+        measured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        exit_status=int(exitstatus),
+    )
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def pytest_sessionfinish(session, exitstatus):
-    """Turn a vacuous green into a failure."""
+    """Turn a vacuous green into a failure, and write the report artifact when a path was given."""
     selection = session.config.stash.get(_REPORT_KEY, None)
     if selection is None:
         return
+    report_path = os.getenv(REPORT_PATH_ENV)
+    if report_path and collected_any_case(selection):
+        write_report_artifact(selection, report_path, exitstatus=int(exitstatus))
     if not collected_any_case(selection):
         return  # no conformance cases were collected at all: this run was not a conformance run
     if vacuity_problems(selection, strict=os.getenv(STRICT_ENV, "0") == "1") and exitstatus == 0:
