@@ -202,6 +202,40 @@ class ITMyConfig(ITConfig):
         super().__post_init__()
 ```
 
+### Both config classes are required, and how yours is found
+
+Patterns 1 and 2 are not alternatives. Every adapter ships **both**:
+
+- the **payload** on `ITSerializableCfg`, holding your adapter's settings (Pattern 1);
+- an **`ITConfig` subclass that declares a field for it** (Pattern 2).
+
+The second one is what auto-composition discovers. When a caller constructs a config carrying
+`my_cfg=MyConfig(...)`, `find_adapter_subclasses` looks for an `ITConfig` subclass declaring `my_cfg`
+and composes it in. Ship only the payload and there is nothing to find: the setting lands as a stray
+attribute on a class that does not declare it, which your adapter can still read back through a
+`getattr` default. The module then looks configured while its config never was, the setting cannot be
+validated or serialized with the config, and a misspelled name is indistinguishable from a real one.
+
+**How the subclass is located depends on how your adapter is delivered.**
+
+**Bundled adapters** are found by import path. Discovery imports
+`interpretune.adapters.<name>.config` and `interpretune.adapters.<name>.adapter` and takes the
+`ITConfig` subclasses it finds there, so putting the class in either module is all that is required.
+
+**Hub-delivered adapters** must register the class, because no import path can be derived for them: a
+hub component executes from a revision-scoped synthetic module, so neither template above can name it.
+Register from your entrypoint, before any composition happens:
+
+```python
+@classmethod
+def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
+    adapter_ctx_registry.register_module_cfg_class(ADAPTER_NAME, ITMyConfig)
+    ...
+```
+
+Registering is inert for a bundled adapter: the registry is consulted only after the import templates
+and skips any adapter they already resolved, so it cannot change what a bundled adapter composes.
+
 ### Pattern 3: Model Wrapper Selection (SAE Lens)
 
 The SAE Lens adapter selects its TL model wrapper from the one flag every TransformerLens-backed config carries,
