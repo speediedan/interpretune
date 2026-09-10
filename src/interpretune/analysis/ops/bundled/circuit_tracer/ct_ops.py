@@ -73,7 +73,9 @@ def compute_attribution_graph_impl(
     }
 
     support = analysis_backend.attribution_graph_support
-    why = support.refusal(getattr(module, "replacement_model", None) or module.model)
+    # `is None`, never `or`: an nnsight envoy answers a truth-test by delegating `len` to the wrapped model
+    replacement = getattr(module, "replacement_model", None)
+    why = support.refusal(module.model if replacement is None else replacement)
     if why is not None:
         raise ValueError(f"attribution graph refused for {type(module).__name__}: {why}")
     graph = module.generate_attribution_graph(prompt, **attribution_graph_kwargs)

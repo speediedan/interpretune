@@ -303,6 +303,33 @@ class FeatureInterventionSupport:
         )
 
 
+def _unwrap_execution_handle(model: Any) -> Any:
+    """The HF model an execution wrapper carries, or ``model`` itself when it is one.
+
+    Walks the private handle first (``_model``, which nnsight's wrapper and circuit-tracer's replacement model
+    keep as the raw module), then the public ``model`` and ``hf_model``; an nnsight envoy met on the way is unwrapped
+    to its module, since its type lives in nnsight and would make a provenance check look at the wrong modeling
+    module and pass vacuously. A truth-test is never applied to a candidate: an envoy delegates ``len`` to the
+    wrapped model.
+    """
+    inner = model
+    for _ in range(4):
+        module_attr = getattr(inner, "_module", None)
+        if module_attr is not None and type(inner).__module__.startswith("nnsight"):
+            inner = module_attr
+            continue
+        candidate = None
+        for attr in ("_model", "model", "hf_model"):
+            found = getattr(inner, attr, None)
+            if found is not None and hasattr(found, "config") and found is not inner:
+                candidate = found
+                break
+        if candidate is None:
+            break
+        inner = candidate
+    return inner
+
+
 @dataclass(frozen=True)
 class AttributionGraphSupport:
     """What attribution-graph construction requires of the model it runs on, checked before construction.
@@ -324,12 +351,7 @@ class AttributionGraphSupport:
             return None
         import inspect
 
-        inner = model
-        for attr in ("model", "_model", "hf_model"):
-            candidate = getattr(inner, attr, None)
-            if candidate is not None and hasattr(candidate, "config"):
-                inner = candidate
-                break
+        inner = _unwrap_execution_handle(model)
         modeling = inspect.getmodule(type(inner))
         fn = getattr(modeling, "eager_attention_forward", None) if modeling is not None else None
         if fn is None or modeling is None:
