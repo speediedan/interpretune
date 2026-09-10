@@ -99,6 +99,18 @@ The capture declaration (every model backend):
 | every declared point is captured | structural | every capturable base point, spelled at the capture layer, reaches the store as a non-degenerate tensor |
 | a point outside the declaration is refused by name | negative | asking for a declared gap (or a layer the model lacks) through the runner path raises, naming the point and the reason, rather than returning a cache that is silently short |
 
+**An always-on case is a requirement on every out-of-tree backend, and adding one is a breaking change that
+produces no signal in this repository.** The bundled targets satisfy a new case the moment it lands, because they
+are written alongside it, so the suite here stays green while an adapter repository's default branch goes red at
+the merge and stays red until something unrelated runs its suite. A conformance suite whose every implementation
+shares a construction path tests the construction rather than the contract. The ungated set is therefore recorded
+in a manifest (`interpretune.testing.conformance.manifest.UNGATED_CASES`: the case, what it binds, the pull
+request that introduced it, and how its downstream adoption was tracked), and a unit test refuses by name an
+ungated case the manifest does not list and a row whose case is gone. Growing the set costs an edit to that file,
+which the reviewer sees for what it is; the edit should name the issue tracking the adopting change in each
+repository that runs the suite. Gating on a family or on the prompt shape does not exempt a case: those select
+on a property of the target, so the case still binds every backend of that kind.
+
 Capture is a base method every model backend has, so it is not a `ModelBackendCapability` member: that enum answers
 "is the surface implemented at all". What varies is WHICH vocabulary points a backend can capture on the model it
 wraps, and that is a typed record beside `InterventionSupport`, keyed by layer-free base spellings over the
@@ -146,8 +158,20 @@ Gate `GRADIENTS`:
 | the gradient op stores the declared schema | structural | `logit_diffs_attr_grad` yields per-hook attribution `[rows, d_sae]`, finite, zero off the alive set, non-zero somewhere |
 | the gradient predicts a small perturbation to first order | causal (direct) | scaling the strongest latent by $1 + \varepsilon$ at the answer position moves the summed logit difference by $\varepsilon$ times its stored attribution (activation times gradient), within ten percent; the unperturbed sum is first checked against the op's own, so both paths are known to see one forward |
 
-The analysis-backend gates (`ATTRIBUTION_GRAPH`, `FEATURE_INTERVENTION`) have their cases listed on the tracking
-issue and land as the suite grows; a repository declaring them runs whatever exists at its Interpretune version.
+Gate `ATTRIBUTION_GRAPH` (with `attribution_graph_support`), on op outputs only:
+
+| case | oracle | asserts |
+| --- | --- | --- |
+| the attribution graph round-trips through the store | structural | the graph the op writes as store columns hydrates back to the graph it computed: same adjacency, same active features, selected features index into them |
+| pruning is monotone | positive control | a stricter node threshold keeps a subset of a looser one's nodes, and strictly fewer at some pair |
+| foreign attention is refused before graph construction | negative | when the record requires the modeling module's own eager attention, a planted replacement of that function is refused by name, naming the foreign function and the module, before construction reaches the tracer; put back, the refusal clears |
+
+Gate `FEATURE_INTERVENTION` (with `feature_intervention_support`):
+
+| case | oracle | asserts |
+| --- | --- | --- |
+| feature-intervention settings are decided by the declaration | negative, with positive control | a value source outside `value_sources` is refused by name before any forward and a declared one runs through the same path; a layer constraint and returned activations are each honoured when declared and refused by name when not |
+| the edge predicts the measured feature intervention | causal | scaling a top feature's activation moves the other active features and the target logits by the graph's edge weights into it, times the scale; skips by name when the record says layers cannot be constrained, since the graph is a linear model of the intervention only with every layer constrained |
 
 ## Per-mode invariants and distinguishability
 

@@ -12,6 +12,7 @@ from typing import Any, ClassVar, cast
 import pytest
 import torch
 
+from interpretune.analysis.backends.capabilities import _unwrap_execution_handle
 from interpretune.analysis.backends import (
     AnalysisBackendCapability,
     get_analysis_backend,
@@ -1127,6 +1128,13 @@ class ModelBackendConformance:
         # frozen at their baseline rather than re-activated nonlinearly), so the case states that requirement on
         # the module's settings rather than assuming the target set it: measured unconstrained on gemma-3-1b-it, the
         # active features moved off the edges by up to 126 where the edges predicted under 1e-3.
+        record = suite.capabilities.feature_intervention
+        assert record is not None, "FEATURE_INTERVENTION is declared with no feature_intervention record"
+        if not record.constrainable_layers:
+            pytest.skip(
+                "the graph is a linear model of an intervention only with every layer constrained, and this backend"
+                " declares it cannot constrain a feature intervention to a layer subset"
+            )
         support = suite.capabilities.capture
         n_layers = support.n_layers if support is not None else None
         ct_cfg = getattr(suite.module, "circuit_tracer_cfg", None)
@@ -1194,6 +1202,130 @@ class ModelBackendConformance:
             )
             checked += 1
         assert checked > 0, "every top feature had a zero baseline activation; nothing was checked"
+
+    def _single_feature_fields(self, suite) -> dict[str, Any]:
+        """The suite graph's strongest top feature as feature-intervention batch fields, computed once per target
+        class; callers build a fresh batch from them, since the op path owns the batch it is given."""
+        import interpretune as it
+        from interpretune.analysis.backends import require_analysis_backend
+        from interpretune.analysis.ops.base import AnalysisBatch
+
+        key = "single_feature_fields"
+        if key not in suite.memo:
+            result = self._graph(suite)
+            graph = require_analysis_backend(suite.module).hydrate_graph_from_batch(result)
+            influence = it.graph_node_influence(suite.module, result, batch=cast(Any, None), batch_idx=0)
+            payload = dict(result)
+            payload.update(dict(influence))
+            top = it.extract_top_features(
+                suite.module,
+                AnalysisBatch(**payload),
+                batch=cast(Any, None),
+                batch_idx=0,
+                top_n=suite.inputs.attribution_top_n,
+            )
+            rows = torch.as_tensor(top.top_feature_ids, dtype=torch.long)
+            assert rows.shape[0] > 0, "no top feature to intervene on"
+            suite.memo[key] = dict(
+                prompts=[self._attribution_prompt(suite)],
+                top_feature_ids=rows[:1],
+                top_feature_scores=torch.as_tensor(top.top_feature_scores, dtype=torch.float32)[:1],
+                top_feature_activation_values=torch.as_tensor(top.top_feature_activation_values, dtype=torch.float32)[
+                    :1
+                ],
+                logit_target_ids=torch.as_tensor(graph.logit_tokens).long().cpu(),
+            )
+        return suite.memo[key]
+
+    @conformance_case(capability=AnalysisBackendCapability.FEATURE_INTERVENTION)
+    def test_feature_intervention_settings_are_decided_by_the_declaration(self, suite):
+        """Each configuration the record declares is honoured through the op path and each it does not is refused
+        by name before any forward: a value source outside ``value_sources``, a layer constraint on a backend that
+        declares it cannot constrain one, returned activations from one that declares it cannot return them. The
+        declaration decides which branch each axis takes, so a backend cannot pass by declaring less."""
+        import interpretune as it
+        from interpretune.analysis.ops.base import AnalysisBatch
+
+        record = suite.capabilities.feature_intervention
+        assert record is not None, "FEATURE_INTERVENTION is declared with no feature_intervention record"
+        fields = self._single_feature_fields(suite)
+
+        def run(**overrides):
+            return it.feature_intervention_forward(
+                suite.module, AnalysisBatch(**fields), batch=cast(Any, None), batch_idx=0, **overrides
+            )
+
+        undeclared = "not_a_value_source"
+        assert undeclared not in record.value_sources
+        with pytest.raises(ValueError) as refused:
+            run(intervention_value_source=undeclared)
+        assert undeclared in str(refused.value) and "declared" in str(refused.value), str(refused.value)
+        # positive control: a declared source runs through the same path
+        sources = sorted(record.value_sources - {"constant"})
+        extra = {"intervention_value": 1.0} if not sources else {}
+        out = run(intervention_value_source=sources[0] if sources else "constant", **extra)
+        assert out.post_intervention_logits is not None
+        if record.returns_activations:
+            out = run(intervention_return_activations=True)
+            assert getattr(out, "intervention_activation_cache", None) is not None, (
+                "returns_activations is declared and the op returned no intervention_activation_cache"
+            )
+        else:
+            with pytest.raises(ValueError) as refused:
+                run(intervention_return_activations=True)
+            assert "return_activations" in str(refused.value), str(refused.value)
+        if record.constrainable_layers:
+            out = run(intervention_constrained_layers=[0])
+            assert out.post_intervention_logits is not None
+        else:
+            with pytest.raises(ValueError) as refused:
+                run(intervention_constrained_layers=[0])
+            assert "constrained_layers" in str(refused.value), str(refused.value)
+
+    @conformance_case(capability=AnalysisBackendCapability.ATTRIBUTION_GRAPH)
+    def test_foreign_attention_is_refused_before_graph_construction(self, suite):
+        """When the record requires the modeling module's own eager attention, a model whose attention function
+        another library replaced is refused by name, naming the foreign function and the modeling module, before
+        construction reaches the tracer (the measured failure was an ``AttributeError`` deep inside it).
+
+        The original is put back and the refusal clears; the round-trip case is the positive control.
+        """
+        import inspect
+
+        import interpretune as it
+        from interpretune.analysis.ops.base import AnalysisBatch
+
+        record = suite.capabilities.attribution_graph
+        assert record is not None, "ATTRIBUTION_GRAPH is declared with no attribution_graph record"
+        if not record.requires_own_eager_attention:
+            pytest.skip("the backend declares no requirement on the model's attention function")
+        replacement = getattr(suite.module, "replacement_model", None)
+        handle = suite.module.model if replacement is None else replacement
+        inner = _unwrap_execution_handle(handle)
+        modeling = inspect.getmodule(type(inner))
+        original = getattr(modeling, "eager_attention_forward", None) if modeling is not None else None
+        if modeling is None or original is None:
+            pytest.skip(f"{type(inner).__name__} has no module-level eager attention to replace")
+        assert record.refusal(handle) is None, record.refusal(handle)
+
+        def planted_stand_in(*args, **kwargs):
+            return original(*args, **kwargs)
+
+        planted_stand_in.__module__ = __name__  # this module: foreign to the modeling module by construction
+        setattr(modeling, "eager_attention_forward", planted_stand_in)
+        try:
+            with pytest.raises(ValueError) as refused:
+                it.compute_attribution_graph(
+                    suite.module,
+                    AnalysisBatch(prompts=[self._attribution_prompt(suite)]),
+                    batch=cast(Any, None),
+                    batch_idx=0,
+                )
+        finally:
+            setattr(modeling, "eager_attention_forward", original)
+        message = str(refused.value)
+        assert modeling.__name__ in message and "planted_stand_in" in message, message
+        assert record.refusal(handle) is None, "the original was put back and the refusal should clear"
 
     # -- single-prompt backends ----------------------------------------------------------------------
 
