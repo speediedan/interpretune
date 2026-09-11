@@ -22,6 +22,41 @@ class CompositionRegistry(dict):
     # TODO: if this experimental compositional utility and protocol gains traction with external users:
     #         - change Adapter enum to a separate AdapterRegistry that can be loaded externally similar to extensions
     #           using the relevant entrypoint API config https://setuptools.pypa.io/en/latest/userguide/entry_point.html
+    def register_module_cfg_class(self, lead_adapter: Adapter | str, cfg_cls: type) -> None:
+        """Record the ``ITConfig`` subclass ``lead_adapter`` composes its settings through.
+
+        Bundled adapters are found by importing a module path derived from the adapter's name. A
+        hub-delivered adapter executes from a revision-scoped synthetic module, so no such path exists
+        and auto-composition cannot see its config class at all -- the settings then arrive as a stray
+        attribute rather than a composed field. Registering the class here is the discovery route those
+        adapters can have, and it is the one the note beside ``AUTOCOMP_SEARCH_TEMPLATES`` describes.
+
+        Bundled adapters may register too; discovery prefers what the import path finds, so doing so
+        changes nothing for them.
+        """
+        adapter = Adapter[lead_adapter] if isinstance(lead_adapter, str) else lead_adapter
+        existing = self._module_cfg_classes.get(adapter)
+        if existing is not None and existing is not cfg_cls:
+            # Two classes for one adapter would make composition depend on registration order, which is
+            # not something a caller can see or control.
+            raise ValueError(
+                f"adapter {adapter.name!r} already registered module cfg class {existing.__qualname__}; "
+                f"refusing to replace it with {cfg_cls.__qualname__}"
+            )
+        self._module_cfg_classes[adapter] = cfg_cls
+
+    def module_cfg_class(self, lead_adapter: Adapter | str) -> type | None:
+        """The registered ``ITConfig`` subclass for ``lead_adapter``, or ``None`` if it registered none."""
+        adapter = Adapter[lead_adapter] if isinstance(lead_adapter, str) else lead_adapter
+        return self._module_cfg_classes.get(adapter)
+
+    @property
+    def _module_cfg_classes(self) -> dict[Adapter, type]:
+        """Lazily created so an existing registry instance does not need an __init__ change."""
+        if not hasattr(self, "_module_cfg_classes_store"):
+            self._module_cfg_classes_store: dict[Adapter, type] = {}
+        return self._module_cfg_classes_store
+
     def register(
         self,
         lead_adapter: Adapter,
