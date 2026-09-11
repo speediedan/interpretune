@@ -275,6 +275,10 @@ jobs:
         displayName: 'Env details and package versions'
 
       - bash: |
+          # A bash step's result is its LAST command's exit code and the script is not echoed, so a guard
+          # line placed before pytest can neither fail the step nor be seen to have run. `set -e` makes the
+          # guard below able to fail, and its print is the evidence it executed.
+          set -e
           source /tmp/venvs/it_dev/bin/activate
           # Keep the baseline coverage pass CPU-only on GPU runners.
           # GPU-specific coverage is collected in the dedicated CUDA, standalone, and profile_ci phases below.
@@ -282,7 +286,7 @@ jobs:
           # This phase runs without the `gpu` lease, so "it touches no GPU" must be a check that fails the day
           # it stops being true rather than a property of the line above: refuse to start if any device is
           # visible. The same line fails with the variable unset (measured: 2 devices on the runner host).
-          python -c 'import torch; n = torch.cuda.device_count(); assert n == 0, f"{n} CUDA device(s) visible in the CPU-only phase"'
+          python -c 'import torch; n = torch.cuda.device_count(); assert n == 0, f"{n} CUDA device(s) visible in the CPU-only phase"; print("CPU-only phase guard: no CUDA device visible")' || exit 1
           # --reruns/--reruns-delay handle transient httpx read timeouts with HF transformers v5
           python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v --junitxml=$(Build.Repository.LocalPath)/test-results.xml --durations=50 --reruns 2 --reruns-delay 5
         displayName: 'Testing: standard'
