@@ -190,6 +190,15 @@ tags
 CLAUDE.local.md
 .claude/settings.local.json
 
+# Codex local (private, per-machine) instructions; agent-neutral analog of CLAUDE.local.md
+AGENTS.override.md
+
+# opencode.json carries host-absolute instruction paths (the harness homes), so it stays
+# local-only: AGENTS.md loads natively and the shared instructions resolve via the homes
+# without any project file. Kept on disk per checkout, never committed.
+opencode.json
+opencode.jsonc
+
 # One-shot bypass for the benchmark registry's clean-tree guard. Consumed on use; never committed,
 # because a bypass that reaches other checkouts disarms the guard for everyone (see #275).
 tests/benchmarks/benchmark_update.allow
