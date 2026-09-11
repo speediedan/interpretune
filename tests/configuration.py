@@ -11,7 +11,7 @@
 # limitations under the License.
 # Initially based on https://bit.ly/3oQ8Vqf
 import os
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, Literal, overload, Sequence
 from copy import deepcopy
 
 import torch
@@ -330,6 +330,30 @@ def cfg_op_env(
                 break
 
         return it_session, batch_list, analysis_batch_list
+
+
+@overload
+def config_modules(
+    test_cfg,
+    test_alias,
+    expected_results,
+    tmp_path,
+    prewrapped_modules: dict[str, Any] | None = ...,
+    state_log_mode: bool = ...,
+    cfg_only: Literal[False] = ...,
+) -> ITSession: ...
+
+
+@overload
+def config_modules(
+    test_cfg,
+    test_alias,
+    expected_results,
+    tmp_path,
+    prewrapped_modules: dict[str, Any] | None = ...,
+    state_log_mode: bool = ...,
+    cfg_only: Literal[True] = ...,
+) -> ITSessionConfig: ...
 
 
 def config_modules(

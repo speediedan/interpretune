@@ -13,6 +13,7 @@ pytest with ``--doctest-modules``, which imports every module under ``tests/`` d
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 SCENARIOS = {
     "orange_polysemous": dict(
@@ -46,28 +47,33 @@ def main() -> None:
     import torch
 
     import interpretune as it
-    from it_examples import _ACTIVE_PATCHES  # noqa: F401
+    import interpretune.hub as hub
     from it_examples.seeds import ensure_local_seeds
     from it_examples.utils.example_helpers import concept_token_positions
     from interpretune import ITSession, ITSessionConfig
+    from interpretune.base import it_init
+    from interpretune.protocol import Adapter
     from interpretune.analysis.backends import require_analysis_backend
     from interpretune.analysis.ops.base import AnalysisBatch
     from interpretune.config import AnalysisCfg, init_analysis_cfgs
 
     ensure_local_seeds()  # idempotent, offline: seed publish sources -> components cache
-    base_itdm_cfg, base_it_cfg, dm_cls, m_cls = it.hub.load("speediedan/rte", "rte_demo.gemma2.circuit_tracer")
+    base_itdm_cfg, base_it_cfg, dm_cls, m_cls = hub.load("speediedan/rte", "rte_demo.gemma2.circuit_tracer")
     base_it_cfg.circuit_tracer_cfg.backend = "nnsight"
     base_it_cfg.circuit_tracer_cfg.transcoder_set = "gemma"
     session_cfg = ITSessionConfig(
-        adapter_ctx=(it.Adapter.core, it.Adapter.nnsight, it.Adapter.circuit_tracer),
+        adapter_ctx=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer),
         datamodule_cfg=base_itdm_cfg,
         module_cfg=base_it_cfg,
         datamodule_cls=dm_cls,
         module_cls=m_cls,
     )
     it_session = ITSession(session_cfg)
-    it.it_init(**it_session)
-    module = it_session.module
+    it_init(**it_session)
+    # The composed module's circuit-tracer surface (replacement_model, analysis_cfg) is attached by the adapter
+    # at composition time, so it is reached dynamically here rather than through the base module's type.
+    module = cast(Any, it_session.module)
+    assert module is not None, "the session composed no module"
     tokenizer = module.replacement_model.tokenizer
     backend = require_analysis_backend(module)
     module.analysis_cfg = AnalysisCfg(target_op=it.compute_attribution_graph, ignore_manual=True, save_tokens=False)

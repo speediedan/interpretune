@@ -14,7 +14,7 @@ from it_examples.utils.analysis_injection.orchestrator import (
     get_caller_context,
 )
 from it_examples.utils.example_helpers import collect_shapes
-from it_examples.utils.raw_graph_analysis import get_topk_2nd_order_adjacency
+from it_examples.utils.graph_analysis_helpers import get_topk_2nd_order_adjacency
 
 # because we use analysis injection helper functions (get_analysis_vars) to update our local analysis point state:
 # pyright: reportUndefinedVariable=false

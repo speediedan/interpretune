@@ -21,6 +21,15 @@ if TYPE_CHECKING:
 # )
 
 
+def _resolve_adjacency(graph: Any, adjacency_matrix: torch.Tensor | None, adj_matrix_name: str) -> torch.Tensor:
+    """The adjacency matrix to analyse: the one given, else the named attribute of ``graph``, else a refusal."""
+    if adjacency_matrix is not None:
+        return adjacency_matrix
+    if graph is None:
+        raise ValueError("Either 'graph' or 'adjacency_matrix' must be provided.")
+    return getattr(graph, adj_matrix_name)
+
+
 def get_topk_2nd_order_adjacency(
     k: int,
     limit_node: int,
@@ -43,10 +52,7 @@ def get_topk_2nd_order_adjacency(
     Returns:
         tuple[torch.Tensor, torch.Tensor]: (topk_values, topk_indices), both of shape [n_rows, k, k]
     """
-    if adjacency_matrix is None:
-        if graph is None:
-            raise ValueError("Either 'graph' or 'adjacency_matrix' must be provided.")
-        adjacency_matrix = getattr(graph, adj_matrix_name)
+    adjacency_matrix = _resolve_adjacency(graph, adjacency_matrix, adj_matrix_name)
     adj_logit_idxs = (adjacency_matrix.shape[0] - n_logits) + inspect_logit_idxs
     first_order_values, first_order_indices = torch.topk(adjacency_matrix[adj_logit_idxs, :], k)
     adj_mask = first_order_indices < limit_node
@@ -508,10 +514,7 @@ def gen_raw_graph_overview(
     Returns:
         RawGraphOverview: Dataclass containing all relevant outputs.
     """
-    if adjacency_matrix is None:
-        if graph is None:
-            raise ValueError("Either 'graph' or 'adjacency_matrix' must be provided.")
-        adjacency_matrix = getattr(graph, adj_matrix_name)
+    adjacency_matrix = _resolve_adjacency(graph, adjacency_matrix, adj_matrix_name)
 
     if node_ranges is None or node_mapping is None:
         # Use provided node_mask or default to all nodes
@@ -558,4 +561,6 @@ def gen_raw_graph_overview(
 
 
 # NOTE: For a complete example of using these functions with Circuit Tracer graphs,
-# see raw_graph_analysis_example_incomplete.py (TODO: requires local demo data to be made public)
+# An end-to-end example of these helpers needs public demo graphs, and none is bundled; the archived draft
+# that used local data is outside the repository until one exists or the example is parameterised for a
+# user-supplied graph.

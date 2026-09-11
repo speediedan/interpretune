@@ -286,11 +286,13 @@ def cleanup_memory():
 
 
 class FixtPhase(IntEnum):
-    cfgonly: int = auto()
-    initonly: int = auto()
-    prepare_data: int = auto()
-    setup: int = auto()
-    configure_optimizers: int = auto()
+    # No member annotations: `name: int = auto()` makes a type checker read the members as plain int
+    # attributes rather than enum members, so a call site passing FixtPhase.setup was flagged as passing an int.
+    cfgonly = auto()
+    initonly = auto()
+    prepare_data = auto()
+    setup = auto()
+    configure_optimizers = auto()
 
 
 class RunPhase(IntEnum):

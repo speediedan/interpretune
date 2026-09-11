@@ -22,7 +22,9 @@ def main() -> None:
 
     tok = AutoTokenizer.from_pretrained("google/gemma-3-1b-it")
     model = AutoModelForCausalLM.from_pretrained("google/gemma-3-1b-it", torch_dtype=torch.bfloat16)
-    W_U = model.get_output_embeddings().weight.detach().float()  # (vocab, d_model)
+    output_embeddings = model.get_output_embeddings()
+    assert output_embeddings is not None, "gemma-3-1b-it exposes its output embeddings; none were found"
+    W_U = output_embeddings.weight.detach().float()  # (vocab, d_model)
     del model
 
     fruit_ids = [tok.encode(v, add_special_tokens=False)[0] for v in ("Fruit", " Fruit")]

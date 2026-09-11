@@ -331,7 +331,7 @@ def generate_composition_stub(op_name: str, op_def: Dict[str, Any], definitions:
 
     signature = wrap_signature(
         op_name,
-        ["module", f"analysis_batch: Optional[{protocol}]", "batch", "batch_idx: int"],
+        ["module", "analysis_batch: Optional[BaseAnalysisBatchProtocol]", "batch", "batch_idx: int", "**kwargs"],
         protocol,
     )
 
