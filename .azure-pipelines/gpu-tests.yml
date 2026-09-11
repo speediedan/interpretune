@@ -83,7 +83,9 @@ jobs:
         PyTorch_latest:
           image: speediedan/interpretune:py3.13-pt2.13.0-azpl-init
           scope: ""
-    timeoutInMinutes: 100
+    # 120 rather than 100: the job can now wait for a host lease twice (cpu-heavy at the start, gpu before the
+    # GPU phases), 40 minutes each at most, on top of a ~53 minute run.
+    timeoutInMinutes: 120
     cancelTimeoutInMinutes: 2
 
     pool:
@@ -141,13 +143,26 @@ jobs:
       clean: outputs
 
     steps:
-      # Serialize this job against local multi-GPU runs on the self-hosted host (shared with
-      # finetuning-scheduler). The agent already runs one Azure job at a time, so this guards only
-      # against collisions with interactive/agent sessions. Fails open if the lease dir is not mounted.
+      # Serialize this job against local runs on the self-hosted host (shared with finetuning-scheduler).
+      # The agent already runs one Azure job at a time, so this guards only against collisions with
+      # interactive/agent sessions. Fails open if the lease dir is not mounted.
+      #
+      # Two host leases, because the job contends for two resources at different times:
+      #   - `cpu-heavy` covers the install and the CPU-only phase. What it serializes is HOST MEMORY: a full
+      #     local suite beside this job's own suite OOM-killed both sides on a 62 GiB host. No GPU is
+      #     involved for the first half of the job, so holding the `gpu` lease then only made every GPU-only
+      #     local consumer (a notebook, a benchmark leg) wait for a phase that could not touch a device.
+      #   - `gpu` is taken only when the GPU phases begin, and the two are then held together in the host
+      #     tool's fixed order (gpu, then cpu-heavy), which is why `cpu-heavy` is released and re-taken there
+      #     rather than kept: a local caller taking both in that order could otherwise deadlock against a job
+      #     holding `cpu-heavy` while waiting for `gpu`.
+      # The `Acquire host GPU lease` task therefore starts at about the minute the CPU phase ends in the
+      # build timeline. That position is the evidence the split is in effect; a green build looks the same
+      # with or without it.
       - bash: |
           source scripts/gpu_lease_wrap.sh
-          ci_gpu_lease_acquire /gpu_leases /tmp/azp_gpu_lease.pid 2400 "azure-it-$(Build.BuildId)"
-        displayName: 'Acquire host GPU lease'
+          ci_gpu_lease_acquire /gpu_leases /tmp/azp_cpu_heavy_lease.pid 2400 "azure-it-$(Build.BuildId)" cpu-heavy
+        displayName: 'Acquire host cpu-heavy lease'
 
       - bash: |
           echo "=== identity ==="
@@ -260,13 +275,31 @@ jobs:
         displayName: 'Env details and package versions'
 
       - bash: |
+          # A bash step's result is its LAST command's exit code and the script is not echoed, so a guard
+          # line placed before pytest can neither fail the step nor be seen to have run. `set -e` makes the
+          # guard below able to fail, and its print is the evidence it executed.
+          set -e
           source /tmp/venvs/it_dev/bin/activate
           # Keep the baseline coverage pass CPU-only on GPU runners.
           # GPU-specific coverage is collected in the dedicated CUDA, standalone, and profile_ci phases below.
           export CUDA_VISIBLE_DEVICES=''
+          # This phase runs without the `gpu` lease, so "it touches no GPU" must be a check that fails the day
+          # it stops being true rather than a property of the line above: refuse to start if any device is
+          # visible. The same line fails with the variable unset (measured: 2 devices on the runner host).
+          python -c 'import torch; n = torch.cuda.device_count(); assert n == 0, f"{n} CUDA device(s) visible in the CPU-only phase"; print("CPU-only phase guard: no CUDA device visible")' || exit 1
           # --reruns/--reruns-delay handle transient httpx read timeouts with HF transformers v5
           python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v --junitxml=$(Build.Repository.LocalPath)/test-results.xml --durations=50 --reruns 2 --reruns-delay 5
         displayName: 'Testing: standard'
+
+      # The GPU phases: release `cpu-heavy`, then take `gpu` and `cpu-heavy` in the host tool's order (see
+      # the note on the first lease step). Waiting here for tens of minutes behind a local GPU job is the
+      # lease working, not a hung build.
+      - bash: |
+          source scripts/gpu_lease_wrap.sh
+          ci_gpu_lease_release /gpu_leases /tmp/azp_cpu_heavy_lease.pid cpu-heavy
+          ci_gpu_lease_acquire /gpu_leases /tmp/azp_gpu_lease.pid 2400 "azure-it-$(Build.BuildId)" gpu
+          ci_gpu_lease_acquire /gpu_leases /tmp/azp_cpu_heavy_lease.pid 2400 "azure-it-$(Build.BuildId)" cpu-heavy
+        displayName: 'Acquire host GPU lease'
 
       - bash: |
           source /tmp/venvs/it_dev/bin/activate
@@ -276,7 +309,7 @@ jobs:
         displayName: 'Testing: standard gpu cuda-marked'
         env:
           # gated-model tests (llama3/gemma) and the notebook/example tests run in this phase and
-          # read these secrets; without the mapping they fail with KeyError (see build 575)
+          # read these secrets; without the mapping they fail with a KeyError on the secret's name
           HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
           # HF_TOKEN feeds from HF_MCP_TOKEN_RW so the J-space steering section can pull the PRIVATE
           # speediedan/jlens_steering_ops collection (#273). The gated key cannot read it (probed).
@@ -351,10 +384,11 @@ jobs:
           # Ensure directories have SGID and group write
           sudo find /opt/interpretune/hf_cache/datasets -type d -exec chmod g+ws {} \; 2>/dev/null || true
 
-          # Release the host GPU lease. Belt-and-braces: if this job dies or its container is torn
-          # down, every process inside dies too and the kernel frees the lease automatically.
-          source scripts/gpu_lease_wrap.sh 2>/dev/null && \
-            ci_gpu_lease_release /gpu_leases /tmp/azp_gpu_lease.pid || true
+          # Release both host leases. Belt-and-braces: if this job dies or its container is torn
+          # down, every process inside dies too and the kernel frees the leases automatically.
+          source scripts/gpu_lease_wrap.sh 2>/dev/null && {
+            ci_gpu_lease_release /gpu_leases /tmp/azp_gpu_lease.pid gpu
+            ci_gpu_lease_release /gpu_leases /tmp/azp_cpu_heavy_lease.pid cpu-heavy; } || true
           echo 'Agent workspace and HF cache cleanup completed'
         condition: always()
         displayName: 'Cleaning up agent workspace'
