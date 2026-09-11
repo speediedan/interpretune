@@ -33,7 +33,7 @@ default_language_version:
 # applies to every hook including one written to verify these very files. Measured in a sibling repo,
 # the same exclusion emptied such a guard's file list and degraded it to "(no files to check) Skipped"
 # -- a guard born skipped, which reports success forever. Pair it with `always_run: true`.
-exclude: 'tests/(ioi_parity|mech_interp_parity|concept_direction_approach_parity)/.*|scripts/benchmark_baseline_patches/.*\.patch|\.claude/skills/.*'
+exclude: 'tests/(ioi_parity|mech_interp_parity|concept_direction_approach_parity)/.*|scripts/benchmark_baseline_patches/.*\.patch|\.claude/skills/.*|\.agents/skills/.*'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -123,10 +123,10 @@ repos:
         name: Vendored skills must not be edited here
         entry: python scripts/check_vendored_skills.py
         language: system
-        # The repo-level `exclude:` above covers `.claude/skills/`, which is precisely this hook's
+        # The repo-level `exclude:` above covers both skills trees, which are precisely this hook's
         # subject. Without `always_run` a commit touching ONLY a vendored skill -- the exact case this
         # exists to catch -- leaves pre-commit with an empty file list and it reports "(no files to
-        # check) Skipped", a guard born skipped. The check reads the manifest itself, not argv, so it
+        # check) Skipped", a guard born skipped. The check reads both manifests itself, not argv, so it
         # needs no file list to do its job.
         always_run: true
         pass_filenames: false
