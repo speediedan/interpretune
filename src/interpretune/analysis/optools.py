@@ -222,54 +222,55 @@ def resolve_tokenizer(module: Any) -> Any:
     raise ValueError("A tokenizer is required for this analysis operation")
 
 
-# HF RMSNorm families that apply ``(1 + weight)`` rather than ``weight``. Membership is EXACT, not a
-# prefix test, because the convention is not a property of the name: `gemma3` carries the offset and
-# `gemma3n` does not, so any prefix wide enough to catch the first also catches the second. An earlier
-# `startswith("gemma")` rule was correct for every family that existed when it was written and silently
-# wrong for `gemma3n` and the whole `gemma4` line, producing a plausible direction rather than an error.
-_RMSNORM_OFFSET_MODEL_TYPES = frozenset({"gemma", "gemma2", "gemma3", "gemma3_text"})
-# Families in the same namespace that are KNOWN to apply weight directly. Listed rather than left to the
-# default so that an unrecognized `gemma*` type is distinguishable from a checked one.
-_RMSNORM_NO_OFFSET_MODEL_TYPES = frozenset(
-    {
-        "gemma3n",
-        "gemma3n_text",
-        "gemma3n_audio",
-        "gemma3n_vision",
-        "gemma4",
-        "gemma4_text",
-        "gemma4_audio",
-        "gemma4_vision",
-        "gemma4_assistant",
-        "gemma4_unified",
-        "gemma4_unified_text",
-        "gemma4_unified_audio",
-        "gemma4_unified_vision",
-        "gemma4_unified_assistant",
-    }
-)
+#: Probe amplitude. `rms(c * 1) = c` for any c, but at c = 1 the RMSNorm `eps` is not negligible
+#: against it (error near 1e-6); by c = 10 the recovery is exact.
+_RMSNORM_PROBE_CONSTANT = 10.0
 
 
-def _rmsnorm_scale(weight: torch.Tensor, model_type: str) -> torch.Tensor:
-    """The elementwise scale an RMSNorm APPLIES, given its stored weight and the model's family.
+def _rmsnorm_scale(norm: Any, weight: torch.Tensor) -> torch.Tensor:
+    """The elementwise scale an RMSNorm APPLIES, read from the module rather than declared.
 
-    Most families apply ``weight``; the gemma line splits, and the split does not follow the name. An
-    unrecognized family in that namespace warns rather than guessing, because both guesses are wrong for
-    some member of it and neither failure is visible in the output: the direction stays plausible and
-    only the answer changes.
+    Since ``rms(c * 1) = c``, a constant vector normalizes to ones and an RMSNorm returns its own
+    effective scale: ``norm(c * 1) = s``. So the module reports what it does and nothing here has to
+    know which convention its family uses.
+
+    This replaces a hardcoded table of ``model_type`` values, and the table was a standing liability
+    rather than a one-time cost: ``gemma``/``gemma2``/``gemma3`` apply ``(1 + weight)`` while
+    ``gemma3n`` and the whole ``gemma4`` line apply ``weight`` directly, so the split runs INSIDE one
+    family prefix. A wrong entry is silent, scaling every direction built from that model, and an
+    unrecognized family had no good answer: the old code warned and guessed.
+
+    Three properties this depends on, each of which breaks it if dropped:
+
+    * **Detached.** The probe is a forward pass through a module whose weight is a ``Parameter``, so
+      undetached it attaches the norm's parameters to every graph a caller builds. Lens directions are
+      consumed as constant bases, so that is a quieter wrong answer in place of a loud one.
+    * **``c >= 10``.** At ``c = 1`` the ``eps`` term is not negligible against ``rms``, giving an error
+      near ``1e-6``; by ``c = 10`` recovery is exact.
+    * **No ``isinstance`` guard.** The seam's main consumer is the NNsight adapter, where the norm
+      arrives as an ``Envoy``, which is NOT an ``nn.Module`` subclass. Guarding on the type would fall
+      back to a declared convention on exactly the path this exists to serve. ``Envoy.__call__``
+      delegates to the wrapped module, so the probe computes; guard on the RESULT instead.
     """
-    if model_type in _RMSNORM_OFFSET_MODEL_TYPES:
-        return 1.0 + weight
-    if model_type not in _RMSNORM_NO_OFFSET_MODEL_TYPES and model_type.startswith("gemma"):
-        from interpretune.utils.logging import rank_zero_warn
-
-        rank_zero_warn(
-            f"unrecognized gemma-family model_type {model_type!r}: the gemma line splits on whether its "
-            "RMSNorm applies `(1 + weight)` or `weight`, and this one is in neither list, so `weight` is "
-            "assumed. If that is wrong every readout-faithful direction built here is silently off; check "
-            "the family's `RMSNorm.forward` and add it to the right set in `interpretune.analysis.optools`."
+    try:
+        with torch.no_grad():
+            probed = norm(torch.full_like(weight, _RMSNORM_PROBE_CONSTANT).unsqueeze(0))
+        scale = probed.reshape(-1).detach().to(dtype=weight.dtype)
+    except Exception as exc:  # -- the cause is reported; guessing a convention is the defect
+        raise RuntimeError(
+            f"could not read the elementwise scale from {type(norm).__name__!r} by evaluating it on a "
+            f"constant vector: {exc!r}. Refused rather than assuming `weight` or `(1 + weight)`, because "
+            "the two differ within a single model family and choosing wrong is silent: every direction "
+            "built from this model would be scaled incorrectly while still looking plausible."
+        ) from exc
+    if scale.shape != weight.shape or not torch.isfinite(scale).all():
+        raise RuntimeError(
+            f"probing {type(norm).__name__!r} returned a scale of shape {tuple(scale.shape)} "
+            f"(expected {tuple(weight.shape)}) or with non-finite entries. Refused rather than "
+            "substituted, for the same reason: a wrong scale here is not visible in the output."
         )
-    return weight
+    assert not scale.requires_grad, "the probed scale must be detached before it reaches a lens direction"
+    return scale
 
 
 class UnembedNormInfo(NamedTuple):
@@ -341,8 +342,7 @@ def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
                     weight = getattr(norm, "weight", None) if norm is not None else None
                     if isinstance(weight, torch.Tensor):
                         kind = "layernorm" if "LayerNorm" in type(norm).__name__ else "rmsnorm"
-                        model_type = str(getattr(getattr(model, "config", None), "model_type", ""))
-                        scale = weight if kind != "rmsnorm" else _rmsnorm_scale(weight, model_type)
+                        scale = weight if kind != "rmsnorm" else _rmsnorm_scale(norm, weight)
                         return UnembedNormInfo(w_u=w_u, norm_scale=scale, norm_kind=kind)
                 return UnembedNormInfo(w_u=w_u, norm_scale=None, norm_kind="none")
         w_u = getattr(model, "W_U", None)
