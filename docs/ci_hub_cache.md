@@ -32,6 +32,50 @@ A test that genuinely needs the live Hub (it exercises the real pull path, or re
 with a token) is marked `@pytest.mark.hf_live`. It skips in the offline pass and runs in the online pass,
 which is small enough never to approach the rate limit.
 
+### Which of the two: the criterion is what the test exists to exercise
+
+Both options make a failing test pass, so "it fails offline" does not choose between them. The question is
+whether a warm cache would leave the test still testing its subject:
+
+> **If a warm cache makes the test pass without exercising the thing it exists to exercise, mark it
+> `hf_live`. Otherwise add the repository to the manifest.**
+
+A test that loads a model in order to test something else wants the manifest — the download is setup, and
+warming it is exactly the point. A test whose subject *is* the fetch does not: warming the cache turns it
+into a test of something else while it stays green, which is the failure mode with no symptom.
+
+That case is not hypothetical. `#490` was a pinned pull that wrote a snapshot but no `refs/main`, so the
+documented pull-then-load could not work from nothing. Every local run was green, because an earlier
+unpinned pull had left the ref behind. A warmed cache reproduces that state deliberately.
+
+Mark by **intent** rather than reactively. A test that means to reach the Hub declares it whether or not
+any pipeline currently runs offline — otherwise it survives until someone adds an offline pass, and then
+fails as though the new pass were the defect. The same criterion, from the manifest's side, is in the
+header of `tests/hf_warm_manifest.yaml`.
+
+### Verifying the mark, and the check that looks like it fails
+
+Running the marked file on its own does **not** verify anything: `tests/conftest.py` applies the skip from a
+session-level hook, and that conftest is never loaded when only `src/it_examples/tests/` is collected. The
+mark then appears broken when it is correct — and it fails in whichever direction your machine happens to
+be in, passing against a warm local cache or erroring against a clean one. Neither is the skip you are
+checking for, which is why the outcome looks like information and is not.
+
+```bash
+# WRONG - conftest never loads, so the mark appears broken
+pytest src/it_examples/tests/test_x.py
+
+# RIGHT - CI's shape: both paths collected together, so the hook sees the item
+HF_HUB_OFFLINE=1 pytest -rs tests/core/test_warm_hf_cache.py src/it_examples/tests/test_x.py
+#   expect: SKIPPED ... "needs the live Hub, and HF_HUB_OFFLINE=1 is set"
+```
+
+And confirm the mark is on the item you think it is, which the skip alone does not tell you:
+
+```bash
+pytest --collect-only -m hf_live src/it_examples/tests/test_x.py
+```
+
 Nothing changes for a developer running the suite locally: without `HF_HUB_OFFLINE` set, every test runs
 online exactly as before. To reproduce the CI shape locally:
 
