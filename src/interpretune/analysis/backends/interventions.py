@@ -72,6 +72,11 @@ class InterventionSpec(NamedTuple):
             ``"project"`` mode. ``True`` means project the current hook input onto the span of
             ``intervention_tensor``. ``False`` means project ``intervention_tensor`` onto the
             span of the current hook input instead.
+        clamp_min: Lower bound of the ``"clamp"`` band in pseudoinverse coordinates, or ``None``
+            for one-sided clamping from above. A clamp with neither bound is the identity for
+            every input and is refused at apply time rather than run.
+        clamp_max: Upper bound of the ``"clamp"`` band in pseudoinverse coordinates, or ``None``
+            for one-sided clamping from below.
     """
 
     intervention_tensor: torch.Tensor
@@ -247,6 +252,8 @@ def _validate_intervention_spec(
         mode=mode,
         scale_factor=spec.scale_factor,
         use_intervention_tensor_as_basis=spec.use_intervention_tensor_as_basis,
+        clamp_min=spec.clamp_min,
+        clamp_max=spec.clamp_max,
         position_scope=normalize_position_scope(spec.position_scope),
     )
 
@@ -346,10 +353,14 @@ def _shared_spec_fields(
     added to one cannot be silently absent from the other -- which is how `position_scope` was dropped
     on the per-hook path while the single-tensor path carried it.
     """
+    clamp_min = value.get("clamp_min", None)
+    clamp_max = value.get("clamp_max", None)
     return {
         "mode": normalize_intervention_mode(value.get("mode", default_mode)),
         "scale_factor": float(value.get("scale_factor", default_scale_factor)),
         "use_intervention_tensor_as_basis": bool(value.get("use_intervention_tensor_as_basis", True)),
+        "clamp_min": None if clamp_min is None else float(clamp_min),
+        "clamp_max": None if clamp_max is None else float(clamp_max),
         "position_scope": normalize_position_scope(value.get("position_scope", PositionScope.LAST_TOKEN)),
     }
 

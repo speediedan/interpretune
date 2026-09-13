@@ -16,6 +16,9 @@ from interpretune.analysis.backends.interventions import (
     InterventionSpec,
     _apply_mode_to_region,
     _apply_span_clamp,
+    _coerce_single_intervention_spec,
+    _expand_intervention_value_for_matches,
+    _validate_intervention_spec,
 )
 
 
@@ -109,3 +112,61 @@ class TestClampReachesTheSharedDispatch:
         direct = _apply_span_clamp(spec, input_value=h, target=basis)
         dispatched = _apply_mode_to_region(h, spec)
         assert torch.allclose(direct, dispatched, atol=1e-6)
+
+
+class TestClampBandSurvivesTheMappingPayload:
+    """The op surface speaks mappings, not specs: a band passed as payload fields must reach the backend.
+
+    Two rebuilds each enumerate the fields they carry, and both omitted the clamp bounds when the mode was added -- so a
+    mapping-sourced clamp arrived with neither bound and was refused at apply time, while every direct-spec test passed.
+    This class walks the exact path the conformance harness takes.
+    """
+
+    def _mapping(self, basis):
+        return {
+            "intervention_tensor": basis,
+            "mode": "clamp",
+            "scale_factor": 1.0,
+            "position_scope": "all_positions",
+            "clamp_min": -1.0,
+            "clamp_max": 1.0,
+        }
+
+    @pytest.fixture
+    def vector(self) -> torch.Tensor:
+        """One direction: the mapping path validates the tensor against the hook shape, and the
+        two-row fixture is wider than any single hook slice."""
+        return torch.tensor([1.0, 1.0, 1.0])
+
+    def test_coercion_carries_both_bounds(self, vector):
+        spec = _coerce_single_intervention_spec(self._mapping(vector))
+        assert spec.clamp_min == pytest.approx(-1.0) and spec.clamp_max == pytest.approx(1.0)
+
+    def test_validation_does_not_strip_the_bounds(self, vector):
+        """POSITIVE CONTROL pair: validation rebuilds every field, and this is the second rebuild."""
+        spec = _coerce_single_intervention_spec(self._mapping(vector))
+        validated = _validate_intervention_spec(spec, target_shape=(3,), hook_name="hook")
+        assert validated.clamp_min == pytest.approx(-1.0) and validated.clamp_max == pytest.approx(1.0)
+
+    def test_a_bandless_mapping_still_refuses_at_apply(self, vector):
+        """The fix carries values; it must not invent them.
+
+        No band in the mapping means no band.
+        """
+        mapping = {k: v for k, v in self._mapping(vector).items() if k not in ("clamp_min", "clamp_max")}
+        spec = _validate_intervention_spec(
+            _coerce_single_intervention_spec(mapping), target_shape=(3,), hook_name="hook"
+        )
+        assert spec.clamp_min is None and spec.clamp_max is None
+        with pytest.raises(ValueError, match=r"neither `clamp_min` nor `clamp_max`"):
+            _apply_span_clamp(spec, input_value=torch.tensor([[5.0, 0.0, 0.0]]), target=vector)
+
+    def test_expansion_carries_the_band_to_the_hook(self, vector):
+        # coordinate (5 - 5 + 5) / 3 = 5/3: out of the [-1, 1] band, so a carried band must move it.
+        h = torch.tensor([[5.0, -5.0, 5.0]])
+        (specs,) = _expand_intervention_value_for_matches(self._mapping(vector), ["hook"], {"hook": (3,)})
+        (spec,) = specs
+        out = _apply_span_clamp(spec, input_value=h, target=vector)
+        assert not torch.allclose(out, h, atol=1e-6)
+        coords = out.reshape(1, -1) @ torch.linalg.pinv(vector.reshape(1, -1).transpose(0, 1)).transpose(0, 1)
+        assert torch.all(coords <= 1.0 + 1e-5) and torch.all(coords >= -1.0 - 1e-5)
