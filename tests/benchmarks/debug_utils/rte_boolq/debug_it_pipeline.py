@@ -37,7 +37,7 @@ def main():
     from interpretune.session import ITSession, ITSessionConfig
     from interpretune.config.datamodule import ITDataModuleConfig
     from interpretune.config.mixins import HFGenerationConfig
-    from it_examples.experiments.rte_boolq import (
+    from tests.rte_component import (
         RTEBoolqConfig,
         RTEBoolqModule,
         RTEBoolqDataModule,
@@ -59,7 +59,7 @@ def main():
         enable_datasets_cache=True,
         prepare_data_map_cfg={"batched": True},
         data_collator_cfg={"collator_class": "transformers.DataCollatorWithPadding"},
-        prompt_cfg={"class_path": "it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig"},
+        prompt_cfg={"class_path": "rte_boolq.RTEBoolqChatTemplatePromptConfig"},
         tokenizers_parallelism=False,
         tokenizer_kwargs={
             "local_files_only": False,

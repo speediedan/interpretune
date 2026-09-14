@@ -16,7 +16,6 @@ import pytest
 from interpretune.hub.manifest import ComponentManifestError, validate_component_manifest
 
 RTE_COMPONENT_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "examples" / "rte"
-RTE_ENTRYPOINT = RTE_COMPONENT_DIR.parent.parent / "experiments" / "rte_boolq.py"
 
 
 def _manifest(**overrides):
@@ -27,11 +26,12 @@ def _manifest(**overrides):
 
 @pytest.fixture()
 def rte_cache(tmp_path):
-    """The in-tree RTE component (which declares the datamodule kind) local-published into a tmp cache."""
+    """The RTE component (which declares the datamodule kind) local-published into a tmp cache."""
     from interpretune.hub.components import local_publish
+    from tests.rte_component import rte_entrypoint_src
 
     cache = tmp_path / "components"
-    local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=RTE_ENTRYPOINT, cache_dir=cache)
+    local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
     return cache
 
 
@@ -76,7 +76,9 @@ class TestStandaloneResolutionAndHydration:
         payload["module_cfg"] = {"task_name": "smuggled"}
         payload_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
         cache = tmp_path / "cache"
-        local_publish(tainted, "someorg/tainted", entrypoint_src=RTE_ENTRYPOINT, cache_dir=cache)
+        from tests.rte_component import rte_entrypoint_src
+
+        local_publish(tainted, "someorg/tainted", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
         with pytest.raises(ComponentManifestError, match="must not carry module configuration"):
             resolve_datamodule_config("someorg/tainted", "rte_boolq", cache_dir=cache)
 

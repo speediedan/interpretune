@@ -68,12 +68,14 @@ def compose_prompt_config_class(ref_cls: type, task_schema_cls: type | None) -> 
 
 def instantiate_prompt_cfg_node(node: dict[str, Any], cache_dir: Path | None = None) -> Any:
     """Instantiate a ``prompt_cfg`` node carrying ``compose_ref`` (with optional task-schema ``class_path``)."""
-    from interpretune.utils import instantiate_class
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
 
     node = dict(node)
     ref_cls = resolve_prompt_config_class(node.pop("compose_ref"), cache_dir=cache_dir)
     task_cls = None
     if "class_path" in node:
-        task_cls = instantiate_class(init={"class_path": node["class_path"]}, import_only=True)
+        task_cls = instantiate_hub_aware_class(
+            init={"class_path": node["class_path"]}, import_only=True, cache_dir=cache_dir
+        )
     composed = compose_prompt_config_class(ref_cls, task_cls)
     return composed(**(node.get("init_args") or {}))

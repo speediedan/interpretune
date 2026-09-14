@@ -73,11 +73,12 @@ def find_entrypoint_owner(stem: str, *, cache_dir: Path | None = None) -> tuple[
     first. Manifests that fail to read are skipped; a component too corrupt to declare its
     entrypoints cannot supply them, and the caller reports the miss by name either way.
     """
-    from interpretune.hub.cache import IT_COMPONENTS_HUB_CACHE, scan_cached_repos
-    from interpretune.hub.components import resolve_component_manifest
+    from interpretune.hub.cache import scan_cached_repos
+    from interpretune.hub.components import IT_COMPONENTS_HUB_CACHE, resolve_component_manifest
 
     owners: list[tuple[str, str]] = []
-    for repo in sorted(scan_cached_repos(Path(cache_dir or IT_COMPONENTS_HUB_CACHE)), key=lambda r: r.repo_id):
+    root = Path(cache_dir) if cache_dir is not None else Path(IT_COMPONENTS_HUB_CACHE)
+    for repo in sorted(scan_cached_repos(root), key=lambda r: r.repo_id):
         try:
             manifest, _, _ = resolve_component_manifest(repo.repo_id, cache_dir=cache_dir)
         except Exception:

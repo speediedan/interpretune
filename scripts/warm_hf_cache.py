@@ -35,7 +35,7 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         manifest = yaml.safe_load(handle) or {}
     if not isinstance(manifest, dict):
-        raise SystemExit(f"{path}: manifest must be a mapping with `models` and `datasets` lists")
+        raise SystemExit(f"{path}: manifest must be a mapping with `models`, `datasets`, `components` lists")
     return manifest
 
 
@@ -113,6 +113,35 @@ def warm_datasets(entries: list[dict[str, Any]], dry_run: bool) -> None:
             _retry(path, lambda: load_dataset(path, config_name, revision=revision))
 
 
+def warm_components(entries: list[dict[str, Any]], dry_run: bool) -> None:
+    """Pull Hub-resident experiment components into the components cache (offline tests resolve them).
+
+    A key-less pull materializes the manifest plus every payload cache-only loaders read whole
+    (entrypoints, datamodule configs); per-key pulls add the named module configurations. All
+    pinned to ``revision`` so the warmed snapshot is single-revision coherent.
+    """
+    for entry in entries:
+        repo_id = entry["repo_id"]
+        revision = entry.get("revision")
+        keys = entry.get("keys") or []
+        print(f"component {repo_id} (revision={revision or 'main'}, keys={keys or 'manifest+payloads'})")
+        if dry_run:
+            continue
+
+        def _pull() -> None:
+            import interpretune as it
+
+            manifest, _ = it.hub.pull(repo_id, revision=revision)
+            if keys:
+                wanted = list(keys)
+            else:
+                wanted = sorted(((manifest.get("module") or {}).get("configs") or {}))
+            for key in wanted:
+                it.hub.pull(repo_id, key, revision=revision)
+
+        _retry(repo_id, _pull)
+
+
 def _cache_size() -> str:
     from huggingface_hub.constants import HF_HOME
 
@@ -138,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"warming from {args.manifest} (cache_version={manifest.get('cache_version')})")
     warm_models(manifest.get("models") or [], args.dry_run)
     warm_datasets(manifest.get("datasets") or [], args.dry_run)
+    warm_components(manifest.get("components") or [], args.dry_run)
     if not args.dry_run:
         print(f"Hub cache: {_cache_size()}")
     return 0

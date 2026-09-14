@@ -14,11 +14,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-ENTRYPOINT_SRC = '''\
+ENTRYPOINT_TEMPLATE = '''\
 class FixtureWidget:
     """Standalone widget: no imports, so the snapshot import cannot drag the tree in."""
 
-    def __init__(self, tag: str = "w") -> None:
+    def __init__(self, tag: str = {tag!r}) -> None:
         self.tag = tag
 
 
@@ -32,10 +32,10 @@ class FixtureGadget:
 MODULE_CONFIG_KEY = "fixture.tiny.core"
 
 
-def _write_fixture_component(root: Path) -> Path:
+def _write_fixture_component(root: Path, tag: str = "w") -> Path:
     """A minimal publishable tree: one module config, one datamodule entry, one entrypoint file."""
     (root / "configs").mkdir(parents=True)
-    (root / "fixture_entry.py").write_text(ENTRYPOINT_SRC, encoding="utf-8")
+    (root / "fixture_entry.py").write_text(ENTRYPOINT_TEMPLATE.format(tag=tag), encoding="utf-8")
     manifest = {
         "it_schema_version": 1,
         "kinds": ["module", "datamodule"],
@@ -66,6 +66,22 @@ def entrypoint_cache(tmp_path):
     from interpretune.hub.components import local_publish
 
     component = _write_fixture_component(tmp_path / "component")
+    cache = tmp_path / "cache"
+    local_publish(component, "someorg/fixture", entrypoint_src=component / "fixture_entry.py", cache_dir=cache)
+    return cache
+
+
+@pytest.fixture()
+def unexecuted_entrypoint_cache(tmp_path):
+    """Same shape under a distinct revision, so no earlier test has executed its module.
+
+    Synthetic module names incorporate the revision: reusing the default tag would resolve to the
+    already-executed module and pass the trust gate without challenging it (the behavior the
+    promptconfigs suite pins deliberately, which is exactly what this control must not rely on).
+    """
+    from interpretune.hub.components import local_publish
+
+    component = _write_fixture_component(tmp_path / "component", tag="unexecuted")
     cache = tmp_path / "cache"
     local_publish(component, "someorg/fixture", entrypoint_src=component / "fixture_entry.py", cache_dir=cache)
     return cache
@@ -138,7 +154,67 @@ def test_declared_but_absent_entrypoint_names_the_pull(entrypoint_cache):
         )
 
 
-def test_snapshot_execution_needs_the_trust_opt_in(entrypoint_cache, monkeypatch):
+def test_declared_payloads_include_entrypoints_and_datamodule_configs():
+    """Key-less pull materializes what cache-only loaders read whole: entrypoints plus dm configs.
+
+    Module configs stay per-key (pinned by the hookmaps test); entrypoints and datamodule
+    standalone configs cannot, since snapshot class resolution and datamodule resolution read
+    them whole from the snapshot.
+    """
+    from interpretune.hub.components import declared_component_payloads
+
+    manifest = {
+        "kinds": ["module", "datamodule"],
+        "module": {"entrypoint": "entry.py", "configs": {"k": "configs/k.yaml"}},
+        "datamodules": {"dm": {"entrypoint": "entry.py", "config": "configs/dm.yaml"}},
+    }
+    assert declared_component_payloads(manifest) == ["entry.py", "configs/dm.yaml"]
+
+
+def test_explicit_cache_dir_does_not_bind_the_default_cache(tmp_path, monkeypatch):
+    """Cache isolation: an explicit cache scopes resolution; a same-stem default never leaks in."""
+    from interpretune.hub import components
+    from interpretune.hub.components import local_publish
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
+    real = tmp_path / "real" / "cache"
+    local_publish(
+        _write_fixture_component(tmp_path / "real" / "component", tag="real"),
+        "someorg/fixture",
+        entrypoint_src=tmp_path / "real" / "component" / "fixture_entry.py",
+        cache_dir=real,
+    )
+    decoy = tmp_path / "decoy" / "cache"
+    local_publish(
+        _write_fixture_component(tmp_path / "decoy" / "component", tag="decoy"),
+        "someorg/fixture",
+        entrypoint_src=tmp_path / "decoy" / "component" / "fixture_entry.py",
+        cache_dir=decoy,
+    )
+    monkeypatch.setattr(components, "IT_COMPONENTS_HUB_CACHE", decoy)
+    cls = instantiate_hub_aware_class({"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=real)
+    assert cls().tag == "real"
+
+
+def test_default_cache_honors_the_established_patch_pattern(tmp_path, monkeypatch):
+    """Without an explicit cache, the default binding applies (including the test-suite patch)."""
+    from interpretune.hub import components
+    from interpretune.hub.components import local_publish
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
+    cache = tmp_path / "cache"
+    local_publish(
+        _write_fixture_component(tmp_path / "component"),
+        "someorg/fixture",
+        entrypoint_src=tmp_path / "component" / "fixture_entry.py",
+        cache_dir=cache,
+    )
+    monkeypatch.setattr(components, "IT_COMPONENTS_HUB_CACHE", cache)
+    cls = instantiate_hub_aware_class({"class_path": "fixture_entry.FixtureWidget"}, import_only=True)
+    assert cls().tag == "w"
+
+
+def test_snapshot_execution_needs_the_trust_opt_in(unexecuted_entrypoint_cache, monkeypatch):
     """Proof (v): the gate fires before exec, with this path's own wording pinned."""
     from interpretune.hub.entrypoints import instantiate_hub_aware_class
     from interpretune.hub.trust import RemoteCodeNotTrustedError
@@ -146,5 +222,5 @@ def test_snapshot_execution_needs_the_trust_opt_in(entrypoint_cache, monkeypatch
     monkeypatch.setenv("IT_TRUST_REMOTE_CODE", "0")
     with pytest.raises(RemoteCodeNotTrustedError, match="component entrypoint"):
         instantiate_hub_aware_class(
-            {"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=entrypoint_cache
+            {"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=unexecuted_entrypoint_cache
         )

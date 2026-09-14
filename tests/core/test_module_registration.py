@@ -131,9 +131,7 @@ class TestComponentTreeRegistryLaziness:
         shutil.copytree(self._examples_root(), root)
         broken = root / "rte" / "configs" / f"{self.BROKEN_KEY}.yaml"
         broken.write_text(
-            broken.read_text(encoding="utf-8").replace(
-                "it_examples.experiments.rte_boolq.RTEBoolqDataModule", "no.such.module.Nope"
-            ),
+            broken.read_text(encoding="utf-8").replace("rte_boolq.RTEBoolqDataModule", "no.such.module.Nope"),
             encoding="utf-8",
         )
         return root
@@ -175,17 +173,24 @@ class TestComponentTreeRegistryLaziness:
             registry.get(self.GOOD_KEY)
 
     def test_all_seed_keys_resolve_from_cache(self, tmp_path):
-        """Every seed configuration resolves CACHE-ONLY post-flip (bridge -> resolve -> hydrate)."""
+        """Every seed configuration resolves CACHE-ONLY post-flip (bridge -> resolve -> hydrate).
+
+        The RTE experiment is Hub-resident now: its six published module keys hydrate from the
+        warmed default cache, while the local-publish bridge roundtrip below covers the remaining
+        seeds (a dev checkout without the warmed component fails here naming the fetch).
+        """
         from interpretune.hub.components import resolve_component_manifest
         import interpretune as it
         from it_examples.seeds import SEED_COMPONENTS, ensure_local_seeds
 
         cache = tmp_path / "components"
         ensure_local_seeds(cache_dir=cache)
-        resolved = 0
         for repo_id in SEED_COMPONENTS:
             manifest, _, _ = resolve_component_manifest(repo_id, cache_dir=cache)
             for key in manifest.get("module", {}).get("configs") or {}:
                 assert it.hub.load(repo_id, key, cache_dir=cache) is not None
-                resolved += 1
-        assert resolved == 6
+        rte_manifest, _, _ = resolve_component_manifest("speediedan/rte")
+        rte_keys = sorted((rte_manifest.get("module") or {}).get("configs") or {})
+        assert len(rte_keys) == 6
+        for key in rte_keys:
+            assert it.hub.load("speediedan/rte", key) is not None

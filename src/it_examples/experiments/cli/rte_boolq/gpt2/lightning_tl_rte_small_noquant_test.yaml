@@ -23,14 +23,14 @@ registered_cfg:
       prepare_data_map_cfg:
         batched: true
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns:
       - input
       - attention_mask
       - labels
       train_batch_size: 2
   module_cfg:
-    class_path: it_examples.experiments.rte_boolq.RTEBoolqTLConfig
+    class_path: rte_boolq.RTEBoolqTLConfig
     init_args:
       cust_fwd_kwargs: {}
       experiment_tag: lightning_tl_rte_small_noquant_test
@@ -46,15 +46,15 @@ registered_cfg:
           model_head: transformers.GPT2LMHeadModel
           activation_checkpointing: false
       generative_step_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+        class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
         init_args:
           enabled: true
           lm_generation_cfg:
             class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
             init_args:
               max_new_tokens: 1
-  datamodule_cls: it_examples.experiments.rte_boolq.RTEBoolqDataModule
-  module_cls: it_examples.experiments.rte_boolq.RTEBoolqModule
+  datamodule_cls: rte_boolq.RTEBoolqDataModule
+  module_cls: rte_boolq.RTEBoolqModule
 adapter_ctx:
 - lightning
 - transformer_lens

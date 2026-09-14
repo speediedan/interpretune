@@ -20,12 +20,12 @@
 #       add_bos_token: true
 #   registered_cfg:
 #     datamodule_cls:
-#       class_path: it_examples.experiments.rte_boolq.RTEBoolqDataModule
+#       class_path: rte_boolq.RTEBoolqDataModule
 #     module_cls:
-#       class_path: it_examples.experiments.rte_boolq.RTEBoolqModule
+#       class_path: rte_boolq.RTEBoolqModule
 #     datamodule_cfg:
 #       prompt_cfg:
-#         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+#         class_path: rte_boolq.RTEBoolqPromptConfig
 #       signature_columns: ['input', 'labels']
 #       text_fields: ["premise", "hypothesis"]
 #       enable_datasets_cache: True
@@ -39,9 +39,9 @@
 #           init_args:
 #             module_cfg_name: RTEBoolqConfig
 #             module_cfg_mixin:
-#               class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+#               class_path: rte_boolq.RTEBoolqEntailmentMapping
 #         generative_step_cfg:
-#           class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+#           class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
 #           init_args:
 #             enabled: True
 #             lm_generation_cfg:
@@ -87,12 +87,12 @@
 #       add_bos_token: true
 #   registered_cfg:
 #     datamodule_cls:
-#       class_path: it_examples.experiments.rte_boolq.RTEBoolqDataModule
+#       class_path: rte_boolq.RTEBoolqDataModule
 #     module_cls:
-#       class_path: it_examples.experiments.rte_boolq.RTEBoolqModule
+#       class_path: rte_boolq.RTEBoolqModule
 #     datamodule_cfg:
 #       prompt_cfg:
-#         class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+#         class_path: rte_boolq.RTEBoolqPromptConfig
 #       signature_columns: ['input', 'labels']
 #       text_fields: ["premise", "hypothesis"]
 #       enable_datasets_cache: True
@@ -106,9 +106,9 @@
 #           init_args:
 #             module_cfg_name: RTEBoolqConfig
 #             module_cfg_mixin:
-#               class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+#               class_path: rte_boolq.RTEBoolqEntailmentMapping
 #         generative_step_cfg:
-#           class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+#           class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
 #           init_args:
 #             enabled: True
 #             lm_generation_cfg:

@@ -21,7 +21,7 @@ from interpretune.protocol import ITModuleProtocol, STEP_OUTPUT
 from interpretune.config import ITDataModuleConfig, ITConfig
 from interpretune.utils import rank_zero_only, rank_zero_debug
 from interpretune import MemProfilerHooks
-from it_examples.experiments.rte_boolq import RTEBoolqDataModule, RTEBoolqModuleMixin, RTEBoolqSteps
+from tests.rte_component import RTEBoolqDataModule, RTEBoolqModuleMixin, RTEBoolqSteps, RTE_ENTRYPOINT_MODULE
 from tests import FinetuningScheduler
 from tests.base_defaults import default_test_task
 from tests.results import (
@@ -44,7 +44,7 @@ from tests.parity_acceptance.expected import memory_footprints
 class BaseTestDataModule:
     def __init__(self, itdm_cfg: ITDataModuleConfig, force_prepare_data: bool = False) -> None:
         with mock.patch.multiple(
-            "it_examples.experiments.rte_boolq",
+            RTE_ENTRYPOINT_MODULE,
             TASK_NUM_LABELS=TEST_TASK_NUM_LABELS,
             TASK_TEXT_FIELD_MAP=TEST_TASK_TEXT_FIELD_MAP,
         ):

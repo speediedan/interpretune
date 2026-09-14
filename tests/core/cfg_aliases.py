@@ -28,7 +28,7 @@ from interpretune.config import (
 )
 from interpretune.extensions import DebugLMConfig, MemProfilerCfg
 from interpretune.analysis import LatentAnalysisTargets, AnalysisOp
-from it_examples.experiments.rte_boolq import RTEBoolqEntailmentMapping
+from tests.rte_component import RTEBoolqEntailmentMapping
 from tests.base_defaults import BaseAugTest, BaseCfg, AnalysisBaseCfg
 from tests.parity_acceptance.cfg_aliases import parity_cli_cfgs, mod_initargs, CLI_TESTS
 from tests.parity_acceptance.test_it_tl import TLParityCfg

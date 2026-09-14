@@ -98,9 +98,8 @@ Use a manual `analysis_step` when:
 - you want to mix custom module logic with built-in ops
 - you need tighter control than the generated analysis-step path provides
 
-See the current example in:
-
-- `src/it_examples/experiments/rte_boolq.py`
+See the current example in the Hub-resident `speediedan/rte` component (the experiment moved
+out of the tree in #497; its entrypoint carries the module and datamodule definitions).
 
 ## Best Practices
 

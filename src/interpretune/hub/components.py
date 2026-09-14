@@ -178,16 +178,30 @@ def declared_component_payloads(manifest: dict) -> list[str]:
 
     ``pull_component_config`` fetches one configuration by key and op collections have their own cache and
     verb, so those are not listed. What IS listed is every payload a cache-only loader reads whole: the
-    adapters entrypoint (``load_hub_adapter``), the promptconfigs entrypoint (``import_cached_entrypoint``)
-    and the hookmaps documents (``load_hub_hookmaps``). A manifest-only pull of such a component used to
-    leave a snapshot those loaders could not complete, with an error blaming a partial download.
+    adapters entrypoint (``load_hub_adapter``), the promptconfigs entrypoint (``import_cached_entrypoint``),
+    the module and datamodule entrypoints (snapshot class resolution), the datamodule standalone configs
+    (``resolve_datamodule_config``), and the hookmaps documents (``load_hub_hookmaps``). A manifest-only pull
+    of such a component used to leave a snapshot those loaders could not complete, with an error blaming a
+    partial download.
     """
     rels: list[str] = []
     for section in ("adapters", "promptconfigs"):
         entrypoint = (manifest.get(section) or {}).get("entrypoint")
-        if entrypoint:
+        if entrypoint and entrypoint not in rels:
             rels.append(entrypoint)
-    rels.extend((manifest.get("hookmaps") or {}).get("files") or [])
+    module_section = manifest.get("module") or {}
+    if module_section.get("entrypoint") and module_section["entrypoint"] not in rels:
+        rels.append(module_section["entrypoint"])
+    for entry in (manifest.get("datamodules") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("entrypoint") and entry["entrypoint"] not in rels:
+            rels.append(entry["entrypoint"])
+        if entry.get("config") and entry["config"] not in rels:
+            rels.append(entry["config"])
+    for rel in (manifest.get("hookmaps") or {}).get("files") or []:
+        if rel not in rels:
+            rels.append(rel)
     return rels
 
 

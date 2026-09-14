@@ -34,14 +34,14 @@ rte.cust.core:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['tokens', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
       eval_batch_size: 2
     module_cfg:
-      class_path: it_examples.experiments.rte_boolq.RTEBoolqConfig
+      class_path: rte_boolq.RTEBoolqConfig
       init_args:
         model_cfg:
           device: cpu
@@ -49,7 +49,7 @@ rte.cust.core:
           model_args:
             max_seq_len: 200
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -86,17 +86,17 @@ rte.cust.transformer_lens:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
       eval_batch_size: 2
     module_cfg:
-      class_path: it_examples.experiments.rte_boolq.RTEBoolqTLConfig
+      class_path: rte_boolq.RTEBoolqTLConfig
       init_args:
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -145,17 +145,17 @@ rte.cust.sae_lens:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
       eval_batch_size: 2
     module_cfg:
-      class_path: it_examples.experiments.rte_boolq.RTEBoolqSLConfig
+      class_path: rte_boolq.RTEBoolqSLConfig
       init_args:
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -226,17 +226,17 @@ rte.gpt2.core:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
       eval_batch_size: 2
     module_cfg:
-      class_path: it_examples.experiments.rte_boolq.RTEBoolqConfig
+      class_path: rte_boolq.RTEBoolqConfig
       init_args:
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -281,7 +281,7 @@ rte.gpt2.transformer_lens:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
@@ -295,11 +295,11 @@ rte.gpt2.transformer_lens:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
             target_adapters: transformer_lens
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -347,7 +347,7 @@ rte.gpt2.sae_lens:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
@@ -361,10 +361,10 @@ rte.gpt2.sae_lens:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -420,7 +420,7 @@ rte.gpt2.nnsight:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
@@ -434,7 +434,7 @@ rte.gpt2.nnsight:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
             target_adapters: nnsight
         nnsight_cfg:
@@ -478,7 +478,7 @@ rte.gpt2.nnsight+sae_lens:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
@@ -493,11 +493,11 @@ rte.gpt2.nnsight+sae_lens:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
             target_adapters: nnsight
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -567,17 +567,17 @@ rte.gemma2.core:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig
+        class_path: rte_boolq.RTEBoolqChatTemplatePromptConfig
       signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
       eval_batch_size: 2
     module_cfg:
-      class_path: it_examples.experiments.rte_boolq.RTEBoolqConfig
+      class_path: rte_boolq.RTEBoolqConfig
       init_args:
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -618,17 +618,17 @@ rte.gemma2.sae_lens:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
       eval_batch_size: 2
     module_cfg:
-      class_path: it_examples.experiments.rte_boolq.RTEBoolqSLConfig
+      class_path: rte_boolq.RTEBoolqSLConfig
       init_args:
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -677,7 +677,7 @@ rte.gemma2.transformer_lens:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: False
@@ -691,10 +691,10 @@ rte.gemma2.transformer_lens:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -744,7 +744,7 @@ rte_base_test.gemma2.circuit_tracer:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: False
@@ -758,10 +758,10 @@ rte_base_test.gemma2.circuit_tracer:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -819,7 +819,7 @@ rte_base_test.gemma2.circuit_tracer+transformer_lens:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: False
@@ -833,10 +833,10 @@ rte_base_test.gemma2.circuit_tracer+transformer_lens:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -900,7 +900,7 @@ rte_base_test.gemma2.circuit_tracer+nnsight:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: False
@@ -914,10 +914,10 @@ rte_base_test.gemma2.circuit_tracer+nnsight:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -975,7 +975,7 @@ rte_base_test.gemma2.circuit_tracer+nnsight.remote:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: False
@@ -989,10 +989,10 @@ rte_base_test.gemma2.circuit_tracer+nnsight.remote:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -1055,17 +1055,17 @@ rte.gemma3.core:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqChatTemplatePromptConfig
+        class_path: rte_boolq.RTEBoolqChatTemplatePromptConfig
       signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: True
       train_batch_size: 2
       eval_batch_size: 2
     module_cfg:
-      class_path: it_examples.experiments.rte_boolq.RTEBoolqConfig
+      class_path: rte_boolq.RTEBoolqConfig
       init_args:
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -1110,7 +1110,7 @@ rte_base_test.gemma3.circuit_tracer+nnsight:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
       signature_columns: ['input', 'labels']
       text_fields: ["premise", "hypothesis"]
       enable_datasets_cache: False
@@ -1124,10 +1124,10 @@ rte_base_test.gemma3.circuit_tracer+nnsight:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -1192,7 +1192,7 @@ rte.llama3.core:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
         compose_ref: speediedan/prompt-configs#Llama3PromptConfig
       signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
@@ -1202,10 +1202,10 @@ rte.llama3.core:
       special_tokens_dict: {"pad_token": "<|finetune_right_pad_id|>"}
       cust_tokenization_pattern: llama3-chat
     module_cfg:
-      class_path: it_examples.experiments.rte_boolq.RTEBoolqConfig
+      class_path: rte_boolq.RTEBoolqConfig
       init_args:
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:
@@ -1263,7 +1263,7 @@ rte.llama3.transformer_lens:
   registered_cfg:
     datamodule_cfg:
       prompt_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+        class_path: rte_boolq.RTEBoolqPromptConfig
         compose_ref: speediedan/prompt-configs#Llama3PromptConfig
       signature_columns: ['input_ids', 'attention_mask', 'labels']
       text_fields: ["premise", "hypothesis"]
@@ -1280,10 +1280,10 @@ rte.llama3.transformer_lens:
           init_args:
             module_cfg_name: RTEBoolqConfig
             module_cfg_mixin:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+              class_path: rte_boolq.RTEBoolqEntailmentMapping
               import_only: True
         generative_step_cfg:
-          class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+          class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
           init_args:
             enabled: True
             lm_generation_cfg:

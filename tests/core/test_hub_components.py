@@ -16,9 +16,9 @@ from interpretune.hub.manifest import (
     validate_component_manifest,
 )
 from interpretune.hub.publish import build_component_tree
+from tests.rte_component import rte_entrypoint_src
 
 RTE_COMPONENT_DIR = Path(__file__).parent.parent.parent / "src" / "it_examples" / "examples" / "rte"
-RTE_ENTRYPOINT = RTE_COMPONENT_DIR.parent.parent / "experiments" / "rte_boolq.py"
 
 
 class TestComponentManifest:
@@ -112,7 +112,7 @@ class TestGeneratedCards:
     def test_every_publish_produces_a_card(self, tmp_path):
         """No publish path may produce a card-less repo — the card IS the discovery sentinel."""
         out = tmp_path / "build"
-        manifest = build_component_tree(RTE_COMPONENT_DIR, out, entrypoint_src=RTE_ENTRYPOINT)
+        manifest = build_component_tree(RTE_COMPONENT_DIR, out, entrypoint_src=rte_entrypoint_src())
         generate_component_card(manifest, "speediedan/rte").save(out / "README.md")
         assert (out / "README.md").exists()
         assert "library_name: interpretune" in (out / "README.md").read_text(encoding="utf-8")
@@ -123,7 +123,7 @@ class TestPublishTreeParity:
 
     def test_built_tree_mirrors_in_repo_tree(self, tmp_path):
         out = tmp_path / "build"
-        manifest = build_component_tree(RTE_COMPONENT_DIR, out, entrypoint_src=RTE_ENTRYPOINT)
+        manifest = build_component_tree(RTE_COMPONENT_DIR, out, entrypoint_src=rte_entrypoint_src())
 
         # every in-repo file is copied byte-identical
         for rel in ["it_component.yaml"] + sorted(manifest["module"]["configs"].values()):
@@ -144,7 +144,7 @@ class TestPublishTreeParity:
             drifted.read_text(encoding="utf-8").replace("model: gpt2", "model: gpt3000"), encoding="utf-8"
         )
         with pytest.raises(ValueError, match="parity violation"):
-            build_component_tree(src_copy, tmp_path / "build", entrypoint_src=RTE_ENTRYPOINT)
+            build_component_tree(src_copy, tmp_path / "build", entrypoint_src=rte_entrypoint_src())
 
     def test_missing_entrypoint_refused(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="entrypoint"):
@@ -180,7 +180,7 @@ class TestLocalPublishBridge:
         from interpretune.hub.components import local_publish, resolve_component_config
 
         cache = tmp_path / "components"
-        rev = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=RTE_ENTRYPOINT, cache_dir=cache)
+        rev = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
         assert rev.startswith("local") and len(rev) == 40
         key, body = resolve_component_config("speediedan/rte", "rte_demo.gemma2.circuit_tracer", cache_dir=cache)
         loaded = load_session_cfg(body, expected_key=key)
@@ -191,8 +191,8 @@ class TestLocalPublishBridge:
         from interpretune.hub.components import local_publish
 
         cache = tmp_path / "components"
-        rev1 = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=RTE_ENTRYPOINT, cache_dir=cache)
-        rev2 = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=RTE_ENTRYPOINT, cache_dir=cache)
+        rev1 = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
+        rev2 = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
         assert rev1 == rev2, "unchanged content must map to the same pseudo-revision"
         snapshots = tmp_path / "components" / "models--speediedan--rte" / "snapshots"
         assert len(list(snapshots.iterdir())) == 1
@@ -206,11 +206,19 @@ class TestLocalPublishBridge:
 
 @pytest.fixture()
 def seeded_cache(tmp_path):
-    """A components cache holding the in-tree rte seed, materialized via the local-publish bridge."""
+    """A components cache holding the seeds plus the rte component, materialized via bridges.
+
+    The experiment is Hub-resident now, so its half is a local publish of the in-tree component dir with the entrypoint
+    sourced from the warmed snapshot (mirroring the socket-blocked bridge test below): tmp-cache tests keep exercising
+    the current tree, cache-only.
+    """
+    from interpretune.hub.components import local_publish
     from it_examples.seeds import ensure_local_seeds
+    from tests.rte_component import rte_entrypoint_src
 
     cache = tmp_path / "components"
     ensure_local_seeds(cache_dir=cache)
+    local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
     return cache
 
 
@@ -268,7 +276,7 @@ class TestComponentRequires:
         assert patched != manifest_path.read_text(encoding="utf-8"), "requires patch did not apply"
         manifest_path.write_text(patched, encoding="utf-8")
         cache = tmp_path / "components"
-        local_publish(src_copy, "someorg/patched", entrypoint_src=RTE_ENTRYPOINT, cache_dir=cache)
+        local_publish(src_copy, "someorg/patched", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
         return cache
 
     @pytest.mark.parametrize(
@@ -316,7 +324,7 @@ class TestComponentRequires:
         assert patched != manifest_path.read_text(encoding="utf-8"), "requires mutation did not apply"
         manifest_path.write_text(patched, encoding="utf-8")
         cache = tmp_path / "components"
-        local_publish(src_copy, "someorg/patched", entrypoint_src=RTE_ENTRYPOINT, cache_dir=cache)
+        local_publish(src_copy, "someorg/patched", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
         with pytest.raises(ComponentRequirementError, match=match):
             resolve_component_config("someorg/patched", "rte_demo.gpt2.sae_lens", cache_dir=cache)
 

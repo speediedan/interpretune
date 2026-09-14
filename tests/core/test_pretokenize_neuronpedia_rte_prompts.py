@@ -64,12 +64,13 @@ def test_load_rte_pretokenization_settings_uses_gemma_prompt_config() -> None:
 
     assert settings.task_name == "rte"
     assert settings.text_fields == ("premise", "hypothesis")
-    # pin by REFERENCE, not string literal: the default must resolve to the intended class without
-    # this test becoming a hardcoded coordination point for future re-points
-    from it_examples.experiments.rte_boolq import RTEBoolqChatTemplatePromptConfig
+    # pin by DECLARATION, not string literal: the default must resolve to the Hub-resident
+    # class the payload names, without this test becoming a hardcoded coordination point. The
+    # resolved class object comes from the cached snapshot (revision-scoped module), so identity
+    # is asserted against the Hub-loaded class rather than a module path.
+    from tests.rte_component import RTEBoolqChatTemplatePromptConfig
 
-    expected_cls_path = f"{RTEBoolqChatTemplatePromptConfig.__module__}.{RTEBoolqChatTemplatePromptConfig.__qualname__}"
-    assert settings.prompt_config_class_path == expected_cls_path
+    assert settings.prompt_config_class_path == "rte_boolq.RTEBoolqChatTemplatePromptConfig"
     assert isinstance(settings.prompt_cfg, RTEBoolqChatTemplatePromptConfig)
     assert settings.prompt_cfg.ctx_question_join == "Does the previous passage imply that "
     assert settings.windowing_mode == "max-prompt-pad"
