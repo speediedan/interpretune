@@ -2106,6 +2106,7 @@ def compute_embed_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
             "concept_group_a": group_a_tokens,
             "concept_label": concept_label,
             "concept_direction_mode": cfg.analysis_direction_mode_name,
+            "concept_basis": "embed",
         }
         if group_b_tokens:
             analysis_kwargs["concept_group_b"] = group_b_tokens
@@ -2429,6 +2430,7 @@ def compute_store_direction_manual(cfg: NotebookHarnessConfig) -> dict[str, Any]
                     concept_direction_mode=cfg.analysis_direction_mode_name,
                     concept_group_a_name=cfg.concept_pair.group_a_name,
                     concept_group_b_name=cfg.concept_pair.group_b_name,
+                    concept_basis="store",
                 ),
                 NULL_BATCH,
                 0,
@@ -2675,6 +2677,7 @@ def execute_concept_latent_extraction_ops(
                     concept_group_b_name=cfg.concept_pair.group_b_name,
                     concept_label=cfg.concept_pair.concept_label,
                     concept_direction_mode=cfg.analysis_direction_mode_name,
+                    concept_basis="store",
                     concept_cache_key=cfg.store_concept_cache_key,
                     concept_correct_only=cfg.store_concept_correct_only,
                     concept_weight_by_logit_diff=cfg.store_weight_by_logit_diff,

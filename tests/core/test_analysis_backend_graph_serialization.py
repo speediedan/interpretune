@@ -190,7 +190,7 @@ def _rehydrate_graph(analysis_batch: AnalysisBatch) -> Graph:
 
 def test_concept_direction_impl_uses_embedding_difference() -> None:
     module = _FakeModule()
-    analysis_batch = AnalysisBatch(concept_group_a=["Paris"], concept_group_b=["London"])
+    analysis_batch = AnalysisBatch(concept_group_a=["Paris"], concept_group_b=["London"], concept_basis="embed")
 
     result = concept_direction_impl(module, analysis_batch, batch=None, batch_idx=0)
 
@@ -220,6 +220,7 @@ def test_concept_direction_impl_prefers_aggregate_row_fields() -> None:
         concept_direction_mode="mean_difference",
         concept_group_a_name="capital",
         concept_group_b_name="state",
+        concept_basis="store",
     )
 
     result = concept_direction_impl(module, analysis_batch, batch=None, batch_idx=0)

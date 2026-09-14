@@ -182,6 +182,12 @@ def concept_direction(
         concept_group_a (string)
         concept_group_b (string)
         concept_direction_mode (string)
+        concept_basis (string) (required)
+        jlens_layer (int64)
+        jlens_layer_percentile (float32)
+        jlens_lens_path (string)
+        jlens_model_id (string)
+        jlens_repo_id (string)
 
     Output Schema:
         concept_direction (float32)
@@ -191,6 +197,8 @@ def concept_direction(
         concept_group_a_name (string)
         concept_group_b_name (string)
         concept_direction_mode (string)
+        concept_basis (string) (required)
+        jlens_layer (int64)
     """
     ...
 

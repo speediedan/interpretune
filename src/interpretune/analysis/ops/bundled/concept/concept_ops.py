@@ -20,13 +20,16 @@ from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.backends.capabilities import ModelBackendCapability
 from interpretune.analysis.optools import (
     require_backend_capability,
+    jlens_direction_rows,
     last_token_logits,
     load_json_field,
     mean_target_logit_delta,
     require_model_backend,
     resolve_aggregate_input,
     resolve_embedding_weight,
+    resolve_jlens_layer,
     resolve_tokenizer,
+    resolve_unembed_and_norm_scale,
     token_strings_to_last_ids,
     weighted_mean,
 )
@@ -81,6 +84,14 @@ CONCEPT_AGGREGATE_ROW_FIELDS: tuple[str, ...] = (
     "concept_example_weight_rows",
     "concept_context_indices_rows",
 )
+
+#: Where a concept direction comes from. ``embed`` and ``store`` are the two pre-existing
+#: constructions; ``jlens_paper`` and ``jlens_norm_aware`` build through the read path and are two
+#: values rather than one with a fold flag, because a fold parameter would be accepted and ignored
+#: for ``embed`` and ``store``. There is deliberately no default: paper reproduction wants the
+#: unfolded basis while the readout direction wants the norm-aware one, so an absent basis is
+#: refused by name rather than resolved to either.
+CONCEPT_BASES: tuple[str, ...] = ("embed", "store", "jlens_paper", "jlens_norm_aware")
 
 
 def reset_concept_streaming_state(state: Any) -> None:
@@ -716,6 +727,7 @@ def _concept_direction_streaming(
     module,
     analysis_batch: AnalysisBatch,
     op_state,
+    basis: str,
 ) -> AnalysisBatch:
     """Streaming/incremental concept-direction accumulator.
 
@@ -790,6 +802,80 @@ def _concept_direction_streaming(
         concept_group_a_name=group_a_name,
         concept_group_b_name=group_b_name,
         concept_aggregate_output_mode="streaming",
+        concept_basis=basis,
+    )
+    return analysis_batch
+
+
+def _concept_direction_jlens(module: Any, analysis_batch: AnalysisBatch, kwargs: dict, basis: str) -> AnalysisBatch:
+    """Build the concept direction from J-lens direction rows at the resolved lens layer.
+
+    The same group combination the ``embed`` path applies (mean difference, paired rejection, single
+    group), but over per-token J-lens direction rows in the basis ``basis`` names rather than over
+    input-embedding rows. Reads through the shared read-path seam (``resolve_jlens_layer``,
+    ``jlens_direction_rows``), so there is one lens construction in the tree rather than two.
+    """
+    j, layer, _artifact = resolve_jlens_layer(module, analysis_batch, kwargs)
+    info = resolve_unembed_and_norm_scale(module)
+    apply_norm = basis == "jlens_norm_aware"
+    tokenizer = resolve_tokenizer(module)
+    raw_group_a = analysis_batch.get("concept_group_a")
+    raw_group_b = analysis_batch.get("concept_group_b")
+    group_a = list(raw_group_a or [])
+    group_b = list(raw_group_b or [])
+    direction_mode = str(analysis_batch.get("concept_direction_mode", "mean_difference"))
+    concept_label = analysis_batch.get("concept_label")
+    if not group_a:
+        raise ValueError("concept_direction with a jlens basis requires non-empty concept_group_a")
+
+    group_a_ids = token_strings_to_last_ids(tokenizer, group_a)
+    rows_a = jlens_direction_rows(info, group_a_ids, j, apply_norm=apply_norm).detach().cpu()
+    if group_b:
+        group_b_ids = token_strings_to_last_ids(tokenizer, group_b)
+        rows_b = jlens_direction_rows(info, group_b_ids, j, apply_norm=apply_norm).detach().cpu()
+    else:
+        group_b_ids = []
+        rows_b = None
+
+    if direction_mode == "mean_difference":
+        if rows_b is None:
+            raise ValueError("mean_difference requires non-empty concept_group_b")
+        direction_vector = rows_a.mean(dim=0) - rows_b.mean(dim=0)
+    elif direction_mode == "paired_rejection":
+        if rows_b is None:
+            raise ValueError("paired_rejection requires non-empty concept_group_b")
+        if len(group_a_ids) != len(group_b_ids):
+            raise ValueError("paired_rejection requires concept groups of equal length")
+        residuals = []
+        for row_a, row_b in zip(rows_a, rows_b):
+            denom = torch.dot(row_b, row_b).clamp_min(1e-12)
+            proj = (torch.dot(row_a, row_b) / denom) * row_b
+            residuals.append(row_a - proj)
+        direction_vector = torch.stack(residuals).mean(dim=0)
+    elif direction_mode == "single_group":
+        direction_vector = rows_a.mean(dim=0)
+    else:
+        raise ValueError(f"Unsupported concept_direction_mode: {direction_mode}")
+
+    direction_norm = torch.linalg.vector_norm(direction_vector)
+    if torch.isfinite(direction_norm) and direction_norm.item() > 0:
+        direction_vector = direction_vector / direction_norm
+
+    analysis_batch.update(
+        concept_direction=direction_vector.detach().cpu(),
+        concept_label=(
+            concept_label
+            or (
+                " / ".join(group_a)
+                if direction_mode == "single_group"
+                else f"{' / '.join(group_a)} -> {' / '.join(group_b)}"
+            )
+        ),
+        concept_group_a_token_ids=group_a_ids,
+        concept_group_b_token_ids=group_b_ids,
+        concept_direction_mode=direction_mode,
+        concept_basis=basis,
+        jlens_layer=layer,
     )
     return analysis_batch
 
@@ -801,9 +887,16 @@ def concept_direction_impl(
     batch_idx: int,
     **kwargs,
 ) -> AnalysisBatch:
-    """Compute a concept direction from latent-example rows, or fall back to token-group embeddings.
+    """Compute a concept direction in the basis ``concept_basis`` names.
 
-    Aggregation modes (selected via ``concept_aggregate_output_mode`` on the batch):
+    ``concept_basis`` is required and has no default: ``embed`` builds from token-group embedding
+    rows, ``store`` aggregates latent-example rows (streaming or in-memory), and ``jlens_paper`` /
+    ``jlens_norm_aware`` build per-token J-lens direction rows through the read path. An absent or
+    unknown basis is refused by name, and a basis whose inputs are not on the batch is refused
+    naming what is missing: the previous silent fallback from missing store rows to embeddings is
+    removed, because it returned a plausible direction for a basis nobody asked for.
+
+    Aggregation modes (selected via ``concept_aggregate_output_mode`` on the batch, ``store`` only):
 
     * ``"streaming"``: maintain per-group running weighted state sums and weight totals in this op's
       declared ``op_state`` (``concept_running_state_sum_a``, ``concept_running_weight_a``,
@@ -823,9 +916,21 @@ def concept_direction_impl(
 
     If ``concept_aggregate_output_mode`` is not set, behavior is determined by what is on the
     batch: aggregate row fields trigger the legacy path; per-batch fields with a bound op-state
-    container trigger streaming. If neither is available, fall back to a token-group embedding
-    direction computed from the model's input embedding matrix.
+    container trigger streaming. ``embed`` reads a token-group embedding direction from the model's
+    input embedding matrix; the ``jlens_*`` bases read per-token J-lens direction rows at the
+    resolved lens layer.
     """
+    basis = kwargs.get("concept_basis", analysis_batch.get("concept_basis"))
+    if basis is None:
+        raise ValueError(
+            "concept_direction requires `concept_basis` naming where the concept vector comes from: "
+            f"{list(CONCEPT_BASES)}. There is no default: paper reproduction wants the unfolded basis "
+            "while the readout direction wants the norm-aware one."
+        )
+    if basis not in CONCEPT_BASES:
+        raise ValueError(f"concept_basis {basis!r} is not a basis: expected one of {list(CONCEPT_BASES)}.")
+    if basis in ("jlens_paper", "jlens_norm_aware"):
+        return _concept_direction_jlens(module, analysis_batch, kwargs, basis)
     aggregate_mode = analysis_batch.get("concept_aggregate_output_mode")
     analysis_inputs = kwargs.get("analysis_inputs")
     op_state = getattr(analysis_inputs, "op_state", None) if analysis_inputs is not None else None
@@ -838,6 +943,12 @@ def concept_direction_impl(
         use_streaming = (not legacy_rows_present) and per_batch_state_present and op_state is not None
 
     if use_streaming:
+        if basis != "store":
+            raise ValueError(
+                f"concept_direction streaming accumulates latent-example rows, which is the `store` "
+                f"basis, not {basis!r}. Pass concept_basis='store' for streaming, or run without "
+                "per-batch latent state."
+            )
         if op_state is None:
             # Previously this reached the accumulators with store=None, where the writes were
             # swallowed by `except Exception: pass` and the failure surfaced several frames later as
@@ -848,14 +959,14 @@ def concept_direction_impl(
                 "interpretune.analysis.execution.execute_analysis_op) so the state container has a "
                 "lifecycle owner."
             )
-        return _concept_direction_streaming(module, analysis_batch, op_state)
+        return _concept_direction_streaming(module, analysis_batch, op_state, basis)
 
     latent_state_rows = resolve_aggregate_input(module, analysis_batch, "concept_latent_state_rows")
     group_id_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_id_rows")
     if latent_state_rows is None or group_id_rows is None:
         latent_state_rows = resolve_aggregate_input(module, analysis_batch, "concept_latent_state")
         group_id_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_id")
-    if latent_state_rows is not None and group_id_rows is not None:
+    if basis == "store" and latent_state_rows is not None and group_id_rows is not None:
         direction_mode = str(analysis_batch.get("concept_direction_mode", "mean_difference"))
         concept_label = analysis_batch.get("concept_label")
         group_name_rows = resolve_aggregate_input(module, analysis_batch, "concept_group_name_rows")
@@ -933,8 +1044,17 @@ def concept_direction_impl(
             concept_direction_mode=direction_mode,
             concept_group_a_name=group_a_name,
             concept_group_b_name=group_b_name,
+            concept_basis=basis,
         )
         return analysis_batch
+
+    if basis == "store":
+        raise ValueError(
+            "concept_basis='store' but the batch carries no latent-example rows and no per-batch "
+            "latent state with a bound op-state container. The previous silent fallback to token "
+            "embeddings is removed: it returned a plausible direction for a basis nobody asked for. "
+            "Pass concept_basis='embed' for an embedding direction, or supply the rows."
+        )
 
     tokenizer = resolve_tokenizer(module)
     embed_weight = resolve_embedding_weight(module)
@@ -993,6 +1113,7 @@ def concept_direction_impl(
         concept_group_a_token_ids=group_a_ids,
         concept_group_b_token_ids=group_b_ids,
         concept_direction_mode=direction_mode,
+        concept_basis=basis,
     )
     return analysis_batch
 

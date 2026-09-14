@@ -600,6 +600,35 @@ def jlens_layer_for_percentile(artifact: JLensArtifact, percentile: float) -> in
     return layers[round(percentile * (len(layers) - 1))]
 
 
+def resolve_jlens_layer(
+    module: Any, analysis_batch: Any, kwargs: dict, *, default_percentile: float = 0.85
+) -> tuple[torch.Tensor, int, JLensArtifact]:
+    """The ``J`` matrix and the fitted layer a call reads at, plus the artifact for provenance.
+
+    One construction for every op that reads a lens, so the layer rule cannot drift between them: an
+    explicit ``jlens_layer`` wins, otherwise ``jlens_layer_percentile`` selects into the fitted set,
+    and a layer outside the fitted set is refused rather than interpolated.
+    """
+    artifact = resolve_jlens(
+        module,
+        repo_id=kwargs.get("jlens_repo_id") or analysis_batch.get("jlens_repo_id") or DEFAULT_JLENS_REPO,
+        model_id=kwargs.get("jlens_model_id") or analysis_batch.get("jlens_model_id"),
+        path=kwargs.get("jlens_lens_path") or analysis_batch.get("jlens_lens_path"),
+    )
+    layer = kwargs.get("jlens_layer", analysis_batch.get("jlens_layer"))
+    if layer is None:
+        percentile = kwargs.get("jlens_layer_percentile", analysis_batch.get("jlens_layer_percentile"))
+        layer = jlens_layer_for_percentile(artifact, default_percentile if percentile is None else float(percentile))
+    layer = int(layer)
+    if layer not in artifact.j_by_layer:
+        raise ValueError(
+            f"the lens at {artifact.repo_id}:{artifact.path} was fit at layers {artifact.source_layers}, "
+            f"which does not include {layer}. Interpolating between fitted layers is not the same lens, "
+            "so it is refused rather than approximated."
+        )
+    return artifact.j_by_layer[layer].float(), layer, artifact
+
+
 def fold_norm_into_unembed_rows(info: UnembedNormInfo, token_ids: Any, *, apply_norm: bool) -> torch.Tensor:
     """Readout-faithful unembed rows for ``token_ids``, with the final norm folded in per kind.
 
@@ -817,6 +846,7 @@ __all__ = [
     "decode_token_ids",
     "extract_logits",
     "resolve_jlens",
+    "resolve_jlens_layer",
     "jlens_layer_for_percentile",
     "JLensArtifact",
     "DEFAULT_JLENS_REPO",

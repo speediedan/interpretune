@@ -28,8 +28,7 @@ from interpretune.analysis.optools import (
     UnembedNormInfo,
     jlens_basis_name,
     jlens_direction_rows,
-    jlens_layer_for_percentile,
-    resolve_jlens,
+    resolve_jlens_layer,
     resolve_tokenizer,
     resolve_unembed_and_norm_scale,
 )
@@ -39,26 +38,7 @@ DEFAULT_LAYER_PERCENTILE = 0.85
 
 def _resolve_lens_layer(module: Any, analysis_batch: AnalysisBatch, kwargs: dict) -> tuple[torch.Tensor, int, Any]:
     """The ``J`` matrix and the fitted layer this call reads at, plus the artifact for provenance."""
-    artifact = resolve_jlens(
-        module,
-        repo_id=kwargs.get("jlens_repo_id") or analysis_batch.get("jlens_repo_id") or "neuronpedia/jacobian-lens",
-        model_id=kwargs.get("jlens_model_id") or analysis_batch.get("jlens_model_id"),
-        path=kwargs.get("jlens_lens_path") or analysis_batch.get("jlens_lens_path"),
-    )
-    layer = kwargs.get("jlens_layer", analysis_batch.get("jlens_layer"))
-    if layer is None:
-        percentile = kwargs.get("jlens_layer_percentile", analysis_batch.get("jlens_layer_percentile"))
-        layer = jlens_layer_for_percentile(
-            artifact, DEFAULT_LAYER_PERCENTILE if percentile is None else float(percentile)
-        )
-    layer = int(layer)
-    if layer not in artifact.j_by_layer:
-        raise ValueError(
-            f"the lens at {artifact.repo_id}:{artifact.path} was fit at layers {artifact.source_layers}, "
-            f"which does not include {layer}. Interpolating between fitted layers is not the same lens, "
-            "so it is refused rather than approximated."
-        )
-    return artifact.j_by_layer[layer].float(), layer, artifact
+    return resolve_jlens_layer(module, analysis_batch, kwargs, default_percentile=DEFAULT_LAYER_PERCENTILE)
 
 
 def _readout_device(info: UnembedNormInfo) -> torch.device:

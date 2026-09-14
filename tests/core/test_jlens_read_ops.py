@@ -12,6 +12,7 @@ import torch
 
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.bundled.jlens import jlens_ops
+from interpretune.analysis import optools
 from interpretune.analysis.optools import JLensArtifact
 from tests.runif import RunIf
 
@@ -88,7 +89,7 @@ def synthetic_lens(monkeypatch):
             provenance={"results": {"prompts_fitted": 277}},
         )
 
-    monkeypatch.setattr(jlens_ops, "resolve_jlens", _resolve)
+    monkeypatch.setattr(optools, "resolve_jlens", _resolve)
 
 
 def _batch(activations):
@@ -284,14 +285,14 @@ class TestCrossBackendReadoutAgreement:
                 provenance={},
             )
             batch = AnalysisBatch(cache={"blocks.6.hook_in": activations})
-            original = jlens_ops.resolve_jlens
-            jlens_ops.resolve_jlens = lambda m, **k: artifact
+            original = optools.resolve_jlens
+            optools.resolve_jlens = lambda m, **k: artifact
             try:
                 return jlens_ops.jlens_read_impl(
                     module, batch, None, 0, jlens_layer=6, jlens_cache_key="blocks.6.hook_in", jlens_top_k=20
                 )
             finally:
-                jlens_ops.resolve_jlens = original
+                optools.resolve_jlens = original
 
         tl_out, hf_out = _read(tl_module), _read(hf_module)
         torch.testing.assert_close(tl_out["jlens_top_token_ids"], hf_out["jlens_top_token_ids"])
@@ -332,7 +333,7 @@ class TestRealLensSmoke:
         assert artifact.d_model == model.config.n_embd
         assert artifact.provenance.get("results", {}).get("prompts_fitted", 0) > 0
 
-        layer = jlens_ops.jlens_layer_for_percentile(artifact, 0.85)
+        layer = optools.jlens_layer_for_percentile(artifact, 0.85)
         activations = torch.randn(1, 4, artifact.d_model)
         out = jlens_ops.jlens_read_impl(
             module,

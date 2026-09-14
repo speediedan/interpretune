@@ -358,7 +358,7 @@ def test_concept_direction_supports_non_ct_native_modules(module_factory, expect
 
     result = it.concept_direction(
         module,
-        AnalysisBatch(concept_group_a=["Paris"], concept_group_b=["London"]),
+        AnalysisBatch(concept_group_a=["Paris"], concept_group_b=["London"], concept_basis="embed"),
         batch=None,
         batch_idx=0,
     )
@@ -384,7 +384,7 @@ def test_concept_direction_public_op_uses_schema_default_mode(module_factory) ->
 
     result = it.concept_direction(
         module,
-        AnalysisBatch(concept_group_a=["Paris"], concept_group_b=["London"]),
+        AnalysisBatch(concept_group_a=["Paris"], concept_group_b=["London"], concept_basis="embed"),
         batch=None,
         batch_idx=0,
     )
@@ -404,7 +404,7 @@ def test_concept_direction_single_group_embed_supports_group_a_only(module_facto
 
     result = it.concept_direction(
         module,
-        AnalysisBatch(concept_group_a=["Paris"], concept_direction_mode="single_group"),
+        AnalysisBatch(concept_group_a=["Paris"], concept_direction_mode="single_group", concept_basis="embed"),
         batch=None,
         batch_idx=0,
     )
@@ -598,6 +598,7 @@ def test_concept_direction_accepts_per_example_rows_without_manual_stacking() ->
             concept_group_id=[batch.concept_group_id for batch in extracted_batches],
             concept_group_name=[batch.concept_group_name for batch in extracted_batches],
             concept_example_weight=[batch.concept_example_weight for batch in extracted_batches],
+            concept_basis="store",
             concept_direction_mode="mean_difference",
             concept_group_a_name="ohio_entities",
             concept_group_b_name="indiana_entities",
@@ -652,7 +653,7 @@ def test_concept_direction_aggregates_round_tripped_synthetic_hf_dataset(tmp_pat
 
     result = it.concept_direction(
         producer,
-        AnalysisBatch(concept_direction_mode="mean_difference"),
+        AnalysisBatch(concept_direction_mode="mean_difference", concept_basis="store"),
         batch=None,
         batch_idx=0,
     )
@@ -760,7 +761,7 @@ def test_concept_direction_runner_store_workflow_aggregates_latent_examples(tmp_
     previous_cfg = module.analysis_cfg
     result = execute_analysis_op(
         module,
-        analysis_batch=AnalysisBatch(concept_direction_mode="mean_difference"),
+        analysis_batch=AnalysisBatch(concept_direction_mode="mean_difference", concept_basis="store"),
         analysis_cfg=aggregate_cfg,
     )
     assert module.analysis_cfg is previous_cfg
@@ -809,6 +810,7 @@ def test_extract_concept_latent_examples_final_batch_is_directly_consumable(tmp_
                     concept_cache_key="unembed.hook_in.hook_sae_acts_post",
                     concept_weight_by_logit_diff=True,
                     concept_aggregate_output_mode="in_memory",
+                    concept_basis="store",
                 ),
                 analysis_cfg=analysis_cfg,
                 analysis_inputs=AnalysisInputs(store=extraction_inputs),
@@ -871,6 +873,7 @@ def _run_chained_concept_direction_for_aggregate_mode(
                     concept_cache_key="unembed.hook_in.hook_sae_acts_post",
                     concept_weight_by_logit_diff=True,
                     concept_aggregate_output_mode=aggregate_mode,
+                    concept_basis="store",
                 ),
                 analysis_cfg=analysis_cfg,
                 analysis_inputs=AnalysisInputs(store=shared_store),
@@ -1128,7 +1131,7 @@ def test_concept_direction_ignores_empty_store_rows(tmp_path) -> None:
 
     result = execute_analysis_op(
         module,
-        analysis_batch=AnalysisBatch(concept_direction_mode="mean_difference"),
+        analysis_batch=AnalysisBatch(concept_direction_mode="mean_difference", concept_basis="store"),
         analysis_cfg=aggregate_cfg,
     )
 
@@ -1143,7 +1146,7 @@ def test_transformerlens_store_round_trip_can_feed_ct_attribution_op(tmp_path) -
     producer = _TLLikeProducerModule()
     produced = it.concept_direction(
         producer,
-        AnalysisBatch(concept_group_a=["Paris"], concept_group_b=["London"]),
+        AnalysisBatch(concept_group_a=["Paris"], concept_group_b=["London"], concept_basis="embed"),
         batch=None,
         batch_idx=0,
     )
@@ -1157,6 +1160,7 @@ def test_transformerlens_store_round_trip_can_feed_ct_attribution_op(tmp_path) -
                 "concept_group_a_token_ids": [produced.concept_group_a_token_ids],
                 "concept_group_b_token_ids": [produced.concept_group_b_token_ids],
                 "concept_direction_mode": [produced.concept_direction_mode],
+                "concept_basis": [produced.concept_basis],
             }
         ),
     )
@@ -1197,7 +1201,7 @@ def test_concept_direction_prefers_run_scoped_inputs_over_row_store_values(tmp_p
     module.analysis_cfg = SimpleNamespace(
         input_store=input_store,
         batch_inputs={},
-        run_inputs={"concept_group_a": ["Paris"], "concept_group_b": ["London"]},
+        run_inputs={"concept_group_a": ["Paris"], "concept_group_b": ["London"], "concept_basis": "embed"},
     )
 
     result = it.concept_direction(module, AnalysisBatch(), batch=None, batch_idx=1)
@@ -1253,8 +1257,8 @@ def test_concept_direction_multi_batch_accumulation(tmp_path, module_factory) ->
     """Multiple dataloader batches produce per-batch direction rows that can be averaged."""
     module = module_factory()
     concept_batches = [
-        {"concept_group_a": ["Paris"], "concept_group_b": ["London"]},
-        {"concept_group_a": ["Dallas"], "concept_group_b": ["Austin"]},
+        {"concept_group_a": ["Paris"], "concept_group_b": ["London"], "concept_basis": "embed"},
+        {"concept_group_a": ["Dallas"], "concept_group_b": ["Austin"], "concept_basis": "embed"},
     ]
     directions = []
     rows: dict[str, list] = {
@@ -1385,6 +1389,7 @@ def test_concept_direction_store_vs_embed_algebraic_equivalence(tmp_path) -> Non
             concept_group_a=capitals,
             concept_group_b=states,
             concept_direction_mode="paired_rejection",
+            concept_basis="embed",
         ),
         batch=None,
         batch_idx=0,
@@ -1413,7 +1418,7 @@ def test_concept_direction_store_vs_embed_algebraic_equivalence(tmp_path) -> Non
     module_store = _EmbedStoreEquivalenceModule(embed_weight, input_store=concept_store)
     store_result = it.concept_direction(
         module_store,
-        AnalysisBatch(concept_direction_mode="paired_rejection"),
+        AnalysisBatch(concept_direction_mode="paired_rejection", concept_basis="store"),
         batch=None,
         batch_idx=0,
     )
@@ -1491,7 +1496,7 @@ def test_concept_direction_store_path_quality_with_distinct_latent_space(tmp_pat
     module = _EmbedStoreEquivalenceModule(embed_weight, input_store=concept_store)
     result = it.concept_direction(
         module,
-        AnalysisBatch(concept_direction_mode="paired_rejection"),
+        AnalysisBatch(concept_direction_mode="paired_rejection", concept_basis="store"),
         batch=None,
         batch_idx=0,
     )
@@ -1539,7 +1544,7 @@ def test_concept_direction_single_group_store_supports_group_a_only(tmp_path) ->
 
     result = it.concept_direction(
         module,
-        AnalysisBatch(concept_direction_mode="single_group", concept_group_a_name="ohio_city"),
+        AnalysisBatch(concept_direction_mode="single_group", concept_group_a_name="ohio_city", concept_basis="store"),
         batch=None,
         batch_idx=0,
     )
@@ -1577,7 +1582,7 @@ def test_concept_direction_paired_rejection_separates_overlapping_groups(tmp_pat
     module = _EmbedStoreEquivalenceModule(embed_weight, input_store=concept_store)
     result = it.concept_direction(
         module,
-        AnalysisBatch(concept_direction_mode="paired_rejection"),
+        AnalysisBatch(concept_direction_mode="paired_rejection", concept_basis="store"),
         batch=None,
         batch_idx=0,
     )
@@ -1611,6 +1616,7 @@ def test_concept_direction_contextual_store_diverges_from_embed(tmp_path) -> Non
             concept_group_a=capitals,
             concept_group_b=states,
             concept_direction_mode="paired_rejection",
+            concept_basis="embed",
         ),
         batch=None,
         batch_idx=0,
@@ -1655,7 +1661,7 @@ def test_concept_direction_contextual_store_diverges_from_embed(tmp_path) -> Non
     module_store = _EmbedStoreEquivalenceModule(embed_weight, input_store=concept_store)
     store_result = it.concept_direction(
         module_store,
-        AnalysisBatch(concept_direction_mode="paired_rejection"),
+        AnalysisBatch(concept_direction_mode="paired_rejection", concept_basis="store"),
         batch=None,
         batch_idx=0,
     )
