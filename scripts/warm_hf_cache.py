@@ -116,28 +116,31 @@ def warm_datasets(entries: list[dict[str, Any]], dry_run: bool) -> None:
 def warm_components(entries: list[dict[str, Any]], dry_run: bool) -> None:
     """Pull Hub-resident experiment components into the components cache (offline tests resolve them).
 
-    A key-less pull materializes the manifest plus every payload cache-only loaders read whole
-    (entrypoints, datamodule configs); per-key pulls add the named module configurations. All
-    pinned to ``revision`` so the warmed snapshot is single-revision coherent.
+    Fetch-only: manifest, wholesale payloads (entrypoints, datamodule configs), and every module
+    configuration file, all pinned to ``revision``. Nothing hydrates here — hydrating would execute
+    component entrypoints behind the trust gate, and the warm step runs untrusted by design, so a
+    fetch verb that instantiates classes would fail the warm before any test runs.
     """
     for entry in entries:
         repo_id = entry["repo_id"]
         revision = entry.get("revision")
-        keys = entry.get("keys") or []
-        print(f"component {repo_id} (revision={revision or 'main'}, keys={keys or 'manifest+payloads'})")
+        keys = entry.get("keys")
+        print(f"component {repo_id} (revision={revision or 'main'}, keys={keys or 'all module configs'})")
         if dry_run:
             continue
 
         def _pull() -> None:
-            import interpretune as it
+            from interpretune.hub.components import (
+                pull_component_config,
+                pull_component_manifest,
+                pull_component_payloads,
+            )
 
-            manifest, _ = it.hub.pull(repo_id, revision=revision)
-            if keys:
-                wanted = list(keys)
-            else:
-                wanted = sorted(((manifest.get("module") or {}).get("configs") or {}))
+            manifest, commit = pull_component_manifest(repo_id, revision=revision)
+            pull_component_payloads(repo_id, manifest, commit)
+            wanted = list(keys) if keys else sorted(((manifest.get("module") or {}).get("configs") or {}))
             for key in wanted:
-                it.hub.pull(repo_id, key, revision=revision)
+                pull_component_config(repo_id, key, revision=revision)
 
         _retry(repo_id, _pull)
 
