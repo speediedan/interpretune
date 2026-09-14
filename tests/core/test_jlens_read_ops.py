@@ -30,10 +30,32 @@ class _Norm(torch.nn.Module):  # class name drives kind detection
         self.weight = torch.nn.Parameter(scale)
 
 
-class _RMSNorm(_Norm): ...
+class _RMSNorm(_Norm):
+    """Applies `weight` directly, and must actually DO it.
+
+    A weight-only stub was sufficient while the seam read the scale from a per-family table: nothing
+    ever called the module. The seam now reads the scale by evaluating the module on a constant vector,
+    so a double that carries a parameter and no behaviour no longer stands in for a norm. That is the
+    mechanism working rather than a test needing repair -- the whole point is that the applied scale,
+    not the stored parameter, is what gets read.
+    """
+
+    def forward(self, x):
+        x = x.float()
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-6) * self.weight
 
 
-class _LayerNorm(_Norm): ...
+class _LayerNorm(_Norm):
+    """Centers, so the probe does not apply and the declared path handles it.
+
+    See `_RMSNorm`.
+    """
+
+    def forward(self, x):
+        x = x.float()
+        return (
+            (x - x.mean(-1, keepdim=True)) * torch.rsqrt(x.var(-1, keepdim=True, unbiased=False) + 1e-6) * self.weight
+        )
 
 
 def _module(norm_cls=_RMSNorm, scale=None, model_type="llama"):

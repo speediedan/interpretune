@@ -144,70 +144,89 @@ class TestRMSNormOffsetIsPerFamilyNotPerPrefix:
     """The gemma line splits on whether its RMSNorm applies `(1 + weight)` or `weight`.
 
     A prefix test was correct for every family that existed when it was written and silently wrong for
-    `gemma3n` and the whole `gemma4` line. The cases below that assert `weight` for a `gemma*` family are
-    the ones that fail against a prefix rule, so they are what keeps the fix from being reverted by a
-    reasonable-looking simplification.
+    `gemma3n` and the whole `gemma4` line. That split is still real and is why the scale is now READ from
+    the norm module rather than declared from a table: a table has to be right about every family that
+    exists and every family that will exist, and being wrong about one is invisible in the output.
+
+    These cases therefore assert the same facts as before against the new mechanism. The ones asserting
+    `weight` for a `gemma*` family remain the regression: they fail against a prefix rule, and they now
+    also fail against any reintroduced table that gets an entry wrong.
     """
 
     WEIGHT = 0.5
+    OFFSET_FAMILIES = [("gemma", "Gemma"), ("gemma2", "Gemma2"), ("gemma3", "Gemma3")]
+    PLAIN_GEMMA_FAMILIES = [("gemma3n", "Gemma3n"), ("gemma4", "Gemma4")]
+    OUTSIDE_FAMILIES = [("llama", "Llama"), ("qwen3", "Qwen3"), ("mistral", "Mistral")]
 
-    @pytest.mark.parametrize("model_type", ["gemma", "gemma2", "gemma3", "gemma3_text"])
-    def test_families_that_apply_the_offset(self, model_type):
-        scale = _rmsnorm_scale(torch.full((D,), self.WEIGHT), model_type)
-        torch.testing.assert_close(scale, torch.full((D,), 1.0 + self.WEIGHT))
+    def _norm(self, model_type: str, prefix: str):
+        module = pytest.importorskip(f"transformers.models.{model_type}.modeling_{model_type}")
+        cls = getattr(module, f"{prefix}RMSNorm", None)
+        if cls is None:
+            pytest.skip(f"{prefix}RMSNorm absent from this transformers build")
+        norm = cls(D)
+        with torch.no_grad():
+            norm.weight.data = torch.full((D,), self.WEIGHT).to(norm.weight.dtype)
+        return norm
 
-    @pytest.mark.parametrize(
-        "model_type",
-        ["gemma3n", "gemma3n_text", "gemma4", "gemma4_text", "gemma4_unified", "gemma4_unified_assistant"],
-    )
-    def test_gemma_families_that_do_NOT_apply_the_offset(self, model_type):
+    @pytest.mark.parametrize("model_type, prefix", OFFSET_FAMILIES)
+    def test_families_that_apply_the_offset(self, model_type, prefix):
+        norm = self._norm(model_type, prefix)
+        torch.testing.assert_close(_rmsnorm_scale(norm, norm.weight).float(), torch.full((D,), 1.0 + self.WEIGHT))
+
+    @pytest.mark.parametrize("model_type, prefix", PLAIN_GEMMA_FAMILIES)
+    def test_gemma_families_that_do_NOT_apply_the_offset(self, model_type, prefix):
         """These are the cases a `startswith("gemma")` rule gets wrong, so they are the regression."""
-        scale = _rmsnorm_scale(torch.full((D,), self.WEIGHT), model_type)
-        torch.testing.assert_close(scale, torch.full((D,), self.WEIGHT))
+        norm = self._norm(model_type, prefix)
+        torch.testing.assert_close(_rmsnorm_scale(norm, norm.weight).float(), torch.full((D,), self.WEIGHT))
 
-    @pytest.mark.parametrize("model_type", ["llama", "qwen3", "mistral", ""])
-    def test_families_outside_the_gemma_namespace_apply_weight_directly(self, model_type):
-        scale = _rmsnorm_scale(torch.full((D,), self.WEIGHT), model_type)
-        torch.testing.assert_close(scale, torch.full((D,), self.WEIGHT))
+    @pytest.mark.parametrize("model_type, prefix", OUTSIDE_FAMILIES)
+    def test_families_outside_the_gemma_namespace_apply_weight_directly(self, model_type, prefix):
+        norm = self._norm(model_type, prefix)
+        torch.testing.assert_close(_rmsnorm_scale(norm, norm.weight).float(), torch.full((D,), self.WEIGHT))
 
-    def test_an_unrecognized_gemma_family_warns_rather_than_guessing_silently(self):
-        """Both guesses are wrong for some member of this namespace and neither is visible in the output.
+    def test_a_family_no_table_could_know_about_needs_no_special_case(self):
+        """Replaces a test that asserted a WARNING for an unrecognized gemma family.
 
-        The value still has to be something, so it assumes `weight`; the point is that the assumption is
-        announced rather than made silently.
+        That warning existed because a table had to guess and the guess was wrong for some member of the namespace.
+        Reading the scale from the module removes the guess, so there is nothing to announce: a family nobody has heard
+        of is handled exactly like one everybody has.
         """
-        with pytest.warns(UserWarning, match="unrecognized gemma-family model_type"):
-            scale = _rmsnorm_scale(torch.full((D,), self.WEIGHT), "gemma5_hypothetical")
-        torch.testing.assert_close(scale, torch.full((D,), self.WEIGHT))
-
-    def test_a_recognized_family_does_not_warn(self):
-        """The positive control: if everything warned, the warning above would carry no information."""
         import warnings
 
-        for model_type in ("gemma3", "gemma4", "llama"):
-            with warnings.catch_warnings():
-                warnings.simplefilter("error")
-                _rmsnorm_scale(torch.full((D,), self.WEIGHT), model_type)
+        class FutureRMSNorm(torch.nn.Module):
+            """A plausible later variant applying `(1 + weight)` under a name no table carries."""
 
-    def test_the_offset_decision_reaches_the_resolved_seam(self):
-        """End to end through `resolve_unembed_and_norm_scale`, not just the helper."""
-        from transformers.models.gemma3.modeling_gemma3 import Gemma3RMSNorm
+            def __init__(self):
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.full((D,), TestRMSNormOffsetIsPerFamilyNotPerPrefix.WEIGHT))
+                self.eps = 1e-6
 
-        norm = Gemma3RMSNorm(D)
-        norm.weight.data = torch.full((D,), self.WEIGHT)
-        offset = resolve_unembed_and_norm_scale(_hf_module("gemma3", norm))
-        plain = resolve_unembed_and_norm_scale(_hf_module("gemma4", norm))
-        torch.testing.assert_close(offset.norm_scale, torch.full((D,), 1.0 + self.WEIGHT))
-        torch.testing.assert_close(plain.norm_scale, torch.full((D,), self.WEIGHT))
-        assert offset.norm_kind == plain.norm_kind == "rmsnorm"
+            def forward(self, x):
+                x = x.float()
+                return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps) * (1.0 + self.weight)
 
-    def test_a_gemma_family_with_no_rmsnorm_neither_warns_nor_reaches_for_one(self):
-        """Two gemma families ship no RMSNorm class at all, so the seam must not fire on their name.
+        norm = FutureRMSNorm()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            scale = _rmsnorm_scale(norm, norm.weight)
+        torch.testing.assert_close(scale.float(), torch.full((D,), 1.0 + self.WEIGHT))
 
-        The unrecognized-family warning keys on the family name, which makes it tempting to check the name first. It is
-        deliberately reachable only from inside the rmsnorm branch, so a gemma-family model whose final norm is absent
-        or of another kind passes through silently.
+    def test_the_scale_follows_the_MODULE_and_not_the_declared_family(self):
+        """The strongest form of this class's claim, and it was not expressible against a table.
+
+        One module, resolved under two different `model_type` names. A table answers from the name and
+        would give two different scales; reading the module gives the same one both times, because the
+        name was never the thing that decided it.
         """
+        norm = self._norm("gemma3", "Gemma3")
+        as_gemma3 = resolve_unembed_and_norm_scale(_hf_module("gemma3", norm))
+        as_gemma4 = resolve_unembed_and_norm_scale(_hf_module("gemma4", norm))
+        torch.testing.assert_close(as_gemma3.norm_scale, as_gemma4.norm_scale)
+        torch.testing.assert_close(as_gemma3.norm_scale.float(), torch.full((D,), 1.0 + self.WEIGHT))
+        assert as_gemma3.norm_kind == as_gemma4.norm_kind == "rmsnorm"
+
+    def test_a_gemma_family_with_no_rmsnorm_does_not_reach_for_one(self):
+        """A gemma-family model whose final norm is absent or of another kind passes through silently."""
         import warnings
 
         with warnings.catch_warnings():
@@ -216,7 +235,11 @@ class TestRMSNormOffsetIsPerFamilyNotPerPrefix:
         assert info.norm_scale is None and info.norm_kind == "none"
 
     def test_a_layernorm_is_untouched_by_the_rmsnorm_rule(self):
-        """The offset question is RMSNorm-only; a LayerNorm in any family applies its weight directly."""
+        """The offset question is RMSNorm-only, and the probe does not apply: a constant vector centers to zero and
+        a LayerNorm returns its bias.
+
+        The declared path survives on that arm.
+        """
         norm = torch.nn.LayerNorm(D)
         norm.weight.data = torch.full((D,), self.WEIGHT)
         info = resolve_unembed_and_norm_scale(_hf_module("gemma3", norm, inner_attr="transformer"))

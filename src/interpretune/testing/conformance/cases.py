@@ -472,9 +472,22 @@ class ModelBackendConformance:
     # -- INTERVENTION ------------------------------------------------------------------------------
 
     def _intervene(
-        self, suite, *, scope: str, mode: str = "add", scale: float = STEER_SCALE, vector=None, basis: bool = True
+        self,
+        suite,
+        *,
+        scope: str,
+        mode: str = "add",
+        scale: float = STEER_SCALE,
+        vector=None,
+        basis: bool = True,
+        extra: dict | None = None,
     ):
-        """The caller's path: a raw payload in run_inputs, through model_fwd_intervention."""
+        """The caller's path: a raw payload in run_inputs, through model_fwd_intervention.
+
+        ``extra`` carries spec fields a mode needs beyond ``(tensor, scale)``. ``clamp`` is the first:
+        its band is two independent bounds rather than a magnitude, and a clamp with no band is the
+        identity for every input, so the parameters cannot be flattened onto ``scale_factor``.
+        """
         import interpretune as it
         from interpretune import AnalysisCfg
 
@@ -487,6 +500,7 @@ class ModelBackendConformance:
                 "scale_factor": scale,
                 "position_scope": scope,
                 "use_intervention_tensor_as_basis": basis,
+                **(extra or {}),
             }
         }
         return suite.run(
@@ -675,10 +689,22 @@ class ModelBackendConformance:
             # `reject` removes the component in the span where `project` keeps it, so the same vector at
             # the same scale distinguishes them: they partition the activation rather than agreeing.
             "reject": (vector, 1.0),
+            "clamp": (vector, 1.0),
         }
+        # Modes whose parameters are not exhausted by (tensor, scale). A clamp needs a BAND: with neither
+        # bound it is the identity for every input, so an entry here is what makes the mode exercisable
+        # rather than merely declared.
+        extras: dict[str, dict] = {"clamp": {"clamp_min": -1.0, "clamp_max": 1.0}}
         declared = sorted(m.value for m in suite.capabilities.intervention.modes)
         results = {
-            mode: self._intervene(suite, scope=scope, mode=mode, vector=payloads[mode][0], scale=payloads[mode][1])
+            mode: self._intervene(
+                suite,
+                scope=scope,
+                mode=mode,
+                vector=payloads[mode][0],
+                scale=payloads[mode][1],
+                extra=extras.get(mode),
+            )
             for mode in declared
         }
         for mode, store in results.items():
