@@ -13,8 +13,6 @@ via an explicit ``it.hub.pull`` or the local-publish bridge.
 from __future__ import annotations
 
 import dataclasses
-import importlib.util
-import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -27,33 +25,16 @@ def import_cached_entrypoint(repo_id: str, cache_dir: Path | None = None) -> Mod
     revisions of the same repo can never collide in ``sys.modules`` as repos update.
     """
     from interpretune.hub.components import resolve_component_manifest
+    from interpretune.hub.entrypoints import import_snapshot_entrypoint
 
-    manifest, snapshot, revision = resolve_component_manifest(repo_id, cache_dir=cache_dir)
+    manifest, _, _ = resolve_component_manifest(repo_id, cache_dir=cache_dir)
     pc = manifest.get("promptconfigs") or {}
     entrypoint = pc.get("entrypoint")
     if not entrypoint:
         raise KeyError(f"{repo_id} (cached) declares no promptconfigs entrypoint (kinds: {manifest.get('kinds')}).")
-    sanitized = repo_id.replace("/", "__").replace("-", "_").replace(".", "_")
-    module_name = f"it_hub_components.{sanitized}.{revision}"
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    # the gate belongs HERE, at the point of execution: this is the one place outside op discovery
-    # where interpretune runs Python that came from a hub repo
-    from interpretune.hub.trust import ensure_remote_code_trusted
-
-    ensure_remote_code_trusted(repo_id, what=f"the prompt-config entrypoint {entrypoint!r}")
-    if not (snapshot / entrypoint).is_file():
-        raise FileNotFoundError(
-            f"{repo_id}@{revision[:12]}: manifest declares promptconfigs entrypoint {entrypoint!r}, which is not "
-            f"present in the snapshot. A manifest-only fetch leaves exactly this state: run "
-            f"interpretune.hub.pull({repo_id!r}) to materialize the entrypoint (loading never downloads)."
-        )
-    spec = importlib.util.spec_from_file_location(module_name, snapshot / entrypoint)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
+    return import_snapshot_entrypoint(
+        repo_id, entrypoint, cache_dir=cache_dir, what=f"the prompt-config entrypoint {entrypoint!r}"
+    )
 
 
 def resolve_prompt_config_class(ref: str, cache_dir: Path | None = None) -> type:
