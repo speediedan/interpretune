@@ -224,3 +224,52 @@ def test_snapshot_execution_needs_the_trust_opt_in(unexecuted_entrypoint_cache, 
         instantiate_hub_aware_class(
             {"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=unexecuted_entrypoint_cache
         )
+
+
+def test_finder_reimports_an_evicted_snapshot_module(tmp_path, monkeypatch):
+    """A fresh process (spawn worker) restores the module from disk: evict, reimport, identical file."""
+    import importlib
+    import inspect
+    import sys
+
+    from interpretune.hub import components
+    from interpretune.hub.components import local_publish
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
+    # Unique tag: synthetic names are content hashes, so sharing the default tag with other
+    # tests would resolve to their already-imported module instead of exercising the finder.
+    component = _write_fixture_component(tmp_path / "component", tag="reimport")
+    cache = tmp_path / "cache"
+    local_publish(component, "someorg/fixture", entrypoint_src=component / "fixture_entry.py", cache_dir=cache)
+    monkeypatch.setattr(components, "IT_COMPONENTS_HUB_CACHE", cache)
+    cls = instantiate_hub_aware_class({"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=cache)
+    name, expected_file = cls.__module__, inspect.getfile(cls)
+    assert name.startswith("it_hub_components.")
+    evicted = sys.modules.pop(name)
+    try:
+        restored = importlib.import_module(name)
+    finally:
+        sys.modules.setdefault(name, evicted)
+    assert inspect.getfile(restored) == expected_file
+    assert restored.FixtureWidget.__name__ == "FixtureWidget"
+
+
+def test_finder_ignores_ordinary_and_unknown_names(entrypoint_cache):
+    """Only it_hub_components stems consult the cache; unknown stems miss without network."""
+    from interpretune.hub.entrypoints import _HubSnapshotFinder
+
+    finder = _HubSnapshotFinder()
+    assert finder.find_spec("os", None) is None
+    assert finder.find_spec("nope.missing", None) is None
+    assert finder.find_spec("it_hub_components.nope__none.abc123", None) is None
+
+
+def test_finder_install_is_idempotent():
+    """Repeated installs add no duplicate finders."""
+    import sys
+
+    from interpretune.hub.entrypoints import install_hub_module_finder
+
+    install_hub_module_finder()
+    install_hub_module_finder()
+    assert sum(type(finder).__name__ == "_HubSnapshotFinder" for finder in sys.meta_path) == 1

@@ -16,11 +16,15 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from importlib.abc import MetaPathFinder
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 from interpretune.utils.exceptions import MisconfigurationException
+
+_HUB_MODULE_PREFIX = "it_hub_components."
 
 
 def synthetic_entrypoint_name(repo_id: str, revision: str) -> str:
@@ -63,6 +67,70 @@ def import_snapshot_entrypoint(
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
+
+
+class _HubSnapshotFinder(MetaPathFinder):
+    """Resolve revision-scoped snapshot modules from the on-disk components cache.
+
+    Snapshot entrypoints execute under synthetic names (``it_hub_components.<repo>.<rev>``) that no
+    ``sys.path`` entry provides, so a fresh process -- a spawn worker unpickling a Hub-loaded class,
+    a notebook kernel that never ran the loader -- cannot import them back by reference. Without a
+    finder that import fails, and serializers fall back to pickling Hub classes by value, which the
+    revision scope exists to make meaningless. The finder closes the loop: same machine, same cache,
+    same classes, with the trust gate checked before any execution, exactly as on the loader path.
+
+    Only the default components cache is consulted (plus whatever ``IT_COMPONENTS_HUB_CACHE`` names
+    in the importing process, since workers inherit the environment). Cache-only throughout: never
+    touches the network. Ambiguous stems refuse rather than guess, mirroring
+    :func:`find_entrypoint_owner`.
+    """
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "it_hub_components" or (fullname.startswith(_HUB_MODULE_PREFIX) and fullname.count(".") < 2):
+            return ModuleSpec(fullname, loader=None, is_package=True)
+        if not fullname.startswith(_HUB_MODULE_PREFIX):
+            return None
+        from interpretune.hub.cache import scan_cached_repos
+        from interpretune.hub.components import IT_COMPONENTS_HUB_CACHE as COMPONENTS_DEFAULT
+        from interpretune.hub.components import cached_component_revisions, resolve_component_manifest
+        from interpretune.hub.trust import ensure_remote_code_trusted
+
+        cache_default = Path(COMPONENTS_DEFAULT)
+        for repo in sorted(scan_cached_repos(cache_default), key=lambda r: r.repo_id):
+            for rev in cached_component_revisions(repo.repo_id):
+                if synthetic_entrypoint_name(repo.repo_id, rev) != fullname:
+                    continue
+                manifest, snapshot, _ = resolve_component_manifest(repo.repo_id, revision=rev)
+                rels = []
+                module_section = manifest.get("module") or {}
+                if module_section.get("entrypoint"):
+                    rels.append(module_section["entrypoint"])
+                for entry in (manifest.get("datamodules") or {}).values():
+                    if isinstance(entry, dict) and entry.get("entrypoint"):
+                        rels.append(entry["entrypoint"])
+                rels = sorted(set(rels))
+                if len(rels) != 1:
+                    return None
+                ensure_remote_code_trusted(repo.repo_id, what=f"the component entrypoint {rels[0]!r}")
+                return importlib.util.spec_from_file_location(fullname, snapshot / rels[0])
+        return None
+
+
+_FINDER_INSTALLED = False
+
+
+def install_hub_module_finder() -> None:
+    """Append the snapshot finder to ``sys.meta_path`` (idempotent, microsecond cost).
+
+    Called at ``interpretune`` import time so fresh worker processes inherit it through the normal
+    import chain: anything that can import interpretune can restore a Hub-loaded class by reference.
+    Appended last, so it only ever sees names every other finder declined.
+    """
+    global _FINDER_INSTALLED
+    if _FINDER_INSTALLED or any(isinstance(finder, _HubSnapshotFinder) for finder in sys.meta_path):
+        return
+    sys.meta_path.append(_HubSnapshotFinder())
+    _FINDER_INSTALLED = True
 
 
 def find_entrypoint_owner(stem: str, *, cache_dir: Path | None = None) -> tuple[str, str] | None:

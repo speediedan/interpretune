@@ -68,6 +68,27 @@ class _AnalysisImportHook(MetaPathFinder):
 # Register our import hook to handle interpretune.analysis imports
 sys.meta_path.insert(0, _AnalysisImportHook())
 
+
+class _HubSnapshotImportHook(MetaPathFinder):
+    """MetaPathFinder stub routing snapshot imports to the guarded helper, loaded lazily.
+
+    Importing ``interpretune.hub.entrypoints`` here would pull the whole ``interpretune.utils``
+    package (and, transitively, the adapter frameworks) into every ``import interpretune``. The
+    stub costs nothing until an ``it_hub_components.*`` name is actually imported -- which happens
+    exactly when snapshot code must execute -- and then delegates to the real finder, so fresh
+    worker processes restore Hub-loaded classes by reference.
+    """
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "it_hub_components" or fullname.startswith("it_hub_components."):
+            from interpretune.hub.entrypoints import _HubSnapshotFinder
+
+            return _HubSnapshotFinder().find_spec(fullname, path, target)
+        return None
+
+
+sys.meta_path.append(_HubSnapshotImportHook())
+
 _LAZY_MODULE_ATTRS = {
     # hub (the `it.hub` verb surface — itself lazy per-attribute, so this stays cheap)
     "hub": "interpretune.hub",
