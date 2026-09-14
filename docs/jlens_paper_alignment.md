@@ -35,7 +35,7 @@ The paper and interpretune agree on where the lens lives and disagree only on a 
 | Stage | Object | Paper | Interpretune |
 |---|---|---|---|
 | Lens fitting | $J_\ell$ | Jacobian from an intermediate residual to a later residual stream | Same; consumed pre-fitted |
-| Readout | $W_U \operatorname{norm}(J_\ell h)$ | Final normalization, then unembedding | Same, calling the real modules |
+| Readout | $W_U \mathrm{norm}(J_\ell h)$ | Final normalization, then unembedding | Same, calling the real modules |
 | Fixed vocabulary basis for probing and writing | $v_t$ | Names the rows of $W_U J_\ell$ the J-lens vectors | Derives the norm-aware direction when the readout's normalization makes the two differ |
 
 The fitted $J_\ell$ is a residual-to-residual transport map; normalization and unembedding come after it. The
@@ -48,7 +48,7 @@ final norm's learned scale is anisotropic the two are not parallel: the scale ch
 For an RMSNorm final norm with effective elementwise scale $s$, token $t$'s pre-softmax score is
 
 $$
-z_t = \frac{\langle (W_U[t] \odot s) J_\ell, h \rangle}{\operatorname{rms}(J_\ell h)}
+z_t = \frac{\langle (W_U[t] \odot s) J_\ell, h \rangle}{\mathrm{rms}(J_\ell h)}
 $$
 
 so the fixed direction that governs the normalized readout is the **folded** vector
@@ -74,7 +74,7 @@ unfolded result differ by a direction, not by a coefficient, so a result must st
 
 | Operation | Paper's explicit form | Unfolded | Folded | Honest claim | Interpretune today |
 |---|---|---|---|---|---|
-| Read | $\operatorname{softmax}(W_U \operatorname{norm}(J_\ell h))$ | Bare $W_U J_\ell h$ omits the learned scale and, for LayerNorm, centering | Folded dot products divided by $\operatorname{rms}(J_\ell h)$ are an exact rewrite for RMSNorm | Call the actual norm module; treat unfolded scores as a labelled approximation | `jlens_read` calls the real modules |
+| Read | $\mathrm{softmax}(W_U \mathrm{norm}(J_\ell h))$ | Bare $W_U J_\ell h$ omits the learned scale and, for LayerNorm, centering | Folded dot products divided by $\mathrm{rms}(J_\ell h)$ are an exact rewrite for RMSNorm | Call the actual norm module; treat unfolded scores as a labelled approximation | `jlens_read` calls the real modules |
 | Probe | Score or cosine against $v_t$ | Literal paper convention | Norm-aware fixed direction | Offer both, labelled | `jlens_concept_probe`, both bases by `jlens_apply_final_norm` |
 | Add | $h + \alpha v_t$ | The paper's written operation | A different direction, readout-aligned; no scalar $\alpha$ repairs an anisotropic rotation | Folded for "the readout direction", unfolded for replication | `add` mode takes either; the source op states the basis (#420) |
 | Ablate | Project out $P_V = V V^{+}$ | Paper-basis subspace | Norm-aware subspace; a different column span | Must state the basis | `reject` mode (`model_fwd_intervention`); the pair-building op records the basis (#540) |
