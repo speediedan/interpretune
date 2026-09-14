@@ -33,12 +33,15 @@ def synthetic_entrypoint_name(repo_id: str, revision: str) -> str:
     return f"it_hub_components.{sanitized}.{revision}"
 
 
-def import_snapshot_entrypoint(repo_id: str, entrypoint: str, *, cache_dir: Path | None = None) -> ModuleType:
+def import_snapshot_entrypoint(
+    repo_id: str, entrypoint: str, *, cache_dir: Path | None = None, what: str
+) -> ModuleType:
     """Import a cached component's entrypoint file under its revision-scoped module name.
 
     Cache-only: the component must already be cached via an explicit pull or the local-publish
     bridge. The trust gate belongs here, at the point of execution: this is where interpretune
-    runs Python that came from a hub repo.
+    runs Python that came from a hub repo. ``what`` names the entrypoint kind in the refusal
+    (each caller states its own context, so refusal wording stays pinned per path).
     """
     from interpretune.hub.components import resolve_component_manifest
     from interpretune.hub.trust import ensure_remote_code_trusted
@@ -47,7 +50,7 @@ def import_snapshot_entrypoint(repo_id: str, entrypoint: str, *, cache_dir: Path
     module_name = synthetic_entrypoint_name(repo_id, revision)
     if module_name in sys.modules:
         return sys.modules[module_name]
-    ensure_remote_code_trusted(repo_id, what=f"the component entrypoint {entrypoint!r}")
+    ensure_remote_code_trusted(repo_id, what=what)
     if not (snapshot / entrypoint).is_file():
         raise FileNotFoundError(
             f"{repo_id}@{revision[:12]}: manifest declares entrypoint {entrypoint!r}, which is not "
@@ -134,7 +137,9 @@ def instantiate_hub_aware_class(
             "names a hub component, cache it first with an explicit it.hub.pull(...)."
         ) from first_error
     repo_id, entrypoint = owner
-    module = import_snapshot_entrypoint(repo_id, entrypoint, cache_dir=cache_dir)
+    module = import_snapshot_entrypoint(
+        repo_id, entrypoint, cache_dir=cache_dir, what=f"the component entrypoint {entrypoint!r}"
+    )
     try:
         args_class = getattr(module, class_name)
     except AttributeError:

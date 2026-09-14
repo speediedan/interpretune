@@ -139,12 +139,12 @@ def test_declared_but_absent_entrypoint_names_the_pull(entrypoint_cache):
 
 
 def test_snapshot_execution_needs_the_trust_opt_in(entrypoint_cache, monkeypatch):
-    """Proof (v): the gate fires before exec, mirroring the promptconfigs entrypoint path."""
+    """Proof (v): the gate fires before exec, with this path's own wording pinned."""
     from interpretune.hub.entrypoints import instantiate_hub_aware_class
     from interpretune.hub.trust import RemoteCodeNotTrustedError
 
     monkeypatch.setenv("IT_TRUST_REMOTE_CODE", "0")
-    with pytest.raises(RemoteCodeNotTrustedError):
+    with pytest.raises(RemoteCodeNotTrustedError, match="component entrypoint"):
         instantiate_hub_aware_class(
             {"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=entrypoint_cache
         )

@@ -32,7 +32,9 @@ def import_cached_entrypoint(repo_id: str, cache_dir: Path | None = None) -> Mod
     entrypoint = pc.get("entrypoint")
     if not entrypoint:
         raise KeyError(f"{repo_id} (cached) declares no promptconfigs entrypoint (kinds: {manifest.get('kinds')}).")
-    return import_snapshot_entrypoint(repo_id, entrypoint, cache_dir=cache_dir)
+    return import_snapshot_entrypoint(
+        repo_id, entrypoint, cache_dir=cache_dir, what=f"the prompt-config entrypoint {entrypoint!r}"
+    )
 
 
 def resolve_prompt_config_class(ref: str, cache_dir: Path | None = None) -> type:
