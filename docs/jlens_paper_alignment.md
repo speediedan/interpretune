@@ -22,8 +22,8 @@ by name when a row cites an issue that has closed.
 | Decompose an activation into sparse J-space concepts | Implemented: nonnegative sparse decomposition by gradient pursuit over the J-lens dictionary, with its residual. | `jlens_sparse_inventory` |
 | Add a J-lens direction | The model-level `add` mode exists and takes any direction; a single-vector J-lens source for it is the collection's concern (#420 introduces the `basis=` selector that names which basis produced the direction). | `model_fwd_intervention`, mode `add` |
 | Patch one J-lens coordinate into another | Implemented: the `patch` mode swaps the activation's coordinates along a pair of directions through the pseudoinverse; the pair is built in a stated basis. | `model_fwd_intervention`, mode `patch`; `jlens_direction_rows` |
-| Clamp coordinates to a clean-pass value | Not implemented. A clean-pass clamp needs a clean reference activation and one basis across both passes; a static projection bound cannot express it. Open: #423. | none |
-| Ablate J-space directions | Not implemented. Ablation projects *out* of a subspace; the `project` mode projects *onto* one. Open: #423. | none |
+| Clamp coordinates to a clean-pass value | Implemented as bound-into-range: the `clamp` mode bounds the activation's pinv coordinates along a stacked basis into `[lo, hi]`, leaving in-range coordinates untouched; a bandless or inverted band is refused by name. A clean-pass-value hold is a two-pass construction over it. | `model_fwd_intervention`, mode `clamp` |
+| Ablate J-space directions | Implemented: the `reject` mode removes the activation's component in the span (`alpha = 1` full removal), the complement of `project`. | `model_fwd_intervention`, mode `reject` |
 | Reproduce the paper's rates | Not yet: the evidence is the concept-steering demos on gemma-2-2b and gemma-3-1b-it, not the paper's battery. Open: #425. | the two steering demo notebooks |
 | Validate an intervention to first order | Not implemented as an instrument: the patch mechanics are validated in tests, and the per-basis first-order prediction of the metric change is open as #539. | `tests/core/test_jlens_patch_validation.py` |
 | Record which basis produced a result | The bundled J-lens ops record `jlens_basis` on their outputs; the model-level intervention result does not yet record the basis of the pair it was given. Open: #540. | `jlens_basis_name` in `analysis/optools.py` |
@@ -77,9 +77,9 @@ unfolded result differ by a direction, not by a coefficient, so a result must st
 | Read | $\operatorname{softmax}(W_U \operatorname{norm}(J_\ell h))$ | Bare $W_U J_\ell h$ omits the learned scale and, for LayerNorm, centering | Folded dot products divided by $\operatorname{rms}(J_\ell h)$ are an exact rewrite for RMSNorm | Call the actual norm module; treat unfolded scores as a labelled approximation | `jlens_read` calls the real modules |
 | Probe | Score or cosine against $v_t$ | Literal paper convention | Norm-aware fixed direction | Offer both, labelled | `jlens_concept_probe`, both bases by `jlens_apply_final_norm` |
 | Add | $h + \alpha v_t$ | The paper's written operation | A different direction, readout-aligned; no scalar $\alpha$ repairs an anisotropic rotation | Folded for "the readout direction", unfolded for replication | `add` mode takes either; the source op states the basis (#420) |
-| Ablate | Project out $P_V = V V^{+}$ | Paper-basis subspace | Norm-aware subspace; a different column span | Must state the basis | Not implemented (#423) |
+| Ablate | Project out $P_V = V V^{+}$ | Paper-basis subspace | Norm-aware subspace; a different column span | Must state the basis | `reject` mode (`model_fwd_intervention`); the pair-building op records the basis (#540) |
 | Patch | $c = V^{+} h$, $h' = h + V(\sigma(c) - c)$ | The paper's literal coordinate swap | A different plane and pseudoinverse; uniform scale cancels, anisotropic scale does not | Make the basis explicit in the API and the result | `patch` mode, pair built in the stated basis; result basis recorded once #540 lands |
-| Clamp | Hold coordinates at a clean-pass value | Clamp paper-basis coordinates | Clamp norm-aware coordinates | One basis across the clean and intervened passes | Not implemented (#423) |
+| Clamp | Hold coordinates at a clean-pass value | Clamp paper-basis coordinates | Clamp norm-aware coordinates | One basis across the clean and intervened passes | `clamp` mode bounds into `[lo, hi]`; a clean-pass hold is a two-pass construction over it |
 | Validate | No fold choice specified | Validate $\Delta h$ in the unfolded basis | Validate $\Delta h$ in the folded basis | Validate each basis separately with $\nabla_h m^{\mathsf{T}} \Delta h$ | Mechanics pinned in tests; the per-basis instrument is #539 |
 
 Two corrections the paper's own text implies, both carried here as requirements on future work: the top $k$ active
@@ -101,7 +101,7 @@ two one-vector operations in sequence cannot reproduce a coordinate swap when th
 
 ## Maintenance
 
-The rows above that name an issue are #225, #420, #423, #425, #539 and #540. Each carries a checklist item to update
+The rows above that name an issue are #225, #420, #425, #539 and #540. Each carries a checklist item to update
 its row when it closes. The docs link-check workflow, which runs weekly and on demand against the live web, reads
 this page's issue citations and fails by name on any that has closed, so a stale row cannot survive a week unnoticed.
 The page states current behaviour in every row for the reason given at the top: it must be true between those runs

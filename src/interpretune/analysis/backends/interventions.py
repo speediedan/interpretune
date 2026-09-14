@@ -618,7 +618,7 @@ def _apply_span_clamp(
 ) -> torch.Tensor:
     """Bound the activation's coordinates along ``span(V)`` into ``[clamp_min, clamp_max]``.
 
-    Implements ``c <- clip(c, lo, hi)`` with ``c = V^+ h``, writing back ``h + V^T (c' - c)``. A
+    Implements ``c <- clip(c, lo, hi)`` with ``c = V^+ h``, writing back ``h + (c' - c) V``. A
     coordinate already inside its range is left ALONE, which is what distinguishes this from assigning a
     value: the operation is a no-op on activations that were never out of bounds, and that is the
     property the paper's coordinate-clamping ablation depends on.
