@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Sequence, cast
 
 from interpretune.protocol import Adapter
-from interpretune.utils import instantiate_class
+from interpretune.hub.entrypoints import instantiate_hub_aware_class
 
 if TYPE_CHECKING:
     from interpretune.config import ITDataModuleConfig
@@ -130,9 +130,9 @@ def load_session_cfg(
         if entry is None:
             return default
         if isinstance(entry, dict) and "class_path" in entry:
-            return instantiate_class(init=entry, import_only=True)
+            return instantiate_hub_aware_class(init=entry, import_only=True)
         if isinstance(entry, str):
-            return instantiate_class(init={"class_path": entry}, import_only=True)
+            return instantiate_hub_aware_class(init={"class_path": entry}, import_only=True)
         return entry
 
     return ITSessionConfig(
@@ -190,9 +190,9 @@ def _resolve_datamodule_ref(ref: str) -> tuple["ITDataModuleConfig", Any]:
     dm_cls = body.get("datamodule_cls")
     if dm_cls is not None:
         if isinstance(dm_cls, dict) and "class_path" in dm_cls:
-            dm_cls = instantiate_class(init=dm_cls, import_only=True)
+            dm_cls = instantiate_hub_aware_class(init=dm_cls, import_only=True)
         elif isinstance(dm_cls, str):
-            dm_cls = instantiate_class(init={"class_path": dm_cls}, import_only=True)
+            dm_cls = instantiate_hub_aware_class(init={"class_path": dm_cls}, import_only=True)
     return dm_cfg, dm_cls
 
 
@@ -207,9 +207,9 @@ def load_datamodule_cfg(body: dict[str, Any], *, datamodule_cls: Any = None) -> 
     cls_entry = body.get("datamodule_cls")
     if cls_entry is not None:
         if isinstance(cls_entry, dict) and "class_path" in cls_entry:
-            datamodule_cls = instantiate_class(init=cls_entry, import_only=True)
+            datamodule_cls = instantiate_hub_aware_class(init=cls_entry, import_only=True)
         elif isinstance(cls_entry, str):
-            datamodule_cls = instantiate_class(init={"class_path": cls_entry}, import_only=True)
+            datamodule_cls = instantiate_hub_aware_class(init={"class_path": cls_entry}, import_only=True)
     return dm_cfg, datamodule_cls
 
 

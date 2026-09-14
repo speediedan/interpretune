@@ -22,7 +22,8 @@ from copy import deepcopy
 from tabulate import tabulate
 from enum import Enum
 
-from interpretune.utils import ITInstantiationFeedbackWarning, rank_zero_debug, rank_zero_warn, instantiate_class
+from interpretune.hub.entrypoints import instantiate_hub_aware_class
+from interpretune.utils import ITInstantiationFeedbackWarning, rank_zero_debug, rank_zero_warn
 from interpretune.config import ITDataModuleConfig, ITConfig
 from interpretune.base import ITDataModule
 from interpretune.adapters import ITModule
@@ -238,9 +239,9 @@ def instantiate_or_import(
     datamodule_cfg = itdm_cfg_factory(registered_cfg["datamodule_cfg"], shared_cfg, defaults_func=itdm_cfg_defaults_fn)
     module_cfg = it_cfg_factory(registered_cfg["module_cfg"], shared_cfg, defaults_func=it_cfg_defaults_fn)
     if datamodule_cls_path := registered_cfg.get("datamodule_cls", None):
-        datamodule_cls = instantiate_class(init=datamodule_cls_path, import_only=True)
+        datamodule_cls = instantiate_hub_aware_class(init=datamodule_cls_path, import_only=True)
     if module_cls_path := registered_cfg.get("module_cls", None):
-        module_cls = instantiate_class(init=module_cls_path, import_only=True)
+        module_cls = instantiate_hub_aware_class(init=module_cls_path, import_only=True)
     return datamodule_cfg, module_cfg, datamodule_cls, module_cls
 
 
@@ -358,7 +359,7 @@ def instantiate_nested(c: Dict | List, skip_keys: Set | None = None):
             # children are declarative dicts (skipped) vs nested directives (recursed)
             try:
                 child_skip = _declarative_field_names(
-                    instantiate_class({"class_path": c["class_path"]}, import_only=True)
+                    instantiate_hub_aware_class({"class_path": c["class_path"]}, import_only=True)
                 )
             except Exception:
                 child_skip = set()
@@ -371,7 +372,7 @@ def instantiate_nested(c: Dict | List, skip_keys: Set | None = None):
         for i, v in enumerate(c):
             c[i] = instantiate_nested(c[i])
     if "class_path" in c:  # if the dict directly contains a class_path key
-        c = instantiate_class(c, import_only=c.pop("import_only", False))  # type: ignore[arg-type]  # with instantiating the class
+        c = instantiate_hub_aware_class(c, import_only=c.pop("import_only", False))  # type: ignore[arg-type]  # with instantiating the class
     return c
 
 
@@ -397,7 +398,7 @@ def itdm_cfg_factory(cfg: Dict, shared_config: Dict, defaults_func: Callable | N
 
         cfg["prompt_cfg"] = instantiate_prompt_cfg_node(prompt_cfg)
     elif "class_path" in prompt_cfg:
-        cfg["prompt_cfg"] = instantiate_class(prompt_cfg)
+        cfg["prompt_cfg"] = instantiate_hub_aware_class(prompt_cfg)
     instantiated_cfg = ITDataModuleConfig(**shared_config, **cfg)
     if defaults_func:
         defaults_func(instantiated_cfg)
