@@ -15,7 +15,13 @@ from typing import Any
 import torch
 from transformers import BatchEncoding
 
-from interpretune.analysis.backends import require_intervention_support, resolve_interventions
+from interpretune.analysis.backends import (
+    apply_intervention,
+    build_intervention_dict,
+    get_intervention_target_shape,
+    require_intervention_support,
+    resolve_interventions,
+)
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.backends.capabilities import ModelBackendCapability
 from interpretune.analysis.optools import (
@@ -1192,6 +1198,177 @@ def model_fwd_intervention_impl(
     return analysis_batch
 
 
+def intervention_first_order_check_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Check an applied intervention against its first-order prediction, per basis.
+
+    Predicts the metric change as ``Δm ≈ Σ ∇h · Δh`` and reports it beside the measured change
+    with the residual, so a caller sees HOW well the linear term explains the effect rather than a
+    pass or fail. A large residual is a finding (the edit left the linear regime), not an error.
+
+    Runs downstream of ``model_fwd_intervention`` in a composite: the measured change comes from
+    its recorded pre/post logits, while the prediction is built here from (a) the gradient of the
+    metric at the clean site activation, captured through the backend's gradient seam, and (b) the
+    applied edit recomputed with the SHARED ``apply_intervention`` math the backends execute --
+    never a re-derivation, so the instrument cannot drift from the implementation it checks.
+
+    Folding changes ``Δh``; it does not change whether the approximation is valid, so the same
+    instrument compares both bases unmodified. ``concept_basis`` names which basis the run used.
+    """
+
+    basis = kwargs.get("concept_basis", analysis_batch.get("concept_basis"))
+    if basis is None:
+        raise ValueError(
+            "intervention_first_order_check requires `concept_basis` naming which basis the run "
+            f"used: {list(CONCEPT_BASES)}. A result that does not name its basis cannot be compared."
+        )
+    if basis not in CONCEPT_BASES:
+        raise ValueError(f"concept_basis {basis!r} is not a basis: expected one of {list(CONCEPT_BASES)}.")
+
+    interventions = resolve_interventions(
+        analysis_batch=analysis_batch,
+        resolve_field=lambda field_name: resolve_aggregate_input(module, analysis_batch, field_name),
+        load_json_field=lambda field_name: load_json_field(module, analysis_batch, field_name),
+        kwargs=kwargs,
+    )
+    raw_patterns = list(interventions)
+
+    pre = analysis_batch.get("pre_intervention_logits")
+    post = analysis_batch.get("post_intervention_logits")
+    if pre is None or post is None:
+        raise ValueError(
+            "intervention_first_order_check reads the measured change from `pre_intervention_logits` "
+            "and `post_intervention_logits`: run it downstream of `model_fwd_intervention` in a "
+            "composite, so the same batch carries both."
+        )
+    pre_lt = last_token_logits(torch.as_tensor(pre)).float()
+    post_lt = last_token_logits(torch.as_tensor(post)).float()
+    target_ids = resolve_aggregate_input(module, analysis_batch, "logit_target_ids")
+    if target_ids is None:
+        concept_a_ids = analysis_batch.get("concept_group_a_token_ids")
+        concept_b_ids = analysis_batch.get("concept_group_b_token_ids")
+        real_ids = list(concept_a_ids or []) + list(concept_b_ids or [])
+        if real_ids:
+            target_ids = torch.tensor(real_ids, dtype=torch.long)
+    target_ids_tensor = None if target_ids is None else torch.as_tensor(target_ids, dtype=torch.long).reshape(-1)
+    measured = mean_target_logit_delta(pre_lt, post_lt, target_ids_tensor)
+
+    analysis_cfg = getattr(module, "analysis_cfg", None)
+    if analysis_cfg is None:
+        raise ValueError(
+            "intervention_first_order_check captures the site activation through the analysis "
+            "configuration's hook machinery, but the module carries no `analysis_cfg`."
+        )
+    model_backend = require_model_backend(module)
+    require_backend_capability(model_backend, ModelBackendCapability.GRADIENTS, "intervention_first_order_check")
+
+    if (
+        getattr(module, "analysis_cfg", None)
+        and module.analysis_cfg.auto_prune_batch_encoding
+        and isinstance(batch, BatchEncoding)
+    ):
+        batch = module.auto_prune_batch(batch, "forward")
+
+    targets = target_ids_tensor
+
+    def _last_token_attached(logits: torch.Tensor) -> torch.Tensor:
+        """`last_token_logits` indexing without its detach: the backward path needs the graph."""
+        if logits.dim() == 1:
+            return logits
+        if logits.dim() == 2:
+            return logits[-1]
+        return logits[0, -1]
+
+    def backward_fn(raw_logits: torch.Tensor) -> torch.Tensor:
+        """The same metric the measured change uses, as a trace-safe scalar."""
+        lt = _last_token_attached(raw_logits).float()
+        if targets is None:
+            return lt.mean()
+        return lt[..., targets.to(device=lt.device)].mean()
+
+    hook_pattern = raw_patterns[0] if len(raw_patterns) == 1 else None
+    if hook_pattern is None:
+        raise ValueError(
+            f"intervention_first_order_check attributes the metric change to one site, but the spec "
+            f"covers {len(raw_patterns)} patterns ({raw_patterns}). Split the check per site."
+        )
+    prev_filter, prev_fwd, prev_bwd = (
+        analysis_cfg.names_filter,
+        analysis_cfg.fwd_hooks,
+        analysis_cfg.bwd_hooks,
+    )
+    analysis_cfg.names_filter = hook_pattern
+    try:
+        analysis_cfg.add_default_cache_hooks()
+        fwd_hooks, bwd_hooks = analysis_cfg.fwd_hooks, analysis_cfg.bwd_hooks
+        model_backend.fwd_w_grads_and_latent_models(
+            model=module.model,
+            batch=batch,
+            latent_model_handles=getattr(module, "sae_handles", None) or [],
+            fwd_hooks=fwd_hooks,
+            bwd_hooks=bwd_hooks,
+            backward_fn=backward_fn,
+        )
+        cache = analysis_cfg.cache_dict
+    finally:
+        analysis_cfg.names_filter, analysis_cfg.fwd_hooks, analysis_cfg.bwd_hooks = prev_filter, prev_fwd, prev_bwd
+
+    candidate_hooks = [key for key in cache if not key.endswith("_grad")]
+    if hook_pattern in cache:
+        hook = hook_pattern
+    elif len(candidate_hooks) == 1:
+        hook = candidate_hooks[0]
+    else:
+        raise ValueError(
+            f"gradient pass captured {len(candidate_hooks)} site activations "
+            f"({sorted(str(k) for k in candidate_hooks)[:6]}): the check attributes to one site."
+        )
+    h_clean = torch.as_tensor(cache[hook]).detach().float()
+    grad_key = hook + "_grad"
+    if grad_key not in cache:
+        raise ValueError(f"gradient pass captured no gradient at {hook!r}.")
+    grad_h = torch.as_tensor(cache[grad_key]).detach().float()
+
+    hook_shapes = {hook: get_intervention_target_shape(h_clean)}
+    intervention_dict = build_intervention_dict(interventions, {hook_pattern: [hook]}, hook_shapes)
+    if len(intervention_dict) != 1:
+        raise ValueError(
+            f"intervention pattern {hook_pattern!r} resolved to {len(intervention_dict)} hooks: "
+            "the check attributes to one site, so split it per site."
+        )
+    specs = tuple(intervention_dict[hook])
+    if len(specs) != 1:
+        raise ValueError(
+            f"intervention_first_order_check checks one applied edit, but {hook!r} carries "
+            f"{len(specs)} specs. Split the check per spec."
+        )
+    spec = specs[0]
+
+    last_pos = int(h_clean.shape[1] - 1) if h_clean.dim() >= 2 else 0
+    h_edited = apply_intervention(h_clean.clone(), spec, last_pos=last_pos)
+    delta_h = h_edited - h_clean
+    if grad_h.shape != delta_h.shape:
+        raise ValueError(
+            f"gradient {tuple(grad_h.shape)} and applied edit {tuple(delta_h.shape)} disagree at "
+            f"{hook!r}: refusing to contract mismatched tensors into a plausible scalar."
+        )
+    predicted = (grad_h * delta_h).sum()
+    residual = measured.detach().cpu().float().reshape(()) - predicted.detach().cpu()
+
+    analysis_batch.update(
+        fo_predicted_delta=predicted.detach().cpu().reshape(()),
+        fo_measured_delta=measured.detach().cpu().float().reshape(()),
+        fo_residual=residual.reshape(()),
+        concept_basis=basis,
+    )
+    return analysis_batch
+
+
 __all__ = [
     "CONCEPT_AGGREGATE_ROW_FIELDS",
     "CONCEPT_BASES",
@@ -1204,6 +1381,7 @@ __all__ = [
     "extract_concept_latent_state_from_cache",
     "extract_concept_latent_state_impl",
     "flatten_concept_store_rows",
+    "intervention_first_order_check_impl",
     "model_fwd_intervention_impl",
     "project_context_enhanced_states",
     "reset_concept_streaming_state",
