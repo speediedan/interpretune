@@ -24,7 +24,7 @@ def _bootstrap_repo_root(start: Path) -> Path:
 
 _bootstrap_repo_root(Path(__file__).resolve())
 
-from it_examples.experiments.notebook.config import load_experiment_config  # noqa: E402
+from interpretune.harness.config import load_experiment_config  # noqa: E402
 
 
 NOTEBOOK_PATH = Path(__file__).resolve().with_name("concept_direction_latent_dynamics_analysis.ipynb")

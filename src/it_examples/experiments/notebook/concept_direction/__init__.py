@@ -8,7 +8,7 @@ satisfy another experiment's harness call.
 
 from __future__ import annotations
 
-from interpretune.utils.notebook_experiments import ExperimentHooks
+from interpretune.harness.experiments import ExperimentHooks
 
 
 def _register_hooks() -> None:
@@ -17,7 +17,7 @@ def _register_hooks() -> None:
     Imported inside the function, and called at import time, so a failure names this registration rather than surfacing
     as a partially initialized module elsewhere.
     """
-    from it_examples.experiments.notebook.nb_harness_utils import set_experiment_hooks
+    from interpretune.harness.nb_harness_utils import set_experiment_hooks
     from it_examples.experiments.notebook.concept_direction.analysis.concept_direction_analysis import (
         build_classification_prompt_text,
     )

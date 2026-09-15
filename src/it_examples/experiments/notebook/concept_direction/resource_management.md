@@ -42,7 +42,7 @@ flows through `NotebookHarnessConfig.session_kwargs` → `experiment_session()`
 
 ## Adding a New Model
 
-1. Add a `ModelSpec` entry in `src/it_examples/experiments/notebook/configs/model_specs.yaml`.
+1. Add a `ModelSpec` entry in `src/interpretune/harness/configs/model_specs.yaml`.
 2. Add a cfg_aliases class in `tests/core/cfg_aliases.py`.
 3. Register the example module in its component tree under `src/it_examples/examples/<task>/` (or `tests/test_module_registry.yaml` for a test-only entry)
    if the adapter combination is new.

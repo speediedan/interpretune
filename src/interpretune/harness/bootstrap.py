@@ -1,10 +1,12 @@
+"""Notebook import bootstrapping for experiment repositories."""
+
 from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable
 
-from interpretune.utils.notebook_experiments import bootstrap_experiment_imports
+from interpretune.harness.experiments import bootstrap_experiment_imports
 
 
 def bootstrap_notebook_imports(
@@ -16,7 +18,7 @@ def bootstrap_notebook_imports(
 
     A thin adapter over the shared rails, kept so in-tree notebooks importing this name keep working.
     The rails themselves live in the core package, so an out-of-tree experiment uses them directly
-    rather than reaching into `it_examples`.
+    rather than reaching into an examples tree.
 
     Two behaviours changed with the move, both deliberate. The root is found by walking up to the
     nearest `pyproject.toml` rather than assuming the notebook sits two levels below it, and the
