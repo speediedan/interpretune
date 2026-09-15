@@ -214,6 +214,32 @@ def test_default_cache_honors_the_established_patch_pattern(tmp_path, monkeypatc
     assert cls().tag == "w"
 
 
+def test_snapshot_functions_locate_by_reference(tmp_path):
+    """Parent packages are bound, so serializers resolve Hub functions instead of pickling by value.
+
+    Stuffing only the full dotted name into ``sys.modules`` leaves parent-attribute traversal
+    (dill's function location, ``mock.patch`` string targets) unable to reach the module, and
+    serializers fall back to pickling Hub-defined functions by value with their whole globals.
+    Uses its own tag: synthetic names are content hashes, so a shared tag would resolve to
+    another test's already-imported module instead of exercising this path.
+    """
+    import sys
+
+    from dill._dill import _locate_function
+
+    from interpretune.hub.components import local_publish
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
+    component = _write_fixture_component(tmp_path / "component", tag="locate")
+    cache = tmp_path / "cache"
+    local_publish(component, "someorg/fixture", entrypoint_src=component / "fixture_entry.py", cache_dir=cache)
+    cls = instantiate_hub_aware_class({"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=cache)
+    assert cls.__module__.startswith("it_hub_components.")
+    parent_name, _, _ = cls.__module__.rpartition(".")
+    assert getattr(sys.modules[parent_name.rpartition(".")[0]], parent_name.rpartition(".")[2]) is not None
+    assert _locate_function(cls.__init__, None) is True
+
+
 def test_snapshot_execution_needs_the_trust_opt_in(unexecuted_entrypoint_cache, monkeypatch):
     """Proof (v): the gate fires before exec, with this path's own wording pinned."""
     from interpretune.hub.entrypoints import instantiate_hub_aware_class

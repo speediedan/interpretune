@@ -66,7 +66,32 @@ def import_snapshot_entrypoint(
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
+    _ensure_parent_packages(module_name)
     return module
+
+
+def _ensure_parent_packages(fullname: str) -> None:
+    """Create the namespace parents of a directly-registered synthetic module and bind the child.
+
+    A normal import sets each parent attribute as it loads each level; stuffing only the full
+    dotted name into ``sys.modules`` skips that, so parent-attribute traversal (dill's function
+    location, ``mock.patch`` string targets) cannot reach the module and serializers fall back to
+    pickling by value. Bindings follow the standard rule (latest import wins); identity checks at
+    use sites still distinguish revisions, so a stale binding degrades to the old fallback rather
+    than a silent wrong module.
+    """
+    parts = fullname.split(".")
+    for depth in range(1, len(parts)):
+        parent_name = ".".join(parts[:depth])
+        if parent_name not in sys.modules:
+            parent = ModuleType(parent_name)
+            parent.__path__ = []
+            sys.modules[parent_name] = parent
+    for depth in range(1, len(parts)):
+        parent = sys.modules[".".join(parts[:depth])]
+        child = sys.modules.get(".".join(parts[: depth + 1]))
+        if child is not None and getattr(parent, parts[depth], None) is None:
+            setattr(parent, parts[depth], child)
 
 
 class _HubSnapshotFinder(MetaPathFinder):
