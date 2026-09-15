@@ -614,6 +614,7 @@ def resolve_jlens_layer(
         repo_id=kwargs.get("jlens_repo_id") or analysis_batch.get("jlens_repo_id") or DEFAULT_JLENS_REPO,
         model_id=kwargs.get("jlens_model_id") or analysis_batch.get("jlens_model_id"),
         path=kwargs.get("jlens_lens_path") or analysis_batch.get("jlens_lens_path"),
+        revision=kwargs.get("jlens_revision", analysis_batch.get("jlens_revision")),
     )
     layer = kwargs.get("jlens_layer", analysis_batch.get("jlens_layer"))
     if layer is None:

@@ -31,6 +31,11 @@ models:
     allow_patterns: ["gpt2-small_L1_*", "gpt2-small_L2_*", "gpt2-small_L9_*", "gpt2-small_L10_*"]
   # TransformerLens' `tiny-stories-1M` alias, used by the transcoder tests.
   - repo_id: roneneldan/TinyStories-1M
+  # gpt2-small Jacobian lens, input to the #420 real-lens non-collinearity measurement (offline CPU:
+  # path + revision are passed explicitly, so no Hub listing is needed). Few megabytes.
+  - repo_id: neuronpedia/jacobian-lens
+    allow_patterns: ["gpt2-small/*"]
+    revision: 0731326edff4ae730ffc5356fe1a4728c748b3a6
   # The dynamic-module load test reads falcon's config and remote-code modules, not its weights.
   - repo_id: tiiuae/falcon-7b
     allow_patterns: ["*.json", "*.py"]

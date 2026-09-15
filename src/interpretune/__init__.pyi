@@ -188,6 +188,7 @@ def concept_direction(
         jlens_lens_path (string)
         jlens_model_id (string)
         jlens_repo_id (string)
+        jlens_revision (string)
 
     Output Schema:
         concept_direction (float32)

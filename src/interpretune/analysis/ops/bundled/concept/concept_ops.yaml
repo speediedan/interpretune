@@ -245,6 +245,10 @@ concept_direction:
       datasets_dtype: string
       required: false
       non_tensor: true
+    jlens_revision:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
   output_schema:
     concept_direction:
       datasets_dtype: float32
