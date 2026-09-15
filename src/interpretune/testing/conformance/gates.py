@@ -35,6 +35,8 @@ class Gate:
     scopes: tuple[PositionScope, ...] = ()
     """Every scope a case needs declared at once (a mixed-scope payload); ``scope`` is the one-scope form."""
     mode: InterventionMode | None = None
+    modes: tuple[InterventionMode, ...] = ()
+    """Every mode a case needs declared at once (a mixed-mode payload); ``mode`` is the one-mode form."""
     batched_hooks: bool | None = None
     family: str | None = None
     single_prompt: bool | None = None
@@ -54,6 +56,8 @@ class Gate:
             parts.append("scopes=" + "+".join(s.value for s in self.scopes))
         if self.mode is not None:
             parts.append(f"mode={self.mode.value}")
+        if self.modes:
+            parts.append("modes=" + "+".join(m.value for m in self.modes))
         if self.batched_hooks is not None:
             parts.append(f"batched_hooks={self.batched_hooks}")
         if self.family is not None:
@@ -81,6 +85,12 @@ class Gate:
                 return False
         if self.mode is not None:
             if caps.intervention is None or self.mode.value not in {m.value for m in caps.intervention.modes}:
+                return False
+        if self.modes:
+            if caps.intervention is None:
+                return False
+            declared_modes = {m.value for m in caps.intervention.modes}
+            if any(m.value not in declared_modes for m in self.modes):
                 return False
         if self.batched_hooks is not None:
             if caps.latent_models is None or caps.latent_models.batched_hooks is not self.batched_hooks:
