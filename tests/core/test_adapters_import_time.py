@@ -110,6 +110,26 @@ def test_import_interpretune_does_not_import_the_testing_package():
     assert result.stdout.strip() == "0", "importing interpretune pulled in interpretune.testing"
 
 
+def test_import_harness_adds_no_examples_modules():
+    """`import interpretune.harness` must not pull in the examples package: core never imports examples.
+
+    The executable form of the #574 dependency-direction boundary. Subprocess-only: a diff around the import, so modules
+    the test runner already holds cannot mask a violation.
+    """
+    import subprocess
+    import sys
+
+    script = (
+        "import sys, interpretune.harness; "
+        "print(sorted(m for m in sys.modules if m == 'it_examples' or m.startswith('it_examples.')))"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip() == "[]", (
+        "importing interpretune.harness pulled in examples modules: %s" % result.stdout.strip()
+    )
+
+
 def test_conformance_package_imports_without_pytest():
     """The conformance package is import-safe without its test-only dependency: pytest is imported lazily by the case
     and plugin modules, which a consumer only reaches from inside a pytest run."""

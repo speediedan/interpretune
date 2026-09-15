@@ -23,7 +23,7 @@ import interpretune.analysis  # noqa: E402
 from interpretune.analysis.backends import require_analysis_backend  # noqa: E402
 from interpretune.analysis.optools import last_token_logits  # noqa: E402
 
-from it_examples.experiments.notebook.nb_harness_utils import (  # noqa: E402
+from interpretune.harness.nb_harness_utils import (  # noqa: E402
     _build_classification_prompt,
     _build_graph_analysis_inputs,
     _build_key_token_candidates,

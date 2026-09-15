@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import it_examples
 import pytest
 
-from interpretune.utils.notebook_experiments import (
+from interpretune.harness.experiments import (
     ExperimentHooks,
     ExperimentsConfig,
     default_config_dir,
@@ -99,11 +100,11 @@ class TestExtendsResolution:
 
     def test_a_package_resource_resolves_from_outside_the_tree(self, tmp_path):
         config = tmp_path / "mine.yaml"
-        resolved = resolve_extends_path(config, "it_examples.experiments.notebook:configs/base.yaml")
+        resolved = resolve_extends_path(config, "interpretune.harness:configs/base.yaml")
         assert resolved.is_file() and resolved.name == "base.yaml"
 
     def test_a_package_qualified_subpackage_form_also_resolves(self, tmp_path):
-        resolved = resolve_extends_path(tmp_path / "mine.yaml", "it_examples.experiments.notebook.configs:base.yaml")
+        resolved = resolve_extends_path(tmp_path / "mine.yaml", "interpretune.harness.configs:base.yaml")
         assert resolved.is_file()
 
     def test_relative_paths_still_resolve_against_the_config_that_named_them(self, tmp_path):
@@ -125,7 +126,7 @@ class TestExtendsResolution:
     def test_a_missing_resource_inside_a_real_package_is_distinguished_from_a_missing_package(self, tmp_path):
         """Two different mistakes with two different fixes, so they must not share one message."""
         with pytest.raises(FileNotFoundError, match="which does not exist"):
-            resolve_extends_path(tmp_path / "mine.yaml", "it_examples.experiments.notebook:configs/nope.yaml")
+            resolve_extends_path(tmp_path / "mine.yaml", "interpretune.harness:configs/nope.yaml")
 
     def test_a_resource_inside_a_ZIPPED_package_materializes_to_a_real_readable_file(self, tmp_path):
         """The case that fails silently without `as_file`.
@@ -213,13 +214,13 @@ class TestExperimentHooks:
 
         for name in [m for m in sys.modules if "concept_direction" in m]:
             del sys.modules[name]
-        from it_examples.experiments.notebook import nb_harness_utils  # noqa: F401
+        from interpretune.harness import nb_harness_utils  # noqa: F401
 
         assert not any("concept_direction" in m for m in sys.modules)
 
     def test_the_experiment_registers_its_hooks_on_import(self):
         import it_examples.experiments.notebook.concept_direction  # noqa: F401
-        from it_examples.experiments.notebook import nb_harness_utils
+        from interpretune.harness import nb_harness_utils
 
         for name in (
             "build_classification_prompt_text",
@@ -228,3 +229,18 @@ class TestExperimentHooks:
             "tensor_fingerprint",
         ):
             assert nb_harness_utils._EXPERIMENT_HOOKS.require(name) is not None
+
+    def test_gemma_spelling_resolves_through_the_prompt_registry(self, tmp_path):
+        """The harness seam for model-family spellings: registry, not an examples import."""
+        from interpretune.harness.nb_harness_utils import _gemma_prompt_config
+        from interpretune.hub.components import local_publish
+
+        cache = tmp_path / "components"
+        local_publish(
+            Path(it_examples.__file__).parent / "examples" / "prompt_configs",
+            "speediedan/prompt-configs",
+            cache_dir=cache,
+        )
+        cfg = _gemma_prompt_config(cache_dir=cache)
+        assert cfg.B_TEXT == "<bos>"
+        assert callable(cfg.apply_chat_template_fn) and callable(cfg.model_chat_template_fn)
