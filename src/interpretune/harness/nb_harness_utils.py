@@ -213,8 +213,6 @@ class ExperimentHarnessConfig(Protocol):
     analysis_concept_label: Any
     analysis_direction_mode_name: Any
     analysis_mode: Any
-    applied_to: Any
-    apply_chat_template_fn: Any
     batch_size: Any
     check_local_explanation_coverage: Any
     constrained_feature_selection_refs: Any
@@ -236,13 +234,8 @@ class ExperimentHarnessConfig(Protocol):
     generate_missing_local_explanations: Any
     intervention_apply_activation_function: Any
     intervention_constrained_layers: Any
-    intervention_freeze_attention: Any
     intervention_max_influence_norm_scale: Any
-    intervention_return_activations: Any
-    intervention_scale_factor: Any
     intervention_sign_aware_scale: Any
-    intervention_sparse: Any
-    intervention_value_source: Any
     is_debug_intervention_mode: Any
     key_tokens_override: Any
     local_explanation_feature_limit: Any
@@ -251,7 +244,6 @@ class ExperimentHarnessConfig(Protocol):
     local_neuronpedia_db_url: Any
     local_neuronpedia_webapp_url: Any
     max_feature_nodes: Any
-    model_chat_template_fn: Any
     model_family: Any
     model_name: Any
     model_variant: Any
