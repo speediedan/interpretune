@@ -87,10 +87,15 @@ def _ensure_parent_packages(fullname: str) -> None:
             parent = ModuleType(parent_name)
             parent.__path__ = []
             sys.modules[parent_name] = parent
+    # Bind unconditionally, not only when unset: after an eviction and re-import,
+    # ``sys.modules`` holds the new module while a stale parent attribute still points at the
+    # old one, and then attribute traversal (dill location, ``mock.patch`` targets) and
+    # ``sys.modules`` reads reach different objects with no error. The binding always agrees
+    # with ``sys.modules`` this way; identity checks at use sites still tell revisions apart.
     for depth in range(1, len(parts)):
         parent = sys.modules[".".join(parts[:depth])]
         child = sys.modules.get(".".join(parts[: depth + 1]))
-        if child is not None and getattr(parent, parts[depth], None) is None:
+        if child is not None:
             setattr(parent, parts[depth], child)
 
 
@@ -203,33 +208,28 @@ def instantiate_hub_aware_class(
     *,
     cache_dir: Path | None = None,
 ) -> Any:
-    """Like :func:`interpretune.utils.import_utils.instantiate_class`, plus snapshot fallback.
+    """Like :func:`interpretune.utils.import_utils.instantiate_class`, plus snapshot resolution.
 
-    The environment import runs first and wins whenever it succeeds, so behavior is unchanged for every resolvable path
-    and the transition is deterministic. Only an ImportError on a single-segment module stem consults the cached-
-    component entrypoint map; multi-segment stems never do (their failure stands as the existing error), and a stem no
-    component declares fails naming both the import error and the consulted stems. AttributeError on an otherwise
-    importable module likewise stands, since the map is irrelevant to it.
+    For a single-segment module stem that a cached component owns, the snapshot resolves and the
+    environment is not consulted: the pin says which code runs, and an environment-first order
+    would let any importable same-named module silently shadow the pinned revision. The
+    environment is consulted only when no cached component declares the stem (existing behavior
+    and errors preserved exactly there), and when both resolve to different files the call is
+    refused naming both, rather than binding whichever the import order favors. Multi-segment
+    stems never consult the map. AttributeError on an otherwise importable module likewise
+    stands, since the map is irrelevant to it.
     """
     from interpretune.utils import instantiate_class
 
-    try:
-        return instantiate_class(init, args, import_only=import_only)
-    except (ImportError, AttributeError) as exc:
-        first_error = exc
     class_path = init.get("class_path", None) if isinstance(init, dict) else None
     if not isinstance(class_path, str) or "." not in class_path:
-        raise first_error
+        return instantiate_class(init, args, import_only=import_only)
     module_part, _, class_name = class_path.rpartition(".")
     if "." in module_part:
-        raise first_error
+        return instantiate_class(init, args, import_only=import_only)
     owner = find_entrypoint_owner(module_part, cache_dir=cache_dir)
     if owner is None:
-        raise MisconfigurationException(
-            f"Could not resolve {class_path!r}: the environment import failed ({first_error}), and no "
-            f"cached component declares a module/datamodule entrypoint named {module_part!r}. If this "
-            "names a hub component, cache it first with an explicit it.hub.pull(...)."
-        ) from first_error
+        return instantiate_class(init, args, import_only=import_only)
     repo_id, entrypoint = owner
     module = import_snapshot_entrypoint(
         repo_id, entrypoint, cache_dir=cache_dir, what=f"the component entrypoint {entrypoint!r}"
@@ -241,9 +241,55 @@ def instantiate_hub_aware_class(
             f"Could not resolve {class_path!r}: cached component {repo_id!r} declares entrypoint "
             f"{entrypoint!r}, but it defines no attribute {class_name!r}."
         ) from None
+    _refuse_environment_divergence(module_part, repo_id, entrypoint, cache_dir=cache_dir)
     if import_only:
         return args_class
     if args and not isinstance(args, tuple):
         args = (args,)
     kwargs = init.get("init_args", {})
     return args_class(**kwargs) if not args else args_class(*args, **kwargs)
+
+
+def _refuse_environment_divergence(stem: str, repo_id: str, entrypoint: str, *, cache_dir: Path | None = None) -> None:
+    """Refuse when the environment resolves an owned stem to a different file than the snapshot.
+
+    An older installed copy, a sibling checkout, or a stale tree on ``PYTHONPATH`` would otherwise
+    shadow the pinned revision with no error. Same file (hardlink, symlink, or shared checkout)
+    is not divergence and proceeds.
+    """
+    import importlib
+    import os
+
+    try:
+        env_module = importlib.import_module(stem)
+    except ImportError:
+        return
+    env_file = getattr(env_module, "__file__", None)
+    if env_file is None:
+        return
+    snapshot_file = _snapshot_entrypoint_file(repo_id, entrypoint, cache_dir=cache_dir)
+    if snapshot_file is None:
+        return
+    try:
+        same = os.path.samefile(env_file, snapshot_file)
+    except OSError:
+        return
+    if not same:
+        raise MisconfigurationException(
+            f"Entrypoint stem {stem!r} resolves in the environment to {env_file} and in the "
+            f"components cache to {snapshot_file} (component {repo_id!r}): two different files "
+            "claim one name, so binding either silently would shadow the other. Remove or rename "
+            "one of them rather than relying on import order."
+        )
+
+
+def _snapshot_entrypoint_file(repo_id: str, entrypoint: str, *, cache_dir: Path | None = None) -> Path | None:
+    """The on-disk entrypoint file a cached component declares, or None when absent."""
+    from interpretune.hub.components import resolve_component_manifest
+
+    try:
+        _, snapshot, _ = resolve_component_manifest(repo_id, cache_dir=cache_dir)
+    except Exception:
+        return None
+    candidate = snapshot / entrypoint
+    return candidate if candidate.is_file() else None

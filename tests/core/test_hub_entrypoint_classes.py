@@ -102,28 +102,36 @@ def test_entrypoint_stem_class_resolves_from_the_snapshot(entrypoint_cache):
     assert cls(tag="t").tag == "t"
 
 
-def test_environment_import_wins_when_both_resolve(entrypoint_cache, monkeypatch):
-    """Proof (ii): in-tree precedence is deterministic; the snapshot is the fallback, not a shadow."""
+def test_snapshot_wins_over_the_environment(entrypoint_cache, monkeypatch, tmp_path):
+    """Proof (ii): for a stem a cached component owns, the pin decides, not import order.
+
+    An older installed copy, a sibling checkout, or a stale tree on ``PYTHONPATH`` must not
+    shadow the pinned revision silently: the snapshot resolves, and a divergent environment
+    copy is refused naming both files instead.
+    """
     import sys
     import types
 
     from interpretune.hub.entrypoints import instantiate_hub_aware_class
-
-    fake = types.ModuleType("fixture_entry")
-    fake.FixtureWidget = type("FixtureWidget", (), {})  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "fixture_entry", fake)
-    cls = instantiate_hub_aware_class(
-        {"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=entrypoint_cache
-    )
-    assert cls is fake.FixtureWidget
-
-
-def test_undeclared_stem_refuses_naming_both_attempts(entrypoint_cache):
-    """Proof (iii): a miss is a named refusal, not a bare ImportError and not a guess."""
-    from interpretune.hub.entrypoints import instantiate_hub_aware_class
     from interpretune.utils.exceptions import MisconfigurationException
 
-    with pytest.raises(MisconfigurationException, match="no cached component"):
+    divergent = tmp_path / "divergent_entry.py"
+    divergent.write_text("class FixtureWidget:\n    pass\n", encoding="utf-8")
+    fake = types.ModuleType("fixture_entry")
+    fake.__file__ = str(divergent)
+    fake.FixtureWidget = type("FixtureWidget", (), {})  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fixture_entry", fake)
+    with pytest.raises(MisconfigurationException, match="two different files"):
+        instantiate_hub_aware_class(
+            {"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=entrypoint_cache
+        )
+
+
+def test_undeclared_stem_keeps_the_existing_failure(entrypoint_cache):
+    """Proof (iii): a stem no component declares behaves exactly as before (plain import error)."""
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
+    with pytest.raises(ModuleNotFoundError):
         instantiate_hub_aware_class({"class_path": "nope_missing.Widget"}, import_only=True, cache_dir=entrypoint_cache)
 
 
@@ -238,6 +246,9 @@ def test_snapshot_functions_locate_by_reference(tmp_path):
     parent_name, _, _ = cls.__module__.rpartition(".")
     assert getattr(sys.modules[parent_name.rpartition(".")[0]], parent_name.rpartition(".")[2]) is not None
     assert _locate_function(cls.__init__, None) is True
+    import pickle
+
+    assert pickle.loads(pickle.dumps(cls.__init__)) is cls.__init__
 
 
 def test_snapshot_execution_needs_the_trust_opt_in(unexecuted_entrypoint_cache, monkeypatch):
