@@ -24,7 +24,7 @@ from tests.utils import disable_genclassif, get_super_method, ablate_cls_attrs
 from tests.runif import RunIf
 from tests.warns import CORE_CTX_WARNS, unexpected_warns
 from tests.orchestration import run_it
-from it_examples.experiments.rte_boolq import RTEBoolqModuleMixin
+from tests.rte_component import RTEBoolqModuleMixin
 
 
 class TestClassMixins:
@@ -536,8 +536,9 @@ class TestClassificationMixin:
 
             # Patch the RTEBoolqModuleMixin.setup method at the class level to ensure only the base setup() is called
             # TODO: replace use of `core_cust` fixture with a more generic one when available instead of this patch
-            with mock.patch(
-                "it_examples.experiments.rte_boolq.RTEBoolqModuleMixin.setup",
+            with mock.patch.object(
+                RTEBoolqModuleMixin,
+                "setup",
                 autospec=True,
                 side_effect=lambda self, *args, **kwargs: super(RTEBoolqModuleMixin, self).setup(*args, **kwargs),
             ):
@@ -555,9 +556,7 @@ class TestClassificationMixin:
         module = fixture.it_session.module
         # Use the utility function to get the BaseITModule standardize_logits method
         # (skipping the override in RTEBoolqModuleMixin)
-        target_standard_logits = get_super_method(
-            "it_examples.experiments.rte_boolq.RTEBoolqModuleMixin", module, "standardize_logits"
-        )
+        target_standard_logits = get_super_method(RTEBoolqModuleMixin, module, "standardize_logits")
 
         # Setup classification mapping indices - ensure we have the right device
         device = module.device
@@ -605,9 +604,7 @@ class TestClassificationMixin:
         fixture = get_it_session__core_cust__setup
         module = fixture.it_session.module
 
-        target_labels_to_ids = get_super_method(
-            "it_examples.experiments.rte_boolq.RTEBoolqModuleMixin", module, "labels_to_ids"
-        )
+        target_labels_to_ids = get_super_method(RTEBoolqModuleMixin, module, "labels_to_ids")
         # Setup classification mapping indices
         module.it_cfg.classification_mapping_indices = torch.tensor([10, 20, 30], device=module.device)
 
@@ -625,9 +622,7 @@ class TestClassificationMixin:
         fixture = get_it_session__core_cust__setup
         module = fixture.it_session.module
 
-        target_labels_to_ids = get_super_method(
-            "it_examples.experiments.rte_boolq.RTEBoolqModuleMixin", module, "labels_to_ids"
-        )
+        target_labels_to_ids = get_super_method(RTEBoolqModuleMixin, module, "labels_to_ids")
         module.it_cfg.entailment_mapping_indices = torch.tensor([10, 20, 30], device=module.device)
 
         labels = torch.tensor([0, 1, 2, 0], device="cpu")

@@ -5,9 +5,12 @@ Thin wrapper over :mod:`interpretune.hub.publish` (library code carries the logi
 it). The in-repo tree mirrors the Hub tree; publishing copies it and adds the generated card + entrypoint.
 
 Examples:
-    # publish the rte task component (private until deliberately flipped public)
+    # publish the rte task component (private until deliberately flipped public). Post-#497 the
+    # experiment has no in-tree source: extract the entrypoint from the current Hub revision,
+    # edit that copy, and republish it. Payload class paths must address the entrypoint stem
+    # (``rte_boolq.*``), never an in-tree module, or Hub loads break the moment no tree carries it.
     python scripts/publish_it_module.py --component src/it_examples/examples/rte \\
-        --repo-id speediedan/rte --entrypoint src/it_examples/experiments/rte_boolq.py --private
+        --repo-id speediedan/rte --entrypoint /tmp/rte_boolq.py --private
 
     # regenerate + push ONLY the card/manifest for an op-collection repo
     python scripts/publish_it_module.py --component <dir-with-it_component.yaml> --repo-id <org>/<repo>

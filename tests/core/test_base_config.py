@@ -22,11 +22,11 @@ from interpretune.analysis import LatentAnalysisTargets, OpSchema, ColCfg, Analy
 from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp
 from interpretune.analysis.ops.dispatcher import DISPATCHER
 
-from it_examples.experiments.rte_boolq import (
+from tests.rte_component import (
     RTEBoolqEntailmentMapping,
-    GenerativeClassificationConfig,
     RTEBoolqSLConfig,
 )
+from interpretune import GenerativeClassificationConfig
 from interpretune.adapters.transformer_lens.config import TLensGenerationConfig
 from tests.base_defaults import default_test_task
 from tests.utils import _unwrap_one

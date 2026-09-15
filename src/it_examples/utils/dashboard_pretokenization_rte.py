@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -18,7 +17,25 @@ from sae_dashboard.neuronpedia.prompt_pretokenization import (
     pretokenize_prompt_token_sequences,
     set_default_windowing_mode,
 )
-from it_examples.experiments.rte_boolq import TASK_TEXT_FIELD_MAP
+from interpretune.hub.entrypoints import find_entrypoint_owner, import_snapshot_entrypoint
+
+
+def _task_text_field_map() -> dict[str, tuple[str, str]]:
+    """The RTE task's text fields, resolved from the Hub-resident experiment on first use.
+
+    Module-level resolution would hit the components cache (and the trust gate) on every import, including script
+    consumers that never touch RTE fields. Lazy keeps the import clean and fails loudly, with the fetch that fixes it,
+    on first actual use.
+    """
+    owner = find_entrypoint_owner("rte_boolq")
+    if owner is None:
+        raise ImportError(
+            "TASK_TEXT_FIELD_MAP is Hub-resident now (speediedan/rte) and no cached component "
+            "declares it. Fetch it once with it.hub.pull('speediedan/rte')."
+        )
+    return import_snapshot_entrypoint(
+        owner[0], owner[1], what=f"the experiment entrypoint {owner[1]!r} of {owner[0]!r}"
+    ).TASK_TEXT_FIELD_MAP
 
 
 DEFAULT_EXPERIMENT_CONFIG = (
@@ -53,7 +70,7 @@ def load_custom_pretokenization_settings(args: argparse.Namespace) -> RTEPretoke
     prompt_config_cls = _import_from_class_path(prompt_config_class_path)
     prompt_cfg = prompt_config_cls(**(prompt_cfg_payload.get("init_args") or {}))
     task_name = datamodule_args.get("task_name", "rte")
-    text_fields = TASK_TEXT_FIELD_MAP[task_name]
+    text_fields = _task_text_field_map()[task_name]
     return RTEPretokenizationSettings(
         prompt_cfg=prompt_cfg,
         task_name=task_name,
@@ -122,10 +139,9 @@ def build_rte_boolq_task_prompt(
 
 
 def _import_from_class_path(class_path: str) -> type[Any]:
-    module_name, _, class_name = class_path.rpartition(".")
-    if not module_name or not class_name:
-        raise ValueError(f"Invalid class path: {class_path}")
-    return getattr(importlib.import_module(module_name), class_name)
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
+    return instantiate_hub_aware_class({"class_path": class_path}, import_only=True)
 
 
 def _iter_chat_template_tokens(

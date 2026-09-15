@@ -165,14 +165,22 @@ class ConformanceInputs:
         from interpretune.config.mixins import HFFromPretrainedConfig
         from interpretune.config.shared import AutoCompConfig
         from interpretune.hub.api import load_datamodule
-        from it_examples.experiments.rte_boolq import (
-            RTEBoolqDataModule,
-            RTEBoolqEntailmentMapping,
-            RTEBoolqGenerativeClassificationConfig,
-            RTEBoolqModule,
-        )
+        from interpretune.hub.entrypoints import find_entrypoint_owner, import_snapshot_entrypoint
 
         dm_cfg, _dm_cls = load_datamodule(SEED_REPO, SEED_DATAMODULE)
+        _owner = find_entrypoint_owner("rte_boolq")
+        if _owner is None:
+            raise ImportError(
+                "The RTE experiment is Hub-resident now (speediedan/rte) and is not in the local "
+                "components cache. Fetch it once with it.hub.pull('speediedan/rte')."
+            )
+        _rte = import_snapshot_entrypoint(
+            _owner[0], _owner[1], what=f"the experiment entrypoint {_owner[1]!r} of {_owner[0]!r}"
+        )
+        RTEBoolqDataModule = _rte.RTEBoolqDataModule
+        RTEBoolqEntailmentMapping = _rte.RTEBoolqEntailmentMapping
+        RTEBoolqGenerativeClassificationConfig = _rte.RTEBoolqGenerativeClassificationConfig
+        RTEBoolqModule = _rte.RTEBoolqModule
         dm_cfg.model_name_or_path = self.model_id
         dm_cfg.os_env_model_auth_key = None
         dm_cfg.tokenizer_kwargs = {

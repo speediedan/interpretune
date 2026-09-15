@@ -40,3 +40,8 @@ datasets:
   # The debug-generation extension's default corpus.
   - path: Salesforce/wikitext
     config_name: wikitext-2-raw-v1
+components:
+  # The RTE/BoolQ experiment, Hub-resident post-#497: the test registry, backbone, and conformance
+  # seeds resolve its classes from the components cache, offline. Pinned revision; bump with intent.
+  - repo_id: speediedan/rte
+    revision: 738e41229e39379c432da4e5830af01d6e8960b2

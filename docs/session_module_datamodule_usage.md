@@ -98,9 +98,15 @@ Use a manual `analysis_step` when:
 - you want to mix custom module logic with built-in ops
 - you need tighter control than the generated analysis-step path provides
 
-See the current example in:
+See the current example in the Hub-resident `speediedan/rte` component (the experiment moved
+out of the tree in #497; its entrypoint carries the module and datamodule definitions).
 
-- `src/it_examples/experiments/rte_boolq.py`
+Resolution order for component-owned class paths: when a cached component declares the
+entrypoint stem (for example `rte_boolq.RTEBoolqModule`), the pinned snapshot revision
+resolves and the environment is not consulted. An installable same-named module no longer
+shadows the pin; if both resolve to different files the loader refuses naming both, rather
+than binding whichever the import order favors. Class paths no component declares resolve
+from the environment exactly as before.
 
 ## Best Practices
 

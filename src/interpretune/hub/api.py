@@ -17,11 +17,11 @@ if TYPE_CHECKING:
     from interpretune.registry import RegisteredDataModuleCfg
 
 
-def _hydrate_component_body(key: str, body: dict) -> RegisteredCfg:
+def _hydrate_component_body(key: str, body: dict, cache_dir: Path | None = None) -> RegisteredCfg:
     """Hydrate a fetched configuration body through the one-door loader into a ``RegisteredCfg``."""
     from interpretune.config.loading import load_session_cfg
 
-    loaded = load_session_cfg(body, expected_key=key)
+    loaded = load_session_cfg(body, expected_key=key, cache_dir=cache_dir)
     return RegisteredCfg(
         loaded.datamodule_cfg,
         loaded.module_cfg,
@@ -57,7 +57,7 @@ def pull(
         pull_component_payloads(repo_id, manifest, commit, cache_dir=cache_dir, token=token)
         return manifest, commit
     canonical, body = pull_component_config(repo_id, key, revision=revision, cache_dir=cache_dir, token=token)
-    return _hydrate_component_body(canonical, body)
+    return _hydrate_component_body(canonical, body, cache_dir=cache_dir)
 
 
 def pull_ops(
@@ -212,7 +212,7 @@ def load(
     canonical, body = resolve_component_config(
         repo_id, key, cache_dir=cache_dir, revision=revision, require_hub=require_hub
     )
-    return _hydrate_component_body(canonical, body)
+    return _hydrate_component_body(canonical, body, cache_dir=cache_dir)
 
 
 def load_datamodule(repo_id: str, name: str, *, cache_dir: Path | None = None) -> "RegisteredDataModuleCfg":
@@ -227,7 +227,7 @@ def load_datamodule(repo_id: str, name: str, *, cache_dir: Path | None = None) -
     from interpretune.registry import RegisteredDataModuleCfg
 
     body = resolve_datamodule_config(repo_id, name, cache_dir=cache_dir)
-    dm_cfg, dm_cls = load_datamodule_cfg(body)
+    dm_cfg, dm_cls = load_datamodule_cfg(body, cache_dir=cache_dir)
     if dm_cls is None:
         # lean on the NamedTuple's DEFAULT_DATAMODULE field default (which carries the one sanctioned
         # type-ignore) rather than re-passing it positionally and re-triggering the same mismatch here

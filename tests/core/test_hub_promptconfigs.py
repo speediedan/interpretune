@@ -13,10 +13,14 @@ PROMPT_COMPONENT_DIR = Path(it_examples.__file__).parent / "examples" / "prompt_
 
 @pytest.fixture()
 def seeded_cache(tmp_path):
+    from interpretune.hub.components import local_publish
     from it_examples.seeds import ensure_local_seeds
+    from tests.rte_component import rte_entrypoint_src
 
     cache = tmp_path / "components"
     ensure_local_seeds(cache_dir=cache)
+    rte_dir = Path(__file__).parent.parent.parent / "src" / "it_examples" / "examples" / "rte"
+    local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
     return cache
 
 
@@ -161,7 +165,7 @@ class TestComposeRefParity:
         """
         import dataclasses
 
-        from it_examples.experiments.rte_boolq import RTEBoolqPromptConfig
+        from tests.rte_component import RTEBoolqPromptConfig
         from interpretune.hub.promptconfigs import compose_prompt_config_class, resolve_prompt_config_class
 
         ref_cls = resolve_prompt_config_class(f"speediedan/prompt-configs#{ref_name}", cache_dir=seeded_cache)
@@ -185,12 +189,13 @@ class TestComposeRefParity:
         cfg = itdm_cfg_factory(
             {
                 "prompt_cfg": {
-                    "class_path": "it_examples.experiments.rte_boolq.RTEBoolqPromptConfig",
+                    "class_path": "rte_boolq.RTEBoolqPromptConfig",
                     "compose_ref": "speediedan/prompt-configs#GemmaPromptConfig",
                 },
                 "signature_columns": ["input", "labels"],
             },
             {"model_name_or_path": "gpt2", "task_name": "rte"},
+            cache_dir=seeded_cache,
         )
         assert type(cfg.prompt_cfg).__name__ == "GemmaPromptConfig_RTEBoolqPromptConfig"
         assert cfg.prompt_cfg.model_chat_template_fn("Hi", "gemma-chat").startswith("<bos><start_of_turn>user")

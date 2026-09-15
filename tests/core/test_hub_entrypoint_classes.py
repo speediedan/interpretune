@@ -14,11 +14,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-ENTRYPOINT_SRC = '''\
+ENTRYPOINT_TEMPLATE = '''\
 class FixtureWidget:
     """Standalone widget: no imports, so the snapshot import cannot drag the tree in."""
 
-    def __init__(self, tag: str = "w") -> None:
+    def __init__(self, tag: str = {tag!r}) -> None:
         self.tag = tag
 
 
@@ -32,10 +32,10 @@ class FixtureGadget:
 MODULE_CONFIG_KEY = "fixture.tiny.core"
 
 
-def _write_fixture_component(root: Path) -> Path:
+def _write_fixture_component(root: Path, tag: str = "w") -> Path:
     """A minimal publishable tree: one module config, one datamodule entry, one entrypoint file."""
     (root / "configs").mkdir(parents=True)
-    (root / "fixture_entry.py").write_text(ENTRYPOINT_SRC, encoding="utf-8")
+    (root / "fixture_entry.py").write_text(ENTRYPOINT_TEMPLATE.format(tag=tag), encoding="utf-8")
     manifest = {
         "it_schema_version": 1,
         "kinds": ["module", "datamodule"],
@@ -71,6 +71,22 @@ def entrypoint_cache(tmp_path):
     return cache
 
 
+@pytest.fixture()
+def unexecuted_entrypoint_cache(tmp_path):
+    """Same shape under a distinct revision, so no earlier test has executed its module.
+
+    Synthetic module names incorporate the revision: reusing the default tag would resolve to the
+    already-executed module and pass the trust gate without challenging it (the behavior the
+    promptconfigs suite pins deliberately, which is exactly what this control must not rely on).
+    """
+    from interpretune.hub.components import local_publish
+
+    component = _write_fixture_component(tmp_path / "component", tag="unexecuted")
+    cache = tmp_path / "cache"
+    local_publish(component, "someorg/fixture", entrypoint_src=component / "fixture_entry.py", cache_dir=cache)
+    return cache
+
+
 def test_entrypoint_stem_class_resolves_from_the_snapshot(entrypoint_cache):
     """Proof (i): a stem-addressed class comes from the snapshot, not the environment."""
     import inspect
@@ -86,28 +102,36 @@ def test_entrypoint_stem_class_resolves_from_the_snapshot(entrypoint_cache):
     assert cls(tag="t").tag == "t"
 
 
-def test_environment_import_wins_when_both_resolve(entrypoint_cache, monkeypatch):
-    """Proof (ii): in-tree precedence is deterministic; the snapshot is the fallback, not a shadow."""
+def test_snapshot_wins_over_the_environment(entrypoint_cache, monkeypatch, tmp_path):
+    """Proof (ii): for a stem a cached component owns, the pin decides, not import order.
+
+    An older installed copy, a sibling checkout, or a stale tree on ``PYTHONPATH`` must not
+    shadow the pinned revision silently: the snapshot resolves, and a divergent environment
+    copy is refused naming both files instead.
+    """
     import sys
     import types
 
     from interpretune.hub.entrypoints import instantiate_hub_aware_class
-
-    fake = types.ModuleType("fixture_entry")
-    fake.FixtureWidget = type("FixtureWidget", (), {})  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "fixture_entry", fake)
-    cls = instantiate_hub_aware_class(
-        {"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=entrypoint_cache
-    )
-    assert cls is fake.FixtureWidget
-
-
-def test_undeclared_stem_refuses_naming_both_attempts(entrypoint_cache):
-    """Proof (iii): a miss is a named refusal, not a bare ImportError and not a guess."""
-    from interpretune.hub.entrypoints import instantiate_hub_aware_class
     from interpretune.utils.exceptions import MisconfigurationException
 
-    with pytest.raises(MisconfigurationException, match="no cached component"):
+    divergent = tmp_path / "divergent_entry.py"
+    divergent.write_text("class FixtureWidget:\n    pass\n", encoding="utf-8")
+    fake = types.ModuleType("fixture_entry")
+    fake.__file__ = str(divergent)
+    fake.FixtureWidget = type("FixtureWidget", (), {})  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fixture_entry", fake)
+    with pytest.raises(MisconfigurationException, match="two different files"):
+        instantiate_hub_aware_class(
+            {"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=entrypoint_cache
+        )
+
+
+def test_undeclared_stem_keeps_the_existing_failure(entrypoint_cache):
+    """Proof (iii): a stem no component declares behaves exactly as before (plain import error)."""
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
+    with pytest.raises(ModuleNotFoundError):
         instantiate_hub_aware_class({"class_path": "nope_missing.Widget"}, import_only=True, cache_dir=entrypoint_cache)
 
 
@@ -138,7 +162,96 @@ def test_declared_but_absent_entrypoint_names_the_pull(entrypoint_cache):
         )
 
 
-def test_snapshot_execution_needs_the_trust_opt_in(entrypoint_cache, monkeypatch):
+def test_declared_payloads_include_entrypoints_and_datamodule_configs():
+    """Key-less pull materializes what cache-only loaders read whole: entrypoints plus dm configs.
+
+    Module configs stay per-key (pinned by the hookmaps test); entrypoints and datamodule
+    standalone configs cannot, since snapshot class resolution and datamodule resolution read
+    them whole from the snapshot.
+    """
+    from interpretune.hub.components import declared_component_payloads
+
+    manifest = {
+        "kinds": ["module", "datamodule"],
+        "module": {"entrypoint": "entry.py", "configs": {"k": "configs/k.yaml"}},
+        "datamodules": {"dm": {"entrypoint": "entry.py", "config": "configs/dm.yaml"}},
+    }
+    assert declared_component_payloads(manifest) == ["entry.py", "configs/dm.yaml"]
+
+
+def test_explicit_cache_dir_does_not_bind_the_default_cache(tmp_path, monkeypatch):
+    """Cache isolation: an explicit cache scopes resolution; a same-stem default never leaks in."""
+    from interpretune.hub import components
+    from interpretune.hub.components import local_publish
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
+    real = tmp_path / "real" / "cache"
+    local_publish(
+        _write_fixture_component(tmp_path / "real" / "component", tag="real"),
+        "someorg/fixture",
+        entrypoint_src=tmp_path / "real" / "component" / "fixture_entry.py",
+        cache_dir=real,
+    )
+    decoy = tmp_path / "decoy" / "cache"
+    local_publish(
+        _write_fixture_component(tmp_path / "decoy" / "component", tag="decoy"),
+        "someorg/fixture",
+        entrypoint_src=tmp_path / "decoy" / "component" / "fixture_entry.py",
+        cache_dir=decoy,
+    )
+    monkeypatch.setattr(components, "IT_COMPONENTS_HUB_CACHE", decoy)
+    cls = instantiate_hub_aware_class({"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=real)
+    assert cls().tag == "real"
+
+
+def test_default_cache_honors_the_established_patch_pattern(tmp_path, monkeypatch):
+    """Without an explicit cache, the default binding applies (including the test-suite patch)."""
+    from interpretune.hub import components
+    from interpretune.hub.components import local_publish
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
+    cache = tmp_path / "cache"
+    local_publish(
+        _write_fixture_component(tmp_path / "component"),
+        "someorg/fixture",
+        entrypoint_src=tmp_path / "component" / "fixture_entry.py",
+        cache_dir=cache,
+    )
+    monkeypatch.setattr(components, "IT_COMPONENTS_HUB_CACHE", cache)
+    cls = instantiate_hub_aware_class({"class_path": "fixture_entry.FixtureWidget"}, import_only=True)
+    assert cls().tag == "w"
+
+
+def test_snapshot_functions_locate_by_reference(tmp_path):
+    """Parent packages are bound, so serializers resolve Hub functions instead of pickling by value.
+
+    Stuffing only the full dotted name into ``sys.modules`` leaves parent-attribute traversal
+    (dill's function location, ``mock.patch`` string targets) unable to reach the module, and
+    serializers fall back to pickling Hub-defined functions by value with their whole globals.
+    Uses its own tag: synthetic names are content hashes, so a shared tag would resolve to
+    another test's already-imported module instead of exercising this path.
+    """
+    import sys
+
+    from dill._dill import _locate_function
+
+    from interpretune.hub.components import local_publish
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
+    component = _write_fixture_component(tmp_path / "component", tag="locate")
+    cache = tmp_path / "cache"
+    local_publish(component, "someorg/fixture", entrypoint_src=component / "fixture_entry.py", cache_dir=cache)
+    cls = instantiate_hub_aware_class({"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=cache)
+    assert cls.__module__.startswith("it_hub_components.")
+    parent_name, _, _ = cls.__module__.rpartition(".")
+    assert getattr(sys.modules[parent_name.rpartition(".")[0]], parent_name.rpartition(".")[2]) is not None
+    assert _locate_function(cls.__init__, None) is True
+    import pickle
+
+    assert pickle.loads(pickle.dumps(cls.__init__)) is cls.__init__
+
+
+def test_snapshot_execution_needs_the_trust_opt_in(unexecuted_entrypoint_cache, monkeypatch):
     """Proof (v): the gate fires before exec, with this path's own wording pinned."""
     from interpretune.hub.entrypoints import instantiate_hub_aware_class
     from interpretune.hub.trust import RemoteCodeNotTrustedError
@@ -146,5 +259,54 @@ def test_snapshot_execution_needs_the_trust_opt_in(entrypoint_cache, monkeypatch
     monkeypatch.setenv("IT_TRUST_REMOTE_CODE", "0")
     with pytest.raises(RemoteCodeNotTrustedError, match="component entrypoint"):
         instantiate_hub_aware_class(
-            {"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=entrypoint_cache
+            {"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=unexecuted_entrypoint_cache
         )
+
+
+def test_finder_reimports_an_evicted_snapshot_module(tmp_path, monkeypatch):
+    """A fresh process (spawn worker) restores the module from disk: evict, reimport, identical file."""
+    import importlib
+    import inspect
+    import sys
+
+    from interpretune.hub import components
+    from interpretune.hub.components import local_publish
+    from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
+    # Unique tag: synthetic names are content hashes, so sharing the default tag with other
+    # tests would resolve to their already-imported module instead of exercising the finder.
+    component = _write_fixture_component(tmp_path / "component", tag="reimport")
+    cache = tmp_path / "cache"
+    local_publish(component, "someorg/fixture", entrypoint_src=component / "fixture_entry.py", cache_dir=cache)
+    monkeypatch.setattr(components, "IT_COMPONENTS_HUB_CACHE", cache)
+    cls = instantiate_hub_aware_class({"class_path": "fixture_entry.FixtureWidget"}, import_only=True, cache_dir=cache)
+    name, expected_file = cls.__module__, inspect.getfile(cls)
+    assert name.startswith("it_hub_components.")
+    evicted = sys.modules.pop(name)
+    try:
+        restored = importlib.import_module(name)
+    finally:
+        sys.modules.setdefault(name, evicted)
+    assert inspect.getfile(restored) == expected_file
+    assert restored.FixtureWidget.__name__ == "FixtureWidget"
+
+
+def test_finder_ignores_ordinary_and_unknown_names(entrypoint_cache):
+    """Only it_hub_components stems consult the cache; unknown stems miss without network."""
+    from interpretune.hub.entrypoints import _HubSnapshotFinder
+
+    finder = _HubSnapshotFinder()
+    assert finder.find_spec("os", None) is None
+    assert finder.find_spec("nope.missing", None) is None
+    assert finder.find_spec("it_hub_components.nope__none.abc123", None) is None
+
+
+def test_finder_install_is_idempotent():
+    """Repeated installs add no duplicate finders."""
+    import sys
+
+    from interpretune.hub.entrypoints import install_hub_module_finder
+
+    install_hub_module_finder()
+    install_hub_module_finder()
+    assert sum(type(finder).__name__ == "_HubSnapshotFinder" for finder in sys.meta_path) == 1
