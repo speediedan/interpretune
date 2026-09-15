@@ -1,10 +1,12 @@
+"""Experiment config loading with EXTENDS inheritance and environment overrides."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 import os
 from pathlib import Path
 
-from interpretune.utils.notebook_experiments import resolve_extends_path
+from interpretune.harness.experiments import resolve_extends_path
 from typing import Any, Mapping
 
 import yaml  # type: ignore[import-untyped]
@@ -15,6 +17,7 @@ _MISSING = object()
 
 
 def _parse_env_override(raw_value: str) -> Any:
+    """Parse an environment override value, coercing recognizeable literals."""
     stripped = raw_value.strip()
     if not stripped:
         return raw_value
@@ -34,6 +37,7 @@ def _parse_env_override(raw_value: str) -> Any:
 
 
 def _get_env_override(flat_key: str) -> Any:
+    """Read one flat-key environment override, or the missing sentinel."""
     if flat_key not in os.environ:
         return _MISSING
     return _parse_env_override(os.environ[flat_key])
@@ -41,6 +45,8 @@ def _get_env_override(flat_key: str) -> Any:
 
 @dataclass(frozen=True)
 class HarnessModelConfig:
+    """Model section of the shared harness config."""
+
     family: str
     variant: str
     model_name: str
@@ -52,6 +58,8 @@ class HarnessModelConfig:
 
 @dataclass(frozen=True)
 class HarnessPromptConfig:
+    """Prompt section of the shared harness config."""
+
     prompt: str
     render_mode: str
     target_tokens: tuple[str, str] | None
@@ -62,6 +70,8 @@ class HarnessPromptConfig:
 
 @dataclass(frozen=True)
 class HarnessSessionConfig:
+    """Session section of the shared harness config."""
+
     force_device: str | None
     batch_size: int | None
     max_feature_nodes: int | None
@@ -70,6 +80,8 @@ class HarnessSessionConfig:
 
 @dataclass(frozen=True)
 class HarnessNeuronpediaConfig:
+    """Neuronpedia section of the shared harness config."""
+
     base_url: str
     use_localhost: bool
     local_db_url: str | None
@@ -91,6 +103,8 @@ class HarnessNeuronpediaConfig:
 
 @dataclass(frozen=True)
 class HarnessDebugValidationConfig:
+    """Debug-validation section of the shared harness config."""
+
     enable_zero_softcap: bool
     enable_baseline_path_debug: bool
     logit_atol: float
@@ -103,6 +117,8 @@ class HarnessDebugValidationConfig:
 
 @dataclass(frozen=True)
 class SharedHarnessSections:
+    """The shared harness config sections every experiment config extends."""
+
     model: HarnessModelConfig
     prompt: HarnessPromptConfig
     session: HarnessSessionConfig
@@ -111,6 +127,7 @@ class SharedHarnessSections:
 
 
 def _load_yaml_mapping(path: Path) -> dict[str, Any]:
+    """Load a YAML file as a string-keyed mapping."""
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     if payload is None:
         return {}
@@ -120,6 +137,7 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
 
 
 def deep_merge_mappings(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    """Deep-merge two config mappings, overrides winning."""
     merged: dict[str, Any] = dict(base)
     for key, value in override.items():
         base_value = merged.get(key)
@@ -131,6 +149,7 @@ def deep_merge_mappings(base: Mapping[str, Any], override: Mapping[str, Any]) ->
 
 
 def _resolve_extends_paths(config_path: Path, extends_value: Any) -> list[Path]:
+    """Resolve an EXTENDS value to parent config paths."""
     if extends_value is None:
         return []
     if isinstance(extends_value, str):
@@ -147,6 +166,7 @@ def _resolve_extends_paths(config_path: Path, extends_value: Any) -> list[Path]:
 
 
 def load_experiment_config(config_path: str | Path, *, _seen: tuple[Path, ...] = ()) -> dict[str, Any]:
+    """Load an experiment config, following EXTENDS inheritance with cycle detection."""
     resolved_path = Path(config_path).expanduser().resolve()
     if resolved_path in _seen:
         chain = " -> ".join(str(path) for path in (*_seen, resolved_path))
@@ -177,6 +197,7 @@ def get_config_value(
     flat_key: str,
     default: Any = None,
 ) -> Any:
+    """Read one config value with an optional default."""
     env_override = _get_env_override(flat_key)
     if env_override is not _MISSING:
         return env_override
@@ -194,6 +215,7 @@ def get_required_config_value(
     key: str,
     flat_key: str,
 ) -> Any:
+    """Read one required config value, raising when it is absent."""
     value = get_config_value(payload, section=section, key=key, flat_key=flat_key)
     if value is None:
         raise ValueError(f"Config is missing required value '{flat_key}' (or nested '{section}.{key}').")
@@ -245,6 +267,7 @@ def build_shared_harness_sections(
     debug_validation_top_k: int,
     debug_validation_raise_on_failure: bool,
 ) -> SharedHarnessSections:
+    """Build the shared harness sections from a resolved experiment config."""
     return SharedHarnessSections(
         model=HarnessModelConfig(
             family=model_family,

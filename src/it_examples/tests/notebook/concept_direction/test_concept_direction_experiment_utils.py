@@ -24,8 +24,8 @@ from it_examples.experiments.notebook.concept_direction.concept_direction import
     execute_concept_latent_extraction_ops,
 )
 from it_examples.experiments.notebook import pipeline_patterns
-from it_examples.experiments.notebook import nb_harness_utils as nb_harness_utils_module
-from it_examples.experiments.notebook.nb_harness_utils import (
+from interpretune.harness import nb_harness_utils as nb_harness_utils_module
+from interpretune.harness.nb_harness_utils import (
     _build_graph_analysis_inputs,
     _build_feature_selection_spec,
     _extract_top_features_with_optional_filter,
@@ -209,15 +209,15 @@ def test_prepare_local_explanation_backfill_uses_requested_type_for_coverage(mon
         return 3, tmp_path / "feature-1.jsonl.gz"
 
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.check_local_explanation_coverage",
+        "interpretune.harness.nb_harness_utils.check_local_explanation_coverage",
         fake_check_local_explanation_coverage,
     )
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils._populate_feature_cache_from_local_exports",
+        "interpretune.harness.nb_harness_utils._populate_feature_cache_from_local_exports",
         fake_populate_feature_cache_from_local_exports,
     )
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils._resolve_local_export_roots",
+        "interpretune.harness.nb_harness_utils._resolve_local_export_roots",
         lambda roots: (tmp_path,),
     )
 
@@ -966,7 +966,7 @@ def test_maybe_save_local_neuronpedia_graph_public_upload_syncs_local_metadata(m
             return graph_path
 
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils._upload_graph_for_public_then_sync_local",
+        "interpretune.harness.nb_harness_utils._upload_graph_for_public_then_sync_local",
         lambda graph_path, *, api_key, public_base_url=None: (
             observed.update(
                 upload_path=str(graph_path),
@@ -989,7 +989,7 @@ def test_maybe_save_local_neuronpedia_graph_public_upload_syncs_local_metadata(m
     )
 
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.sync_graph_metadata_to_local_dev",
+        "interpretune.harness.nb_harness_utils.sync_graph_metadata_to_local_dev",
         lambda **kwargs: {
             "model_id": "gemma-3-1b-it",
             "slug": "test-public-sync",
@@ -1052,7 +1052,7 @@ def test_maybe_save_local_neuronpedia_graph_public_upload_falls_back_to_local_sy
 
     monkeypatch.setenv("NEURONPEDIA_API_KEY", "prod-key")
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils._upload_graph_for_public_then_sync_local",
+        "interpretune.harness.nb_harness_utils._upload_graph_for_public_then_sync_local",
         lambda graph_path, *, api_key, public_base_url=None: SimpleNamespace(
             graph_metadata=SimpleNamespace(
                 model_id="gemma-3-1b-it",
@@ -1066,7 +1066,7 @@ def test_maybe_save_local_neuronpedia_graph_public_upload_falls_back_to_local_sy
         ),
     )
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.sync_graph_metadata_to_local_dev",
+        "interpretune.harness.nb_harness_utils.sync_graph_metadata_to_local_dev",
         lambda **kwargs: {
             "model_id": "gemma-3-1b-it",
             "slug": "test-public-sync-fallback",
@@ -1172,25 +1172,23 @@ def test_sync_graph_metadata_to_local_dev_uses_public_json_url_and_upsert(monkey
         def __exit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr("it_examples.experiments.notebook.nb_harness_utils.load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr("interpretune.harness.nb_harness_utils.load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.resolve_local_neuronpedia_db_url",
+        "interpretune.harness.nb_harness_utils.resolve_local_neuronpedia_db_url",
         lambda local_db_url=None: "postgres://postgres:postgres@127.0.0.1:5433/postgres",
     )
+    monkeypatch.setattr("interpretune.harness.nb_harness_utils.urlopen", lambda *args, **kwargs: _FakeResponse())
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.urlopen", lambda *args, **kwargs: _FakeResponse()
-    )
-    monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.psycopg.connect",
+        "interpretune.harness.nb_harness_utils.psycopg.connect",
         lambda *args, **kwargs: _FakeConnection(),
     )
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.load_dotenv",
+        "interpretune.harness.nb_harness_utils.load_dotenv",
         lambda *args, **kwargs: False,
     )
     monkeypatch.setenv("LOCAL_NEURONPEDIA_WEBAPP_URL", "http://localhost:3999")
 
-    from it_examples.experiments.notebook.nb_harness_utils import sync_graph_metadata_to_local_dev
+    from interpretune.harness.nb_harness_utils import sync_graph_metadata_to_local_dev
 
     summary = sync_graph_metadata_to_local_dev(username="speediedan", graph_metadata=graph_metadata)
 
@@ -1272,19 +1270,19 @@ def test_sync_graph_metadata_to_local_dev_generates_local_id_when_public_metadat
             return False
 
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.urlopen",
+        "interpretune.harness.nb_harness_utils.urlopen",
         lambda request, timeout=60: _FakeResponse(),
     )
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.resolve_local_neuronpedia_db_url",
+        "interpretune.harness.nb_harness_utils.resolve_local_neuronpedia_db_url",
         lambda url=None: "postgres://db",
     )
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.psycopg.connect",
+        "interpretune.harness.nb_harness_utils.psycopg.connect",
         lambda *args, **kwargs: _FakeConnection(),
     )
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.load_dotenv",
+        "interpretune.harness.nb_harness_utils.load_dotenv",
         lambda *args, **kwargs: False,
     )
     monkeypatch.setenv("LOCAL_NEURONPEDIA_WEBAPP_URL", "http://localhost:3999")
@@ -1705,7 +1703,7 @@ def test_extract_top_features_with_optional_filter_passes_feature_selection_to_o
     observed_feature_selection: dict[str, Any] = {}
 
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.it.extract_top_features",
+        "interpretune.harness.nb_harness_utils.it.extract_top_features",
         lambda *args, **kwargs: observed_feature_selection.update(feature_selection=kwargs.get("feature_selection"))
         or fake_result,
     )
@@ -1736,7 +1734,7 @@ def test_extract_top_features_with_optional_filter_leaves_op_result_unchanged(mo
     )
 
     monkeypatch.setattr(
-        "it_examples.experiments.notebook.nb_harness_utils.it.extract_top_features",
+        "interpretune.harness.nb_harness_utils.it.extract_top_features",
         lambda *args, **kwargs: fake_result,
     )
 

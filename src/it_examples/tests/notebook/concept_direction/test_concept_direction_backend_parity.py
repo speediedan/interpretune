@@ -33,14 +33,14 @@ from tests.core.test_analysis_backend_parity import (
     _feature_row_from_tensor,
     _find_active_feature_index,
 )
-from it_examples.experiments.notebook.nb_harness_utils import _build_feature_selection_spec
-from it_examples.experiments.notebook.nb_harness_utils import (
+from interpretune.harness.nb_harness_utils import _build_feature_selection_spec
+from interpretune.harness.nb_harness_utils import (
     _extract_top_features_with_optional_filter,
     _serialize_constrained_feature_selection,
     _serialize_intervention_call_kwargs,
     _summarize_graph_input_tokens,
 )
-from it_examples.experiments.notebook.config import load_experiment_config
+from interpretune.harness.config import load_experiment_config
 from it_examples.tests.notebook._harness.session import experiment_session, resolve_model_spec
 from it_examples.experiments.notebook.concept_direction.analysis.concept_direction_analysis import (
     DEFAULT_RANDOM_PERTURBATION_SCALE,

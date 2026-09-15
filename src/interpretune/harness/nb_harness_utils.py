@@ -1,3 +1,5 @@
+"""Shared pipeline helpers for notebook experiments: prompts, configs, reports, artifacts."""
+
 from __future__ import annotations
 
 import gzip
@@ -13,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from urllib.request import Request, urlopen
 
 import psycopg
@@ -48,10 +50,9 @@ from interpretune.utils.neuronpedia_explanations import (
     write_cached_feature_activations,
 )
 
-from it_examples.examples.prompt_configs.prompt_configs import GemmaPromptConfig
-from it_examples.utils.nb_ui_utils import display_layer_divergence_summary, display_logit_drift_summary
-from it_examples.experiments.notebook.config import get_config_value
-from interpretune.utils.notebook_experiments import ExperimentHooks
+from interpretune.harness.config import get_config_value
+from interpretune.harness.display import display_layer_divergence_summary, display_logit_drift_summary
+from interpretune.harness.experiments import ExperimentHooks
 
 # The experiment-specific callables the shared harness needs are SUPPLIED by the experiment rather than
 # imported from one. Importing them here made the shared rails require that particular experiment to be
@@ -140,6 +141,7 @@ def format_token_debug_html(
     marks_key: str | None = "marks",
     index_key: str | None = "index",
 ) -> str:
+    """Render per-token debug entries as an HTML table for notebook inspection."""
     normalized_rows = [row for row in (rows or []) if isinstance(row, Mapping)]
     if not normalized_rows:
         return ""
@@ -157,6 +159,7 @@ def format_token_debug_html(
 
 
 def display_html_frame(frame: Any) -> None:
+    """Display a data frame as HTML, falling back to text outside notebooks."""
     if _ipython_html is None or _ipython_display is None:
         print(frame)
         return
@@ -172,6 +175,7 @@ def display_html_frame(frame: Any) -> None:
 
 
 def display_full_frame(frame: Any) -> None:
+    """Display a data frame with all columns and rows visible."""
     if getattr(frame, "attrs", {}).get("html_columns"):
         display_html_frame(frame)
         return
@@ -190,10 +194,97 @@ def display_full_frame(frame: Any) -> None:
 
 if TYPE_CHECKING:
     from interpretune.extensions.debug_generation import DebugGeneration
-    from it_examples.experiments.notebook.concept_direction.concept_direction import (
-        NotebookHarnessConfig,
-        PromptRenderMode,
-    )
+
+
+PromptRenderMode = Literal["plain", "apply_chat_template", "gemma_dataclass"]
+# How a prompt is rendered before tokenizing: the rails' vocabulary, shared by every experiment.
+
+
+class ExperimentHarnessConfig(Protocol):
+    """What the rails need from an experiment's resolved config, structurally.
+
+    The inversion of the old direction (the harness importing one experiment's config class): every experiment hands the
+    harness an object providing these attributes, and no experiment is imported here, not even for typing. A future
+    experiment satisfies this by providing the attributes its pipeline uses; nothing here names which experiment that
+    is.
+    """
+
+    ablation_n_list: Any
+    analysis_concept_label: Any
+    analysis_direction_mode_name: Any
+    analysis_mode: Any
+    applied_to: Any
+    apply_chat_template_fn: Any
+    batch_size: Any
+    check_local_explanation_coverage: Any
+    constrained_feature_selection_refs: Any
+    context_enhanced_scale: Any
+    debug_print_circuit_tracer_cfg: Any
+    debug_session_surface_preset: Any
+    debug_validation_act_atol: Any
+    debug_validation_act_rtol: Any
+    debug_validation_logit_atol: Any
+    debug_validation_logit_rtol: Any
+    debug_validation_raise_on_failure: Any
+    debug_validation_top_k: Any
+    default_scale_factor: Any
+    enable_zero_softcap: Any
+    experiment_config_name: Any
+    experiment_name: Any
+    explicit_direction_tokens: Any
+    force_device: Any
+    generate_missing_local_explanations: Any
+    intervention_apply_activation_function: Any
+    intervention_constrained_layers: Any
+    intervention_freeze_attention: Any
+    intervention_max_influence_norm_scale: Any
+    intervention_return_activations: Any
+    intervention_scale_factor: Any
+    intervention_sign_aware_scale: Any
+    intervention_sparse: Any
+    intervention_value_source: Any
+    is_debug_intervention_mode: Any
+    key_tokens_override: Any
+    local_explanation_feature_limit: Any
+    local_explanation_type_name: Any
+    local_graph_slug_prefix: Any
+    local_neuronpedia_db_url: Any
+    local_neuronpedia_webapp_url: Any
+    max_feature_nodes: Any
+    model_chat_template_fn: Any
+    model_family: Any
+    model_name: Any
+    model_variant: Any
+    mode_warning_messages: Any
+    neuronpedia_base_url: Any
+    neuronpedia_model: Any
+    neuronpedia_set: Any
+    prompt: Any
+    prompt_render_mode: Any
+    scale_factor_sweep: Any
+    show_score_sign_in_feature_tables: Any
+    store_latent_extraction_mode: Any
+    target_token_ids: Any
+    target_tokens: Any
+    top_n: Any
+    transcoder_set: Any
+    upload_local_graphs: Any
+    use_answer_state_as_basis: Any
+    use_chat_template: Any
+    use_localhost: Any
+    work_root: Any
+
+
+def _gemma_prompt_config(cache_dir: Any = None) -> Any:
+    """Gemma chat spelling via the prompt-config registry, not an examples import.
+
+    Resolves ``speediedan/prompt-configs#GemmaPromptConfig`` from the components cache (seeded
+    in-repo for tests, ``it.hub.pull`` at runtime), so core never imports the examples package
+    for a model-family spelling the Hub promptconfigs kind already serves.
+    """
+    from interpretune.hub.promptconfigs import resolve_prompt_config_class
+
+    return resolve_prompt_config_class("speediedan/prompt-configs#GemmaPromptConfig", cache_dir=cache_dir)()
 
 
 # No default, deliberately. This used to fall back to an absolute path under one contributor's home
@@ -206,6 +297,8 @@ DEFAULT_LOCAL_NEURONPEDIA_EXPORT_ROOT = Path(raw) if (raw := os.getenv(_LOCAL_NE
 
 @dataclass
 class UploadedGraphMetadata:
+    """Graph metadata for an uploaded local graph."""
+
     model_id: str
     slug: str
     prompt_tokens: list[str]
@@ -219,6 +312,8 @@ class UploadedGraphMetadata:
 
 @dataclass
 class PublicGraphUploadResult:
+    """Whether a public graph upload reached the database, with its metadata."""
+
     graph_metadata: UploadedGraphMetadata
     public_saved_to_db: bool
     public_save_to_db_error: str | None = None
@@ -229,12 +324,16 @@ ConstrainedFeatureSelectionRefValue = str | tuple[str, str, int, int]
 
 @dataclass(frozen=True)
 class ConstrainedFeatureSelectionRef:
+    """One constrained feature reference: a value plus its optional activation override."""
+
     ref: ConstrainedFeatureSelectionRefValue
     activation_value: float | None = None
 
 
 @dataclass
 class ConstrainedFeatureSelection:
+    """A constrained feature-selection request: specific features, layers, or activation overrides."""
+
     specific_features: tuple[ConstrainedFeatureSelectionRef | tuple[int, int, int], ...] = ()
     layers: tuple[int, ...] = ()
     positions: tuple[int, ...] = ()
@@ -544,12 +643,12 @@ def _build_classification_prompt(entity_name: str, question: str) -> str:
 
 
 def _chattify_apply_chat_template(prompt: str, tokenizer: Any) -> str:
-    cfg = GemmaPromptConfig()
+    cfg = _gemma_prompt_config()
     return cfg.apply_chat_template_fn(tokenizer, prompt, tokenize=False, add_generation_prompt=True)
 
 
 def _chattify_gemma_dataclass(prompt: str) -> str:
-    cfg = GemmaPromptConfig()
+    cfg = _gemma_prompt_config()
     return cfg.model_chat_template_fn(prompt, tokenization_pattern="gemma-chat")
 
 
@@ -560,6 +659,7 @@ def _chattify(prompt: str, tokenizer: Any, method: str = "apply_chat_template") 
 
 
 def create_work_root(base_dir: str | None, experiment_name: str, *, prefix: str = "nb_experiment") -> Path:
+    """Create the experiment work root, namespaced by experiment name."""
     if base_dir:
         work_root = Path(base_dir).expanduser().resolve()
         work_root.mkdir(parents=True, exist_ok=True)
@@ -568,18 +668,22 @@ def create_work_root(base_dir: str | None, experiment_name: str, *, prefix: str 
 
 
 def tensor_to_cpu(value: torch.Tensor) -> torch.Tensor:
+    """Move a tensor to CPU, detaching it from any device context."""
     return value.detach().cpu().to(torch.float32)
 
 
 def feature_ids_to_tuples(feature_ids: Any) -> list[tuple[int, ...]]:
+    """Normalize feature ids into (layer, index) tuples."""
     return [tuple(feature.tolist()) for feature in feature_ids]
 
 
 def scalar_tensor_list(values: list[float] | tuple[float, ...], *, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    """Build a float tensor from a list of scalars."""
     return torch.tensor(list(values), dtype=dtype)
 
 
 def phase_run_name(experiment_name: str, label: str) -> str:
+    """The run name for one pipeline phase of an experiment."""
     cleaned = label.lower().replace(" ", "_").replace("/", "_")
     return f"{experiment_name}_{cleaned}"
 
@@ -697,7 +801,7 @@ def _upload_graph_for_public_then_sync_local(
 
 
 @contextmanager
-def _temporary_neuronpedia_upload_env(cfg: NotebookHarnessConfig, *, upload_target: str) -> Any:
+def _temporary_neuronpedia_upload_env(cfg: ExperimentHarnessConfig, *, upload_target: str) -> Any:
     env_updates = {"USE_LOCALHOST": "true" if upload_target == "localhost" else "false"}
     if upload_target == "localhost":
         api_key = os.environ.get("DEV_NEURONPEDIA_API_KEY")
@@ -877,7 +981,7 @@ def sync_graph_metadata_to_local_dev(
 
 
 def maybe_save_local_neuronpedia_graph(
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     module: Any,
     graph: Any,
     *,
@@ -887,6 +991,7 @@ def maybe_save_local_neuronpedia_graph(
     graph_target_ids: Sequence[int] | None = None,
     extra_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    """Persist the local Neuronpedia graph when the config asks for it, else do nothing."""
     if not cfg.upload_local_graphs:
         return None
 
@@ -1081,11 +1186,12 @@ def _print_json(payload: Mapping[str, Any] | Any) -> None:
 
 
 def serialize_notebook_config(
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     *,
     config_path: str | Path,
     work_root_is_temporary: bool,
 ) -> dict[str, Any]:
+    """Write the resolved notebook config beside its artifacts for reproducibility."""
     return {
         "experiment_name": cfg.experiment_name,
         "experiment_config_name": cfg.experiment_config_name,
@@ -1147,12 +1253,13 @@ def serialize_notebook_config(
 
 
 def log_notebook_config(
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     *,
     config_path: str | Path,
     work_root_is_temporary: bool,
     verbose: bool,
 ) -> dict[str, Any]:
+    """Log the resolved notebook config at pipeline start."""
     config_summary = serialize_notebook_config(
         cfg,
         config_path=config_path,
@@ -1166,6 +1273,7 @@ def log_notebook_config(
 
 
 def display_tokenizer_verification_report(report: Mapping[str, Any]) -> None:
+    """Display the tokenizer verification report as a notebook table."""
     print(f"Module type: {report['module_type']}")
     print(f"Prompt render mode: {report['prompt_render_mode']}")
     print(f"Prompt token count: {report['prompt_token_count']}")
@@ -1210,6 +1318,7 @@ def display_tokenizer_verification_report(report: Mapping[str, Any]) -> None:
 
 
 def display_initial_sanity_check_report(report: Mapping[str, Any]) -> None:
+    """Display the initial sanity-check report as a notebook table."""
     print("Initial Sanity Check")
     print(f"Prompt style: {report['prompt_style']}")
     print(f"Prompt: {str(report['rendered_prompt'])[:200]}")
@@ -1235,6 +1344,7 @@ def display_initial_sanity_check_report(report: Mapping[str, Any]) -> None:
 
 
 def display_baseline_path_debug_report(report: Mapping[str, Any]) -> None:
+    """Display the baseline-path debug report as a notebook table."""
     print("Baseline Path Debug")
     print(f"Prompt render mode: {report['prompt_render_mode']}")
     _print_json({"generation_kwargs": report.get("generation_kwargs", {})})
@@ -1269,6 +1379,7 @@ def _display_diagnostic_rows(title: str, rows: Sequence[Any]) -> None:
 
 
 def display_debug_intervention_validation_report(report: Mapping[str, Any]) -> None:
+    """Display the debug-intervention validation report as a notebook table."""
     print("Debug Intervention Validation")
     print(f"Selected feature: {report.get('selected_feature')}")
     if report.get("selected_feature_score") is not None:
@@ -1382,6 +1493,7 @@ def display_local_explanation_report(
     prefetch_summary: Mapping[str, Any] | None = None,
     coverage_summary: Mapping[str, Any] | None = None,
 ) -> None:
+    """Display the local-explanation prefetch and coverage summaries."""
     if prefetch_summary is not None:
         print("Local explanation prefetch")
         _print_json(prefetch_summary)
@@ -1391,11 +1503,12 @@ def display_local_explanation_report(
 
 
 def build_shared_summary_record(
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     *,
     config_path: str | Path,
     work_root_removed: bool,
 ) -> dict[str, Any]:
+    """Build the shared run-summary record every pipeline phase extends."""
     return {
         "experiment_name": cfg.experiment_name,
         "config_name": cfg.experiment_config_name,
@@ -1412,19 +1525,19 @@ def build_shared_summary_record(
     }
 
 
-def resolve_key_tokens(cfg: NotebookHarnessConfig) -> tuple[str, ...]:
+def resolve_key_tokens(cfg: ExperimentHarnessConfig) -> tuple[str, ...]:
     """Return the experiment-owned key tokens used for analysis and reporting."""
 
     if cfg.key_tokens_override is None or not cfg.key_tokens_override:
         raise ValueError(
-            "NotebookHarnessConfig requires KEY_TOKENS in the experiment config; concept-pair YAMLs no longer "
+            "ExperimentHarnessConfig requires KEY_TOKENS in the experiment config; concept-pair YAMLs no longer "
             "provide key token defaults."
         )
     return tuple(cfg.key_tokens_override)
 
 
 def _build_key_token_candidates(
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     tokenizer: Any,
     *,
     include_space_prefixed_variants: bool = True,
@@ -1524,6 +1637,7 @@ class LocalExplanationPreparationResult:
 
     @property
     def missing_feature_refs(self) -> list[NeuronpediaFeatureRef]:
+        """Feature references the local explanation prefetch has not covered yet."""
         return [status.feature_ref for status in self.initial_statuses if not status.has_local_explanation]
 
 
@@ -1656,7 +1770,7 @@ def _populate_feature_cache_from_local_exports(
 
 
 def prepare_local_explanation_backfill(
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     *feature_groups: Any,
     cache_dir: Path | None = None,
     local_export_roots: Iterable[Path | str] | None = None,
@@ -1776,6 +1890,7 @@ def prepare_local_explanation_backfill(
 
 
 def render_prompt(prompt: str, tokenizer: Any, mode: PromptRenderMode) -> str:
+    """Render one prompt in the requested mode."""
     if mode == "plain":
         return prompt
     chat_method = "gemma_dataclass" if mode == "gemma_dataclass" else "apply_chat_template"
@@ -1783,7 +1898,8 @@ def render_prompt(prompt: str, tokenizer: Any, mode: PromptRenderMode) -> str:
 
 
 def render_prompt_variants(prompt: str, tokenizer: Any) -> dict[str, str | None]:
-    gemma_cfg = GemmaPromptConfig()
+    """Render the prompt in every supported mode for comparison."""
+    gemma_cfg = _gemma_prompt_config()
     has_chat_template = getattr(tokenizer, "chat_template", None) is not None
     return {
         "plain": prompt,
@@ -1837,14 +1953,15 @@ def _get_prompt_debugger(module: Any) -> DebugGeneration:
     return cast(DebugGeneration, debug_lm)
 
 
-def _normalize_target_token_for_prompt_mode(token: str, cfg: NotebookHarnessConfig) -> str:
+def _normalize_target_token_for_prompt_mode(token: str, cfg: ExperimentHarnessConfig) -> str:
     if not cfg.use_chat_template:
         return token
     normalized = token.lstrip(" ▁Ġ")
     return normalized or token
 
 
-def resolve_target_tokens(cfg: NotebookHarnessConfig, tokenizer: Any) -> tuple[tuple[int, int], tuple[str, str]]:
+def resolve_target_tokens(cfg: ExperimentHarnessConfig, tokenizer: Any) -> tuple[tuple[int, int], tuple[str, str]]:
+    """Resolve the configured target tokens to ids and surface strings."""
     if cfg.target_tokens is not None:
         resolved_tokens = tuple(_normalize_target_token_for_prompt_mode(token, cfg) for token in cfg.target_tokens)
         resolved_ids = tuple(tokenizer.encode(token, add_special_tokens=False)[-1] for token in resolved_tokens)
@@ -1855,9 +1972,10 @@ def resolve_target_tokens(cfg: NotebookHarnessConfig, tokenizer: Any) -> tuple[t
 
 
 def resolve_explicit_direction_tokens(
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     tokenizer: Any,
 ) -> tuple[tuple[int, int], tuple[str, str]]:
+    """Resolve explicitly configured direction tokens to ids and surface strings."""
     if cfg.explicit_direction_tokens is None:
         raise ValueError("explicit_direction_tokens must be provided for explicit embedding-difference mode")
     resolved_tokens = tuple(
@@ -1867,7 +1985,8 @@ def resolve_explicit_direction_tokens(
     return cast(tuple[int, int], resolved_ids), cast(tuple[str, str], resolved_tokens)
 
 
-def resolve_graph_target_tokens(cfg: NotebookHarnessConfig, tokenizer: Any) -> tuple[list[int], list[str]]:
+def resolve_graph_target_tokens(cfg: ExperimentHarnessConfig, tokenizer: Any) -> tuple[list[int], list[str]]:
+    """Resolve graph-analysis target tokens in debug-intervention mode."""
     if not cfg.is_debug_intervention_mode:
         raise ValueError("resolve_graph_target_tokens is only available in debug_intervention_pipelines mode")
 
@@ -1891,7 +2010,7 @@ def resolve_graph_target_tokens(cfg: NotebookHarnessConfig, tokenizer: Any) -> t
 
 
 def get_key_token_ids_and_labels(
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     tokenizer: Any,
     *,
     include_bare_variants: bool = True,
@@ -1917,6 +2036,7 @@ def summarize_gap(
     target_a_id: int,
     target_b_id: int,
 ) -> tuple[float, float, float]:
+    """Summarize the target logit gap before and after steering."""
     pre_gap = float((pre_logits[target_a_id] - pre_logits[target_b_id]).item())
     post_gap = float((post_logits[target_a_id] - post_logits[target_b_id]).item())
     return pre_gap, post_gap, post_gap - pre_gap
@@ -1926,10 +2046,11 @@ def configure_analysis(
     module: Any,
     graph_op: Any,
     scale_factor: float,
-    cfg: NotebookHarnessConfig | None = None,
+    cfg: ExperimentHarnessConfig | None = None,
     *,
     use_debug_intervention_defaults: bool = False,
 ) -> None:
+    """Configure one analysis backend on a module at a scale factor."""
     module.circuit_tracer_cfg.intervention_value_source = "top_feature_activation_values"
     module.circuit_tracer_cfg.intervention_scale_factor = scale_factor
     module.circuit_tracer_cfg.intervention_max_influence_norm_scale = bool(
@@ -1956,7 +2077,7 @@ def configure_analysis(
 
 
 def _debug_intervention_artifact_name(
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     feature_row: Sequence[int],
 ) -> str:
     feature_suffix = "_".join(str(int(value)) for value in feature_row)
@@ -1965,7 +2086,7 @@ def _debug_intervention_artifact_name(
 
 
 def _maybe_preserve_debug_intervention_artifacts(
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     *,
     graph: Any,
     feature_row: Sequence[int],
@@ -2033,7 +2154,8 @@ def _maybe_preserve_debug_intervention_artifacts(
 
 
 @contextmanager
-def maybe_zero_softcap(module: Any, cfg: NotebookHarnessConfig):
+def maybe_zero_softcap(module: Any, cfg: ExperimentHarnessConfig):
+    """Zero attention softcaps for the wrapped block when the config enables it."""
     if not cfg.enable_zero_softcap:
         yield
         return
@@ -2058,7 +2180,7 @@ def maybe_zero_softcap(module: Any, cfg: NotebookHarnessConfig):
 
 
 def _build_graph_analysis_inputs(
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     tokenizer: Any,
     rendered_prompt: str,
     *,
@@ -2408,7 +2530,7 @@ def _summarize_graph_input_tokens(
 
 def _parse_constrained_feature_selection_ref(
     raw_ref: ConstrainedFeatureSelectionRef,
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
 ) -> tuple[int, int]:
     ref_value, _ = _split_constrained_feature_selection_ref(raw_ref)
     layer_identifier: str
@@ -2468,7 +2590,7 @@ def _parse_constrained_feature_selection_ref(
 
 
 def _build_feature_selection_spec(
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     active_features: Any,
 ) -> FeatureSelectionSpec | None:
     requested_selection = _normalize_constrained_feature_selection(cfg.constrained_feature_selection_refs)
@@ -2573,7 +2695,7 @@ def _build_feature_selection_spec(
 
 def _extract_top_features_with_optional_filter(
     module: Any,
-    cfg: NotebookHarnessConfig,
+    cfg: ExperimentHarnessConfig,
     top_payload: dict[str, Any],
     *,
     top_n: int,

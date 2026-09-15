@@ -15,7 +15,7 @@ Do not reuse that preset for the normal localhost concept-pair configs. The pari
 
 ## What `parity_surface` Changes
 
-The preset is resolved from `src/it_examples/experiments/notebook/configs/session_surface_presets.yaml`
+The preset is resolved from `src/interpretune/harness/configs/session_surface_presets.yaml`
 and forwarded by `NotebookHarnessConfig.session_kwargs`.
 When selected, it pushes the debug run toward the standalone parity surface by:
 
