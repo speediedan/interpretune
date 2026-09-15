@@ -1536,6 +1536,37 @@ class TestInterventionScopeSurvivesCanonicalization:
         assert torch.equal(out, torch.ones(2, 3, 4))
 
 
+class TestStackedSpanCanonicalization:
+    """#571: a stacked `(k, d)` operand canonicalizes under `reject` and `clamp`, the modes whose maths reads
+    coordinates through the pseudoinverse of the stack -- while every other mode's broadcast check is unchanged."""
+
+    _HOOK = "blocks.0.hook_resid_post"
+
+    def _canonical(self, mode, tensor):
+        return build_intervention_dict(
+            {self._HOOK: {"intervention_tensor": tensor, "mode": mode}},
+            {self._HOOK: [self._HOOK]},
+            {self._HOOK: (4,)},
+        )[self._HOOK][0]
+
+    def test_stacked_reject_matches_the_low_level_call(self):
+        from interpretune.analysis.backends.interventions import _apply_span_rejection
+
+        torch.manual_seed(0)
+        v, h = torch.randn(2, 4), torch.randn(1, 1, 4)
+        spec = self._canonical("reject", v)
+        torch.testing.assert_close(
+            apply_intervention(h.clone(), spec, last_pos=0),
+            _apply_span_rejection(
+                InterventionSpec(v, mode="reject", scale_factor=1.0), input_value=h.clone(), target=v
+            ),
+        )
+
+    def test_stacked_add_is_still_refused(self):
+        with pytest.raises(ValueError, match="not compatible"):
+            self._canonical("add", torch.randn(2, 4))
+
+
 class TestRequireInterventionSupport:
     """The single gate an op calls, on a RAW payload, before any backend canonicalizes it."""
 

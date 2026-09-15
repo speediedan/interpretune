@@ -242,6 +242,16 @@ def _validate_intervention_spec(
                 f"size 2 (source, target); got tensor with shape {tuple(tensor.shape)}"
             )
         _ensure_shape_compatible(tuple(tensor.shape[1:]), target_shape, hook_name)
+    elif mode in (InterventionMode.REJECT, InterventionMode.CLAMP):
+        # A span is legitimately `(k, *target_shape)` for any k >= 1, not only a single direction:
+        # the mode maths reads coordinates through the pseudoinverse of the stack. Validating a
+        # stacked operand under the broadcast-into-slice check refuses the J-lens pole pair (k = 2),
+        # the case these modes were added for, while low-level calls keep working -- the same failure
+        # the patch branch above exists to prevent.
+        if tensor.ndim == len(target_shape) + 1 and tensor.shape[0] >= 1:
+            _ensure_shape_compatible(tuple(tensor.shape[1:]), target_shape, hook_name)
+        else:
+            _ensure_shape_compatible(tuple(tensor.shape), target_shape, hook_name)
     else:
         _ensure_shape_compatible(tuple(tensor.shape), target_shape, hook_name)
     # Rebuild with EVERY field. An earlier version omitted `position_scope` here, and since this is the
