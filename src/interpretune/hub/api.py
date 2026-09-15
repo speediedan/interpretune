@@ -60,6 +60,44 @@ def pull(
     return _hydrate_component_body(canonical, body, cache_dir=cache_dir)
 
 
+def pull_experiment_config(
+    repo_id: str,
+    key: str,
+    *,
+    revision: str | None = None,
+    cache_dir: Path | None = None,
+    token: str | None = None,
+) -> tuple[str, dict, Path]:
+    """Explicitly fetch ONE experiment definition (network; manifest-first, revision-pinned).
+
+    Returns ``(canonical_key, config_body, snapshot_dir)``: the snapshot dir scopes the snapshot-confined EXTENDS
+    resolution the harness launcher performs on the body. The entry's pipeline and owned files materialize pinned to the
+    same commit, so a relative EXTENDS can only resolve inside this revision.
+    """
+    from interpretune.hub.components import (
+        pull_component_manifest,
+        pull_experiment_config as _fetch,
+        pull_experiment_payloads,
+    )
+
+    manifest, commit = pull_component_manifest(repo_id, revision=revision, cache_dir=cache_dir, token=token)
+    canonical, body = _fetch(repo_id, key, revision=commit, cache_dir=cache_dir, token=token)
+    snapshot = pull_experiment_payloads(repo_id, manifest, key, commit, cache_dir=cache_dir, token=token)
+    return canonical, body, snapshot
+
+
+def load_experiment_config(
+    repo_id: str, key: str, *, cache_dir: Path | None = None, revision: str | None = None
+) -> tuple[str, dict, Path]:
+    """Cache-only resolution of ONE experiment definition — never touches the network.
+
+    Same triple as :func:`pull_experiment_config`: the snapshot dir scopes EXTENDS confinement.
+    """
+    from interpretune.hub.components import resolve_experiment_config
+
+    return resolve_experiment_config(repo_id, key, cache_dir=cache_dir, revision=revision)
+
+
 def pull_ops(
     repo_id: str,
     *,

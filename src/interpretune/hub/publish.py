@@ -59,6 +59,33 @@ def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Pat
                 dest = out_dir / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(component_dir / rel, dest)
+    # experiment definitions: the config carries the parity check (filename == key ==
+    # EXPERIMENT_NAME); pipeline and owned files copy verbatim under the same allowlist rule
+    from interpretune.hub.manifest import check_experiment_key_parity
+
+    for key, entry in (manifest.get("experiments") or {}).items():
+        cfg_src = component_dir / entry["config"]
+        import yaml
+
+        check_experiment_key_parity(cfg_src, yaml.safe_load(cfg_src.read_text(encoding="utf-8")), expected_key=key)
+        dest = out_dir / entry["config"]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cfg_src, dest)
+        for rel in [entry.get("pipeline"), *(entry.get("files") or [])]:
+            if not rel:
+                continue
+            src = component_dir / rel
+            if not src.exists():
+                raise FileNotFoundError(
+                    f"Manifest declares experiment payload {rel!r} for {key!r}, which is not present "
+                    f"in {component_dir}."
+                )
+            dest = out_dir / rel
+            if src.is_dir():
+                shutil.copytree(src, dest, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*STAGING_IGNORES))
+            else:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
     for rel in (manifest.get("ops") or {}).get("files") or []:
         shutil.copy2(component_dir / rel, out_dir / rel)
     # hookmaps documents are data, but data with a schema: a document that does not parse into a

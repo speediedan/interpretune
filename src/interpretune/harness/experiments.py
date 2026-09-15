@@ -221,11 +221,35 @@ class ExperimentHooks:
         return hook
 
 
+def load_snapshot_experiment(
+    repo_id: str, key: str, *, cache_dir: Path | None = None, revision: str | None = None
+) -> tuple[str, dict[str, Any], Path, dict[str, Any]]:
+    """Load ONE cached experiment definition through its snapshot-confined inheritance.
+
+    Returns ``(canonical_key, resolved_payload, snapshot_dir, manifest)``. Relative EXTENDS
+    stays inside the snapshot; declared ``requires.components`` must already be cached, so a
+    cached experiment says what else it needs before anything runs. The session itself builds
+    through the existing registry-key derivation and ``it.hub.load`` on those components.
+    """
+    from interpretune.hub.components import resolve_component_manifest, resolve_experiment_config
+
+    canonical, body, snapshot = resolve_experiment_config(repo_id, key, cache_dir=cache_dir, revision=revision)
+    manifest, _, _ = resolve_component_manifest(repo_id, cache_dir=cache_dir, revision=revision)
+    for ref in (manifest.get("requires") or {}).get("components") or []:
+        resolve_component_manifest(ref, cache_dir=cache_dir)
+    from interpretune.harness.config import load_experiment_config
+
+    entry = (manifest.get("experiments") or {})[canonical]
+    resolved = load_experiment_config(snapshot / entry["config"], _root=snapshot)
+    return canonical, resolved, snapshot, manifest
+
+
 __all__ = [
     "bootstrap_experiment_imports",
     "default_config_dir",
     "default_output_dir",
     "ExperimentHooks",
     "ExperimentsConfig",
+    "load_snapshot_experiment",
     "resolve_extends_path",
 ]
