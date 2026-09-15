@@ -29,7 +29,7 @@ harness_paths = ["shared"]     # extra sys.path entries, relative to the reposit
 base that ships inside an installed package:
 
 ```yaml
-EXTENDS: it_examples.experiments.notebook:configs/base.yaml
+EXTENDS: interpretune.harness:configs/base.yaml
 ```
 
 Relative and absolute paths behave exactly as before. A package-resource base is **read-only**, since
@@ -102,7 +102,7 @@ local webapp URL plus an API key are supplied, call the localhost graph delete r
 payload is removed before the DB cleanup runs:
 
 ```bash
-python -m it_examples.experiments.notebook.local_graph_cleanup \
+python -m interpretune.harness.cleanup \
   --work-root /path/to/notebook/work_root \
   --local-db-url "$LOCAL_NEURONPEDIA_DB_URL" \
   --local-webapp-url "$LOCAL_NEURONPEDIA_WEBAPP_URL" \
