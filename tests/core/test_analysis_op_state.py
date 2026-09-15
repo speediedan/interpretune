@@ -259,6 +259,7 @@ class TestStreamingRequiresAnOwner:
             concept_latent_state=torch.ones(1, 2),
             concept_group_id=torch.tensor([0]),
             concept_aggregate_output_mode="streaming",
+            concept_basis="store",
         )
         with pytest.raises(ValueError, match="requires this op's declared op_state"):
             concept_direction_impl(SimpleNamespace(analysis_cfg=None), batch, None, 0)

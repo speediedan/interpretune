@@ -221,6 +221,34 @@ concept_direction:
       required: false
       non_tensor: true
       default: mean_difference
+    concept_basis:
+      datasets_dtype: string
+      required: true
+      non_tensor: true
+    jlens_layer:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+    jlens_layer_percentile:
+      datasets_dtype: float32
+      required: false
+      non_tensor: true
+    jlens_lens_path:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    jlens_model_id:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    jlens_repo_id:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+    jlens_revision:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
   output_schema:
     concept_direction:
       datasets_dtype: float32
@@ -253,6 +281,16 @@ concept_direction:
       sequence_type: false
     concept_direction_mode:
       datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    concept_basis:
+      datasets_dtype: string
+      required: true
+      non_tensor: true
+      sequence_type: false
+    jlens_layer:
+      datasets_dtype: int64
       required: false
       non_tensor: true
       sequence_type: false
