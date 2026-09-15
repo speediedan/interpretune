@@ -426,6 +426,38 @@ def graph_prune(module, analysis_batch: AnalysisBatch, batch: BatchEncoding, bat
 
 ct_graph_prune = graph_prune
 
+def intervention_first_order_check(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Check an applied intervention against its first-order prediction per basis
+
+    Input Schema:
+        interventions (object)
+        interventions_json (string)
+        intervention_hook_pattern (string)
+        intervention_tensor (float32)
+        intervention_tensors_json (string)
+        intervention_mode (string)
+        intervention_use_intervention_tensor_as_basis (bool)
+        intervention_scale_factor (float32)
+        intervention_position_scope (string)
+        use_latent_models (bool)
+        concept_direction (float32)
+        concept_cache_key (string)
+        direction_scale_factor (float32)
+        pre_intervention_logits (float32) (required)
+        post_intervention_logits (float32) (required)
+        logit_target_ids (int64)
+        concept_basis (string) (required)
+
+    Output Schema:
+        fo_predicted_delta (float32) (required)
+        fo_measured_delta (float32) (required)
+        fo_residual (float32) (required)
+        concept_basis (string) (required)
+    """
+    ...
+
 def jlens_concept_probe(
     module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
 ) -> AnalysisBatch:
