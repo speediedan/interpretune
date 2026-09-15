@@ -483,25 +483,25 @@ cd <interpretune-repo-root>
 source <your-venv>/bin/activate  # any env with interpretune + notebook extras installed
 
 # Run a single config
-python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
+python src/interpretune/harness/launcher.py \
    --notebook src/it_examples/experiments/notebook/concept_direction/concept_direction_template.ipynb \
    src/it_examples/experiments/notebook/concept_direction/configs/gemma3_1b_it_local_color_fruit_orange.yaml
 
 # Run all configs in the configs/ directory
-python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
+python src/interpretune/harness/launcher.py \
    --notebook src/it_examples/experiments/notebook/concept_direction/concept_direction_template.ipynb --all-configs
 
 # Run only a matching wave (any regex over the configs/ filenames)
-python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
+python src/interpretune/harness/launcher.py \
    --notebook src/it_examples/experiments/notebook/concept_direction/concept_direction_template.ipynb \
    --config-pattern '.*color_fruit_orange.*\\.yaml'
 
 # Prepare only (copy notebook + archive config, don't execute)
-python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
+python src/interpretune/harness/launcher.py \
    --notebook src/it_examples/experiments/notebook/concept_direction/concept_direction_template.ipynb --all-configs --prepare-only
 
 # Custom timeout and kernel
-python src/it_examples/experiments/notebook/nb_experiment_launcher.py \
+python src/interpretune/harness/launcher.py \
    --notebook src/it_examples/experiments/notebook/concept_direction/concept_direction_template.ipynb \
     src/it_examples/experiments/notebook/concept_direction/configs/gemma3_1b_it_local_color_fruit_orange.yaml \
   --timeout 3600 --kernel-name it_latest

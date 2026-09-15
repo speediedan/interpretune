@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Launch notebook experiments from the command line via papermill."""
+
 from __future__ import annotations
 
 import argparse
@@ -12,11 +14,12 @@ from typing import Any
 import torch
 import yaml  # type: ignore[import-untyped]
 
-from interpretune.utils.notebook_experiments import ExperimentsConfig, default_config_dir, default_output_dir
-from it_examples.experiments.notebook.config import load_experiment_config
+from interpretune.harness.experiments import ExperimentsConfig, default_config_dir, default_output_dir
+from interpretune.harness.config import load_experiment_config
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse the notebook-launcher command line."""
     parser = argparse.ArgumentParser(
         description="Render and execute parameterized experiment notebooks via papermill.",
     )
@@ -108,6 +111,7 @@ def _default_output_dir(notebook_path: Path) -> Path:
 
 
 def discover_config_paths(args: argparse.Namespace, config_dir: Path) -> list[Path]:
+    """Discover experiment configs to execute from CLI args and the config dir."""
     use_all_configs = args.all_configs or bool(args.config_pattern and not args.configs)
     if use_all_configs:
         config_paths = sorted(config_dir.glob("*.y*ml"))
@@ -131,6 +135,7 @@ def execute_config(
     kernel_name: str | None,
     prepare_only: bool,
 ) -> Path:
+    """Execute one experiment config through papermill, returning the output notebook."""
     import papermill as pm
 
     resolved_config = load_experiment_config(config_path)
@@ -163,6 +168,7 @@ def execute_config(
 
 
 def main() -> int:
+    """Launch notebook experiments from the command line."""
     args = parse_args()
     notebook_path = Path(args.notebook).resolve()
     config_dir = (

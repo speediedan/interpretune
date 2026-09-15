@@ -110,7 +110,7 @@ def resolve_extends_path(config_path: Path, raw_value: str) -> Path:
             f"{config_path}: EXTENDS value {raw_value!r} looks like a placeholder. There is no reserved "
             "prefix for the shared configs, deliberately: naming one package as special is the assumption "
             "the component rails removed. Use `package.module:resource`, for example "
-            "`it_examples.experiments.notebook:configs/base.yaml`, or a path relative to this config."
+            "`interpretune.harness:configs/base.yaml`, or a path relative to this config."
         )
     if PACKAGE_RESOURCE_SEPARATOR in raw_value and not Path(raw_value).exists():
         package, _, resource = raw_value.partition(PACKAGE_RESOURCE_SEPARATOR)

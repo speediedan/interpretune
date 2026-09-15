@@ -1,3 +1,5 @@
+"""Discover and remove local Neuronpedia graph artifacts."""
+
 from __future__ import annotations
 
 import argparse
@@ -14,6 +16,8 @@ import psycopg
 
 @dataclass(frozen=True)
 class LocalGraphArtifact:
+    """One local graph artifact on disk."""
+
     slug: str
     path: Path
     model_id: str | None
@@ -21,6 +25,8 @@ class LocalGraphArtifact:
 
 @dataclass(frozen=True)
 class LocalGraphCleanupSummary:
+    """How many artifacts were found, removed, and what remains."""
+
     work_root: str
     graph_root: str
     local_db_url: str | None
@@ -38,6 +44,7 @@ DEFAULT_LOCAL_NEURONPEDIA_WEBAPP_URL = "http://localhost:3000"
 
 
 def _is_s3_backed_graph_url(url: str) -> bool:
+    """Whether a graph URL points at S3-backed remote storage."""
     parsed = urlparse(url)
     return parsed.scheme in {"http", "https"} and "amazonaws.com" in parsed.netloc
 
@@ -49,6 +56,7 @@ def _delete_remote_graph_payload(
     local_webapp_url: str,
     local_api_key: str,
 ) -> None:
+    """Delete one remote graph payload, raising on failure."""
     payload = json.dumps({"modelId": model_id, "slug": slug}).encode("utf-8")
     req = request.Request(
         f"{local_webapp_url.rstrip('/')}/api/graph/delete",
@@ -75,6 +83,7 @@ def _delete_remote_graph_payload(
 
 
 def _extract_graph_artifact(graph_path: Path) -> LocalGraphArtifact | None:
+    """Read one graph artifact file, returning None when it does not parse."""
     try:
         payload = json.loads(graph_path.read_text(encoding="utf-8"))
     except Exception:
@@ -107,6 +116,7 @@ def _extract_graph_artifact(graph_path: Path) -> LocalGraphArtifact | None:
 def discover_local_graph_artifacts(
     work_root: str | Path, *, slug_prefix: str | None = None
 ) -> list[LocalGraphArtifact]:
+    """Discover local graph artifacts under a work root, optionally slug-filtered."""
     graph_root = Path(work_root).expanduser().resolve() / "graph_artifacts"
     if not graph_root.exists():
         return []
@@ -132,6 +142,7 @@ def cleanup_local_graph_artifacts(
     dry_run: bool = False,
     remove_files: bool = True,
 ) -> LocalGraphCleanupSummary:
+    """Remove local graph artifacts and their remote payloads, reporting a summary."""
     resolved_work_root = Path(work_root).expanduser().resolve()
     graph_root = resolved_work_root / "graph_artifacts"
     artifacts = discover_local_graph_artifacts(resolved_work_root, slug_prefix=slug_prefix)
@@ -287,6 +298,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Remove local graph artifacts from the command line."""
     args = _build_arg_parser().parse_args()
     summary = cleanup_local_graph_artifacts(
         args.work_root,

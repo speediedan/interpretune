@@ -12,7 +12,7 @@ The shared harness owns:
 
 ## Running an experiment from outside this repository
 
-The rails live in the core package (`interpretune.utils.notebook_experiments`), so an experiment in
+The rails live in the core package (`interpretune.harness`), so an experiment in
 another repository consumes them rather than copying them. Configure it with a table in that
 repository's `pyproject.toml`; every key has a default, so a repository that writes no table still
 works:

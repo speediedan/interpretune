@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from it_examples.experiments.notebook import local_graph_cleanup
+from interpretune.harness import cleanup as local_graph_cleanup
 
 
 def _write_graph(path: Path, *, slug: str, model_id: str = "gemma-3-1b-it") -> None:
