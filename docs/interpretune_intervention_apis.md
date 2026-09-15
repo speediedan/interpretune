@@ -130,6 +130,13 @@ In practice this means new configs should prefer names such as `blocks.{i}.hook_
 `blocks.{i}.attn.hook_out`, `blocks.{i}.attn.o.hook_in`, and `unembed.hook_in`. The intervention pattern expander now
 tries supported canonical and legacy spellings in both directions before backend resolution.
 
+## Multi-spec ordering at one hook point
+
+A payload may name several specs at one hook point, given as a list in declaration order. They apply sequentially,
+each seeing the previous spec's output: `[add(v), reject(v)]` differs from `[reject(v), add(v)]`, while two `add`
+specs commute. Backends fold the spec tuple left to right, and adapters preserve the declaration order rather than
+grouping by mode.
+
 ## Direct projection config pattern
 
 The concept-direction notebook configs now expose a notebook-facing `ANALYSIS.direct_projection` section. The most

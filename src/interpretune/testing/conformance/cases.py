@@ -816,6 +816,101 @@ class ModelBackendConformance:
             )
             assert not same, f"the mixed-scope payload gave the logits of a {scope!r}-only payload at {first!r}"
 
+    @conformance_case(
+        capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
+        modes=(InterventionMode.ADD, InterventionMode.REJECT),
+        family="hf_native",
+    )
+    def test_mixed_modes_apply_in_declaration_order(self, suite, hf):
+        """Several specs at one hook point apply sequentially in declaration order: ``[add, reject]`` matches the
+        add-then-reject composition, ``[reject, add]`` matches the reverse composition, the two differ, and two
+        adds in either order agree.
+
+        The reference composes the two updates on the activation in the same order, under one HF hook per spec
+        (hooks fire in registration order). A backend that groups by mode fails the ordered references; a backend
+        that ignores order fails the positive control.
+        """
+        import interpretune as it
+        from interpretune import AnalysisCfg
+
+        point = suite.inputs.intervention_point
+        vector = self._vector(suite)
+
+        def add_spec(scale=STEER_SCALE):
+            return {
+                "intervention_tensor": vector,
+                "mode": "add",
+                "scale_factor": scale,
+                "position_scope": "last_token",
+                "use_intervention_tensor_as_basis": True,
+            }
+
+        def reject_spec():
+            return {
+                "intervention_tensor": vector,
+                "mode": "reject",
+                "scale_factor": 1.0,
+                "position_scope": "last_token",
+                "use_intervention_tensor_as_basis": True,
+            }
+
+        def add_fn(scale=STEER_SCALE):
+            return lambda t: t + vector * scale
+
+        def reject_fn():
+            # float32 like the backend (`_apply_span_rejection` upcasts): a bf16 reference
+            # diverges ~6e-2 on bf16 models while the float32 form matches exactly.
+            v32 = vector.to(torch.float32)
+            denom32 = (v32 * v32).sum()
+
+            def _reject(t: torch.Tensor) -> torch.Tensor:
+                t32 = t.to(torch.float32)
+                return (t32 - ((t32 * v32).sum(-1, keepdim=True) / denom32) * v32).to(t.dtype)
+
+            return _reject
+
+        def run(specs):
+            return suite.run(
+                AnalysisCfg(
+                    target_op=it.model_fwd_intervention, run_inputs={"interventions": {point: specs}}, save_tokens=True
+                )
+            )
+
+        forward = run([add_spec(), reject_spec()])
+        reverse = run([reject_spec(), add_spec()])
+        for i, (fwd, rev) in enumerate(zip(forward["post_intervention_logits"], reverse["post_intervention_logits"])):
+            ids, mask = suite.batch_inputs(i)
+            ref_fwd = hf.steered_many(
+                ids,
+                [(point, add_fn(), "last_token"), (point, reject_fn(), "last_token")],
+                attention_mask=mask,
+            )
+            ref_rev = hf.steered_many(
+                ids,
+                [(point, reject_fn(), "last_token"), (point, add_fn(), "last_token")],
+                attention_mask=mask,
+            )
+            _assert_close_padded(fwd, ref_fwd["logits"][0, -1, :], what=f"batch {i}: add-then-reject logits")
+            _assert_close_padded(rev, ref_rev["logits"][0, -1, :], what=f"batch {i}: reject-then-add logits")
+        # positive control: the two orders differ, so order had an effect
+        same = all(
+            torch.allclose(a, b, rtol=0, atol=CONVERGENCE_ATOL)
+            for a, b in zip(forward["post_intervention_logits"], reverse["post_intervention_logits"])
+        )
+        assert not same, "add-then-reject gave the logits of reject-then-add: the order had no effect"
+        # commuting control: two adds agree in either order
+        half = STEER_SCALE / 2
+        first_add = run([add_spec(STEER_SCALE), add_spec(half)])
+        second_add = run([add_spec(half), add_spec(STEER_SCALE)])
+        pairs = zip(first_add["post_intervention_logits"], second_add["post_intervention_logits"])
+        for i, (first, second) in enumerate(pairs):
+            ids, mask = suite.batch_inputs(i)
+            ref = hf.steered_many(ids, [(point, add_fn(STEER_SCALE + half), "last_token")], attention_mask=mask)
+            _assert_close_padded(first, ref["logits"][0, -1, :], what=f"batch {i}: summed-add logits")
+            assert torch.allclose(first, second, rtol=0, atol=CONVERGENCE_ATOL), (
+                f"batch {i}: two adds in opposite orders disagreed"
+            )
+
     # -- LATENT_MODELS ------------------------------------------------------------------------------
     #
     # These run over `inputs.latent_models`, which the target's session config attaches. The latent model is an
