@@ -835,7 +835,6 @@ class ModelBackendConformance:
 
         point = suite.inputs.intervention_point
         vector = self._vector(suite)
-        denom = (vector * vector).sum()
 
         def add_spec(scale=STEER_SCALE):
             return {
@@ -859,7 +858,16 @@ class ModelBackendConformance:
             return lambda t: t + vector * scale
 
         def reject_fn():
-            return lambda t: t - ((t * vector).sum(-1, keepdim=True) / denom) * vector
+            # float32 like the backend (`_apply_span_rejection` upcasts): a bf16 reference
+            # diverges ~6e-2 on bf16 models while the float32 form matches exactly.
+            v32 = vector.to(torch.float32)
+            denom32 = (v32 * v32).sum()
+
+            def _reject(t: torch.Tensor) -> torch.Tensor:
+                t32 = t.to(torch.float32)
+                return (t32 - ((t32 * v32).sum(-1, keepdim=True) / denom32) * v32).to(t.dtype)
+
+            return _reject
 
         def run(specs):
             return suite.run(
