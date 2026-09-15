@@ -23,6 +23,7 @@ from interpretune.hub.manifest import (
     IT_COMPONENT_MANIFEST,
     ComponentManifestError,
     check_config_key_parity,
+    check_experiment_key_parity,
     validate_component_manifest,
 )
 
@@ -153,6 +154,12 @@ def pull_component_config(
     """
     manifest, commit = pull_component_manifest(repo_id, revision=revision, cache_dir=cache_dir, token=token)
     enforce_component_requires(manifest, source=f"{repo_id}@{commit[:12]}")
+    if "module" not in (manifest.get("kinds") or []):
+        raise KeyError(
+            f"{repo_id} carries kinds {manifest.get('kinds')}, not `module`: a module-configuration "
+            "request cannot resolve against an experiment, promptconfigs, or ops component. "
+            f"(manifest revision {commit[:12]})"
+        )
     configs = (manifest.get("module") or {}).get("configs") or {}
     if key not in configs:
         raise KeyError(
@@ -171,6 +178,43 @@ def pull_component_config(
     )
     body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     return check_config_key_parity(cfg_path, body, expected_key=key), body
+
+
+def pull_experiment_config(
+    repo_id: str, key: str, revision: str | None = None, cache_dir: Path | None = None, token: str | None = None
+) -> tuple[str, dict]:
+    """Manifest-first fetch of ONE experiment definition by key; returns ``(canonical_key, config_body)``.
+
+    The experiment parity-check (filename == manifest key == the config's own ``EXPERIMENT_NAME``)
+    runs on the fetched file before it is returned, the same derived-from-fields discipline as the
+    module kind. A request against a component whose kinds carry no `experiment` names what it found
+    rather than guessing.
+    """
+    manifest, commit = pull_component_manifest(repo_id, revision=revision, cache_dir=cache_dir, token=token)
+    enforce_component_requires(manifest, source=f"{repo_id}@{commit[:12]}")
+    if "experiment" not in (manifest.get("kinds") or []):
+        raise KeyError(
+            f"{repo_id} carries kinds {manifest.get('kinds')}, not `experiment`: an experiment "
+            "definition cannot resolve against a module, promptconfigs, or ops component. "
+            f"(manifest revision {commit[:12]})"
+        )
+    entries = manifest.get("experiments") or {}
+    if key not in entries:
+        raise KeyError(
+            f"{repo_id} declares no experiment {key!r}. Available: {sorted(entries)} (manifest revision {commit[:12]})"
+        )
+    cfg_path = Path(
+        hf_hub_download(
+            repo_id,
+            entries[key]["config"],
+            revision=commit,  # pinned: partial materialization stays single-revision coherent
+            cache_dir=str(cache_dir or IT_COMPONENTS_HUB_CACHE),
+            token=token,
+            **_TELEMETRY,
+        )
+    )
+    body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    return check_experiment_key_parity(cfg_path, body, expected_key=key), body
 
 
 def declared_component_payloads(manifest: dict) -> list[str]:
@@ -210,6 +254,35 @@ def pull_component_payloads(
             )
         )
     return paths
+
+
+def pull_experiment_payloads(
+    repo_id: str, manifest: dict, key: str, commit: str, cache_dir: Path | None = None, token: str | None = None
+) -> Path:
+    """Materialize ONE experiment entry's config, pipeline, and owned files, pinned to ``commit``.
+
+    Returns the snapshot dir: every relative EXTENDS the harness launcher resolves stays inside it,
+    which is what makes the revision pin a confinement boundary rather than a label.
+    """
+    entry = (manifest.get("experiments") or {})[key]
+    rels = [entry["config"], entry.get("pipeline"), *(entry.get("files") or [])]
+    snapshot: Path | None = None
+    for rel in rels:
+        if not rel:
+            continue
+        downloaded = Path(
+            hf_hub_download(
+                repo_id,
+                rel,
+                revision=commit,  # pinned: partial materialization stays single-revision coherent
+                cache_dir=str(cache_dir or IT_COMPONENTS_HUB_CACHE),
+                token=token,
+                **_TELEMETRY,
+            )
+        )
+        snapshot = downloaded.parents[len(Path(rel).parts)]
+    assert snapshot is not None
+    return snapshot
 
 
 def register_component_config(
@@ -408,12 +481,43 @@ def resolve_component_config(
         repo_id, cache_dir=cache_dir, revision=revision, require_hub=require_hub
     )
     enforce_component_requires(manifest, source=f"{repo_id}@cache")
+    if "module" not in (manifest.get("kinds") or []):
+        raise KeyError(
+            f"{repo_id} (cached) carries kinds {manifest.get('kinds')}, not `module`: a "
+            "module-configuration request cannot resolve against an experiment, promptconfigs, "
+            "or ops component."
+        )
     configs = (manifest.get("module") or {}).get("configs") or {}
     if key not in configs:
         raise KeyError(f"{repo_id} (cached) declares no configuration {key!r}. Available: {sorted(configs)}")
     cfg_path = snapshot / configs[key]
     body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     return check_config_key_parity(cfg_path, body, expected_key=key), body
+
+
+def resolve_experiment_config(
+    repo_id: str, key: str, cache_dir: Path | None = None, *, revision: str | None = None, require_hub: bool = False
+) -> tuple[str, dict, Path]:
+    """CACHE-ONLY resolution of one experiment definition: never touches the network.
+
+    Returns ``(canonical_key, config_body, snapshot_dir)``: the snapshot dir scopes the
+    snapshot-confined EXTENDS resolution the harness launcher performs on the body.
+    """
+    manifest, snapshot, _ = resolve_component_manifest(
+        repo_id, cache_dir=cache_dir, revision=revision, require_hub=require_hub
+    )
+    enforce_component_requires(manifest, source=f"{repo_id}@cache")
+    if "experiment" not in (manifest.get("kinds") or []):
+        raise KeyError(
+            f"{repo_id} (cached) carries kinds {manifest.get('kinds')}, not `experiment`: an "
+            "experiment definition cannot resolve against a module, promptconfigs, or ops component."
+        )
+    entries = manifest.get("experiments") or {}
+    if key not in entries:
+        raise KeyError(f"{repo_id} (cached) declares no experiment {key!r}. Available: {sorted(entries)}")
+    cfg_path = snapshot / entries[key]["config"]
+    body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    return check_experiment_key_parity(cfg_path, body, expected_key=key), body, snapshot
 
 
 def resolve_datamodule_config(repo_id: str, name: str, cache_dir: Path | None = None) -> dict:

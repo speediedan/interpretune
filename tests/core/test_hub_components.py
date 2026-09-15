@@ -362,3 +362,174 @@ class TestBareKeyAliasing:
         self._register_from_cache(seeded_cache, registry, monkeypatch, alias_bare_key=False)
         assert registry.get("speediedan.rte.rte_demo.gpt2.sae_lens") is not None
         assert "rte_demo.gpt2.sae_lens" not in registry
+
+
+def _experiment_component_dir(root: Path, *, key: str = "demo_experiment", name: str | None = None) -> Path:
+    """A minimal valid experiment component tree: manifest + one definition config + pipeline file."""
+    from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
+
+    component = root / "component"
+    (component / "configs").mkdir(parents=True)
+    manifest = {
+        "it_schema_version": 1,
+        "kinds": ["experiment"],
+        "requires": {"interpretune": ">=0.1.dev0"},
+        "experiments": {
+            key: {"config": f"configs/{key}.yaml", "pipeline": "pipeline/run.py", "files": ["notes.md"]},
+        },
+    }
+    (component / IT_COMPONENT_MANIFEST).write_text(__import__("yaml").safe_dump(manifest), encoding="utf-8")
+    (component / "pipeline").mkdir()
+    (component / "pipeline" / "run.py").write_text("ENTRY = True\n", encoding="utf-8")
+    (component / "notes.md").write_text("notes\n", encoding="utf-8")
+    (component / "configs" / f"{key}.yaml").write_text(
+        __import__("yaml").safe_dump({"EXPERIMENT_NAME": name or key, "PROMPT": {"text": "hi"}}),
+        encoding="utf-8",
+    )
+    return component
+
+
+class TestExperimentKindSpec:
+    """``kinds: [experiment]`` per the #498 ruling: own parity, snapshot confinement, declared sessions."""
+
+    _VALID_ENTRY = {"config": "configs/demo_experiment.yaml", "pipeline": "pipeline/run.py"}
+
+    def test_valid_experiment_manifest_accepted(self):
+        manifest = {
+            "it_schema_version": 1,
+            "kinds": ["experiment"],
+            "requires": {"interpretune": ">=0.1.dev0", "components": ["speediedan/rte"]},
+            "experiments": {"demo_experiment": dict(self._VALID_ENTRY)},
+        }
+        assert validate_component_manifest(manifest)["experiments"]["demo_experiment"]["config"] == (
+            "configs/demo_experiment.yaml"
+        )
+
+    def test_experiment_kind_may_combine_with_module(self):
+        manifest = {
+            "it_schema_version": 1,
+            "kinds": ["experiment", "module"],
+            "module": {"configs": {"rte.gpt2.core": {}}},
+            "experiments": {"demo_experiment": dict(self._VALID_ENTRY)},
+        }
+        assert validate_component_manifest(manifest)["kinds"] == ["experiment", "module"]
+
+    @pytest.mark.parametrize(
+        ("experiments", "why"),
+        [
+            (None, "no experiments block at all"),
+            ({}, "empty index"),
+            ({"demo": {}}, "entry without a config"),
+            ({"demo": {"config": "/abs/path.yaml"}}, "absolute config path"),
+            ({"demo": {"config": "../escape.yaml"}}, "config escaping the component"),
+            ({"demo": {"config": 5}}, "non-string config"),
+            ({"demo": {"config": "configs/x.yaml", "pipeline": "../run.py"}}, "pipeline escaping"),
+        ],
+    )
+    def test_malformed_experiment_declarations_rejected(self, experiments, why):
+        manifest = {"it_schema_version": 1, "kinds": ["experiment"]}
+        if experiments is not None:
+            manifest["experiments"] = experiments
+        with pytest.raises(ComponentManifestError, match="`experiments`|experiment entry"):
+            validate_component_manifest(manifest, source=why)
+
+    def test_experiment_key_derives_from_experiment_name(self):
+        from interpretune.hub.manifest import check_experiment_key_parity, derive_experiment_key
+
+        assert derive_experiment_key({"EXPERIMENT_NAME": "demo_experiment"}) == "demo_experiment"
+        with pytest.raises(ComponentManifestError, match="EXPERIMENT_NAME"):
+            derive_experiment_key({"PROMPT": {}})
+        with pytest.raises(ValueError, match="parity violation"):
+            check_experiment_key_parity(Path("other.yaml"), {"EXPERIMENT_NAME": "demo_experiment"})
+
+    def test_requires_components_axis_shape(self):
+        good = {"it_schema_version": 1, "kinds": ["experiment"], "experiments": {"d": dict(self._VALID_ENTRY)}}
+        validate_component_manifest(dict(good, requires={"components": ["speediedan/rte"]}))
+        with pytest.raises(ComponentManifestError, match="components"):
+            validate_component_manifest(dict(good, requires={"components": ["not-a-repo-ref"]}))
+
+    def test_built_tree_carries_experiment_payloads_and_parity(self, tmp_path):
+        component = _experiment_component_dir(tmp_path)
+        out = tmp_path / "build"
+        build_component_tree(component, out)
+        for rel in ["it_component.yaml", "configs/demo_experiment.yaml", "pipeline/run.py", "notes.md"]:
+            assert filecmp.cmp(component / rel, out / rel, shallow=False), f"drift in {rel}"
+
+    def test_parity_check_blocks_drifted_experiment_config(self, tmp_path):
+        component = _experiment_component_dir(tmp_path)
+        drifted = component / "configs" / "demo_experiment.yaml"
+        drifted.write_text(
+            drifted.read_text(encoding="utf-8").replace("demo_experiment", "renamed_experiment"),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="parity violation"):
+            build_component_tree(component, tmp_path / "build")
+
+    def test_missing_experiment_payload_refused(self, tmp_path):
+        component = _experiment_component_dir(tmp_path)
+        (component / "pipeline" / "run.py").unlink()
+        with pytest.raises(FileNotFoundError, match="experiment payload"):
+            build_component_tree(component, tmp_path / "build")
+
+    def test_module_request_against_experiment_component_names_kinds(self, tmp_path):
+        from interpretune.hub.components import local_publish, resolve_component_config
+
+        cache = tmp_path / "components"
+        local_publish(_experiment_component_dir(tmp_path), "speediedan/demo-exp", cache_dir=cache)
+        with pytest.raises(KeyError, match="not `module`"):
+            resolve_component_config("speediedan/demo-exp", "demo_experiment", cache_dir=cache)
+
+    def test_experiment_request_against_module_component_names_kinds(self, seeded_cache):
+        from interpretune.hub.components import resolve_experiment_config
+
+        with pytest.raises(KeyError, match="not `experiment`"):
+            resolve_experiment_config("speediedan/rte", "rte_demo.gpt2.sae_lens", cache_dir=seeded_cache)
+
+    def test_snapshot_experiment_loads_confined(self, tmp_path):
+        from interpretune.harness.experiments import load_snapshot_experiment
+        from interpretune.hub.components import local_publish
+
+        component = _experiment_component_dir(tmp_path)
+        cache = tmp_path / "components"
+        local_publish(component, "speediedan/demo-exp", cache_dir=cache)
+        key, resolved, snapshot, manifest = load_snapshot_experiment(
+            "speediedan/demo-exp", "demo_experiment", cache_dir=cache
+        )
+        assert key == "demo_experiment" and resolved["EXPERIMENT_NAME"] == "demo_experiment"
+        assert manifest["kinds"] == ["experiment"]
+
+    def test_missing_required_component_names_the_fetch(self, tmp_path):
+        from interpretune.harness.experiments import load_snapshot_experiment
+        from interpretune.hub.components import local_publish
+
+        component = _experiment_component_dir(tmp_path)
+        manifest_path = component / "it_component.yaml"
+        body = __import__("yaml").safe_load(manifest_path.read_text(encoding="utf-8"))
+        body["requires"] = {"interpretune": ">=0.1.dev0", "components": ["speediedan/rte"]}
+        manifest_path.write_text(__import__("yaml").safe_dump(body), encoding="utf-8")
+        cache = tmp_path / "components"
+        local_publish(component, "speediedan/demo-exp", cache_dir=cache)
+        with pytest.raises(KeyError, match="speediedan/rte"):
+            load_snapshot_experiment("speediedan/demo-exp", "demo_experiment", cache_dir=cache)
+
+    def test_escaping_extends_refused_inside_snapshot(self, tmp_path):
+        from interpretune.harness.experiments import load_snapshot_experiment
+        from interpretune.hub.components import local_publish
+
+        component = _experiment_component_dir(tmp_path)
+        evil = component / "configs" / "demo_experiment.yaml"
+        evil.write_text(
+            __import__("yaml").safe_dump({"EXPERIMENT_NAME": "demo_experiment", "EXTENDS": "../../outside.yaml"}),
+            encoding="utf-8",
+        )
+        cache = tmp_path / "components"
+        local_publish(component, "speediedan/demo-exp", cache_dir=cache)
+        with pytest.raises(ValueError, match="outside the component snapshot"):
+            load_snapshot_experiment("speediedan/demo-exp", "demo_experiment", cache_dir=cache)
+
+    def test_card_renders_experiment_definitions(self, tmp_path):
+        component = _experiment_component_dir(tmp_path)
+        manifest = load_component_manifest(component / "it_component.yaml")
+        card = generate_component_card(manifest, "speediedan/demo-exp")
+        assert "interpretune-experiment" in card.data.tags
+        assert "## Experiment definitions" in card.text

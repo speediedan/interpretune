@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 
-from interpretune.harness.experiments import resolve_extends_path
+from interpretune.harness.experiments import PACKAGE_RESOURCE_SEPARATOR, resolve_extends_path
 from typing import Any, Mapping
 
 import yaml  # type: ignore[import-untyped]
@@ -148,7 +148,7 @@ def deep_merge_mappings(base: Mapping[str, Any], override: Mapping[str, Any]) ->
     return merged
 
 
-def _resolve_extends_paths(config_path: Path, extends_value: Any) -> list[Path]:
+def _resolve_extends_paths(config_path: Path, extends_value: Any, *, _root: Path | None = None) -> list[Path]:
     """Resolve an EXTENDS value to parent config paths."""
     if extends_value is None:
         return []
@@ -162,12 +162,32 @@ def _resolve_extends_paths(config_path: Path, extends_value: Any) -> list[Path]:
     # `package.module:resource` reaches a base config shipped inside an installed package, which is how
     # an out-of-tree experiment extends these shared configs without a relative path into this tree.
     # Relative and absolute paths behave exactly as before.
-    return [resolve_extends_path(config_path, raw_value) for raw_value in raw_values]
+    resolved = [resolve_extends_path(config_path, raw_value) for raw_value in raw_values]
+    if _root is not None:
+        root = _root.expanduser().resolve()
+        for raw_value, parent in zip(raw_values, resolved):
+            if PACKAGE_RESOURCE_SEPARATOR in raw_value:
+                continue  # an installed package, versioned separately: not a snapshot escape
+            if root not in parent.resolve().parents and parent.resolve() != root:
+                raise ValueError(
+                    f"{CONFIG_EXTENDS_KEY} {raw_value!r} in {config_path} resolves outside the "
+                    f"component snapshot {root}: a config that silently inherits from another tree "
+                    "is the revision-scope defect the snapshot exists to remove. Reference a base in "
+                    "an installed package with the `package.module:resource` form instead."
+                )
+    return resolved
 
 
-def load_experiment_config(config_path: str | Path, *, _seen: tuple[Path, ...] = ()) -> dict[str, Any]:
-    """Load an experiment config, following EXTENDS inheritance with cycle detection."""
+def load_experiment_config(
+    config_path: str | Path, *, _seen: tuple[Path, ...] = (), _root: Path | str | None = None
+) -> dict[str, Any]:
+    """Load an experiment config, following EXTENDS inheritance with cycle detection.
+
+    ``_root`` confines relative EXTENDS to one directory (a cached component snapshot): a parent
+    resolving outside it is refused by name. ``package.module:resource`` bases are unaffected.
+    """
     resolved_path = Path(config_path).expanduser().resolve()
+    root = Path(_root).expanduser().resolve() if _root is not None else None
     if resolved_path in _seen:
         chain = " -> ".join(str(path) for path in (*_seen, resolved_path))
         raise ValueError(f"Detected cyclic config inheritance: {chain}")
@@ -176,10 +196,10 @@ def load_experiment_config(config_path: str | Path, *, _seen: tuple[Path, ...] =
     extends_value = payload.pop(CONFIG_EXTENDS_KEY, None)
 
     merged_payload: dict[str, Any] = {}
-    for parent_path in _resolve_extends_paths(resolved_path, extends_value):
+    for parent_path in _resolve_extends_paths(resolved_path, extends_value, _root=root):
         merged_payload = deep_merge_mappings(
             merged_payload,
-            load_experiment_config(parent_path, _seen=(*_seen, resolved_path)),
+            load_experiment_config(parent_path, _seen=(*_seen, resolved_path), _root=root),
         )
 
     merged_payload = deep_merge_mappings(merged_payload, payload)
