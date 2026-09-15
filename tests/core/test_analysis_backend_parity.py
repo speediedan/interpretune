@@ -430,6 +430,7 @@ def _build_op_baseline(it_session, case: SemanticInterventionParityCase) -> OpSe
                 concept_group_b=case.states,
                 concept_label=case.label,
                 concept_direction_mode="paired_rejection",
+                concept_basis="embed",
             ),
             None,
             0,
