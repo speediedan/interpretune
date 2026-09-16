@@ -215,7 +215,9 @@ class TestTheNotebookMatchesTheApiItCalls:
                 continue
             call = node.value
             if isinstance(call, ast.Call) and "load_hub_adapter" in ast.dump(call.func):
-                bound = node.targets[0].id
+                target = node.targets[0]
+                if isinstance(target, ast.Name):
+                    bound = target.id
         assert bound, "no assignment from load_hub_adapter(...) found in the hub cell"
 
         read = {
