@@ -163,7 +163,8 @@ class TestDeferredWorkSaysWhy:
         """Section 4b is deferred for a reason specific to this notebook, not the sibling's reachability one.
 
         Asserted because a bare ``False`` reads as an oversight, and the next person to see it will either
-        turn it on without knowing what is unsettled or delete the section as dead weight.
+        turn it on without knowing a J-space patch is refused over this backend or delete the section as
+        dead weight.
         """
         _, params = _find_cell(dev_cells, "RUN_JSPACE_SECTION")
         line = next(ln for ln in params.splitlines() if ln.strip().startswith("RUN_JSPACE_SECTION"))
@@ -184,7 +185,7 @@ class TestDeferredWorkSaysWhy:
         )
         assert "modes" in trailing_comment and "interp-engine" in trailing_comment, (
             "RUN_JSPACE_SECTION is disabled without stating why in this notebook's terms, in the comment "
-            "directly above it — the reason here is the unsettled intervention-mode question for the "
+            "directly above it — the reason here is the settled refusal of a J-space patch over the "
             "interp-engine backend, not the sibling notebook's collection reachability"
         )
 
