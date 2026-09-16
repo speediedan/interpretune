@@ -60,7 +60,7 @@ def pull(
     return _hydrate_component_body(canonical, body, cache_dir=cache_dir)
 
 
-def pull_experiment_config(
+def pull_experiment(
     repo_id: str,
     key: str,
     *,
@@ -86,7 +86,7 @@ def pull_experiment_config(
     return canonical, body, snapshot
 
 
-def load_experiment_config(
+def load_experiment(
     repo_id: str, key: str, *, cache_dir: Path | None = None, revision: str | None = None
 ) -> tuple[str, dict, Path]:
     """Cache-only resolution of ONE experiment definition — never touches the network.
@@ -95,7 +95,8 @@ def load_experiment_config(
     """
     from interpretune.hub.components import resolve_experiment_config
 
-    return resolve_experiment_config(repo_id, key, cache_dir=cache_dir, revision=revision)
+    canonical, body, snapshot, _ = resolve_experiment_config(repo_id, key, cache_dir=cache_dir, revision=revision)
+    return canonical, body, snapshot
 
 
 def pull_ops(

@@ -535,9 +535,129 @@ class TestExperimentKindSpec:
         with pytest.raises(ValueError, match="outside the component snapshot"):
             load_snapshot_experiment("speediedan/demo-exp", "demo_experiment", cache_dir=cache)
 
+    def test_absolute_extends_outside_snapshot_refused(self, tmp_path):
+        """An existing absolute path with a colon takes the path branch, not the exemption.
+
+        Regression: the exemption keyed on `:` in the raw text, so `/tmp/.../esc:ape.yaml`
+        loaded while the same path without the colon was refused (and on Windows every
+        absolute path has one, voiding the check where CI runs it).
+        """
+        from interpretune.harness.config import load_experiment_config
+
+        root = tmp_path / "snapshot"
+        (root / "configs").mkdir(parents=True)
+        outside = tmp_path / "esc:ape.yaml"
+        outside.write_text(__import__("yaml").safe_dump({"X": 1}), encoding="utf-8")
+        cfg = root / "configs" / "demo_experiment.yaml"
+        cfg.write_text(
+            __import__("yaml").safe_dump({"EXPERIMENT_NAME": "demo_experiment", "EXTENDS": str(outside)}),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="outside the component snapshot"):
+            load_experiment_config(cfg, _root=root)
+
+    def test_package_resource_extends_passes_confinement(self, tmp_path):
+        """Positive control: the installed-package form is exempt from snapshot confinement."""
+        from interpretune.harness.config import load_experiment_config
+
+        root = tmp_path / "snapshot"
+        (root / "configs").mkdir(parents=True)
+        cfg = root / "configs" / "demo_experiment.yaml"
+        cfg.write_text(
+            __import__("yaml").safe_dump(
+                {"EXPERIMENT_NAME": "demo_experiment", "EXTENDS": "interpretune.harness:configs/base.yaml"}
+            ),
+            encoding="utf-8",
+        )
+        resolved = load_experiment_config(cfg, _root=root)
+        assert resolved["EXPERIMENT_NAME"] == "demo_experiment"
+
+    def test_pull_path_returns_the_revision_snapshot(self, tmp_path, monkeypatch):
+        """The pull payload root is `snapshots/<sha>`, not `snapshots/`: a cross-revision EXTENDS must be refused
+        from the returned dir."""
+        from interpretune.hub import components as hub_components
+        from interpretune.hub.components import pull_experiment_payloads
+
+        sha = "abc123"
+        cache = tmp_path / "components"
+
+        def _fake_download(repo_id, rel, *, revision, cache_dir, token, **kw):
+            dest = Path(cache_dir) / "models--speediedan--demo-exp" / "snapshots" / revision / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text("x: 1\n", encoding="utf-8")
+            return str(dest)
+
+        monkeypatch.setattr(hub_components, "hf_hub_download", _fake_download)
+        manifest = {
+            "experiments": {
+                "demo_experiment": {"config": "configs/demo_experiment.yaml", "pipeline": "pipeline/run.py"}
+            }
+        }
+        snapshot = pull_experiment_payloads("speediedan/demo-exp", manifest, "demo_experiment", sha, cache_dir=cache)
+        assert snapshot == cache / "models--speediedan--demo-exp" / "snapshots" / sha
+
+        from interpretune.harness.config import load_experiment_config
+
+        evil = snapshot / "configs" / "evil.yaml"
+        evil.write_text(
+            __import__("yaml").safe_dump({"EXPERIMENT_NAME": "evil", "EXTENDS": "../../other-sha/outside.yaml"}),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="outside the component snapshot"):
+            load_experiment_config(evil, _root=snapshot)
+
     def test_card_renders_experiment_definitions(self, tmp_path):
         component = _experiment_component_dir(tmp_path)
         manifest = load_component_manifest(component / "it_component.yaml")
         card = generate_component_card(manifest, "speediedan/demo-exp")
         assert "interpretune-experiment" in card.data.tags
         assert "## Experiment definitions" in card.text
+
+    def test_orphan_experiments_block_refused(self):
+        manifest = {
+            "it_schema_version": 1,
+            "kinds": ["module"],
+            "module": {"configs": {"rte.gpt2.core": {}}},
+            "experiments": {"demo_experiment": {"config": "configs/demo_experiment.yaml"}},
+        }
+        with pytest.raises(ComponentManifestError, match="orphan"):
+            validate_component_manifest(manifest)
+
+    def test_non_yaml_experiment_config_refused(self):
+        manifest = {
+            "it_schema_version": 1,
+            "kinds": ["experiment"],
+            "experiments": {"demo_experiment": {"config": "configs/demo_experiment.yml"}},
+        }
+        with pytest.raises(ComponentManifestError, match="`.yaml`"):
+            validate_component_manifest(manifest)
+
+    def test_requires_components_revision_form(self):
+        good = {
+            "it_schema_version": 1,
+            "kinds": ["experiment"],
+            "experiments": {"d": {"config": "configs/d.yaml"}},
+        }
+        validate_component_manifest(dict(good, requires={"components": ["speediedan/rte@738e4122"]}))
+        for bad in (["speediedan/rte@rev@extra"], ["not-a-repo-ref@"], ["speediedan/rte@"]):
+            with pytest.raises(ComponentManifestError, match="components"):
+                validate_component_manifest(dict(good, requires={"components": bad}))
+
+    def test_pinned_required_component_checked_at_its_revision(self, tmp_path):
+        from interpretune.harness.experiments import load_snapshot_experiment
+        from interpretune.hub.components import local_publish
+
+        component = _experiment_component_dir(tmp_path)
+        manifest_path = component / "it_component.yaml"
+        body = __import__("yaml").safe_load(manifest_path.read_text(encoding="utf-8"))
+        body["requires"] = {"interpretune": ">=0.1.dev0", "components": ["speediedan/rte@deadbeef"]}
+        manifest_path.write_text(__import__("yaml").safe_dump(body), encoding="utf-8")
+        cache = tmp_path / "components"
+        local_publish(component, "speediedan/demo-exp", cache_dir=cache)
+        with pytest.raises(KeyError, match="required by experiment `speediedan/demo-exp#demo_experiment`"):
+            load_snapshot_experiment("speediedan/demo-exp", "demo_experiment", cache_dir=cache)
+
+    def test_hub_experiment_verbs_resolve(self):
+        import interpretune as it
+
+        assert callable(it.hub.pull_experiment) and callable(it.hub.load_experiment)

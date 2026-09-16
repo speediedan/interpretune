@@ -76,6 +76,12 @@ def _is_relative_inside(rel: str) -> bool:
 _REQUIRES_AXES = ("interpretune", "adapters", "modules", "pip", "components")
 
 
+def _is_component_ref(value: str) -> bool:
+    """A `<org>/<repo>` component reference with an optional `@revision` pin."""
+    repo, sep, revision = value.partition("@")
+    return repo.count("/") == 1 and (not sep or (bool(revision) and "@" not in revision))
+
+
 def _validate_requires_shape(requires: Any, where: str) -> None:
     """The `requires` vocabulary: `interpretune` (a specifier), `adapters` / `modules` / `pip` / `components`
     (lists of names)."""
@@ -97,10 +103,11 @@ def _validate_requires_shape(requires: Any, where: str) -> None:
                 f"{where}.modules entries must be dotted importable names (evaluated with importlib.util.find_spec, "
                 f"nothing is imported), got {values!r}"
             )
-        if axis == "components" and not all(v.count("/") == 1 for v in values):
+        if axis == "components" and not all(_is_component_ref(v) for v in values):
             raise ComponentManifestError(
                 f"{where}.components entries must be `<org>/<repo>` component references naming the module "
-                f"components whose registry keys the experiment resolves, got {values!r}"
+                f"components whose registry keys the experiment resolves, with an optional `@revision` pin, "
+                f"got {values!r}"
             )
 
 
@@ -274,11 +281,22 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
                 f"{source}: kind `experiment` requires a non-empty `experiments` index "
                 "(experiment name -> entry). The manifest names entries; there are no reserved filenames."
             )
-        for name, entry in exps.items():
+    elif manifest.get("experiments") is not None:
+        raise ComponentManifestError(
+            f"{source}: an `experiments` block without kind `experiment` is an orphan: no loader reads "
+            "it, so it publishes payloads nothing consumes. Declare the kind or remove the block."
+        )
+    if "experiment" in kinds:
+        for name, entry in (manifest.get("experiments") or {}).items():
             if not isinstance(entry, dict) or not entry.get("config") or not isinstance(entry["config"], str):
                 raise ComponentManifestError(
                     f"{source}: experiment entry {name!r} requires a repo-relative `config` path (the "
                     "harness experiment definition it publishes)."
+                )
+            if not entry["config"].endswith(".yaml"):
+                raise ComponentManifestError(
+                    f"{source}: experiment entry {name!r} config {entry['config']!r} must be a `.yaml` "
+                    "path: parity derives the key from the filename stem minus that suffix."
                 )
             for rel in [entry["config"], entry.get("pipeline"), *(entry.get("files") or [])]:
                 if rel is None:

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 
-from interpretune.harness.experiments import PACKAGE_RESOURCE_SEPARATOR, resolve_extends_path
+from interpretune.harness.experiments import is_package_resource_extends, resolve_extends_path
 from typing import Any, Mapping
 
 import yaml  # type: ignore[import-untyped]
@@ -166,7 +166,7 @@ def _resolve_extends_paths(config_path: Path, extends_value: Any, *, _root: Path
     if _root is not None:
         root = _root.expanduser().resolve()
         for raw_value, parent in zip(raw_values, resolved):
-            if PACKAGE_RESOURCE_SEPARATOR in raw_value:
+            if is_package_resource_extends(raw_value):
                 continue  # an installed package, versioned separately: not a snapshot escape
             if root not in parent.resolve().parents and parent.resolve() != root:
                 raise ValueError(

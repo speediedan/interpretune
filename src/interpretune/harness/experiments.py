@@ -94,6 +94,16 @@ def bootstrap_experiment_imports(
     return config
 
 
+def is_package_resource_extends(raw_value: str) -> bool:
+    """Whether an EXTENDS value takes the package-resource branch: a colon it does not already exist as.
+
+    The single predicate both the resolver and the snapshot-confinement check consult, so the
+    exemption can never disagree with the branch taken: an existing absolute path containing a
+    colon (every Windows absolute path) resolves as a plain path and is confined like one.
+    """
+    return PACKAGE_RESOURCE_SEPARATOR in raw_value and not Path(raw_value).exists()
+
+
 def resolve_extends_path(config_path: Path, raw_value: str) -> Path:
     """Resolve one ``EXTENDS`` entry, either as a package resource or as a path.
 
@@ -112,7 +122,7 @@ def resolve_extends_path(config_path: Path, raw_value: str) -> Path:
             "the component rails removed. Use `package.module:resource`, for example "
             "`interpretune.harness:configs/base.yaml`, or a path relative to this config."
         )
-    if PACKAGE_RESOURCE_SEPARATOR in raw_value and not Path(raw_value).exists():
+    if is_package_resource_extends(raw_value):
         package, _, resource = raw_value.partition(PACKAGE_RESOURCE_SEPARATOR)
         return _package_resource_path(config_path, package, resource)
     candidate = Path(raw_value).expanduser()
@@ -233,10 +243,15 @@ def load_snapshot_experiment(
     """
     from interpretune.hub.components import resolve_component_manifest, resolve_experiment_config
 
-    canonical, body, snapshot = resolve_experiment_config(repo_id, key, cache_dir=cache_dir, revision=revision)
-    manifest, _, _ = resolve_component_manifest(repo_id, cache_dir=cache_dir, revision=revision)
+    canonical, body, snapshot, manifest = resolve_experiment_config(
+        repo_id, key, cache_dir=cache_dir, revision=revision
+    )
     for ref in (manifest.get("requires") or {}).get("components") or []:
-        resolve_component_manifest(ref, cache_dir=cache_dir)
+        ref_repo, _, ref_revision = ref.partition("@")
+        try:
+            resolve_component_manifest(ref_repo, cache_dir=cache_dir, revision=ref_revision or None)
+        except KeyError as exc:
+            raise KeyError(f"required by experiment `{repo_id}#{key}`: component {ref!r} — {exc}") from exc
     from interpretune.harness.config import load_experiment_config
 
     entry = (manifest.get("experiments") or {})[canonical]

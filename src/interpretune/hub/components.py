@@ -294,7 +294,11 @@ def pull_experiment_payloads(
                 **_TELEMETRY,
             )
         )
-        snapshot = downloaded.parents[len(Path(rel).parts)]
+        # Anchor on the `snapshots/<sha>` segment, not on a part count: counting parts from the
+        # leaf returns the `snapshots/` directory itself, which would confine EXTENDS to every
+        # cached revision of the repo instead of this one.
+        parts = downloaded.parts
+        snapshot = Path(*parts[: parts.index("snapshots") + 2])
     assert snapshot is not None
     return snapshot
 
@@ -511,10 +515,10 @@ def resolve_component_config(
 
 def resolve_experiment_config(
     repo_id: str, key: str, cache_dir: Path | None = None, *, revision: str | None = None, require_hub: bool = False
-) -> tuple[str, dict, Path]:
+) -> tuple[str, dict, Path, dict]:
     """CACHE-ONLY resolution of one experiment definition: never touches the network.
 
-    Returns ``(canonical_key, config_body, snapshot_dir)``: the snapshot dir scopes the
+    Returns ``(canonical_key, config_body, snapshot_dir, manifest)``: the snapshot dir scopes the
     snapshot-confined EXTENDS resolution the harness launcher performs on the body.
     """
     manifest, snapshot, _ = resolve_component_manifest(
@@ -531,7 +535,7 @@ def resolve_experiment_config(
         raise KeyError(f"{repo_id} (cached) declares no experiment {key!r}. Available: {sorted(entries)}")
     cfg_path = snapshot / entries[key]["config"]
     body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-    return check_experiment_key_parity(cfg_path, body, expected_key=key), body, snapshot
+    return check_experiment_key_parity(cfg_path, body, expected_key=key), body, snapshot, manifest
 
 
 def resolve_datamodule_config(

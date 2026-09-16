@@ -395,7 +395,7 @@ def generate_component_card(
             lines.append(f"- `{name}`: `{experiments[name]['config']}`")
         lines += [
             "",
-            'Fetch with `interpretune.hub.pull_experiment_config("<org>/<repo>", "<name>")` '
+            'Fetch with `interpretune.hub.pull_experiment("<org>/<repo>", "<name>")` '
             "(manifest-first, revision-pinned, parity-checked on filename, key, and EXPERIMENT_NAME), "
             "then drive with the notebook harness launcher. A relative EXTENDS resolves inside the "
             "cached revision only.",

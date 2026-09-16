@@ -63,10 +63,15 @@ def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Pat
     # EXPERIMENT_NAME); pipeline and owned files copy verbatim under the same allowlist rule
     from interpretune.hub.manifest import check_experiment_key_parity
 
+    import yaml
+
     for key, entry in (manifest.get("experiments") or {}).items():
         cfg_src = component_dir / entry["config"]
-        import yaml
-
+        if not cfg_src.is_file():
+            raise FileNotFoundError(
+                f"Manifest declares experiment config {entry['config']!r} for {key!r}, which is not "
+                f"present in {component_dir}."
+            )
         check_experiment_key_parity(cfg_src, yaml.safe_load(cfg_src.read_text(encoding="utf-8")), expected_key=key)
         dest = out_dir / entry["config"]
         dest.parent.mkdir(parents=True, exist_ok=True)
