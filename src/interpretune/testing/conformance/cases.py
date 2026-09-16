@@ -52,6 +52,29 @@ from .session import build_conformance_session, tokenized_prompts
 #: relative. Pad positions are undefined and never compared.
 PADDED_RTOL = 1e-3
 PADDED_ATOL = 1e-3
+REJECT_DIRECTION_MIX = 0.5
+# Fraction of the captured direction mixed into the order case's reject direction: the reject
+# legs steer along a seeded unit vector orthogonalised against the captured direction, plus this
+# fraction of the captured direction itself, so rejection removes a material but not total
+# component (residual ~0.89 of the activation norm at this fraction, far above the floor below).
+
+
+def _bounded_reject_direction(captured_direction: torch.Tensor) -> torch.Tensor:
+    """A unit steer direction with bounded projection onto the activation it will reject.
+
+    Rejecting the captured direction itself leaves a near-null residual whose reference comparison is ill-conditioned
+    (logit noise with no signal, measured at 2e-3 to 9e-3 over a 1e-3 tolerance on gemma-3 CUDA). Seeded, so every
+    runner builds the same direction.
+    """
+    v = captured_direction.to(torch.float32)
+    v = v / v.norm()
+    gen = torch.Generator().manual_seed(427)
+    raw = torch.randn(v.numel(), generator=gen, dtype=torch.float32)
+    orth = raw - (raw @ v) * v
+    orth = orth / orth.norm()
+    mixed = orth + REJECT_DIRECTION_MIX * v
+    return (mixed / mixed.norm()).to(captured_direction.dtype)
+
 
 _PROTOCOL_FOR = {
     ModelBackendCapability.LATENT_MODELS: SupportsLatentModels,
@@ -829,12 +852,19 @@ class ModelBackendConformance:
         The reference composes the two updates on the activation in the same order, under one HF hook per spec
         (hooks fire in registration order). A backend that groups by mode fails the ordered references; a backend
         that ignores order fails the positive control.
+
+        The reject legs steer along a direction whose projection onto the activation is BOUNDED, not along
+        the activation's own direction: rejecting the captured direction itself leaves a near-null residual
+        whose comparison is ill-conditioned (logit noise with no signal). The conditioning assert below
+        locks that property, so a future vector choice cannot recreate the degeneracy silently.
         """
         import interpretune as it
         from interpretune import AnalysisCfg
 
         point = suite.inputs.intervention_point
-        vector = self._vector(suite)
+        cap_store = suite.run(AnalysisCfg(target_op="store_capture_points", names_filter=[point]))
+        vector = steering_vector(captured_points(cap_store, 0)[point])
+        reject_vector = _bounded_reject_direction(vector)
 
         def add_spec(scale=STEER_SCALE):
             return {
@@ -847,7 +877,7 @@ class ModelBackendConformance:
 
         def reject_spec():
             return {
-                "intervention_tensor": vector,
+                "intervention_tensor": reject_vector,
                 "mode": "reject",
                 "scale_factor": 1.0,
                 "position_scope": "last_token",
@@ -860,7 +890,7 @@ class ModelBackendConformance:
         def reject_fn():
             # float32 like the backend (`_apply_span_rejection` upcasts): a bf16 reference
             # diverges ~6e-2 on bf16 models while the float32 form matches exactly.
-            v32 = vector.to(torch.float32)
+            v32 = reject_vector.to(torch.float32)
             denom32 = (v32 * v32).sum()
 
             def _reject(t: torch.Tensor) -> torch.Tensor:
@@ -878,6 +908,18 @@ class ModelBackendConformance:
 
         forward = run([add_spec(), reject_spec()])
         reverse = run([reject_spec(), add_spec()])
+        # conditioning lock: rejection must leave a material residual at the intervened position,
+        # or the comparison below measures noise. Analytic on the captured activation, so a future
+        # vector choice that recreates the degeneracy fails here by name rather than as a divergence.
+        u = reject_vector.to(torch.float32)
+        u = u / u.norm()
+        for i in range(len(forward["post_intervention_logits"])):
+            h_last = captured_points(cap_store, i)[point].reshape(-1, vector.numel())[-1].to(torch.float32)
+            resid = h_last - (h_last @ u) * u
+            assert resid.norm() >= 0.1 * h_last.norm(), (
+                f"batch {i}: post-rejection residual {resid.norm():.3e} below a tenth of the activation "
+                f"norm {h_last.norm():.3e}: the reject direction is degenerate for this activation"
+            )
         for i, (fwd, rev) in enumerate(zip(forward["post_intervention_logits"], reverse["post_intervention_logits"])):
             ids, mask = suite.batch_inputs(i)
             ref_fwd = hf.steered_many(
