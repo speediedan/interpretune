@@ -163,13 +163,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--dry-run", action="store_true", help="print the plan without fetching anything")
+    parser.add_argument(
+        "--components-only",
+        action="store_true",
+        help="warm only the manifest's Hub components (the self-hosted GPU job persists "
+        "models/datasets on its cache mount across builds but nothing populates components).",
+    )
     args = parser.parse_args(argv)
     if not args.dry_run and os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in {"1", "true", "yes"}:
         raise SystemExit("HF_HUB_OFFLINE is set; the warm step must run online (unset it for this step only)")
     manifest = _load_manifest(args.manifest)
     print(f"warming from {args.manifest} (cache_version={manifest.get('cache_version')})")
-    warm_models(manifest.get("models") or [], args.dry_run)
-    warm_datasets(manifest.get("datasets") or [], args.dry_run)
+    if not args.components_only:
+        warm_models(manifest.get("models") or [], args.dry_run)
+        warm_datasets(manifest.get("datasets") or [], args.dry_run)
     warm_components(manifest.get("components") or [], args.dry_run)
     if not args.dry_run:
         print(f"Hub cache: {_cache_size()}")
