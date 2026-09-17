@@ -215,7 +215,7 @@ class TestConceptDirectionStreaming:
             (torch.tensor([[4.0, 0.0], [0.0, 8.0]]), torch.tensor([0, 1]), torch.tensor([3.0, 1.0])),
         ]
         for states, gids, weights in batches:
-            result = _concept_direction_streaming(_module_without_cfg(), _batch(states, gids, weights), state)
+            result = _concept_direction_streaming(_module_without_cfg(), _batch(states, gids, weights), state, "store")
         all_states = torch.cat([b[0] for b in batches])
         all_gids = torch.cat([b[1] for b in batches])
         all_weights = torch.cat([b[2] for b in batches])
@@ -245,7 +245,7 @@ class TestConceptDirectionStreaming:
         ]
         for _epoch in range(2):
             for states, gids, weights in epoch_batches:
-                _concept_direction_streaming(_module_without_cfg(), _batch(states, gids, weights), state)
+                _concept_direction_streaming(_module_without_cfg(), _batch(states, gids, weights), state, "store")
         # 2 epochs x 2 batches x weight 1.0 per group
         assert torch.allclose(state.get("concept_running_weight_a"), torch.tensor(4.0))
         assert torch.allclose(state.get("concept_running_weight_b"), torch.tensor(4.0))
@@ -256,6 +256,7 @@ class TestConceptDirectionStreaming:
             _module_without_cfg(),
             _batch(torch.tensor([[3.0, 4.0]]), torch.tensor([0]), concept_direction_mode="single_group"),
             _state(),
+            "store",
         )
         assert torch.allclose(result.concept_direction, torch.tensor([0.6, 0.8]))
         assert result.concept_label == "group_a"
@@ -266,18 +267,22 @@ class TestConceptDirectionStreaming:
             _module_without_cfg(),
             _batch(torch.tensor([[1.0, 1.0]]), torch.tensor([0]), concept_direction_mode="paired_rejection"),
             state,
+            "store",
         )
         assert torch.equal(result.concept_direction, torch.zeros(2))
         result = _concept_direction_streaming(
             _module_without_cfg(),
             _batch(torch.tensor([[1.0, 0.0]]), torch.tensor([1]), concept_direction_mode="paired_rejection"),
             state,
+            "store",
         )
         assert torch.allclose(result.concept_direction, torch.tensor([0.0, 1.0]))
 
     def test_missing_group_a_raises(self):
         with pytest.raises(ValueError, match="at least one group A example"):
-            _concept_direction_streaming(_module_without_cfg(), _batch(torch.ones(1, 2), torch.tensor([1])), _state())
+            _concept_direction_streaming(
+                _module_without_cfg(), _batch(torch.ones(1, 2), torch.tensor([1])), _state(), "store"
+            )
 
     def test_unsupported_mode_raises(self):
         with pytest.raises(ValueError, match="Unsupported concept_direction_mode"):
@@ -285,6 +290,7 @@ class TestConceptDirectionStreaming:
                 _module_without_cfg(),
                 _batch(torch.ones(1, 2), torch.tensor([0]), concept_direction_mode="bogus"),
                 _state(),
+                "store",
             )
 
     def test_undeclared_field_is_rejected(self):

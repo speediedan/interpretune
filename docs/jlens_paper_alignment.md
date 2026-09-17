@@ -96,6 +96,9 @@ two one-vector operations in sequence cannot reproduce a coordinate swap when th
 1. Default according to the claim: paper reproduction uses `jlens_paper`; "the direction governing the normalized
    readout" uses `jlens_norm_aware`.
 1. Folded and unfolded behavioural results are never compared as though they differed by a coefficient.
+   Measured on the shipped gpt2-small lens at layer 8 (Paris-vs-London concept direction, collection
+   revision `0731326e`): $1 - \lvert \cos \rvert = 0.0681$. The bases differ in practice, not only in
+   construction, so the comparison the rule forbids would also be wrong numerically.
 1. Each selected basis is validated with its own first-order prediction, once #539 lands; until then the claim a
    result can make is the one its tests pin.
 

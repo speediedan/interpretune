@@ -636,6 +636,7 @@ def run_latent_dynamics_analysis(
                             concept_group_b=list(cfg.concept_pair.group_b_tokens),
                             concept_label=cfg.concept_pair.concept_label,
                             concept_direction_mode=cfg.analysis_direction_mode_name,
+                            concept_basis="embed",
                         ),
                         batch=cast(Any, None),
                         batch_idx=0,

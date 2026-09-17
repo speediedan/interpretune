@@ -129,6 +129,7 @@ def test_composite_ops_validate_capabilities_per_stage() -> None:
         analysis_batch = AnalysisBatch(
             concept_group_a=["Paris"],
             concept_group_b=["London"],
+            concept_basis="embed",
             input_string="Paris London",
             adjacency_matrix=[[0.0]],
             active_features=[[0, 0, 0]],
