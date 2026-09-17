@@ -40,19 +40,30 @@ def normalize(value: Any) -> Any:
 
     Classes/callables become fully-qualified names (so ``AutoCompConfig``-synthesized classes compare by
     identity-relevant name, not object id); dataclasses become ``{"__class__": fqname, **fields}``;
-    tuples/sets/paths/enums/torch dtypes become plain JSON-able values.
+    tuples/sets/paths/enums/torch dtypes become plain JSON-able values. Hub snapshot classes resolve
+    under revision-scoped synthetic modules, so the revision segment is canonicalized away: the
+    revision identifies content, and two checkouts at different revisions of identical content must
+    still compare equal (machine independence is pinned by test, not just intended).
     """
     import torch
 
+    def _fqname(module: str | None, qualname: str) -> str:
+        parts = (module or "?").split(".")
+        if len(parts) > 2 and parts[0] == "it_hub_components":
+            module = ".".join(parts[:2])
+        else:
+            module = module or "?"
+        return f"{module}.{qualname}"
+
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        out = {"__class__": f"{type(value).__module__}.{type(value).__qualname__}"}
+        out = {"__class__": _fqname(type(value).__module__, type(value).__qualname__)}
         for f in dataclasses.fields(value):
             out[f.name] = normalize(getattr(value, f.name))
         return out
     if isinstance(value, type):
-        return f"{value.__module__}.{value.__qualname__}"
+        return _fqname(value.__module__, value.__qualname__)
     if callable(value) and hasattr(value, "__qualname__"):
-        return f"{getattr(value, '__module__', '?')}.{value.__qualname__}"
+        return _fqname(getattr(value, "__module__", None), value.__qualname__)
     if isinstance(value, enum.Enum):
         return f"{type(value).__qualname__}.{value.name}"
     if isinstance(value, torch.dtype):

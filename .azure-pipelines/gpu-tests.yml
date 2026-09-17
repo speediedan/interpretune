@@ -275,6 +275,18 @@ jobs:
         displayName: 'Env details and package versions'
 
       - bash: |
+          set -e
+          source /tmp/venvs/it_dev/bin/activate
+          # Suite resolves Hub experiment seeds offline from this mount, and nothing else
+          # populates components on it: models/datasets persist across builds, pinned
+          # component revisions do not. Warm them (small, pinned, idempotent) so the
+          # Testing phases never inherit another build's refs/main roulette.
+          python scripts/warm_hf_cache.py --components-only
+        displayName: 'Warm Hub components from manifest'
+        env:
+          HF_TOKEN: $(HF_MCP_TOKEN_RW)
+
+      - bash: |
           # A bash step's result is its LAST command's exit code and the script is not echoed, so a guard
           # line placed before pytest can neither fail the step nor be seen to have run. `set -e` makes the
           # guard below able to fail, and its print is the evidence it executed.

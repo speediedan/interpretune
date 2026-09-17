@@ -52,6 +52,7 @@ def load_session_cfg(
     datamodule_cls: Any = None,
     module_cls: Any = None,
     expected_key: str | None = None,
+    cache_dir: Any = None,
 ):
     """Construct an :class:`~interpretune.session.ITSessionConfig` from a declarative configuration body.
 
@@ -65,6 +66,9 @@ def load_session_cfg(
         module_cls: Default module class when the body declares none.
         expected_key: When given (hub/manifest resolution), the body's structured fields must derive to
             exactly this key (the loader-side half of the filename == manifest key == derived parity).
+        cache_dir: Components cache Hub-resolved classes come from; None means the default cache.
+            Threaded so an explicitly scoped hydration cannot silently bind a stale default-cache
+            snapshot for its class paths.
 
     Returns:
         A fully-populated ``ITSessionConfig`` (``shared_cfg`` deliberately ``None`` — shared-config
@@ -117,22 +121,22 @@ def load_session_cfg(
                 "reference supplies BOTH the configuration and the class, wholesale. Declaring one half "
                 "locally would be a partial merge by the back door (#128)."
             )
-        dm_cfg, ref_dm_cls = _resolve_datamodule_ref(dm_cfg_body["ref"])
+        dm_cfg, ref_dm_cls = _resolve_datamodule_ref(dm_cfg_body["ref"], cache_dir=cache_dir)
         if ref_dm_cls is not None:
             datamodule_cls = ref_dm_cls
     else:
-        dm_cfg = _hydrate_datamodule_cfg(dm_cfg_body, shared)
+        dm_cfg = _hydrate_datamodule_cfg(dm_cfg_body, shared, cache_dir=cache_dir)
 
     m_cfg_body = dict(registered.get("module_cfg") or {})
-    m_cfg = it_cfg_factory(m_cfg_body, shared)
+    m_cfg = it_cfg_factory(m_cfg_body, shared, cache_dir=cache_dir)
 
     def _resolve_cls(entry: Any, default: Any) -> Any:
         if entry is None:
             return default
         if isinstance(entry, dict) and "class_path" in entry:
-            return instantiate_hub_aware_class(init=entry, import_only=True)
+            return instantiate_hub_aware_class(init=entry, import_only=True, cache_dir=cache_dir)
         if isinstance(entry, str):
-            return instantiate_hub_aware_class(init={"class_path": entry}, import_only=True)
+            return instantiate_hub_aware_class(init={"class_path": entry}, import_only=True, cache_dir=cache_dir)
         return entry
 
     return ITSessionConfig(
@@ -144,7 +148,9 @@ def load_session_cfg(
     )
 
 
-def _hydrate_datamodule_cfg(dm_cfg_body: dict[str, Any], shared: dict[str, Any]) -> "ITDataModuleConfig":
+def _hydrate_datamodule_cfg(
+    dm_cfg_body: dict[str, Any], shared: dict[str, Any], cache_dir: Any = None
+) -> "ITDataModuleConfig":
     """The ONE datamodule-hydration path, shared by inline bodies and standalone payloads (#128)."""
     from interpretune.registry import itdm_cfg_factory
 
@@ -157,9 +163,12 @@ def _hydrate_datamodule_cfg(dm_cfg_body: dict[str, Any], shared: dict[str, Any])
         init_args = dict(dm_cfg_body.get("init_args") or {})
         return cast(
             "ITDataModuleConfig",
-            instantiate_nested({"class_path": dm_cfg_body["class_path"], "init_args": {**shared, **init_args}}),
+            instantiate_nested(
+                {"class_path": dm_cfg_body["class_path"], "init_args": {**shared, **init_args}},
+                cache_dir=cache_dir,
+            ),
         )
-    return itdm_cfg_factory(dm_cfg_body, shared)
+    return itdm_cfg_factory(dm_cfg_body, shared, cache_dir=cache_dir)
 
 
 def parse_datamodule_ref(ref: str) -> tuple[str, str]:
@@ -172,7 +181,7 @@ def parse_datamodule_ref(ref: str) -> tuple[str, str]:
     return repo_id, name
 
 
-def _resolve_datamodule_ref(ref: str) -> tuple["ITDataModuleConfig", Any]:
+def _resolve_datamodule_ref(ref: str, cache_dir: Any = None) -> tuple["ITDataModuleConfig", Any]:
     """Resolve a REPLACEMENT datamodule reference through the hub layer (cache-only, #128).
 
     The referenced payload is used WHOLESALE: its own ``shared_config`` applies to it (through the same
@@ -185,31 +194,39 @@ def _resolve_datamodule_ref(ref: str) -> tuple["ITDataModuleConfig", Any]:
     from interpretune.hub.components import resolve_datamodule_config
 
     repo_id, name = parse_datamodule_ref(ref)
-    body = resolve_datamodule_config(repo_id, name)
-    dm_cfg = _hydrate_datamodule_cfg(dict(body.get("datamodule_cfg") or {}), dict(body.get("shared_config") or {}))
+    body = resolve_datamodule_config(repo_id, name, cache_dir=cache_dir)
+    dm_cfg = _hydrate_datamodule_cfg(
+        dict(body.get("datamodule_cfg") or {}), dict(body.get("shared_config") or {}), cache_dir=cache_dir
+    )
     dm_cls = body.get("datamodule_cls")
     if dm_cls is not None:
         if isinstance(dm_cls, dict) and "class_path" in dm_cls:
-            dm_cls = instantiate_hub_aware_class(init=dm_cls, import_only=True)
+            dm_cls = instantiate_hub_aware_class(init=dm_cls, import_only=True, cache_dir=cache_dir)
         elif isinstance(dm_cls, str):
-            dm_cls = instantiate_hub_aware_class(init={"class_path": dm_cls}, import_only=True)
+            dm_cls = instantiate_hub_aware_class(init={"class_path": dm_cls}, import_only=True, cache_dir=cache_dir)
     return dm_cfg, dm_cls
 
 
-def load_datamodule_cfg(body: dict[str, Any], *, datamodule_cls: Any = None) -> tuple["ITDataModuleConfig", Any]:
+def load_datamodule_cfg(
+    body: dict[str, Any], *, datamodule_cls: Any = None, cache_dir: Any = None
+) -> tuple["ITDataModuleConfig", Any]:
     """Hydrate a STANDALONE datamodule payload (#128): ``datamodule_cfg`` + optional ``shared_config``.
 
     Same one-merge-site semantics as :func:`load_session_cfg` -- ``shared_config`` applies through the
     registry factories, nothing else merges. The payload must be module-free (the resolver enforces
     that for hub payloads; this loader simply never reads module keys).
     """
-    dm_cfg = _hydrate_datamodule_cfg(dict(body.get("datamodule_cfg") or {}), dict(body.get("shared_config") or {}))
+    dm_cfg = _hydrate_datamodule_cfg(
+        dict(body.get("datamodule_cfg") or {}), dict(body.get("shared_config") or {}), cache_dir=cache_dir
+    )
     cls_entry = body.get("datamodule_cls")
     if cls_entry is not None:
         if isinstance(cls_entry, dict) and "class_path" in cls_entry:
-            datamodule_cls = instantiate_hub_aware_class(init=cls_entry, import_only=True)
+            datamodule_cls = instantiate_hub_aware_class(init=cls_entry, import_only=True, cache_dir=cache_dir)
         elif isinstance(cls_entry, str):
-            datamodule_cls = instantiate_hub_aware_class(init={"class_path": cls_entry}, import_only=True)
+            datamodule_cls = instantiate_hub_aware_class(
+                init={"class_path": cls_entry}, import_only=True, cache_dir=cache_dir
+            )
     return dm_cfg, datamodule_cls
 
 

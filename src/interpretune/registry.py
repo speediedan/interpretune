@@ -233,15 +233,19 @@ def instantiate_and_register(
 
 
 def instantiate_or_import(
-    registered_cfg, shared_cfg, itdm_cfg_defaults_fn, it_cfg_defaults_fn, datamodule_cls, module_cls
+    registered_cfg, shared_cfg, itdm_cfg_defaults_fn, it_cfg_defaults_fn, datamodule_cls, module_cls, cache_dir=None
 ):
     """Hydrate a registry entry: build its configs, importing the declared classes where given."""
-    datamodule_cfg = itdm_cfg_factory(registered_cfg["datamodule_cfg"], shared_cfg, defaults_func=itdm_cfg_defaults_fn)
-    module_cfg = it_cfg_factory(registered_cfg["module_cfg"], shared_cfg, defaults_func=it_cfg_defaults_fn)
+    datamodule_cfg = itdm_cfg_factory(
+        registered_cfg["datamodule_cfg"], shared_cfg, defaults_func=itdm_cfg_defaults_fn, cache_dir=cache_dir
+    )
+    module_cfg = it_cfg_factory(
+        registered_cfg["module_cfg"], shared_cfg, defaults_func=it_cfg_defaults_fn, cache_dir=cache_dir
+    )
     if datamodule_cls_path := registered_cfg.get("datamodule_cls", None):
-        datamodule_cls = instantiate_hub_aware_class(init=datamodule_cls_path, import_only=True)
+        datamodule_cls = instantiate_hub_aware_class(init=datamodule_cls_path, import_only=True, cache_dir=cache_dir)
     if module_cls_path := registered_cfg.get("module_cls", None):
-        module_cls = instantiate_hub_aware_class(init=module_cls_path, import_only=True)
+        module_cls = instantiate_hub_aware_class(init=module_cls_path, import_only=True, cache_dir=cache_dir)
     return datamodule_cfg, module_cfg, datamodule_cls, module_cls
 
 
@@ -340,7 +344,7 @@ def _admits_plain_dict(declared) -> bool:
     return False
 
 
-def instantiate_nested(c: Dict | List, skip_keys: Set | None = None):
+def instantiate_nested(c: Dict | List, skip_keys: Set | None = None, cache_dir=None):
     """Recursively instantiate ``class_path``/``init_args`` nodes, honoring ``compose_ref`` where present.
 
     ``skip_keys`` leaves selected subtrees as plain data -- needed where a nested mapping is configuration
@@ -351,7 +355,7 @@ def instantiate_nested(c: Dict | List, skip_keys: Set | None = None):
         # cross-repo prompt-config composition (design §11.5): one grammar, one extension point
         from interpretune.hub.promptconfigs import instantiate_prompt_cfg_node
 
-        return instantiate_prompt_cfg_node(c)
+        return instantiate_prompt_cfg_node(c, cache_dir=cache_dir)
     if isinstance(c, dict):
         child_skip: Set = set()
         if "class_path" in c:
@@ -359,7 +363,7 @@ def instantiate_nested(c: Dict | List, skip_keys: Set | None = None):
             # children are declarative dicts (skipped) vs nested directives (recursed)
             try:
                 child_skip = _declarative_field_names(
-                    instantiate_hub_aware_class({"class_path": c["class_path"]}, import_only=True)
+                    instantiate_hub_aware_class({"class_path": c["class_path"]}, import_only=True, cache_dir=cache_dir)
                 )
             except Exception:
                 child_skip = set()
@@ -367,12 +371,12 @@ def instantiate_nested(c: Dict | List, skip_keys: Set | None = None):
             if k in skip_keys:
                 continue
             if isinstance(v, (dict, List)):
-                c[k] = instantiate_nested(v, skip_keys=child_skip if k == "init_args" else None)
+                c[k] = instantiate_nested(v, skip_keys=child_skip if k == "init_args" else None, cache_dir=cache_dir)
     elif isinstance(c, List):
         for i, v in enumerate(c):
-            c[i] = instantiate_nested(c[i])
+            c[i] = instantiate_nested(c[i], cache_dir=cache_dir)
     if "class_path" in c:  # if the dict directly contains a class_path key
-        c = instantiate_hub_aware_class(c, import_only=c.pop("import_only", False))  # type: ignore[arg-type]  # with instantiating the class
+        c = instantiate_hub_aware_class(c, import_only=c.pop("import_only", False), cache_dir=cache_dir)  # type: ignore[arg-type]  # with instantiating the class
     return c
 
 
@@ -383,7 +387,7 @@ def apply_defaults(cfg: ITConfig | ITDataModuleConfig, defaults: Dict, force_ove
             setattr(cfg, k, v)
 
 
-def itdm_cfg_factory(cfg: Dict, shared_config: Dict, defaults_func: Callable | None = None):
+def itdm_cfg_factory(cfg: Dict, shared_config: Dict, defaults_func: Callable | None = None, cache_dir=None):
     """Build an ``ITDataModuleConfig`` from a body plus shared config -- one half of the ONE merge site.
 
     Shared values are applied here, through the constructor, which is what keeps ``AutoCompConfig``
@@ -396,16 +400,16 @@ def itdm_cfg_factory(cfg: Dict, shared_config: Dict, defaults_func: Callable | N
     if "compose_ref" in prompt_cfg:
         from interpretune.hub.promptconfigs import instantiate_prompt_cfg_node
 
-        cfg["prompt_cfg"] = instantiate_prompt_cfg_node(prompt_cfg)
+        cfg["prompt_cfg"] = instantiate_prompt_cfg_node(prompt_cfg, cache_dir=cache_dir)
     elif "class_path" in prompt_cfg:
-        cfg["prompt_cfg"] = instantiate_hub_aware_class(prompt_cfg)
+        cfg["prompt_cfg"] = instantiate_hub_aware_class(prompt_cfg, cache_dir=cache_dir)
     instantiated_cfg = ITDataModuleConfig(**shared_config, **cfg)
     if defaults_func:
         defaults_func(instantiated_cfg)
     return instantiated_cfg
 
 
-def it_cfg_factory(cfg: Dict, shared_config: Dict | None = None, defaults_func: Callable | None = None):
+def it_cfg_factory(cfg: Dict, shared_config: Dict | None = None, defaults_func: Callable | None = None, cache_dir=None):
     """Build an ``ITConfig`` from a body plus shared config -- the other half of the one merge site.
 
     Note the asymmetry with the datamodule factory: shared config is applied only on the ``class_path``
@@ -413,7 +417,7 @@ def it_cfg_factory(cfg: Dict, shared_config: Dict | None = None, defaults_func: 
     """
     if "class_path" in cfg:
         cfg["init_args"] = cfg["init_args"] | shared_config if "init_args" in cfg else shared_config
-        instantiated_cfg = instantiate_nested(cfg)
+        instantiated_cfg = instantiate_nested(cfg, cache_dir=cache_dir)
     else:
         instantiated_cfg = ITConfig(**cfg)
     if defaults_func:

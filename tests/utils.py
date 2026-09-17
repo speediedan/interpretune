@@ -164,7 +164,7 @@ def get_super_method(cls_path_or_type: str | Type, instance: Any, method_name: s
 
     Example:
         ```python
-        from it_examples.experiments.rte_boolq import RTEBoolqModuleMixin
+        from tests.rte_component import RTEBoolqModuleMixin
 
         # Get the BaseITModule version of standardize_logits
         base_standardize_logits = get_super_method(RTEBoolqModuleMixin, module, "standardize_logits")

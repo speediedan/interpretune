@@ -22,7 +22,7 @@ shared_config:
 registered_cfg:
   datamodule_cfg:
     prompt_cfg:
-      class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+      class_path: rte_boolq.RTEBoolqPromptConfig
     signature_columns: ['input', 'labels']
     text_fields: ["premise", "hypothesis"]
     enable_datasets_cache: False
@@ -39,10 +39,10 @@ registered_cfg:
         init_args:
           module_cfg_name: RTEBoolqConfig
           module_cfg_mixin:
-            class_path: it_examples.experiments.rte_boolq.RTEBoolqEntailmentMapping
+            class_path: rte_boolq.RTEBoolqEntailmentMapping
             import_only: True
       generative_step_cfg:
-        class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+        class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
         init_args:
           enabled: True
           lm_generation_cfg:
@@ -97,6 +97,6 @@ registered_cfg:
           T_mult: 2
           eta_min: 1.0e-06
   datamodule_cls:
-    class_path: it_examples.experiments.rte_boolq.RTEBoolqDataModule
+    class_path: rte_boolq.RTEBoolqDataModule
   module_cls:
-    class_path: it_examples.experiments.rte_boolq.RTEBoolqModule
+    class_path: rte_boolq.RTEBoolqModule

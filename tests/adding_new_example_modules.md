@@ -24,17 +24,17 @@
       registered_cfg:
           datamodule_cfg:
             prompt_cfg:
-              class_path: it_examples.experiments.rte_boolq.RTEBoolqPromptConfig
+              class_path: rte_boolq.RTEBoolqPromptConfig
             signature_columns: ['input', 'labels']
             text_fields: ["premise", "hypothesis"]
             enable_datasets_cache: True
             train_batch_size: 2
             eval_batch_size: 2
           module_cfg:
-            class_path: it_examples.experiments.rte_boolq.RTEBoolqTLConfig
+            class_path: rte_boolq.RTEBoolqTLConfig
             init_args:
               generative_step_cfg:
-                class_path: it_examples.experiments.rte_boolq.RTEBoolqGenerativeClassificationConfig
+                class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
                 init_args:
                   enabled: True
                   lm_generation_cfg:
