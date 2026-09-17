@@ -21,6 +21,10 @@ MODEL_ID = "gpt2"
 #: bridge-vs-nnsight data-pipeline differences (`model_input_names`, `signature_columns`), which is why the
 #: target names its datamodule *flavour* rather than authoring a datamodule.
 SEED_REPO = "speediedan/rte"
+#: The republished self-contained revision (single-segment class paths): refs/main roulette across
+#: cached revisions resolves whatever revision was written last, so every seed resolution below pins
+#: this explicitly rather than inheriting whatever the cache holds.
+SEED_REVISION = "738e41229e39379c432da4e5830af01d6e8960b2"
 SEED_CONFIGS = {
     "bridge": "rte_demo.gpt2.sae_lens",
     "nnsight": "rte_demo.gpt2.nnsight+sae_lens",
@@ -152,7 +156,7 @@ class ConformanceInputs:
             raise ValueError(
                 f"unknown datamodule flavour {flavour!r}; expected 'hf' or one of {sorted(SEED_CONFIGS)}"
             ) from None
-        return hub_load(SEED_REPO, key)
+        return hub_load(SEED_REPO, key, revision=SEED_REVISION)
 
     def _adapter_free_seed(self, module_cfg_extras: dict | None = None):
         """The standalone datamodule entry, pointed at the suite model, plus a core-only module config.
@@ -167,7 +171,7 @@ class ConformanceInputs:
         from interpretune.hub.api import load_datamodule
         from interpretune.hub.entrypoints import find_entrypoint_owner, import_snapshot_entrypoint
 
-        dm_cfg, _dm_cls = load_datamodule(SEED_REPO, SEED_DATAMODULE)
+        dm_cfg, _dm_cls = load_datamodule(SEED_REPO, SEED_DATAMODULE, revision=SEED_REVISION)
         _owner = find_entrypoint_owner("rte_boolq")
         if _owner is None:
             raise ImportError(
@@ -175,7 +179,10 @@ class ConformanceInputs:
                 "components cache. Fetch it once with it.hub.pull('speediedan/rte')."
             )
         _rte = import_snapshot_entrypoint(
-            _owner[0], _owner[1], what=f"the experiment entrypoint {_owner[1]!r} of {_owner[0]!r}"
+            _owner[0],
+            _owner[1],
+            revision=SEED_REVISION,
+            what=f"the experiment entrypoint {_owner[1]!r} of {_owner[0]!r}",
         )
         RTEBoolqDataModule = _rte.RTEBoolqDataModule
         RTEBoolqEntailmentMapping = _rte.RTEBoolqEntailmentMapping

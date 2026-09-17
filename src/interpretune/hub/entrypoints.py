@@ -38,7 +38,7 @@ def synthetic_entrypoint_name(repo_id: str, revision: str) -> str:
 
 
 def import_snapshot_entrypoint(
-    repo_id: str, entrypoint: str, *, cache_dir: Path | None = None, what: str
+    repo_id: str, entrypoint: str, *, cache_dir: Path | None = None, revision: str | None = None, what: str
 ) -> ModuleType:
     """Import a cached component's entrypoint file under its revision-scoped module name.
 
@@ -50,7 +50,7 @@ def import_snapshot_entrypoint(
     from interpretune.hub.components import resolve_component_manifest
     from interpretune.hub.trust import ensure_remote_code_trusted
 
-    _, snapshot, revision = resolve_component_manifest(repo_id, cache_dir=cache_dir)
+    _, snapshot, revision = resolve_component_manifest(repo_id, cache_dir=cache_dir, revision=revision)
     module_name = synthetic_entrypoint_name(repo_id, revision)
     if module_name in sys.modules:
         return sys.modules[module_name]

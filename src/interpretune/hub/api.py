@@ -215,7 +215,9 @@ def load(
     return _hydrate_component_body(canonical, body, cache_dir=cache_dir)
 
 
-def load_datamodule(repo_id: str, name: str, *, cache_dir: Path | None = None) -> "RegisteredDataModuleCfg":
+def load_datamodule(
+    repo_id: str, name: str, *, cache_dir: Path | None = None, revision: str | None = None
+) -> "RegisteredDataModuleCfg":
     """Cache-only hydration of one STANDALONE datamodule entry (#128) — never touches the network.
 
     The datamodule-only half of the two-path contract: the returned pair has no module coupling, and the
@@ -226,7 +228,7 @@ def load_datamodule(repo_id: str, name: str, *, cache_dir: Path | None = None) -
     from interpretune.hub.components import resolve_datamodule_config
     from interpretune.registry import RegisteredDataModuleCfg
 
-    body = resolve_datamodule_config(repo_id, name, cache_dir=cache_dir)
+    body = resolve_datamodule_config(repo_id, name, cache_dir=cache_dir, revision=revision)
     dm_cfg, dm_cls = load_datamodule_cfg(body, cache_dir=cache_dir)
     if dm_cls is None:
         # lean on the NamedTuple's DEFAULT_DATAMODULE field default (which carries the one sanctioned

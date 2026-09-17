@@ -176,10 +176,12 @@ class TestComponentTreeRegistryLaziness:
         """Every seed configuration resolves CACHE-ONLY post-flip (bridge -> resolve -> hydrate).
 
         The RTE experiment is Hub-resident now: its six published module keys hydrate from the
-        warmed default cache, while the local-publish bridge roundtrip below covers the remaining
-        seeds (a dev checkout without the warmed component fails here naming the fetch).
+        warmed default cache at the pinned self-contained revision, while the local-publish
+        bridge roundtrip below covers the remaining seeds (a dev checkout without the warmed
+        component fails here naming the fetch).
         """
         from interpretune.hub.components import resolve_component_manifest
+        from interpretune.testing.conformance.inputs import SEED_REPO, SEED_REVISION
         import interpretune as it
         from it_examples.seeds import SEED_COMPONENTS, ensure_local_seeds
 
@@ -189,8 +191,8 @@ class TestComponentTreeRegistryLaziness:
             manifest, _, _ = resolve_component_manifest(repo_id, cache_dir=cache)
             for key in manifest.get("module", {}).get("configs") or {}:
                 assert it.hub.load(repo_id, key, cache_dir=cache) is not None
-        rte_manifest, _, _ = resolve_component_manifest("speediedan/rte")
+        rte_manifest, _, _ = resolve_component_manifest(SEED_REPO, revision=SEED_REVISION)
         rte_keys = sorted((rte_manifest.get("module") or {}).get("configs") or {})
         assert len(rte_keys) == 6
         for key in rte_keys:
-            assert it.hub.load("speediedan/rte", key) is not None
+            assert it.hub.load(SEED_REPO, key, revision=SEED_REVISION) is not None

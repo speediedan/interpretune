@@ -430,7 +430,9 @@ def resolve_component_config(
     return check_config_key_parity(cfg_path, body, expected_key=key), body
 
 
-def resolve_datamodule_config(repo_id: str, name: str, cache_dir: Path | None = None) -> dict:
+def resolve_datamodule_config(
+    repo_id: str, name: str, cache_dir: Path | None = None, *, revision: str | None = None
+) -> dict:
     """CACHE-ONLY resolution of one datamodule entry's standalone payload (#128).
 
     Datamodule entries are named by the manifest's ``datamodules`` index rather than by derived
@@ -438,7 +440,7 @@ def resolve_datamodule_config(repo_id: str, name: str, cache_dir: Path | None = 
     body is the standalone-consumption payload only: module configurations inline their own
     ``datamodule_cfg`` wholesale and never read this payload (strictly two-path, no merge semantics).
     """
-    manifest, snapshot, _ = resolve_component_manifest(repo_id, cache_dir=cache_dir)
+    manifest, snapshot, _ = resolve_component_manifest(repo_id, cache_dir=cache_dir, revision=revision)
     enforce_component_requires(manifest, source=f"{repo_id}@cache")
     entries = manifest.get("datamodules") or {}
     if name not in entries:
