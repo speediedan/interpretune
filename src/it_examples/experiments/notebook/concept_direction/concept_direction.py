@@ -42,14 +42,14 @@ from interpretune.utils.neuronpedia_explanations import (
 )
 
 from it_examples.examples.prompt_configs.prompt_configs import GemmaPromptConfig
-from it_examples.experiments.notebook.config import (
+from interpretune.harness.config import (
     SharedHarnessSections,
     build_shared_harness_sections,
     get_config_value,
     get_required_config_value,
     load_experiment_config,
 )
-from it_examples.experiments.notebook.nb_harness_utils import (
+from interpretune.harness.nb_harness_utils import (
     ConstrainedFeatureSelection,
     ConstrainedFeatureSelectionRef as ConstrainedFeatureSelectionRef,
     _build_graph_analysis_inputs as _shared_build_graph_analysis_inputs,

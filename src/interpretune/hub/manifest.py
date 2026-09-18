@@ -14,7 +14,7 @@ import yaml
 
 IT_COMPONENT_MANIFEST = "it_component.yaml"
 SUPPORTED_SCHEMA_VERSIONS = (1,)
-KNOWN_KINDS = ("module", "datamodule", "ops", "adapters", "promptconfigs", "hookmaps")
+KNOWN_KINDS = ("module", "datamodule", "ops", "adapters", "promptconfigs", "hookmaps", "experiment")
 
 
 class ComponentManifestError(ValueError):
@@ -38,6 +38,23 @@ def derive_config_key(cfg: dict) -> str:
     return f"{cfg['task_variant']}.{cfg['model']}.{comp_str}" + (f".{node4}" if node4 else "")
 
 
+def derive_experiment_key(cfg: dict) -> str:
+    """Derive the canonical experiment key from a harness experiment config: its own ``EXPERIMENT_NAME``.
+
+    The same derived-from-fields discipline as :func:`derive_config_key`, for configs that are
+    experiment definitions rather than session configs: filename stem == manifest key == this value,
+    checked at publish and at load. A config without the field is not an experiment config, and
+    refusing names the field rather than guessing from the filename.
+    """
+    name = cfg.get("EXPERIMENT_NAME")
+    if not name or not isinstance(name, str):
+        raise ComponentManifestError(
+            f"experiment configs carry their key in `EXPERIMENT_NAME`, got {name!r}: not an experiment "
+            "definition, or the field is missing. Session configs belong under `module.configs`."
+        )
+    return name
+
+
 def _is_relative_inside(rel: str) -> bool:
     """Whether a declared path is relative and stays inside the component directory, on EVERY platform.
 
@@ -56,11 +73,18 @@ def _is_relative_inside(rel: str) -> bool:
     return True
 
 
-_REQUIRES_AXES = ("interpretune", "adapters", "modules", "pip")
+_REQUIRES_AXES = ("interpretune", "adapters", "modules", "pip", "components")
+
+
+def _is_component_ref(value: str) -> bool:
+    """A `<org>/<repo>` component reference with an optional `@revision` pin."""
+    repo, sep, revision = value.partition("@")
+    return repo.count("/") == 1 and (not sep or (bool(revision) and "@" not in revision))
 
 
 def _validate_requires_shape(requires: Any, where: str) -> None:
-    """The `requires` vocabulary: `interpretune` (a specifier), `adapters` / `modules` / `pip` (lists of names)."""
+    """The `requires` vocabulary: `interpretune` (a specifier), `adapters` / `modules` / `pip` / `components`
+    (lists of names)."""
     if requires is None:
         return
     if not isinstance(requires, dict):
@@ -68,7 +92,7 @@ def _validate_requires_shape(requires: Any, where: str) -> None:
     # Unknown axes are IGNORED rather than refused, by an existing test's explicit choice: a manifest written for a
     # newer interpretune may carry an axis this one does not evaluate, and refusing would make the component
     # unloadable here instead of merely less guarded. Known axes are held to their shape.
-    for axis in ("adapters", "modules", "pip"):
+    for axis in ("adapters", "modules", "pip", "components"):
         values = requires.get(axis)
         if values is None:
             continue
@@ -78,6 +102,12 @@ def _validate_requires_shape(requires: Any, where: str) -> None:
             raise ComponentManifestError(
                 f"{where}.modules entries must be dotted importable names (evaluated with importlib.util.find_spec, "
                 f"nothing is imported), got {values!r}"
+            )
+        if axis == "components" and not all(_is_component_ref(v) for v in values):
+            raise ComponentManifestError(
+                f"{where}.components entries must be `<org>/<repo>` component references naming the module "
+                f"components whose registry keys the experiment resolves, with an optional `@revision` pin, "
+                f"got {values!r}"
             )
 
 
@@ -244,6 +274,38 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
                 f"{source}: kind `promptconfigs` requires a `promptconfigs.entrypoint` and a non-empty "
                 "`promptconfigs.definitions` index (definition name -> metadata; one repo, many definitions)."
             )
+    if "experiment" in kinds:
+        exps = manifest.get("experiments")
+        if not exps or not isinstance(exps, dict):
+            raise ComponentManifestError(
+                f"{source}: kind `experiment` requires a non-empty `experiments` index "
+                "(experiment name -> entry). The manifest names entries; there are no reserved filenames."
+            )
+    elif manifest.get("experiments") is not None:
+        raise ComponentManifestError(
+            f"{source}: an `experiments` block without kind `experiment` is an orphan: no loader reads "
+            "it, so it publishes payloads nothing consumes. Declare the kind or remove the block."
+        )
+    if "experiment" in kinds:
+        for name, entry in (manifest.get("experiments") or {}).items():
+            if not isinstance(entry, dict) or not entry.get("config") or not isinstance(entry["config"], str):
+                raise ComponentManifestError(
+                    f"{source}: experiment entry {name!r} requires a repo-relative `config` path (the "
+                    "harness experiment definition it publishes)."
+                )
+            if not entry["config"].endswith(".yaml"):
+                raise ComponentManifestError(
+                    f"{source}: experiment entry {name!r} config {entry['config']!r} must be a `.yaml` "
+                    "path: parity derives the key from the filename stem minus that suffix."
+                )
+            for rel in [entry["config"], entry.get("pipeline"), *(entry.get("files") or [])]:
+                if rel is None:
+                    continue
+                if not isinstance(rel, str) or not rel or not _is_relative_inside(rel):
+                    raise ComponentManifestError(
+                        f"{source}: experiment entry {name!r} declares path {rel!r}, which must be a "
+                        "repo-relative path inside the component directory."
+                    )
     return manifest
 
 
@@ -261,6 +323,18 @@ def check_config_key_parity(config_path: Path, body: dict, expected_key: str | N
         raise ValueError(
             f"Configuration key parity violation for {config_path}: filename stem {stem!r}, "
             f"manifest key {expected_key!r}, derived-from-fields {derived!r} must all match."
+        )
+    return derived
+
+
+def check_experiment_key_parity(config_path: Path, body: dict, expected_key: str | None = None) -> str:
+    """Enforce filename == manifest key == the config's own ``EXPERIMENT_NAME``; return the canonical key."""
+    derived = derive_experiment_key(body)
+    stem = config_path.name[: -len(".yaml")]
+    if derived != stem or (expected_key is not None and derived != expected_key):
+        raise ValueError(
+            f"Experiment key parity violation for {config_path}: filename stem {stem!r}, "
+            f"manifest key {expected_key!r}, EXPERIMENT_NAME {derived!r} must all match."
         )
     return derived
 

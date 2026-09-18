@@ -94,6 +94,16 @@ def bootstrap_experiment_imports(
     return config
 
 
+def is_package_resource_extends(raw_value: str) -> bool:
+    """Whether an EXTENDS value takes the package-resource branch: a colon it does not already exist as.
+
+    The single predicate both the resolver and the snapshot-confinement check consult, so the
+    exemption can never disagree with the branch taken: an existing absolute path containing a
+    colon (every Windows absolute path) resolves as a plain path and is confined like one.
+    """
+    return PACKAGE_RESOURCE_SEPARATOR in raw_value and not Path(raw_value).exists()
+
+
 def resolve_extends_path(config_path: Path, raw_value: str) -> Path:
     """Resolve one ``EXTENDS`` entry, either as a package resource or as a path.
 
@@ -110,9 +120,9 @@ def resolve_extends_path(config_path: Path, raw_value: str) -> Path:
             f"{config_path}: EXTENDS value {raw_value!r} looks like a placeholder. There is no reserved "
             "prefix for the shared configs, deliberately: naming one package as special is the assumption "
             "the component rails removed. Use `package.module:resource`, for example "
-            "`it_examples.experiments.notebook:configs/base.yaml`, or a path relative to this config."
+            "`interpretune.harness:configs/base.yaml`, or a path relative to this config."
         )
-    if PACKAGE_RESOURCE_SEPARATOR in raw_value and not Path(raw_value).exists():
+    if is_package_resource_extends(raw_value):
         package, _, resource = raw_value.partition(PACKAGE_RESOURCE_SEPARATOR)
         return _package_resource_path(config_path, package, resource)
     candidate = Path(raw_value).expanduser()
@@ -221,11 +231,40 @@ class ExperimentHooks:
         return hook
 
 
+def load_snapshot_experiment(
+    repo_id: str, key: str, *, cache_dir: Path | None = None, revision: str | None = None
+) -> tuple[str, dict[str, Any], Path, dict[str, Any]]:
+    """Load ONE cached experiment definition through its snapshot-confined inheritance.
+
+    Returns ``(canonical_key, resolved_payload, snapshot_dir, manifest)``. Relative EXTENDS
+    stays inside the snapshot; declared ``requires.components`` must already be cached, so a
+    cached experiment says what else it needs before anything runs. The session itself builds
+    through the existing registry-key derivation and ``it.hub.load`` on those components.
+    """
+    from interpretune.hub.components import resolve_component_manifest, resolve_experiment_config
+
+    canonical, body, snapshot, manifest = resolve_experiment_config(
+        repo_id, key, cache_dir=cache_dir, revision=revision
+    )
+    for ref in (manifest.get("requires") or {}).get("components") or []:
+        ref_repo, _, ref_revision = ref.partition("@")
+        try:
+            resolve_component_manifest(ref_repo, cache_dir=cache_dir, revision=ref_revision or None)
+        except KeyError as exc:
+            raise KeyError(f"required by experiment `{repo_id}#{key}`: component {ref!r} — {exc}") from exc
+    from interpretune.harness.config import load_experiment_config
+
+    entry = (manifest.get("experiments") or {})[canonical]
+    resolved = load_experiment_config(snapshot / entry["config"], _root=snapshot)
+    return canonical, resolved, snapshot, manifest
+
+
 __all__ = [
     "bootstrap_experiment_imports",
     "default_config_dir",
     "default_output_dir",
     "ExperimentHooks",
     "ExperimentsConfig",
+    "load_snapshot_experiment",
     "resolve_extends_path",
 ]

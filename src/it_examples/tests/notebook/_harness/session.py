@@ -21,6 +21,7 @@ for _path in (REPO_ROOT, TESTS_DIR):
 
 from interpretune.adapters.nnsight.config import NNsightConfig  # noqa: E402
 from interpretune.adapter_registry import ADAPTER_REGISTRY  # noqa: E402
+import interpretune.harness  # noqa: E402
 from interpretune.utils.resource_mgmt import cleanup_python_cuda, safe_clean_cuda  # noqa: E402
 from tests import load_dotenv  # noqa: E402
 from tests.analysis_resource_utils import clear_nnsight_test_state, serial_test_cleanup  # noqa: E402
@@ -31,8 +32,8 @@ from tests.conftest import FixtPhase, session_fixture_hook_exec  # noqa: E402
 DebugSessionSurfacePreset = Literal["notebook_default", "parity_surface"]
 
 
-# config payloads live with the RESEARCH tree (shipped); the harness only drives them
-CONFIG_DIR = Path(__file__).resolve().parents[3] / "experiments" / "notebook" / "configs"
+# shared config payloads live with the harness package; experiment-owned configs stay in the research tree
+CONFIG_DIR = Path(interpretune.harness.__file__).resolve().parent / "configs"
 MODEL_SPECS_PATH = CONFIG_DIR / "model_specs.yaml"
 SESSION_SURFACE_PRESETS_PATH = CONFIG_DIR / "session_surface_presets.yaml"
 

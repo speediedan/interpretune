@@ -25,7 +25,7 @@ from it_examples.experiments.notebook.concept_direction.concept_direction import
     render_prompt,
     resolve_target_tokens,
 )
-from it_examples.experiments.notebook.nb_harness_utils import (
+from interpretune.harness.nb_harness_utils import (
     _extract_top_features_with_optional_filter,
     _serialize_constrained_feature_selection,
     _serialize_intervention_call_kwargs,

@@ -388,6 +388,18 @@ def generate_component_card(
             "",
             "Reference a definition from a task configuration via `compose_ref: <org>/<repo>#<name>`.",
         ]
+    experiments = manifest.get("experiments") or {}
+    if experiments:
+        lines += ["", "## Experiment definitions", ""]
+        for name in sorted(experiments):
+            lines.append(f"- `{name}`: `{experiments[name]['config']}`")
+        lines += [
+            "",
+            'Fetch with `interpretune.hub.pull_experiment("<org>/<repo>", "<name>")` '
+            "(manifest-first, revision-pinned, parity-checked on filename, key, and EXPERIMENT_NAME), "
+            "then drive with the notebook harness launcher. A relative EXTENDS resolves inside the "
+            "cached revision only.",
+        ]
     if "adapters" in (manifest.get("kinds") or []):
         _check_adapter_manifest_coherence(manifest, repo_id)
         report = _load_conformance_report(tree) if tree is not None else None
