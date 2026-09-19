@@ -31,10 +31,11 @@ locally, at practical cost — is what the ~2-month dashboard-infrastructure eff
 
 ## Directory Layout
 
-- `src/it_examples/experiments/notebook/` — experiment-agnostic harness: layered YAML config loading
-  (`config.py`), model/session registry (`session.py`, `configs/model_specs.yaml`), papermill
-  launcher (`nb_experiment_launcher.py`), shared pipeline helpers (`nb_harness_utils.py`,
-  `pipeline_patterns.py`), and local-Neuronpedia graph upload/cleanup (`local_graph_cleanup.py`).
+- `src/it_examples/experiments/notebook/` — the experiment tree: shared pipeline helpers
+  (`pipeline_patterns.py`), the experiment family, and these docs. The experiment-agnostic
+  harness itself now lives in core (`src/interpretune/harness/`: layered YAML config loading,
+  model/session registry with `configs/model_specs.yaml`, papermill launcher, shared notebook
+  helpers, and local-Neuronpedia graph upload/cleanup).
 - `concept_direction/` — the experiment family: source notebook
   (`concept_direction_template.ipynb` + `concept_direction.py`), per-experiment YAML configs,
   living analysis docs, and backend-parity test suites.
