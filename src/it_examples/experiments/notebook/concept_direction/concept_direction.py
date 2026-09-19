@@ -16,7 +16,7 @@ import interpretune.analysis
 from interpretune.analysis.execution import execute_analysis_op
 from interpretune.analysis.inputs import AnalysisInputs
 from interpretune.analysis.optools import FEATURE_SCORE_SOURCE_ALIASES, last_token_logits
-from interpretune.analysis.ops.bundled.concept.concept_ops import flatten_concept_store_rows
+from interpretune.analysis.ops.bundled.concept.concept_ops import CONCEPT_BASES, flatten_concept_store_rows
 from interpretune.config import AnalysisCfg, init_analysis_cfgs
 from interpretune.utils import (
     DEFAULT_EXPLANATION_CLI_MAX_RETRIES,
@@ -458,6 +458,12 @@ class NotebookHarnessConfig:
     constrained_feature_selection_refs: ConstrainedFeatureSelection | None = None
     show_score_sign_in_feature_tables: bool = False
     store_latent_extraction_mode: StoreLatentExtractionMode = "answer_position_state"
+    direction_bases: tuple[str, ...] | None = None
+    jlens_layer: int | None = None
+    jlens_model_id: str | None = None
+    jlens_repo_id: str | None = None
+    jlens_revision: str | None = None
+    jlens_layer_percentile: float | None = None
     context_enhanced_scale: float = 1.0
     use_answer_state_as_basis: bool = False
     debug_print_circuit_tracer_cfg: bool = False
@@ -522,6 +528,14 @@ class NotebookHarnessConfig:
         self.local_graph_upload_target = str(self.local_graph_upload_target).strip() or "localhost"
         if self.local_graph_upload_target not in {"localhost", "public_then_sync_local"}:
             raise ValueError("local_graph_upload_target must be 'localhost' or 'public_then_sync_local'")
+        if self.direction_bases is not None:
+            if isinstance(self.direction_bases, str):
+                items: Iterable[str] = (part.strip() for part in self.direction_bases.split(","))
+            else:
+                items = self.direction_bases
+            self.direction_bases = tuple(b for b in (str(b).strip() for b in items) if b)
+            if not self.direction_bases:
+                raise ValueError("direction_bases must name at least one basis.")
         if self.local_graph_owner_username is not None:
             stripped_owner_username = str(self.local_graph_owner_username).strip()
             self.local_graph_owner_username = stripped_owner_username or None
@@ -694,6 +708,23 @@ class NotebookHarnessConfig:
         return self.analysis_mode == "concept_pair"
 
     @property
+    def enabled_direction_bases(self) -> tuple[str, ...]:
+        """Bases the harness constructs directions for, in run order.
+
+        None means the historical default: embed always, store when the mode supports it. An
+        explicit tuple overrides fully and is validated here, so an unknown name fails at config
+        time naming the valid bases rather than mid-run inside the op.
+        """
+        if self.direction_bases is None:
+            return ("embed", "store") if self.supports_store_direction else ("embed",)
+        unknown = [b for b in self.direction_bases if b not in CONCEPT_BASES]
+        if unknown:
+            raise ValueError(
+                f"direction_bases names unknown bases {unknown}: expected a subset of {list(CONCEPT_BASES)}."
+            )
+        return tuple(self.direction_bases)
+
+    @property
     def analysis_concept_label(self) -> str:
         if self.uses_explicit_embedding_difference and self.explicit_direction_tokens is not None:
             return f"{self.explicit_direction_tokens[0]} - {self.explicit_direction_tokens[1]}"
@@ -749,6 +780,37 @@ def _normalize_int_pair(value: Any, *, field_name: str) -> tuple[int, int] | Non
     if len(items) != 2:
         raise ValueError(f"{field_name} must contain exactly two values.")
     return cast(tuple[int, int], items)
+
+
+def _normalize_direction_bases(value: Any) -> tuple[str, ...] | None:
+    """Normalize a YAML direction-bases setting to a tuple, or None for the default.
+
+    Accepts a comma-separated string or a sequence; blank entries are dropped so
+    ``"embed, store"`` and ``["embed", "store"]`` mean the same thing. Name validation
+    lives on ``enabled_direction_bases`` so every construction path shares it.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        items: Iterable[str] = (part.strip() for part in value.split(","))
+    else:
+        items = value
+    return tuple(b for b in (str(b).strip() for b in items) if b) or None
+
+
+def _optional_int(value: Any) -> int | None:
+    return None if value is None or str(value).strip() == "" else int(str(value).strip())
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_float(value: Any) -> float | None:
+    return None if value is None or str(value).strip() == "" else float(str(value).strip())
 
 
 def _resolve_prompt_text(payload: Mapping[str, Any]) -> str:
@@ -1223,6 +1285,54 @@ def build_notebook_harness_config(
                 key="use_answer_state_as_basis",
                 flat_key="USE_ANSWER_STATE_AS_BASIS",
                 default=False,
+            )
+        ),
+        direction_bases=_normalize_direction_bases(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="direction_bases",
+                flat_key="DIRECTION_BASES",
+            )
+        ),
+        jlens_layer=_optional_int(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="jlens_layer",
+                flat_key="JLENS_LAYER",
+            )
+        ),
+        jlens_model_id=_optional_str(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="jlens_model_id",
+                flat_key="JLENS_MODEL_ID",
+            )
+        ),
+        jlens_repo_id=_optional_str(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="jlens_repo_id",
+                flat_key="JLENS_REPO_ID",
+            )
+        ),
+        jlens_revision=_optional_str(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="jlens_revision",
+                flat_key="JLENS_REVISION",
+            )
+        ),
+        jlens_layer_percentile=_optional_float(
+            get_config_value(
+                resolved_payload,
+                section="ANALYSIS",
+                key="jlens_layer_percentile",
+                flat_key="JLENS_LAYER_PERCENTILE",
             )
         ),
         debug_pipeline_state_artifacts=bool(
@@ -2082,6 +2192,114 @@ def run_tokenizer_verification(cfg: NotebookHarnessConfig) -> dict[str, Any]:
         return report
 
 
+def _jlens_direction_kwargs(
+    cfg: NotebookHarnessConfig,
+    basis: str,
+    group_a_tokens: list[str],
+    group_b_tokens: list[str],
+    concept_label: str,
+) -> dict[str, Any]:
+    """Pure assembly of the ``it.concept_direction`` kwargs for a J-lens basis.
+
+    Factored out so the threading (basis name plus lens-resolution passthroughs) is unit-testable
+    without a session: only non-None lens settings travel, so the read path's own defaults
+    (repo, percentile) apply unless the config overrides them.
+    """
+    analysis_kwargs: dict[str, Any] = {
+        "concept_group_a": group_a_tokens,
+        "concept_label": concept_label,
+        "concept_direction_mode": cfg.analysis_direction_mode_name,
+        "concept_basis": basis,
+    }
+    if group_b_tokens:
+        analysis_kwargs["concept_group_b"] = group_b_tokens
+    lens_settings = {
+        "jlens_layer": cfg.jlens_layer,
+        "jlens_model_id": cfg.jlens_model_id,
+        "jlens_repo_id": cfg.jlens_repo_id,
+        "jlens_revision": cfg.jlens_revision,
+        "jlens_layer_percentile": cfg.jlens_layer_percentile,
+    }
+    for key, value in lens_settings.items():
+        if value is not None:
+            analysis_kwargs[key] = value
+    return analysis_kwargs
+
+
+def compute_jlens_direction(cfg: NotebookHarnessConfig, basis: str) -> dict[str, Any]:
+    """Build a concept direction from per-token J-lens direction rows.
+
+    Same group resolution as the embed path (explicit tokens or the concept pair), but the vector
+    comes from the read path at the resolved lens layer instead of the embedding matrix. ``basis``
+    must be one of the ``jlens_*`` values; anything else is refused here rather than dispatched.
+    """
+    if basis not in ("jlens_paper", "jlens_norm_aware"):
+        raise ValueError(
+            f"compute_jlens_direction serves the jlens bases, not {basis!r}: expected one of "
+            "['jlens_paper', 'jlens_norm_aware']."
+        )
+    if cfg.is_debug_intervention_mode:
+        raise ValueError("compute_jlens_direction is not available in debug_intervention_pipelines mode")
+
+    with experiment_session(
+        cfg.work_root,
+        phase_run_name(cfg, f"{basis}_direction"),
+        **cfg.session_kwargs,
+    ) as (_, module, tokenizer):
+        if cfg.uses_explicit_embedding_difference:
+            explicit_tokens = cast(tuple[str, str], cfg.explicit_direction_tokens)
+            group_a_tokens, group_b_tokens = ([explicit_tokens[0]], [explicit_tokens[1]])
+            concept_label = cfg.analysis_concept_label
+        else:
+            group_a_tokens = cfg.concept_pair.group_a_tokens
+            group_b_tokens = (
+                [] if cfg.analysis_direction_mode_name == "single_group" else cfg.concept_pair.group_b_tokens
+            )
+            concept_label = cfg.concept_pair.concept_label
+
+        jlens_result = cast(
+            Any,
+            it.concept_direction(
+                module,
+                it.AnalysisBatch(**_jlens_direction_kwargs(cfg, basis, group_a_tokens, group_b_tokens, concept_label)),
+                NULL_BATCH,
+                0,
+            ),
+        )
+        result = {
+            "direction": tensor_to_cpu(jlens_result.concept_direction),
+            "basis": basis,
+            "group_a_ids": list(jlens_result.concept_group_a_token_ids),
+            "group_b_ids": list(jlens_result.concept_group_b_token_ids),
+        }
+        if cfg.debug_pipeline_state_artifacts:
+            result["debug_pipeline_state_artifacts"] = build_concept_direction_stage_artifact(
+                path_label=f"{basis}_direction",
+                direction_mode=cfg.analysis_direction_mode_name,
+                direction=jlens_result.concept_direction,
+                tokenizer=tokenizer,
+                group_a_token_ids=jlens_result.concept_group_a_token_ids,
+                group_b_token_ids=jlens_result.concept_group_b_token_ids,
+            )
+        return result
+
+
+def compute_direction(cfg: NotebookHarnessConfig, basis: str) -> dict[str, Any]:
+    """The one parameterized direction-construction path: route ``basis`` to its constructor.
+
+    ``embed`` and ``store`` keep their existing constructors (embedding rows versus elicited latent
+    states are genuinely different inputs); the parameterization is the routing, so the template
+    iterates bases instead of hardcoding two pipelines and the analysis gains its third arm here.
+    """
+    if basis == "embed":
+        return compute_embed_direction(cfg)
+    if basis == "store":
+        return compute_store_direction(cfg)
+    if basis in ("jlens_paper", "jlens_norm_aware"):
+        return compute_jlens_direction(cfg, basis)
+    raise ValueError(f"concept direction basis {basis!r} is not a basis: expected one of {list(CONCEPT_BASES)}.")
+
+
 def compute_embed_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
     if cfg.is_debug_intervention_mode:
         raise ValueError("compute_embed_direction is not available in debug_intervention_pipelines mode")
@@ -2122,6 +2340,7 @@ def compute_embed_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
         )
         result = {
             "direction": tensor_to_cpu(embed_result.concept_direction),
+            "basis": "embed",
             "group_a_ids": list(embed_result.concept_group_a_token_ids),
             "group_b_ids": list(embed_result.concept_group_b_token_ids),
         }
@@ -2438,6 +2657,7 @@ def compute_store_direction_manual(cfg: NotebookHarnessConfig) -> dict[str, Any]
         )
         return {
             "direction": tensor_to_cpu(store_result.concept_direction),
+            "basis": "store",
             "group_a_ids": [
                 tokenizer.encode(token, add_special_tokens=False)[-1] for token in cfg.concept_pair.group_a_tokens
             ],
@@ -2856,6 +3076,7 @@ def compute_store_direction(cfg: NotebookHarnessConfig) -> dict[str, Any]:
             )
         result = {
             "direction": tensor_to_cpu(store_result.concept_direction),
+            "basis": "store",
             "group_a_ids": [
                 tokenizer.encode(token, add_special_tokens=False)[-1] for token in cfg.concept_pair.group_a_tokens
             ],
@@ -3210,6 +3431,8 @@ def collect_summary(
         summary["embed_gap_delta"] = results["embed_pipeline"]["gap_delta"]
     if "store_pipeline" in results:
         summary["store_gap_delta"] = results["store_pipeline"]["gap_delta"]
+    if "jlens_pipeline" in results:
+        summary["jlens_gap_delta"] = results["jlens_pipeline"]["gap_delta"]
     if "comparison" in results:
         summary["cosine_similarity"] = results["comparison"]["cosine_similarity"]
         summary["feature_jaccard"] = results["comparison"]["feature_jaccard"]
