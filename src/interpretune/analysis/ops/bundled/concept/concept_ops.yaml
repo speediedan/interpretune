@@ -385,3 +385,104 @@ model_fwd_intervention:
       datasets_dtype: float32
       required: false
       sequence_type: false
+
+intervention_first_order_check:
+  description: Check an applied intervention against its first-order prediction per basis
+  implementation: interpretune.analysis.ops.bundled.concept.concept_ops.intervention_first_order_check_impl
+  required_capabilities: [activation_intervention, gradients]
+  input_schema:
+    interventions:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+    interventions_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_hook_pattern:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_tensor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    intervention_tensors_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_mode:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_use_intervention_tensor_as_basis:
+      datasets_dtype: bool
+      required: false
+      sequence_type: false
+    intervention_scale_factor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    intervention_position_scope:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    use_latent_models:
+      datasets_dtype: bool
+      required: false
+      sequence_type: false
+    concept_direction:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    direction_scale_factor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    pre_intervention_logits:
+      datasets_dtype: float32
+      required: true
+      sequence_type: true
+    post_intervention_logits:
+      datasets_dtype: float32
+      required: true
+      sequence_type: true
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    concept_basis:
+      datasets_dtype: string
+      required: true
+      non_tensor: true
+  output_schema:
+    fo_predicted_delta:
+      datasets_dtype: float32
+      required: true
+      non_tensor: true
+      sequence_type: false
+    fo_measured_delta:
+      datasets_dtype: float32
+      required: true
+      non_tensor: true
+      sequence_type: false
+    fo_residual:
+      datasets_dtype: float32
+      required: true
+      non_tensor: true
+      sequence_type: false
+    concept_basis:
+      datasets_dtype: string
+      required: true
+      non_tensor: true
+      sequence_type: false
