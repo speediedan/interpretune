@@ -182,6 +182,23 @@ jobs:
           print("no dev-flow residue; the env is what README.md produces")
           PY
 
+      - name: Warm the Hub components cache (RTE is Hub-resident post-#569)
+        env:
+          # speediedan/rte is PRIVATE: an anonymous pull 404s (HF answers 404, not 403, for a
+          # repo the token cannot see), and the local warm that verified this step "worked" only
+          # succeeded on a cached snapshot plus ambient credentials. Same token ci_test-full warms
+          # with; scoped to this step so the scheduled outsider slice below stays tokenless.
+          HF_TOKEN: ${{ secrets.HF_MCP_TOKEN_RW }}
+        run: |
+          # Since #569 the RTE experiment resolves from the Hub (speediedan/rte, pinned in
+          # tests/hf_warm_manifest.yaml); a fresh runner has no components cache, and the parse
+          # surface below imports the RTE entrypoint, so without this the job fails deterministically
+          # on every post-#569 tree. Components-only: models/datasets are ci_test-full's business;
+          # this lane needs the registry resolvable and nothing else.
+          env -u PYTHONPATH PYTHONPATH="${{ github.workspace }}/src:${{ github.workspace }}" \
+            PATH="${IT_VENV}/bin:${PATH}" \
+            "${IT_VENV}/bin/python" scripts/warm_hf_cache.py --components-only
+
       - name: Parse surface (all shipped configs, ungated)
         run: |
           # Every shipped experiment config through its real argv surface. Ungated and CPU-only; the
