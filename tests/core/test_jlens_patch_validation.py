@@ -421,3 +421,144 @@ class TestCrossBackendAgreement:
         assert effect > 0.1, "patch produced no measurable effect; agreement below would be vacuous"
         rel_gap = torch.linalg.norm(nns_delta - tl_delta) / effect
         assert rel_gap < 0.10, f"backends disagree: relative delta gap {rel_gap:.3f}"
+
+
+_GEMMA_ORANGE_PROMPT = "Is orange a color or a fruit? Answer with one word: Color or Fruit. orange ->"
+
+
+def _gemma_pair_case(model_id: str, jlens_id: str, layer: int) -> dict[str, object]:
+    """Run the production pair construction and patch on NNsight, returning CPU artifacts.
+
+    One backend per process lifetime here: the caller tears down before loading TL, because a
+    gemma-2-2b NNsight trace beside a no-processing TL copy exceeds one 4090.
+    """
+    from types import SimpleNamespace
+
+    from nnsight import LanguageModel
+
+    from interpretune.analysis.optools import (
+        jlens_direction_rows,
+        resolve_jlens_layer,
+        resolve_unembed_and_norm_scale,
+    )
+
+    lm = LanguageModel(model_id, device_map="cuda", dispatch=True)
+    try:
+        hf_model = NNsightModelBackend._get_hf_model(lm)
+        nns_backend = NNsightModelBackend(
+            HookNameResolver(hf_model.config.architectures[0]),
+            configs_per_pass=get_default_configs_per_pass(),
+        )
+        nns_backend.register_model_hooks(lm)
+        tokenizer = lm.tokenizer
+        ids = tokenizer(_GEMMA_ORANGE_PROMPT, return_tensors="pt")["input_ids"].to("cuda")
+
+        info = resolve_unembed_and_norm_scale(SimpleNamespace(model=hf_model))
+        j, resolved_layer, _artifact = resolve_jlens_layer(
+            SimpleNamespace(model=hf_model),
+            {"concept_group_a": ["Fruit"], "concept_group_b": ["Color"]},
+            {"jlens_model_id": jlens_id, "jlens_layer": layer},
+        )
+        assert resolved_layer == layer
+        ids_a = [tokenizer.encode("Fruit", add_special_tokens=False)[-1]]
+        ids_b = [tokenizer.encode("Color", add_special_tokens=False)[-1]]
+        pair = jlens_direction_rows(info, ids_a + ids_b, j, apply_norm=True).detach().float()
+
+        hook = f"blocks.{resolved_layer}.hook_resid_post"
+        spec = _validate_intervention_spec(
+            InterventionSpec(intervention_tensor=pair, mode="patch", scale_factor=1.0),
+            target_shape=(pair.shape[1],),
+            hook_name=hook,
+        )
+        with torch.no_grad():
+            nns_pre, nns_post = nns_backend.fwd_w_intervention(
+                model=lm, batch={"input_ids": ids}, interventions=InterventionDict({hook: (spec,)})
+            )
+        return {
+            "pair": pair.cpu(),
+            "delta": (nns_post[0, -1] - nns_pre[0, -1]).detach().float().cpu(),
+            "pre_gap": float(nns_pre[0, -1, ids_a[0]] - nns_pre[0, -1, ids_b[0]]),
+            "gap": float(nns_post[0, -1, ids_a[0]] - nns_post[0, -1, ids_b[0]]),
+            "ids": ids.cpu(),
+            "ids_a": ids_a,
+            "ids_b": ids_b,
+            "hook": hook,
+            "scale": info.norm_scale.float().cpu(),
+            "kind": info.norm_kind,
+        }
+    finally:
+        del lm
+        torch.cuda.empty_cache()
+
+
+def _tl_gap_for_pair(model_id: str, case: dict[str, object]) -> dict[str, object]:
+    """Run the same pair through TL no-processing; returns gaps, delta, and the scale gap."""
+    from types import SimpleNamespace
+
+    from transformer_lens import HookedTransformer
+
+    from interpretune.adapters.transformer_lens.backends import TLModelBackend
+    from interpretune.analysis.optools import resolve_unembed_and_norm_scale
+
+    tl_model = HookedTransformer.from_pretrained_no_processing(model_id, device="cuda")
+    try:
+        info_tl = resolve_unembed_and_norm_scale(SimpleNamespace(model=tl_model))
+        scale_gap = float(
+            torch.linalg.norm(case["scale"] - info_tl.norm_scale.float().cpu())
+            / torch.linalg.norm(case["scale"]).clamp_min(1e-12)
+        )
+        spec = _validate_intervention_spec(
+            InterventionSpec(intervention_tensor=case["pair"], mode="patch", scale_factor=1.0),
+            target_shape=(case["pair"].shape[1],),
+            hook_name=case["hook"],
+        )
+        tl_backend = TLModelBackend()
+        with torch.no_grad():
+            tl_pre, tl_post = tl_backend.fwd_w_intervention(
+                model=tl_model,
+                batch={"input": case["ids"]},
+                interventions=InterventionDict({case["hook"]: (spec,)}),
+            )
+        return {
+            "delta": (tl_post[0, -1] - tl_pre[0, -1]).detach().float().cpu(),
+            "pre_gap": float(tl_pre[0, -1, case["ids_a"][0]] - tl_pre[0, -1, case["ids_b"][0]]),
+            "gap": float(tl_post[0, -1, case["ids_a"][0]] - tl_post[0, -1, case["ids_b"][0]]),
+            "scale_gap": scale_gap,
+            "kind": info_tl.norm_kind,
+        }
+    finally:
+        del tl_model
+        torch.cuda.empty_cache()
+
+
+class TestGemmaPairLevel3:
+    """#339: level-3 on the real gemma demo pair, built through the production seam.
+
+    The synthetic sweep pins the machinery; this pins the PRODUCTION construction (resolve_unembed_and_norm_scale +
+    resolve_jlens_layer + jlens_direction_rows over real lens artifacts) on both demo models, asserting the cross-
+    backend agreement the demo only eyeballed (+4.50 vs +4.25) and the TL-vs-HF effective-scale agreement the per-family
+    convention row assumes. Standalone-marked at the METHOD level: gemma loads are too heavy for the default lane, and
+    the standalone GPU phase runs online with the tokens gated weights need, so no Hub-manifest entries are required.
+    """
+
+    @RunIf(standalone=True)
+    def test_gemma2_2b_pair_flips_and_backends_agree(self):
+        case = _gemma_pair_case("google/gemma-2-2b", "gemma-2-2b", 24)
+        tl = _tl_gap_for_pair("google/gemma-2-2b", case)
+        # measured 2026-09-19 (4090, bf16): nns +5.692, tl +5.688, rel gap 0.0017
+        assert case["pre_gap"] < 0 < case["gap"], "patch did not flip the gap on NNsight"
+        assert tl["pre_gap"] < 0 < tl["gap"], "patch did not flip the gap on TL"
+        rel_gap = torch.linalg.norm(case["delta"] - tl["delta"]) / torch.linalg.norm(case["delta"])
+        assert rel_gap < 0.02, f"backends disagree on the real pair: rel gap {rel_gap:.4f}"
+        assert tl["scale_gap"] < 0.01, f"TL-vs-HF scale conventions disagree: {tl['scale_gap']:.6f}"
+
+    @RunIf(standalone=True)
+    def test_gemma3_1b_it_pair_flips_and_backends_agree(self):
+        case = _gemma_pair_case("google/gemma-3-1b-it", "gemma-3-1b-it", 21)
+        tl = _tl_gap_for_pair("google/gemma-3-1b-it", case)
+        # measured 2026-09-19 (4090, bf16): nns +10.438, tl +10.424, rel gap 0.0465
+        assert case["pre_gap"] < 0 < case["gap"], "patch did not flip the gap on NNsight"
+        assert tl["pre_gap"] < 0 < tl["gap"], "patch did not flip the gap on TL"
+        rel_gap = torch.linalg.norm(case["delta"] - tl["delta"]) / torch.linalg.norm(case["delta"])
+        assert rel_gap < 0.10, f"backends disagree on the real pair: rel gap {rel_gap:.4f}"
+        assert tl["scale_gap"] < 0.01, f"TL-vs-HF scale conventions disagree: {tl['scale_gap']:.6f}"
