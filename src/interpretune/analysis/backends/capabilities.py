@@ -83,6 +83,11 @@ class InterventionMode(str, Enum):
     :func:`~interpretune.analysis.backends.interventions.require_intervention_mode` rather than applied
     as a different mode, since every mode returns plausible logits and the substitution is undetectable
     from the result.
+
+    A payload naming several specs at one hook point applies them SEQUENTIALLY IN DECLARATION ORDER,
+    each seeing the previous spec's output: ``[add(v), reject(v)]`` is not ``[reject(v), add(v)]``,
+    while two ``add`` specs commute. Backends implement this by folding the spec tuple left to right,
+    and adapters must preserve the declaration order rather than grouping by mode.
     """
 
     REPLACE = "replace"
