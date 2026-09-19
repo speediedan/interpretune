@@ -122,6 +122,11 @@ def _build_cfg(
     intervention_apply_activation_function: bool = True,
     intervention_constrained_layers: list[int] | None = None,
     debug_print_circuit_tracer_cfg: bool = False,
+    direction_bases: tuple[str, ...] | None = None,
+    jlens_layer: int | None = None,
+    jlens_model_id: str | None = None,
+    concept_pair_config_path: str | None = None,
+    transcoder_set: str = "test-set",
 ) -> NotebookHarnessConfig:
     return NotebookHarnessConfig(
         experiment_name="test",
@@ -129,13 +134,13 @@ def _build_cfg(
         model_family="gemma3",
         model_variant="1b_it",
         model_name="google/gemma-3-1b-it",
-        transcoder_set="test-set",
+        transcoder_set=transcoder_set,
         hf_model_head=None,
         neuronpedia_model="gemma-3-1b-it",
         neuronpedia_set="gemmascope-2-transcoder-16k",
         neuronpedia_base_url="https://www.neuronpedia.org",
         concept_pair_name=None,
-        concept_pair_config_path=str(_TEST_CONCEPT_PAIR_CONFIG_PATH),
+        concept_pair_config_path=str(concept_pair_config_path or _TEST_CONCEPT_PAIR_CONFIG_PATH),
         prompt="Answer with only the missing city name.",
         prompt_render_mode=prompt_render_mode,
         target_tokens=target_tokens,
@@ -170,6 +175,9 @@ def _build_cfg(
         intervention_apply_activation_function=intervention_apply_activation_function,
         intervention_constrained_layers=intervention_constrained_layers,
         debug_print_circuit_tracer_cfg=debug_print_circuit_tracer_cfg,
+        direction_bases=direction_bases,
+        jlens_layer=jlens_layer,
+        jlens_model_id=jlens_model_id,
     )
 
 
@@ -2170,3 +2178,93 @@ def test_concept_token_positions_and_feature_io_profiles() -> None:
     assert by_key[(12, 9)].input_concept_share == pytest.approx(1.0)  # only fires at pos 3
     assert by_key[(12, 9)].output_projection == pytest.approx(-0.5)
     assert by_key[(14, 3)].activation_mass == 0.0  # absent from the graph -> zero mass, decoder still read
+
+
+class TestDirectionBasesSelection:
+    """CPU coverage for the #420 harness threading: basis resolution, refusal, kwargs."""
+
+    # The file-local configs dir vanished in the #246 split move, so resolving the pair
+    # through _TEST_CONCEPT_PAIR_CONFIG_PATH breaks here; the live tree below is the path that exists.
+    _LIVE_CONCEPT_PAIR_CONFIG_PATH = (
+        Path(__file__).resolve().parents[3]
+        / "experiments"
+        / "notebook"
+        / "concept_direction"
+        / "configs"
+        / "cp_color_fruit_orange_gemma_it.yaml"
+    ).resolve()
+
+    def _live_cfg(self, **kwargs: Any) -> NotebookHarnessConfig:
+        base = {"prompt_render_mode": "plain", "target_tokens": ("Austin", "Dallas")}
+        base.update(kwargs)
+        return _build_cfg(
+            concept_pair_config_path=str(self._LIVE_CONCEPT_PAIR_CONFIG_PATH),
+            **base,  # type: ignore[arg-type]
+        )
+
+    def test_enabled_bases_default_to_embed_and_store_in_concept_pair(self) -> None:
+        cfg = self._live_cfg()
+        assert cfg.enabled_direction_bases == ("embed", "store")
+
+    def test_enabled_bases_embed_only_outside_concept_pair(self) -> None:
+        cfg = self._live_cfg(
+            analysis_mode="explicit_embedding_difference",
+            explicit_direction_tokens=("Austin", "Dallas"),
+        )
+        assert cfg.enabled_direction_bases == ("embed",)
+
+    def test_enabled_bases_honors_explicit_tuple(self) -> None:
+        cfg = self._live_cfg(direction_bases=("embed", "jlens_paper"))
+        assert cfg.enabled_direction_bases == ("embed", "jlens_paper")
+
+    def test_enabled_bases_refuses_unknown_basis_by_name(self) -> None:
+        cfg = self._live_cfg(direction_bases=("embed", "bogus"))
+        with pytest.raises(ValueError, match="bogus"):
+            cfg.enabled_direction_bases
+
+    def test_compute_direction_refuses_unknown_basis_before_any_session(self) -> None:
+        cfg = self._live_cfg()
+        with pytest.raises(ValueError, match="not a basis"):
+            concept_direction_module.compute_direction(cfg, "bogus")
+
+    def test_compute_jlens_direction_refuses_non_jlens_basis(self) -> None:
+        cfg = self._live_cfg()
+        with pytest.raises(ValueError, match="jlens bases"):
+            concept_direction_module.compute_jlens_direction(cfg, "embed")
+
+    def test_jlens_kwargs_threads_basis_and_lens_settings(self) -> None:
+        cfg = self._live_cfg(jlens_layer=24, jlens_model_id="google/gemma-2-2b")
+        kwargs = concept_direction_module._jlens_direction_kwargs(
+            cfg, "jlens_norm_aware", ["apple"], ["orange"], "fruit-vs-color"
+        )
+        assert kwargs["concept_basis"] == "jlens_norm_aware"
+        assert kwargs["concept_group_a"] == ["apple"]
+        assert kwargs["concept_group_b"] == ["orange"]
+        assert kwargs["jlens_layer"] == 24
+        assert kwargs["jlens_model_id"] == "google/gemma-2-2b"
+        assert "jlens_repo_id" not in kwargs  # unset: the read path default applies
+
+    def test_jlens_kwargs_omits_unset_lens_settings(self) -> None:
+        cfg = self._live_cfg()
+        kwargs = concept_direction_module._jlens_direction_kwargs(cfg, "jlens_paper", ["apple"], [], "fruit")
+        assert kwargs["concept_basis"] == "jlens_paper"
+        assert "concept_group_b" not in kwargs
+        assert not any(key.startswith("jlens_") for key in kwargs)
+
+    def test_collect_summary_reports_jlens_arm_when_present(self) -> None:
+        cfg = self._live_cfg()
+        summary = concept_direction_module.collect_summary(
+            cfg,
+            {"jlens_pipeline": {"gap_delta": 1.5}, "embed_pipeline": {"gap_delta": 0.5}},
+            config_path="orange.yaml",
+            work_root_removed=False,
+        )
+        assert summary["jlens_gap_delta"] == 1.5
+        assert summary["embed_gap_delta"] == 0.5
+
+    def test_collect_summary_omits_jlens_arm_when_absent(self) -> None:
+        cfg = self._live_cfg()
+        summary = concept_direction_module.collect_summary(
+            cfg, {"embed_pipeline": {"gap_delta": 0.5}}, config_path="orange.yaml", work_root_removed=False
+        )
+        assert "jlens_gap_delta" not in summary
