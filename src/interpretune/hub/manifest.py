@@ -306,6 +306,12 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
                         f"{source}: experiment entry {name!r} declares path {rel!r}, which must be a "
                         "repo-relative path inside the component directory."
                     )
+    rewrite = manifest.get("experiment_snapshot_rewrite")
+    if rewrite is not None and (not isinstance(rewrite, str) or not rewrite):
+        raise ComponentManifestError(
+            f"{source}: `experiment_snapshot_rewrite` must name a registered snapshot rewrite "
+            f"(the builder refuses unknown names), got {rewrite!r}."
+        )
     return manifest
 
 
