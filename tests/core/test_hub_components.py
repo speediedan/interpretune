@@ -535,6 +535,27 @@ class TestExperimentKindSpec:
         with pytest.raises(ValueError, match="outside the component snapshot"):
             load_snapshot_experiment("speediedan/demo-exp", "demo_experiment", cache_dir=cache)
 
+    def test_symlinked_snapshot_files_load_confined(self, tmp_path):
+        """Hub snapshots store files as symlinks into a shared `blobs/` directory: following those links answers
+        physical storage, not the declared tree, so confinement judges the lexical path and this layout loads
+        instead of refusing as an escape."""
+        from interpretune.harness.config import load_experiment_config
+
+        root = tmp_path / "snap"
+        (root / "configs").mkdir(parents=True)
+        blobs = tmp_path / "blobs"
+        blobs.mkdir()
+        (blobs / "C").write_text(
+            __import__("yaml").safe_dump({"EXPERIMENT_NAME": "demo", "EXTENDS": "base.yaml", "A": 1}),
+            encoding="utf-8",
+        )
+        (blobs / "B").write_text(__import__("yaml").safe_dump({"B": 2}), encoding="utf-8")
+        (root / "configs" / "child.yaml").symlink_to(blobs / "C")
+        (root / "configs" / "base.yaml").symlink_to(blobs / "B")
+        resolved = load_experiment_config(root / "configs" / "child.yaml", _root=root)
+        assert resolved["EXPERIMENT_NAME"] == "demo"
+        assert resolved["A"] == 1 and resolved["B"] == 2
+
     def test_absolute_extends_outside_snapshot_refused(self, tmp_path):
         """An existing absolute path with a colon takes the path branch, not the exemption.
 
@@ -739,5 +760,11 @@ class TestExperimentSnapshotRewrite:
             assert (out / entry["pipeline"]).is_file(), key
             for rel in entry.get("files") or []:
                 assert (out / rel).exists(), (key, rel)
+            declared = set(entry.get("files") or [])
+            assert {
+                "exp/__init__.py",
+                "exp/analysis/__init__.py",
+                "exp/_prompt_shim.py",
+            } <= declared, (key, "generated package files must be declared for partial fetch")
             body = yaml.safe_load((out / entry["config"]).read_text(encoding="utf-8"))
             assert body["EXPERIMENT_NAME"] == key == Path(entry["config"]).stem

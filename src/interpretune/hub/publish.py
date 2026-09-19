@@ -379,6 +379,12 @@ def _rewrite_concept_direction_snapshot(out_dir: Path, manifest: dict) -> None:
         ("exp/_prompt_shim.py", _EXPERIMENT_PROMPT_SHIM_TEXT),
     ]:
         (out_dir / generated).write_text(body, encoding="utf-8")
+    # Generated files join each entry's `files`: partial materialization (`pull_experiment_payloads`)
+    # fetches exactly the manifest-declared payloads, so an undeclared generated file would ship on
+    # the Hub yet never arrive in a partial fetch — a pipeline that imports from a full snapshot
+    # but fails from the documented consumption path. Declaring them keeps the manifest describing
+    # the tree it ships with.
+    generated_rels = ["exp/__init__.py", "exp/analysis/__init__.py", "exp/_prompt_shim.py"]
 
     blockers: list[str] = []
     for staged in sorted((out_dir / "exp").rglob("*.py")):
@@ -399,6 +405,9 @@ def _rewrite_concept_direction_snapshot(out_dir: Path, manifest: dict) -> None:
             if rel in moves:
                 entry[field] = moves[rel]
         entry["files"] = [moves.get(rel, rel) for rel in entry.get("files") or []]
+        for rel in generated_rels:
+            if rel not in entry["files"]:
+                entry["files"].append(rel)
     (out_dir / IT_COMPONENT_MANIFEST).write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
 
