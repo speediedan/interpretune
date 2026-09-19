@@ -19,11 +19,11 @@ YAML config (BATCH_SIZE, MAX_FEATURE_NODES)
 
 | File | Role |
 |------|------|
-| `../session.py` | shared model spec registry, `build_test_cfg()`, `experiment_session()` |
+| `src/it_examples/tests/notebook/_harness/session.py` | shared model spec registry, `build_test_cfg()`, `experiment_session()` |
 | `concept_direction.py` | `NotebookHarnessConfig`, concept-pair loading, direction computation |
-| `../nb_harness_utils.py` | shared prompt/token/resource helpers |
+| `interpretune.harness.nb_harness_utils` | shared prompt/token/resource helpers |
 | `../pipeline_patterns.py` | shared notebook phase runners |
-| `../nb_experiment_launcher.py` | Papermill driver with inter-notebook `gc.collect()` + CUDA cleanup |
+| `interpretune.harness.launcher` | Papermill driver with inter-notebook `gc.collect()` + CUDA cleanup |
 | `concept_direction_template.ipynb` | Notebook template; params cell provides `BATCH_SIZE`, `MAX_FEATURE_NODES` |
 | `src/interpretune/utils/resource_mgmt.py` | `cleanup_python_cuda()`, `safe_clean_cuda()` |
 | `src/it_examples/utils/nb_ui_utils.py` | `display_ablation_chart()` with `plt.close(fig)` for figure cleanup |
@@ -55,7 +55,7 @@ flows through `NotebookHarnessConfig.session_kwargs` → `experiment_session()`
 1. Set `IT_RESOURCE_DEBUG=1` for per-fixture/per-test snapshots.
 2. Run a single config through the launcher:
    ```bash
-   python ../nb_experiment_launcher.py \
+   python -m interpretune.harness.launcher \
        --notebook concept_direction_template.ipynb \
        gemma2_it_capitals_states.yaml \
        --continue-on-error

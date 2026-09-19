@@ -33,7 +33,7 @@ directly across model sizes.
 
 ## Architecture Notes
 
-Core harness infrastructure now lives in `src/it_examples/experiments/notebook/`.
+Core harness infrastructure now lives in `src/interpretune/harness/`.
 This directory keeps the concept-direction experiment definitions, concept-pair YAMLs, and
 analysis-specific notebook logic, while shared launcher/bootstrap/session/config code is owned by
 the shared harness package.
@@ -446,13 +446,14 @@ See [resource_management.md](resource_management.md) for full details and [/docs
 - `concept_direction.py`: Concept-direction-specific config/runtime surface — `NotebookHarnessConfig`,
    concept-pair loading, direction computation, and local explanation preparation.
 - `concept_direction_template.ipynb`: Parameterized concept-direction notebook template.
-- `../nb_experiment_harness/nb_harness_utils.py`: shared notebook utility helpers used across
+- `interpretune.harness.nb_harness_utils`: shared notebook utility helpers used across
    experiment templates.
-- `../nb_experiment_harness/pipeline_patterns.py`: shared notebook phase runners used by the
+- `../pipeline_patterns.py`: shared notebook phase runners used by the
    concept-direction template.
-- `../nb_experiment_harness/nb_experiment_launcher.py`: shared Papermill launcher for running
-   parameterized experiment notebooks across YAML configs with timestamped output.
-- `../nb_experiment_harness/README.md`: shared launcher/bootstrap/config/session harness notes.
+- `interpretune.harness.launcher` (`python -m interpretune.harness.launcher`): shared Papermill
+   launcher for running parameterized experiment notebooks across YAML configs with timestamped
+   output.
+- `interpretune.harness`: shared launcher/bootstrap/config/session harness package notes.
 - Historical notes and results from the retired standalone experimentation wave were
   consolidated into `experiment_summary.md` (2026-04-25; the `archived_analysis/` directory no
   longer exists).
