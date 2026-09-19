@@ -59,13 +59,18 @@ def tiny_gpt2_dir(tmp_path_factory):
     """A seeded random tiny GPT-2 saved to disk so nnsight can load it by path."""
     from transformers import AutoTokenizer, GPT2Config, GPT2LMHeadModel
 
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
     torch.manual_seed(42)
-    config = GPT2Config(n_layer=N_LAYERS, n_head=4, n_embd=D_MODEL, vocab_size=64, n_positions=32)
+    # The config's vocabulary is sized from the tokenizer it ships with, so every id the
+    # tokenizer can emit (including specials up to 50256) fits the embedding by construction.
+    # A small fixed vocab with the real tokenizer is consistent only until something reaches a
+    # canonicalizing path; raw ids are the trigger, not the safeguard.
+    config = GPT2Config(n_layer=N_LAYERS, n_head=4, n_embd=D_MODEL, vocab_size=len(tokenizer), n_positions=32)
     model = GPT2LMHeadModel(config).eval()
     path = tmp_path_factory.mktemp("tiny_gpt2")
     model.save_pretrained(path)
     # any real tokenizer satisfies nnsight's loader; the tests drive the model with raw ids
-    AutoTokenizer.from_pretrained("gpt2").save_pretrained(path)
+    tokenizer.save_pretrained(path)
     return path
 
 
@@ -221,14 +226,18 @@ class TestMagnitudeSweepMonotonicity:
     does not, rather than pretending linearity extends: "patch at scale s" stops meaning "s times the
     effect" exactly where the curvature term (quadratic in the displacement) catches up.
 
-    Measured on the seeded tiny model (float64, projection ``m`` onto the unit ``jvpu`` direction)::
+    Measured on the seeded tiny model (float64, projection ``m`` onto the unit ``jvpu`` direction).
 
-        s=0.25: m=-0.129 (lin -0.124)  R=0.024  rel=0.148
-        s=0.50: m=-0.072 (lin -0.070)  R=0.014  rel=0.115
-        s=1.00: m= 0.038 (lin  0.038)  R=0.008  rel=0.075
-        s=2.00: m= 0.230 (lin  0.255)  R=0.047  rel=0.171
-        s=4.00: m= 0.472 (lin  0.687)  R=0.273  rel=0.393
-        s=8.00: m= 0.650 (lin  1.552)  R=0.973  rel=0.626
+    The fixture pairs a tokenizer-sized vocabulary with the real gpt2 tokenizer (#339: sizing the
+    config to the tokenizer by construction), so this table was re-measured on that RNG stream;
+    the regime boundary below is stream-dependent, the tolerance is not::
+
+        s=0.25: m=+6.755 (lin +6.747)  R=0.958   rel=0.140
+        s=0.50: m=+8.032 (lin +8.092)  R=1.355   rel=0.166
+        s=1.00: m=+10.435 (lin +10.783) R=2.337  rel=0.216
+        s=2.00: m=+14.492 (lin +16.165) R=4.951  rel=0.306
+        s=4.00: m=+19.664 (lin +26.928) R=12.029 rel=0.446
+        s=8.00: m=+23.511 (lin +48.453) R=29.859 rel=0.616
 
     (``R`` is the absolute residual ``|measured - lin|``, ``rel`` divides by ``|lin|``.) Two shapes worth
     naming: the residual is minimized near ``s=1`` because ``|Delta(s)|`` is V-shaped in ``s`` (the pure
@@ -241,8 +250,8 @@ class TestMagnitudeSweepMonotonicity:
     # measured min adjacent gap in m(s) is 0.057; a small positive margin keeps "strictly increasing"
     # from passing on float noise alone
     MONOTONE_MARGIN = 0.01
-    # first-order regime: measured max rel residual through s=2.0 is 0.171
-    FIRST_ORDER_REGIME_MAX = 2.0
+    # first-order regime: measured max rel residual through s=1.0 is 0.216
+    FIRST_ORDER_REGIME_MAX = 1.0
     FIRST_ORDER_REL_TOL = 0.25
     # departure regime: rel residual worsens monotonically past s=1 and exceeds half the prediction
     # by s=8 (measured 0.626); the measured effect lands under 3/4 of the affine extrapolation

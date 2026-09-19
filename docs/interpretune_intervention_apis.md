@@ -73,6 +73,16 @@ op to state.
 > build the pair from the processed model's own weights; never mix. (Pinned by
 > `tests/core/test_jlens_patch_validation.py`.)
 
+> **A folded vector counts its fold exactly once, against the matrix whose processing state matches the scale.**
+> The norm-aware J-lens construction multiplies unembedding rows by the final norm's scale, and that scale
+> lives on a specific side: `(1 + weight)` for HF gemma RMSNorms, plain `weight` elsewhere including TL
+> models, whose gemma conversion folds the `+1` at load. Building folded vectors from a *processed* `W_U`
+> while applying an HF-convention scale counts the norm twice — once baked into the weights, once in the
+> fold — and the resulting directions are wrong in a way no magnitude adjustment repairs, for the same
+> reason the pair basis above is not interchangeable. Go through `resolve_unembed_and_norm_scale` plus
+> `fold_norm_into_unembed_rows`, which pair each matrix with its own scale convention, rather than
+> hand-rolling either side.
+
 ## Op-level entry points and composites
 
 The registered analysis ops (all callable as `it.<name>(...)`):
