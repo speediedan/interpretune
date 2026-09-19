@@ -1046,10 +1046,12 @@ API summary in `intervention_capabilities_overview.md`). What that means per pro
   family already exists (`interpretune.analysis.optools.resolve_unembed_and_norm_scale`). This
   probe is the principled replacement for the 1-D "output projection" column in the Phase-6 table
   above, which is its `k = 1`, single-token special case.
-- **Probe 4 (`concept_direction(..., basis="jlens")`)** needs the selector to be introduced: there is
-  no `basis=` parameter today, embed and store are two parallel pipelines in this harness, and
-  `use_answer_state_as_basis` is a different axis. Its test against Finding 2 (are jlens-basis
-  attribution targets less output-machinery-biased at intermediate layers) remains the right one.
+- **Probe 4 (`concept_direction(..., basis="jlens")`)**: the selector exists since #568
+  (`concept_basis` with `embed` / `store` / `jlens_paper` / `jlens_norm_aware`, required, no
+  default), and the harness threads it (`compute_direction` dispatcher plus `direction_bases` and
+  the `jlens_*` lens settings on the harness config). `use_answer_state_as_basis` remains a
+  different axis. Its test against Finding 2 (are jlens-basis attribution targets less
+  output-machinery-biased at intermediate layers) remains the right one.
 
 One measured result that bears on Finding 4 arrived from the folding work rather than from a probe:
 on gemma-3-1b-it the demo residual projects enormously onto both unfolded concept poles (coordinate
