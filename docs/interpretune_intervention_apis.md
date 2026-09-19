@@ -57,7 +57,7 @@ precedence. Concept-direction notebook experiments use this surface for direct-p
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
 such as `blocks.0.hook_in` in `project` mode.
 
-`model_fwd_intervention` dispatches four modes: `replace`, `add`, `project`, and `patch`. The `patch` mode (the
+`model_fwd_intervention` dispatches six modes: `replace`, `add`, `project`, `patch`, `reject`, and `clamp`. The `patch` mode (the
 J-space write) takes exactly two direction vectors stacked on a leading axis and swaps the activation's
 coordinates along that pair, leaving the component orthogonal to the pair untouched. Mechanically it is
 basis-agnostic: any pair of directions can serve as the patch pair, so embed-basis concept poles are as valid a

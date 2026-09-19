@@ -88,6 +88,7 @@ class InterventionMode(str, Enum):
     each seeing the previous spec's output: ``[add(v), reject(v)]`` is not ``[reject(v), add(v)]``,
     while two ``add`` specs commute. Backends implement this by folding the spec tuple left to right,
     and adapters must preserve the declaration order rather than grouping by mode.
+    A backend that cannot apply that order refuses the payload by name rather than reordering it.
     """
 
     REPLACE = "replace"
