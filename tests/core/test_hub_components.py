@@ -661,3 +661,83 @@ class TestExperimentKindSpec:
         import interpretune as it
 
         assert callable(it.hub.pull_experiment) and callable(it.hub.load_experiment)
+
+
+CONCEPT_DIRECTION_COMPONENT_DIR = (
+    Path(__file__).parent.parent.parent / "src" / "it_examples" / "experiments" / "notebook"
+)
+CONCEPT_DIRECTION_KEYS = [
+    "gemma3_1b_it_local_color_fruit_orange",
+    "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5",
+    "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_answer_basis",
+    "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_s5",
+    "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_s5_any",
+    "gemma3_1b_it_local_color_fruit_orange_fs_l10_n5_s5_pos_noact_constrained",
+    "gemma3_1b_it_local_color_fruit_orange_signed_fs_l10_n5",
+]
+
+
+class TestExperimentSnapshotRewrite:
+    """Build-time rewrite of experiment payloads into a runnable snapshot layout (#498)."""
+
+    def test_non_string_rewrite_marker_refused(self):
+        manifest = {
+            "it_schema_version": 1,
+            "kinds": ["experiment"],
+            "experiments": {"d": {"config": "configs/d.yaml"}},
+            "experiment_snapshot_rewrite": {"not": "a name"},
+        }
+        with pytest.raises(ComponentManifestError, match="experiment_snapshot_rewrite"):
+            validate_component_manifest(manifest)
+
+    def test_unknown_rewrite_name_refused_with_available(self, tmp_path):
+        component = _experiment_component_dir(tmp_path)
+        manifest_path = component / "it_component.yaml"
+        body = __import__("yaml").safe_dump(
+            {
+                **__import__("yaml").safe_load(manifest_path.read_text(encoding="utf-8")),
+                "experiment_snapshot_rewrite": "no-such-rewrite",
+            }
+        )
+        manifest_path.write_text(body, encoding="utf-8")
+        with pytest.raises(ComponentManifestError, match="concept-direction-v1"):
+            build_component_tree(component, tmp_path / "build")
+
+    def test_concept_direction_manifest_declares_seven_parity_held_experiments(self):
+        manifest = load_component_manifest(CONCEPT_DIRECTION_COMPONENT_DIR / "it_component.yaml")
+        assert manifest["kinds"] == ["experiment"]
+        assert manifest["experiment_snapshot_rewrite"] == "concept-direction-v1"
+        assert sorted(manifest["experiments"]) == sorted(CONCEPT_DIRECTION_KEYS)
+        assert manifest["requires"]["components"] == ["speediedan/rte@738e41229e39379c432da4e5830af01d6e8960b2"]
+
+    def test_concept_direction_staged_tree_is_runnable_package(self, tmp_path):
+        from interpretune.hub.publish import _module_level_it_examples_refs
+
+        out = tmp_path / "build"
+        build_component_tree(CONCEPT_DIRECTION_COMPONENT_DIR, out)
+        staged = yaml.safe_load((out / "it_component.yaml").read_text(encoding="utf-8"))
+        expected_exp = {
+            "exp/concept_direction.py",
+            "exp/pipeline_patterns.py",
+            "exp/_prompt_shim.py",
+            "exp/__init__.py",
+            "exp/analysis/__init__.py",
+            "exp/analysis/concept_direction_analysis.py",
+            "exp/analysis/intervention_drift_analysis.py",
+        }
+        actual_exp = {p.relative_to(out).as_posix() for p in (out / "exp").rglob("*") if p.is_file()}
+        assert actual_exp == expected_exp, f"staged exp/ drifted: {sorted(actual_exp)}"
+        blockers = [
+            f"{p.relative_to(out)}:{ref}"
+            for p in sorted((out / "exp").rglob("*.py"))
+            if p.name != "__init__.py"
+            for ref in _module_level_it_examples_refs(p)
+        ]
+        assert blockers == [], f"snapshot still imports it_examples at module level: {blockers}"
+        for key, entry in staged["experiments"].items():
+            assert (out / entry["config"]).is_file(), key
+            assert (out / entry["pipeline"]).is_file(), key
+            for rel in entry.get("files") or []:
+                assert (out / rel).exists(), (key, rel)
+            body = yaml.safe_load((out / entry["config"]).read_text(encoding="utf-8"))
+            assert body["EXPERIMENT_NAME"] == key == Path(entry["config"]).stem
