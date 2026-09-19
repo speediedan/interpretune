@@ -4,7 +4,17 @@
 # Individual analysis points can be toggled on/off via the `enable` flag below.
 settings:
   enabled: true
-  target_package_version: "0.4.0"  # Required circuit_tracer version for this notebook
+  # ADVISORY, not load-bearing: circuit-tracer is installed from the git pin in pyproject.toml,
+  # and `needs_temp_install()` honors that pinned commit rather than this string (#363), so a
+  # stale value warns instead of failing the run. Keep it accurate anyway -- it is what tells a
+  # reader which circuit-tracer the notebook was validated against.
+  # Upstream switched circuit-tracer to VCS-derived versioning (hatch-vcs) in its #110, so this is
+  # not a static release number: it is derived from the pinned commit's distance from the nearest
+  # version tag, and moves whenever the pin moves.
+  # Refresh after a pin bump with:
+  #   uv pip install --no-deps "circuit-tracer @ git+<pinned url>" && python -c \
+  #     "from importlib.metadata import version; print(version('circuit-tracer'))"
+  target_package_version: "0.5.3.dev31+g1e40cbf6e"  # circuit_tracer this notebook was validated against
   log_to_console: false
   log_to_file: true
   log_dir: /tmp
