@@ -816,6 +816,93 @@ class ModelBackendConformance:
             )
             assert not same, f"the mixed-scope payload gave the logits of a {scope!r}-only payload at {first!r}"
 
+    # -- INTERVENTION: declaration order --------------------------------------------------------
+    #
+    # Specs on one hook point apply in declaration order (see InterventionMode): this case pins the
+    # order rather than the arithmetic, so its reference composes the same two updates with HF hooks
+    # and the discriminating assertion is that the two orders differ from each other. A backend that
+    # applied specs in any other order, or dropped one, would make the two payloads agree.
+
+    @conformance_case(
+        capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
+        family="hf_native",
+    )
+    def test_declaration_order_decides_at_one_point(self, suite, hf):
+        """`[add, reject]` and `[reject, add]` at one point differ from each other, each matches the HF-hook
+        reference applied in that order, and two commuting `add` specs agree either way."""
+        import interpretune as it
+        from interpretune import AnalysisCfg
+
+        declared = {m.value for m in suite.capabilities.intervention.modes}
+        if not {"add", "reject"} <= declared:
+            pytest.skip("the order case needs a backend declaring both `add` and `reject`")
+        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        point = suite.inputs.intervention_point
+        vector = self._vector(suite)
+        second = self._second_vector(vector)
+
+        def add_edit(tensor, _v=vector):
+            return tensor + _v * STEER_SCALE
+
+        def reject_edit(tensor, _v=vector):
+            shape = tensor.shape
+            flat = tensor.reshape(-1, shape[-1]).to(dtype=torch.float32)
+            basis = _v.to(dtype=torch.float32).reshape(1, -1)
+            coords = flat @ torch.linalg.pinv(basis.transpose(0, 1)).transpose(0, 1)
+            return (flat - coords @ basis).reshape(shape).to(dtype=tensor.dtype)
+
+        def spec(mode, tensor, scale):
+            return {
+                "intervention_tensor": tensor,
+                "mode": mode,
+                "scale_factor": scale,
+                "position_scope": scope,
+                "use_intervention_tensor_as_basis": True,
+            }
+
+        def run(specs):
+            return suite.run(
+                AnalysisCfg(
+                    target_op=it.model_fwd_intervention,
+                    run_inputs={"interventions": {point: specs}},
+                    save_tokens=True,
+                )
+            )
+
+        add_first = run([spec("add", vector, STEER_SCALE), spec("reject", vector, 1.0)])
+        reject_first = run([spec("reject", vector, 1.0), spec("add", vector, STEER_SCALE)])
+        self._assert_moved(add_first, what="[add, reject]")
+        self._assert_moved(reject_first, what="[reject, add]")
+        for i, (post_add_first, post_reject_first) in enumerate(
+            zip(add_first["post_intervention_logits"], reject_first["post_intervention_logits"])
+        ):
+            same = torch.allclose(post_add_first, post_reject_first, rtol=0, atol=CONVERGENCE_ATOL)
+            assert not same, f"batch {i}: the two declaration orders agreed; order was not applied"
+            ids, mask = suite.batch_inputs(i)
+            ref_add_first = hf.steered_many(
+                ids,
+                [(point, add_edit, scope), (point, reject_edit, scope)],
+                attention_mask=mask,
+            )
+            _assert_close_padded(
+                post_add_first,
+                ref_add_first["logits"][0, -1, :],
+                what=f"batch {i}: [add, reject] against the declaration-order reference",
+            )
+            ref_reject_first = hf.steered_many(
+                ids,
+                [(point, reject_edit, scope), (point, add_edit, scope)],
+                attention_mask=mask,
+            )
+            _assert_close_padded(
+                post_reject_first,
+                ref_reject_first["logits"][0, -1, :],
+                what=f"batch {i}: [reject, add] against the declaration-order reference",
+            )
+        commute_forward = run([spec("add", vector, STEER_SCALE), spec("add", second, STEER_SCALE)])
+        commute_reverse = run([spec("add", second, STEER_SCALE), spec("add", vector, STEER_SCALE)])
+        self._assert_same_logits(commute_forward, commute_reverse, what="two commuting adds disagreed by order")
+
     # -- LATENT_MODELS ------------------------------------------------------------------------------
     #
     # These run over `inputs.latent_models`, which the target's session config attaches. The latent model is an

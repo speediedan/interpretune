@@ -83,6 +83,10 @@ class InterventionMode(str, Enum):
     :func:`~interpretune.analysis.backends.interventions.require_intervention_mode` rather than applied
     as a different mode, since every mode returns plausible logits and the substitution is undetectable
     from the result.
+
+    Specs on one hook point apply one after another in declaration order; each reads the activation
+    as the previous spec left it. Order is therefore part of a multi-spec payload's meaning, and a
+    backend that cannot apply that order refuses the payload by name rather than reordering it.
     """
 
     REPLACE = "replace"

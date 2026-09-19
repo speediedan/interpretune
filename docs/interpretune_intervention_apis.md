@@ -53,11 +53,13 @@ through `module.replacement_model`, and stores Arrow-safe intervention summaries
 `model_fwd_intervention` is the model-level op for direct tensor interventions. It accepts either explicit
 `interventions` / `interventions_json` mappings or the shorthand `intervention_hook_pattern`, `intervention_mode`,
 `intervention_scale_factor` and `intervention_use_intervention_tensor_as_basis` fields; explicit mappings take
-precedence. Concept-direction notebook experiments use this surface for direct-projection phases, including
+precedence. A point may carry several specs, given as a list under that point: they apply one after another in
+declaration order, each reading the activation as the previous spec left it, so two payloads differing only in
+order are two different interventions. Concept-direction notebook experiments use this surface for direct-projection phases, including
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
 such as `blocks.0.hook_in` in `project` mode.
 
-`model_fwd_intervention` dispatches four modes: `replace`, `add`, `project`, and `patch`. The `patch` mode (the
+`model_fwd_intervention` dispatches six modes: `replace`, `add`, `project`, `patch`, `reject`, and `clamp`. The `patch` mode (the
 J-space write) takes exactly two direction vectors stacked on a leading axis and swaps the activation's
 coordinates along that pair, leaving the component orthogonal to the pair untouched. Mechanically it is
 basis-agnostic: any pair of directions can serve as the patch pair, so embed-basis concept poles are as valid a
