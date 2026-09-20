@@ -158,35 +158,40 @@ class TestTheCompositionDependsOnDelivery:
         )
 
 
-class TestDeferredWorkSaysWhy:
-    def test_the_jspace_section_is_off_and_names_its_reason(self, dev_cells):
-        """Section 4b is deferred for a reason specific to this notebook, not the sibling's reachability one.
+class TestTheJSpaceSectionNamesTheRefusalItWorksAround:
+    def test_the_jspace_section_is_on_and_says_why_it_rejects_instead_of_patching(self, dev_cells):
+        """Section 4b runs, and the flag's own comment block names the refusal the section works around.
 
-        Asserted because a bare ``False`` reads as an oversight, and the next person to see it will either
-        turn it on without knowing a J-space patch is refused over this backend or delete the section as
-        dead weight.
+        The sibling notebook's 4b is a lens-coordinate ``patch`` the interp-engine backend refuses by name;
+        this notebook runs ``reject`` over the same pole pair instead. Asserted on the contiguous comment
+        block directly above the flag, not the whole cell, so an unrelated mention elsewhere cannot satisfy
+        it (measured on the first version of the predecessor test).
         """
-        _, params = _find_cell(dev_cells, "RUN_JSPACE_SECTION")
-        line = next(ln for ln in params.splitlines() if ln.strip().startswith("RUN_JSPACE_SECTION"))
-        assert line.split("=", 1)[1].split("#")[0].strip() == "False"
-        # The comment immediately preceding the flag, not the whole cell: "interp-engine" also occurs in the
-        # component repo id a few lines up, so a cell-wide search passes even once the reason is deleted --
-        # measured, on the first version of this test.
         import itertools
 
+        _, params = _find_cell(dev_cells, "RUN_JSPACE_SECTION")
+        line = next(ln for ln in params.splitlines() if ln.strip().startswith("RUN_JSPACE_SECTION"))
+        assert line.split("=", 1)[1].split("#")[0].strip() == "True"
         preamble = params[: params.index("RUN_JSPACE_SECTION")]
-        # takewhile, not a filter: filtering keeps every comment line in the cell, so the assertion below
-        # was satisfied by an unrelated comment mentioning the same words. Only the contiguous block
-        # directly above the flag is the reason for the flag.
         trailing_comment = "\n".join(
             itertools.takewhile(
                 lambda ln: ln.strip().startswith("#") or not ln.strip(), reversed(preamble.splitlines())
             )
         )
-        assert "modes" in trailing_comment and "interp-engine" in trailing_comment, (
-            "RUN_JSPACE_SECTION is disabled without stating why in this notebook's terms, in the comment "
-            "directly above it — the reason here is the settled refusal of a J-space patch over the "
-            "interp-engine backend, not the sibling notebook's collection reachability"
+        for word in ("patch", "reject", "interp-engine"):
+            assert word in trailing_comment, (
+                f"RUN_JSPACE_SECTION is on without the comment directly above it naming {word!r}: the reason "
+                "this section rejects instead of patching is the settled refusal of a J-space patch over the "
+                "interp-engine backend, and a bare True reads as the sibling's section copied across"
+            )
+
+    def test_the_jspace_cell_rejects_over_the_staged_pair_and_never_runs_the_patch_composite(self, dev_cells):
+        """The 4b code stages the pair with the collection's pair op and runs ``reject``; the sibling's
+        ``jlens_patch_intervention`` composite (which would run the refused ``patch``) is not called."""
+        _, code = _find_cell(dev_cells, "jlens_concept_patch_pair(")
+        assert 'intervention_mode="reject"' in code, "the J-space cell must run reject over the staged pair"
+        assert "it.jlens_patch_intervention(" not in code, (
+            "the patch composite is refused by name over this backend; the cell must not call it"
         )
 
 

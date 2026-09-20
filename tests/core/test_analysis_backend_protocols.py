@@ -167,5 +167,19 @@ class TestAttributionGraphSupport:
         model.model.config._attn_implementation = "sdpa"
         assert "configured as 'sdpa'" in AttributionGraphSupport().refusal(model)
 
+    def test_circuit_tracers_own_frozen_attention_is_accepted(self):
+        """Circuit-tracer's interp-engine backend switches the shared model to its own frozen eager variant and
+        builds graphs through it; the guard reads that name from circuit-tracer rather than refusing it as
+        foreign."""
+        pytest.importorskip("circuit_tracer")
+        from circuit_tracer.replacement_model.replacement_model_interp_engine import FROZEN_ATTN_IMPL
+
+        model, _ = self._gemma3_model()
+        model.model.config._attn_implementation = FROZEN_ATTN_IMPL
+        assert AttributionGraphSupport().refusal(model) is None
+        # Control on the same stand-in: a name circuit-tracer did not register is still refused.
+        model.model.config._attn_implementation = "circuit_tracer_frozen_lookalike"
+        assert "configured as 'circuit_tracer_frozen_lookalike'" in AttributionGraphSupport().refusal(model)
+
     def test_no_requirement_accepts_anything(self):
         assert AttributionGraphSupport(requires_own_eager_attention=False).refusal(object()) is None

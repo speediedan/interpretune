@@ -337,6 +337,23 @@ def _unwrap_execution_handle(model: Any) -> Any:
     return inner
 
 
+def _circuit_tracer_own_attention_implementations() -> tuple[str, ...]:
+    """Attention implementation names circuit-tracer registers itself and builds graphs through.
+
+    Its interp-engine backend points the shared HF model at a frozen variant of eager attention (registered with
+    transformers under circuit-tracer's own name) and resolves attention patterns through its own taps rather than
+    through nnsight's source tracing of the modeling module's function. That implementation is therefore what
+    construction on that backend NEEDS, not a foreign substitution: refusing it by name refused the one path that works.
+    Read from circuit-tracer rather than spelled here, so a rename there cannot leave a stale literal accepting nothing;
+    absent circuit-tracer, nothing is added and the check is unchanged.
+    """
+    try:
+        from circuit_tracer.replacement_model.replacement_model_interp_engine import FROZEN_ATTN_IMPL
+    except Exception:
+        return ()
+    return (str(FROZEN_ATTN_IMPL),)
+
+
 @dataclass(frozen=True)
 class AttributionGraphSupport:
     """What attribution-graph construction requires of the model it runs on, checked before construction.
@@ -365,7 +382,7 @@ class AttributionGraphSupport:
             return None  # an architecture without a module-level eager attention resolves its locations another way
         modeling_name = modeling.__name__
         impl = getattr(getattr(inner, "config", None), "_attn_implementation", None)
-        if impl not in (None, "eager"):
+        if impl not in (None, "eager", *_circuit_tracer_own_attention_implementations()):
             return f"attribution graphs need the eager attention implementation and the model is configured as {impl!r}"
         if getattr(fn, "__module__", None) != modeling_name:
             return (
