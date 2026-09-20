@@ -292,3 +292,44 @@ def jlens_sparse_inventory_impl(
         jlens_basis=jlens_basis_name(apply_norm),
     )
     return analysis_batch
+
+
+def subspace_attribution_scores(
+    grad_h: torch.Tensor,
+    delta_h: torch.Tensor,
+    direction_rows: torch.Tensor,
+    token_ids: list[int],
+    basis: str,
+) -> dict[str, object]:
+    """Attribute a logit change to J-lens basis directions, with the unexplained remainder.
+
+    Splits the first-order prediction ``gᵀΔh`` per direction: with pseudoinverse coordinates
+    ``Δc = V⁺Δh`` (the same read side ``patch`` mode uses) and per-direction gradient readouts
+    ``w = Vᵀg``, direction ``i`` explains ``a_i = w_i · Δc_i``. The sum plus the remainder
+    reconstructs the prediction exactly, so a dictionary that explains nothing reports a large
+    remainder rather than large shares: ``remainder = gᵀΔh − Σa_i`` is the honest part, the same
+    role the reconstruction residual plays in :func:`jlens_sparse_inventory_impl`.
+    """
+    if not token_ids:
+        raise ValueError("subspace attribution needs at least one dictionary token: nothing to attribute to.")
+    g = torch.as_tensor(grad_h, dtype=torch.float32).reshape(-1)
+    d = torch.as_tensor(delta_h, dtype=torch.float32).reshape(-1)
+    v = torch.as_tensor(direction_rows, dtype=torch.float32).reshape(len(token_ids), -1)
+    if g.numel() != d.numel() or v.shape[1] != d.numel():
+        raise ValueError(
+            f"subspace attribution needs matching widths: grad {g.numel()}, displacement {d.numel()}, "
+            f"dictionary rows {v.shape[1]}."
+        )
+    predicted = float(g @ d)
+    delta_coords = torch.linalg.lstsq(v.transpose(0, 1), d).solution
+    weights = v @ g
+    shares = (weights * delta_coords).tolist()
+    total = float(sum(shares))
+    return {
+        "token_ids": list(token_ids),
+        "attribution_shares": shares,
+        "attribution_total": total,
+        "predicted_delta": predicted,
+        "unexplained_remainder": predicted - total,
+        "basis": basis,
+    }
