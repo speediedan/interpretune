@@ -338,20 +338,26 @@ def _unwrap_execution_handle(model: Any) -> Any:
 
 
 def _circuit_tracer_own_attention_implementations() -> tuple[str, ...]:
-    """Attention implementation names circuit-tracer registers itself and builds graphs through.
+    """Attention implementation names circuit-tracer registered with transformers itself.
 
-    Its interp-engine backend points the shared HF model at a frozen variant of eager attention (registered with
-    transformers under circuit-tracer's own name) and resolves attention patterns through its own taps rather than
-    through nnsight's source tracing of the modeling module's function. That implementation is therefore what
-    construction on that backend NEEDS, not a foreign substitution: refusing it by name refused the one path that works.
-    Read from circuit-tracer rather than spelled here, so a rename there cannot leave a stale literal accepting nothing;
-    absent circuit-tracer, nothing is added and the check is unchanged.
+    A circuit-tracer backend may point the model it builds graphs on at a variant of eager attention it registers under
+    its own name (a frozen eager, so attention patterns can be replayed) and resolve attention through its own taps
+    rather than through the modeling module's function. Such an implementation is what construction on that backend
+    NEEDS, not a foreign substitution, so it is accepted by PROVENANCE: any registered implementation whose function
+    lives in circuit-tracer's own package. No name is spelled here, so a rename there cannot leave a stale literal
+    accepting nothing, and nothing below names any particular backend. Absent circuit-tracer or its registration,
+    nothing is added and the check is unchanged.
     """
     try:
-        from circuit_tracer.replacement_model.replacement_model_interp_engine import FROZEN_ATTN_IMPL
+        from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
     except Exception:
         return ()
-    return (str(FROZEN_ATTN_IMPL),)
+    accepted: list[str] = []
+    for name in ALL_ATTENTION_FUNCTIONS.valid_keys():
+        fn = ALL_ATTENTION_FUNCTIONS.get(name)
+        if str(getattr(fn, "__module__", "")).startswith("circuit_tracer."):
+            accepted.append(str(name))
+    return tuple(accepted)
 
 
 @dataclass(frozen=True)

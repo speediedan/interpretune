@@ -167,19 +167,35 @@ class TestAttributionGraphSupport:
         model.model.config._attn_implementation = "sdpa"
         assert "configured as 'sdpa'" in AttributionGraphSupport().refusal(model)
 
-    def test_circuit_tracers_own_frozen_attention_is_accepted(self):
-        """Circuit-tracer's interp-engine backend switches the shared model to its own frozen eager variant and
-        builds graphs through it; the guard reads that name from circuit-tracer rather than refusing it as
-        foreign."""
+    def test_an_attention_implementation_circuit_tracer_registered_is_accepted_by_provenance(self):
+        """A circuit-tracer backend may switch the shared model to an eager variant it registers under its own name
+        and build graphs through it; the guard accepts it because the registered function lives in circuit-tracer,
+        not because of the name."""
         pytest.importorskip("circuit_tracer")
-        from circuit_tracer.replacement_model.replacement_model_interp_engine import FROZEN_ATTN_IMPL
+        from circuit_tracer.replacement_model import replacement_model_interp_engine as ct_engine
 
+        ct_engine._register_frozen_attention()  # what circuit-tracer does when it builds that backend's model
         model, _ = self._gemma3_model()
-        model.model.config._attn_implementation = FROZEN_ATTN_IMPL
+        model.model.config._attn_implementation = ct_engine.FROZEN_ATTN_IMPL
         assert AttributionGraphSupport().refusal(model) is None
-        # Control on the same stand-in: a name circuit-tracer did not register is still refused.
+        # Control on the same stand-in: a name nobody registered is still refused.
         model.model.config._attn_implementation = "circuit_tracer_frozen_lookalike"
         assert "configured as 'circuit_tracer_frozen_lookalike'" in AttributionGraphSupport().refusal(model)
+
+    def test_a_registered_implementation_from_another_package_is_still_refused(self, monkeypatch):
+        """Provenance is the criterion: registering the same kind of variant from outside circuit-tracer earns
+        nothing. Registered through the registry's global mapping under monkeypatch, so it is restored afterwards
+        (the registry's own `pop` reaches only its local mapping)."""
+        from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+        def foreign_eager(*args, **kwargs):  # pragma: no cover - never called
+            raise AssertionError
+
+        monkeypatch.setitem(ALL_ATTENTION_FUNCTIONS._global_mapping, "it_test_foreign_eager", foreign_eager)
+        assert "it_test_foreign_eager" in ALL_ATTENTION_FUNCTIONS.valid_keys()
+        model, _ = self._gemma3_model()
+        model.model.config._attn_implementation = "it_test_foreign_eager"
+        assert "configured as 'it_test_foreign_eager'" in AttributionGraphSupport().refusal(model)
 
     def test_no_requirement_accepts_anything(self):
         assert AttributionGraphSupport(requires_own_eager_attention=False).refusal(object()) is None

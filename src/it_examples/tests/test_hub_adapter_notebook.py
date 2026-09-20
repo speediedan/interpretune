@@ -185,11 +185,11 @@ class TestTheJSpaceSectionNamesTheRefusalItWorksAround:
                 "interp-engine backend, and a bare True reads as the sibling's section copied across"
             )
 
-    def test_the_jspace_cell_rejects_over_the_staged_pair_and_never_runs_the_patch_composite(self, dev_cells):
-        """The 4b code stages the pair with the collection's pair op and runs ``reject``; the sibling's
-        ``jlens_patch_intervention`` composite (which would run the refused ``patch``) is not called."""
-        _, code = _find_cell(dev_cells, "jlens_concept_patch_pair(")
-        assert 'intervention_mode="reject"' in code, "the J-space cell must run reject over the staged pair"
+    def test_the_jspace_cell_runs_the_reject_composite_and_never_the_patch_one(self, dev_cells):
+        """The 4b code runs the collection's ``jlens_reject_intervention`` composite; the sibling's
+        ``jlens_patch_intervention`` (which would run the refused ``patch``) is not called."""
+        _, code = _find_cell(dev_cells, "it.jlens_reject_intervention(")
+        assert "it.jlens_reject_intervention(" in code, "the J-space cell must run the reject composite"
         assert "it.jlens_patch_intervention(" not in code, (
             "the patch composite is refused by name over this backend; the cell must not call it"
         )
