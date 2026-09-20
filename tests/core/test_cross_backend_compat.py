@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from functools import lru_cache
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Sequence
 
 import pytest
 import torch
@@ -36,19 +37,478 @@ from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.bundled.concept.concept_ops import (
     extract_concept_latent_state_impl,
     extract_concept_latent_examples_impl,
+    project_context_enhanced_states,
 )
 from interpretune.analysis.ops.bundled.concept.concept_ops import extract_concept_latent_state_from_cache
 from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig
 from interpretune.config import init_analysis_cfgs
 from tests import load_dotenv
 from it_examples.tests.notebook._harness.session import resolve_model_spec
-from it_examples.experiments.notebook.concept_direction.analysis.concept_direction_analysis import (
-    build_prompt_alignment_snapshot,
-    capture_context_enhanced_extraction_snapshot,
-    compare_top_feature_sets,
-    resolve_prompt_alignment_context_index,
-)
 from tests.runif import RunIf
+###############################################################################
+# Vendored analysis fixtures (issue #499): prompt-alignment, context-enhanced
+# extraction, and feature-parity helpers, derived from the deleted
+# ``concept_direction_analysis`` experiment module. They are pure tensor/text
+# utilities with no experiment coupling; the runnable source of truth for the
+# experiment itself is the published Hub component. Pinned by this file's own
+# assertions with synthetic fixtures — do not hand-edit, re-derive on change.
+###############################################################################
+
+
+def _decode_token_ids(tokenizer: Any, token_ids: Sequence[int]) -> list[str]:
+    if hasattr(tokenizer, "convert_ids_to_tokens"):
+        try:
+            converted = tokenizer.convert_ids_to_tokens(list(token_ids))
+        except Exception:
+            return [str(tokenizer.convert_ids_to_tokens(int(token_id))) for token_id in token_ids]
+        if isinstance(converted, list):
+            return [str(token) for token in converted]
+    return [str(tokenizer.decode([int(token_id)], skip_special_tokens=False)) for token_id in token_ids]
+
+
+def _coerce_input_ids(tokenizer: Any, rendered_prompt: str, *, add_special_tokens: bool) -> list[int]:
+    encoded = tokenizer(rendered_prompt, return_tensors="pt", padding=False, add_special_tokens=add_special_tokens)
+    input_ids = encoded["input_ids"]
+    if isinstance(input_ids, torch.Tensor):
+        if input_ids.dim() == 0:
+            return [int(input_ids.item())]
+        if input_ids.dim() == 1:
+            return [int(value) for value in input_ids.tolist()]
+        return [int(value) for value in input_ids[0].tolist()]
+    if input_ids and isinstance(input_ids[0], list):
+        return [int(value) for value in input_ids[0]]
+    return [int(value) for value in input_ids]
+
+
+def _encode_text(tokenizer: Any, text: str) -> list[int]:
+    if hasattr(tokenizer, "encode"):
+        return [int(value) for value in tokenizer.encode(text, add_special_tokens=False)]
+    encoded = tokenizer(text, add_special_tokens=False)
+    input_ids = encoded["input_ids"]
+    if not input_ids:
+        return []
+    if isinstance(input_ids[0], list):
+        return [int(value) for value in input_ids[0]]
+    return [int(value) for value in input_ids]
+
+
+def _coerce_offset_mapping(
+    tokenizer: Any,
+    rendered_prompt: str,
+    *,
+    add_special_tokens: bool,
+) -> list[tuple[int, int]] | None:
+    def _pairify(pairs: Any) -> list[tuple[int, int]]:
+        return [(int(pair[0]), int(pair[1])) for pair in pairs]
+
+    try:
+        encoded = tokenizer(
+            rendered_prompt,
+            return_offsets_mapping=True,
+            return_tensors=None,
+            padding=False,
+            add_special_tokens=add_special_tokens,
+        )
+    except Exception:
+        return None
+
+    offset_mapping = encoded.get("offset_mapping")
+    if offset_mapping is None:
+        return None
+    if isinstance(offset_mapping, torch.Tensor):
+        if offset_mapping.dim() == 3:
+            return _pairify(offset_mapping[0].tolist())
+        return _pairify(offset_mapping.tolist())
+    if (
+        offset_mapping
+        and isinstance(offset_mapping[0], list)
+        and offset_mapping[0]
+        and isinstance(offset_mapping[0][0], (list, tuple))
+    ):
+        return _pairify(offset_mapping[0])
+    return _pairify(offset_mapping)
+
+
+def _resolve_text_span(
+    tokenizer: Any,
+    rendered_prompt: str,
+    input_ids: Sequence[int],
+    *,
+    text: str,
+    add_special_tokens: bool,
+    search_end: int | None = None,
+) -> tuple[tuple[int, ...], int | None, int | None]:
+    if not text:
+        return (), None, None
+
+    char_start = rendered_prompt.rfind(text, 0, search_end) if search_end is not None else rendered_prompt.rfind(text)
+    if char_start < 0:
+        fallback_token_ids = tuple(_encode_text(tokenizer, text))
+        fallback_start = find_last_subsequence(input_ids, fallback_token_ids)
+        fallback_end = None if fallback_start is None else fallback_start + len(fallback_token_ids) - 1
+        return fallback_token_ids, fallback_start, fallback_end
+
+    char_end = char_start + len(text)
+    offset_mapping = _coerce_offset_mapping(tokenizer, rendered_prompt, add_special_tokens=add_special_tokens)
+    if offset_mapping is not None:
+        matched_indices = [
+            index
+            for index, (token_start, token_end) in enumerate(offset_mapping)
+            if token_end > token_start and token_end > char_start and token_start < char_end
+        ]
+        if matched_indices:
+            span_start_index = matched_indices[0]
+            span_end_index = matched_indices[-1]
+            span_token_ids = tuple(int(value) for value in input_ids[span_start_index : span_end_index + 1])
+            return span_token_ids, span_start_index, span_end_index
+
+    prefix_ids = _coerce_input_ids(tokenizer, rendered_prompt[:char_start], add_special_tokens=add_special_tokens)
+    span_end_ids = _coerce_input_ids(tokenizer, rendered_prompt[:char_end], add_special_tokens=add_special_tokens)
+    span_start_index = len(prefix_ids)
+    span_end_index = len(span_end_ids) - 1
+    span_token_ids = tuple(int(value) for value in input_ids[span_start_index : span_end_index + 1])
+    return span_token_ids, span_start_index, span_end_index
+
+
+def _decode_ids(tokenizer: Any, token_ids: Sequence[int]) -> list[str]:
+    return _decode_token_ids(tokenizer, token_ids)
+
+
+def _coerce_feature_row(row: Sequence[int]) -> tuple[int, int, int]:
+    values = tuple(int(value) for value in row)
+    if len(values) != 3:
+        raise ValueError(f"Expected feature row of length 3, received {values}")
+    return (values[0], values[1], values[2])
+
+
+def find_last_subsequence(sequence: Sequence[int], subsequence: Sequence[int]) -> int | None:
+    """Return the starting index of the final subsequence match, or ``None`` when absent."""
+    if not sequence or not subsequence or len(subsequence) > len(sequence):
+        return None
+    for start in range(len(sequence) - len(subsequence), -1, -1):
+        if list(sequence[start : start + len(subsequence)]) == list(subsequence):
+            return start
+    return None
+
+
+@dataclass(frozen=True)
+class PromptAlignmentSnapshot:
+    """Rendered-prompt token alignment for one classification/example prompt.
+
+    When ``answer_text`` is provided, ``answer_index`` is the first token index of the
+    answer subsequence inside the rendered prompt plus answer string. This lets parity
+    tests verify that the probe token is aligned against the actual answer token rather
+    than a nearby separator token such as ``:`` or a standalone space token.
+    """
+
+    rendered_prompt: str
+    input_ids: tuple[int, ...]
+    input_tokens: tuple[str, ...]
+    probe_text: str
+    probe_token_ids: tuple[int, ...]
+    probe_start_index: int | None
+    probe_end_index: int | None
+    answer_text: str | None
+    answer_token_ids: tuple[int, ...]
+    answer_start_index: int | None
+    answer_end_index: int | None
+    answer_index: int
+    answer_token_id: int
+    answer_token_text: str
+    previous_token_index: int | None
+    previous_token_id: int | None
+    previous_token_text: str | None
+    intervening_token_ids: tuple[int, ...]
+    intervening_token_texts: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rendered_prompt": self.rendered_prompt,
+            "input_ids": list(self.input_ids),
+            "input_tokens": list(self.input_tokens),
+            "probe_text": self.probe_text,
+            "probe_token_ids": list(self.probe_token_ids),
+            "probe_start_index": self.probe_start_index,
+            "probe_end_index": self.probe_end_index,
+            "answer_text": self.answer_text,
+            "answer_token_ids": list(self.answer_token_ids),
+            "answer_start_index": self.answer_start_index,
+            "answer_end_index": self.answer_end_index,
+            "answer_index": self.answer_index,
+            "answer_token_id": self.answer_token_id,
+            "answer_token_text": self.answer_token_text,
+            "previous_token_index": self.previous_token_index,
+            "previous_token_id": self.previous_token_id,
+            "previous_token_text": self.previous_token_text,
+            "intervening_token_ids": list(self.intervening_token_ids),
+            "intervening_token_texts": list(self.intervening_token_texts),
+        }
+
+
+def build_prompt_alignment_snapshot(
+    tokenizer: Any,
+    rendered_prompt: str,
+    *,
+    probe_text: str,
+    answer_text: str | None = None,
+    add_special_tokens: bool,
+) -> PromptAlignmentSnapshot:
+    """Capture probe-token and answer-token alignment for one rendered prompt."""
+    input_ids = _coerce_input_ids(tokenizer, rendered_prompt, add_special_tokens=add_special_tokens)
+    input_tokens = _decode_ids(tokenizer, input_ids)
+    answer_char_start = rendered_prompt.rfind(answer_text) if answer_text else None
+    probe_token_ids, probe_start_index, probe_end_index = _resolve_text_span(
+        tokenizer,
+        rendered_prompt,
+        input_ids,
+        text=probe_text,
+        add_special_tokens=add_special_tokens,
+        search_end=answer_char_start,
+    )
+    answer_token_ids: tuple[int, ...] = ()
+    answer_start_index = None
+    answer_end_index = None
+    if answer_text is not None:
+        answer_token_ids, answer_start_index, answer_end_index = _resolve_text_span(
+            tokenizer,
+            rendered_prompt,
+            input_ids,
+            text=answer_text,
+            add_special_tokens=add_special_tokens,
+        )
+    answer_index = len(input_ids) - 1 if answer_start_index is None else answer_start_index
+    answer_token_id = int(input_ids[answer_index])
+    answer_token_text = str(input_tokens[answer_index])
+    previous_token_index = answer_index - 1 if answer_index > 0 else None
+    previous_token_id = None if previous_token_index is None else int(input_ids[previous_token_index])
+    previous_token_text = None if previous_token_index is None else str(input_tokens[previous_token_index])
+    intervening_start = None if probe_end_index is None else probe_end_index + 1
+    intervening_end = answer_index
+    intervening_token_ids: tuple[int, ...] = ()
+    intervening_token_texts: tuple[str, ...] = ()
+    if intervening_start is not None and intervening_start < intervening_end:
+        intervening_token_ids = tuple(int(value) for value in input_ids[intervening_start:intervening_end])
+        intervening_token_texts = tuple(str(value) for value in input_tokens[intervening_start:intervening_end])
+    return PromptAlignmentSnapshot(
+        rendered_prompt=rendered_prompt,
+        input_ids=tuple(input_ids),
+        input_tokens=tuple(input_tokens),
+        probe_text=probe_text,
+        probe_token_ids=tuple(probe_token_ids),
+        probe_start_index=probe_start_index,
+        probe_end_index=probe_end_index,
+        answer_text=answer_text,
+        answer_token_ids=answer_token_ids,
+        answer_start_index=answer_start_index,
+        answer_end_index=answer_end_index,
+        answer_index=answer_index,
+        answer_token_id=answer_token_id,
+        answer_token_text=answer_token_text,
+        previous_token_index=previous_token_index,
+        previous_token_id=previous_token_id,
+        previous_token_text=previous_token_text,
+        intervening_token_ids=intervening_token_ids,
+        intervening_token_texts=intervening_token_texts,
+    )
+
+
+def resolve_prompt_alignment_context_index(snapshot: PromptAlignmentSnapshot) -> tuple[int | None, str]:
+    """Resolve the semantic context-token index for a prompt-alignment snapshot."""
+
+    if snapshot.probe_end_index is not None and snapshot.answer_index > snapshot.probe_end_index:
+        return snapshot.probe_end_index, "probe_end"
+    if snapshot.previous_token_index is not None:
+        return snapshot.previous_token_index, "answer_previous"
+    return None, "unavailable"
+
+
+def _resolve_concept_cache_key(analysis_batch: Any) -> str:
+    if hasattr(analysis_batch, "get"):
+        return str(analysis_batch.get("concept_cache_key") or "unembed.hook_in")
+    return str(getattr(analysis_batch, "concept_cache_key", None) or "unembed.hook_in")
+
+
+def _get_analysis_value(analysis_batch: Any, field_name: str) -> Any:
+    if hasattr(analysis_batch, "get"):
+        return analysis_batch.get(field_name)
+    return getattr(analysis_batch, field_name)
+
+
+@dataclass(frozen=True)
+class ContextEnhancedExtractionSnapshot:
+    """Detailed math for the resolved context-token extraction path."""
+
+    cache_key: str
+    context_source: str
+    use_answer_state_as_basis: bool
+    projection_basis: str
+    answer_indices: tuple[int, ...]
+    answer_states: torch.Tensor
+    context_indices: tuple[int, ...]
+    context_states: torch.Tensor
+    scaled_answer: torch.Tensor
+    dot_num: torch.Tensor
+    dot_den: torch.Tensor
+    projected_states: torch.Tensor
+    final_latent_states: torch.Tensor
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cache_key": self.cache_key,
+            "context_source": self.context_source,
+            "use_answer_state_as_basis": self.use_answer_state_as_basis,
+            "projection_basis": self.projection_basis,
+            "answer_indices": list(self.answer_indices),
+            "context_indices": list(self.context_indices),
+            "answer_states": self.answer_states.tolist(),
+            "context_states": self.context_states.tolist(),
+            "scaled_answer": self.scaled_answer.tolist(),
+            "dot_num": self.dot_num.reshape(-1).tolist(),
+            "dot_den": self.dot_den.reshape(-1).tolist(),
+            "projected_states": self.projected_states.tolist(),
+            "final_latent_states": self.final_latent_states.tolist(),
+        }
+
+
+def capture_context_enhanced_extraction_snapshot(
+    analysis_batch: Any,
+    *,
+    context_scale: float,
+    use_answer_state_as_basis: bool = False,
+) -> ContextEnhancedExtractionSnapshot:
+    """Reconstruct the current context-enhanced extraction math from an analysis batch."""
+    cache = _get_analysis_value(analysis_batch, "cache")
+    answer_indices = _get_analysis_value(analysis_batch, "answer_indices")
+    if cache is None or answer_indices is None:
+        raise ValueError("capture_context_enhanced_extraction_snapshot requires cache and answer_indices")
+
+    cache_key = _resolve_concept_cache_key(analysis_batch)
+    cache_tensor = torch.as_tensor(cache[cache_key])
+    answer_index_tensor = torch.as_tensor(answer_indices, dtype=torch.long, device=cache_tensor.device).reshape(-1)
+    batch_indices = torch.arange(cache_tensor.size(0), device=cache_tensor.device)
+
+    answer_states = cache_tensor[batch_indices, answer_index_tensor].detach().cpu().float()
+    raw_context_token_indices = _get_analysis_value(analysis_batch, "context_token_indices")
+    if raw_context_token_indices is None:
+        context_source = "answer_previous"
+        raw_context_index_tensor = answer_index_tensor - 1
+        valid_mask = raw_context_index_tensor >= 0
+    else:
+        context_source = "context_token_indices"
+        raw_context_index_tensor = torch.as_tensor(
+            raw_context_token_indices,
+            dtype=torch.long,
+            device=cache_tensor.device,
+        ).reshape(-1)
+        if raw_context_index_tensor.shape != answer_index_tensor.shape:
+            raise ValueError(
+                "capture_context_enhanced_extraction_snapshot requires context_token_indices to align with "
+                f"answer_indices ({raw_context_index_tensor.shape} vs {answer_index_tensor.shape})"
+            )
+        valid_mask = raw_context_index_tensor >= 0
+    context_index_tensor = raw_context_index_tensor.clamp(min=0)
+    context_states = cache_tensor[batch_indices, context_index_tensor].detach().cpu().float()
+
+    batch_flag = _get_analysis_value(analysis_batch, "use_answer_state_as_basis")
+    resolved_use_answer_state_as_basis = bool(batch_flag) if batch_flag is not None else use_answer_state_as_basis
+    scaled_answer, dot_num, dot_den, projected_states = project_context_enhanced_states(
+        answer_states,
+        context_states,
+        context_scale=context_scale,
+        use_answer_state_as_basis=resolved_use_answer_state_as_basis,
+    )
+    final_latent_states = torch.where(
+        valid_mask.unsqueeze(-1).expand_as(answer_states),
+        projected_states,
+        answer_states,
+    )
+
+    return ContextEnhancedExtractionSnapshot(
+        cache_key=cache_key,
+        context_source=context_source,
+        use_answer_state_as_basis=resolved_use_answer_state_as_basis,
+        projection_basis=("answer_state" if resolved_use_answer_state_as_basis else "context_state"),
+        answer_indices=tuple(int(index) for index in answer_index_tensor.detach().cpu().tolist()),
+        answer_states=answer_states,
+        context_indices=tuple(int(index) for index in context_index_tensor.detach().cpu().tolist()),
+        context_states=context_states,
+        scaled_answer=scaled_answer,
+        dot_num=dot_num.detach().cpu().float(),
+        dot_den=dot_den.detach().cpu().float(),
+        projected_states=projected_states.detach().cpu().float(),
+        final_latent_states=final_latent_states.detach().cpu().float(),
+    )
+
+
+@dataclass(frozen=True)
+class FeatureParitySummary:
+    """Set-level overlap summary for two top-feature collections."""
+
+    left_label: str
+    right_label: str
+    left_only: tuple[tuple[int, int, int], ...]
+    shared: tuple[tuple[int, int, int], ...]
+    right_only: tuple[tuple[int, int, int], ...]
+    jaccard: float
+    shared_score_cosine: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "left_label": self.left_label,
+            "right_label": self.right_label,
+            "left_only": [list(row) for row in self.left_only],
+            "shared": [list(row) for row in self.shared],
+            "right_only": [list(row) for row in self.right_only],
+            "jaccard": self.jaccard,
+            "shared_score_cosine": self.shared_score_cosine,
+        }
+
+
+def compare_top_feature_sets(
+    left_rows: Sequence[Sequence[int]],
+    right_rows: Sequence[Sequence[int]],
+    *,
+    left_scores: Sequence[float] | torch.Tensor | None = None,
+    right_scores: Sequence[float] | torch.Tensor | None = None,
+    left_label: str,
+    right_label: str,
+) -> FeatureParitySummary:
+    """Compute overlap diagnostics for two ordered top-feature collections."""
+
+    left = [_coerce_feature_row(row) for row in left_rows]
+    right = [_coerce_feature_row(row) for row in right_rows]
+    left_set = set(left)
+    right_set = set(right)
+    shared = tuple(row for row in left if row in right_set)
+    left_only = tuple(row for row in left if row not in right_set)
+    right_only = tuple(row for row in right if row not in left_set)
+    union_size = len(left_set | right_set)
+    jaccard = 0.0 if union_size == 0 else len(shared) / union_size
+
+    shared_score_cosine: float | None = None
+    if shared and left_scores is not None and right_scores is not None:
+        left_score_tensor = torch.as_tensor(left_scores, dtype=torch.float32).reshape(-1)
+        right_score_tensor = torch.as_tensor(right_scores, dtype=torch.float32).reshape(-1)
+        left_score_map = {row: float(left_score_tensor[index].item()) for index, row in enumerate(left)}
+        right_score_map = {row: float(right_score_tensor[index].item()) for index, row in enumerate(right)}
+        left_shared = torch.tensor([left_score_map[row] for row in shared], dtype=torch.float32)
+        right_shared = torch.tensor([right_score_map[row] for row in shared], dtype=torch.float32)
+        left_norm = torch.linalg.vector_norm(left_shared)
+        right_norm = torch.linalg.vector_norm(right_shared)
+        if left_norm.item() > 0 and right_norm.item() > 0:
+            shared_score_cosine = float(
+                torch.nn.functional.cosine_similarity(left_shared.unsqueeze(0), right_shared.unsqueeze(0)).item()
+            )
+
+    return FeatureParitySummary(
+        left_label=left_label,
+        right_label=right_label,
+        left_only=left_only,
+        shared=shared,
+        right_only=right_only,
+        jaccard=jaccard,
+        shared_score_cosine=shared_score_cosine,
+    )
 
 
 RUNIF: Any = RunIf

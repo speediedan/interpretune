@@ -52,7 +52,8 @@ log = logging.getLogger(__name__)
 
 # NOTE [One-Door Body Keys]: the top-level keys of a flattened one-door configuration body (hub design
 # v3 §11.4). They are BOTH declared on the parse surface and read by the argv shim's file merge, and
-# the two must not drift: the 4b migration flattened every shipped experiments/cli config while leaving
+# the two must not drift: the 4b migration flattened every shipped benchmark config in
+# tests/benchmarks/configs/ while leaving
 # the parse surface knowing only the legacy `session_cfg` subtree, so jsonargparse rejected all of them
 # before the loader ever ran. `tests/core/test_components_cli.py` pins the parse surface against the
 # shipped configs so a future dialect change cannot ship that way again.

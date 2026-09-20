@@ -1,5 +1,5 @@
 {
-  "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_qlora_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma2/2b_chat_lightning_qlora_zs_test.yaml": {
     "adapter_ctx": [
       "lightning"
     ],
@@ -242,7 +242,7 @@
       "entailment_mapping_indices": null
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_sl_br_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma2/2b_chat_lightning_sl_br_zs_test.yaml": {
     "adapter_ctx": [
       "lightning",
       "sae_lens"
@@ -524,7 +524,7 @@
       "entailment_mapping_indices": null
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_sl_ht_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma2/2b_chat_lightning_sl_ht_zs_test.yaml": {
     "adapter_ctx": [
       "lightning",
       "sae_lens"
@@ -811,7 +811,7 @@
       "entailment_mapping_indices": null
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_sl_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma2/2b_chat_lightning_sl_zs_test.yaml": {
     "adapter_ctx": [
       "lightning",
       "sae_lens"
@@ -1098,7 +1098,7 @@
       "entailment_mapping_indices": null
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml": {
     "adapter_ctx": [
       "lightning"
     ],
@@ -1332,7 +1332,7 @@
       "entailment_mapping_indices": null
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_it_ct_ns_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma2/2b_it_ct_ns_zs_test.yaml": {
     "adapter_ctx": [
       "circuit_tracer",
       "core",
@@ -1608,7 +1608,7 @@
       }
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gemma2/2b_nonchat_lightning_qlora_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma2/2b_nonchat_lightning_qlora_zs_test.yaml": {
     "adapter_ctx": [
       "lightning"
     ],
@@ -1854,7 +1854,7 @@
       "entailment_mapping_indices": null
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gemma3/1b_it_ct_ns_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma3/1b_it_ct_ns_zs_test.yaml": {
     "adapter_ctx": [
       "circuit_tracer",
       "core",
@@ -2109,7 +2109,7 @@
       }
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml": {
     "adapter_ctx": [
       "circuit_tracer",
       "lightning",
@@ -2364,7 +2364,7 @@
       }
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gemma3/1b_it_lightning_ns_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma3/1b_it_lightning_ns_zs_test.yaml": {
     "adapter_ctx": [
       "lightning",
       "nnsight"
@@ -2597,7 +2597,7 @@
       "entailment_mapping_indices": null
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gemma3/1b_it_ns_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma3/1b_it_ns_zs_test.yaml": {
     "adapter_ctx": [
       "core",
       "nnsight"
@@ -2830,7 +2830,7 @@
       "entailment_mapping_indices": null
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gemma3/4b_262k_it_ct_ns_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma3/4b_262k_it_ct_ns_zs_test.yaml": {
     "adapter_ctx": [
       "circuit_tracer",
       "core",
@@ -3098,7 +3098,7 @@
       }
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gemma3/4b_it_ct_ns_zs_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gemma3/4b_it_ct_ns_zs_test.yaml": {
     "adapter_ctx": [
       "circuit_tracer",
       "core",
@@ -3366,7 +3366,7 @@
       }
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/gpt2/lightning_tl_rte_small_noquant_test.yaml": {
+  "tests/benchmarks/configs/rte_boolq/gpt2/lightning_tl_rte_small_noquant_test.yaml": {
     "adapter_ctx": [
       "lightning",
       "transformer_lens"
@@ -3640,7 +3640,7 @@
       "entailment_mapping_indices": null
     }
   },
-  "src/it_examples/experiments/cli/rte_boolq/llama3_2/lightning_rte_3b_qlora_zero_shot_test_only.yaml": {
+  "tests/benchmarks/configs/rte_boolq/llama3_2/lightning_rte_3b_qlora_zero_shot_test_only.yaml": {
     "adapter_ctx": [
       "lightning"
     ],

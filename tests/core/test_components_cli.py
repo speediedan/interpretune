@@ -110,7 +110,10 @@ def test_compose_config_relative(clean_cli_env, cli_test_configs, fnf_error, glo
                     cli_cfg.run, cli_cfg.cli_adapter, cli_cfg.compose_cfg, cfg_files, cli_cfg.extra_args
                 )
             elif glob_search:  # we always warn with glob_search
-                file_name_only_path = cfg_files[1].parts[-1]
+                # NOTE (#499): the bare basename must name a file shipped under IT_BASE for the
+                # glob fallback to find; the benchmark configs moved to tests/benchmarks/configs/,
+                # so this names a stable examples-tree config instead of the relocated base_debug.yaml.
+                file_name_only_path = "datamodule.rte_boolq.yaml"
                 cfg_files = cfg_files[:-1] + (file_name_only_path,)
                 with pytest.warns(UserWarning, match="Glob search within"):
                     cli_main, *_ = gen_cli_args(
@@ -159,7 +162,7 @@ def test_bootstrap_cli(clean_cli_env, l_cli, run):
 # NOTE [Parse Surface vs Loader]: `tests/core/test_loader_equivalence.py` pins what the LOADER makes of
 # these bodies; the tests below pin that the argv/config-file shim ACCEPTS them in the first place.
 # Nothing pinned the second half before, and the gap shipped: the 4b migration (25ee43c) flattened every
-# config in `experiments/cli/` to the one-door schema without adding those top-level keys to the parse
+# config in `tests/benchmarks/configs/` to the one-door schema without adding those top-level keys to the parse
 # surface, so all 15 failed `interpretune --config <cfg>` with rc=2. The loader harness stayed green
 # (it bypasses the parser) and every CLI test config stayed in the legacy `session_cfg` dialect (see
 # `tests/parity_acceptance/cfg_aliases.py`), so nothing failed, while the entire registered-benchmark

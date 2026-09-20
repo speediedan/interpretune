@@ -39,8 +39,7 @@ def _task_text_field_map() -> dict[str, tuple[str, str]]:
 
 
 DEFAULT_EXPERIMENT_CONFIG = (
-    Path(__file__).resolve().parents[2]
-    / "it_examples/experiments/cli/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml"
+    Path(__file__).resolve().parents[3] / "tests/benchmarks/configs/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml"
 )
 
 

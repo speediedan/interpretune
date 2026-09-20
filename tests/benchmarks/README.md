@@ -138,7 +138,7 @@ python tests/benchmarks/run_benchmarks.py --benchmark rte_boolq/gemma2_2b_it_l -
    benchmarks:
      <experiment_name>:
        <benchmark_id>:
-         config_path: src/it_examples/experiments/cli/<experiment>/<config>.yaml
+         config_path: tests/benchmarks/configs/<experiment>/<config>.yaml
          expected_accuracy: null  # Set after first validated run
          tolerance: 0.03
          cli_mode: lightning     # Or "core" for non-Lightning configs
