@@ -373,10 +373,16 @@ def main() -> int:
         # An empty surface means yaml was unavailable (see bundled_op_names), not that there are no ops.
         # Reporting the difference matters: silently skipping would read as "checked and clean".
         op_check_available = bool(current_ops)
+        missing: list[str] = []
         for source in notebooks:
             rel = source.relative_to(PUBLISH_DIR)
             artifact = ARTIFACT_DIR / rel
             if not artifact.exists():
+                # A published notebook with NO artifact is the case this check was blind to: conf.py falls
+                # back to the code-only publish copy, so the site renders the notebook without outputs and
+                # nothing fails. Every notebook-changing PR ships its rendered artifact, so an absent one is
+                # drift of the same kind as a stale one, reported by name with the command that produces it.
+                missing.append(str(rel))
                 continue
             artifact_nb = load_notebook(artifact)
             if not artifact_matches_source(artifact_nb, load_notebook(source)):
@@ -392,6 +398,12 @@ def main() -> int:
                 # Outputs are current; the STAMP under-records (#318). Without this, every op missing
                 # from the stamp is invisible to the next rename's drift check for this artifact.
                 stamp_stale.append(f"{rel}: outputs mention {', '.join(gaps)} absent from the recorded surface")
+        for rel_str in missing:
+            print(
+                f"MISSING artifact (render it: python scripts/render_notebook_docs_artifacts.py "
+                f"--notebook {Path(rel_str).stem}): {rel_str}",
+                file=sys.stderr,
+            )
         for rel_str in stale:
             print(f"STALE artifact (rebuild it): {rel_str}", file=sys.stderr)
         for entry in output_stale:
@@ -409,8 +421,8 @@ def main() -> int:
             print(f"note: no recorded op surface, output drift not checkable: {rel_str}", file=sys.stderr)
         if not op_check_available:
             print("note: pyyaml unavailable, output-drift check skipped (source drift still checked)", file=sys.stderr)
-        total = len(stale) + len(output_stale) + len(stamp_stale)
-        print(f"{total} stale artifact(s); {len(unstamped)} unstamped")
+        total = len(missing) + len(stale) + len(output_stale) + len(stamp_stale)
+        print(f"{total} stale or missing artifact(s); {len(unstamped)} unstamped")
         return DRIFT_EXIT_CODE if total else 0
 
     if args.restamp:

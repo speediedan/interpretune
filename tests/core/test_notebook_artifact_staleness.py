@@ -172,6 +172,51 @@ class TestDriftExitCodeContract:
         assert "NOT a drift report" in workflow
 
 
+class TestMissingArtifactIsDrift:
+    """A published notebook with no artifact renders code-only on the site with no error anywhere, which is the
+    state the artifact mandate exists to prevent.
+
+    Measured before this landed: `--check-stale` exited 0
+    with one notebook reported MISSING by `--list`.
+    """
+
+    @staticmethod
+    def _notebook() -> dict:
+        return {"cells": [{"cell_type": "code", "source": ["x = 1\n"], "outputs": [], "metadata": {}}], "metadata": {}}
+
+    def _plant(self, tmp_path: Path, renderer, monkeypatch, with_artifact: bool) -> None:
+        import json
+
+        publish = tmp_path / "publish" / "lane"
+        artifacts = tmp_path / "artifacts" / "lane"
+        publish.mkdir(parents=True)
+        (publish / "nb.ipynb").write_text(json.dumps(self._notebook()), encoding="utf-8")
+        if with_artifact:
+            artifacts.mkdir(parents=True)
+            # Same cells as the source: passes `artifact_matches_source`, so only the presence differs.
+            (artifacts / "nb.ipynb").write_text(json.dumps(self._notebook()), encoding="utf-8")
+        monkeypatch.setattr(renderer, "PUBLISH_DIR", tmp_path / "publish")
+        monkeypatch.setattr(renderer, "ARTIFACT_DIR", tmp_path / "artifacts")
+        monkeypatch.setattr(renderer, "bundled_op_names", lambda: set())
+
+    def test_a_published_notebook_with_no_artifact_fails_the_check_by_name(
+        self, tmp_path, renderer, monkeypatch, capsys
+    ):
+        """Positive control: the check can fire on exactly the planted absence."""
+        self._plant(tmp_path, renderer, monkeypatch, with_artifact=False)
+        monkeypatch.setattr(sys, "argv", ["render_notebook_docs_artifacts.py", "--check-stale"])
+        assert renderer.main() == renderer.DRIFT_EXIT_CODE
+        err = capsys.readouterr().err
+        assert "MISSING artifact" in err and "lane/nb.ipynb" in err and "--notebook nb" in err
+
+    def test_a_present_matching_artifact_passes(self, tmp_path, renderer, monkeypatch, capsys):
+        """Negative control on the same fixture: presence is the only thing that changed."""
+        self._plant(tmp_path, renderer, monkeypatch, with_artifact=True)
+        monkeypatch.setattr(sys, "argv", ["render_notebook_docs_artifacts.py", "--check-stale"])
+        assert renderer.main() == 0
+        assert "MISSING artifact" not in capsys.readouterr().err
+
+
 class TestStampUnderRecording:
     """#318: an artifact re-rendered while the stamping machinery changed under it carries CURRENT outputs with a
     STALE stamp.

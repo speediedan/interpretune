@@ -33,8 +33,9 @@ jobs:
           python scripts/render_notebook_docs_artifacts.py --check-stale && rc=0 || rc=$?
           case $rc in
             0) ;;
-            3) echo "::error::A docs notebook artifact has drifted from its publish source. \
-          Rebuild it with: python scripts/render_notebook_docs_artifacts.py --notebook <name>"; exit 1 ;;
+            3) echo "::error::A docs notebook artifact has drifted from its publish source, or a published \
+          notebook has no rendered artifact at all (the page would render code-only). \
+          Render it with: python scripts/render_notebook_docs_artifacts.py --notebook <name>"; exit 1 ;;
             *) echo "::error::The notebook-artifact staleness check FAILED TO RUN (exit $rc). \
           This is NOT a drift report -- see the log above for the real error."; exit 1 ;;
           esac
