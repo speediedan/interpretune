@@ -853,6 +853,15 @@ Dev notebooks live in `src/it_examples/notebooks/dev/` and are auto-published to
 - **CLI flags:** `--dry-run` (preview), `--check-only` (CI validation), `--force` (republish all). Launch.json has debug configs for each mode.
 - **Workflow:** Edit dev notebooks only → commit → pre-commit publishes automatically. Never edit publish notebooks directly.
 - **Verification:** After any notebook changes, run `python scripts/publish_notebooks.py --check-only` to verify published notebooks are in sync.
+- **Rendered artifacts are part of the change.** A PR that adds or edits a notebook also re-renders its docs
+  artifact (`docs/notebook_artifacts/<lane>/<name>.ipynb`, produced by
+  `python scripts/render_notebook_docs_artifacts.py --notebook <name>` on a host with the full environment; some
+  notebooks need a GPU, gated weights, Hub tokens or the local Neuronpedia stack) and commits it, so the PR's
+  docs preview (`https://interpretune--<PR>.org.readthedocs.build/en/<PR>/notebooks/<lane>/<name>.html`) shows
+  real outputs. Reviewers read that page, not the code-only fallback, before a merge is proposed.
+  `--check-stale` fails by name on a stale artifact AND on a published notebook with no artifact at all: the
+  fallback renders code-only with no error anywhere, which is the state this rule exists to prevent. A new
+  notebook also gets its row in `docs/source/examples.md` in the same PR.
 
 ## Elevated-Access Blockers
 
