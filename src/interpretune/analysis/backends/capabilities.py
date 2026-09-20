@@ -337,6 +337,29 @@ def _unwrap_execution_handle(model: Any) -> Any:
     return inner
 
 
+def _circuit_tracer_own_attention_implementations() -> tuple[str, ...]:
+    """Attention implementation names circuit-tracer registered with transformers itself.
+
+    A circuit-tracer backend may point the model it builds graphs on at a variant of eager attention it registers under
+    its own name (a frozen eager, so attention patterns can be replayed) and resolve attention through its own taps
+    rather than through the modeling module's function. Such an implementation is what construction on that backend
+    NEEDS, not a foreign substitution, so it is accepted by PROVENANCE: any registered implementation whose function
+    lives in circuit-tracer's own package. No name is spelled here, so a rename there cannot leave a stale literal
+    accepting nothing, and nothing below names any particular backend. Absent circuit-tracer or its registration,
+    nothing is added and the check is unchanged.
+    """
+    try:
+        from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+    except Exception:
+        return ()
+    accepted: list[str] = []
+    for name in ALL_ATTENTION_FUNCTIONS.valid_keys():
+        fn = ALL_ATTENTION_FUNCTIONS.get(name)
+        if str(getattr(fn, "__module__", "")).startswith("circuit_tracer."):
+            accepted.append(str(name))
+    return tuple(accepted)
+
+
 @dataclass(frozen=True)
 class AttributionGraphSupport:
     """What attribution-graph construction requires of the model it runs on, checked before construction.
@@ -365,7 +388,7 @@ class AttributionGraphSupport:
             return None  # an architecture without a module-level eager attention resolves its locations another way
         modeling_name = modeling.__name__
         impl = getattr(getattr(inner, "config", None), "_attn_implementation", None)
-        if impl not in (None, "eager"):
+        if impl not in (None, "eager", *_circuit_tracer_own_attention_implementations()):
             return f"attribution graphs need the eager attention implementation and the model is configured as {impl!r}"
         if getattr(fn, "__module__", None) != modeling_name:
             return (

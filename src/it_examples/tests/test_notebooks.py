@@ -589,6 +589,7 @@ def test_notebook_discovery():
         "circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb",
         "example_op_collections/bundled_ops_hub_optin.ipynb",
         "example_op_collections/op_collection_example.ipynb",
+        "interp_engine_example/interp_engine_hub_adapter.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",
         "shared_analysis/shared_analysis_roundtrip.ipynb",
