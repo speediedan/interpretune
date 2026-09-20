@@ -159,13 +159,14 @@ class TestTheCompositionDependsOnDelivery:
 
 
 class TestTheJSpaceSectionNamesTheRefusalItWorksAround:
-    def test_the_jspace_section_is_on_and_says_why_it_rejects_instead_of_patching(self, dev_cells):
-        """Section 4b runs, and the flag's own comment block names the refusal the section works around.
+    def test_the_jspace_section_is_on_and_names_the_two_pass_swap_and_the_refusal(self, dev_cells):
+        """Section 4b runs, and the flag's own comment block names the refusal it works around and how.
 
-        The sibling notebook's 4b is a lens-coordinate ``patch`` the interp-engine backend refuses by name;
-        this notebook runs ``reject`` over the same pole pair instead. Asserted on the contiguous comment
-        block directly above the flag, not the whole cell, so an unrelated mention elsewhere cannot satisfy
-        it (measured on the first version of the predecessor test).
+        The sibling notebook's 4b is a one-pass lens-coordinate ``patch`` the interp-engine backend refuses by
+        name; this notebook runs the same swap in two passes, a captured clean activation and a static ``add``
+        of the patch's own delta. Asserted on the contiguous comment block directly above the flag, not the
+        whole cell, so an unrelated mention elsewhere cannot satisfy it (measured on the first version of the
+        predecessor test).
         """
         import itertools
 
@@ -178,21 +179,27 @@ class TestTheJSpaceSectionNamesTheRefusalItWorksAround:
                 lambda ln: ln.strip().startswith("#") or not ln.strip(), reversed(preamble.splitlines())
             )
         )
-        for word in ("patch", "reject", "interp-engine"):
+        for word in ("patch", "two passes", "add", "interp-engine"):
             assert word in trailing_comment, (
-                f"RUN_JSPACE_SECTION is on without the comment directly above it naming {word!r}: the reason "
-                "this section rejects instead of patching is the settled refusal of a J-space patch over the "
-                "interp-engine backend, and a bare True reads as the sibling's section copied across"
+                f"RUN_JSPACE_SECTION is on without the comment directly above it naming {word!r}: this section "
+                "runs the sibling's swap as a two-pass add because a one-pass J-space patch is refused by name "
+                "over the interp-engine backend, and a bare True reads as the sibling's section copied across"
             )
 
-    def test_the_jspace_cell_runs_the_reject_composite_and_never_the_patch_one(self, dev_cells):
-        """The 4b code runs the collection's ``jlens_reject_intervention`` composite; the sibling's
-        ``jlens_patch_intervention`` (which would run the refused ``patch``) is not called."""
-        _, code = _find_cell(dev_cells, "it.jlens_reject_intervention(")
-        assert "it.jlens_reject_intervention(" in code, "the J-space cell must run the reject composite"
+    def test_the_jspace_cell_runs_the_two_pass_composite_and_never_the_one_pass_patch(self, dev_cells):
+        """The 4b code runs the collection's ``jlens_patch_via_add_intervention`` composite and asserts the flip
+        the sibling asserts; the sibling's one-pass ``jlens_patch_intervention`` (the refused ``patch``) is not
+        called, and the reject twin is not what runs either (its ablation is not parity)."""
+        _, code = _find_cell(dev_cells, "it.jlens_patch_via_add_intervention(")
+        assert "it.jlens_patch_via_add_intervention(" in code, "the J-space cell must run the two-pass composite"
         assert "it.jlens_patch_intervention(" not in code, (
-            "the patch composite is refused by name over this backend; the cell must not call it"
+            "the one-pass patch composite is refused by name over this backend; the cell must not call it"
         )
+        assert "it.jlens_reject_intervention(" not in code, "the reject twin ablates the pair; it is not the swap"
+        assert "jlens_clean_coords" in code and "jlens_swapped_coords" in code, (
+            "the cell prints the clean and swapped coordinates so the swap is visible, not inferred"
+        )
+        assert "assert jl_post_gap > 0" in code, "the cell asserts the flip the sibling asserts"
 
 
 class TestTheNotebookMatchesTheApiItCalls:
