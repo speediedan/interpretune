@@ -207,7 +207,8 @@ class TestMissingArtifactIsDrift:
         monkeypatch.setattr(sys, "argv", ["render_notebook_docs_artifacts.py", "--check-stale"])
         assert renderer.main() == renderer.DRIFT_EXIT_CODE
         err = capsys.readouterr().err
-        assert "MISSING artifact" in err and "lane/nb.ipynb" in err and "--notebook nb" in err
+        # The path is printed in the platform's own spelling (a backslash on Windows), so compare that form.
+        assert "MISSING artifact" in err and str(Path("lane") / "nb.ipynb") in err and "--notebook nb" in err
 
     def test_a_present_matching_artifact_passes(self, tmp_path, renderer, monkeypatch, capsys):
         """Negative control on the same fixture: presence is the only thing that changed."""
