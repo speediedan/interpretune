@@ -33,7 +33,11 @@ class TestGemmaEagerAttentionRestore:
         for module in modules.values():
             assert module.eager_attention_forward is _stand_in, "a bridge alive from earlier must keep its hooks"
 
+    @pytest.mark.usefixtures("unpatched_gemma_eager_attention")
     def test_a_snapshot_taken_after_the_patch_is_refused_by_name(self, monkeypatch):
+        # The fixture matters, not the monkeypatch: the snapshot iterates gemma2 first, and a bridge
+        # built earlier in the session leaves the process-wide patch on it, which would be refused
+        # under the wrapper's name instead of the planted stand-in's.
         module = importlib.import_module(GEMMA_MODELING_MODULES[1])
         monkeypatch.setattr(module, "eager_attention_forward", _stand_in)
         with pytest.raises(RuntimeError, match="already .*_stand_in; a snapshot taken now cannot vouch"):
