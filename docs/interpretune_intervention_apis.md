@@ -9,8 +9,8 @@ Interpretune intervenes on two different objects, at two levels, and every name 
 | Model backend | `ModelBackendCapability.ACTIVATION_INTERVENTION` | a residual-stream tensor at a vocabulary point (the **embed path**) | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (modes, position scopes) |
 | Analysis backend | `AnalysisBackendCapability.FEATURE_INTERVENTION` | latent feature activations `(layer, position, feature_id) -> value` (the **store path**) | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `FeatureInterventionSupport` (value sources, constrainable layers, returned activations) |
 
-The table in `src/it_examples/experiments/notebook/intervention_capabilities_overview.md` is the definition both
-enums cite; this note is the API contract beneath it.
+The two enums cite a shared two-path table (residual-stream tensor vs latent feature activations,
+above); this note is the API contract beneath it.
 
 **The rule, stated once for both levels.** A capability member names a protocol surface (a `Supports*` group of
 methods) and answers only whether the backend implements it. Which configurations of that surface the backend

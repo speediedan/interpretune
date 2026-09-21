@@ -1,7 +1,7 @@
 benchmarks:
   rte_boolq:
     gemma2_2b_it_l:
-      config_path: src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml
+      config_path: tests/benchmarks/configs/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml
       expected_accuracy: 0.8087
       tolerance: 0.03
       adapter_ctx:
@@ -30,7 +30,7 @@ benchmarks:
         datasets: 5.0.0
         torch: 2.13.0+cu130
     gemma2_2b_it_l_sl_ht:
-      config_path: src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_sl_ht_zs_test.yaml
+      config_path: tests/benchmarks/configs/rte_boolq/gemma2/2b_chat_lightning_sl_ht_zs_test.yaml
       expected_accuracy: 0.8123
       tolerance: 0.03
       adapter_ctx:
@@ -62,7 +62,7 @@ benchmarks:
         datasets: 5.0.0
         torch: 2.13.0+cu130
     gemma2_2b_it_l_sl_br:
-      config_path: src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_sl_br_zs_test.yaml
+      config_path: tests/benchmarks/configs/rte_boolq/gemma2/2b_chat_lightning_sl_br_zs_test.yaml
       expected_accuracy: 0.7509
       tolerance: 0.03
       adapter_ctx:
@@ -94,7 +94,7 @@ benchmarks:
         datasets: 5.0.0
         torch: 2.13.0+cu130
     gemma3_1b_it_l_ct_ns:
-      config_path: src/it_examples/experiments/cli/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml
+      config_path: tests/benchmarks/configs/rte_boolq/gemma3/1b_it_lightning_ct_ns_zs_test.yaml
       expected_accuracy: 0.7184
       tolerance: 0.05
       adapter_ctx:
@@ -127,7 +127,7 @@ benchmarks:
         datasets: 5.0.0
         torch: 2.13.0+cu130
     gemma3_4b_it_ct_ns:
-      config_path: src/it_examples/experiments/cli/rte_boolq/gemma3/4b_it_ct_ns_zs_test.yaml
+      config_path: tests/benchmarks/configs/rte_boolq/gemma3/4b_it_ct_ns_zs_test.yaml
       expected_accuracy: 0.795
       tolerance: 1.0
       cli_mode: core
@@ -162,7 +162,7 @@ benchmarks:
         datasets: 5.0.0
         torch: 2.13.0+cu130
     gemma3_4b_262k_it_ct_ns:
-      config_path: src/it_examples/experiments/cli/rte_boolq/gemma3/4b_262k_it_ct_ns_zs_test.yaml
+      config_path: tests/benchmarks/configs/rte_boolq/gemma3/4b_262k_it_ct_ns_zs_test.yaml
       expected_accuracy: 0.795
       tolerance: 1.0
       cli_mode: core
@@ -197,7 +197,7 @@ benchmarks:
         datasets: 5.0.0
         torch: 2.13.0+cu130
     gemma3_1b_it_l_ns:
-      config_path: src/it_examples/experiments/cli/rte_boolq/gemma3/1b_it_lightning_ns_zs_test.yaml
+      config_path: tests/benchmarks/configs/rte_boolq/gemma3/1b_it_lightning_ns_zs_test.yaml
       expected_accuracy: 0.722
       tolerance: 0.05
       adapter_ctx:
@@ -228,7 +228,7 @@ benchmarks:
         datasets: 5.0.0
         torch: 2.13.0+cu130
     gemma2_2b_it_ct_ns:
-      config_path: src/it_examples/experiments/cli/rte_boolq/gemma2/2b_it_ct_ns_zs_test.yaml
+      config_path: tests/benchmarks/configs/rte_boolq/gemma2/2b_it_ct_ns_zs_test.yaml
       expected_accuracy: 0.8094
       tolerance: 0.05
       cli_mode: core
@@ -262,7 +262,7 @@ benchmarks:
         datasets: 5.0.0
         torch: 2.13.0+cu130
     gemma3_1b_it_ct_ns:
-      config_path: src/it_examples/experiments/cli/rte_boolq/gemma3/1b_it_ct_ns_zs_test.yaml
+      config_path: tests/benchmarks/configs/rte_boolq/gemma3/1b_it_ct_ns_zs_test.yaml
       expected_accuracy: 0.7194
       tolerance: 0.05
       cli_mode: core
@@ -296,7 +296,7 @@ benchmarks:
         datasets: 5.0.0
         torch: 2.13.0+cu130
     gemma3_1b_it_ns:
-      config_path: src/it_examples/experiments/cli/rte_boolq/gemma3/1b_it_ns_zs_test.yaml
+      config_path: tests/benchmarks/configs/rte_boolq/gemma3/1b_it_ns_zs_test.yaml
       expected_accuracy: 0.723
       tolerance: 0.05
       cli_mode: core

@@ -38,9 +38,9 @@ class ModelBackendCapability(Enum):
 
     ACTIVATION_INTERVENTION = "activation_intervention"
     """``SupportsIntervention``: baseline-vs-intervention paired execution (``fwd_w_intervention``) on a residual-
-    stream tensor at a vocabulary point, the embed path of the two-path table in
-    ``src/it_examples/experiments/notebook/intervention_capabilities_overview.md``; the analysis-level
-    ``FEATURE_INTERVENTION`` acts on latent feature activations instead."""
+    stream tensor at a vocabulary point, the embed path of the two-path table (residual-stream tensor vs latent
+    feature activations); the analysis-level ``FEATURE_INTERVENTION`` acts on latent feature activations
+    instead."""
 
 
 class PositionScope(str, Enum):
@@ -255,8 +255,8 @@ class AnalysisBackendCapability(Enum):
 
     Same rule as :class:`ModelBackendCapability`: a member names a ``Supports*`` protocol and answers whether it is
     implemented; its configurations live in the record on that protocol (:class:`AttributionGraphSupport`,
-    :class:`FeatureInterventionSupport`). ``FEATURE_INTERVENTION`` acts on latent feature activations, the store
-    path of the two-path table in ``src/it_examples/experiments/notebook/intervention_capabilities_overview.md``;
+    :class:`FeatureInterventionSupport`).     ``FEATURE_INTERVENTION`` acts on latent feature activations, the store
+    path of the two-path table (residual-stream tensor vs latent feature activations);
     the model-level ``ACTIVATION_INTERVENTION`` acts on a residual-stream tensor at a point.
     """
 

@@ -17,7 +17,7 @@ from typing import Any
 from interpretune.session import ITSessionConfig
 
 REPO_ROOT = Path(__file__).parent.parent.parent
-CLI_EXPERIMENTS_DIR = REPO_ROOT / "src" / "it_examples" / "experiments" / "cli" / "rte_boolq"
+CLI_EXPERIMENTS_DIR = REPO_ROOT / "tests" / "benchmarks" / "configs" / "rte_boolq"
 
 
 def cli_experiment_configs() -> list[Path]:

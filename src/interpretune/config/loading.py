@@ -1,8 +1,8 @@
 """The unified declarative session-configuration loader (hub design v3 §11.4, lane 4a).
 
 ONE DOOR: the input mapping is the published configuration body (design §4.4) — the same schema whether
-the body came from a hub-fetched component configuration, an in-repo ``examples/`` tree, or (post-4b) an
-``experiments/cli`` config. Structured key fields, when present, are validated by the same parity code the
+the body came from a hub-fetched component configuration, an in-repo ``examples/`` tree, or (post-4b) a
+``tests/benchmarks/configs`` config. Structured key fields, when present, are validated by the same parity code the
 registry and publish paths use.
 
 ONE MERGE SITE: ``shared_config`` application happens here, through the registry factories
@@ -233,7 +233,7 @@ def load_datamodule_cfg(
 def session_body_from_cli_mapping(session_cfg_mapping: dict[str, Any]) -> dict[str, Any]:
     """Convert a legacy ``session_cfg:``-shaped CLI mapping into the one-door configuration body.
 
-    The argv shim's translation until 4b rewrites the ``experiments/cli`` configs into the published
+    The argv shim's translation until 4b rewrites the ``tests/benchmarks/configs`` configs into the published
     body outright: the ``ITSharedConfig`` fields the CLI propagated datamodule → module via
     ``link_arguments`` are extracted into a ``shared_config`` block, so the factories apply the SAME
     values to both configs (the one merge site replacing the parser-time link DAG).

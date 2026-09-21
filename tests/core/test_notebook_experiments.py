@@ -218,18 +218,6 @@ class TestExperimentHooks:
 
         assert not any("concept_direction" in m for m in sys.modules)
 
-    def test_the_experiment_registers_its_hooks_on_import(self):
-        import it_examples.experiments.notebook.concept_direction  # noqa: F401
-        from interpretune.harness import nb_harness_utils
-
-        for name in (
-            "build_classification_prompt_text",
-            "resolve_artifact_output_dir",
-            "save_preserved_intervention_artifacts",
-            "tensor_fingerprint",
-        ):
-            assert nb_harness_utils._EXPERIMENT_HOOKS.require(name) is not None
-
     def test_gemma_spelling_resolves_through_the_prompt_registry(self, tmp_path):
         """The harness seam for model-family spellings: registry, not an examples import."""
         from interpretune.harness.nb_harness_utils import _gemma_prompt_config
