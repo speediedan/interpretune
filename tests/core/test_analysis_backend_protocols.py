@@ -134,8 +134,14 @@ class TestFeatureInterventionSupport:
             FeatureInterventionSupport(value_sources=frozenset())
 
 
+@pytest.mark.usefixtures("unpatched_gemma_eager_attention")
 class TestAttributionGraphSupport:
-    """The provenance check, with the planted foreign function as the positive control."""
+    """The provenance check, with the planted foreign function as the positive control.
+
+    The class-scoped fixture restores transformers' own gemma eager attention for the class duration: any
+    TransformerLens bridge built earlier in the session replaces the process-wide module global and never puts it back,
+    which the provenance guard then (correctly) refuses.
+    """
 
     def _gemma3_model(self):
         import transformers.models.gemma3.modeling_gemma3 as modeling

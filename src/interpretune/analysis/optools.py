@@ -290,11 +290,16 @@ class UnembedNormInfo(NamedTuple):
             cancels in patch mode because scaling ``V`` scales its pseudoinverse inversely, centering
             removes an ADDITIVE uniform component, so it moves the direction and with it the plane a
             swap happens in. :func:`fold_norm_into_unembed_rows` applies the right one per kind.
+        norm_bias: The final norm's additive bias (LayerNorm families), or ``None`` when the norm
+            carries none or none resolved. Readout-only: the bias contributes an input-independent
+            logit offset, so it moves a readout ranking while dropping out of every direction. The
+            readout adds ``w_u @ norm_bias``; direction builders ignore this field.
     """
 
     w_u: torch.Tensor
     norm_scale: torch.Tensor | None
     norm_kind: str
+    norm_bias: torch.Tensor | None = None
 
 
 def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
@@ -343,7 +348,13 @@ def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
                     if isinstance(weight, torch.Tensor):
                         kind = "layernorm" if "LayerNorm" in type(norm).__name__ else "rmsnorm"
                         scale = weight if kind != "rmsnorm" else _rmsnorm_scale(norm, weight)
-                        return UnembedNormInfo(w_u=w_u, norm_scale=scale, norm_kind=kind)
+                        bias = getattr(norm, "bias", None)
+                        return UnembedNormInfo(
+                            w_u=w_u,
+                            norm_scale=scale,
+                            norm_kind=kind,
+                            norm_bias=bias if isinstance(bias, torch.Tensor) else None,
+                        )
                 return UnembedNormInfo(w_u=w_u, norm_scale=None, norm_kind="none")
         w_u = getattr(model, "W_U", None)
         if isinstance(w_u, torch.Tensor):
@@ -351,7 +362,13 @@ def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
             weight = getattr(ln_final, "w", None) if ln_final is not None else None
             if isinstance(weight, torch.Tensor):
                 kind = "layernorm" if hasattr(ln_final, "b") else "rmsnorm"
-                return UnembedNormInfo(w_u=w_u.transpose(0, 1), norm_scale=weight, norm_kind=kind)
+                tl_bias = getattr(ln_final, "b", None)
+                return UnembedNormInfo(
+                    w_u=w_u.transpose(0, 1),
+                    norm_scale=weight,
+                    norm_kind=kind,
+                    norm_bias=tl_bias if isinstance(tl_bias, torch.Tensor) else None,
+                )
             return UnembedNormInfo(w_u=w_u.transpose(0, 1), norm_scale=None, norm_kind="none")
     raise ValueError(
         "resolve_unembed_and_norm_scale: module exposes neither an HF-style `.model.lm_head/.embed_out` "

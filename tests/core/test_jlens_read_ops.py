@@ -49,20 +49,30 @@ class _RMSNorm(_Norm):
 class _LayerNorm(_Norm):
     """Centers, so the probe does not apply and the declared path handles it.
 
-    See `_RMSNorm`.
+    See `_RMSNorm`. Takes an optional additive bias, which the real LayerNorm families carry
+    and which the readout reproduces as a logit offset rather than dropping.
     """
+
+    def __init__(self, scale, bias=None):
+        super().__init__(scale)
+        self.bias = torch.nn.Parameter(bias) if bias is not None else None
 
     def forward(self, x):
         x = x.float()
-        return (
-            (x - x.mean(-1, keepdim=True)) * torch.rsqrt(x.var(-1, keepdim=True, unbiased=False) + 1e-6) * self.weight
-        )
+        out = (x - x.mean(-1, keepdim=True)) * torch.rsqrt(x.var(-1, keepdim=True, unbiased=False) + 1e-6)
+        out = out * self.weight
+        return out if self.bias is None else out + self.bias
 
 
-def _module(norm_cls=_RMSNorm, scale=None, model_type="llama"):
+def _module(norm_cls=_RMSNorm, scale=None, model_type="llama", bias=None):
     torch.manual_seed(0)
     inner = type("Inner", (), {})()
-    inner.norm = norm_cls(torch.ones(D) if scale is None else scale)
+    resolved_scale = torch.ones(D) if scale is None else scale
+    if norm_cls is _LayerNorm:
+        inner.norm = norm_cls(resolved_scale, bias)
+    else:
+        assert bias is None, "only the LayerNorm stub carries a bias, like the real families"
+        inner.norm = norm_cls(resolved_scale)
     model = type("Model", (), {})()
     model.config = type("Cfg", (), {"model_type": model_type})()
     model.lm_head = type("Head", (), {})()
@@ -132,6 +142,44 @@ class TestJLensRead:
         assert not torch.allclose(without["jlens_top_token_scores"], with_scale["jlens_top_token_scores"]), (
             "if magnitudes were unchanged the flag would be inert and cross-position comparison unaffected"
         )
+
+    def test_layernorm_bias_reaches_the_readout_scores(self, synthetic_lens):
+        """The final-norm bias is input-independent but token-dependent: it moves the readout ranking,
+        so the readout adds ``W_U @ bias`` instead of dropping it the way directions do."""
+        torch.manual_seed(0)
+        bias = torch.arange(D).float() * 0.25 - 1.0
+        module = _module(norm_cls=_LayerNorm, bias=bias)
+        acts = torch.randn(2, 5, D)
+        out = jlens_ops.jlens_read_impl(module, _batch(acts), None, 0, jlens_top_k=VOCAB)
+        h = acts[:, -1, :]
+        expected = (h - h.mean(dim=-1, keepdim=True)) @ module.model.lm_head.weight.T
+        expected = expected + module.model.lm_head.weight @ bias
+        torch.testing.assert_close(
+            out["jlens_top_token_scores"][:, 0, :],
+            expected.sort(dim=-1, descending=True).values,
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        torch.testing.assert_close(out["jlens_top_token_ids"][:, 0, :], expected.sort(dim=-1, descending=True).indices)
+
+    def test_rms_divisor_is_placed_before_the_scale(self, synthetic_lens):
+        """With a non-uniform scale the divisor must be computed on the unweighted activation: the
+        norm divides first and weights second, and anything else is a per-position magnitude error."""
+        torch.manual_seed(0)
+        scale = 0.5 + torch.arange(D).float()
+        module = _module(scale=scale)
+        acts = torch.randn(2, 3, D)
+        out = jlens_ops.jlens_read_impl(module, _batch(acts), None, 0, jlens_top_k=VOCAB, jlens_include_rms_scale=True)
+        h = acts[:, -1, :]
+        normed = h / h.pow(2).mean(dim=-1, keepdim=True).sqrt()
+        expected = (normed * scale) @ module.model.lm_head.weight.T
+        torch.testing.assert_close(
+            out["jlens_top_token_scores"][:, 0, :],
+            expected.sort(dim=-1, descending=True).values,
+            rtol=1e-4,
+            atol=1e-5,
+        )
+        torch.testing.assert_close(out["jlens_top_token_ids"][:, 0, :], expected.sort(dim=-1, descending=True).indices)
 
     def test_a_layer_the_lens_was_not_fit_at_is_refused_not_interpolated(self, synthetic_lens):
         with pytest.raises(ValueError, match="fit at layers"):
