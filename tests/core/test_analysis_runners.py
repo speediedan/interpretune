@@ -543,3 +543,61 @@ class TestGradStateAcrossAFailingRun:
         ):
             runner.core_analysis_loop(module, MagicMock())
         assert torch.is_grad_enabled(), "a failing run leaked a disabled grad state"
+
+
+class TestGeneratorCacheSharing:
+    """Deterministic fingerprints share generator cache files across runs (interpretune#554)."""
+
+    def _module(self, cache_dir):
+        module = MagicMock()
+        module.analysis_cfg.output_store.cache_dir = cache_dir
+        return module
+
+    def _run(self, monkeypatch, module, shared, base, split="validation"):
+        def fake_gen(**_kwargs):
+            yield {"value": 1}
+
+        monkeypatch.setattr("interpretune.runners.analysis.analysis_store_generator", fake_gen)
+        return generate_analysis_dataset(
+            module=module,
+            features=Features({"value": Value("int64")}),
+            it_format_kwargs={},
+            gen_kwargs={},
+            split=split,
+            fingerprint=base,
+            generator_cache_dir=shared,
+        )
+
+    def _cache_files(self, shared):
+        return sorted(p.name for p in shared.rglob("*.arrow"))
+
+    def test_same_base_reuses_cache_files(self, monkeypatch, tmp_path):
+        shared = tmp_path / "shared"
+        module = self._module(tmp_path / "workdir")
+        first = self._run(monkeypatch, module, shared, base="base-key")
+        files_after_first = self._cache_files(shared)
+        assert files_after_first, "expected generator cache files"
+        second = self._run(monkeypatch, module, shared, base="base-key")
+        assert second.to_dict() == first.to_dict()
+        assert self._cache_files(shared) == files_after_first, "second run must reuse, not regenerate"
+
+    def test_split_and_base_separate_cache_files(self, monkeypatch, tmp_path):
+        shared = tmp_path / "shared"
+        module = self._module(tmp_path / "workdir")
+        self._run(monkeypatch, module, shared, base="base-key", split="validation")
+        self._run(monkeypatch, module, shared, base="base-key", split="test")
+        self._run(monkeypatch, module, shared, base="other-key", split="validation")
+        assert len(self._cache_files(shared)) == 3
+
+    def test_default_stays_per_run(self, monkeypatch, tmp_path):
+        module = self._module(tmp_path / "workdir")
+
+        def fake_gen(**_kwargs):
+            yield {"value": 1}
+
+        monkeypatch.setattr("interpretune.runners.analysis.analysis_store_generator", fake_gen)
+        generate_analysis_dataset(
+            module=module, features=Features({"value": Value("int64")}), it_format_kwargs={}, gen_kwargs={}
+        )
+        workdir_files = sorted(p.name for p in (tmp_path / "workdir").rglob("*.arrow"))
+        assert workdir_files, "default keeps writing generator cache under the output store dir"
