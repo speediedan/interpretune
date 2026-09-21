@@ -39,15 +39,15 @@ def test_direction_rows_carry_both_factors_and_fractions_of_explained_mass():
     assert summary.unexplained_remainder == pytest.approx(0.2)
     for text in ("+3.0000", "+0.5000", "+1.5000", "75.0%", "-0.5000", "25.0%", "Remainder", "+0.2000"):
         assert text in markup, text
-    assert "Measured Δgap" not in markup and "finite diff." not in markup
+    assert "Measured &#916;gap" not in markup and "dGap/ds" not in markup
 
 
 def test_optional_columns_render_only_when_given():
     markup, _ = build_attribution_comparison_html(
         _attribution(), ["a", "b"], finite_difference_slopes=[0.55, -0.3], measured_delta=5.7
     )
-    assert "finite diff." in markup and "+0.5500" in markup and "-0.3000" in markup
-    assert "Measured Δgap" in markup and "+5.7000" in markup
+    assert "dGap/ds" in markup and "+0.5500" in markup and "-0.3000" in markup
+    assert "Measured &#916;gap" in markup and "+5.7000" in markup
 
 
 def test_features_rank_by_magnitude_with_links_signs_and_explanations():
@@ -83,3 +83,29 @@ def test_missing_factors_render_as_not_available_rather_than_guessed():
     attribution = {k: v for k, v in _attribution().items() if k not in ("delta_coords", "readouts")}
     markup, _ = build_attribution_comparison_html(attribution, ["a", "b"])
     assert markup.count("n/a") == 4 and "+1.5000" in markup
+
+
+def test_the_columns_are_sized_to_their_content_and_the_pair_scrolls_rather_than_colliding():
+    """The layout contract, pinned because breaking it is invisible in a wide notebook and ugly in the docs.
+
+    Measured on the docs theme: with shrinkable flex items (``flex: 1``, ``flex-basis: 0``) the two columns
+    settle at half the content width, each table overflows its own box, and the two render on top of one
+    another. Sizing each column to its content and letting the PAIR scroll is what fixes it; the scroll lives
+    inside the widget, so the page never scrolls sideways.
+    """
+    markup, _ = build_attribution_comparison_html(_attribution(), ["a", "b"], features=FEATURES, feature_scores=SCORES)
+    style = markup[markup.index("<style>") : markup.index("</style>")]
+    assert "flex-wrap: nowrap" in style and "overflow-x: auto" in style, "the pair must scroll, not wrap or collide"
+    assert "flex: 0 0 auto" in style and "width: max-content" in style, "a column must not shrink below its table"
+    assert "min-width: 300px" not in style, "a fixed min-width is what let the tables overflow their columns"
+
+
+def test_footer_values_sit_in_the_share_column_not_the_last_one():
+    """A total in share units under a slope header reads as a slope; the colspans put it under Share a."""
+    with_slopes, _ = build_attribution_comparison_html(
+        _attribution(), ["a", "b"], finite_difference_slopes=[0.55, -0.3]
+    )
+    # label + 2 empty + value + 2 trailing (Fraction, dGap/ds) with slopes; 1 trailing without them.
+    assert '<td colspan="2"></td><td>+1.0000</td><td colspan="2"></td>' in with_slopes
+    without, _ = build_attribution_comparison_html(_attribution(), ["a", "b"])
+    assert '<td colspan="2"></td><td>+1.0000</td><td colspan="1"></td>' in without

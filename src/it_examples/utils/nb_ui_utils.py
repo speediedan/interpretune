@@ -414,25 +414,33 @@ def build_attribution_comparison_html(
     feat_mass = sum(abs(float(sc)) for _, sc in ranked)
     feat_fractions = [abs(float(sc)) / feat_mass if feat_mass else 0.0 for _, sc in ranked]
 
+    # Measured against the docs theme rather than guessed: with shrinkable flex items the columns
+    # settle at half the content width and each table overflows its own box, so the two render on top
+    # of one another. Columns are therefore sized to their content and never shrink, and the PAIR
+    # scrolls horizontally inside this widget when the page is narrower than both. The scrollbar stays
+    # inside the element, so the page itself never scrolls sideways.
     style = """
     <style>
     .attr-cmp { font-family: system-ui, -apple-system, sans-serif; margin-bottom: 12px; font-size: 13px; }
     .attr-cmp .title { font-weight: bold; font-size: 14px; margin-bottom: 6px; padding: 4px 6px;
         border-radius: 3px; background: #555; color: white; display: inline-block; }
-    .attr-cmp .cols { display: flex; gap: 16px; flex-wrap: wrap; }
-    .attr-cmp .col { flex: 1; min-width: 300px; }
+    .attr-cmp .cols { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 16px;
+        overflow-x: auto; padding-bottom: 6px; }
+    .attr-cmp .col { flex: 0 0 auto; width: max-content; min-width: 0; }
     .attr-cmp .col-header { font-weight: bold; font-size: 13px; padding: 4px 8px; border-radius: 3px;
         color: white; margin-bottom: 6px; }
-    .attr-cmp table { width: 100%; border-collapse: collapse; }
+    .attr-cmp table { width: max-content; min-width: 100%; max-width: none; border-collapse: collapse; }
     .attr-cmp th, .attr-cmp td { padding: 3px 6px; border: 1px solid rgba(150,150,150,0.5); text-align: right; }
-    .attr-cmp th { background-color: rgba(200,200,200,0.3); font-weight: bold; }
-    .attr-cmp td.lbl, .attr-cmp th.lbl, .attr-cmp td.txt { text-align: left; }
+    .attr-cmp td { white-space: nowrap; }
+    .attr-cmp th { white-space: normal; }
+    .attr-cmp td.lbl, .attr-cmp th.lbl { text-align: left; }
+    .attr-cmp td.txt, .attr-cmp th.txt { text-align: left; white-space: normal; min-width: 180px; max-width: 260px; }
     .attr-cmp tr.total td { background: rgba(120,180,240,0.15); font-weight: bold; }
-    .attr-cmp tr.note td { font-weight: normal; color: #666; font-size: 12px; }
     .attr-cmp .monospace { font-family: monospace; }
     .attr-cmp a.np-link { color: inherit; text-decoration: none; border-bottom: 1px dashed rgba(150,150,150,0.6); }
     .attr-cmp a.np-link:hover { color: #2980B9; border-bottom-style: solid; }
-    .attr-cmp .footnote { font-size: 12px; color: #666; margin-top: 6px; }
+    .attr-cmp .footnote { font-size: 12px; color: #666; margin-top: 6px; max-width: 900px; }
+    .attr-cmp .footnote code { font-family: monospace; }
     </style>
     """
 
@@ -440,12 +448,15 @@ def build_attribution_comparison_html(
         return "n/a" if v != v else f"{v:+.{precision}f}"  # NaN when a factor was not supplied
 
     # ---- left: directions ------------------------------------------------------------
-    slope_header = "<th>dGap/ds (finite diff.)</th>" if slopes is not None else ""
+    # Headers are short because the columns are sized to their content: a header long enough to want
+    # wrapping simply widens the table instead, since max-content sizing never applies the pressure
+    # that would make it wrap. The symbols are spelled out in the legend under both tables.
+    slope_header = "<th>dGap/ds</th>" if slopes is not None else ""
     left = (
         f'<div class="col"><div class="col-header" style="background-color:#2471A3;">'
         f"{html.escape(direction_column_title)}</div><table><thead><tr>"
-        '<th class="lbl">Direction</th><th>Δc (coord. change)</th><th>Readout gᵀv</th>'
-        f"<th>Share a = w·Δc</th><th>Fraction</th>{slope_header}</tr></thead><tbody>"
+        '<th class="lbl">Direction</th><th>&#916;c</th><th>Readout w</th>'
+        f"<th>Share a</th><th>Fraction</th>{slope_header}</tr></thead><tbody>"
     )
     for i, lbl in enumerate(labels):
         slope_cell = f"<td>{_signed(slopes[i])}</td>" if slopes is not None else ""
@@ -453,24 +464,25 @@ def build_attribution_comparison_html(
             f'<tr><td class="lbl">{html.escape(lbl)}</td><td>{_signed(delta_coords[i])}</td>'
             f"<td>{_signed(readouts[i])}</td><td>{shares[i]:+.4f}</td><td>{fractions[i]:.1%}</td>{slope_cell}</tr>"
         )
-    span = 6 if slopes is not None else 5
-    left += (
-        f'<tr class="total"><td class="lbl">Explained (Σ a)</td><td colspan="{span - 2}"></td>'
-        f"<td>{total:+.4f}</td></tr>"
-        f'<tr class="total"><td class="lbl">Remainder (gᵀΔh − Σ a)</td><td colspan="{span - 2}"></td>'
-        f"<td>{remainder:+.4f}</td></tr>"
-        f'<tr class="total"><td class="lbl">First-order prediction gᵀΔh</td><td colspan="{span - 2}"></td>'
-        f"<td>{predicted:+.4f}</td></tr>"
-    )
-    if measured_delta is not None:
-        left += (
-            f'<tr class="total"><td class="lbl">Measured Δgap (patch)</td><td colspan="{span - 2}"></td>'
-            f"<td>{float(measured_delta):+.4f}</td></tr>"
+    # Each footer value is a share-space quantity, so it sits in the Share column rather than being
+    # pushed to the last one, where it would read as a slope.
+    trailing = 2 if slopes is not None else 1
+
+    def _footer(label: str, value: float) -> str:
+        return (
+            f'<tr class="total"><td class="lbl">{label}</td><td colspan="2"></td>'
+            f'<td>{value:+.4f}</td><td colspan="{trailing}"></td></tr>'
         )
+
+    left += _footer("Explained &#931;a", total)
+    left += _footer("Remainder", remainder)
+    left += _footer("First-order g&#7488;&#916;h", predicted)
+    if measured_delta is not None:
+        left += _footer("Measured &#916;gap", float(measured_delta))
     left += "</tbody></table></div>"
 
     # ---- right: features -------------------------------------------------------------
-    explain_header = "<th class='lbl'>Explanation</th>" if feature_explanations is not None else ""
+    explain_header = '<th class="txt">Explanation</th>' if feature_explanations is not None else ""
     right = (
         f'<div class="col"><div class="col-header" style="background-color:#27AE60;">'
         f"{html.escape(feature_column_title)}</div><table><thead><tr>"
@@ -495,11 +507,20 @@ def build_attribution_comparison_html(
         )
     right += "</tbody></table></div>"
 
+    # The legend defines only the columns actually rendered: naming a column the reader cannot see is the
+    # same defect in prose that an empty column would be in the table.
+    legend = (
+        "&#916;c = V&#8314;&#916;h, the displacement's coordinates in the pair; w = V&#7488;g, the gradient's "
+        "readout of each direction; a = w&#183;&#916;c, the direction's share of the first-order prediction "
+        "g&#7488;&#916;h."
+    )
+    if slopes is not None:
+        legend += " dGap/ds is the central-difference slope of the gap along that direction, an independent check on w."
     footnote = (
-        "Fractions are within each vocabulary (|a| over Σ|a|; |score| over Σ|score| of the rows shown): "
-        "gap units per coordinate and graph influence are not comparable as raw numbers. "
-        "The first-order prediction is the gradient's linear estimate of the patch's effect; the measured "
-        "change includes everything nonlinear downstream of the site."
+        f"{legend} Fractions are within each vocabulary (|a| over &#931;|a|; |score| over &#931;|score| of the "
+        "rows shown): gap units per coordinate and graph influence are not comparable as raw numbers. The "
+        "first-order prediction is the gradient's linear estimate of the patch's effect; the measured change "
+        "includes everything nonlinear downstream of the site."
     )
     markup = (
         f'{style}<div class="attr-cmp"><div class="title">{html.escape(title)}</div>'
