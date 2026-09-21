@@ -136,8 +136,12 @@ def test_no_unembed_surface_raises_rather_than_guessing():
 
 
 def test_named_tuple_surface_is_stable():
-    """The collection imports this by name; field renames are a compat break worth failing on."""
-    assert UnembedNormInfo._fields == ("w_u", "norm_scale", "norm_kind")
+    """The collection imports this by name; field renames are a compat break worth failing on.
+
+    Additive fields with defaults (like ``norm_bias``) are not: every existing construction and
+    reader keeps working, which the keyword-built cases below rely on.
+    """
+    assert UnembedNormInfo._fields == ("w_u", "norm_scale", "norm_kind", "norm_bias")
 
 
 class TestRMSNormOffsetIsPerFamilyNotPerPrefix:

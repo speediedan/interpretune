@@ -73,29 +73,38 @@ def _apply_readout_norm(y: torch.Tensor, info: UnembedNormInfo, include_rms_scal
     position, because it is a positive scalar, and it does change magnitude comparisons ACROSS
     positions. That is why it is an explicit flag: a default would be silently wrong for exactly the
     cross-position comparison someone eventually makes.
+
+    The divisor is computed on the unweighted activation, before the elementwise scale is applied,
+    because that is where the norm divides: ``((y - mean) / rms(y)) * scale``. Dividing the
+    weighted vector instead agrees only for uniform scale.
     """
     if info.norm_kind == "layernorm":
         y = y - y.mean(dim=-1, keepdim=True)
+    if include_rms_scale and info.norm_kind != "none":
+        if info.norm_kind == "layernorm":
+            denom = y.var(dim=-1, keepdim=True, unbiased=False).sqrt()
+        else:
+            denom = y.pow(2).mean(dim=-1, keepdim=True).sqrt()
+        y = y / denom.clamp_min(torch.finfo(y.dtype).tiny)
     if info.norm_scale is not None:
         y = y * info.norm_scale.float().to(y.device)
-    if not include_rms_scale or info.norm_kind == "none":
-        return y
-    if info.norm_kind == "layernorm":
-        denom = y.var(dim=-1, keepdim=True, unbiased=False).sqrt()
-    else:
-        denom = y.pow(2).mean(dim=-1, keepdim=True).sqrt()
-    return y / denom.clamp_min(torch.finfo(y.dtype).tiny)
+    return y
 
 
 def _lens_readout(h: torch.Tensor, j: torch.Tensor, info: UnembedNormInfo, include_rms_scale: bool) -> torch.Tensor:
-    """``W_U .
+    """``W_U . norm(J h)`` for activations ``h`` shaped ``(..., d_model)``.
 
-    norm(J h)`` for activations ``h`` shaped ``(..., d_model)``.
+    The norm's additive bias, when one resolved, is applied as the logit offset ``W_U @ bias``: it
+    is input-independent but token-dependent, so it moves the readout ranking while correctly
+    dropping out of every direction built through :func:`fold_norm_into_unembed_rows`.
     """
     if h.shape[-1] != j.shape[0]:
         raise ValueError(f"activation width {h.shape[-1]} does not match lens d_model {j.shape[0]}")
     y = h @ j.transpose(0, 1)
-    return _apply_readout_norm(y, info, include_rms_scale) @ info.w_u.float().transpose(0, 1)
+    logits = _apply_readout_norm(y, info, include_rms_scale) @ info.w_u.float().transpose(0, 1)
+    if info.norm_bias is not None:
+        logits = logits + (info.w_u.double() @ info.norm_bias.double()).float().to(logits.device)
+    return logits
 
 
 def _selected_positions(analysis_batch: AnalysisBatch, kwargs: dict, n_positions: int) -> torch.Tensor:
