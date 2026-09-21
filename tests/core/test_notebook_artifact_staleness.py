@@ -218,6 +218,65 @@ class TestMissingArtifactIsDrift:
         assert "MISSING artifact" not in capsys.readouterr().err
 
 
+class TestSkippedSectionIsDrift:
+    """An enabled section that skipped at render time ships as a `[SKIPPED]` line where the docs show its output,
+    with no error anywhere.
+
+    Measured on the local-Neuronpedia steering demo, whose J-space section rendered as a skip line (the render host's
+    token could not see the private collection) and stayed that way until someone read the page.
+    """
+
+    SKIP_LINE = "[SKIPPED] J-space section: could not pull owner/collection: 404"
+
+    @staticmethod
+    def _notebook(output_lines: list[str]) -> dict:
+        # The SOURCE carries the print that produces the marker in every case, so the check can only be
+        # keyed on outputs: a source-keyed check would flag every notebook with a skip path.
+        return {
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "source": ['print("[SKIPPED] J-space section: ...")\n'],
+                    "outputs": [{"output_type": "stream", "name": "stdout", "text": output_lines}],
+                    "metadata": {},
+                }
+            ],
+            "metadata": {},
+        }
+
+    def _plant(self, tmp_path: Path, renderer, monkeypatch, artifact_output: list[str]) -> None:
+        import json
+
+        publish = tmp_path / "publish" / "lane"
+        artifacts = tmp_path / "artifacts" / "lane"
+        publish.mkdir(parents=True)
+        artifacts.mkdir(parents=True)
+        (publish / "nb.ipynb").write_text(json.dumps(self._notebook([])), encoding="utf-8")
+        (artifacts / "nb.ipynb").write_text(json.dumps(self._notebook(artifact_output)), encoding="utf-8")
+        monkeypatch.setattr(renderer, "PUBLISH_DIR", tmp_path / "publish")
+        monkeypatch.setattr(renderer, "ARTIFACT_DIR", tmp_path / "artifacts")
+        monkeypatch.setattr(renderer, "bundled_op_names", lambda: set())
+        monkeypatch.setattr(sys, "argv", ["render_notebook_docs_artifacts.py", "--check-stale"])
+
+    def test_a_skipped_section_in_the_outputs_fails_the_check_by_name(self, tmp_path, renderer, monkeypatch, capsys):
+        """Positive control: the check fires on exactly the planted skip line and names the section."""
+        self._plant(tmp_path, renderer, monkeypatch, ["pulled nothing\n", self.SKIP_LINE + "\n"])
+        assert renderer.main() == renderer.DRIFT_EXIT_CODE
+        err = capsys.readouterr().err
+        assert "SKIPPED section in artifact" in err and self.SKIP_LINE in err and str(Path("lane") / "nb.ipynb") in err
+
+    def test_the_marker_in_source_alone_passes(self, tmp_path, renderer, monkeypatch, capsys):
+        """Negative control on the same fixture: the source's print is not evidence the skip fired."""
+        self._plant(tmp_path, renderer, monkeypatch, ["pulled owner/collection @ 872760c7\n"])
+        assert renderer.main() == 0
+        assert "SKIPPED section" not in capsys.readouterr().err
+
+    def test_the_marker_inside_a_line_does_not_count(self, tmp_path, renderer, monkeypatch):
+        """Only a line that STARTS with the marker is a skip announcement; prose quoting it is not."""
+        self._plant(tmp_path, renderer, monkeypatch, ["the cell prints [SKIPPED] when the pull fails\n"])
+        assert renderer.main() == 0
+
+
 class TestStampUnderRecording:
     """#318: an artifact re-rendered while the stamping machinery changed under it carries CURRENT outputs with a
     STALE stamp.

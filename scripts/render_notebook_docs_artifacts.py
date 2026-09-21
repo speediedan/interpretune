@@ -221,6 +221,33 @@ def captured_output_text(notebook: dict[str, Any]) -> str:
     return "".join(chunks)
 
 
+SKIP_MARKER = "[SKIPPED]"
+
+
+def skipped_sections(artifact: dict[str, Any]) -> list[str]:
+    """Output lines announcing a section the notebook enabled but the render skipped.
+
+    A notebook section that needs something the render host lacked (a private Hub repo the token could
+    not see, a local service) prints ``[SKIPPED] <section>: <reason>`` and moves on, by design: a reader
+    without that access still gets the rest. The rendered artifact is the exception. The docs show it as
+    the section's output, so a skip there is a page silently missing the thing the section exists to
+    show, with no build error anywhere; measured on the local-Neuronpedia steering demo, whose J-space
+    section shipped as a skip line for as long as nothing looked. Only OUTPUTS are read: the marker in a
+    cell's source is the print that produces it, not evidence that it fired.
+    """
+    found: list[str] = []
+    for cell in artifact.get("cells", []):
+        if cell.get("cell_type") != "code":
+            continue
+        for output in cell.get("outputs", []) or []:
+            text = "".join(output.get("text", []) or [])
+            for mime, payload in (output.get("data") or {}).items():
+                if mime.startswith("text/"):
+                    text += "".join(payload if isinstance(payload, list) else [payload])
+            found.extend(line.strip() for line in text.splitlines() if line.strip().startswith(SKIP_MARKER))
+    return found
+
+
 def stale_output_references(artifact: dict[str, Any], current_ops: set[str]) -> list[str]:
     """Op names an artifact's OUTPUTS mention that the current op surface no longer has.
 
@@ -369,6 +396,7 @@ def main() -> int:
         output_stale: list[str] = []
         unstamped: list[str] = []
         stamp_stale: list[str] = []
+        skipped: list[str] = []
         current_ops = bundled_op_names()
         # An empty surface means yaml was unavailable (see bundled_op_names), not that there are no ops.
         # Reporting the difference matters: silently skipping would read as "checked and clean".
@@ -388,6 +416,8 @@ def main() -> int:
             if not artifact_matches_source(artifact_nb, load_notebook(source)):
                 stale.append(str(rel))
                 continue  # a source-drifted artifact needs a rebuild regardless of its outputs
+            for line in skipped_sections(artifact_nb):
+                skipped.append(f"{rel}: {line}")
             if not op_check_available:
                 continue
             if dead := stale_output_references(artifact_nb, current_ops):
@@ -408,6 +438,11 @@ def main() -> int:
             print(f"STALE artifact (rebuild it): {rel_str}", file=sys.stderr)
         for entry in output_stale:
             print(f"STALE artifact OUTPUT (re-execute it): {entry}", file=sys.stderr)
+        for entry in skipped:
+            print(
+                f"SKIPPED section in artifact (re-render it on a host with the access the section needs): {entry}",
+                file=sys.stderr,
+            )
         for entry in stamp_stale:
             print(
                 f"STALE artifact STAMP (re-stamp it, no execution needed: "
@@ -421,7 +456,7 @@ def main() -> int:
             print(f"note: no recorded op surface, output drift not checkable: {rel_str}", file=sys.stderr)
         if not op_check_available:
             print("note: pyyaml unavailable, output-drift check skipped (source drift still checked)", file=sys.stderr)
-        total = len(missing) + len(stale) + len(output_stale) + len(stamp_stale)
+        total = len(missing) + len(stale) + len(output_stale) + len(stamp_stale) + len(skipped)
         print(f"{total} stale or missing artifact(s); {len(unstamped)} unstamped")
         return DRIFT_EXIT_CODE if total else 0
 
