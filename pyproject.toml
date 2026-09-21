@@ -162,7 +162,10 @@ examples = [
     # engine only; the hub adapter composing it into a session is pulled with `it.hub.pull`.
     # The marker is required, not cosmetic: interp-engine supports >=3.11 while this project supports
     # >=3.10, so an unmarked requirement makes the universal lock unsatisfiable.
-    "interp-engine ~=1.5.1; python_version >= '3.11'",
+    # The pin is `~=` at the minor (floats patches only) rather than a floor: upstream minors have
+    # carried surface changes (1.11.0 named the steering methods once as `SteerMethod`), so each
+    # minor is validated deliberately via #600's successors instead of arriving silently.
+    "interp-engine ~=1.11.1; python_version >= '3.11'",
     # we comment these out when installing from git urls to avoid dep conflicts
     # note packages that have need to have git url deps override transitive dependencies (e.g. needing to override
     # sae-lens' transformer-lens dependency with a git url dep) need to be moved to git-deps as well
