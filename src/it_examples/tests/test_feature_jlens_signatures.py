@@ -100,20 +100,29 @@ class TestFeatureIOSignatures:
         target = torch.ones(d) / (d**0.5)
         graph = _StubGraph()
         transcoders = _FixedTranscoders(torch.ones(d))
-        kwargs = dict(
+        lens_kwargs: dict[str, object] = dict(
             jlens_artifact=artifact,
             unembed_info=info,
             tokenizer=_StubTokenizer(),
         )
-        base = dict(
-            graph=graph,
-            feature_pairs=[(10, 7)],
-            target_direction=target,
-            transcoder_set=transcoders,
-            concept_positions={1, 2},
-        )
-        with_concepts = feature_io_profiles(concept_token_ids=[5, 9], **base, **kwargs)[0]
-        without_concepts = feature_io_profiles(concept_token_ids=[30, 31], **base, **kwargs)[0]
+        with_concepts = feature_io_profiles(
+            graph,
+            [(10, 7)],
+            target,
+            transcoders,
+            {1, 2},
+            concept_token_ids=[5, 9],
+            **lens_kwargs,  # type: ignore[arg-type]
+        )[0]
+        without_concepts = feature_io_profiles(
+            graph,
+            [(10, 7)],
+            target,
+            transcoders,
+            {1, 2},
+            concept_token_ids=[30, 31],
+            **lens_kwargs,  # type: ignore[arg-type]
+        )[0]
         assert with_concepts.jlens_signature == without_concepts.jlens_signature
         assert with_concepts.jlens_concept_mass == pytest.approx(1.0)
         assert without_concepts.jlens_concept_mass == pytest.approx(0.0)
