@@ -342,6 +342,191 @@ def display_top_features_comparison(
     display(HTML(style + body))
 
 
+class AttributionComparisonSummary(NamedTuple):
+    """What :func:`display_attribution_comparison` rendered, for assertions without re-deriving it."""
+
+    direction_labels: tuple[str, ...]
+    direction_shares: tuple[float, ...]
+    direction_fractions: tuple[float, ...]
+    attribution_total: float
+    predicted_delta: float
+    unexplained_remainder: float
+    feature_fractions: tuple[float, ...]
+
+
+def _neuronpedia_feature_link(
+    layer: int, feat_idx: int, model: str | None, source_set: str, base_url: str, css_class: str
+) -> str:
+    if model is None:
+        return str(feat_idx)
+    url = f"{html.escape(base_url.rstrip('/'))}/{html.escape(model)}/{layer}-{html.escape(source_set)}/{feat_idx}"
+    return f'<a class="{css_class}" href="{url}" target="_blank" title="View on Neuronpedia">{feat_idx}</a>'
+
+
+def build_attribution_comparison_html(
+    attribution: Mapping[str, Any],
+    direction_labels: Sequence[str],
+    *,
+    finite_difference_slopes: Sequence[float] | None = None,
+    measured_delta: float | None = None,
+    features: Sequence[tuple[int, int, int]] = (),
+    feature_scores: Sequence[float] = (),
+    feature_explanations: Mapping[tuple[int, int], str] | None = None,
+    neuronpedia_model: str | None = None,
+    neuronpedia_set: str = "gemmascope-transcoder-16k",
+    neuronpedia_base_url: str = "https://www.neuronpedia.org",
+    top_n: int = 5,
+    title: str = "Attribution comparison: J-lens directions vs SAE features",
+    direction_column_title: str = "J-lens directions",
+    feature_column_title: str = "SAE features (signed influence)",
+) -> tuple[str, AttributionComparisonSummary]:
+    """Build the two-column attribution comparison as HTML; :func:`display_attribution_comparison` shows it.
+
+    Left column: one row per J-lens direction from ``attribution`` (the dict
+    :func:`~interpretune.analysis.ops.bundled.jlens.jlens_ops.subspace_attribution_scores` returns),
+    with the coordinate change ``Δc_i``, the gradient readout ``w_i``, their product ``a_i``, and the
+    direction's fraction of the explained total; a footer row each for the explained total, the
+    remainder, the first-order prediction ``gᵀΔh`` and, when given, the measured logit change. Right
+    column: the top ``top_n`` features by ``|score|`` with sign, magnitude, fraction of the summed
+    magnitude, a Neuronpedia link when a model is given, and the explanation when known.
+
+    The two columns are shares within their own vocabulary, deliberately: gap units per coordinate and
+    row-normalized graph influence are not comparable as raw numbers, so each side reports where its
+    explained change concentrates rather than whose units are larger. Pure (no display), so a test can
+    check the markup and the summary without a kernel.
+    """
+    shares = [float(x) for x in attribution["attribution_shares"]]
+    labels = [str(lbl) for lbl in direction_labels]
+    if len(labels) != len(shares):
+        raise ValueError(f"{len(labels)} direction labels for {len(shares)} attribution shares")
+    delta_coords = [float(x) for x in attribution.get("delta_coords") or [float("nan")] * len(shares)]
+    readouts = [float(x) for x in attribution.get("readouts") or [float("nan")] * len(shares)]
+    slopes = [float(x) for x in finite_difference_slopes] if finite_difference_slopes is not None else None
+    if slopes is not None and len(slopes) != len(shares):
+        raise ValueError(f"{len(slopes)} finite-difference slopes for {len(shares)} attribution shares")
+    total = float(attribution["attribution_total"])
+    predicted = float(attribution["predicted_delta"])
+    remainder = float(attribution["unexplained_remainder"])
+    share_mass = sum(abs(a) for a in shares)
+    fractions = [abs(a) / share_mass if share_mass else 0.0 for a in shares]
+
+    ranked = sorted(zip(features, feature_scores), key=lambda t: abs(float(t[1])), reverse=True)[:top_n]
+    feat_mass = sum(abs(float(sc)) for _, sc in ranked)
+    feat_fractions = [abs(float(sc)) / feat_mass if feat_mass else 0.0 for _, sc in ranked]
+
+    style = """
+    <style>
+    .attr-cmp { font-family: system-ui, -apple-system, sans-serif; margin-bottom: 12px; font-size: 13px; }
+    .attr-cmp .title { font-weight: bold; font-size: 14px; margin-bottom: 6px; padding: 4px 6px;
+        border-radius: 3px; background: #555; color: white; display: inline-block; }
+    .attr-cmp .cols { display: flex; gap: 16px; flex-wrap: wrap; }
+    .attr-cmp .col { flex: 1; min-width: 300px; }
+    .attr-cmp .col-header { font-weight: bold; font-size: 13px; padding: 4px 8px; border-radius: 3px;
+        color: white; margin-bottom: 6px; }
+    .attr-cmp table { width: 100%; border-collapse: collapse; }
+    .attr-cmp th, .attr-cmp td { padding: 3px 6px; border: 1px solid rgba(150,150,150,0.5); text-align: right; }
+    .attr-cmp th { background-color: rgba(200,200,200,0.3); font-weight: bold; }
+    .attr-cmp td.lbl, .attr-cmp th.lbl, .attr-cmp td.txt { text-align: left; }
+    .attr-cmp tr.total td { background: rgba(120,180,240,0.15); font-weight: bold; }
+    .attr-cmp tr.note td { font-weight: normal; color: #666; font-size: 12px; }
+    .attr-cmp .monospace { font-family: monospace; }
+    .attr-cmp a.np-link { color: inherit; text-decoration: none; border-bottom: 1px dashed rgba(150,150,150,0.6); }
+    .attr-cmp a.np-link:hover { color: #2980B9; border-bottom-style: solid; }
+    .attr-cmp .footnote { font-size: 12px; color: #666; margin-top: 6px; }
+    </style>
+    """
+
+    def _signed(v: float, precision: int = 4) -> str:
+        return "n/a" if v != v else f"{v:+.{precision}f}"  # NaN when a factor was not supplied
+
+    # ---- left: directions ------------------------------------------------------------
+    slope_header = "<th>dGap/ds (finite diff.)</th>" if slopes is not None else ""
+    left = (
+        f'<div class="col"><div class="col-header" style="background-color:#2471A3;">'
+        f"{html.escape(direction_column_title)}</div><table><thead><tr>"
+        '<th class="lbl">Direction</th><th>Δc (coord. change)</th><th>Readout gᵀv</th>'
+        f"<th>Share a = w·Δc</th><th>Fraction</th>{slope_header}</tr></thead><tbody>"
+    )
+    for i, lbl in enumerate(labels):
+        slope_cell = f"<td>{_signed(slopes[i])}</td>" if slopes is not None else ""
+        left += (
+            f'<tr><td class="lbl">{html.escape(lbl)}</td><td>{_signed(delta_coords[i])}</td>'
+            f"<td>{_signed(readouts[i])}</td><td>{shares[i]:+.4f}</td><td>{fractions[i]:.1%}</td>{slope_cell}</tr>"
+        )
+    span = 6 if slopes is not None else 5
+    left += (
+        f'<tr class="total"><td class="lbl">Explained (Σ a)</td><td colspan="{span - 2}"></td>'
+        f"<td>{total:+.4f}</td></tr>"
+        f'<tr class="total"><td class="lbl">Remainder (gᵀΔh − Σ a)</td><td colspan="{span - 2}"></td>'
+        f"<td>{remainder:+.4f}</td></tr>"
+        f'<tr class="total"><td class="lbl">First-order prediction gᵀΔh</td><td colspan="{span - 2}"></td>'
+        f"<td>{predicted:+.4f}</td></tr>"
+    )
+    if measured_delta is not None:
+        left += (
+            f'<tr class="total"><td class="lbl">Measured Δgap (patch)</td><td colspan="{span - 2}"></td>'
+            f"<td>{float(measured_delta):+.4f}</td></tr>"
+        )
+    left += "</tbody></table></div>"
+
+    # ---- right: features -------------------------------------------------------------
+    explain_header = "<th class='lbl'>Explanation</th>" if feature_explanations is not None else ""
+    right = (
+        f'<div class="col"><div class="col-header" style="background-color:#27AE60;">'
+        f"{html.escape(feature_column_title)}</div><table><thead><tr>"
+        f'<th>#</th><th class="lbl">Node</th><th>Sign</th><th>|Score|</th><th>Fraction</th>{explain_header}'
+        "</tr></thead><tbody>"
+    )
+    for j, ((layer, pos, feat_idx), score) in enumerate(ranked):
+        value = float(score)
+        sign, colour = ("+", "#1a7f37") if value > 0 else (("−", "#d1242f") if value < 0 else ("0", "inherit"))
+        link = _neuronpedia_feature_link(
+            int(layer), int(feat_idx), neuronpedia_model, neuronpedia_set, neuronpedia_base_url, "np-link"
+        )
+        explain_cell = ""
+        if feature_explanations is not None:
+            explain_cell = (
+                f'<td class="txt">{html.escape(feature_explanations.get((int(layer), int(feat_idx)), ""))}</td>'
+            )
+        right += (
+            f'<tr><td>{j + 1}</td><td class="lbl monospace">({layer},&#8239;{pos},&#8239;{link})</td>'
+            f'<td style="color:{colour};font-weight:600">{sign}</td><td>{format_score(abs(value))}</td>'
+            f"<td>{feat_fractions[j]:.1%}</td>{explain_cell}</tr>"
+        )
+    right += "</tbody></table></div>"
+
+    footnote = (
+        "Fractions are within each vocabulary (|a| over Σ|a|; |score| over Σ|score| of the rows shown): "
+        "gap units per coordinate and graph influence are not comparable as raw numbers. "
+        "The first-order prediction is the gradient's linear estimate of the patch's effect; the measured "
+        "change includes everything nonlinear downstream of the site."
+    )
+    markup = (
+        f'{style}<div class="attr-cmp"><div class="title">{html.escape(title)}</div>'
+        f'<div class="cols">{left}{right}</div><div class="footnote">{footnote}</div></div>'
+    )
+    summary = AttributionComparisonSummary(
+        direction_labels=tuple(labels),
+        direction_shares=tuple(shares),
+        direction_fractions=tuple(fractions),
+        attribution_total=total,
+        predicted_delta=predicted,
+        unexplained_remainder=remainder,
+        feature_fractions=tuple(feat_fractions),
+    )
+    return markup, summary
+
+
+def display_attribution_comparison(
+    attribution: Mapping[str, Any], direction_labels: Sequence[str], **kwargs: Any
+) -> AttributionComparisonSummary:
+    """Render :func:`build_attribution_comparison_html` and return its summary (see that function for the
+    columns)."""
+    markup, summary = build_attribution_comparison_html(attribution, direction_labels, **kwargs)
+    display(HTML(markup))
+    return summary
+
+
 # ---------------------------------------------------------------------------
 # Token probability display
 # ---------------------------------------------------------------------------

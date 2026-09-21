@@ -309,6 +309,10 @@ def subspace_attribution_scores(
     reconstructs the prediction exactly, so a dictionary that explains nothing reports a large
     remainder rather than large shares: ``remainder = gᵀΔh − Σa_i`` is the honest part, the same
     role the reconstruction residual plays in :func:`jlens_sparse_inventory_impl`.
+
+    The two factors of each share are returned beside it (``delta_coords`` is ``Δc``, ``readouts`` is
+    ``w``), so a display can show a reader WHY a direction's share is what it is: a large readout on a
+    coordinate the displacement barely moved, or the reverse, are different stories with one product.
     """
     if not token_ids:
         raise ValueError("subspace attribution needs at least one dictionary token: nothing to attribute to.")
@@ -328,6 +332,8 @@ def subspace_attribution_scores(
     return {
         "token_ids": list(token_ids),
         "attribution_shares": shares,
+        "delta_coords": delta_coords.tolist(),
+        "readouts": weights.tolist(),
         "attribution_total": total,
         "predicted_delta": predicted,
         "unexplained_remainder": predicted - total,
