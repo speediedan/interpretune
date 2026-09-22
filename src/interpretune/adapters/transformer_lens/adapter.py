@@ -244,9 +244,27 @@ class BaseITLensModule(BaseITModule):
         #       custom config) based, so model_init will not be used. To fully customize TL behavior, override this
         #       method and init a config-based bridge as desired
         # TODO: suppress messages from tl about no tokenizer here, we're deferring the tokenizer attach until setup
-        self._resolve_vocab_sentinels(self.it_cfg.tl_cfg.cfg, self.it_cfg.tokenizer)
-        self.model = TransformerBridge.boot_native(self.it_cfg.tl_cfg.cfg, tokenizer=self.it_cfg.tokenizer)
-        self._apply_bridge_hook_flags(self.model, self.it_cfg.tl_cfg.cfg)
+        self.model = self._boot_native_bridge()
+
+    def _boot_native_bridge(self) -> TransformerBridge:
+        """Build a config-only bridge that honors the config the way ``HookedTransformer(cfg)`` did.
+
+        Shared by every adapter with a config-only path, so they cannot drift. ``boot_native`` leaves three things
+        to the caller that ``HookedTransformer`` did itself: the ``-1`` vocab sentinels, placement (it moves the
+        model only when passed ``device``/``dtype``, ignoring ``cfg.device``, so a cuda config silently built a CPU
+        model), and the hook-exposing flags.
+        """
+        tl_cfg = self.it_cfg.tl_cfg
+        cfg = tl_cfg.cfg
+        self._resolve_vocab_sentinels(cfg, self.it_cfg.tokenizer)
+        bridge = TransformerBridge.boot_native(
+            cfg,
+            tokenizer=self.it_cfg.tokenizer,
+            device=getattr(cfg, "device", None) if getattr(tl_cfg, "move_to_device", True) else None,
+            dtype=getattr(cfg, "dtype", None),
+        )
+        self._apply_bridge_hook_flags(bridge, cfg)
+        return bridge
 
     # Config flags that change which hook points a bridge exposes. `boot_native` accepts them on the config but
     # does not propagate them to the attention/MLP components, so `use_attn_result=True` built a model with no

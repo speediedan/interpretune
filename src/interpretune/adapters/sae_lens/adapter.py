@@ -270,18 +270,8 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
         same pattern ``_convert_hf_to_bridge`` uses for the pretrained path.
         """
         from sae_lens.analysis.sae_transformer_bridge import SAETransformerBridge
-        from transformer_lens.model_bridge import TransformerBridge
 
-        # Same -1 vocab sentinels the TL adapter resolves: boot_native passes cfg.d_vocab straight into
-        # nn.Embedding, where HookedTransformer used to infer it from the tokenizer.
-        self._resolve_vocab_sentinels(  # type: ignore[attr-defined]  # from BaseITLensModule
-            self.it_cfg.tl_cfg.cfg,  # type: ignore[attr-defined]  # ITLensCustomConfig on this path
-            self.it_cfg.tokenizer,
-        )
-        self.model = TransformerBridge.boot_native(
-            self.it_cfg.tl_cfg.cfg,  # type: ignore[attr-defined]  # ITLensCustomConfig on this path
-            tokenizer=self.it_cfg.tokenizer,
-        )
+        self.model = self._boot_native_bridge()  # type: ignore[attr-defined]  # from BaseITLensModule
         self.model.__class__ = SAETransformerBridge
         # The swap rebinds the class but runs no initializer, so the state SAETransformerBridge's methods
         # assume has to be seeded here -- the same two dicts `_convert_hf_to_bridge` seeds, and the same

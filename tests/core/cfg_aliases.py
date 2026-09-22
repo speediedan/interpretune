@@ -273,17 +273,6 @@ class LightningGPT2(BaseCfg):
 
 
 @dataclass(kw_only=True)
-class LightningTLGPT2(BaseCfg):
-    model_src_key: str | None = "gpt2"
-    adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
-    tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
-        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left"
-        )
-    )
-
-
-@dataclass(kw_only=True)
 class LightningTLBridgeGPT2(BaseCfg):
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)

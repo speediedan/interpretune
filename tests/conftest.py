@@ -85,7 +85,6 @@ from tests.core.cfg_aliases import (
     CoreGPT2PEFTSeqCfg,
     CoreCfgForcePrepare,
     LightningGPT2,
-    LightningTLGPT2,
     LightningTLBridgeGPT2,
     LightningTLBridgeGPT2Processed,
     CoreSLCust,
@@ -351,7 +350,6 @@ FIXTURE_CFGS = {
     "core_gpt2_peft_seq": FixtureCfg(test_cfg=CoreGPT2PEFTSeqCfg, variants={"it_session": [FixtPhase.initonly]}),
     "core_cust_memprof": FixtureCfg(test_cfg=CoreMemProfCfg, variants={"it_session": [FixtPhase.initonly]}),
     "l_gpt2": FixtureCfg(test_cfg=LightningGPT2, scope="function", variants={"it_session": [FixtPhase.setup]}),
-    "l_tl_ht_gpt2": FixtureCfg(test_cfg=LightningTLGPT2, scope="function", variants={"it_session": [FixtPhase.setup]}),
     "l_tl_bridge_gpt2": FixtureCfg(
         test_cfg=LightningTLBridgeGPT2, scope="module", variants={"it_session": [FixtPhase.setup]}
     ),
@@ -465,7 +463,6 @@ FIXTURE_CFGS = {
     "ns_gpt2_debug": FixtureCfg(test_cfg=NSDebugCfg, variants={"it_session": [FixtPhase.setup]}),
     # FT Schedule fixtures (function-scoped for per-test generation)
     "l_gpt2_sched": FixtureCfg(scope="function", variants={"ft_schedule": [FixtPhase.setup]}),
-    "l_tl_ht_gpt2_sched": FixtureCfg(scope="function", variants={"ft_schedule": [FixtPhase.setup]}),
     "l_tl_bridge_gpt2_sched": FixtureCfg(scope="function", variants={"ft_schedule": [FixtPhase.setup]}),
     "l_tl_bridge_gpt2_tl_names_sched": FixtureCfg(scope="function", variants={"ft_schedule": [FixtPhase.setup]}),
 }
@@ -861,12 +858,6 @@ def ft_schedule_fixture_factory(config_key, phase):
                 "transforms": {"basic_explicit": l_imp_to_exp, "multiphase_explicit": l_multiphase_explicit},
                 "fts_kwargs": {},
             },
-            "l_tl_ht_gpt2_sched": {
-                "model_key": "l_tl_ht_gpt2",
-                "session_fixture": "get_it_session__l_tl_ht_gpt2__setup",
-                "transforms": {"multiphase_explicit": tl_ht_multiphase_explicit},
-                "fts_kwargs": {},
-            },
             "l_tl_bridge_gpt2_sched": {
                 "model_key": "l_tl_bridge_gpt2",
                 "session_fixture": "get_it_session__l_tl_bridge_gpt2__setup",
@@ -1124,38 +1115,6 @@ def l_multiphase_explicit(sched_dict: Dict) -> Dict:
             r"model.transformer.h.([0-6](?!\d)).(mlp|attn|ln_(1|2)).(c_proj|c_fc|c_attn|weight|bias).*",
             r"model.transformer.(wpe|wte).weight",
             r"model.transformer.ln_f.*",
-        ],
-        "lr": 1e-06,
-    }
-    return sched_dict
-
-
-def tl_ht_imp_to_exp(sched_dict: Dict) -> Dict:
-    sched_dict[0]["params"] = [r"model.blocks.(9|1[0-1]).*"]
-    sched_dict[0]["max_transition_epoch"] = 2
-    phase_1_pats = [
-        r"model.blocks.([0-8](?!\d)).*",
-        r"model.(pos_embed|embed|unembed).*",
-    ]
-    sched_dict[1]["params"] = phase_1_pats
-    sched_dict[1]["lr"] = 1e-06
-    sched_dict = {phase: phase_def for phase, phase_def in sched_dict.items() if phase in range(2)}
-    return sched_dict
-
-
-def tl_ht_multiphase_explicit(sched_dict: Dict) -> Dict:
-    """Multi-level explicit schedule for l_tl_ht_gpt2: splits basic_explicit into 3 phases."""
-    # Start with basic_explicit transformation
-    sched_dict = tl_ht_imp_to_exp(sched_dict)
-    # Phase 0: layers 9-11 (unchanged from basic_explicit)
-    # Phase 1: layers 7-8 only (split from original phase 1)
-    sched_dict[1]["params"] = [r"model.blocks.([7-8]).*"]
-    sched_dict[1]["max_transition_epoch"] = 3
-    # Phase 2: layers 0-6 and embeddings
-    sched_dict[2] = {
-        "params": [
-            r"model.blocks.([0-6](?!\d)).*",
-            r"model.(pos_embed|embed|unembed).*",
         ],
         "lr": 1e-06,
     }

@@ -343,7 +343,6 @@ All FTS integration tests validate:
 
 Test configurations:
 - `train_cpu_32_l_fts`: Base GPT-2 (3-phase)
-- `train_cuda_32_l_tl_ht_fts`: HookedTransformer (3-phase)
 - `train_cuda_32_l_tl_bridge_fts`: TransformerBridge canonical (3-phase)
 - `train_cuda_32_l_tl_bridge_tl_names_fts`: TransformerBridge TL names (3-phase)
 

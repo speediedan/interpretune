@@ -130,6 +130,15 @@ class TestCircuitTracerBackendTypes:
 # =============================================================================
 
 
+# circuit-tracer's TransformerLens backend subclasses HookedTransformer, which TransformerLens 4.0 removes, so its
+# registry compositions are disabled until circuit-tracer ports it onto TransformerBridge. Restore with them.
+_CT_TL_DISABLED = pytest.mark.skip(
+    reason="circuit-tracer TransformerLens backend disabled pending its TransformerLens 4.0 support; "
+    "its compositions are commented out in tests/test_module_registry.yaml"
+)
+
+
+@_CT_TL_DISABLED
 @pytest.mark.usefixtures("cleanup_cuda")
 class TestCircuitTracerTLBackend:
     """TransformerLens backend integration tests for CircuitTracerAdapter.
@@ -157,6 +166,7 @@ class TestCircuitTracerTLBackend:
         assert it_session.module.model.config is not None
 
 
+@_CT_TL_DISABLED
 @pytest.mark.usefixtures("cleanup_cuda")
 class TestCircuitTracerLightningTLBackendInitialization:
     """Test Lightning + TransformerLens backend initialization.
