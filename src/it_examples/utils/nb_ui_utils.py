@@ -1207,22 +1207,30 @@ def display_feature_decoupling_table(
         return f'<td style="{cell_style}">{value}</td>'
 
     rows = ""
+    show_jlens = any(getattr(prof, "jlens_signature", None) for prof in profiles)
     for i, prof in enumerate(sorted(profiles, key=lambda r: -abs(r.output_projection))):
         explanation = (feature_explanations or {}).get((prof.layer, prof.feature), "")
         decoupled = abs(prof.output_projection) >= 0.03 and prof.input_concept_share < 0.05
         suppressor = prof.input_concept_share >= 0.3 and prof.output_projection < -0.03
         marker = "decoupled" if decoupled else ("suppressor-motif" if suppressor else "")
         row_class = "even-row" if i % 2 == 0 else "odd-row"
-        rows += (
+        cells = (
             f'<tr class="{row_class}">'
             + _cell(f"L{prof.layer}/{prof.feature}", align="left")
             + _cell(f"{prof.input_concept_share:.3f}", bold=prof.input_concept_share == 0.0)
             + _cell(f"{prof.activation_mass:.2f}")
             + _cell(f"{prof.output_projection:+.4f}", bold=abs(prof.output_projection) >= 0.03)
-            + _cell(html.escape(marker), align="left", bold=bool(marker))
-            + _cell(html.escape(str(explanation))[:80], align="left")
-            + "</tr>\n"
         )
+        if show_jlens:
+            signature = getattr(prof, "jlens_signature", None) or ()
+            mass = getattr(prof, "jlens_concept_mass", None)
+            top_tokens = ", ".join(tok for tok, _ in signature[:3])
+            mass_text = f"{mass:.2f}" if mass is not None else "—"
+            cells += _cell(f"{top_tokens} ({mass_text})", align="left")
+        cells += _cell(html.escape(marker), align="left", bold=bool(marker)) + _cell(
+            html.escape(str(explanation))[:80], align="left"
+        )
+        rows += cells + "</tr>\n"
 
     title_html = (
         f'<div style="font-weight:bold;font-size:14px;margin-bottom:4px;padding:4px 6px;'
@@ -1332,11 +1340,16 @@ def plot_decoder_projection_map(
     target_label: str = "A−B",
     title: str = "Decoder-vector projection map",
     static_companion: bool = False,
+    color_by: str = "output_projection",
 ) -> None:
     """Interactive decoder-space projection (UMAP w/ PCA fallback) with per-feature hover details.
 
     Uses plotly for hover tooltips (feature id, input concept share, activation mass, signed output projection,
     explanation) with the analyzed features colored by signed output projection over a gray active-feature background.
+    Pass ``color_by="jlens_concept_mass"`` to color by J-space disposition instead: each feature's share of
+    signature mass on the concept tokens (0 to 1, sequential scale), which answers where the feature disposes
+    the model to speak rather than how hard it pushes one logit difference. Profiles without a signature fall
+    back to output projection, so mixed batches still render.
     Axis tick labels are hidden deliberately: UMAP coordinates are non-metric (arbitrary rotation/scale; only local
     neighborhood structure is meaningful), so raw axis numbers invite over-reading. The interactive figure is embedded
     as an HTML div bootstrapping plotly.js from CDN (``fig.to_html(include_plotlyjs="cdn")``) rather than via
@@ -1369,6 +1382,27 @@ def plot_decoder_projection_map(
         float(coords[:, 1].min()),
         float(coords[:, 1].max()),
     )
+
+    if color_by == "jlens_concept_mass":
+        color_values = [
+            float(p.jlens_concept_mass)
+            if getattr(p, "jlens_concept_mass", None) is not None
+            else float(p.output_projection)
+            for p in analyzed_profiles
+        ]
+        color_scale, color_mid, color_title = "Viridis", None, "J-space concept mass"
+    elif color_by == "output_projection":
+        color_values = [float(p.output_projection) for p in analyzed_profiles]
+        color_scale, color_mid, color_title = (
+            "RdBu_r",
+            0.0,
+            f"output proj<br>({target_label})",
+        )
+    else:
+        raise ValueError(
+            f"plot_decoder_projection_map color_by {color_by!r} is not a coloring: "
+            "expected 'output_projection' or 'jlens_concept_mass'."
+        )
 
     try:
         import plotly.graph_objects as go
@@ -1409,11 +1443,11 @@ def plot_decoder_projection_map(
                 hoverinfo="text",
                 marker=dict(
                     size=marker_px,
-                    color=[p.output_projection for p in analyzed_profiles],
-                    colorscale="RdBu_r",
-                    cmid=0.0,
+                    color=color_values,
+                    colorscale=color_scale,
+                    cmid=color_mid,
                     showscale=True,
-                    colorbar=dict(title=dict(text=f"output proj<br>({target_label})", side="right"), len=0.85),
+                    colorbar=dict(title=dict(text=color_title, side="right"), len=0.85),
                     line=dict(width=1, color="black"),
                 ),
             )
@@ -1472,8 +1506,8 @@ def plot_decoder_projection_map(
             fg[:, 0],
             fg[:, 1],
             s=[80 + 320 * p.input_concept_share for p in analyzed_profiles],
-            c=[p.output_projection for p in analyzed_profiles],
-            cmap="coolwarm",
+            c=color_values,
+            cmap="viridis" if color_by == "jlens_concept_mass" else "coolwarm",
             edgecolors="black",
             linewidths=0.8,
             label="analyzed features",
