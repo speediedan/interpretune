@@ -1,3 +1,10 @@
+# NOTE: circuit-tracer's TransformerLens backend is UNAVAILABLE pending upstream support for
+# TransformerLens 4.0. circuit-tracer declares `class TransformerLensReplacementModel(HookedTransformer)`
+# and TL 4.0 removes HookedTransformer, so this composition cannot run until upstream ports that
+# replacement model onto TransformerBridge. The path is unported, not retired.
+#
+# Working circuit-tracer examples meanwhile: rte_demo.gemma2.circuit_tracer+nnsight.yaml and
+# rte_demo.gemma3.circuit_tracer.neuronpedia.yaml, both on the nnsight backend.
 # Derived key: rte_demo.gemma2.circuit_tracer.neuronpedia  (was: gemma2.rte_demo.circuit_tracer_w_neuronpedia)
 task_variant: rte_demo
 model: gemma2
@@ -61,7 +68,6 @@ registered_cfg:
         init_args:
           model_name: gemma-2-2b
           default_padding_side: left  # to pad on left
-          use_bridge: false  # circuit_tracer doesn't fully support TransformerBridge yet
       circuit_tracer_cfg:
         class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
         init_args:

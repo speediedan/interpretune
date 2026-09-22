@@ -103,7 +103,7 @@ class TestClassSAELens:
     )
     test_tlens_gpt2 = {
         **test_tl_gpt2_shared_config,
-        "tl_cfg": ITLensFromPretrainedConfig(use_bridge=False),
+        "tl_cfg": ITLensFromPretrainedConfig(),
         "hf_from_pretrained_cfg": dict(
             pretrained_kwargs={"device_map": "cpu", "dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
         ),

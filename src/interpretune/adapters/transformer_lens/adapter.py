@@ -244,7 +244,25 @@ class BaseITLensModule(BaseITModule):
         #       custom config) based, so model_init will not be used. To fully customize TL behavior, override this
         #       method and init a config-based bridge as desired
         # TODO: suppress messages from tl about no tokenizer here, we're deferring the tokenizer attach until setup
+        self._resolve_vocab_sentinels(self.it_cfg.tl_cfg.cfg, self.it_cfg.tokenizer)
         self.model = TransformerBridge.boot_native(self.it_cfg.tl_cfg.cfg, tokenizer=self.it_cfg.tokenizer)
+
+    @staticmethod
+    def _resolve_vocab_sentinels(cfg, tokenizer) -> None:
+        """Resolve TL's ``-1`` vocab sentinels from the tokenizer, which config-only init no longer does for us.
+
+        ``HookedTransformer.__init__`` inferred these (``d_vocab = max(tokenizer.vocab.values()) + 1``, and
+        ``d_vocab_out`` following it). ``boot_native`` does not: ``NativeModel`` passes ``cfg.d_vocab`` straight
+        into ``nn.Embedding``, so a config that omitted ``d_vocab`` and relied on inference now fails with
+        ``RuntimeError: Trying to create tensor with negative dimension -1``. The arithmetic below is upstream's,
+        copied deliberately so a config that worked before produces the same embedding size.
+        """
+        if tokenizer is None or getattr(tokenizer, "vocab", None) is None:
+            return
+        if getattr(cfg, "d_vocab", None) == -1:
+            cfg.d_vocab = max(tokenizer.vocab.values()) + 1
+        if getattr(cfg, "d_vocab_out", None) == -1:
+            cfg.d_vocab_out = cfg.d_vocab
 
     def _prune_tl_cfg_dict(self, normalize_device: bool = False, prune_list: list | None = None) -> dict:
         """Prunes the tl_cfg dictionary by removing IT-specific and HF-specific keys that shouldn't be passed to

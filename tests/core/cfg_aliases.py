@@ -274,7 +274,7 @@ class LightningTLGPT2(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left", use_bridge=False
+            model_name="gpt2-small", default_padding_side="left"
         )
     )
 
@@ -397,7 +397,7 @@ class CircuitTracerTLGemma2(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.transformer_lens, Adapter.circuit_tracer)
     tl_cfg: ITLensCfg | None = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gemma-2-2b", default_padding_side="left", use_bridge=False
+            model_name="gemma-2-2b", default_padding_side="left"
         )
     )
     generative_step_cfg: GenerativeClassificationConfig | None = field(
@@ -432,7 +432,7 @@ class LightningCircuitTracerTLGemma2(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer)
     tl_cfg: ITLensCfg | None = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gemma-2-2b", default_padding_side="left", use_bridge=False
+            model_name="gemma-2-2b", default_padding_side="left"
         )
     )
     circuit_tracer_cfg: CircuitTracerConfig | None = field(
@@ -626,7 +626,7 @@ class CoreSLHTGPT2(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left", use_bridge=False
+            model_name="gpt2-small", default_padding_side="left"
         )
     )
     # force_prepare_data: bool | None = True  # sometimes useful to enable for test debugging
@@ -705,7 +705,7 @@ class CoreSLHTGPT2Analysis(AnalysisBaseCfg):
     )
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left", use_bridge=False
+            model_name="gpt2-small", default_padding_side="left"
         )
     )
     sae_cfgs: list = field(default_factory=lambda: [])
@@ -873,8 +873,7 @@ class CoreSLNNsightGPT2LogitDiffsAttrAblation(CoreSLNNsightGPT2Analysis):
 class CoreSLBridgeGPT2Analysis(AnalysisBaseCfg):
     """TransformerBridge variant of CoreSLHTGPT2Analysis for Bridge vs Hooked parity testing.
 
-    Uses (core, sae_lens) adapter composition with use_bridge=True and ITLensBridgeConfig instead of
-    ITLensFromPretrainedNoProcessingConfig.
+    Uses (core, sae_lens) adapter composition with ITLensBridgeConfig instead of ITLensFromPretrainedNoProcessingConfig.
     """
 
     phase: str | None = "analysis"
@@ -981,7 +980,7 @@ class LightningSLHTGPT2(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.sae_lens)
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left", use_bridge=False
+            model_name="gpt2-small", default_padding_side="left"
         )
     )
 

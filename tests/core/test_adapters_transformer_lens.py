@@ -1,3 +1,4 @@
+import warnings
 from copy import deepcopy
 from dataclasses import dataclass, field
 import inspect
@@ -256,7 +257,12 @@ class TestClassTransformerLens:
     def test_tl_session_exceptions(self, get_it_session__tl_cust__setup):
         fixture = get_it_session__tl_cust__setup
         tl_test_module = fixture.it_session.module
+        # A TransformerBridge forwards unknown attributes to the model it wraps, and that model carries its
+        # own `cfg`, so ablating only the bridge's leaves `cfg` resolvable and this warn path unreachable.
+        # (Under the weight-converting HookedTransformer there was one object and one `cfg`.) Ablate both, so
+        # the assertion still exercises "config genuinely unreachable" rather than passing for free.
         with (
+            ablate_cls_attrs(tl_test_module.model.original_model, "cfg"),
             ablate_cls_attrs(tl_test_module.model, "cfg"),
             pytest.warns(UserWarning, match="Could not find a TransformerLens config"),
         ):
@@ -361,41 +367,44 @@ class TestClassTransformerLens:
         assert "hf_model" not in pruned_dict
         assert "tokenizer" not in pruned_dict
 
-    def test_tl_use_bridge_config(self):
-        """Test that use_bridge configuration option is properly handled."""
-        # Test with use_bridge=True (default, TransformerBridge)
+    def test_tl_retired_use_bridge_is_refused_by_name(self):
+        """``use_bridge`` is gone, and passing it fails by name rather than being accepted and ignored.
+
+        It selected the weight-converting ``HookedTransformer`` against ``TransformerBridge``.
+        TransformerLens 4.0 removes that class, so the flag has one reachable value and no reason to exist;
+        ``enable_compatibility_mode`` on the bridge config is what still expresses the old numerics.
+
+        The assertion is that construction RAISES. A retired field that is quietly swallowed leaves a config
+        whose author believes they selected something they did not, and nothing downstream can tell.
+        """
+        for cfg_cls in (ITLensFromPretrainedConfig, ITLensCustomConfig):
+            assert "use_bridge" not in cfg_cls.__dataclass_fields__, (
+                f"{cfg_cls.__name__} still declares the retired use_bridge field"
+            )
+
         test_tl_cfg = deepcopy(TestClassTransformerLens.test_tlens_gpt2)
-        test_tl_cfg["tl_cfg"]["use_bridge"] = True
-        test_tl_cfg["tl_cfg"] = ITLensFromPretrainedConfig(**test_tl_cfg["tl_cfg"])
-        it_cfg_bridge = ITLensConfig(**test_tl_cfg)
-        assert it_cfg_bridge.tl_cfg.use_bridge is True
+        test_tl_cfg["tl_cfg"]["use_bridge"] = False
+        with pytest.raises(TypeError, match="use_bridge"):
+            ITLensFromPretrainedConfig(**test_tl_cfg["tl_cfg"])
 
-        # Test with use_bridge=False (legacy HookedTransformer)
-        test_tl_cfg_legacy = deepcopy(TestClassTransformerLens.test_tlens_gpt2)
-        test_tl_cfg_legacy["tl_cfg"]["use_bridge"] = False
-        test_tl_cfg_legacy["tl_cfg"] = ITLensFromPretrainedConfig(**test_tl_cfg_legacy["tl_cfg"])
-        it_cfg_legacy = ITLensConfig(**test_tl_cfg_legacy)
-        assert it_cfg_legacy.tl_cfg.use_bridge is False
+    def test_tl_custom_config_is_no_longer_special_cased(self):
+        """A custom (config-only) tl_cfg builds like any other, with no warn-and-force branch.
 
-        # Test default (should be True)
-        test_tl_cfg_default = deepcopy(TestClassTransformerLens.test_tlens_gpt2)
-        test_tl_cfg_default["tl_cfg"] = ITLensFromPretrainedConfig(**test_tl_cfg_default["tl_cfg"])
-        it_cfg_default = ITLensConfig(**test_tl_cfg_default)
-        assert it_cfg_default.tl_cfg.use_bridge is True
-
-        # Test default for custom config: should default to False (HookedTransformer)
-        test_tl_cfg_custom_default = deepcopy(TestClassTransformerLens.test_tlens_cust)
-        test_tl_cfg_custom_default["tl_cfg"] = ITLensCustomConfig(**test_tl_cfg_custom_default["tl_cfg"])
-        it_cfg_custom = ITLensConfig(**test_tl_cfg_custom_default)
-        assert it_cfg_custom.tl_cfg.use_bridge is False
-
-        # If user sets use_bridge=True in a custom config, warn and force to False
-        test_tl_cfg_custom_override = deepcopy(TestClassTransformerLens.test_tlens_cust)
-        test_tl_cfg_custom_override["tl_cfg"]["use_bridge"] = True
-        test_tl_cfg_custom_override["tl_cfg"] = ITLensCustomConfig(**test_tl_cfg_custom_override["tl_cfg"])
-        with pytest.warns(UserWarning, match="ITLensCustomConfig does not support TransformerBridge"):
-            it_cfg_custom_override = ITLensConfig(**test_tl_cfg_custom_override)
-        assert it_cfg_custom_override.tl_cfg.use_bridge is False
+        It was forced onto the legacy path because ``TransformerBridge`` could not be built without an HF
+        model. ``TransformerBridge.boot_native`` removes that premise, so the special case is gone and
+        constructing a custom config must not warn about bridge support.
+        """
+        test_tl_cfg_custom = deepcopy(TestClassTransformerLens.test_tlens_cust)
+        test_tl_cfg_custom["tl_cfg"] = ITLensCustomConfig(**test_tl_cfg_custom["tl_cfg"])
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            it_cfg_custom = ITLensConfig(**test_tl_cfg_custom)
+        # Assert on the specific warning that is gone, not on silence: this path legitimately emits
+        # unrelated instantiation feedback (tokenizer_name resolution), and asserting silence would
+        # make the test fail for a reason that has nothing to do with the special case being removed.
+        offending = [w for w in caught if "does not support TransformerBridge" in str(w.message)]
+        assert not offending, f"the retired warn-and-force branch still fires: {offending}"
+        assert it_cfg_custom.tl_cfg is not None
 
 
 class TestBasicTransformerBridgeAdapter:

@@ -98,7 +98,6 @@ class BaseCfg:
     circuit_tracer_cfg: CircuitTracerConfig | None = None
     nnsight_cfg: NNsightConfig | None = None
     sae_cfgs: Dict | None = None
-    use_bridge: bool | None = None  # Override for SAELensConfig.use_bridge (True=Bridge, False=Hooked)
     auto_comp_cfg: AutoCompConfig | None = None
     add_saes_on_init: bool = False
     req_grad_mask: Tuple | None = None  # used to toggle requires grad for non-fts contexts
