@@ -92,12 +92,12 @@ FIXTURE_CFGS = {
 3. **ITSessionCfg Fixtures** - Configuration only (no instantiation):
    - Pattern: `get_it_session_cfg__{config_key}`
    - Returns: ITSessionCfg object
-   - Example: `get_it_session_cfg__sl_ht_gpt2`
+   - Example: `get_it_session_cfg__sl_br_gpt2`
 
 4. **AnalysisSession Fixtures** - Session with analysis runner and results:
    - Pattern: `get_analysis_session__{config_key}__{phase}_{runphase}`
    - Returns: `AnalysisSessionFixture(result, it_session, runner, run_config, test_cfg)`
-   - Example: `get_analysis_session__sl_ht_gpt2_logit_diffs_latent__initonly_runanalysis`
+   - Example: `get_analysis_session__sl_br_gpt2_logit_diffs_latent__initonly_runanalysis`
 
 5. **Fine-Tuning Schedule Fixtures** - Fine-tuning schedules:
    - Pattern: `get_ft_schedule__{config_key}__setup`
@@ -224,7 +224,7 @@ class CircuitTracerTLGemma2(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.circuit_tracer)
     tl_cfg: ITLensCfg | None = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gemma-2-2b", default_padding_side="left", use_bridge=False
+            model_name="gemma-2-2b", default_padding_side="left"
         )
     )
     generative_step_cfg: GenerativeClassificationConfig | None = field(
@@ -262,7 +262,7 @@ class LightningTLGPT2(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.transformer_lens)
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left", use_bridge=False
+            model_name="gpt2-small", default_padding_side="left"
         )
     )
 ```
@@ -355,23 +355,23 @@ Use for expensive setups shared across multiple tests:
 
 ```python
 @pytest.fixture(scope="class")
-def sl_ht_gpt2_w_ref_logits(get_it_session__sl_ht_gpt2__initonly):
-    fixture = get_it_session__sl_ht_gpt2__initonly
+def sl_br_gpt2_w_ref_logits(get_it_session__sl_br_gpt2__initonly):
+    fixture = get_it_session__sl_br_gpt2__initonly
     sl_test_module = fixture.it_session.module
     return sl_test_module, TestClassSAELens.get_ref_logits(sl_test_module)
 
 
 @pytest.fixture(scope="class")
-def l_sl_ht_gpt2_w_ref_logits(get_it_session__l_sl_ht_gpt2__initonly):
-    fixture = get_it_session__l_sl_ht_gpt2__initonly
+def l_sl_br_gpt2_w_ref_logits(get_it_session__l_sl_br_gpt2__initonly):
+    fixture = get_it_session__l_sl_br_gpt2__initonly
     sl_test_module = fixture.it_session.module
     return sl_test_module, TestClassSAELens.get_ref_logits(sl_test_module)
 
 
 core_l_run_w_pytest_cfg = {
     "argvalues": [
-        pytest.param("sl_ht_gpt2_w_ref_logits"),
-        pytest.param("l_sl_ht_gpt2_w_ref_logits", marks=RunIf(lightning=True)),
+        pytest.param("sl_br_gpt2_w_ref_logits"),
+        pytest.param("l_sl_br_gpt2_w_ref_logits", marks=RunIf(lightning=True)),
     ],
     "ids": ["core", "lightning"],
 }
@@ -451,7 +451,8 @@ gemma2.rte.circuit_tracer_tl:
           init_args:
             model_name: gemma-2-2b
             default_padding_side: left
-            use_bridge: false  # circuit_tracer requires HookedTransformer, not TransformerBridge
+            # NOTE: circuit-tracer's TransformerLens backend is unavailable pending upstream TL 4.0
+            # support; use backend: nnsight for circuit-tracer compositions meanwhile.
         circuit_tracer_cfg:
           class_path: interpretune.adapters.circuit_tracer.config.CircuitTracerConfig
           init_args:
@@ -606,17 +607,17 @@ From `test_adapters_sae_lens.py`:
 
 ```python
 @pytest.fixture(scope="class")
-def sl_ht_gpt2_w_ref_logits(get_it_session__sl_ht_gpt2__initonly):
+def sl_br_gpt2_w_ref_logits(get_it_session__sl_br_gpt2__initonly):
     # Deepcopy to avoid interference between tests
-    it_s = deepcopy(get_it_session__sl_ht_gpt2__initonly)
+    it_s = deepcopy(get_it_session__sl_br_gpt2__initonly)
     # Modify copy for specific test needs
     it_s.it_session.module.compute_reference_logits()
     return it_s
 
 class TestSAELens:
-    def test_with_modified_session(self, sl_ht_gpt2_w_ref_logits):
+    def test_with_modified_session(self, sl_br_gpt2_w_ref_logits):
         # Tests use modified copy, original fixture unaffected
-        assert sl_ht_gpt2_w_ref_logits.it_session.module.reference_logits is not None
+        assert sl_br_gpt2_w_ref_logits.it_session.module.reference_logits is not None
 ```
 
 ### Pattern: Conditional Parameterization
@@ -626,8 +627,8 @@ From `test_adapters_sae_lens.py`:
 ```python
 core_l_run_w_pytest_cfg = {
     "argvalues": [
-        pytest.param("sl_ht_gpt2_w_ref_logits"),
-        pytest.param("l_sl_ht_gpt2_w_ref_logits", marks=RunIf(lightning=True)),
+        pytest.param("sl_br_gpt2_w_ref_logits"),
+        pytest.param("l_sl_br_gpt2_w_ref_logits", marks=RunIf(lightning=True)),
     ],
     "ids": ["core", "lightning"],
 }

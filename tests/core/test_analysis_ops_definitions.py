@@ -939,7 +939,19 @@ SERIALIZATION_TEST_CONFIGS = (
         ),
     ),
     BaseAugTest(
-        alias="model_fwd_w_cache_latent_models", cfg=OpTestConfig(target_op=it.model_fwd_w_cache_latent_models)
+        alias="model_fwd_w_cache_latent_models",
+        cfg=OpTestConfig(target_op=it.model_fwd_w_cache_latent_models),
+        extra_marks=(
+            pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "interpretune#613: SAE latent keys do not survive the round trip on a TransformerBridge -- "
+                    "the runtime dict is keyed by the bridge's canonical hook names (attn.o.hook_in) while the "
+                    "persisted copy keeps the configured SAE spelling (attn.hook_z). Strict so this fails loudly "
+                    "the moment #613 lands rather than sitting here as a stale exemption."
+                ),
+            ),
+        ),
     ),
     BaseAugTest(alias="model_ablation", cfg=OpTestConfig(target_op=it.model_ablation)),
     BaseAugTest(alias="model_gradient", cfg=OpTestConfig(target_op=it.model_gradient)),
@@ -948,6 +960,17 @@ SERIALIZATION_TEST_CONFIGS = (
     BaseAugTest(
         alias="model_fwd_w_cache_latent_models.logit_diffs_cache",
         cfg=OpTestConfig(target_op=[it.model_fwd_w_cache_latent_models, it.logit_diffs_cache]),
+        extra_marks=(
+            pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "interpretune#613: SAE latent keys do not survive the round trip on a TransformerBridge -- "
+                    "the runtime dict is keyed by the bridge's canonical hook names (attn.o.hook_in) while the "
+                    "persisted copy keeps the configured SAE spelling (attn.hook_z). Strict so this fails loudly "
+                    "the moment #613 lands rather than sitting here as a stale exemption."
+                ),
+            ),
+        ),
     ),
     BaseAugTest(alias="latent_correct_acts", cfg=OpTestConfig(target_op=it.latent_correct_acts)),
     BaseAugTest(alias="ablation_attribution", cfg=OpTestConfig(target_op=it.ablation_attribution)),

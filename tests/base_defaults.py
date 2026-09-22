@@ -40,6 +40,10 @@ class BaseAugTest:
     expected: Dict | None = None
     result_gen: Callable | None = None
     function_marks: dict[str, Any] = field(default_factory=dict)  # marks applied at test function level
+    # Pytest marks passed through verbatim. `marks`/`function_marks` are a RunIf vocabulary (environment
+    # gating); this is for ordinary marks a case needs on its own terms, e.g. a strict xfail against a
+    # filed defect, which RunIf cannot express.
+    extra_marks: tuple = ()
 
     def __post_init__(self):
         if self.expected is None and self.result_gen is not None:
@@ -69,7 +73,7 @@ def pytest_factory(test_configs: list[BaseAugTest], unpack: bool = True, fq_alia
             config.alias,
             *config.cfg if unpack else (config.cfg,),
             id=config.alias if not fq_alias else config.alias.split(".")[-1],
-            marks=config.marks or tuple(),
+            marks=((config.marks,) if config.marks else ()) + tuple(config.extra_marks),
         )
         for config in test_configs
     ]
@@ -139,7 +143,7 @@ class OpTestConfig:
 
     target_op: Any  # The operation to test
     resolved_op: AnalysisOp | None = None
-    session_fixt: str = "get_it_session__sl_ht_gpt2_analysis__setup"
+    session_fixt: str = "get_it_session__sl_br_gpt2_analysis__setup"
     batch_size: int = 1
     generate_required_only: bool = True
     override_req_cols: tuple | None = None

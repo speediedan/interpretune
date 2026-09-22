@@ -620,21 +620,8 @@ class LightningCircuitTracerNNsightGemma3(BaseCfg):
 
 
 @dataclass(kw_only=True)
-class CoreSLHTGPT2(BaseCfg):
-    phase: str | None = "test"
-    model_src_key: str | None = "gpt2"
-    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
-    tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
-        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left"
-        )
-    )
-    # force_prepare_data: bool | None = True  # sometimes useful to enable for test debugging
-
-
-@dataclass(kw_only=True)
 class CoreSLNNsightGPT2(BaseCfg):
-    """NNsight backend variant of CoreSLHTGPT2 for basic SAE adapter tests."""
+    """NNsight backend variant of CoreSLBridgeGPT2 for basic SAE adapter tests."""
 
     phase: str | None = "test"
     model_src_key: str | None = "gpt2"
@@ -669,7 +656,7 @@ class CoreSLNNsightGPT2(BaseCfg):
 
 @dataclass(kw_only=True)
 class CoreSLBridgeGPT2(BaseCfg):
-    """TransformerBridge variant of CoreSLHTGPT2 for basic SAE adapter tests."""
+    """(core, sae_lens) over a TransformerBridge, for basic SAE adapter tests."""
 
     phase: str | None = "test"
     model_src_key: str | None = "gpt2"
@@ -685,93 +672,8 @@ class CoreSLBridgeGPT2(BaseCfg):
 
 
 @dataclass(kw_only=True)
-class CoreSLHTGPT2Analysis(AnalysisBaseCfg):
-    phase: str | None = "analysis"
-    model_src_key: str | None = "gpt2"
-    adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens)
-    generative_step_cfg: GenerativeClassificationConfig = field(
-        default_factory=lambda: GenerativeClassificationConfig(
-            enabled=True,
-            lm_generation_cfg=TLensGenerationConfig(max_new_tokens=1, output_logits=True, return_dict_in_generate=True),
-        )
-    )
-    latent_analysis_targets: LatentAnalysisTargets = field(
-        default_factory=lambda: LatentAnalysisTargets(sae_release="gpt2-small-hook-z-kk", target_layers=[9, 10])
-    )
-    hf_from_pretrained_cfg: HFFromPretrainedConfig = field(
-        default_factory=lambda: HFFromPretrainedConfig(
-            pretrained_kwargs={"dtype": "float32"}, model_head="transformers.GPT2LMHeadModel"
-        )
-    )
-    tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
-        default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left"
-        )
-    )
-    sae_cfgs: list = field(default_factory=lambda: [])
-    auto_comp_cfg: AutoCompConfig = field(
-        default_factory=lambda: AutoCompConfig(
-            module_cfg_name="RTEBoolqConfig", module_cfg_mixin=RTEBoolqEntailmentMapping
-        )
-    )
-    # TODO: customize these cache paths for testing efficiency
-    # cache_dir: str | None = None
-    # op_output_dataset_path: str | None = None
-    # important for ephemeral CI runner alignment
-    force_prepare_data: bool | None = True
-    dm_override_cfg: dict | None = field(
-        default_factory=lambda: {
-            "enable_datasets_cache": True,
-            "dataset_path": str(Path(tempfile.gettempdir()) / "force_prepare_analysis_ds"),
-        }
-    )
-
-    def __post_init__(self):
-        super().__post_init__()
-        # Dynamically generate sae_cfgs from sae_targets.latent_model_fqns
-        if self.latent_analysis_targets and hasattr(self.latent_analysis_targets, "latent_model_fqns"):
-            self.sae_cfgs = [
-                SAELensFromPretrainedConfig(release=sae_fqn.release, sae_id=sae_fqn.sae_id)
-                for sae_fqn in self.latent_analysis_targets.latent_model_fqns
-            ]
-
-
-@dataclass(kw_only=True)
-class CoreSLHTGPT2LogitDiffsBase(CoreSLHTGPT2Analysis):
-    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
-        AnalysisCfg(target_op=it.logit_diffs_base, save_prompts=False, save_tokens=False, ignore_manual=True),
-    )
-
-
-@dataclass(kw_only=True)
-class CoreSLHTGPT2LogitDiffsLatent(CoreSLHTGPT2Analysis):
-    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
-        AnalysisCfg(target_op=it.logit_diffs_latent, save_prompts=True, save_tokens=True, ignore_manual=True),
-    )
-
-
-@dataclass(kw_only=True)
-class CoreSLHTGPT2LogitDiffsAttrGrad(CoreSLHTGPT2Analysis):
-    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
-        AnalysisCfg(target_op=it.logit_diffs_attr_grad, save_prompts=False, save_tokens=False, ignore_manual=True),
-    )
-
-
-@dataclass(kw_only=True)
-class CoreSLHTGPT2LogitDiffsAttrAblation(CoreSLHTGPT2Analysis):
-    analysis_cfgs: AnalysisCfg | AnalysisOp | Iterable[AnalysisCfg | AnalysisOp] = (
-        AnalysisCfg(target_op=it.logit_diffs_attr_ablation, save_prompts=False, save_tokens=False, ignore_manual=True),
-    )
-
-
-################################################################################
-# NNsight SAE Analysis Test Configs (Backend Parity)
-################################################################################
-
-
-@dataclass(kw_only=True)
 class CoreSLNNsightGPT2Analysis(AnalysisBaseCfg):
-    """NNsight backend variant of CoreSLHTGPT2Analysis for SAE backend parity testing.
+    """NNsight backend variant of CoreSLBridgeGPT2Analysis for SAE backend parity testing.
 
     Uses (core, nnsight, sae_lens) adapter composition with SAELensConfig(backend='nnsight').
     """
@@ -871,9 +773,11 @@ class CoreSLNNsightGPT2LogitDiffsAttrAblation(CoreSLNNsightGPT2Analysis):
 
 @dataclass(kw_only=True)
 class CoreSLBridgeGPT2Analysis(AnalysisBaseCfg):
-    """TransformerBridge variant of CoreSLHTGPT2Analysis for Bridge vs Hooked parity testing.
+    """(core, sae_lens) analysis over a TransformerBridge built from ``ITLensBridgeConfig``.
 
-    Uses (core, sae_lens) adapter composition with ITLensBridgeConfig instead of ITLensFromPretrainedNoProcessingConfig.
+    The weight-converting counterpart this was once compared against is gone: TransformerLens 4.0 removed
+    HookedTransformer, so the bridge is the only model path and this is the analysis baseline rather than
+    one side of a parity pair.
     """
 
     phase: str | None = "analysis"
@@ -974,7 +878,7 @@ class CoreSLCust(BaseCfg):
 
 
 @dataclass(kw_only=True)
-class LightningSLHTGPT2(BaseCfg):
+class LightningSLBridgeGPT2(BaseCfg):
     phase: str | None = "test"
     model_src_key: str | None = "gpt2"
     adapter_ctx: Sequence[Adapter | str] = (Adapter.lightning, Adapter.sae_lens)

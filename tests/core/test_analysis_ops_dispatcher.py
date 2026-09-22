@@ -415,7 +415,7 @@ test_op:
         try:
             # Use existing analysis session fixture if available
             fixture = request.getfixturevalue(
-                "get_analysis_session__sl_ht_gpt2_logit_diffs_latent__initonly_runanalysis"
+                "get_analysis_session__sl_br_gpt2_logit_diffs_latent__initonly_runanalysis"
             )
 
             # Verify the fixture contains expected data
