@@ -200,6 +200,10 @@ ATTRIBUTION_ANALYSIS_PARAMS = [
 
 
 @RunIf(bf16_cuda=True)
+@pytest.mark.skip(
+    reason="interpretune#614: the notebook's analysis injection targets circuit-tracer's TransformerLens backend, "
+    "which is unavailable until circuit-tracer supports TransformerLens 4.0"
+)
 @pytest.mark.parametrize("params", ATTRIBUTION_ANALYSIS_PARAMS)
 def test_attribution_analysis_notebook(params: dict[str, Any], tmp_path: Path):
     """Test attribution analysis notebook with different parameterizations."""
@@ -325,18 +329,21 @@ def test_circuit_tracer_notebooks(params: dict[str, Any], tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
-# Test parameters for CT Analysis Backend Demo notebook (public dashboard mode). Both
-# circuit-tracer backends are validated; the notebook's in-cell sanity gates (unit direction
-# norm, post-gap > pre-gap) catch wild cross-backend divergences without heavy assertions.
+# Test parameters for CT Analysis Backend Demo notebook (public dashboard mode). The
+# notebook's in-cell sanity gates (unit direction norm, post-gap > pre-gap) catch wild divergences
+# without heavy assertions.
 CT_ANALYSIS_BACKEND_PARAMS = [
     pytest.param(
         {"backend": "nnsight", "dashboard_mode": "public"},
         id="ct_analysis_backend_nnsight_public",
     ),
-    pytest.param(
-        {"backend": "transformerlens", "dashboard_mode": "public"},
-        id="ct_analysis_backend_tl_public",
-    ),
+    # circuit-tracer's TransformerLens backend is disabled until circuit-tracer ports its replacement model
+    # (a HookedTransformer subclass, removed in TransformerLens 4.0) onto TransformerBridge. Restore this case
+    # when that lands; the nnsight case above covers the notebook meanwhile.
+    # pytest.param(
+    #     {"backend": "transformerlens", "dashboard_mode": "public"},
+    #     id="ct_analysis_backend_tl_public",
+    # ),
 ]
 
 # Local-dashboard-mode params: identical analysis flow, feature-dashboard links point at the
@@ -394,9 +401,10 @@ def test_ct_analysis_backend_notebook_local(params: dict[str, Any], tmp_path: Pa
 # needs no services and is the CI lane; the local one is opt-in (see below).
 CT_CONCEPT_STEERING_PARAMS = [
     pytest.param({}, id="ct_concept_steering_public"),
-    # TransformerLens circuit-tracer backend; the notebook's gap assertions (both steering paths)
-    # are the cross-backend sanity gate
-    pytest.param({"BACKEND": "transformerlens"}, id="ct_concept_steering_tl_public"),
+    # circuit-tracer's TransformerLens backend is disabled until circuit-tracer ports its replacement model
+    # (a HookedTransformer subclass, removed in TransformerLens 4.0) onto TransformerBridge. Restore this case
+    # when that lands; the nnsight case above covers the notebook meanwhile.
+    # pytest.param({"BACKEND": "transformerlens"}, id="ct_concept_steering_tl_public"),
 ]
 
 # Local-Neuronpedia notebook. Its defaults already carry the gemma-3-1b-it + local-webapp substrate,
