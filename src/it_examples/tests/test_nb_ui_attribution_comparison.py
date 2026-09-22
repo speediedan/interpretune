@@ -126,7 +126,11 @@ def test_footer_cell_count_matches_the_header_width():
         left = markup.split('<div class="col-header"')[1]
         header_cols = len(re.findall(r"<th\b", left.split("</thead>")[0]))
         assert header_cols == expected, f"{header_cols} header columns, expected {expected}"
-        footer = re.search(r'<tr class="total">.*?</tr>', left).group(0)
+        footer_row = re.search(r'<tr class="total">.*?</tr>', left)
+        # Not just for the type checker: if no footer row rendered at all, say so, rather than dying on
+        # an attribute of None and reporting a crash where the real finding is a missing row.
+        assert footer_row is not None, "no footer row rendered in the directions table"
+        footer = footer_row.group(0)
         # Read colspan out of each tag rather than one combined pattern: an optional group after a lazy
         # prefix silently never captures, which counts every cell as width 1 and passes only by accident.
         width = 0
