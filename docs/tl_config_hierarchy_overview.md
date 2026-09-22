@@ -1,29 +1,17 @@
 # TransformerLens Config Hierarchy Overview
 
 ## Overview
-This document provides an overview of the configuration hierarchy for TransformerLens v3 (TransformerBridge) and legacy (HookedTransformer) paths, and their integration with Interpretune configurations.
+This document provides an overview of the TransformerLens configuration hierarchy and its integration with Interpretune configurations.
+
+TransformerLens 4.0 removed the legacy `Hooked*` model stack, so `TransformerBridge` is the only model path and `TransformerBridgeConfig` the only TL config. The `use_bridge` flag that selected between them is retired: it had one reachable value left, and passing it now fails by name rather than being accepted and ignored.
 
 ## TransformerLens Config Hierarchy
 
 ### Base Class: TransformerLensConfig
-Common base class for both architectures, stored in `transformer_lens/config/TransformerLensConfig.py`:
+Stored in `transformer_lens/config/TransformerLensConfig.py`:
 - Defines core model dimensions: `d_model`, `d_head`, `n_layers`, `n_ctx`, `d_vocab`, `n_heads`
-- Common to both HookedTransformerConfig and TransformerBridgeConfig
 
-### HookedTransformerConfig (Legacy)
-Extends `TransformerLensConfig` as a dataclass:
-- **Location**: `transformer_lens/config/HookedTransformerConfig.py`
-- **Usage**: Traditional TransformerLens interface with weight conversion
-- **Key Fields**:
-  - Model architecture: `d_mlp`, `act_fn`, `attn_only`, `parallel_attn_mlp`
-  - Attention config: `use_attn_scale`, `use_qk_norm`, `use_local_attn`, `window_size`
-  - Initialization: `init_mode`, `initializer_range`, `init_weights`, `seed`
-  - Normalization: `normalization_type`, `eps`, `final_rms`
-  - Advanced: `gated_mlp`, `rotary_dim`, `rotary_base`, `num_experts`, `experts_per_token`
-  - Device/dtype: `device`, `dtype`, `n_devices`
-  - Metadata: `model_name`, `checkpoint_index`, `checkpoint_value`, `tokenizer_name`
-
-### TransformerBridgeConfig (v3)
+### TransformerBridgeConfig
 Extends `TransformerLensConfig` as a regular class:
 - **Location**: `transformer_lens/config/TransformerBridgeConfig.py`
 - **Usage**: Wraps HF models without weight conversion, more memory efficient
@@ -32,8 +20,11 @@ Extends `TransformerLensConfig` as a regular class:
   - `tokenizer_prepends_bos`: Tokenizer behavior configuration
   - `default_padding_side`: Padding side configuration
   - `split_attention_weights`: Attention weight processing configuration
-- **Compatibility**: Includes all HookedTransformerConfig fields for API compatibility
-- **Note**: Despite including HookedTransformer fields, TransformerBridge doesn't perform weight conversion
+- **Compatibility**: Carries the fields the removed `HookedTransformerConfig` declared, so configs written
+  against it keep working
+- **Note**: The bridge does not convert weights. `enable_compatibility_mode()` applies the processing the
+  legacy path did by default (LayerNorm folding, `center_writing_weights`, `center_unembed`); omit it to work
+  with raw HF weights
 
 ## TransformerBridge Model Structure
 
@@ -61,12 +52,11 @@ class ArchitectureAdapter:
 For generation flag precedence and debug semantics, see `docs/generation_precedence.md`.
 
 ### Base: ITLensSharedConfig
-Common configuration shared across both initialization modes:
+Common configuration shared across the initialization modes:
 - **Location**: `src/interpretune/config/transformer_lens.py`
 - **Key Fields**:
   - `move_to_device`: Control device movement (default: True)
   - `default_padding_side`: Padding side for tokenizer (default: "right")
-  - `use_bridge`: **Toggle between TransformerBridge (v3) and HookedTransformer (legacy)** (default: True)
 - **Purpose**: IT-specific settings that don't map directly to TL configs
 
 ### ITLensFromPretrainedConfig
@@ -79,15 +69,19 @@ Extends `ITLensSharedConfig` for `from_pretrained` initialization:
   - `hf_model`: Optional pre-instantiated HF model (IT handles instantiation)
   - `tokenizer`: Optional tokenizer (IT handles instantiation)
   - `fold_value_biases`, `default_prepend_bos`: Behavior flags
-- **Note**: These configs are **not** directly convertible to HookedTransformerConfig or TransformerBridgeConfig
+- **Note**: These configs are **not** directly convertible to `TransformerBridgeConfig`
 
 ### ITLensCustomConfig
 Extends `ITLensSharedConfig` for config-based initialization:
-- **Usage**: When providing explicit TransformerLens config (currently only supports HookedTransformerConfig)
+- **Usage**: When providing an explicit TransformerLens config rather than loading pretrained weights
 - **Key Field**:
-  - `cfg`: HookedTransformerConfig or dict convertible to it
-- **Limitation**: Currently requires HookedTransformerConfig, cannot accept TransformerBridgeConfig directly
-- **Note**: When `use_bridge=True` with `ITLensCustomConfig`, initialization will not use TransformerBridge — Interpretune will warn and force `use_bridge=False`, falling back to the legacy HookedTransformer path.
+  - `cfg`: `TransformerBridgeConfig` or dict convertible to it
+- **Note**: No longer special-cased. It was previously forced onto the legacy path because a bridge could not
+  be built without an HF model; `TransformerBridge.boot_native` removes that premise, so a custom config
+  builds a bridge like any other.
+- **Note**: `boot_native` does NOT infer TransformerLens' `-1` vocab sentinels from the tokenizer the way
+  `HookedTransformer.__init__` did, so the adapter resolves `d_vocab` / `d_vocab_out` before booting. A config
+  that omitted `d_vocab` and relied on inference would otherwise fail inside `nn.Embedding`.
 
 ### ITLensBridgeConfig
 Extends `ITLensSharedConfig` for explicit TransformerBridge (v3) configuration:
@@ -98,14 +92,14 @@ Extends `ITLensSharedConfig` for explicit TransformerBridge (v3) configuration:
   - `enable_compatibility_mode_kwargs`: Optional kwargs for enable_compatibility_mode() (e.g., `fold_ln`, `fold_value_biases`)
   - `transformer_bridge_config_overrides`: Optional kwargs to pass to TransformerBridgeConfig constructor
   - `device`, `dtype`: Device/dtype configuration
-  - `use_bridge`: Always True for this config type (default: True)
-- **Note**: This is the recommended config for TransformerBridge mode. Using `ITLensFromPretrainedConfig` with `use_bridge=True` will produce a warning since the config fields are HookedTransformer-specific.
-- **Note**: `SAELensConfig` will warn if `use_bridge=True` but `tl_cfg` is an `ITLensFromPretrainedConfig` instead of `ITLensBridgeConfig`.
+- **Note**: This is the bridge-native config, and the one to use when you want compatibility mode or
+  `TransformerBridgeConfig` overrides. `ITLensFromPretrainedConfig` also produces a bridge; it simply
+  expresses the from-pretrained loading path instead.
 
 ### ITLensConfig
 Top-level IT configuration encapsulating all settings:
 - **Key Fields**:
-  - `tl_cfg`: Either ITLensFromPretrainedConfig or ITLensCustomConfig
+  - `tl_cfg`: `ITLensFromPretrainedConfig`, `ITLensCustomConfig` or `ITLensBridgeConfig`
   - `hf_from_pretrained_cfg`: HFFromPretrainedConfig (for HF model loading)
   - Various inherited IT core configs
 - **Internal State**:
@@ -118,8 +112,8 @@ Top-level IT configuration encapsulating all settings:
 
 ## Config Flow During Initialization
 
-### TransformerBridge Path (use_bridge=True)
-1. User provides `ITLensFromPretrainedConfig` with `use_bridge=True` (default)
+### Pretrained Path
+1. User provides `ITLensFromPretrainedConfig` (or `ITLensBridgeConfig`)
 2. IT loads HF model via `model_name` using `hf_from_pretrained_cfg`
 3. `_convert_hf_to_bridge()` is called:
    ```python
@@ -142,39 +136,22 @@ Top-level IT configuration encapsulating all settings:
    - `self.model.config = HF PretrainedConfig` (original HF config)
    - `self.model.adapter.cfg = TransformerBridgeConfig instance` (same as model.cfg)
 
-### HookedTransformer Path (use_bridge=False)
-1. User provides `ITLensFromPretrainedConfig` with `use_bridge=False`
-2. IT loads HF model via `model_name` using `hf_from_pretrained_cfg`
-3. `_convert_hf_to_tl()` is called:
-   ```python
-   # Convert using TL's from_pretrained with weight conversion
-   model = HookedTransformer.from_pretrained_no_processing(
-       model_name=model_name,
-       hf_model=hf_model,
-       **filtered_kwargs
-   )
-
-   # Preserve original HF config
-   model.config = hf_model.config  # HF PretrainedConfig
-   ```
-4. After initialization:
-   - `self.model = HookedTransformer instance`
-   - `self.model.cfg = HookedTransformerConfig instance` (created by TL)
-   - `self.model.config = HF PretrainedConfig` (original HF config)
-
 ### Config-based Path (ITLensCustomConfig)
-1. User provides `ITLensCustomConfig` with `cfg=HookedTransformerConfig`
+1. User provides `ITLensCustomConfig` with `cfg=TransformerBridgeConfig`
 2. `_load_from_pretrained = False` is set
 3. `tl_config_model_init()` is called:
    ```python
-   # Create HookedTransformer from config
-   model = HookedTransformer(cfg=tl_cfg)
+   # Resolve TL's -1 vocab sentinels from the tokenizer first: boot_native passes cfg.d_vocab
+   # straight into nn.Embedding and does not infer it the way HookedTransformer.__init__ did.
+   self._resolve_vocab_sentinels(cfg, tokenizer)
+
+   # Build a bridge around a randomly-initialized TL-native model: no HF model, no Hub call
+   model = TransformerBridge.boot_native(cfg, tokenizer=tokenizer)
    ```
 4. After initialization:
-   - `self.model = HookedTransformer instance`
-   - `self.model.cfg = HookedTransformerConfig instance` (provided by user)
+   - `self.model = TransformerBridge instance`
+   - `self.model.cfg = TransformerBridgeConfig instance` (provided by user)
    - No `self.model.config` (no original HF config)
-   - **Cannot use TransformerBridge path** (requires HF model)
 
 ## Config Serialization Requirements
 
@@ -186,20 +163,15 @@ def _capture_hyperparameters(self) -> None:
    """Capture and serialize hyperparameters for model checkpointing.
 
    Current behavior:
-   1. Serialize the actual TL model configuration (HookedTransformerConfig or TransformerBridgeConfig)
-      derived from the initialized model instance (`self.model.cfg`) and store it under the
-      `tl_model_cfg` key in the session `_init_hparams` so it can be used for reproducible recreation.
-   2. Add a `_used_bridge` flag when possible to capture whether the bridge (v3) path was used.
-   3. Store IT-specific TL settings under `it_tl_cfg` so IT-level configuration fields are preserved.
-   4. Call the superclass implementation to capture the original HF `PretrainedConfig` (hf_preconversion_config).
+   1. Serialize the actual `TransformerBridgeConfig` derived from the initialized model instance
+      (`self.model.cfg`) and store it under the `tl_model_cfg` key in the session `_init_hparams` so it
+      can be used for reproducible recreation.
+   2. Store IT-specific TL settings under `it_tl_cfg` so IT-level configuration fields are preserved.
+   3. Call the superclass implementation to capture the original HF `PretrainedConfig` (hf_preconversion_config).
    """
 
    # capture the Marshal-able TransformerLens model cfg from the runtime model instance
    tl_model_cfg = self._make_config_serializable(self.model.cfg, ["device", "dtype"])
-
-   # Add architecture flag for clarity (used_bridge toggles the bridge vs legacy path)
-   if hasattr(tl_model_cfg, "__dict__"):
-      tl_model_cfg.__dict__["_used_bridge"] = self.it_cfg.tl_cfg.use_bridge
 
    # Save the serialized TransformerLens model config for checkpointing and reproduction
    self._it_state._init_hparams.update({"tl_model_cfg": tl_model_cfg})
@@ -213,51 +185,33 @@ def _capture_hyperparameters(self) -> None:
 
 ### What Needs to be Serialized
 
-#### For TransformerBridge Path (use_bridge=True):
 1. **Original HF PretrainedConfig** (already preserved via `self.model.config`):
    - Source: `hf_model.config` (HuggingFace PretrainedConfig)
    - Purpose: Complete HF model configuration, required for reproducible recreation
    - Access: `self.model.config`
+   - Absent on the config-only path (`ITLensCustomConfig`), which never loads an HF model
 
 2. **TransformerBridgeConfig (runtime TL model config)** (serialized under `tl_model_cfg`):
    - Source: `self.model.cfg` (the authoritative TL config created during model initialization)
-   - Purpose: TransformerLens v3 configuration including architecture info and device/dtype
+   - Purpose: TransformerLens configuration including architecture info and device/dtype
    - Access: `self.model.cfg` or `self.model.adapter.cfg`
    - Stored in `_init_hparams` as `tl_model_cfg` (serializable via `_make_config_serializable`)
 
-3. **ITLensFromPretrainedConfig** (IT-level settings)
+3. **The IT-level tl_cfg** (`ITLensFromPretrainedConfig`, `ITLensBridgeConfig` or `ITLensCustomConfig`)
    - Source: `self.it_cfg.tl_cfg` (the IT wrapper providing high-level runtime choices)
-   - Purpose: IT-specific settings (fold_ln, center_writing_weights, use_bridge, etc.)
+   - Purpose: IT-specific settings (`fold_ln`, `center_writing_weights`, `enable_compatibility_mode`, ...)
    - Stored under `_init_hparams` key `it_tl_cfg` so they are available for recreation and diagnostics
-
-#### For HookedTransformer Path (use_bridge=False):
-1. **Original HF PretrainedConfig** (already preserved via `self.model.config`):
-   - Source: `hf_model.config` (HuggingFace PretrainedConfig)
-   - Purpose: Complete HF model configuration
-   - Access: `self.model.config`
-
-2. **HookedTransformerConfig (runtime TL model config)** (serialized under `tl_model_cfg`):
-   - Source: `self.model.cfg` (HookedTransformerConfig created during initialization)
-   - Purpose: HookedTransformer model configuration details (d_mlp, activations, etc.)
-   - Access: `self.model.cfg`
-   - Stored in `_init_hparams` as `tl_model_cfg` for reproducibility
-
-3. **ITLensFromPretrainedConfig** (IT-level settings)
-   - Source: `self.it_cfg.tl_cfg`
-   - Purpose: IT-specific settings
-   - Stored under `_init_hparams` key `it_tl_cfg`
 
 ## Current Serialization Practice
 
 We capture the runtime TL model configuration (`self.model.cfg`) — which is the authoritative
 source of truth for the TransformerLens configuration used at runtime — and stores it in `_init_hparams` as `tl_model_cfg`.
-This ensures that whether the module was initialized via a pretrained HF model (TransformerBridge path) or via a HookedTransformer
-config, the true TL model configuration is captured and preserved.
+This ensures that whether the module was initialized from pretrained HF weights or from a config alone
+(`boot_native`), the true TL model configuration is captured and preserved.
 
 Key points:
-- The TF model's `self.model.cfg` (HookedTransformerConfig or TransformerBridgeConfig) is serialized and saved as
-   `tl_model_cfg` in the `_init_hparams` map.
-- A `_used_bridge` flag is stored alongside `tl_model_cfg` to clarify whether the bridge (v3) path was used.
+- The model's `self.model.cfg` (a `TransformerBridgeConfig`) is serialized and saved as `tl_model_cfg` in the
+   `_init_hparams` map.
 - IT-specific TL settings are saved under the `it_tl_cfg` key so that high-level IT configuration choices are preserved.
 - The superclass call continues to capture the original HF `PretrainedConfig` via `super()._capture_hyperparameters()`.
 
@@ -270,10 +224,9 @@ serialize IT wrapper configs as if they were actual TL configs.
 | Config Class | Purpose | Initialization | Serialization Target |
 |-------------|---------|----------------|---------------------|
 | **TransformerLensConfig** | Base class for TL configs | N/A (abstract) | N/A |
-| **HookedTransformerConfig** | Legacy TL config | Created by TL's from_pretrained | `self.model.cfg` |
-| **TransformerBridgeConfig** | V3 TL config with architecture info | Created by map_to_tl_config + adapter | `self.model.cfg` |
+| **TransformerBridgeConfig** | The TL config, with architecture info | Created by map_to_tl_config + adapter, or supplied for `boot_native` | `self.model.cfg` |
 | **ITLensSharedConfig** | Base IT TL settings | User provides | `self.it_cfg.tl_cfg` |
-| **ITLensFromPretrainedConfig** | IT settings for from_pretrained (HookedTransformer) | User provides | `self.it_cfg.tl_cfg` |
-| **ITLensBridgeConfig** | IT settings for TransformerBridge (v3) | User provides | `self.it_cfg.tl_cfg` |
+| **ITLensFromPretrainedConfig** | IT settings for the from_pretrained path | User provides | `self.it_cfg.tl_cfg` |
+| **ITLensBridgeConfig** | IT settings for a bridge-native config (compatibility mode, overrides) | User provides | `self.it_cfg.tl_cfg` |
 | **ITLensCustomConfig** | IT settings for config-based init | User provides | `self.it_cfg.tl_cfg` |
 | **HF PretrainedConfig** | Original HF model config | Loaded with HF model | `self.model.config` |

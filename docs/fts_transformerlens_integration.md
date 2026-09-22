@@ -1,13 +1,19 @@
 # FinetuningScheduler Integration with TransformerLens
 
-This document describes how Interpretune integrates FinetuningScheduler (FTS) with TransformerLens architectures (HookedTransformer and TransformerBridge), including parameter naming conventions, schedule generation, and phase-based parameter thawing behavior.
+This document describes how Interpretune integrates FinetuningScheduler (FTS) with TransformerLens, including parameter naming conventions, schedule generation, and phase-based parameter thawing behavior.
+
+> **On the HookedTransformer material below.** TransformerLens 4.0 removed `HookedTransformer`, so that path is
+> no longer reachable and no in-tree composition builds one. Its naming conventions, schedules and parameter
+> counts are kept here deliberately: the bridge counts are documented as deltas AGAINST them, so deleting the
+> baseline would leave numbers like "+6 params" measuring nothing. Read those sections as the record the
+> deltas refer to, not as a path you can select.
 
 ## Overview
 
 FinetuningScheduler enables flexible fine-tuning through YAML-based schedules that specify which parameters to thaw at each training phase. When integrated with TransformerLens, FTS must handle four distinct parameter naming conventions:
 
 1. **HuggingFace Canonical** - Standard PyTorch naming (e.g., `transformer.h.9.attn.c_attn.weight`)
-2. **TransformerLens - HookedTransformer** - Legacy TL naming (e.g., `blocks.9.attn.W_Q`) including LayerNorms in named_parameters()
+2. **TransformerLens - HookedTransformer** - Removed in TL 4.0; the naming (e.g., `blocks.9.attn.W_Q`, LayerNorms present in named_parameters()) is retained as the baseline the bridge deltas below are measured against
 3. **TransformerLens - TransformerBridge** - Modern names using canonical `_original_component` wrapper references
 4. **TransformerLens - TransformerBridge TL Names Mode** - Modern TL-style naming
 

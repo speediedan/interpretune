@@ -52,7 +52,7 @@ Remember: per-call kwargs in `generate_kwargs` take precedence over model defaul
 
 ### Debugging generation outputs with Interpretune's DebugGeneration extension
 
-For legacy TransformerLens `HookedTransformer` generation, raw outputs may still be bare tensors rather than HuggingFace-style `ModelOutput` objects.
+For TL-native generation, raw outputs may be bare tensors rather than HuggingFace-style `ModelOutput` objects (this was also true of the removed `HookedTransformer`).
 
 Interpretune handles that in `DebugGeneration._normalize_output_to_model_output(...)`.
 
@@ -66,8 +66,11 @@ In practice, this means the debug layer is responsible for making heterogeneous 
 
 ### TransformerBridge (ITLensBridgeConfig)
 
-TransformerBridge delegates generation to the wrapped HuggingFace model, so standard HF generation kwargs (`output_logits`, `return_dict_in_generate`, etc.) work natively. Use `ITLensBridgeConfig` as `tl_cfg` in `SAELensConfig` for the Bridge path; using `ITLensFromPretrainedConfig` with `use_bridge=True` will emit a misconfiguration warning.
+TransformerBridge delegates generation to the wrapped HuggingFace model, so standard HF generation kwargs (`output_logits`, `return_dict_in_generate`, etc.) work natively. `ITLensBridgeConfig` is the bridge-native config and the one to use when you want compatibility mode or `TransformerBridgeConfig` overrides; `ITLensFromPretrainedConfig` also produces a bridge, via the from-pretrained loading path.
 
-### HookedTransformer (ITLensFromPretrainedConfig)
+### TL-native generation
 
-HookedTransformer uses TransformerLens's own `generate()` implementation with `TLensGenerationConfig` fields. Some HF generation flags may not be supported or may behave differently. Set `use_bridge=False` explicitly when targeting HookedTransformer.
+A TL-native model (one built by `boot_native` rather than wrapping an HF model) uses TransformerLens' own
+`generate()` implementation with `TLensGenerationConfig` fields, so some HF generation flags may be unsupported
+or behave differently. This was also true of the removed `HookedTransformer`, which is why
+`CoreGenerationConfig` exists alongside `HFGenerationConfig`.

@@ -14,45 +14,42 @@
 
 ## TransformerLens v3 Integration
 
-**TransformerBridge (v3, default):**
+**TransformerBridge (the only model path):**
 - Wraps HuggingFace models without weight conversion
 - More memory efficient (no weight duplication)
 - Better HF ecosystem compatibility
-- Enabled by default via `use_bridge=True` in tl_cfg
-
-**Legacy HookedTransformer:**
-- Traditional TL interface with weight conversion
-- Available via `use_bridge=False` in tl_cfg
-- Maintained for backward compatibility
+- TransformerLens 4.0 removed the weight-converting `HookedTransformer`, and the `use_bridge` flag that
+  selected between them is retired. Passing it fails by name rather than being silently accepted.
+- `enable_compatibility_mode()` on `ITLensBridgeConfig` reproduces the processing the legacy path applied by
+  default (LayerNorm folding, `center_writing_weights`, `center_unembed`); omit it for raw HF weights
 
 **Implementation:**
-- `_convert_hf_to_bridge()`: TransformerBridge initialization
-- `_convert_hf_to_tl()`: Legacy HookedTransformer initialization
-- Config-based initialization always uses HookedTransformer (TransformerBridge requires HF model)
+- `_convert_hf_to_bridge()`: from pretrained HF weights
+- `tl_config_model_init()`: config-only, via `TransformerBridge.boot_native`
 
 ### Configuration Hierarchy
 
 **TransformerLens Configs:**
 - `TransformerLensConfig`: Base class (d_model, n_layers, etc.)
-- `HookedTransformerConfig`: Legacy config extending base (dataclass)
-- `TransformerBridgeConfig`: V3 config extending base with architecture field
+- `TransformerBridgeConfig`: The TL config, extending base with an architecture field
 
 **Interpretune Configs:**
-- `ITLensSharedConfig`: Base with shared and IT-specific settings (`move_to_device`, `use_bridge`)
+- `ITLensSharedConfig`: Base with shared and IT-specific settings (`move_to_device`, `default_padding_side`)
 - `ITLensFromPretrainedConfig`: For from_pretrained initialization (fold_ln, model_name, etc.)
-- `ITLensCustomConfig`: For config-based initialization (requires HookedTransformerConfig or one constructed from a dict)
+- `ITLensCustomConfig`: For config-based initialization (a `TransformerBridgeConfig`, or a dict convertible to one)
 - `ITLensConfig`: Top-level IT config encapsulating all settings
 
 **Config Serialization:**
 Three types of configs are serialized by `_capture_hyperparameters()`:
 1. `hf_preconversion_config`: Original HF PretrainedConfig (via superclass)
-2. `tl_model_cfg`: Actual TL config from `self.model.cfg` (HookedTransformerConfig or TransformerBridgeConfig)
+2. `tl_model_cfg`: Actual TL config from `self.model.cfg` (a `TransformerBridgeConfig`)
 3. `it_tl_cfg`: IT-specific settings from `self.it_cfg.tl_cfg` (ITLensFromPretrainedConfig or ITLensCustomConfig)
 
-**Important Limitations:**
-- `ITLensCustomConfig` with `use_bridge=True` will be ignored; IT will warn and force `use_bridge=False`.
-- TransformerBridge requires HF model, cannot be initialized from config alone
-- Config-based path (`ITLensCustomConfig`) only supports HookedTransformer
+**Notes:**
+- `ITLensCustomConfig` is no longer special-cased: `TransformerBridge.boot_native` builds a bridge from a
+  config alone, so the old "a bridge needs an HF model" limitation is gone
+- `boot_native` does NOT resolve TL's `-1` vocab sentinels from the tokenizer the way
+  `HookedTransformer.__init__` did, so the adapter resolves `d_vocab` / `d_vocab_out` before booting
 
 See `docs/tl_config_hierarchy_overview.md` for detailed configuration relationship analysis.
 
@@ -105,7 +102,7 @@ cd /home/runner/work/interpretune/interpretune && python -m pytest tests src/it_
 
 ### Generation Config Guidelines
 - Use `HFGenerationConfig` (applies params to `model.generation_config`) for HF-backed models (including NNsight-wrapped models).
-- Use `CoreGenerationConfig` (passes params as `generate_kwargs`) only for `HookedTransformer` models that use their own `generate()` method.
+- Use `CoreGenerationConfig` (passes params as `generate_kwargs`) only for TL-native models that use their own `generate()` method.
 - The NNsight adapter applies `HFGenerationConfig.model_config` to the underlying HF model via `_apply_generation_config()`.
 
 ### Benchmark Registry Commit Isolation

@@ -61,8 +61,9 @@ Backend selection is automatic based on the module's adapter context. Configurat
 
 **TransformerBridge limitation (tracked)**: the TransformerLens circuit-tracer backend requires the
 legacy `HookedTransformer` path — upstream circuit-tracer's `TransformerLensReplacementModel`
-subclasses `HookedTransformer` directly, so TransformerLens v3 `TransformerBridge` mode is not
-supported (`use_bridge: false` in the CT TL registry entries). Tracked in
+subclasses `HookedTransformer` directly. TransformerLens 4.0 REMOVED that class, so the backend cannot be
+imported at all and the CT TransformerLens registry entries are disabled pending an upstream port to
+`TransformerBridge`; use `backend: nnsight` for circuit-tracer compositions meanwhile. Tracked in
 [interpretune#223](https://github.com/speediedan/interpretune/issues/223) — revisit when upstream
 circuit-tracer gains bridge support; historically this limitation (plus minor NNsight efficiencies and keeping
 experimental variables fixed) is why the (now Hub-published) concept-direction experimentation

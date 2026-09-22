@@ -69,7 +69,10 @@ The multi-backend refactor did not treat all wrappers as interchangeable.
 Instead, the backend layer now reflects the fact that there are two different forward families:
 
 - `NNsightModelBackend` and TransformerBridge-based analysis both target HuggingFace-native execution.
-- HookedTransformer remains supported, but it is understood as a separate execution path with known architectural divergence on padded workloads.
+- HookedTransformer was the other family: a separate execution path with known architectural divergence on
+  padded workloads. TransformerLens 4.0 removed it, so no in-tree adapter runs it any more. The account
+  below is kept because the reasoning is what places any NEW adapter, and because the measurements are the
+  evidence for where the family boundary sits -- not because the path is still reachable.
 
 This separation allowed the analysis ops, cache abstractions, and parity fixtures to be generalized without forcing a false assumption that all wrappers should numerically match under the same tolerances.
 
