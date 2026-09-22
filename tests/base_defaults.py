@@ -40,10 +40,6 @@ class BaseAugTest:
     expected: Dict | None = None
     result_gen: Callable | None = None
     function_marks: dict[str, Any] = field(default_factory=dict)  # marks applied at test function level
-    # Pytest marks passed through verbatim. `marks`/`function_marks` are a RunIf vocabulary (environment
-    # gating); this is for ordinary marks a case needs on its own terms, e.g. a strict xfail against a
-    # filed defect, which RunIf cannot express.
-    extra_marks: tuple = ()
 
     def __post_init__(self):
         if self.expected is None and self.result_gen is not None:
@@ -73,7 +69,7 @@ def pytest_factory(test_configs: list[BaseAugTest], unpack: bool = True, fq_alia
             config.alias,
             *config.cfg if unpack else (config.cfg,),
             id=config.alias if not fq_alias else config.alias.split(".")[-1],
-            marks=((config.marks,) if config.marks else ()) + tuple(config.extra_marks),
+            marks=config.marks or tuple(),
         )
         for config in test_configs
     ]

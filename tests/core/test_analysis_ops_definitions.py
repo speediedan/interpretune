@@ -939,19 +939,7 @@ SERIALIZATION_TEST_CONFIGS = (
         ),
     ),
     BaseAugTest(
-        alias="model_fwd_w_cache_latent_models",
-        cfg=OpTestConfig(target_op=it.model_fwd_w_cache_latent_models),
-        extra_marks=(
-            pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "interpretune#613: SAE latent keys do not survive the round trip on a TransformerBridge -- "
-                    "the runtime dict is keyed by the bridge's canonical hook names (attn.o.hook_in) while the "
-                    "persisted copy keeps the configured SAE spelling (attn.hook_z). Strict so this fails loudly "
-                    "the moment #613 lands rather than sitting here as a stale exemption."
-                ),
-            ),
-        ),
+        alias="model_fwd_w_cache_latent_models", cfg=OpTestConfig(target_op=it.model_fwd_w_cache_latent_models)
     ),
     BaseAugTest(alias="model_ablation", cfg=OpTestConfig(target_op=it.model_ablation)),
     BaseAugTest(alias="model_gradient", cfg=OpTestConfig(target_op=it.model_gradient)),
@@ -960,17 +948,6 @@ SERIALIZATION_TEST_CONFIGS = (
     BaseAugTest(
         alias="model_fwd_w_cache_latent_models.logit_diffs_cache",
         cfg=OpTestConfig(target_op=[it.model_fwd_w_cache_latent_models, it.logit_diffs_cache]),
-        extra_marks=(
-            pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "interpretune#613: SAE latent keys do not survive the round trip on a TransformerBridge -- "
-                    "the runtime dict is keyed by the bridge's canonical hook names (attn.o.hook_in) while the "
-                    "persisted copy keeps the configured SAE spelling (attn.hook_z). Strict so this fails loudly "
-                    "the moment #613 lands rather than sitting here as a stale exemption."
-                ),
-            ),
-        ),
     ),
     BaseAugTest(alias="latent_correct_acts", cfg=OpTestConfig(target_op=it.latent_correct_acts)),
     BaseAugTest(alias="ablation_attribution", cfg=OpTestConfig(target_op=it.ablation_attribution)),
@@ -1232,3 +1209,24 @@ class TestAnalysisOperationsImplementations:
 
         # Validate loaded dataset against original results
         self.validate_loaded_dataset(test_config, result_batches, loaded_dataset, pre_serialization_shapes)
+
+    def test_direct_op_store_keeps_bridge_latent_columns(self, request):
+        """`analysis_store_from_batches` stores a bridge's SAE columns under the schema's hook names.
+
+        A TransformerBridge captures SAE activations under canonical names (``attn.o.hook_in``) while the stored
+        schema is spelled from each SAE's metadata (``attn.hook_z``). `datasets` does not reject the mismatched
+        keys: it writes every per-hook value as None. The runner's path renames the keys; this checks the direct-op
+        path does too, by asserting real values arrive under the schema's names.
+        """
+        from interpretune.analysis import analysis_store_from_batches
+
+        it_session, batches, result_batches, _ = run_op_with_config(
+            request, OpTestConfig(target_op=it.model_fwd_w_cache_latent_models)
+        )
+        runtime_keys = set(_unwrap_one(result_batches).alive_latents)
+        assert any(".attn.o.hook_in." in k for k in runtime_keys), runtime_keys  # the bridge's canonical spelling
+
+        store = analysis_store_from_batches(it_session.module, result_batches, raw_batches=batches)
+        stored = store.dataset.with_format(None)[0]["alive_latents"]
+        assert set(stored) == {k.replace(".attn.o.hook_in.", ".attn.hook_z.") for k in runtime_keys}
+        assert all(v is not None and len(v) > 0 for v in stored.values()), stored

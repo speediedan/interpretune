@@ -249,19 +249,14 @@ def save_reload_results_dataset(
     else:
         features, it_format_kwargs, _ = dataset_features_and_format(it_session.module, {})
 
-    # Create a generator that yields all processed batches
+    # Create a generator that yields all processed batches. It goes through `AnalysisCfg.save_batch`, the
+    # runner's own serialization step, rather than `op.save_batch`: only the former renames a bridge's
+    # canonical hook keys to the schema's spelling, and without that every per-hook column is stored as None.
     def multi_batch_generator():
-        for i, (res_batch, input_batch) in enumerate(zip(result_batches, batches)):
-            # Process and yield the batch
-            processed_batch = it_session.module.analysis_cfg.op.save_batch(
-                res_batch,
-                input_batch,
-                tokenizer=it_session.datamodule.tokenizer,
-                save_prompts=it_session.module.analysis_cfg.save_prompts,
-                save_tokens=it_session.module.analysis_cfg.save_tokens,
-                decode_kwargs=it_session.module.analysis_cfg.decode_kwargs,
+        for res_batch, input_batch in zip(result_batches, batches):
+            yield from it_session.module.analysis_cfg.save_batch(
+                res_batch, input_batch, tokenizer=it_session.datamodule.tokenizer
             )
-            yield processed_batch
 
     # Create dataset from the generator.
     #

@@ -427,10 +427,15 @@ def analysis_store_from_batches(
         return value
 
     output_schema = getattr(resolved_op, "output_schema", None) or {}
+    analysis_cfg = getattr(module, "analysis_cfg", None)
     columns: dict[str, list[Any]] = {name: [] for name in features}
     for idx, analysis_batch in enumerate(analysis_batches):
         raw = raw_batches[idx] if raw_batches is not None else None
         processed = resolved_op.save_batch(analysis_batch, raw)
+        # the runner's generator path renames bridge-canonical hook keys to the schema's spelling inside
+        # `AnalysisCfg.save_batch`; calling `op.save_batch` directly bypasses that, so apply it here too
+        if analysis_cfg is not None and hasattr(analysis_cfg, "remap_hook_keys_for_storage") and output_schema:
+            processed = analysis_cfg.remap_hook_keys_for_storage(processed, output_schema)
         row = dict(processed)
         # strict only for REQUIRED schema columns; optional (required: false) columns fill with None
         missing_required = [

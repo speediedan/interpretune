@@ -363,6 +363,30 @@ class TestAnalysisInjectionConfigs:
         with pytest.raises(ValueError, match="No LatentAnalysisTargets available"):
             cfg.materialize_names_filter(mock_module)
 
+    def test_analysis_cfg_rematerialize_keeps_bridge_mapping(self):
+        """A second run with the same cfg rebuilds the bridge name mapping instead of losing it.
+
+        The first run replaces the list with a resolved callable; a callable carries no names to map, so re-entry used
+        to leave the mapping empty and every per-hook column of the second run was stored as None.
+        """
+        alias = "blocks.9.attn.hook_z.hook_sae_acts_post"
+        canonical = "blocks.9.attn.o.hook_in.hook_sae_acts_post"
+
+        def fake_extend(module, names):
+            return [*names, canonical], {canonical: alias}
+
+        cfg = AnalysisCfg(names_filter=[alias])
+        with (
+            patch("interpretune.config.analysis._refuse_uncapturable"),
+            patch("interpretune.config.analysis._extend_names_for_bridge", side_effect=fake_extend) as extend,
+        ):
+            cfg.materialize_names_filter(Mock())
+            cfg.materialize_names_filter(Mock())
+        assert extend.call_count == 2
+        assert extend.call_args.args[1] == [alias]  # rebuilt from the source list, not the extended one
+        assert cfg._canonical_to_alias_names == {canonical: alias}
+        assert cfg.names_filter(alias) and cfg.names_filter(canonical)
+
     def test_analysis_cfg_maybe_set_hooks(self):
         # Test with no hooks
         cfg = AnalysisCfg(target_op=Mock())
