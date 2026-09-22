@@ -408,3 +408,71 @@ class TestReportArtifact:
         prov = artifact["provenance"]
         assert prov["exit_status"] == 0 and prov["interpretune_version"] and prov["measured_at"].endswith("+00:00")
         assert "git_head" in prov
+
+
+class TestGeneratorCacheKey:
+    """The deterministic conformance generator-cache key (interpretune#554).
+
+    Never builds a session: stability, sensitivity, and the deliberate exclusions are pure
+    functions of the target and inputs.
+    """
+
+    def _target(self, **overrides):
+        from interpretune.testing.conformance.inputs import ConformanceTarget
+
+        kwargs = dict(composition=("core",))
+        kwargs.update(overrides)
+        return ConformanceTarget(**kwargs)
+
+    def test_same_inputs_same_key(self):
+        from interpretune.testing.conformance.inputs import ConformanceInputs
+
+        target = self._target()
+        assert ConformanceInputs().generator_cache_key(target) == ConformanceInputs().generator_cache_key(target)
+
+    def test_inputs_shift_the_key(self):
+        from dataclasses import replace
+
+        from interpretune.testing.conformance.inputs import ConformanceInputs
+
+        target = self._target()
+        base = ConformanceInputs().generator_cache_key(target)
+        assert replace(ConformanceInputs(), prompts=("other",)).generator_cache_key(target) != base
+        assert replace(ConformanceInputs(), precision="float16").generator_cache_key(target) != base
+        assert replace(ConformanceInputs(), limit_batches=1).generator_cache_key(target) != base
+
+    def test_target_identity_shifts_the_key(self):
+        from interpretune.testing.conformance.inputs import ConformanceInputs
+
+        inputs = ConformanceInputs()
+        base = inputs.generator_cache_key(self._target())
+        assert inputs.generator_cache_key(self._target(composition=("core", "nnsight"))) != base
+        assert inputs.generator_cache_key(self._target(datamodule_flavour="bridge")) != base
+        assert inputs.generator_cache_key(self._target(batch_size=1)) != base
+        assert inputs.generator_cache_key(self._target(module_cfg_extras={"a": 1})) != base
+        assert inputs.generator_cache_key(self._target(forward_family="other")) != base
+
+    def test_workdir_does_not_shift_the_key(self, tmp_path):
+        from interpretune.testing.conformance.inputs import ConformanceInputs
+
+        target = self._target()
+        key = ConformanceInputs().generator_cache_key(target)
+        assert ConformanceInputs(workdir=tmp_path / "elsewhere").generator_cache_key(target) == key
+
+    def test_shared_dir_default_and_override(self, tmp_path, monkeypatch):
+        from datasets.config import HF_DATASETS_CACHE
+
+        from interpretune.testing.conformance.inputs import GENERATOR_CACHE_ENV, shared_generator_cache_dir
+
+        monkeypatch.delenv(GENERATOR_CACHE_ENV, raising=False)
+        assert str(shared_generator_cache_dir()).startswith(str(HF_DATASETS_CACHE))
+        monkeypatch.setenv(GENERATOR_CACHE_ENV, str(tmp_path / "shared"))
+        assert shared_generator_cache_dir() == tmp_path / "shared"
+
+    def test_runner_kwargs_carries_the_pair_only_with_a_target(self):
+        from interpretune.testing.conformance.inputs import ConformanceInputs
+
+        bare = ConformanceInputs().runner_kwargs()
+        assert "dataset_fingerprint" not in bare and "generator_cache_dir" not in bare
+        keyed = ConformanceInputs().runner_kwargs(self._target())
+        assert len(keyed["dataset_fingerprint"]) == 32 and keyed["generator_cache_dir"]

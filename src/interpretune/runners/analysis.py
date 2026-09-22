@@ -136,7 +136,16 @@ def dataset_features_and_format(module: "ITModule", kwargs: dict) -> tuple[dict,
     return features, it_format_kwargs, kwargs
 
 
-def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, split="validation", **kwargs) -> Dataset:
+def generate_analysis_dataset(
+    module,
+    features,
+    it_format_kwargs,
+    gen_kwargs,
+    split="validation",
+    fingerprint: str | None = None,
+    generator_cache_dir: str | Path | None = None,
+    **kwargs,
+) -> Dataset:
     """Generate a dataset for analysis using the ITAnalysisFormatter.
 
     Args:
@@ -145,6 +154,12 @@ def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, sp
         it_format_kwargs: Kwargs for interpretune format
         gen_kwargs: Dictionary of generator parameters (module, datamodule, limit_analysis_batches, etc.)
         split: The split to use for dataset generation
+        fingerprint: Explicit datasets fingerprint, or a stable base key the split and output
+            features are mixed into (conformance runs pass their run key; see interpretune#554).
+            None (default) keeps the historical per-run random fingerprint.
+        generator_cache_dir: Where datasets writes generator cache files. None (default) keeps the
+            historical `output_store.cache_dir`; pass a shared persistent directory to reuse cache
+            files across runs. See interpretune#554.
         **kwargs: Additional arguments for error context
 
     Returns:
@@ -155,16 +170,33 @@ def generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, sp
     """
     # Use an explicit fingerprint so datasets doesn't hash gen_kwargs via dill.
     # gen_kwargs includes the module/datamodule, and hashing those objects can serialize model
-    # weights and fail on memory-constrained runners. The fingerprint is intentionally per-run
-    # until issue #183 implements a deterministic AnalysisStore cache key.
+    # weights and fail on memory-constrained runners. The fingerprint is random per run unless the
+    # caller passes a deterministic base key (conformance runs do; see interpretune#554), in which
+    # case the split and output features are mixed in so one base serves every case without two
+    # different computations ever sharing cache files. A general deterministic AnalysisStore cache
+    # key remains post-MVP work under issue #183.
+    if fingerprint is None:
+        resolved_fingerprint = generate_random_fingerprint()
+    else:
+        import hashlib
+        import json
+
+        from datasets.fingerprint import Hasher
+
+        mix = Hasher.hash(
+            {"base": fingerprint, "split": str(split), "features": json.dumps(features, sort_keys=True, default=str)}
+        )
+        resolved_fingerprint = hashlib.sha256(mix.encode()).hexdigest()[:32]
     try:
         dataset = Dataset.from_generator(
             analysis_store_generator,
             features=features,
-            cache_dir=str(module.analysis_cfg.output_store.cache_dir),  # type: ignore[attr-defined]  # protocol provides output_store
+            cache_dir=str(
+                generator_cache_dir if generator_cache_dir is not None else module.analysis_cfg.output_store.cache_dir  # type: ignore[attr-defined]  # protocol provides output_store
+            ),
             gen_kwargs=gen_kwargs,
             split=split,  # type: ignore[arg-type]  # str acceptable for NamedSplit at runtime
-            fingerprint=generate_random_fingerprint(),
+            fingerprint=resolved_fingerprint,
         ).with_format("interpretune", **it_format_kwargs)
         return dataset  # type: ignore[return-value]  # datasets compatibility
     except Exception as e:
