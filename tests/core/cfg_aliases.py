@@ -3,6 +3,7 @@ from copy import deepcopy
 from enum import auto
 from dataclasses import dataclass, field
 from typing import Iterable
+import math
 from pathlib import Path
 import tempfile
 
@@ -61,7 +62,10 @@ tl_cust_mi_cfg = {
         attention_dir="causal",
         tokenizer_name="gpt2",
         seed=1,
-        use_attn_result=True,
+        # Explicit rather than the -1 sentinel: TransformerLens releases before the native-init fix resolve the
+        # sentinel to 0.02 where HookedTransformer used 0.8 / sqrt(d_model), so leaving it implicit made this model's
+        # weights depend on the installed TransformerLens version.
+        initializer_range=0.8 / math.sqrt(768),
     )
 }
 

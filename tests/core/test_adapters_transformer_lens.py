@@ -406,6 +406,24 @@ class TestClassTransformerLens:
         assert not offending, f"the retired warn-and-force branch still fires: {offending}"
         assert it_cfg_custom.tl_cfg is not None
 
+    def test_tl_custom_config_hook_flags_take_effect_or_refuse(self):
+        """Hook-exposing flags on a config-only model either reach the model or are refused by name.
+
+        ``boot_native`` accepts them on the config without propagating them, so ``use_attn_result=True`` built a
+        model with no ``hook_result`` and no error. The TL-native attention cannot provide per-head results at all.
+        """
+        from transformer_lens.config import TransformerBridgeConfig
+        from transformer_lens.model_bridge.bridge import TransformerBridge
+
+        from interpretune.adapters.transformer_lens.adapter import BaseITLensModule
+
+        small = dict(d_model=16, d_head=4, n_heads=4, n_layers=1, n_ctx=8, d_vocab=32, act_fn="relu", seed=0)
+        bridge = TransformerBridge.boot_native(dict(small))
+        BaseITLensModule._apply_bridge_hook_flags(bridge, TransformerBridgeConfig(**small, use_hook_mlp_in=True))
+        assert bridge.cfg.use_hook_mlp_in is True
+        with pytest.raises(NotImplementedError, match="use_attn_result"):
+            BaseITLensModule._apply_bridge_hook_flags(bridge, TransformerBridgeConfig(**small, use_attn_result=True))
+
 
 class TestBasicTransformerBridgeAdapter:
     """Basic tests for TransformerBridgeStrategyAdapter without model fixtures.

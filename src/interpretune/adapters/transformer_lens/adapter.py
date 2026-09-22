@@ -246,6 +246,20 @@ class BaseITLensModule(BaseITModule):
         # TODO: suppress messages from tl about no tokenizer here, we're deferring the tokenizer attach until setup
         self._resolve_vocab_sentinels(self.it_cfg.tl_cfg.cfg, self.it_cfg.tokenizer)
         self.model = TransformerBridge.boot_native(self.it_cfg.tl_cfg.cfg, tokenizer=self.it_cfg.tokenizer)
+        self._apply_bridge_hook_flags(self.model, self.it_cfg.tl_cfg.cfg)
+
+    # Config flags that change which hook points a bridge exposes. `boot_native` accepts them on the config but
+    # does not propagate them to the attention/MLP components, so `use_attn_result=True` built a model with no
+    # `hook_result` and nothing said so. Each has a bridge setter that propagates it, or raises naming the flag when
+    # the architecture cannot provide it (the TL-native attention cannot provide per-head results, for instance).
+    _BRIDGE_HOOK_FLAGS = ("use_attn_result", "use_split_qkv_input", "use_attn_in", "use_hook_mlp_in")
+
+    @classmethod
+    def _apply_bridge_hook_flags(cls, bridge, cfg) -> None:
+        """Route hook-exposing config flags through the bridge's setters so each takes effect or is refused."""
+        for flag in cls._BRIDGE_HOOK_FLAGS:
+            if getattr(cfg, flag, False):
+                getattr(bridge, f"set_{flag}")(True)
 
     @staticmethod
     def _resolve_vocab_sentinels(cfg, tokenizer) -> None:
