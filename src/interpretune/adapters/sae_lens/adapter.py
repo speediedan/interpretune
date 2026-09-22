@@ -234,7 +234,14 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
 
         # Enable compatibility mode if requested (ITLensBridgeConfig only)
         if isinstance(self.it_cfg.tl_cfg, ITLensBridgeConfig) and self.it_cfg.tl_cfg.enable_compatibility_mode:
-            from interpretune.adapters.transformer_lens import _ensure_bridge_processed_weight_device_patch
+            # Import from the DEFINING submodule, not the package. The package resolves exports lazily
+            # through __getattr__, which refuses names starting with '_' by design, so the package-level
+            # spelling raises ImportError. This branch only runs when compatibility mode is enabled, which
+            # nothing exercised until the conformance target moved onto it, so the bad import sat here
+            # unexecuted.
+            from interpretune.adapters.transformer_lens.adapter import (
+                _ensure_bridge_processed_weight_device_patch,
+            )
 
             compat_kwargs = self.it_cfg.tl_cfg.enable_compatibility_mode_kwargs or {}
             rank_zero_info(f"Enabling TransformerBridge compatibility mode with kwargs: {compat_kwargs}")

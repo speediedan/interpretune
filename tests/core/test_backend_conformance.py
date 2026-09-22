@@ -142,10 +142,25 @@ class TestCompatibilityModeConformance(ModelBackendConformance):
     )
 
     def test_the_family_label_is_true_of_the_model(self, suite):
-        """Positive control on the label: the model under this target is not a bridge over the HF module."""
+        """Positive control on the label: this target's weights really are processed, not raw HF weights.
+
+        The control used to assert the model was NOT a bridge, because `weight_converted` meant the
+        weight-converting `HookedTransformer` and "is a bridge" was therefore proof the label was a lie.
+        TransformerLens 4.0 removes that class, so every model is a bridge and that assertion can no longer
+        fail for the right reason -- it would fail always, which is not a control.
+
+        What the label still means is unchanged: processed weights, so the `hf_native` reference numbers do
+        not apply. `enable_compatibility_mode()` sets `compatibility_mode` on the bridge and its components,
+        so that flag is what makes the claim checkable now. Without this, a target could silently run on raw
+        weights while skipping the reference cases that would have caught it.
+        """
         from transformer_lens.model_bridge import TransformerBridge
 
-        assert not isinstance(suite.module.model, TransformerBridge), (
-            f"the weight_converted target built a {type(suite.module.model).__name__}; its family cases ran on a "
-            "bridge and asserted nothing about the legacy path"
+        model = suite.module.model
+        assert isinstance(model, TransformerBridge), (
+            f"the weight_converted target built a {type(model).__name__}, which is not a bridge at all"
+        )
+        assert getattr(model, "compatibility_mode", False), (
+            "the weight_converted target ran on RAW bridge weights: compatibility_mode is not set, so its "
+            "family cases skipped the hf_native references while asserting nothing about processed weights"
         )
