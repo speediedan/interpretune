@@ -464,15 +464,16 @@ def build_attribution_comparison_html(
             f'<tr><td class="lbl">{html.escape(lbl)}</td><td>{_signed(delta_coords[i])}</td>'
             f"<td>{_signed(readouts[i])}</td><td>{shares[i]:+.4f}</td><td>{fractions[i]:.1%}</td>{slope_cell}</tr>"
         )
-    # Each footer value is a share-space quantity, so it sits in the Share column rather than being
-    # pushed to the last one, where it would read as a slope.
-    trailing = 2 if slopes is not None else 1
+    # A footer value is a share-space quantity, so it must not land under the slope header, where it
+    # would read as a slope. That was previously achieved by padding it into the Share column with an
+    # empty cell either side, which left every footer row visibly gapped. One spanning cell, aligned
+    # left, keeps the value beside the label it belongs to and out of every numeric column, so the
+    # constraint holds without the gaps. Spans the whole row bar the label: six columns with the slope
+    # column present, five without.
+    span = 5 if slopes is not None else 4
 
     def _footer(label: str, value: float) -> str:
-        return (
-            f'<tr class="total"><td class="lbl">{label}</td><td colspan="2"></td>'
-            f'<td>{value:+.4f}</td><td colspan="{trailing}"></td></tr>'
-        )
+        return f'<tr class="total"><td class="lbl">{label}</td><td class="lbl" colspan="{span}">{value:+.4f}</td></tr>'
 
     left += _footer("Explained &#931;a", total)
     left += _footer("Remainder", remainder)

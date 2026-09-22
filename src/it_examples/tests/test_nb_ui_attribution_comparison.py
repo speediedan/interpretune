@@ -100,12 +100,37 @@ def test_the_columns_are_sized_to_their_content_and_the_pair_scrolls_rather_than
     assert "min-width: 300px" not in style, "a fixed min-width is what let the tables overflow their columns"
 
 
-def test_footer_values_sit_in_the_share_column_not_the_last_one():
-    """A total in share units under a slope header reads as a slope; the colspans put it under Share a."""
+def test_footer_values_span_one_cell_beside_their_label_and_never_a_numeric_column():
+    """A total in share units under a slope header reads as a slope, so it must not sit in a numeric column; one
+    left-aligned spanning cell keeps it beside its label without the empty gaps that padding it into the Share
+    column used to leave."""
     with_slopes, _ = build_attribution_comparison_html(
         _attribution(), ["a", "b"], finite_difference_slopes=[0.55, -0.3]
     )
-    # label + 2 empty + value + 2 trailing (Fraction, dGap/ds) with slopes; 1 trailing without them.
-    assert '<td colspan="2"></td><td>+1.0000</td><td colspan="2"></td>' in with_slopes
+    # One cell covering every column bar the label: 5 with the slope column present, 4 without.
+    assert '<td class="lbl" colspan="5">+1.0000</td>' in with_slopes
     without, _ = build_attribution_comparison_html(_attribution(), ["a", "b"])
-    assert '<td colspan="2"></td><td>+1.0000</td><td colspan="1"></td>' in without
+    assert '<td class="lbl" colspan="4">+1.0000</td>' in without
+    # The gapped form is what the change removed; an empty padding cell must not come back.
+    for markup in (with_slopes, without):
+        assert "<td colspan=" not in markup, "an empty padding cell is the layout this replaced"
+
+
+def test_footer_cell_count_matches_the_header_width():
+    """A span that does not total the header width silently skews every footer row, and the browser hides it by
+    stretching the table rather than erroring."""
+    import re
+
+    for slopes, expected in (([0.55, -0.3], 6), (None, 5)):
+        markup, _ = build_attribution_comparison_html(_attribution(), ["a", "b"], finite_difference_slopes=slopes)
+        left = markup.split('<div class="col-header"')[1]
+        header_cols = len(re.findall(r"<th\b", left.split("</thead>")[0]))
+        assert header_cols == expected, f"{header_cols} header columns, expected {expected}"
+        footer = re.search(r'<tr class="total">.*?</tr>', left).group(0)
+        # Read colspan out of each tag rather than one combined pattern: an optional group after a lazy
+        # prefix silently never captures, which counts every cell as width 1 and passes only by accident.
+        width = 0
+        for tag in re.findall(r"<td\b[^>]*>", footer):
+            span = re.search(r'colspan="(\d+)"', tag)
+            width += int(span.group(1)) if span else 1
+        assert width == header_cols, f"footer spans {width} columns, header has {header_cols}"
