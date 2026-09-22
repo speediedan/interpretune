@@ -79,9 +79,8 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
     at the type level.  TL-specific initialization logic is provided by
     :class:`TLConfigInitMixin`, which is shared with ``ITLensConfig``.
 
-    One flag decides the wrapper: ``tl_cfg.use_bridge`` selects SAETransformerBridge (True) or HookedSAETransformer
-    (False), the same field the TransformerLens adapter reads. This config carries no ``use_bridge`` of its own, so a
-    reader sets it in one place and the adapter cannot read the other.
+    The wrapper is always ``SAETransformerBridge``: TransformerLens 4.0 removed the ``HookedTransformer``
+    stack that ``HookedSAETransformer`` was built on, so there is no second wrapper to select.
     """
 
     # Backend selection
