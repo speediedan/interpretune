@@ -50,6 +50,41 @@ CAPTURE_POINTS = (
 )
 
 
+#: Env override for where conformance generator cache files live. Unset means the shared
+#: datasets cache root: generator files are fingerprint-namespaced, so sharing the root with
+#: everything else datasets caches is safe, and a subdirectory keeps the conformance share
+#: identifiable and deletable as one unit.
+GENERATOR_CACHE_ENV = "IT_CONFORMANCE_GENERATOR_CACHE"
+
+
+def _stable_json(value: Any) -> Any:
+    """A JSON-stable projection of ``value`, or None when it cannot be stabilized.
+
+    Config values serialize; exotic objects reduce to ``repr`` (unstable across runs, so a key
+    containing them simply misses the cache) and circular structures refuse entirely (same
+    outcome). Omission degrades to a miss, never to a poisoned hit: two runs this key equates
+    regenerate rather than share.
+    """
+    import json
+
+    try:
+        return json.loads(json.dumps(value, sort_keys=True, default=str))
+    except (TypeError, ValueError):
+        return None
+
+
+def shared_generator_cache_dir() -> Path:
+    """Persistent, cross-run home for conformance generator cache files (interpretune#554)."""
+    import os
+
+    override = os.environ.get(GENERATOR_CACHE_ENV)
+    if override:
+        return Path(override)
+    from datasets.config import HF_DATASETS_CACHE
+
+    return Path(HF_DATASETS_CACHE) / "it_conformance_generator"
+
+
 @dataclass(frozen=True)
 class LatentModelSpec:
     """One pretrained latent model the suite attaches, named the way sae_lens names a release and an id, and the
@@ -337,19 +372,87 @@ class ConformanceInputs:
             if np_cfg is not None and hasattr(np_cfg, "enabled"):
                 np_cfg.enabled = False
 
-    def runner_kwargs(self) -> dict[str, Any]:
+    def runner_kwargs(self, target: ConformanceTarget | None = None) -> dict[str, Any]:
         """The runner settings every case shares.
 
         ``max_epochs`` is explicit because the runner's default of
         ``-1`` makes the analysis generator iterate zero epochs and yield an empty store.
+
+        With a target, the run also carries a deterministic generator fingerprint and a shared
+        generator cache dir, so repeated runs reuse generator cache files instead of regenerating
+        ~20 GB per run (interpretune#554). Without a target both stay unset and each run keeps the
+        historical per-run random fingerprint in the per-run workdir.
         """
-        return dict(
+        kwargs = dict(
             limit_analysis_batches=self.limit_batches,
             max_epochs=self.max_epochs,
             ignore_manual=True,
             cache_dir=str(self._ensure_workdir() / "cache"),
             op_output_dataset_path=str(self._ensure_workdir() / "out"),
         )
+        if target is not None:
+            kwargs["dataset_fingerprint"] = self.generator_cache_key(target)
+            kwargs["generator_cache_dir"] = str(shared_generator_cache_dir())
+        return kwargs
+
+    def generator_cache_key(self, target: ConformanceTarget) -> str:
+        """Deterministic base key identifying what a conformance run generates (interpretune#554).
+
+        Covers the target identity (class path, composition, forward family, datamodule flavour,
+        batch size, module config extras), every stable input field, and the interpretune/datasets
+        versions. Deliberately excluded: ``workdir`` (a per-run path), the ``load`` and
+        ``session_cfg_factory`` callables (code identity is addresses), and ``supplied_extras`` (a
+        post-hoc record of what the session build set from exactly this target and these inputs, so
+        it cannot distinguish two runs this key equates). Unstabilizable extras degrade to a cache
+        miss, never to a shared hit (see ``_stable_json``). Model weight revisions are out of scope:
+        same model id is assumed to resolve the same weights across the runs sharing a cache, as with
+        datasets' own fingerprinting.
+
+        The caller-visible fingerprint mixes this base with the split and output features at
+        generation time (see ``generate_analysis_dataset``), so one base serves every case.
+        """
+        import hashlib
+        import json
+        from datasets import __version__ as datasets_version
+
+        try:
+            from importlib.metadata import version
+
+            it_version = version("interpretune")
+        except Exception:
+            it_version = "unknown"
+        payload = {
+            "target": {
+                "class": f"{type(target).__module__}.{type(target).__qualname__}",
+                "composition": sorted(str(a) for a in target.composition),
+                "forward_family": target.forward_family,
+                "datamodule_flavour": target.datamodule_flavour,
+                "batch_size": target.batch_size,
+                "module_cfg_extras": _stable_json(target.module_cfg_extras),
+            },
+            "inputs": {
+                "model_id": self.model_id,
+                "device_type": self.device_type,
+                "precision": self.precision,
+                "limit_batches": self.limit_batches,
+                "batch_size": self.batch_size,
+                "max_epochs": self.max_epochs,
+                "capture_layer": self.capture_layer,
+                "capture_points": list(self.capture_points),
+                "intervention_point": self.intervention_point,
+                "observe_point": self.observe_point,
+                "prompts": list(self.prompts),
+                "latent_models": [
+                    {"release": s.release, "sae_id": s.sae_id, "model_id": s.model_id} for s in self.latent_models
+                ],
+                "attribution_prompt": self.attribution_prompt,
+                "attribution_top_n": self.attribution_top_n,
+                "attribution_scale_factor": self.attribution_scale_factor,
+            },
+            "versions": {"interpretune": it_version, "datasets": datasets_version},
+        }
+        canonical = json.dumps(payload, sort_keys=True, default=str)
+        return hashlib.sha256(canonical.encode()).hexdigest()[:32]
 
 
 @dataclass(frozen=True)

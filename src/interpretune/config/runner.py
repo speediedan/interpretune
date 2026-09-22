@@ -197,6 +197,12 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
     limit_analysis_batches: int = -1
     cache_dir: str | Path | None = None
     op_output_dataset_path: str | Path | None = None
+    # Generator-cache sharing (interpretune#554). Both default to the historical per-run behavior:
+    # a random fingerprint and the output store's cache dir. A caller that passes a deterministic
+    # `dataset_fingerprint` (conformance runs do) opts into reusing generator cache files, which
+    # only pays off when `generator_cache_dir` points somewhere persistent across runs.
+    dataset_fingerprint: str | None = None
+    generator_cache_dir: str | Path | None = None
     # Add optional latent_analysis_targets as a fallback
     latent_analysis_targets: LatentAnalysisTargets | None = None
     # Add artifact configuration

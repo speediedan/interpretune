@@ -342,6 +342,213 @@ def display_top_features_comparison(
     display(HTML(style + body))
 
 
+class AttributionComparisonSummary(NamedTuple):
+    """What :func:`display_attribution_comparison` rendered, for assertions without re-deriving it."""
+
+    direction_labels: tuple[str, ...]
+    direction_shares: tuple[float, ...]
+    direction_fractions: tuple[float, ...]
+    attribution_total: float
+    predicted_delta: float
+    unexplained_remainder: float
+    feature_fractions: tuple[float, ...]
+
+
+def _neuronpedia_feature_link(
+    layer: int, feat_idx: int, model: str | None, source_set: str, base_url: str, css_class: str
+) -> str:
+    if model is None:
+        return str(feat_idx)
+    url = f"{html.escape(base_url.rstrip('/'))}/{html.escape(model)}/{layer}-{html.escape(source_set)}/{feat_idx}"
+    return f'<a class="{css_class}" href="{url}" target="_blank" title="View on Neuronpedia">{feat_idx}</a>'
+
+
+def build_attribution_comparison_html(
+    attribution: Mapping[str, Any],
+    direction_labels: Sequence[str],
+    *,
+    finite_difference_slopes: Sequence[float] | None = None,
+    measured_delta: float | None = None,
+    features: Sequence[tuple[int, int, int]] = (),
+    feature_scores: Sequence[float] = (),
+    feature_explanations: Mapping[tuple[int, int], str] | None = None,
+    neuronpedia_model: str | None = None,
+    neuronpedia_set: str = "gemmascope-transcoder-16k",
+    neuronpedia_base_url: str = "https://www.neuronpedia.org",
+    top_n: int = 5,
+    title: str = "Attribution comparison: J-lens directions vs SAE features",
+    direction_column_title: str = "J-lens directions",
+    feature_column_title: str = "SAE features (signed influence)",
+) -> tuple[str, AttributionComparisonSummary]:
+    """Build the two-column attribution comparison as HTML; :func:`display_attribution_comparison` shows it.
+
+    Left column: one row per J-lens direction from ``attribution`` (the dict
+    :func:`~interpretune.analysis.ops.bundled.jlens.jlens_ops.subspace_attribution_scores` returns),
+    with the coordinate change ``Δc_i``, the gradient readout ``w_i``, their product ``a_i``, and the
+    direction's fraction of the explained total; a footer row each for the explained total, the
+    remainder, the first-order prediction ``gᵀΔh`` and, when given, the measured logit change. Right
+    column: the top ``top_n`` features by ``|score|`` with sign, magnitude, fraction of the summed
+    magnitude, a Neuronpedia link when a model is given, and the explanation when known.
+
+    The two columns are shares within their own vocabulary, deliberately: gap units per coordinate and
+    row-normalized graph influence are not comparable as raw numbers, so each side reports where its
+    explained change concentrates rather than whose units are larger. Pure (no display), so a test can
+    check the markup and the summary without a kernel.
+    """
+    shares = [float(x) for x in attribution["attribution_shares"]]
+    labels = [str(lbl) for lbl in direction_labels]
+    if len(labels) != len(shares):
+        raise ValueError(f"{len(labels)} direction labels for {len(shares)} attribution shares")
+    delta_coords = [float(x) for x in attribution.get("delta_coords") or [float("nan")] * len(shares)]
+    readouts = [float(x) for x in attribution.get("readouts") or [float("nan")] * len(shares)]
+    slopes = [float(x) for x in finite_difference_slopes] if finite_difference_slopes is not None else None
+    if slopes is not None and len(slopes) != len(shares):
+        raise ValueError(f"{len(slopes)} finite-difference slopes for {len(shares)} attribution shares")
+    total = float(attribution["attribution_total"])
+    predicted = float(attribution["predicted_delta"])
+    remainder = float(attribution["unexplained_remainder"])
+    share_mass = sum(abs(a) for a in shares)
+    fractions = [abs(a) / share_mass if share_mass else 0.0 for a in shares]
+
+    ranked = sorted(zip(features, feature_scores), key=lambda t: abs(float(t[1])), reverse=True)[:top_n]
+    feat_mass = sum(abs(float(sc)) for _, sc in ranked)
+    feat_fractions = [abs(float(sc)) / feat_mass if feat_mass else 0.0 for _, sc in ranked]
+
+    # Measured against the docs theme rather than guessed: with shrinkable flex items the columns
+    # settle at half the content width and each table overflows its own box, so the two render on top
+    # of one another. Columns are therefore sized to their content and never shrink, and the PAIR
+    # scrolls horizontally inside this widget when the page is narrower than both. The scrollbar stays
+    # inside the element, so the page itself never scrolls sideways.
+    style = """
+    <style>
+    .attr-cmp { font-family: system-ui, -apple-system, sans-serif; margin-bottom: 12px; font-size: 13px; }
+    .attr-cmp .title { font-weight: bold; font-size: 14px; margin-bottom: 6px; padding: 4px 6px;
+        border-radius: 3px; background: #555; color: white; display: inline-block; }
+    .attr-cmp .cols { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 16px;
+        overflow-x: auto; padding-bottom: 6px; }
+    .attr-cmp .col { flex: 0 0 auto; width: max-content; min-width: 0; }
+    .attr-cmp .col-header { font-weight: bold; font-size: 13px; padding: 4px 8px; border-radius: 3px;
+        color: white; margin-bottom: 6px; }
+    .attr-cmp table { width: max-content; min-width: 100%; max-width: none; border-collapse: collapse; }
+    .attr-cmp th, .attr-cmp td { padding: 3px 6px; border: 1px solid rgba(150,150,150,0.5); text-align: right; }
+    .attr-cmp td { white-space: nowrap; }
+    .attr-cmp th { white-space: normal; }
+    .attr-cmp td.lbl, .attr-cmp th.lbl { text-align: left; }
+    .attr-cmp td.txt, .attr-cmp th.txt { text-align: left; white-space: normal; min-width: 180px; max-width: 260px; }
+    .attr-cmp tr.total td { background: rgba(120,180,240,0.15); font-weight: bold; }
+    .attr-cmp .monospace { font-family: monospace; }
+    .attr-cmp a.np-link { color: inherit; text-decoration: none; border-bottom: 1px dashed rgba(150,150,150,0.6); }
+    .attr-cmp a.np-link:hover { color: #2980B9; border-bottom-style: solid; }
+    .attr-cmp .footnote { font-size: 12px; color: #666; margin-top: 6px; max-width: 900px; }
+    .attr-cmp .footnote code { font-family: monospace; }
+    </style>
+    """
+
+    def _signed(v: float, precision: int = 4) -> str:
+        return "n/a" if v != v else f"{v:+.{precision}f}"  # NaN when a factor was not supplied
+
+    # ---- left: directions ------------------------------------------------------------
+    # Headers are short because the columns are sized to their content: a header long enough to want
+    # wrapping simply widens the table instead, since max-content sizing never applies the pressure
+    # that would make it wrap. The symbols are spelled out in the legend under both tables.
+    slope_header = "<th>dGap/ds</th>" if slopes is not None else ""
+    left = (
+        f'<div class="col"><div class="col-header" style="background-color:#2471A3;">'
+        f"{html.escape(direction_column_title)}</div><table><thead><tr>"
+        '<th class="lbl">Direction</th><th>&#916;c</th><th>Readout w</th>'
+        f"<th>Share a</th><th>Fraction</th>{slope_header}</tr></thead><tbody>"
+    )
+    for i, lbl in enumerate(labels):
+        slope_cell = f"<td>{_signed(slopes[i])}</td>" if slopes is not None else ""
+        left += (
+            f'<tr><td class="lbl">{html.escape(lbl)}</td><td>{_signed(delta_coords[i])}</td>'
+            f"<td>{_signed(readouts[i])}</td><td>{shares[i]:+.4f}</td><td>{fractions[i]:.1%}</td>{slope_cell}</tr>"
+        )
+    # A footer value is a share-space quantity, so it must not land under the slope header, where it
+    # would read as a slope. That was previously achieved by padding it into the Share column with an
+    # empty cell either side, which left every footer row visibly gapped. One spanning cell, aligned
+    # left, keeps the value beside the label it belongs to and out of every numeric column, so the
+    # constraint holds without the gaps. Spans the whole row bar the label: six columns with the slope
+    # column present, five without.
+    span = 5 if slopes is not None else 4
+
+    def _footer(label: str, value: float) -> str:
+        return f'<tr class="total"><td class="lbl">{label}</td><td class="lbl" colspan="{span}">{value:+.4f}</td></tr>'
+
+    left += _footer("Explained &#931;a", total)
+    left += _footer("Remainder", remainder)
+    left += _footer("First-order g&#7488;&#916;h", predicted)
+    if measured_delta is not None:
+        left += _footer("Measured &#916;gap", float(measured_delta))
+    left += "</tbody></table></div>"
+
+    # ---- right: features -------------------------------------------------------------
+    explain_header = '<th class="txt">Explanation</th>' if feature_explanations is not None else ""
+    right = (
+        f'<div class="col"><div class="col-header" style="background-color:#27AE60;">'
+        f"{html.escape(feature_column_title)}</div><table><thead><tr>"
+        f'<th>#</th><th class="lbl">Node</th><th>Sign</th><th>|Score|</th><th>Fraction</th>{explain_header}'
+        "</tr></thead><tbody>"
+    )
+    for j, ((layer, pos, feat_idx), score) in enumerate(ranked):
+        value = float(score)
+        sign, colour = ("+", "#1a7f37") if value > 0 else (("−", "#d1242f") if value < 0 else ("0", "inherit"))
+        link = _neuronpedia_feature_link(
+            int(layer), int(feat_idx), neuronpedia_model, neuronpedia_set, neuronpedia_base_url, "np-link"
+        )
+        explain_cell = ""
+        if feature_explanations is not None:
+            explain_cell = (
+                f'<td class="txt">{html.escape(feature_explanations.get((int(layer), int(feat_idx)), ""))}</td>'
+            )
+        right += (
+            f'<tr><td>{j + 1}</td><td class="lbl monospace">({layer},&#8239;{pos},&#8239;{link})</td>'
+            f'<td style="color:{colour};font-weight:600">{sign}</td><td>{format_score(abs(value))}</td>'
+            f"<td>{feat_fractions[j]:.1%}</td>{explain_cell}</tr>"
+        )
+    right += "</tbody></table></div>"
+
+    # The legend defines only the columns actually rendered: naming a column the reader cannot see is the
+    # same defect in prose that an empty column would be in the table.
+    legend = (
+        "&#916;c = V&#8314;&#916;h, the displacement's coordinates in the pair; w = V&#7488;g, the gradient's "
+        "readout of each direction; a = w&#183;&#916;c, the direction's share of the first-order prediction "
+        "g&#7488;&#916;h."
+    )
+    if slopes is not None:
+        legend += " dGap/ds is the central-difference slope of the gap along that direction, an independent check on w."
+    footnote = (
+        f"{legend} Fractions are within each vocabulary (|a| over &#931;|a|; |score| over &#931;|score| of the "
+        "rows shown): gap units per coordinate and graph influence are not comparable as raw numbers. The "
+        "first-order prediction is the gradient's linear estimate of the patch's effect; the measured change "
+        "includes everything nonlinear downstream of the site."
+    )
+    markup = (
+        f'{style}<div class="attr-cmp"><div class="title">{html.escape(title)}</div>'
+        f'<div class="cols">{left}{right}</div><div class="footnote">{footnote}</div></div>'
+    )
+    summary = AttributionComparisonSummary(
+        direction_labels=tuple(labels),
+        direction_shares=tuple(shares),
+        direction_fractions=tuple(fractions),
+        attribution_total=total,
+        predicted_delta=predicted,
+        unexplained_remainder=remainder,
+        feature_fractions=tuple(feat_fractions),
+    )
+    return markup, summary
+
+
+def display_attribution_comparison(
+    attribution: Mapping[str, Any], direction_labels: Sequence[str], **kwargs: Any
+) -> AttributionComparisonSummary:
+    """Render :func:`build_attribution_comparison_html` and return its summary (see that function for the
+    columns)."""
+    markup, summary = build_attribution_comparison_html(attribution, direction_labels, **kwargs)
+    display(HTML(markup))
+    return summary
+
+
 # ---------------------------------------------------------------------------
 # Token probability display
 # ---------------------------------------------------------------------------
@@ -1207,22 +1414,30 @@ def display_feature_decoupling_table(
         return f'<td style="{cell_style}">{value}</td>'
 
     rows = ""
+    show_jlens = any(getattr(prof, "jlens_signature", None) for prof in profiles)
     for i, prof in enumerate(sorted(profiles, key=lambda r: -abs(r.output_projection))):
         explanation = (feature_explanations or {}).get((prof.layer, prof.feature), "")
         decoupled = abs(prof.output_projection) >= 0.03 and prof.input_concept_share < 0.05
         suppressor = prof.input_concept_share >= 0.3 and prof.output_projection < -0.03
         marker = "decoupled" if decoupled else ("suppressor-motif" if suppressor else "")
         row_class = "even-row" if i % 2 == 0 else "odd-row"
-        rows += (
+        cells = (
             f'<tr class="{row_class}">'
             + _cell(f"L{prof.layer}/{prof.feature}", align="left")
             + _cell(f"{prof.input_concept_share:.3f}", bold=prof.input_concept_share == 0.0)
             + _cell(f"{prof.activation_mass:.2f}")
             + _cell(f"{prof.output_projection:+.4f}", bold=abs(prof.output_projection) >= 0.03)
-            + _cell(html.escape(marker), align="left", bold=bool(marker))
-            + _cell(html.escape(str(explanation))[:80], align="left")
-            + "</tr>\n"
         )
+        if show_jlens:
+            signature = getattr(prof, "jlens_signature", None) or ()
+            mass = getattr(prof, "jlens_concept_mass", None)
+            top_tokens = ", ".join(tok for tok, _ in signature[:3])
+            mass_text = f"{mass:.2f}" if mass is not None else "—"
+            cells += _cell(f"{top_tokens} ({mass_text})", align="left")
+        cells += _cell(html.escape(marker), align="left", bold=bool(marker)) + _cell(
+            html.escape(str(explanation))[:80], align="left"
+        )
+        rows += cells + "</tr>\n"
 
     title_html = (
         f'<div style="font-weight:bold;font-size:14px;margin-bottom:4px;padding:4px 6px;'
@@ -1332,11 +1547,16 @@ def plot_decoder_projection_map(
     target_label: str = "A−B",
     title: str = "Decoder-vector projection map",
     static_companion: bool = False,
+    color_by: str = "output_projection",
 ) -> None:
     """Interactive decoder-space projection (UMAP w/ PCA fallback) with per-feature hover details.
 
     Uses plotly for hover tooltips (feature id, input concept share, activation mass, signed output projection,
     explanation) with the analyzed features colored by signed output projection over a gray active-feature background.
+    Pass ``color_by="jlens_concept_mass"`` to color by J-space disposition instead: each feature's share of
+    signature mass on the concept tokens (0 to 1, sequential scale), which answers where the feature disposes
+    the model to speak rather than how hard it pushes one logit difference. Profiles without a signature fall
+    back to output projection, so mixed batches still render.
     Axis tick labels are hidden deliberately: UMAP coordinates are non-metric (arbitrary rotation/scale; only local
     neighborhood structure is meaningful), so raw axis numbers invite over-reading. The interactive figure is embedded
     as an HTML div bootstrapping plotly.js from CDN (``fig.to_html(include_plotlyjs="cdn")``) rather than via
@@ -1369,6 +1589,27 @@ def plot_decoder_projection_map(
         float(coords[:, 1].min()),
         float(coords[:, 1].max()),
     )
+
+    if color_by == "jlens_concept_mass":
+        color_values = [
+            float(p.jlens_concept_mass)
+            if getattr(p, "jlens_concept_mass", None) is not None
+            else float(p.output_projection)
+            for p in analyzed_profiles
+        ]
+        color_scale, color_mid, color_title = "Viridis", None, "J-space concept mass"
+    elif color_by == "output_projection":
+        color_values = [float(p.output_projection) for p in analyzed_profiles]
+        color_scale, color_mid, color_title = (
+            "RdBu_r",
+            0.0,
+            f"output proj<br>({target_label})",
+        )
+    else:
+        raise ValueError(
+            f"plot_decoder_projection_map color_by {color_by!r} is not a coloring: "
+            "expected 'output_projection' or 'jlens_concept_mass'."
+        )
 
     try:
         import plotly.graph_objects as go
@@ -1409,11 +1650,11 @@ def plot_decoder_projection_map(
                 hoverinfo="text",
                 marker=dict(
                     size=marker_px,
-                    color=[p.output_projection for p in analyzed_profiles],
-                    colorscale="RdBu_r",
-                    cmid=0.0,
+                    color=color_values,
+                    colorscale=color_scale,
+                    cmid=color_mid,
                     showscale=True,
-                    colorbar=dict(title=dict(text=f"output proj<br>({target_label})", side="right"), len=0.85),
+                    colorbar=dict(title=dict(text=color_title, side="right"), len=0.85),
                     line=dict(width=1, color="black"),
                 ),
             )
@@ -1472,8 +1713,8 @@ def plot_decoder_projection_map(
             fg[:, 0],
             fg[:, 1],
             s=[80 + 320 * p.input_concept_share for p in analyzed_profiles],
-            c=[p.output_projection for p in analyzed_profiles],
-            cmap="coolwarm",
+            c=color_values,
+            cmap="viridis" if color_by == "jlens_concept_mass" else "coolwarm",
             edgecolors="black",
             linewidths=0.8,
             label="analyzed features",
