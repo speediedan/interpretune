@@ -210,6 +210,9 @@ def build_session_body(
     import torch
 
     device_type = force_device or ("cuda" if torch.cuda.is_available() else "cpu")
+    # Config-covering adapters: the framework entries never provide config
+    # sections, so only the rest scope the subclass search.
+    config_adapters = [name for name in spec.composition if name not in ("core", "lightning")]
     return {
         "reg_info": {"adapter_combinations": [list(spec.composition)]},
         "module_cfg": {
@@ -224,7 +227,7 @@ def build_session_body(
                             "class_path": "interpretune.harness.sessions.NeutralSessionMixin",
                             "import_only": True,
                         },
-                        "target_adapters": ["nnsight", "circuit_tracer"],
+                        "target_adapters": config_adapters,
                     },
                 },
                 "circuit_tracer_cfg": {
