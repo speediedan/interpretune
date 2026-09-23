@@ -320,8 +320,12 @@ def experiment_session(
         session_dir = Path(work_root) / run_name
         session_dir.mkdir(parents=True, exist_ok=True)
         it_init(**session)
+        module = session.module
+        datamodule = session.datamodule
+        assert module is not None, "experiment session built no module"
+        assert datamodule is not None, "experiment session built no datamodule"
         try:
-            yield session, session.module, session.datamodule.tokenizer
+            yield session, module, datamodule.tokenizer
         finally:
             from interpretune.utils.resource_mgmt import cleanup_python_cuda
 
