@@ -862,3 +862,21 @@ class TestTemplatePort:
         out.mkdir()
         with pytest.raises(FileNotFoundError, match="declare the template"):
             _rewrite_concept_direction_template(out, {"experiments": {}})
+
+    def test_nested_test_tree_import_refused(self, tmp_path):
+        from interpretune.hub.publish import _nested_blocked_refs
+
+        mod = tmp_path / "sneaky.py"
+        mod.write_text(
+            "VALUE = 1\n\n\ndef run():\n"
+            "    from it_examples.tests.notebook._harness.session import experiment_session\n\n"
+            "    return experiment_session\n",
+            encoding="utf-8",
+        )
+        assert _nested_blocked_refs(mod) == ["sneaky.py:5:it_examples.tests.notebook._harness.session"]
+        clean = tmp_path / "clean.py"
+        clean.write_text(
+            "from it_examples.utils.nb_ui_utils import display_html_frame\n",
+            encoding="utf-8",
+        )
+        assert _nested_blocked_refs(clean) == []

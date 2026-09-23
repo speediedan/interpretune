@@ -320,6 +320,31 @@ def _module_level_it_examples_refs(path: Path) -> list[str]:
     return found
 
 
+#: Import roots no staged snapshot file may reference at any nesting level: the
+#: deleted experiments tree, the wheel-excluded test tree, and bare `tests`
+#: (same tree, top-level form). Other `it_examples.*` subpackages ship in the
+#: wheel and stay importable, so they are not refused.
+_BLOCKED_NESTED_ROOTS = ("tests.", "it_examples.tests", "it_examples.experiments")
+
+
+def _nested_blocked_refs(path: Path) -> list[str]:
+    """Blocked-root imports at any nesting level (lazy function-level imports hide here)."""
+    import ast
+
+    found: list[str] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            mods = [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            mods = [node.module] if node.module else []
+        else:
+            continue
+        for mod in mods:
+            if (mod or "").startswith(_BLOCKED_NESTED_ROOTS):
+                found.append(f"{path.name}:{node.lineno}:{mod}")
+    return found
+
+
 def _rewrite_concept_direction_snapshot(out_dir: Path, manifest: dict) -> None:
     """Restructure a staged concept-direction tree into the runnable ``exp/`` package layout.
 
@@ -384,6 +409,17 @@ def resolve_session_surface_preset_config_defaults(*args, **kwargs):
     resolve_session_surface_preset_config_defaults,
 )""",
         ),
+        (
+            # The session-driving skeleton's own lazy shim: same destination.
+            """# experiment_session is a repo-only HARNESS driver (it_examples/tests is wheel-excluded): imported
+# lazily inside the session-driving functions so this module imports cleanly from an installed wheel;
+# invoking a pipeline without the repo harness raises ImportError at the call, not at import
+def _experiment_session(*args, **kwargs):
+    from it_examples.tests.notebook._harness.session import experiment_session
+
+    return experiment_session(*args, **kwargs)""",
+            "from interpretune.harness.sessions import experiment_session as _experiment_session",
+        ),
     ]
     (out_dir / "exp" / "analysis").mkdir(parents=True, exist_ok=True)
     for src_rel, dest_rel in moves.items():
@@ -416,6 +452,7 @@ def resolve_session_surface_preset_config_defaults(*args, **kwargs):
         if staged.name == "__init__.py":
             continue
         blockers.extend(f"{staged.relative_to(out_dir)}:{ref}" for ref in _module_level_it_examples_refs(staged))
+        blockers.extend(f"{staged.relative_to(out_dir)}:{ref}" for ref in _nested_blocked_refs(staged))
     if blockers:
         raise ValueError(
             "concept-direction snapshot rewrite refuses unmapped it_examples imports "
@@ -522,10 +559,11 @@ def _rewrite_concept_direction_template(out_dir: Path, manifest: dict) -> None:
     """Port the staged notebook template to snapshot execution.
 
     Applies the exact import swaps, replaces the repo-root bootstrap with snapshot-root
-    path logic, generates the snapshot-local tokenizer loader, and refuses any remaining
-    references to the deleted in-repo trees in code cells. The template file itself must
-    be manifest-declared (it ships); its rel joins every entry's ``files`` like the other
-    generated/carried payloads.
+    path logic, and refuses any remaining references to the deleted in-repo trees in
+    code cells. The template file itself must be manifest-declared (it ships); its rel
+    joins every entry's ``files`` like the other carried payloads. Session construction
+    comes from :mod:`interpretune.harness.sessions`, so no snapshot-local session
+    shim is generated.
     """
     import json
 
