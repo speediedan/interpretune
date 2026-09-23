@@ -49,3 +49,38 @@ def test_experiment_datamodule_closure_over_base_gap():
         assert callable(method)
         with pytest.raises(NotImplementedError, match=f"do not serve {phase} dataloaders"):
             method(types.SimpleNamespace())
+
+
+def test_build_session_body_composition_and_sections():
+    from interpretune.harness.sessions import build_session_body, resolve_model_spec
+
+    spec = resolve_model_spec("gemma3", "1b_it")
+    body = build_session_body(spec, force_device="cuda", batch_size=8)
+    assert body["reg_info"]["adapter_combinations"] == [["core", "nnsight", "circuit_tracer"]]
+    init_args = body["module_cfg"]["init_args"]
+    assert init_args["model_name_or_path"] == "google/gemma-3-1b-it"
+    auto_comp = init_args["auto_comp_cfg"]["init_args"]
+    assert auto_comp["module_cfg_mixin"] == {
+        "class_path": "interpretune.harness.sessions.NeutralSessionMixin",
+        "import_only": True,
+    }
+    ct_args = init_args["circuit_tracer_cfg"]["init_args"]
+    assert ct_args["backend"] == "nnsight"
+    assert ct_args["batch_size"] == 8
+    assert init_args["nnsight_cfg"]["init_args"]["device_map"] == "cuda"
+    assert body["datamodule_cfg"]["class_path"] == "interpretune.config.datamodule.ITDataModuleConfig"
+
+
+def test_preset_notebook_default_is_empty():
+    from interpretune.harness.sessions import resolve_session_surface_preset_config_defaults
+
+    assert resolve_session_surface_preset_config_defaults("notebook_default") == {}
+
+
+def test_preset_unknown_refused_by_name():
+    import pytest
+
+    from interpretune.harness.sessions import resolve_session_surface_preset_config_defaults
+
+    with pytest.raises(ValueError, match="Unsupported debug session surface preset: nope"):
+        resolve_session_surface_preset_config_defaults("nope")

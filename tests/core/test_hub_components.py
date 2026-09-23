@@ -798,11 +798,10 @@ class TestTemplatePort:
         _rewrite_concept_direction_template(out, manifest)
         return out, manifest
 
-    def test_template_port_rewrites_imports_and_generates_loader(self, tmp_path):
+    def test_template_port_rewrites_imports_to_snapshot(self, tmp_path):
         import json
 
         out, manifest = self._staged_tree_with_template(tmp_path)
-        assert (out / "exp" / "_tokenizer_loader.py").is_file()
         code = "\n".join(
             "".join(c.get("source", []))
             for c in json.loads(
@@ -810,11 +809,51 @@ class TestTemplatePort:
             )["cells"]
             if c.get("cell_type") == "code"
         )
-        assert "from exp._tokenizer_loader import experiment_session" in code
+        assert "from interpretune.harness.sessions import experiment_session" in code
         assert "tests.nb_experiments" not in code
+        assert not (out / "exp" / "_tokenizer_loader.py").exists()
         files = manifest["experiments"]["demo"]["files"]
-        assert "exp/_tokenizer_loader.py" in files
         assert "concept_direction/concept_direction_template.ipynb" in files
+
+    def test_pipeline_harness_shims_swap_to_core(self, tmp_path):
+        from interpretune.hub.publish import _rewrite_concept_direction_snapshot
+
+        out = tmp_path / "staged"
+        (out / "concept_direction" / "analysis").mkdir(parents=True)
+        harness_block = (
+            "# repo-only HARNESS drivers (it_examples/tests is wheel-excluded): lazy call-site wrappers so this\n"
+            "# module imports cleanly from an installed wheel; harness-driven entry points raise at the call\n"
+            "def _harness():\n"
+            "    from it_examples.tests.notebook import _harness\n"
+            "\n"
+            "    return _harness.session\n"
+            "\n"
+            "\n"
+            "def experiment_session(*args, **kwargs):\n"
+            "    return _harness().experiment_session(*args, **kwargs)\n"
+            "\n"
+            "\n"
+            "def resolve_model_spec(*args, **kwargs):\n"
+            "    return _harness().resolve_model_spec(*args, **kwargs)\n"
+            "\n"
+            "\n"
+            "def resolve_session_surface_preset_config_defaults(*args, **kwargs):\n"
+            "    return _harness().resolve_session_surface_preset_config_defaults(*args, **kwargs)\n"
+        )
+        (out / "concept_direction" / "concept_direction.py").write_text(harness_block, encoding="utf-8")
+        (out / "pipeline_patterns.py").write_text("PATTERN = True\n", encoding="utf-8")
+        (out / "concept_direction" / "analysis" / "concept_direction_analysis.py").write_text(
+            "ANALYSIS = True\n", encoding="utf-8"
+        )
+        (out / "concept_direction" / "analysis" / "intervention_drift_analysis.py").write_text(
+            "DRIFT = True\n", encoding="utf-8"
+        )
+        manifest = {"experiments": {}}
+        _rewrite_concept_direction_snapshot(out, manifest)
+        rewritten = (out / "exp" / "concept_direction.py").read_text(encoding="utf-8")
+        assert "from interpretune.harness.sessions import (" in rewritten
+        assert "it_examples.tests.notebook" not in rewritten
+        assert "def _harness():" not in rewritten
 
     def test_template_missing_template_refused(self, tmp_path):
         from interpretune.hub.publish import _rewrite_concept_direction_template

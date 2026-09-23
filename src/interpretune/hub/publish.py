@@ -359,6 +359,31 @@ def _rewrite_concept_direction_snapshot(out_dir: Path, manifest: dict) -> None:
             "from it_examples.experiments.notebook.concept_direction.concept_direction import NotebookHarnessConfig",
             "from exp.concept_direction import NotebookHarnessConfig",
         ),
+        (
+            # Pipeline-internal lazy shims over the wheel-excluded test helper: the
+            # harness sessions module carries the same names on public construction.
+            """def _harness():
+    from it_examples.tests.notebook import _harness
+
+    return _harness.session
+
+
+def experiment_session(*args, **kwargs):
+    return _harness().experiment_session(*args, **kwargs)
+
+
+def resolve_model_spec(*args, **kwargs):
+    return _harness().resolve_model_spec(*args, **kwargs)
+
+
+def resolve_session_surface_preset_config_defaults(*args, **kwargs):
+    return _harness().resolve_session_surface_preset_config_defaults(*args, **kwargs)""",
+            """from interpretune.harness.sessions import (
+    experiment_session,
+    resolve_model_spec,
+    resolve_session_surface_preset_config_defaults,
+)""",
+        ),
     ]
     (out_dir / "exp" / "analysis").mkdir(parents=True, exist_ok=True)
     for src_rel, dest_rel in moves.items():
@@ -429,7 +454,7 @@ _TEMPLATE_IMPORT_SWAPS = [
     ),
     (
         "from tests.nb_experiments.session import experiment_session",
-        "from exp._tokenizer_loader import experiment_session",
+        "from interpretune.harness.sessions import experiment_session",
     ),
     (
         "from tests.nb_experiments.concept_direction.analysis.concept_direction_analysis "
@@ -469,33 +494,6 @@ SNAPSHOT_ROOT = CWD
 # the in-repo bootstrap (repo-root walk plus test-harness paths) is dropped.
 if str(SNAPSHOT_ROOT) not in sys.path:
     sys.path.insert(0, str(SNAPSHOT_ROOT))"""
-
-#: Snapshot-carried tokenizer access for the template's display cells: they only ever use
-#: the yielded tokenizer, while the in-repo helper builds a full wheel-excluded test session
-#: no Hub consumer could construct. Gated weights resolve with the ambient Hub credential.
-_TOKENIZER_LOADER_TEXT = '''"""Snapshot-local tokenizer access for display cells (no test session on Hub)."""
-
-from __future__ import annotations
-
-from contextlib import contextmanager
-from pathlib import Path
-from typing import Any, Iterator
-
-
-@contextmanager
-def experiment_session(
-    work_root: str | Path, run_name: str, **kwargs: Any
-) -> Iterator[tuple[Any, Any, Any]]:
-    """Yield ``(None, None, tokenizer)``: display cells only ever use the tokenizer."""
-    session_dir = Path(work_root) / run_name
-    session_dir.mkdir(parents=True, exist_ok=True)
-    model_name = kwargs.get("model_name")
-    if not model_name:
-        raise ValueError("experiment_session needs model_name in the session kwargs")
-    from transformers import AutoTokenizer
-
-    yield None, None, AutoTokenizer.from_pretrained(model_name)
-'''
 
 #: The staged template, relative to the snapshot root. Staged verbatim by the manifest like
 #: any payload, then ported in place below.
@@ -550,9 +548,6 @@ def _rewrite_concept_direction_template(out_dir: Path, manifest: dict) -> None:
         cell["source"] = [source]
     template.write_text(json.dumps(notebook, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    (out_dir / "exp").mkdir(parents=True, exist_ok=True)
-    (out_dir / "exp" / "_tokenizer_loader.py").write_text(_TOKENIZER_LOADER_TEXT, encoding="utf-8")
-
     blockers: list[str] = []
     for cell in notebook.get("cells", []):
         if cell.get("cell_type") != "code":
@@ -573,7 +568,7 @@ def _rewrite_concept_direction_template(out_dir: Path, manifest: dict) -> None:
     for entry in (manifest.get("experiments") or {}).values():
         if not isinstance(entry, dict):
             continue
-        for rel in ("exp/_tokenizer_loader.py", _TEMPLATE_REL):
+        for rel in (_TEMPLATE_REL,):
             if rel not in (entry.get("files") or []):
                 entry.setdefault("files", []).append(rel)
 
