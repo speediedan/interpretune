@@ -193,3 +193,32 @@ def test_conformance_package_imports_without_pytest():
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stderr[-2000:]
     assert result.stdout.strip() == "ok"
+
+
+def test_import_config_leaves_heavy_frameworks_unimported_but_resolves_adapter_configs():
+    """`import interpretune.config` must not import heavy frameworks (interpretune#401).
+
+    The adapter-config layout claims laziness, but availability probing imported sae_lens (and
+    through it transformer_lens) at `interpretune.utils` import time, making two optional-extra
+    frameworks de facto hard requirements of the core config package. The existing package-import
+    guard passes while this breaks, because it never goes one import deeper. Subprocess-only, for
+    the same masking reason: the runner's own imports would hide the leak in-process.
+    """
+    import subprocess
+    import sys
+
+    script = (
+        "import json, sys;"
+        "import interpretune.config as config;"
+        "heavy = ['transformer_lens', 'lightning', 'circuit_tracer', 'sae_lens', 'nnsight'];"
+        "present = [m for m in sys.modules if m.split('.')[0] in heavy];"
+        "resolved = [config.ITLensConfig.__name__, config.SAEConfig.__name__];"
+        "print(json.dumps({'present': present, 'resolved': resolved}))"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr[-2000:]
+    payload = json.loads(result.stdout.strip())
+    assert payload["present"] == [], (
+        "heavy frameworks imported by `import interpretune.config`: %s" % payload["present"]
+    )
+    assert payload["resolved"] == ["ITLensConfig", "SAEConfig"]

@@ -140,15 +140,16 @@ def module_available(module_path: str) -> bool:
     False
     >>> module_available('bla.bla')
     False
+
+    Never imports the module: ``find_spec`` resolves without executing it, so probing an
+    optional framework cannot make it a de facto hard dependency of whatever imports this
+    helper (interpretune#401). A package that is present but broken therefore reads as
+    available here and fails later with its real ImportError, which is the honest error.
     """
-    module_names = module_path.split(".")
-    if not package_available(module_names[0]):
-        return False
     try:
-        importlib.import_module(module_path)
-    except ImportError:
+        return find_spec(module_path) is not None
+    except (ModuleNotFoundError, ValueError):
         return False
-    return True
 
 
 def compare_version(package: str, op: Callable, version_str: str, use_base_version: bool = False) -> bool:
