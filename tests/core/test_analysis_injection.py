@@ -52,7 +52,7 @@ def test_framework():
     # Step 2: Import and test the new API
     print("\n2. Testing new API...")
     try:
-        from it_examples.utils.analysis_injection import (
+        from interpretune.analysis.injection import (
             setup_analysis_injection,
             get_module_debug_info,
             HOOK_REGISTRY,
@@ -102,7 +102,7 @@ def test_framework():
     # Step 6: Test module debug info
     print("\n6. Testing module debug info...")
     try:
-        from it_examples.utils.analysis_injection import get_module_debug_info
+        from interpretune.analysis.injection import get_module_debug_info
 
         target_module = "circuit_tracer.attribution.attribute"
         info = get_module_debug_info(target_module)
@@ -120,7 +120,7 @@ def test_framework():
 
     # Step 7: Verify HOOK_REGISTRY state
     print("\n7. Verifying HOOK_REGISTRY state...")
-    from it_examples.utils.analysis_injection import HOOK_REGISTRY
+    from interpretune.analysis.injection import HOOK_REGISTRY
 
     print(f"   [OK] Enabled: {HOOK_REGISTRY._enabled}")
     print(f"   [OK] Registered hooks: {len(HOOK_REGISTRY._hooks)}")
@@ -186,12 +186,12 @@ def test_orchestrator_access():
     print("\n2. Defining test analysis functions...")
 
     def test_point_1(local_vars):
-        from it_examples.utils.analysis_injection.orchestrator import analysis_log_point
+        from interpretune.analysis.injection.orchestrator import analysis_log_point
 
         analysis_log_point("Test point 1 executed", {"value": 1, "status": "executed"})
 
     def test_point_2(local_vars):
-        from it_examples.utils.analysis_injection.orchestrator import analysis_log_point
+        from interpretune.analysis.injection.orchestrator import analysis_log_point
 
         analysis_log_point("Test point 2 executed", {"value": 2, "status": "executed"})
 
@@ -200,7 +200,7 @@ def test_orchestrator_access():
     # Step 3: Create orchestrator and register hooks
     print("\n3. Creating orchestrator and registering hooks...")
     try:
-        from it_examples.utils.analysis_injection import orchestrator
+        from interpretune.analysis.injection import orchestrator
 
         # Clear any existing data
         orchestrator.clear_analysis_data()

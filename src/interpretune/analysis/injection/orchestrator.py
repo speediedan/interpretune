@@ -61,6 +61,7 @@ class VarAnnotate:
 
     @property
     def output(self) -> str:
+        """Render the annotated value for display, dispatching on its runtime type."""
         if isinstance(self.var_value, torch.Tensor):
             return format_tensor(self.var_value, **(self.format_tensor_kwargs or {}))
         if isinstance(self.var_value, dict) or (

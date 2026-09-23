@@ -176,8 +176,7 @@ def patch_file_with_hooks(
             lines.insert(line_num, hook_call)
 
     # Add import at top of file (after any existing imports, including from __future__)
-    # Use the new package path for the in-repo analysis_injection package located under utils
-    import_line = "from it_examples.utils.analysis_injection.analysis_hook_patcher import HOOK_REGISTRY\n"
+    import_line = "from interpretune.analysis.injection.analysis_hook_patcher import HOOK_REGISTRY\n"
 
     # Find where to insert import (after last import or at beginning)
     # Must handle: docstrings (single/multi-line), comments, blank lines, __future__ imports,
@@ -477,7 +476,7 @@ def get_module_debug_info(module_name: str) -> dict[str, Any]:
             with open(module.__file__) as f:
                 source = f.read()
                 info["hook_call_count"] = source.count("HOOK_REGISTRY.execute")
-                info["has_analysis_import"] = "from it_examples.utils.analysis_injection" in source
+                info["has_analysis_import"] = "from interpretune.analysis.injection" in source
         except Exception as e:
             info["read_error"] = str(e)
 

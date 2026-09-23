@@ -110,6 +110,27 @@ def test_import_interpretune_does_not_import_the_testing_package():
     assert result.stdout.strip() == "0", "importing interpretune pulled in interpretune.testing"
 
 
+def test_import_promoted_utils_adds_no_examples_modules():
+    """`import interpretune.analysis.injection` and `import interpretune.utils.latent_state_projection` must not pull
+    in the examples package: core never imports examples.
+
+    The executable form of the #577 dependency-direction boundary, in the same subprocess-diff form as the #574
+    harness guard above.
+    """
+    import subprocess
+    import sys
+
+    script = (
+        "import sys, interpretune.analysis.injection, interpretune.utils.latent_state_projection; "
+        "print(sorted(m for m in sys.modules if m == 'it_examples' or m.startswith('it_examples.')))"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.stdout.strip() == "[]", (
+        "importing the promoted utils pulled in examples modules: %s" % result.stdout.strip()
+    )
+
+
 def test_import_harness_adds_no_examples_modules():
     """`import interpretune.harness` must not pull in the examples package: core never imports examples.
 

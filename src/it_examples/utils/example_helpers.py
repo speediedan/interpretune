@@ -25,7 +25,7 @@ except ImportError:
     load_dotenv = None
 
 # Import VarAnnotate from orchestrator (renamed from VarInspect)
-from it_examples.utils.analysis_injection.orchestrator import VarAnnotate
+from interpretune.analysis.injection.orchestrator import VarAnnotate
 
 
 @dataclass

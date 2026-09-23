@@ -40,7 +40,7 @@ file_hooks:
 
 ```python
 from pathlib import Path
-from it_examples.utils.analysis_injection import orchestrator
+from interpretune.analysis.injection import orchestrator
 
 # Path to your config file
 config_path = Path.cwd() / "analysis_injection_config.yaml"
@@ -142,8 +142,8 @@ Analysis point functions receive `local_vars: dict[str, Any]` containing local v
 ```python
 # In analysis_points.py
 from typing import Any
-from it_examples.utils.analysis_injection.analysis_hook_patcher import get_analysis_vars
-from it_examples.utils.analysis_injection.orchestrator import analysis_log_point
+from interpretune.analysis.injection.analysis_hook_patcher import get_analysis_vars
+from interpretune.analysis.injection.orchestrator import analysis_log_point
 
 def ap_forward_pass_end(local_vars: dict[str, Any]) -> None:
     """Capture data after forward pass completes."""
@@ -195,7 +195,7 @@ Examine this log to verify:
 ### Verify Hook Registration
 
 ```python
-from it_examples.utils.analysis_injection import orchestrator
+from interpretune.analysis.injection import orchestrator
 
 print(f"Enabled: {orchestrator.HOOK_REGISTRY._enabled}")
 print(f"Registered hooks: {list(orchestrator.HOOK_REGISTRY._hooks.keys())}")

@@ -1569,7 +1569,7 @@ def plot_decoder_projection_map(
     colorbar on the right, and per-point labels use collision-aware anchor placement
     (``_collision_aware_label_positions``) so near-coincident analyzed features remain individually legible.
     """
-    from it_examples.utils.latent_state_projection import project_embeddings
+    from interpretune.utils.latent_state_projection import project_embeddings
 
     matrix = torch.cat(
         [

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from it_examples.utils.analysis_injection.version_manager import GIT_FALLBACK_URLS, PackageVersionManager
+from interpretune.analysis.injection.version_manager import GIT_FALLBACK_URLS, PackageVersionManager
 
 
 def test_git_fallback_urls_configured():
