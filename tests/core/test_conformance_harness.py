@@ -410,69 +410,46 @@ class TestReportArtifact:
         assert "git_head" in prov
 
 
-class TestGeneratorCacheKey:
-    """The deterministic conformance generator-cache key (interpretune#554).
+class TestGenerationsStayPerRun:
+    """A conformance session's runner carries no cross-run generator cache key and no shared cache dir.
 
-    Never builds a session: stability, sensitivity, and the deliberate exclusions are pure
-    functions of the target and inputs.
+    The cases on one target run the same op with different ``run_inputs`` (intervention mode, scale, scope,
+    vector), so a key built from the target and the suite inputs cannot tell them apart: once such a key took
+    effect, cases were served each other's stores. A shared dir without a working key only accumulated files
+    nothing read. The runner config the session builder hands over is where both would enter.
     """
 
-    def _target(self, **overrides):
+    def test_the_runner_config_names_no_generator_cache(self, monkeypatch):
+        from types import SimpleNamespace
+
+        import interpretune
+        from interpretune.testing.conformance import session as session_mod
         from interpretune.testing.conformance.inputs import ConformanceTarget
 
-        kwargs = dict(composition=("core",))
-        kwargs.update(overrides)
-        return ConformanceTarget(**kwargs)
+        captured: dict = {}
 
-    def test_same_inputs_same_key(self):
-        from interpretune.testing.conformance.inputs import ConformanceInputs
+        class _Runner:
+            def __init__(self, run_cfg):
+                captured.update(run_cfg)
 
-        target = self._target()
-        assert ConformanceInputs().generator_cache_key(target) == ConformanceInputs().generator_cache_key(target)
+        class _Session:
+            def __init__(self, _cfg):
+                self.module = object()
+                self.datamodule = SimpleNamespace(test_dataloader=lambda: [])
 
-    def test_inputs_shift_the_key(self):
-        from dataclasses import replace
+        # Patch the module objects: the builder resolves both names from the package at call time.
+        monkeypatch.setattr(interpretune, "AnalysisRunner", _Runner)
+        monkeypatch.setattr(interpretune, "ITSession", _Session)
+        monkeypatch.setattr(session_mod, "_require_suite_dependencies", lambda: None)
+        monkeypatch.setattr(session_mod, "register_conformance_ops", lambda: None)
+        monkeypatch.setattr(session_mod, "get_module_capabilities", lambda _module: None)
+        target = ConformanceTarget(composition=("core",), session_cfg_factory=lambda _inputs: object())
 
-        from interpretune.testing.conformance.inputs import ConformanceInputs
+        session_mod.build_conformance_session(target, ConformanceInputs())
 
-        target = self._target()
-        base = ConformanceInputs().generator_cache_key(target)
-        assert replace(ConformanceInputs(), prompts=("other",)).generator_cache_key(target) != base
-        assert replace(ConformanceInputs(), precision="float16").generator_cache_key(target) != base
-        assert replace(ConformanceInputs(), limit_batches=1).generator_cache_key(target) != base
-
-    def test_target_identity_shifts_the_key(self):
-        from interpretune.testing.conformance.inputs import ConformanceInputs
-
-        inputs = ConformanceInputs()
-        base = inputs.generator_cache_key(self._target())
-        assert inputs.generator_cache_key(self._target(composition=("core", "nnsight"))) != base
-        assert inputs.generator_cache_key(self._target(datamodule_flavour="bridge")) != base
-        assert inputs.generator_cache_key(self._target(batch_size=1)) != base
-        assert inputs.generator_cache_key(self._target(module_cfg_extras={"a": 1})) != base
-        assert inputs.generator_cache_key(self._target(forward_family="other")) != base
-
-    def test_workdir_does_not_shift_the_key(self, tmp_path):
-        from interpretune.testing.conformance.inputs import ConformanceInputs
-
-        target = self._target()
-        key = ConformanceInputs().generator_cache_key(target)
-        assert ConformanceInputs(workdir=tmp_path / "elsewhere").generator_cache_key(target) == key
-
-    def test_shared_dir_default_and_override(self, tmp_path, monkeypatch):
-        from datasets.config import HF_DATASETS_CACHE
-
-        from interpretune.testing.conformance.inputs import GENERATOR_CACHE_ENV, shared_generator_cache_dir
-
-        monkeypatch.delenv(GENERATOR_CACHE_ENV, raising=False)
-        assert str(shared_generator_cache_dir()).startswith(str(HF_DATASETS_CACHE))
-        monkeypatch.setenv(GENERATOR_CACHE_ENV, str(tmp_path / "shared"))
-        assert shared_generator_cache_dir() == tmp_path / "shared"
-
-    def test_runner_kwargs_carries_the_pair_only_with_a_target(self):
-        from interpretune.testing.conformance.inputs import ConformanceInputs
-
-        bare = ConformanceInputs().runner_kwargs()
-        assert "dataset_fingerprint" not in bare and "generator_cache_dir" not in bare
-        keyed = ConformanceInputs().runner_kwargs(self._target())
-        assert len(keyed["dataset_fingerprint"]) == 32 and keyed["generator_cache_dir"]
+        assert "it_session" in captured, "the builder did not construct its runner through the patched class"
+        leaked = sorted(k for k in ("dataset_fingerprint", "generator_cache_dir") if k in captured)
+        assert not leaked, (
+            f"the conformance runner config carries {leaked}; a key from the target and suite inputs alone "
+            "cannot separate cases that differ only in run_inputs"
+        )
