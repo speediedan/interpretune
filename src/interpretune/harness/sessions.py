@@ -35,6 +35,7 @@ class HubModelSpec:
     neuronpedia_set: str
     use_chat_template: bool
     composition: tuple[str, ...]
+    module_cls: str
     hf_model_head: str | None = None
     nnsight_overrides: dict[str, Any] | None = None
     circuit_tracer_overrides: dict[str, Any] | None = None
@@ -76,6 +77,12 @@ def _hub_model_spec_registry() -> dict[tuple[str, str], HubModelSpec]:
                 f"Model spec '{raw_key}' must declare a non-empty `composition` list of "
                 "adapter names (the public-registry counterpart of the test config alias)."
             )
+        module_cls = raw_value.get("module_cls")
+        if not isinstance(module_cls, str) or not module_cls:
+            raise ValueError(
+                f"Model spec '{raw_key}' must declare `module_cls`: the importable module "
+                "class sessions compose for its composition."
+            )
         registry[(family, variant)] = HubModelSpec(
             family=family,
             variant=variant,
@@ -85,6 +92,7 @@ def _hub_model_spec_registry() -> dict[tuple[str, str], HubModelSpec]:
             neuronpedia_set=str(raw_value["neuronpedia_set"]),
             use_chat_template=bool(raw_value["use_chat_template"]),
             composition=tuple(composition),
+            module_cls=module_cls,
             hf_model_head=raw_value.get("hf_model_head"),
             nnsight_overrides=raw_value.get("nnsight_overrides"),
             circuit_tracer_overrides=raw_value.get("circuit_tracer_overrides"),
@@ -117,6 +125,7 @@ def resolve_model_spec(
         neuronpedia_set=neuronpedia_set_override or spec.neuronpedia_set,
         use_chat_template=spec.use_chat_template if use_chat_template_override is None else use_chat_template_override,
         composition=spec.composition,
+        module_cls=spec.module_cls,
         hf_model_head=spec.hf_model_head,
         nnsight_overrides=spec.nnsight_overrides,
         circuit_tracer_overrides=spec.circuit_tracer_overrides,
@@ -215,6 +224,7 @@ def build_session_body(
     config_adapters = [name for name in spec.composition if name not in ("core", "lightning")]
     return {
         "reg_info": {"adapter_combinations": [list(spec.composition)]},
+        "module_cls": spec.module_cls,
         "module_cfg": {
             "class_path": "interpretune.config.module.ITConfig",
             "init_args": {

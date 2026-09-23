@@ -57,6 +57,7 @@ def test_build_session_body_composition_and_sections():
     spec = resolve_model_spec("gemma3", "1b_it")
     body = build_session_body(spec, force_device="cuda", batch_size=8)
     assert body["reg_info"]["adapter_combinations"] == [["core", "nnsight", "circuit_tracer"]]
+    assert body["module_cls"] == "interpretune.adapters.circuit_tracer.adapter.CircuitTracerModule"
     init_args = body["module_cfg"]["init_args"]
     assert init_args["model_name_or_path"] == "google/gemma-3-1b-it"
     auto_comp = init_args["auto_comp_cfg"]["init_args"]
