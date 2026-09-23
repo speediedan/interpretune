@@ -163,14 +163,14 @@ class ExperimentDataModule(ITDataModule):
             self._module = module
 
 
-@dataclass(frozen=True)
 class NeutralSessionMixin:
     """Task-neutral auto-composition trigger for Hub experiment sessions.
 
-    Carries no fields: it exists so the config auto-composition materializes
-    the adapter kwargs (circuit-tracer/nnsight sections) as fields on the
-    synthesized config class, instead of refusing them as unexpected. Task
-    components pass their own mapping mixin; Hub experiments have no task.
+    A plain marker class, deliberately not a dataclass: it must serve as a base for the synthesized (non-frozen) config
+    dataclass, which cannot inherit from a frozen one. It carries no fields; it exists so config auto-composition
+    materializes the adapter kwargs (circuit-tracer/nnsight sections) as fields on the synthesized class, instead of
+    refusing them as unexpected keyword arguments. Task components pass their own mapping mixin; Hub experiments have no
+    task.
     """
 
 
