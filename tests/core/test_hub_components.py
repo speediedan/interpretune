@@ -682,3 +682,84 @@ class TestExperimentKindSpec:
         import interpretune as it
 
         assert callable(it.hub.pull_experiment) and callable(it.hub.load_experiment)
+
+
+class TestSnapshotRewrite:
+    """Restored snapshot-rewrite machinery for the concept-direction experiment (#498)."""
+
+    def test_unknown_rewrite_name_refused_at_build(self, tmp_path):
+        from interpretune.hub.publish import build_component_tree
+
+        component = _experiment_component_dir(tmp_path)
+        manifest_path = component / "it_component.yaml"
+        body = __import__("yaml").safe_load(manifest_path.read_text(encoding="utf-8"))
+        body["experiment_snapshot_rewrite"] = "no-such-rewrite"
+        manifest_path.write_text(__import__("yaml").safe_dump(body), encoding="utf-8")
+        with pytest.raises(ComponentManifestError, match="unknown `experiment_snapshot_rewrite`"):
+            build_component_tree(component, tmp_path / "build")
+
+    def _staged_tree(self, root: Path, *, unmapped: bool = False) -> Path:
+        import yaml
+
+        out = root / "staged"
+        sources = {
+            "concept_direction/concept_direction.py": (
+                "from it_examples.experiments.notebook.concept_direction.concept_direction "
+                "import NotebookHarnessConfig\nVALUE = 1\n"
+            ),
+            "pipeline_patterns.py": "PATTERN = True\n",
+            "concept_direction/analysis/concept_direction_analysis.py": "ANALYSIS = True\n",
+            "concept_direction/analysis/intervention_drift_analysis.py": (
+                ("import it_examples.foo\n" if unmapped else "") + "DRIFT = True\n"
+            ),
+        }
+        for rel, text in sources.items():
+            dest = out / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text, encoding="utf-8")
+        manifest = {
+            "experiments": {
+                "demo": {
+                    "config": "configs/demo.yaml",
+                    "pipeline": "concept_direction/concept_direction.py",
+                    "files": ["pipeline_patterns.py"],
+                }
+            },
+            "experiment_snapshot_rewrite": "concept-direction-v1",
+        }
+        (out / "it_component.yaml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+        return out
+
+    def test_concept_direction_rewrite_restructures_and_updates_manifest(self, tmp_path):
+        import yaml
+
+        from interpretune.hub.publish import EXPERIMENT_SNAPSHOT_REWRITES
+
+        out = self._staged_tree(tmp_path)
+        manifest = yaml.safe_load((out / "it_component.yaml").read_text(encoding="utf-8"))
+        EXPERIMENT_SNAPSHOT_REWRITES["concept-direction-v1"](out, manifest)
+
+        assert (out / "exp" / "concept_direction.py").is_file()
+        assert (out / "exp" / "pipeline_patterns.py").is_file()
+        assert (out / "exp" / "analysis" / "concept_direction_analysis.py").is_file()
+        assert (out / "exp" / "_prompt_shim.py").is_file()
+        assert not (out / "concept_direction" / "concept_direction.py").exists()
+        assert not (out / "pipeline_patterns.py").exists()
+        rewritten = (out / "exp" / "concept_direction.py").read_text(encoding="utf-8")
+        assert "from exp.concept_direction import NotebookHarnessConfig" in rewritten
+        assert "it_examples" not in rewritten
+        entry = manifest["experiments"]["demo"]
+        assert entry["pipeline"] == "exp/concept_direction.py"
+        assert "exp/pipeline_patterns.py" in entry["files"]
+        assert "exp/_prompt_shim.py" in entry["files"]
+        assert manifest["experiment_snapshot_rewrite"] == "concept-direction-v1"
+
+    def test_unmapped_it_examples_import_refused(self, tmp_path):
+        import yaml
+
+        from interpretune.hub.publish import EXPERIMENT_SNAPSHOT_REWRITES
+
+        out = self._staged_tree(tmp_path, unmapped=True)
+        manifest = yaml.safe_load((out / "it_component.yaml").read_text(encoding="utf-8"))
+        with pytest.raises(ValueError, match="refuses unmapped it_examples imports"):
+            EXPERIMENT_SNAPSHOT_REWRITES["concept-direction-v1"](out, manifest)

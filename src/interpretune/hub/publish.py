@@ -12,7 +12,12 @@ from pathlib import Path
 
 from interpretune.analysis.ops.collection import COLLECTION_HEADER_KEY
 from interpretune.hub.cards import generate_component_card
-from interpretune.hub.manifest import IT_COMPONENT_MANIFEST, check_config_key_parity, load_component_manifest
+from interpretune.hub.manifest import (
+    IT_COMPONENT_MANIFEST,
+    ComponentManifestError,
+    check_config_key_parity,
+    load_component_manifest,
+)
 
 
 #: Never staged, whatever a declared directory contains: bytecode and tool caches are not part of any artifact.
@@ -159,6 +164,19 @@ def build_component_tree(component_dir: Path, out_dir: Path, entrypoint_src: Pat
                 f"{pc_src} does not exist (promptconfigs entrypoints live inside the component dir)."
             )
         shutil.copy2(pc_src, out_dir / pc_entrypoint)
+    # Named snapshot rewrites run after the verbatim stage: the staged tree is rearranged into its
+    # runnable layout (moves, import swaps, generated package files) and the staged manifest is
+    # updated to describe the tree it ships with. Unmarked manifests stage verbatim, as before.
+    rewrite_name = manifest.get("experiment_snapshot_rewrite")
+    if rewrite_name is not None:
+        try:
+            rewrite = EXPERIMENT_SNAPSHOT_REWRITES[rewrite_name]
+        except KeyError:
+            raise ComponentManifestError(
+                f"{component_dir / IT_COMPONENT_MANIFEST}: unknown `experiment_snapshot_rewrite` "
+                f"{rewrite_name!r} (available: {sorted(EXPERIMENT_SNAPSHOT_REWRITES)})."
+            ) from None
+        rewrite(out_dir, manifest)
     return manifest
 
 
@@ -260,6 +278,144 @@ def _rewrite_implementation_paths(content: dict, package_prefix: str) -> set[str
         if isinstance(params, dict):
             op_def["importable_params"] = {name: rewrite(path) for name, path in params.items()}
     return modules
+
+
+#: Carried (not generated) prompt-config shim, injected into rewritten experiment snapshots so the
+#: pipeline resolves its chat spelling from the published prompt-configs component instead of the
+#: in-repo examples package. Kept tiny and stable on purpose: it is build machinery versioned with
+#: the rewriter below, not per-experiment hand maintenance.
+_EXPERIMENT_PROMPT_SHIM_TEXT = '''"""Chat spelling resolved from the published prompt-configs component (cache-only)."""
+
+
+def GemmaPromptConfig():  # noqa: N802 - matches the published definition's name
+    """The Gemma chat-spelling config class, without importing the examples package."""
+    from interpretune.hub.promptconfigs import resolve_prompt_config_class
+
+    return resolve_prompt_config_class("speediedan/prompt-configs#GemmaPromptConfig")()
+'''
+
+
+def _module_level_it_examples_refs(path: Path) -> list[str]:
+    """`it_examples.*` imports NOT nested in a function: the import-time snapshot blockers."""
+    import ast
+
+    found: list[str] = []
+
+    def visit(node: ast.AST, nested: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.Import, ast.ImportFrom)):
+                mods = (
+                    [a.name for a in child.names]
+                    if isinstance(child, ast.Import)
+                    else ([child.module] if child.module else [])
+                )
+                for mod in mods:
+                    if mod == "it_examples" or (mod or "").startswith("it_examples."):
+                        if not nested:
+                            found.append(f"{path.name}:{child.lineno}:{mod}")
+            else:
+                visit(child, nested or isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)))
+
+    visit(ast.parse(path.read_text(encoding="utf-8")), False)
+    return found
+
+
+def _rewrite_concept_direction_snapshot(out_dir: Path, manifest: dict) -> None:
+    """Restructure a staged concept-direction tree into the runnable ``exp/`` package layout.
+
+    The source tree keeps the in-repo layout (configs beside the pipeline sources); the snapshot
+    instead carries a single importable package, because the snapshot root is what lands on
+    ``sys.path`` and bare module names there risk shadowing. Every transformation is enumerated:
+    moves, exact import swaps, generated ``__init__`` files plus the prompt shim above, and a
+    staged-manifest path update so the manifest describes the tree it ships with. Anything else
+    naming ``it_examples`` at module level is refused rather than guessed at.
+    """
+    import yaml
+
+    moves = {
+        "concept_direction/concept_direction.py": "exp/concept_direction.py",
+        "pipeline_patterns.py": "exp/pipeline_patterns.py",
+        "concept_direction/analysis/concept_direction_analysis.py": "exp/analysis/concept_direction_analysis.py",
+        "concept_direction/analysis/intervention_drift_analysis.py": ("exp/analysis/intervention_drift_analysis.py"),
+    }
+    swaps = [
+        (
+            "from it_examples.examples.prompt_configs.prompt_configs import GemmaPromptConfig",
+            "from exp._prompt_shim import GemmaPromptConfig",
+        ),
+        (
+            "from it_examples.experiments.notebook.pipeline_patterns import (",
+            "from exp.pipeline_patterns import (",
+        ),
+        (
+            "from it_examples.experiments.notebook.concept_direction.analysis.concept_direction_analysis import (",
+            "from exp.analysis.concept_direction_analysis import (",
+        ),
+        (
+            "from it_examples.experiments.notebook.concept_direction.analysis.intervention_drift_analysis import (",
+            "from exp.analysis.intervention_drift_analysis import (",
+        ),
+        (
+            "from it_examples.experiments.notebook.concept_direction.concept_direction import NotebookHarnessConfig",
+            "from exp.concept_direction import NotebookHarnessConfig",
+        ),
+    ]
+    (out_dir / "exp" / "analysis").mkdir(parents=True, exist_ok=True)
+    for src_rel, dest_rel in moves.items():
+        src, dest = out_dir / src_rel, out_dir / dest_rel
+        if not src.is_file():
+            raise FileNotFoundError(
+                f"concept-direction snapshot rewrite needs staged {src_rel!r}, which the manifest did not stage."
+            )
+        text = src.read_text(encoding="utf-8")
+        for old, new in swaps:
+            if old in text:
+                text = text.replace(old, new)
+        dest.write_text(text, encoding="utf-8")
+        src.unlink()
+    for generated, body in [
+        ("exp/__init__.py", ""),
+        ("exp/analysis/__init__.py", ""),
+        ("exp/_prompt_shim.py", _EXPERIMENT_PROMPT_SHIM_TEXT),
+    ]:
+        (out_dir / generated).write_text(body, encoding="utf-8")
+    # Generated files join each entry's `files`: partial materialization (`pull_experiment_payloads`)
+    # fetches exactly the manifest-declared payloads, so an undeclared generated file would ship on
+    # the Hub yet never arrive in a partial fetch — a pipeline that imports from a full snapshot
+    # but fails from the documented consumption path. Declaring them keeps the manifest describing
+    # the tree it ships with.
+    generated_rels = ["exp/__init__.py", "exp/analysis/__init__.py", "exp/_prompt_shim.py"]
+
+    blockers: list[str] = []
+    for staged in sorted((out_dir / "exp").rglob("*.py")):
+        if staged.name == "__init__.py":
+            continue
+        blockers.extend(f"{staged.relative_to(out_dir)}:{ref}" for ref in _module_level_it_examples_refs(staged))
+    if blockers:
+        raise ValueError(
+            "concept-direction snapshot rewrite refuses unmapped it_examples imports "
+            f"(add an explicit swap or carry the source): {sorted(blockers)}"
+        )
+
+    for entry in (manifest.get("experiments") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        for field in ("pipeline",):
+            rel = entry.get(field)
+            if rel in moves:
+                entry[field] = moves[rel]
+        entry["files"] = [moves.get(rel, rel) for rel in entry.get("files") or []]
+        for rel in generated_rels:
+            if rel not in entry["files"]:
+                entry["files"].append(rel)
+    (out_dir / IT_COMPONENT_MANIFEST).write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+
+#: Snapshot rewrites by manifest-declared name. A name with no entry here is refused at build time
+#: (naming what exists), so manifests can never silently select a rewrite that is not implemented.
+EXPERIMENT_SNAPSHOT_REWRITES = {
+    "concept-direction-v1": _rewrite_concept_direction_snapshot,
+}
 
 
 def publish_op_collection(
