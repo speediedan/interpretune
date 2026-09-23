@@ -131,7 +131,7 @@ def build_conformance_session(target: ConformanceTarget, inputs: ConformanceInpu
     if target.load is not None:
         target.load()
     session = ITSession(target.build_session_cfg(inputs))
-    runner = AnalysisRunner(run_cfg=dict(it_session=session, **inputs.runner_kwargs(target)))
+    runner = AnalysisRunner(run_cfg=dict(it_session=session, **inputs.runner_kwargs()))
     caps = get_module_capabilities(session.module)
     # The dataloader is deterministic and the runner reads it in order, so the first N batches here are the
     # batches every store's rows came from; cases needing the raw inputs (the HF reference) use these.
