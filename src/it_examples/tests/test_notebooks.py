@@ -200,10 +200,6 @@ ATTRIBUTION_ANALYSIS_PARAMS = [
 
 
 @RunIf(bf16_cuda=True)
-@pytest.mark.skip(
-    reason="interpretune#614: the notebook's analysis injection targets circuit-tracer's TransformerLens backend, "
-    "which is unavailable until circuit-tracer supports TransformerLens 4.0"
-)
 @pytest.mark.parametrize("params", ATTRIBUTION_ANALYSIS_PARAMS)
 def test_attribution_analysis_notebook(params: dict[str, Any], tmp_path: Path):
     """Test attribution analysis notebook with different parameterizations."""

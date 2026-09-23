@@ -29,9 +29,9 @@ shared_context:
 
 file_hooks:
   ap_forward_pass_end:  # Hook ID is the dict key
-    file_path: attribution/attribute_transformerlens.py
+    file_path: attribution/attribute_nnsight.py
     enable: true
-    regex_pattern: '^\s*ctx\._resid_activations\[-1\]\s*=\s*model\.ln_final'
+    regex_pattern: '^\s*logger\.info\(f"Forward pass completed'
     insert_after: true
     description: "After forward pass on original replacement model"
 ```
