@@ -150,3 +150,14 @@ class ExperimentDataModule(ITDataModule):
     val_dataloader = _refusing_dataloader("val")
     test_dataloader = _refusing_dataloader("test")
     predict_dataloader = _refusing_dataloader("predict")
+
+    def setup(self, stage: str | None = None, module: Any | None = None, *args: Any, **kwargs: Any) -> None:
+        """Attach the module handle without loading any dataset.
+
+        Overrides the base implementation, which asserts a configured dataset
+        path and loads it from disk: experiment pipelines build their own prompt
+        batches, so there is nothing to load. Anything reaching for
+        ``self.dataset`` afterwards fails with a plain ``AttributeError``.
+        """
+        if module is not None:
+            self._module = module
