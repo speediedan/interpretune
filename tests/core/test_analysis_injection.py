@@ -374,3 +374,91 @@ def test_orchestrator_access():
     print("\n" + "=" * 80)
     print("[PASS] Orchestrator iteration test passed!")
     print("=" * 80)
+
+
+def test_install_updates_stale_submodule_attributes(tmp_path):
+    """Installing patched modules must replace stale submodule attributes on parent packages.
+
+    The import system caches the original submodule object as an attribute of the parent package, which survives a
+    sys.modules swap. Without the module-attribute branch of install_patched_modules_with_references, any consumer
+    reaching the module through its parent silently executes the original unpatched code. Measured against the pinned
+    circuit-tracer, whose lazy package __getattr__ resolves exactly this path: the attribution hooks were inserted and
+    verified yet never fired.
+    """
+    import sys
+    import textwrap
+
+    print("=" * 80)
+    print("Testing stale submodule attribute replacement")
+    print("=" * 80)
+
+    pkg_dir = tmp_path / "staleattr_pkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("")
+    (pkg_dir / "worker.py").write_text(
+        textwrap.dedent(
+            """\
+            def run():
+                result = 21 * 2
+                return result
+            """
+        )
+    )
+
+    sys.path.insert(0, str(tmp_path))
+    for mod in [m for m in sys.modules if m == "staleattr_pkg" or m.startswith("staleattr_pkg.")]:
+        del sys.modules[mod]
+
+    from interpretune.analysis.injection import HOOK_REGISTRY
+    from interpretune.analysis.injection.analysis_hook_patcher import (
+        install_patched_modules_with_references,
+        patch_target_package_files,
+    )
+    from interpretune.analysis.injection.config_parser import FileHook
+
+    saved_enabled = HOOK_REGISTRY._enabled
+    saved_hooks = dict(HOOK_REGISTRY._hooks)
+    fired = []
+    try:
+        import staleattr_pkg
+        import staleattr_pkg.worker  # -- sets the (soon stale) parent attribute
+
+        from pathlib import Path
+
+        hooks = {
+            "stale_point": FileHook(
+                point_id="stale_point",
+                file_path=Path("worker.py"),
+                regex_pattern=r"result = ",
+                description="stale attribute probe",
+            )
+        }
+        patched = patch_target_package_files(hooks, pkg_dir, "staleattr_pkg")
+        assert list(patched) == ["staleattr_pkg.worker"], f"unexpected patched set: {list(patched)}"
+        print("   [OK] Patched module produced")
+
+        HOOK_REGISTRY.register("stale_point", lambda local_vars: fired.append(True))
+        HOOK_REGISTRY.enable()
+
+        install_patched_modules_with_references(patched)
+
+        assert staleattr_pkg.worker is sys.modules["staleattr_pkg.worker"], (
+            "parent package still holds the original submodule object"
+        )
+        print("   [OK] Parent attribute now resolves to the patched module")
+
+        assert staleattr_pkg.worker.run() == 42
+        assert fired, "hook reached through the parent attribute never fired"
+        print("   [OK] Call through the parent attribute fired the hook")
+    finally:
+        HOOK_REGISTRY._hooks.clear()
+        HOOK_REGISTRY._hooks.update(saved_hooks)
+        if not saved_enabled:
+            HOOK_REGISTRY.disable()
+        sys.path.remove(str(tmp_path))
+        for mod in [m for m in sys.modules if m == "staleattr_pkg" or m.startswith("staleattr_pkg.")]:
+            del sys.modules[mod]
+
+    print("\n" + "=" * 80)
+    print("[PASS] Stale submodule attribute test passed!")
+    print("=" * 80)

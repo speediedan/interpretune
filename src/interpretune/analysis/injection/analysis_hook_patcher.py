@@ -363,8 +363,22 @@ def install_patched_modules_with_references(patched_modules: dict[str, Path]) ->
 
             # Check each attribute in the importing module
             for attr_name, attr_value in list(importer_module.__dict__.items()):
+                # Check for stale submodule attributes on parent packages: the import
+                # system caches the original submodule object as an attribute of the
+                # parent, which survives the sys.modules swap above. Without this,
+                # any consumer reaching the module through its parent (attribute
+                # access, or a lazy package __getattr__) silently executes the
+                # original unpatched code.
+                if isinstance(attr_value, types.ModuleType) and getattr(attr_value, "__name__", None) == module_name:
+                    setattr(importer_module, attr_name, patched_module)
+
+                    # Log the update for debugging
+                    logging.getLogger("analysis_injection").debug(
+                        f"Updated module reference to {module_name} in {importer_name}"
+                    )
+
                 # Check for functions
-                if (
+                elif (
                     isinstance(attr_value, types.FunctionType)
                     and getattr(attr_value, "__module__", None) == module_name
                 ):
