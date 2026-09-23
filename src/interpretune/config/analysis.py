@@ -387,6 +387,12 @@ class AnalysisCfg(ITSerializableCfg):
             module: The module to construct the names_filter for.
             fallback_sae_targets: Optional fallback LatentAnalysisTargets to use if this config doesn't have one.
         """
+        # A second run with the same cfg finds the callable a previous run resolved, not the list it came from, and
+        # a callable carries no names to map: the bridge mapping would come back empty and every per-hook column of
+        # that run would be stored as None. Restore the list, so the mapping is rebuilt against THIS module.
+        if self.names_filter is not None and self.names_filter is getattr(self, "_resolved_names_filter", None):
+            self.names_filter = self._names_filter_source
+
         if self.names_filter is None:
             # Choose the appropriate LatentAnalysisTargets
             sae_targets = self.latent_analysis_targets or fallback_sae_targets
@@ -406,9 +412,12 @@ class AnalysisCfg(ITSerializableCfg):
         # every per-hook column of the latent, ablation and gradient composites is written as None with nothing
         # raised. A caller-written list took the early-return path here and was the way that happened.
         # TODO: revisit names_filter handling for TransformerBridge — currently we extend the list
-        # with both alias and canonical names and remap keys post-hoc (_remap_bridge_hook_keys). A
+        # with both alias and canonical names and remap keys post-hoc (remap_hook_keys_for_storage). A
         # cleaner approach would be to resolve the naming scheme once at config time so downstream
         # code only ever sees one consistent set of hook names.
+        self._names_filter_source = (
+            list(self.names_filter) if isinstance(self.names_filter, list) else self.names_filter
+        )
         if isinstance(self.names_filter, list):
             _refuse_uncapturable(module, self.names_filter)
             self.names_filter, self._canonical_to_alias_names = _extend_names_for_bridge(module, self.names_filter)
@@ -416,6 +425,7 @@ class AnalysisCfg(ITSerializableCfg):
             self._canonical_to_alias_names = {}
 
         self.names_filter = resolve_names_filter(self.names_filter)
+        self._resolved_names_filter = self.names_filter
 
     def maybe_set_hooks(self) -> None:
         """Set hooks if they're not already set."""
@@ -496,30 +506,31 @@ class AnalysisCfg(ITSerializableCfg):
                 decode_kwargs=self.decode_kwargs,
             )
 
-        # For TransformerBridge models, remap canonical hook-name keys to alias-based
-        # keys at the serialization boundary so the HF dataset matches its schema.
-        analysis_batch = self._remap_bridge_hook_keys(analysis_batch)
+        analysis_batch = self.remap_hook_keys_for_storage(analysis_batch)
 
         yield analysis_batch
 
-    def _remap_bridge_hook_keys(self, analysis_batch: BaseAnalysisBatchProtocol) -> BaseAnalysisBatchProtocol:
-        """Remap canonical hook-name dict keys to alias-based keys for Bridge models.
+    def remap_hook_keys_for_storage(
+        self, analysis_batch: BaseAnalysisBatchProtocol, output_schema: OpSchema | None = None
+    ) -> BaseAnalysisBatchProtocol:
+        """Rename a batch's per-hook keys from the model's runtime spelling to the stored one.
 
-        TransformerBridge models use canonical hook names internally (e.g.
-        ``blocks.9.attn.o.hook_in.hook_sae_acts_post``) while the dataset schema
-        uses alias-based names from SAE metadata (e.g.
-        ``blocks.9.attn.hook_z.hook_sae_acts_post``).
+        A TransformerBridge captures SAE activations under canonical hook names
+        (``blocks.9.attn.o.hook_in.hook_sae_acts_post``), while a stored analysis dataset's schema is built from
+        each SAE's own ``metadata.hook_name`` (``blocks.9.attn.hook_z.hook_sae_acts_post``). Keys that do not match
+        the schema are not rejected by ``datasets``: the column is written with every per-hook value ``None``. So
+        every serializer must pass its batches through here, not only the analysis-step generator; a direct call of
+        ``op.save_batch`` skips it.
 
-        This remapping is applied once at the serialization boundary so all
-        internal analysis operations can use consistent canonical names from the
-        activation cache.
+        A no-op for models whose runtime names already match the schema, and for batches serialized before
+        :meth:`materialize_names_filter` has run.
 
         Args:
-            analysis_batch: The analysis batch whose per-hook dict fields may need
-                key remapping.
+            analysis_batch: The analysis batch whose per-hook dict fields may need key remapping.
+            output_schema: The schema to remap against. Defaults to the configured op's (or ``output_schema``).
 
         Returns:
-            The analysis batch with remapped keys (modified in-place via setattr).
+            The analysis batch with remapped keys (modified in place via setattr).
         """
         canonical_to_alias = getattr(self, "_canonical_to_alias_names", None)
         if not canonical_to_alias:
@@ -528,10 +539,10 @@ class AnalysisCfg(ITSerializableCfg):
         # Determine output schema to identify per-hook dict fields
         from interpretune.analysis.ops.base import AnalysisOpLike, OpSchema
 
-        schema = None
-        if self.op is not None and hasattr(self.op, "output_schema"):
+        schema = output_schema
+        if schema is None and self.op is not None and hasattr(self.op, "output_schema"):
             schema = self.op.output_schema  # type: ignore[union-attr]  # guarded by hasattr
-        elif hasattr(self, "output_schema") and self.output_schema is not None:
+        elif schema is None and hasattr(self, "output_schema") and self.output_schema is not None:
             schema = self.output_schema
         if isinstance(schema, AnalysisOpLike):
             schema = schema.output_schema

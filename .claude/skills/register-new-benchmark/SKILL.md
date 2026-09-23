@@ -100,7 +100,7 @@ Before running this skill, gather the following:
    **Module config** — Update based on adapter stack:
 
    - **TransformerBridge (SAE-Lens + Bridge):** Use `ITLensBridgeConfig` as `tl_cfg`
-   - **HookedTransformer (SAE-Lens + HT):** Use `ITLensFromPretrainedConfig` or `ITLensFromPretrainedNoProcessingConfig` with `use_bridge: false`
+   - **Bridge from pretrained HF weights:** Use `ITLensFromPretrainedConfig`, or `ITLensFromPretrainedNoProcessingConfig` to skip TransformerLens' default weight processing
    - **NNsight:** Use `ITNNsightConfig` with `nnsight_cfg`
    - **Circuit Tracer:** Add `circuit_tracer_cfg` with backend, transcoder_set, analysis targets
 
@@ -289,5 +289,5 @@ No additional test code is needed unless the experiment requires custom assertio
 | `Could not parse accuracy` | Output format not matching regex | Check `benchmark_utils.parse_accuracy()` patterns |
 | `output_logits not found` | Missing `output_logits: true` in generation config | Add to `lm_generation_cfg` |
 | CUDA OOM | Model too large for single GPU | Adjust `device_map`, reduce batch size, or use offloading |
-| `use_bridge=True` warning | `ITLensFromPretrainedConfig` used with `use_bridge=True` | Switch to `ITLensBridgeConfig` for Bridge mode |
+| `use_bridge` TypeError | the flag was retired with TransformerLens 4.0, which removed HookedTransformer | Drop it; use `ITLensBridgeConfig` for a bridge-native config |
 | Very low accuracy | Wrong entailment mapping or prompt config | Verify entailment labels match model's Yes/No tokens |

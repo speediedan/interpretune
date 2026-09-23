@@ -341,7 +341,7 @@ class CoreSLBridgeGPT2LogitDiffsLatent(BaseCfg):
     adapter_ctx: Sequence[Adapter | str] = (Adapter.core, Adapter.sae_lens, Adapter.transformer_lens)
     tl_cfg: ITLensFromPretrainedNoProcessingConfig = field(
         default_factory=lambda: ITLensFromPretrainedNoProcessingConfig(
-            model_name="gpt2-small", default_padding_side="left", use_bridge=True  # Bridge for parity testing
+            model_name="gpt2-small", default_padding_side="left"  # ITLensBridgeConfig is bridge-native
         )
     )
     analysis_cfg: AnalysisConfig = field(default_factory=lambda: AnalysisConfig(ops=["logit_diffs_latent"]))

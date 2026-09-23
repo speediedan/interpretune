@@ -18,9 +18,9 @@ per-model substrate settings) and **experiment level** (task/experiment-specific
 on a model config). See `tests/benchmarks/configs/` for the reference layout
 (e.g. `rte_boolq/gemma2/...`, `rte_boolq/gemma3/...`).
 
-## HookedTransformer: `model_name_or_path` can be arbitrary
+## TL-native configs: `model_name_or_path` can be arbitrary
 
-When instantiating a TransformerLens `HookedTransformer` via interpretune config, the ITLens
+When instantiating a config-only TransformerLens model via interpretune config, the ITLens
 config's `model_name_or_path` can be set to an arbitrary identifier — the TL pretrained-model
 resolution is driven by the TL config's own model selection, so `model_name_or_path` functions as
 a label rather than a required HF-hub pointer in that mode.

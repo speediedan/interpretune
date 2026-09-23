@@ -96,30 +96,33 @@ class TestCircuitTracerConformance(ModelBackendConformance):
     )
 
 
-def _legacy_hooked_transformer(inputs):
-    """The bridge seed's session config with the weight-converted HookedTransformer instead of the bridge.
+def _compatibility_mode_bridge(inputs):
+    """The bridge seed's session config with HookedTransformer-equivalent weight processing turned on.
 
-    One flag decides the wrapper, ``tl_cfg.use_bridge``, and the family case below checks the class it produced: this
-    target once ran as a bridge under its weight-converted label because a second flag on the sae_lens module config
-    was the one the adapter read.
+    This target used to select the weight-converting ``HookedTransformer`` via ``tl_cfg.use_bridge=False``.
+    TransformerLens 4.0 removes that class, and ``enable_compatibility_mode()`` is what reproduces its default
+    processing (LayerNorm folding, ``center_writing_weights``, ``center_unembed``), which upstream verifies
+    against frozen ``HookedTransformer`` reference activations. So the distinction this target exists to cover
+    survives the removal: raw bridge weights versus HookedTransformer-equivalent ones.
     """
 
-    def _no_bridge(_dm_cfg, it_cfg):
-        it_cfg.tl_cfg.use_bridge = False
+    def _compat(_dm_cfg, it_cfg):
+        it_cfg.tl_cfg.enable_compatibility_mode = True
 
-    return inputs.session_cfg(("core", "sae_lens"), flavour="bridge", prepare=_no_bridge)
+    return inputs.session_cfg(("core", "sae_lens"), flavour="bridge", prepare=_compat)
 
 
-class TestWeightConvertedConformance(ModelBackendConformance):
-    """The legacy HookedTransformer path (weight conversion, not a bridge over the HF module).
+class TestCompatibilityModeConformance(ModelBackendConformance):
+    """A bridge carrying HookedTransformer-equivalent weight processing, rather than raw HF weights.
 
-    Its forward is a re-implementation, so the `hf_native` reference cases do not apply and skip by family;
-    the causal and structural cases run, and capture names are the same vocabulary spellings the bridge takes.
+    Processed weights change the numbers a forward produces, so the `hf_native` reference cases do not apply
+    and skip by family; the causal and structural cases run, and capture names are the same vocabulary
+    spellings the raw bridge takes.
     """
 
     target = ConformanceTarget(
         composition=("core", "sae_lens"),
-        session_cfg_factory=_legacy_hooked_transformer,
+        session_cfg_factory=_compatibility_mode_bridge,
         forward_family="weight_converted",
         datamodule_flavour="bridge",
     )
@@ -139,10 +142,25 @@ class TestWeightConvertedConformance(ModelBackendConformance):
     )
 
     def test_the_family_label_is_true_of_the_model(self, suite):
-        """Positive control on the label: the model under this target is not a bridge over the HF module."""
+        """Positive control on the label: this target's weights really are processed, not raw HF weights.
+
+        The control used to assert the model was NOT a bridge, because `weight_converted` meant the
+        weight-converting `HookedTransformer` and "is a bridge" was therefore proof the label was a lie.
+        TransformerLens 4.0 removes that class, so every model is a bridge and that assertion can no longer
+        fail for the right reason -- it would fail always, which is not a control.
+
+        What the label still means is unchanged: processed weights, so the `hf_native` reference numbers do
+        not apply. `enable_compatibility_mode()` sets `compatibility_mode` on the bridge and its components,
+        so that flag is what makes the claim checkable now. Without this, a target could silently run on raw
+        weights while skipping the reference cases that would have caught it.
+        """
         from transformer_lens.model_bridge import TransformerBridge
 
-        assert not isinstance(suite.module.model, TransformerBridge), (
-            f"the weight_converted target built a {type(suite.module.model).__name__}; its family cases ran on a "
-            "bridge and asserted nothing about the legacy path"
+        model = suite.module.model
+        assert isinstance(model, TransformerBridge), (
+            f"the weight_converted target built a {type(model).__name__}, which is not a bridge at all"
+        )
+        assert getattr(model, "compatibility_mode", False), (
+            "the weight_converted target ran on RAW bridge weights: compatibility_mode is not set, so its "
+            "family cases skipped the hf_native references while asserting nothing about processed weights"
         )

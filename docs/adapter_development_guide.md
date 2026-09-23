@@ -236,41 +236,32 @@ def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None
 Registering is inert for a bundled adapter: the registry is consulted only after the import templates
 and skips any adapter they already resolved, so it cannot change what a bundled adapter composes.
 
-### Pattern 3: Model Wrapper Selection (SAE Lens)
+### Pattern 3: One Field for a Wrapper Selection (SAE Lens)
 
-The SAE Lens adapter selects its TL model wrapper from the one flag every TransformerLens-backed config carries,
-``tl_cfg.use_bridge`` (``ITLensSharedConfig``; ``True`` on ``ITLensBridgeConfig`` and ``ITLensFromPretrainedConfig``,
-``False`` on ``ITLensCustomConfig``). ``SAELensConfig`` carries no flag of its own: two flags once decided one
-wrapper, the adapter read the one no example config set, and a weight-converted target ran as a bridge under its
-label until a conformance case checked the class. One field, read by both adapters, is the pattern.
+TransformerLens 4.0 removed `HookedTransformer`, so the SAE Lens adapter has no wrapper to select: it always
+builds a ``SAETransformerBridge``. The pattern is recorded anyway, because the reasoning applies to any adapter
+that acquires a selection flag later, and because the failure it prevents was measured here rather than imagined.
 
-| ``tl_cfg.use_bridge`` | Model class | Notes |
-|-----------------------|-------------|-------|
-| ``True`` | ``SAETransformerBridge`` | Wraps HF model without weight conversion; more memory efficient |
-| ``False`` | ``HookedSAETransformer`` | Legacy path with weight conversion (``from_pretrained``) |
+**The rule: one field, read by every adapter that cares. Never two.**
 
-**Dispatch implementation** (in ``SAELensTLModuleMixin``, ``src/interpretune/adapters/sae_lens/adapter.py``):
+The retired flag was ``tl_cfg.use_bridge``. ``SAELensConfig`` deliberately carried no flag of its own, and the
+reason is the instructive part: when two flags once decided one wrapper, the adapter read the one no example
+config set, and a weight-converted target ran as a **bridge** under its weight-converted label. Nothing failed.
+The suite stayed green while a whole target asserted nothing about the path it claimed to cover, until a
+conformance case checked the produced class directly.
 
-```python
-def _convert_hf_to_tl(self) -> None:
-    """Convert HF model to SAETransformerBridge or HookedSAETransformer, as ``tl_cfg.use_bridge`` decides."""
-    if self.it_cfg.tl_cfg.use_bridge:
-        ...  # SAETransformerBridge path
-    else:
-        ...  # HookedSAETransformer.from_pretrained() path
-```
+Two things generalize past the specific flag:
 
-**Key constraints:**
+- A selection flag belongs on ONE config, read by every adapter that acts on it. A second flag on a neighbouring
+  config is not redundancy, it is an opportunity for the two to disagree silently.
+- A target that names a path should assert the path it actually got. `test_the_family_label_is_true_of_the_model`
+  in `tests/core/test_backend_conformance.py` is that check, and it is the only reason the mismatch above was
+  ever found.
 
-- The flag lives on ``tl_cfg`` and is read only on the TransformerLens backend; the nnsight backend has no
-  ``tl_cfg`` and no wrapper choice.
-- TransformerBridge requires an HF model instance — it **cannot** be initialized from a
-  config dict alone.  Config-based initialization (``ITLensCustomConfig``) always uses
-  ``HookedSAETransformer``, and the TransformerLens config init forces ``use_bridge=False`` there with a warning.
-- Passing ``use_bridge`` to ``SAELensConfig`` itself is refused at construction (an unexpected keyword), never
-  accepted and ignored.
+``SAELensConfig`` still refuses a ``use_bridge`` keyword at construction (an unexpected keyword), rather than
+accepting and ignoring it.
 
-**Configuration example (Bridge):**
+**Configuration example:**
 
 ```python
 from interpretune.config import SAELensConfig, ITLensBridgeConfig
@@ -281,14 +272,8 @@ cfg = SAELensConfig(
 )
 ```
 
-**Configuration example (legacy hooked path):**
-
-```python
-cfg = SAELensConfig(
-    tl_cfg=ITLensFromPretrainedNoProcessingConfig(model_name="gpt2-small", use_bridge=False),
-    sae_cfgs=[SAELensFromPretrainedConfig(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre")],
-)
-```
+For HookedTransformer-equivalent numerics, set ``enable_compatibility_mode=True`` on the bridge config; the
+weight processing the legacy path applied by default is what that reproduces.
 
 **Training SAE parameters requires ``add_saes_on_init=True``.**
 
@@ -511,38 +496,38 @@ Current behavior:
 - `TLModelBackend` accepts the argument for protocol compatibility but ignores it and runs sequentially.
 - `IT_NNSIGHT_CONFIGS_PER_PASS` can override the default chunk size for local repro and CI debugging.
 
-## TransformerBridge and `use_bridge` Selection
+## Choosing a TransformerLens Config
 
-TransformerLens v3 introduced `TransformerBridge` as an alternative to `HookedTransformer`.
-Understanding when each is appropriate is important for adapter development.
+`TransformerBridge` is the only model path: TransformerLens 4.0 removed `HookedTransformer`, and the
+`use_bridge` flag that used to select between them is retired. Passing it fails by name. What remains is a
+choice of which IT config expresses how the bridge is built.
 
-### TransformerBridge (default, `use_bridge=True`)
+| Use Case | Config Class |
+|----------|--------------|
+| Standard analysis from pretrained HF weights | `ITLensFromPretrainedConfig` |
+| Raw HF weights, no TL weight processing | `ITLensFromPretrainedNoProcessingConfig` |
+| Bridge-native: compatibility mode, `TransformerBridgeConfig` overrides | `ITLensBridgeConfig` |
+| Config-only, no pretrained weights | `ITLensCustomConfig` (via `TransformerBridge.boot_native`) |
+| NNsight backend | `NNsightConfig` (no TL involved) |
 
-- Wraps an existing HuggingFace model without weight conversion
-- More memory efficient (no weight duplication)
-- Better HF ecosystem compatibility
-- **Requires** a pre-loaded HF model — cannot be initialized from config alone
-- Used by default in `ITLensFromPretrainedConfig` and `ITLensBridgeConfig`
+Two things worth knowing when developing against these:
 
-### HookedTransformer (legacy, `use_bridge=False`)
+- **`ITLensCustomConfig` is no longer special-cased.** It was forced onto the legacy path because a bridge
+  could not be built without an HF model; `boot_native` removes that premise. Note that `boot_native` does NOT
+  infer TL's `-1` vocab sentinels from the tokenizer the way `HookedTransformer.__init__` did, so the adapter
+  resolves `d_vocab` / `d_vocab_out` before booting. A config that omits `d_vocab` and expects inference would
+  otherwise die inside `nn.Embedding`.
+- **HookedTransformer-equivalent numerics come from `enable_compatibility_mode()`** on `ITLensBridgeConfig`
+  (LayerNorm folding, `center_writing_weights`, `center_unembed`). Omitting it is the equivalent of the old
+  `from_pretrained_no_processing`.
 
-- Traditional TransformerLens with weight conversion
-- Can be initialized from config dictionaries (`ITLensCustomConfig`)
-- Required for circuit-tracer's TransformerLens backend (circuit-tracer expects `HookedTransformer`)
-- Some analysis operations may have subtle behavioral differences
+### circuit-tracer's TransformerLens backend is unavailable
 
-### Selection Guidelines
+circuit-tracer's TL backend declares `class TransformerLensReplacementModel(HookedTransformer)`, so it cannot
+be imported under TL 4.0 at all. Use `circuit_tracer_cfg.backend="nnsight"` for circuit-tracer compositions
+until upstream ports that replacement model onto `TransformerBridge`. This is a path awaiting an upstream port,
+not a retired one.
 
-| Use Case | `use_bridge` | Config Class |
-|----------|-------------|--------------|
-| Standard analysis with TL | `True` (default) | `ITLensFromPretrainedConfig` |
-| SAE-Lens with TransformerBridge | `True` | `ITLensBridgeConfig` |
-| Circuit-tracer TL backend | `False` | `ITLensFromPretrainedNoProcessingConfig` |
-| Config-based initialization | forced `False` | `ITLensCustomConfig` |
-| NNsight backend | N/A | `NNsightConfig` (no TL involved) |
-
-**Important:** Setting `use_bridge=True` with `ITLensCustomConfig` is silently ignored — IT
-will warn and force `use_bridge=False` because TransformerBridge requires an HF model instance.
 
 
 ## Naming a hub-delivered adapter's classes from YAML

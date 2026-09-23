@@ -49,4 +49,4 @@ components:
   # The RTE/BoolQ experiment, Hub-resident post-#497: the test registry, backbone, and conformance
   # seeds resolve its classes from the components cache, offline. Pinned revision; bump with intent.
   - repo_id: speediedan/rte
-    revision: 738e41229e39379c432da4e5830af01d6e8960b2
+    revision: a9b2407a96e5d267c2d4a4c8700e503b4d2b5fb1

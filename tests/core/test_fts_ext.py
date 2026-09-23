@@ -71,12 +71,17 @@ class TestClassFTSExtension:
         with torch.inference_mode():
             logits, cache = curr_model.run_with_cache(tokens, remove_batch_dim=True)
             embed = cache["embed"]
-            l1_results = cache["result", 0]
-            l2_results = cache["result", 1]
+            # Per-head attention outputs, z @ W_O per head. A config-only (TL-native) bridge cannot expose
+            # `hook_result`, so this computes what that hook would have held from `hook_z` and the weights.
+            l1_results = einops.einsum(cache["z", 0], curr_model.W_O[0], "seq nhead dh, nhead dh emb -> seq nhead emb")
+            l2_results = einops.einsum(cache["z", 1], curr_model.W_O[1], "seq nhead dh, nhead dh emb -> seq nhead emb")
             TestClassFTSExtension.logit_attribution(embed, l1_results, l2_results, curr_model.W_U, tokens[0])
             logits[0, torch.arange(len(tokens[0]) - 1), tokens[0, 1:]]
         correct_logits = logits[0, 17:19, 18:20][
             :, 1
         ]  # predicted logits for "lung"/"cancer" respectively at pos 18, 19
-        expected_correct_logits = torch.tensor([0.071049094200, 0.685997366905])
+        # A snapshot of a seeded, randomly initialized TL-native model, so it moves if TransformerLens changes how
+        # native weights are drawn. The HookedTransformer-era values do not carry over: the two constructors draw
+        # from the RNG in a different order and native init scales W_O / W_out by 1/sqrt(2 * n_layers).
+        expected_correct_logits = torch.tensor([-0.244823336601, 0.150921136141])
         assert_close(expected_correct_logits, correct_logits, atol=1e-3, rtol=0)

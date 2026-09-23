@@ -8,7 +8,6 @@ from interpretune.extensions import MemProfilerCfg, MemProfilerSchedule
 from interpretune.config import (
     HFFromPretrainedConfig,
     ITLensBridgeConfig,
-    ITLensFromPretrainedNoProcessingConfig,
     ITLensFromPretrainedConfig,
 )
 from tests.module_registry import (
@@ -30,7 +29,7 @@ w_l_tl = {"adapter_ctx": (Adapter.lightning, Adapter.transformer_lens)}
 # Lightning + SAE lens using legacy HookedTransformer path
 w_l_sl = {
     "adapter_ctx": (Adapter.lightning, Adapter.sae_lens),
-    "tl_cfg": ITLensFromPretrainedConfig(use_bridge=False),
+    "tl_cfg": ITLensFromPretrainedConfig(),
 }
 # NNsight adapter contexts
 w_ns = {"adapter_ctx": (Adapter.core, Adapter.nnsight)}
@@ -110,7 +109,6 @@ default_test_fts_kwargs = {"max_depth": -1}
 # Schedule keys now refer to fixture config keys and transform names
 l_gpt2_explicit_sched = {"fts_schedule_key": ("l_gpt2_sched", "basic_explicit")}
 l_gpt2_multiphase_sched = {"fts_schedule_key": ("l_gpt2_sched", "multiphase_explicit")}
-l_tl_ht_gpt2_multiphase_sched = {"fts_schedule_key": ("l_tl_ht_gpt2_sched", "multiphase_explicit")}
 l_tl_bridge_gpt2_multiphase_sched = {"fts_schedule_key": ("l_tl_bridge_gpt2_sched", "multiphase_explicit")}
 l_tl_bridge_gpt2_tl_names_multiphase_sched = {
     "fts_schedule_key": ("l_tl_bridge_gpt2_tl_names_sched", "multiphase_explicit_tl_names")
@@ -120,16 +118,6 @@ l_gpt2_fts = {
     "callback_cfgs": {TestFTS: {**default_test_fts_kwargs}},
     **l_gpt2_multiphase_sched,
     **l_ctx,
-    "module_cls": "tests.modules.DivergeTestITModule",
-    "model_cfg": {"diverge_on_epoch": 2},
-    "max_epochs": 5,
-}
-l_tl_ht_gpt2_fts_multiphase = {
-    "callback_cfgs": {TestFTS: {**default_test_fts_kwargs}},
-    **l_tl_ht_gpt2_multiphase_sched,
-    "tl_cfg": ITLensFromPretrainedNoProcessingConfig(
-        model_name="gpt2-small", default_padding_side="left", use_bridge=False
-    ),
     "module_cls": "tests.modules.DivergeTestITModule",
     "model_cfg": {"diverge_on_epoch": 2},
     "max_epochs": 5,

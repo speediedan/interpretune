@@ -16,6 +16,7 @@ from typing import Dict
 
 import torch
 from datasets import Dataset
+from datasets.fingerprint import generate_random_fingerprint
 
 from interpretune.protocol import Adapter
 from interpretune.session import ITSessionConfig, ITSession
@@ -248,26 +249,32 @@ def save_reload_results_dataset(
     else:
         features, it_format_kwargs, _ = dataset_features_and_format(it_session.module, {})
 
-    # Create a generator that yields all processed batches
+    # Create a generator that yields all processed batches. It goes through `AnalysisCfg.save_batch`, the
+    # runner's own serialization step, rather than `op.save_batch`: only the former renames a bridge's
+    # canonical hook keys to the schema's spelling, and without that every per-hook column is stored as None.
     def multi_batch_generator():
-        for i, (res_batch, input_batch) in enumerate(zip(result_batches, batches)):
-            # Process and yield the batch
-            processed_batch = it_session.module.analysis_cfg.op.save_batch(
-                res_batch,
-                input_batch,
-                tokenizer=it_session.datamodule.tokenizer,
-                save_prompts=it_session.module.analysis_cfg.save_prompts,
-                save_tokens=it_session.module.analysis_cfg.save_tokens,
-                decode_kwargs=it_session.module.analysis_cfg.decode_kwargs,
+        for res_batch, input_batch in zip(result_batches, batches):
+            yield from it_session.module.analysis_cfg.save_batch(
+                res_batch, input_batch, tokenizer=it_session.datamodule.tokenizer
             )
-            yield processed_batch
 
-    # Create dataset from the generator
+    # Create dataset from the generator.
+    #
+    # The explicit fingerprint is load-bearing, and mirrors what `generate_analysis_dataset` does in
+    # `interpretune.runners.analysis` for the same reason: without it `datasets` derives a config id by
+    # dill-dumping the generator, closure included. The closure holds `result_batches`, and a
+    # cache-producing op puts an `ActivationCache` there, which references the model it was captured from.
+    # Under a `TransformerBridge` that graph reaches an unpicklable ContextVar
+    # (`interpretune.hub.adapters._SUPPORTED_COMPOSITIONS`) and the hash dies with
+    # "cannot pickle '_contextvars.ContextVar' object". The weight-converted HookedTransformer this suite
+    # used before TransformerLens 4.0 did not reach it, which is why the omission went unnoticed here while
+    # the production path has carried the fingerprint all along.
     dataset = Dataset.from_generator(
         generator=multi_batch_generator,
         features=features,
         cache_dir=it_session.module.analysis_cfg.output_store.cache_dir,
         split=split,
+        fingerprint=generate_random_fingerprint(),
     ).with_format("interpretune", **it_format_kwargs)
 
     # TODO: add option to attach the dataset to the current analysis_cfg?

@@ -9,9 +9,7 @@ from IPython.display import IFrame, display
 from sae_lens.loading.pretrained_saes_directory import get_pretrained_saes_directory
 from sae_lens.saes.sae import SAE, SAEConfig
 from sae_lens.saes.standard_sae import StandardSAE
-from sae_lens.analysis.hooked_sae_transformer import HookedSAETransformer
 from transformer_lens.hook_points import NamesFilter
-from transformers import PreTrainedModel
 
 from interpretune.adapters import (
     CompositionRegistry,
@@ -141,9 +139,8 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
     This mixin is composed with BaseSAELensModule and BaseITLensModule when using the TransformerLens backend to
     provide _convert_hf_to_tl, tl_config_model_init, and TLModelBackend initialization.
 
-    Supports model wrapper selection via ``it_cfg.tl_cfg.use_bridge``:
-    - ``True`` (default) → ``SAETransformerBridge`` (memory-efficient)
-    - ``False`` → ``HookedSAETransformer.from_pretrained()``
+    The model wrapper is always ``SAETransformerBridge``: TransformerLens 4.0 removed the
+    ``HookedTransformer`` stack that ``HookedSAETransformer`` was built on.
     """
 
     def __init__(self, *args, **kwargs):
@@ -167,23 +164,8 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
         return f"{sae_handle.cfg.metadata.hook_name}.{internal}"
 
     def _convert_hf_to_tl(self) -> None:
-        """Convert HF model to SAETransformerBridge or HookedSAETransformer, as ``tl_cfg.use_bridge`` decides."""
-        if self.it_cfg.tl_cfg.use_bridge:  # type: ignore[attr-defined]  # the TL backend requires a tl_cfg
-            self._convert_hf_to_bridge()
-        else:
-            self._convert_hf_to_hooked()
-
-    def _convert_hf_to_hooked(self) -> None:
-        """Convert HF model to HookedSAETransformer (legacy path)."""
-        # if datamodule is not attached yet, attempt to retrieve tokenizer handle directly from provided it_cfg
-        tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer  # type: ignore[attr-defined]
-        hf_preconversion_config = deepcopy(self.model.config)  # type: ignore[attr-defined]  # capture original hf config before conversion
-        pruned_cfg = self._prune_tl_cfg_dict()  # type: ignore[attr-defined]  # from BaseITLensModule
-        self.model = HookedSAETransformer.from_pretrained(
-            hf_model=cast(PreTrainedModel, self.model), tokenizer=tokenizer_handle, **pruned_cfg
-        )
-        self.model.config = hf_preconversion_config
-        self.instantiate_saes()  # type: ignore[attr-defined]  # from BaseSAELensModule
+        """Convert HF model to a ``SAETransformerBridge``."""
+        self._convert_hf_to_bridge()
 
     def _convert_hf_to_bridge(self) -> None:
         """Convert HF model to SAETransformerBridge (preferred path).
@@ -252,7 +234,14 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
 
         # Enable compatibility mode if requested (ITLensBridgeConfig only)
         if isinstance(self.it_cfg.tl_cfg, ITLensBridgeConfig) and self.it_cfg.tl_cfg.enable_compatibility_mode:
-            from interpretune.adapters.transformer_lens import _ensure_bridge_processed_weight_device_patch
+            # Import from the DEFINING submodule, not the package. The package resolves exports lazily
+            # through __getattr__, which refuses names starting with '_' by design, so the package-level
+            # spelling raises ImportError. This branch only runs when compatibility mode is enabled, which
+            # nothing exercised until the conformance target moved onto it, so the bad import sat here
+            # unexecuted.
+            from interpretune.adapters.transformer_lens.adapter import (
+                _ensure_bridge_processed_weight_device_patch,
+            )
 
             compat_kwargs = self.it_cfg.tl_cfg.enable_compatibility_mode_kwargs or {}
             rank_zero_info(f"Enabling TransformerBridge compatibility mode with kwargs: {compat_kwargs}")
@@ -275,10 +264,20 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
         self.instantiate_saes()  # type: ignore[attr-defined]  # from BaseSAELensModule
 
     def tl_config_model_init(self) -> None:
-        """Initialize model from TL config (custom/non-pretrained path)."""
-        # Filter out IT-specific keys (e.g., 'use_bridge') that HookedSAETransformer doesn't accept
-        pruned_cfg = self._prune_tl_cfg_dict()  # type: ignore[attr-defined]  # from BaseITLensModule
-        self.model = HookedSAETransformer(tokenizer=self.it_cfg.tokenizer, **pruned_cfg)
+        """Initialize model from TL config (custom/non-pretrained path).
+
+        ``boot_native`` returns a plain ``TransformerBridge``, so the class is swapped afterwards, the
+        same pattern ``_convert_hf_to_bridge`` uses for the pretrained path.
+        """
+        from sae_lens.analysis.sae_transformer_bridge import SAETransformerBridge
+
+        self.model = self._boot_native_bridge()  # type: ignore[attr-defined]  # from BaseITLensModule
+        self.model.__class__ = SAETransformerBridge
+        # The swap rebinds the class but runs no initializer, so the state SAETransformerBridge's methods
+        # assume has to be seeded here -- the same two dicts `_convert_hf_to_bridge` seeds, and the same
+        # ones upstream's own `boot_transformers` sets after its swap.
+        self.model._acts_to_saes = {}  # type: ignore[attr-defined]
+        self.model._transcoder_output_hooks = {}  # type: ignore[attr-defined]
         self.instantiate_saes()  # type: ignore[attr-defined]  # from BaseSAELensModule
 
 

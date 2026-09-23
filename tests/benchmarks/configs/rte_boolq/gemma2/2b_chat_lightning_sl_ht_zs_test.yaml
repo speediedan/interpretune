@@ -44,7 +44,6 @@ registered_cfg:
           device: cuda
           dtype: bfloat16
           default_padding_side: left
-          use_bridge: false
       sae_cfgs:
         class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
         init_args:

@@ -7,8 +7,7 @@ from copy import deepcopy
 
 import torch
 from transformers import PretrainedConfig as HFPretrainedConfig, PreTrainedModel
-from transformer_lens import HookedTransformer
-from transformer_lens.config import HookedTransformerConfig, TransformerBridgeConfig
+from transformer_lens.config import TransformerBridgeConfig
 from transformer_lens.utilities.multi_gpu import get_best_available_device
 from transformer_lens.model_bridge import TransformerBridge
 from transformer_lens.factories.architecture_adapter_factory import ArchitectureAdapterFactory
@@ -77,7 +76,7 @@ class TLensAttributeMixin:
     """TransformerLens-aware attribute access: config and device resolution off the wrapped TL model."""
 
     @property
-    def tl_cfg(self) -> HookedTransformerConfig | TransformerBridgeConfig | None:
+    def tl_cfg(self) -> TransformerBridgeConfig | None:
         """The wrapped model's TL config, or None (with a warning) before the model exists.
 
         Returns None rather than raising because this is read during setup and repr paths, where "not constructed yet"
@@ -117,8 +116,6 @@ class TLensAttributeMixin:
         try:
             if self.tl_cfg is None:
                 return None
-            # get_best_available_device works with both HookedTransformerConfig and TransformerBridgeConfig
-            # at runtime, though type signature only declares HookedTransformerConfig
             device = get_best_available_device(self.tl_cfg)  # type: ignore[arg-type]
         except (AttributeError, AssertionError) as ae:
             rank_zero_warn(f"Problem determining appropriate device from TransformerLens config. Received: {ae}")
@@ -150,11 +147,8 @@ class TLensAttributeMixin:
 class BaseITLensModule(BaseITModule):
     """Base module for TransformerLens integration.
 
-    Supports both:
-    - TransformerBridge (v3, default): Wraps HF models without weight conversion, more memory efficient
-    - HookedTransformer (legacy): Converts HF model weights, provides traditional TL interface
-
-    Set `use_bridge=False` in tl_cfg to use legacy HookedTransformer path.
+    ``TransformerBridge`` wraps HF models without weight conversion, which is more memory efficient than
+    the weight-converting path TransformerLens removed in 4.0.
     """
 
     def __init__(self, *args, **kwargs):
@@ -163,10 +157,7 @@ class BaseITLensModule(BaseITModule):
 
     def auto_model_init(self) -> None:
         """Can be overridden by subclasses to automatically initialize model from a configuration (e.g.
-        hf_from_pretrained_cfg, tl_from_config etc.).
-
-        Supports both TransformerBridge and HookedTransformer.
-        """
+        hf_from_pretrained_cfg, tl_from_config etc.)."""
         if self.it_cfg.hf_from_pretrained_cfg:
             self.hf_pretrained_model_init()
         else:
@@ -176,22 +167,17 @@ class BaseITLensModule(BaseITModule):
         """Initialize from HF pretrained weights, then replace the model with its TL equivalent.
 
         Only a subset of the usual HF init flow runs, because the HF model is a means to an end here:
-        it is converted to a ``TransformerBridge`` (v3 default) or a legacy ``HookedTransformer``
-        depending on ``tl_cfg.use_bridge``, and the HF module itself is not what ends up on ``self``.
+        it is converted to a ``TransformerBridge`` and the HF module itself is not what ends up on ``self``.
         """
-        # for TL, only a subset of the HF pretrained init flow used since the model is replaced with
-        # HookedTransformer or TransformerBridge
+        # for TL, only a subset of the HF pretrained init flow used since the model is replaced with a
+        # TransformerBridge
         access_token = _resolve_env_auth_token(self.it_cfg.os_env_model_auth_key)
         quantization_config = super()._hf_configure_quantization()
         super()._update_hf_pretrained_cfg(quantization_config)
         cust_config, _ = super()._hf_gen_cust_config(access_token)
         self.model = self.hf_configured_model_init(cust_config, access_token)
 
-        # Choose between TransformerBridge (v3, default) and legacy HookedTransformer
-        if self.it_cfg.tl_cfg.use_bridge:
-            self._convert_hf_to_bridge()
-        else:
-            self._convert_hf_to_tl()
+        self._convert_hf_to_bridge()
 
     def hf_configured_model_init(
         self, cust_config: HFPretrainedConfig, access_token: str | None = None
@@ -250,36 +236,79 @@ class BaseITLensModule(BaseITModule):
     def tl_config_model_init(self) -> None:
         """Initialize a TL model from config alone, with no HF pretrained weights.
 
-        Always produces a ``HookedTransformer``: ``TransformerBridge`` wraps an existing HF model and so
-        cannot be built config-only, and ``use_bridge=True`` is warned about and ignored on this path.
+        ``boot_native`` builds a bridge around a randomly-initialized TL-native model, so config-only
+        initialization needs neither an HF model nor a Hub call. ``cfg.init_mode`` and ``cfg.seed``
+        control reproducibility.
         """
         # TODO: add note to documentation that we currently require tl_cfg to be not None (either from pretrained or
         #       custom config) based, so model_init will not be used. To fully customize TL behavior, override this
-        #       method and init config-based HookedTransformer as desired
+        #       method and init a config-based bridge as desired
         # TODO: suppress messages from tl about no tokenizer here, we're deferring the tokenizer attach until setup
-        # Note: TransformerBridge requires an HF model, so config-based init always uses HookedTransformer
-        if self.it_cfg.tl_cfg.use_bridge:
-            rank_zero_warn(
-                "TransformerBridge requires an HF model and cannot be initialized from config alone. "
-                "Falling back to legacy HookedTransformer for config-based initialization."
-            )
-        # Filter out IT-specific keys that HookedTransformer doesn't accept
-        tl_kwargs = {k: v for k, v in self.it_cfg.tl_cfg.__dict__.items() if k not in ["use_bridge"]}
-        self.model = HookedTransformer(tokenizer=self.it_cfg.tokenizer, **tl_kwargs)
+        self.model = self._boot_native_bridge()
+
+    def _boot_native_bridge(self) -> TransformerBridge:
+        """Build a config-only bridge that honors the config the way ``HookedTransformer(cfg)`` did.
+
+        Shared by every adapter with a config-only path, so they cannot drift. ``boot_native`` leaves three things
+        to the caller that ``HookedTransformer`` did itself: the ``-1`` vocab sentinels, placement (it moves the
+        model only when passed ``device``/``dtype``, ignoring ``cfg.device``, so a cuda config silently built a CPU
+        model), and the hook-exposing flags.
+        """
+        tl_cfg = self.it_cfg.tl_cfg
+        cfg = tl_cfg.cfg
+        self._resolve_vocab_sentinels(cfg, self.it_cfg.tokenizer)
+        bridge = TransformerBridge.boot_native(
+            cfg,
+            tokenizer=self.it_cfg.tokenizer,
+            device=getattr(cfg, "device", None) if getattr(tl_cfg, "move_to_device", True) else None,
+            dtype=getattr(cfg, "dtype", None),
+        )
+        self._apply_bridge_hook_flags(bridge, cfg)
+        return bridge
+
+    # Config flags that change which hook points a bridge exposes. `boot_native` accepts them on the config but
+    # does not propagate them to the attention/MLP components, so `use_attn_result=True` built a model with no
+    # `hook_result` and nothing said so. Each has a bridge setter that propagates it, or raises naming the flag when
+    # the architecture cannot provide it (the TL-native attention cannot provide per-head results, for instance).
+    _BRIDGE_HOOK_FLAGS = ("use_attn_result", "use_split_qkv_input", "use_attn_in", "use_hook_mlp_in")
+
+    @classmethod
+    def _apply_bridge_hook_flags(cls, bridge, cfg) -> None:
+        """Route hook-exposing config flags through the bridge's setters so each takes effect or is refused."""
+        for flag in cls._BRIDGE_HOOK_FLAGS:
+            if getattr(cfg, flag, False):
+                getattr(bridge, f"set_{flag}")(True)
+
+    @staticmethod
+    def _resolve_vocab_sentinels(cfg, tokenizer) -> None:
+        """Resolve TL's ``-1`` vocab sentinels from the tokenizer, which config-only init no longer does for us.
+
+        ``HookedTransformer.__init__`` inferred these (``d_vocab = max(tokenizer.vocab.values()) + 1``, and
+        ``d_vocab_out`` following it). ``boot_native`` does not: ``NativeModel`` passes ``cfg.d_vocab`` straight
+        into ``nn.Embedding``, so a config that omitted ``d_vocab`` and relied on inference now fails with
+        ``RuntimeError: Trying to create tensor with negative dimension -1``. The arithmetic below is upstream's,
+        copied deliberately so a config that worked before produces the same embedding size.
+        """
+        if tokenizer is None or getattr(tokenizer, "vocab", None) is None:
+            return
+        if getattr(cfg, "d_vocab", None) == -1:
+            cfg.d_vocab = max(tokenizer.vocab.values()) + 1
+        if getattr(cfg, "d_vocab_out", None) == -1:
+            cfg.d_vocab_out = cfg.d_vocab
 
     def _prune_tl_cfg_dict(self, normalize_device: bool = False, prune_list: list | None = None) -> dict:
         """Prunes the tl_cfg dictionary by removing IT-specific and HF-specific keys that shouldn't be passed to
-        HookedTransformer/TransformerBridge constructors.
+        the ``TransformerBridge`` constructor.
 
         Returns:
             dict: The pruned dictionary
         """
-        prune_list = prune_list or ["hf_model", "tokenizer", "use_bridge"]
+        prune_list = prune_list or ["hf_model", "tokenizer"]
         pruned_dict = deepcopy(self.it_cfg.tl_cfg.__dict__)
 
         for key in prune_list:
             if key in pruned_dict:
-                if pruned_dict[key] is not None and key not in ["use_bridge"]:
+                if pruned_dict[key] is not None:
                     rank_zero_warn(f"Found non-None value for '{key}' in tl_cfg. This may cause issues.")
                 del pruned_dict[key]
 
@@ -296,17 +325,6 @@ class BaseITLensModule(BaseITModule):
         assert self.model is not None, "Model must be loaded before conversion"
         hf_preconversion_config = deepcopy(self.model.config)
         return tokenizer_handle, hf_preconversion_config
-
-    def _convert_hf_to_tl(self) -> None:
-        # TODO: decide whether to pass remaining hf_from_pretrained_cfg args to HookedTransformer
-        # (other than `dtype` which should already have been processed and removed, `device_map` should also be
-        # removed before passing to HookedTransformer)
-        tokenizer_handle, hf_preconversion_config = self._prepare_hf_to_tl_conversion()
-        pruned_cfg = self._prune_tl_cfg_dict()  # avoid edge case where conflicting keys haven't already been pruned
-        self.model = HookedTransformer.from_pretrained(
-            hf_model=cast(PreTrainedModel, self.model), tokenizer=tokenizer_handle, **pruned_cfg
-        )
-        self.model.config = hf_preconversion_config
 
     def _convert_hf_to_bridge(self) -> None:
         """Convert HF model to TransformerBridge (v3 architecture).
@@ -388,7 +406,7 @@ class BaseITLensModule(BaseITModule):
 
         Serializes three types of configurations:
         1. HF PretrainedConfig: Original HF model config (via superclass)
-        2. TL Model Config: Actual TransformerLens config (HookedTransformerConfig or TransformerBridgeConfig)
+        2. TL Model Config: Actual TransformerLens config (TransformerBridgeConfig)
         3. IT TL Config: Interpretune-specific settings (ITLensFromPretrainedConfig or ITLensCustomConfig)
         """
         # Override unsupported from pretrained options
@@ -398,12 +416,7 @@ class BaseITLensModule(BaseITModule):
             self.hf_cfg.bitsandbytesconfig = None  # type: ignore[assignment]  # config flexibility
         # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
         # Serialize the actual TransformerLens config from the initialized model
-        # Works for both HookedTransformer (legacy) and TransformerBridge (v3)
         tl_model_cfg = self._make_config_serializable(self.model.cfg, ["device", "dtype"])
-
-        # Add architecture flag for clarity on which path was used
-        if hasattr(tl_model_cfg, "__dict__"):
-            tl_model_cfg.__dict__["_used_bridge"] = self.it_cfg.tl_cfg.use_bridge
 
         self._it_state._init_hparams.update({"tl_model_cfg": tl_model_cfg})
 

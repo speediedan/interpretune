@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from sae_lens.saes.sae import SAEConfig
 from sae_lens.saes.standard_sae import StandardSAEConfig
 from transformer_lens.utilities.devices import get_device as tl_get_device
-from transformer_lens.config import HookedTransformerConfig
+from transformer_lens.config import TransformerBridgeConfig
 
 from interpretune.config import (
     ITConfig,
@@ -79,9 +79,8 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
     at the type level.  TL-specific initialization logic is provided by
     :class:`TLConfigInitMixin`, which is shared with ``ITLensConfig``.
 
-    One flag decides the wrapper: ``tl_cfg.use_bridge`` selects SAETransformerBridge (True) or HookedSAETransformer
-    (False), the same field the TransformerLens adapter reads. This config carries no ``use_bridge`` of its own, so a
-    reader sets it in one place and the adapter cannot read the other.
+    The wrapper is always ``SAETransformerBridge``: TransformerLens 4.0 removed the ``HookedTransformer``
+    stack that ``HookedSAETransformer`` was built on, so there is no second wrapper to select.
     """
 
     # Backend selection
@@ -265,7 +264,7 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
         assert isinstance(self.tl_cfg, ITLensCfgTypes)
         if hasattr(self.tl_cfg, "cfg"):  # TODO: consider reverting this to ternary assignment w/ type check directives
             assert isinstance(self.tl_cfg, ITLensCustomConfig)
-            assert isinstance(self.tl_cfg.cfg, HookedTransformerConfig)
+            assert isinstance(self.tl_cfg.cfg, TransformerBridgeConfig)
             tl_device = self.tl_cfg.cfg.device
         elif isinstance(self.tl_cfg, ITLensBridgeConfig):
             tl_device = self.tl_cfg.device
