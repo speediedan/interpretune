@@ -199,9 +199,13 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
     op_output_dataset_path: str | Path | None = None
     # Generator-cache sharing (interpretune#554). Both default to the historical per-run behavior:
     # a random fingerprint and the output store's cache dir. A caller that passes a deterministic
-    # `dataset_fingerprint` (conformance runs do) opts into reusing generator cache files, which
+    # `fingerprint` (conformance runs do) opts into reusing generator cache files, which
     # only pays off when `generator_cache_dir` points somewhere persistent across runs.
-    dataset_fingerprint: str | None = None
+    # The field is named `fingerprint` (not `dataset_fingerprint`) because it travels by name
+    # through `run_cfg.__dict__` into `generate_analysis_dataset(fingerprint=...)`; a rename on
+    # either end silently reverts to random fingerprints (measured in #618), so the contract test
+    # in test_analysis_runners.py pins all three ends together.
+    fingerprint: str | None = None
     generator_cache_dir: str | Path | None = None
     # Add optional latent_analysis_targets as a fallback
     latent_analysis_targets: LatentAnalysisTargets | None = None

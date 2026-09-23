@@ -391,7 +391,7 @@ class ConformanceInputs:
             op_output_dataset_path=str(self._ensure_workdir() / "out"),
         )
         if target is not None:
-            kwargs["dataset_fingerprint"] = self.generator_cache_key(target)
+            kwargs["fingerprint"] = self.generator_cache_key(target)
             kwargs["generator_cache_dir"] = str(shared_generator_cache_dir())
         return kwargs
 

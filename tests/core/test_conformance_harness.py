@@ -473,6 +473,6 @@ class TestGeneratorCacheKey:
         from interpretune.testing.conformance.inputs import ConformanceInputs
 
         bare = ConformanceInputs().runner_kwargs()
-        assert "dataset_fingerprint" not in bare and "generator_cache_dir" not in bare
+        assert "fingerprint" not in bare and "generator_cache_dir" not in bare
         keyed = ConformanceInputs().runner_kwargs(self._target())
-        assert len(keyed["dataset_fingerprint"]) == 32 and keyed["generator_cache_dir"]
+        assert len(keyed["fingerprint"]) == 32 and keyed["generator_cache_dir"]

@@ -601,3 +601,41 @@ class TestGeneratorCacheSharing:
         )
         workdir_files = sorted(p.name for p in (tmp_path / "workdir").rglob("*.arrow"))
         assert workdir_files, "default keeps writing generator cache under the output store dir"
+
+
+class TestGeneratorCacheHandoffContract:
+    """The runner-to-function handoff for generator-cache sharing (regression test for #618).
+
+    `AnalysisRunner` spreads `run_cfg.__dict__` into `core_analysis_loop`, whose `**kwargs` reach
+    `generate_analysis_dataset`. A name that binds no parameter there lands in `**kwargs`
+    (documented as error-context kwargs) and the deterministic branch silently never engages —
+    while the shared dir still fills with random-keyed entries. Pin all three ends together so a
+    rename on any one fails loudly here instead of filling a volume.
+    """
+
+    def test_cache_keys_bind_end_to_end(self, tmp_path):
+        import inspect
+
+        from interpretune.config.runner import AnalysisRunnerCfg
+        from interpretune.runners import analysis as analysis_mod
+
+        runner_params = set(inspect.signature(AnalysisRunnerCfg).parameters)
+        fn_params = set(inspect.signature(analysis_mod.generate_analysis_dataset).parameters)
+        loop_kinds = {p.name: p.kind for p in inspect.signature(analysis_mod.core_analysis_loop).parameters.values()}
+        assert loop_kinds.get("kwargs") is inspect.Parameter.VAR_KEYWORD
+        for name in ("fingerprint", "generator_cache_dir"):
+            assert name in runner_params, f"run_cfg no longer carries {name}"
+            assert name in fn_params, f"generate_analysis_dataset no longer accepts {name}"
+
+    def test_run_cfg_accepts_the_pair(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        from interpretune.config.runner import AnalysisRunnerCfg
+
+        module = MagicMock()
+        session = MagicMock()
+        session.module = module
+        cfg = AnalysisRunnerCfg(
+            it_session=session, fingerprint="base-key", generator_cache_dir=str(tmp_path / "shared")
+        )
+        assert cfg.fingerprint == "base-key" and cfg.generator_cache_dir == str(tmp_path / "shared")
