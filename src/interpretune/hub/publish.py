@@ -408,7 +408,7 @@ def _rewrite_concept_direction_snapshot(out_dir: Path, manifest: dict) -> None:
         for rel in generated_rels:
             if rel not in entry["files"]:
                 entry["files"].append(rel)
-    _rewrite_concept_direction_template(out_dir, manifest)
+    _rewrite_concept_direction_template_if_staged(out_dir, manifest)
     (out_dir / IT_COMPONENT_MANIFEST).write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
 
@@ -500,6 +500,24 @@ def experiment_session(
 #: The staged template, relative to the snapshot root. Staged verbatim by the manifest like
 #: any payload, then ported in place below.
 _TEMPLATE_REL = "concept_direction/concept_direction_template.ipynb"
+
+
+def _rewrite_concept_direction_template_if_staged(out_dir: Path, manifest: dict) -> None:
+    """Port the template when staged, skip loudly otherwise.
+
+    Manifests that do not stage the template (the pre-template shape) keep the previous behavior; skipping is logged,
+    never silent, so a missing template is a visible staging choice rather than an unnoticed gap.
+    """
+    import logging
+
+    if (out_dir / _TEMPLATE_REL).is_file():
+        _rewrite_concept_direction_template(out_dir, manifest)
+    else:
+        logging.getLogger(__name__).info(
+            "concept-direction snapshot without staged %s: template port skipped; "
+            "declare the template in the manifest `files` to ship template execution.",
+            _TEMPLATE_REL,
+        )
 
 
 def _rewrite_concept_direction_template(out_dir: Path, manifest: dict) -> None:
