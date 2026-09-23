@@ -1,12 +1,12 @@
 """Hub-runnable model-spec resolution and session construction for notebook experiments.
 
 The notebook-harness session layer historically lived in the wheel-excluded test
-tree; Hub-published experiments cannot reach it. This module carries the pure
+tree; Hub-published experiments cannot reach it. This module carries the portable
 half of that layer: resolving a model family/variant to its spec (model ids,
 transcoder set, Neuronpedia coordinates, adapter composition) from the core
-``harness/configs/model_specs.yaml``. Session assembly on top of a resolved
-spec is the follow-up: it needs public module/datamodule resolution to replace
-the test registry names, which does not exist yet.
+``harness/configs/model_specs.yaml``, plus a minimal datamodule for sessions
+whose pipelines build their own batches. Full public session assembly (module
+side) is the follow-up.
 """
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from interpretune.base.datamodules import ITDataModule
 
 
 @dataclass(frozen=True)
@@ -119,3 +121,32 @@ def resolve_model_spec(
         nnsight_overrides=spec.nnsight_overrides,
         circuit_tracer_overrides=spec.circuit_tracer_overrides,
     )
+
+
+def _refusing_dataloader(phase: str):
+    """Build a dataloader method that refuses by name: experiment pipelines build batches manually."""
+
+    def _loader(self):
+        raise NotImplementedError(
+            f"Hub experiment sessions do not serve {phase} dataloaders: pipelines build "
+            "prompt batches manually and only need the datamodule's tokenizer handle. "
+            f"Calling {phase}_dataloader here is a programming error."
+        )
+
+    _loader.__name__ = f"{phase}_dataloader"
+    return _loader
+
+
+class ExperimentDataModule(ITDataModule):
+    """Minimal datamodule for Hub experiment sessions: tokenizer handle, no dataloaders.
+
+    The base class configures the tokenizer but declares no dataloader methods, so a
+    bare instance fails the session's protocol check. Experiment pipelines build
+    their own prompt batches and never iterate dataloaders; the methods exist only
+    to satisfy the structural check and refuse loudly if ever called.
+    """
+
+    train_dataloader = _refusing_dataloader("train")
+    val_dataloader = _refusing_dataloader("val")
+    test_dataloader = _refusing_dataloader("test")
+    predict_dataloader = _refusing_dataloader("predict")

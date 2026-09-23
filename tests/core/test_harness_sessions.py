@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from interpretune.harness.sessions import HubModelSpec, resolve_model_spec
+from interpretune.harness.sessions import ExperimentDataModule, HubModelSpec, resolve_model_spec
 
 
 def test_known_spec_resolves_with_composition():
@@ -35,3 +35,17 @@ def test_every_table_entry_carries_composition():
     for (family, variant), spec in registry.items():
         assert spec.composition, f"{family}.{variant} has no composition"
         assert all(isinstance(name, str) and name for name in spec.composition)
+
+
+def test_experiment_datamodule_closure_over_base_gap():
+    """The base declares no dataloader methods (the session protocol gap); the subclass adds refusing ones."""
+    import types
+
+    from interpretune.base.datamodules import ITDataModule
+
+    for phase in ("train", "val", "test", "predict"):
+        assert not hasattr(ITDataModule, f"{phase}_dataloader")
+        method = getattr(ExperimentDataModule, f"{phase}_dataloader")
+        assert callable(method)
+        with pytest.raises(NotImplementedError, match=f"do not serve {phase} dataloaders"):
+            method(types.SimpleNamespace())
