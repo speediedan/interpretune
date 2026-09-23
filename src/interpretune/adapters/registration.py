@@ -25,14 +25,10 @@ class CompositionRegistry(dict):
     def register_module_cfg_class(self, lead_adapter: Adapter | str, cfg_cls: type) -> None:
         """Record the ``ITConfig`` subclass ``lead_adapter`` composes its settings through.
 
-        Bundled adapters are found by importing a module path derived from the adapter's name. A
-        hub-delivered adapter executes from a revision-scoped synthetic module, so no such path exists
-        and auto-composition cannot see its config class at all -- the settings then arrive as a stray
-        attribute rather than a composed field. Registering the class here is the discovery route those
-        adapters can have, and it is the one the note beside ``AUTOCOMP_SEARCH_TEMPLATES`` describes.
-
-        Bundled adapters may register too; discovery prefers what the import path finds, so doing so
-        changes nothing for them.
+        This is the ONLY route by which auto-composition finds an adapter's config class, for bundled and
+        hub-delivered adapters alike: each registers from its ``register_adapter_ctx`` (or its hub entrypoint).
+        An adapter that registers nothing composes nothing, and its settings arrive as a stray attribute rather
+        than a composed field.
         """
         adapter = Adapter[lead_adapter] if isinstance(lead_adapter, str) else lead_adapter
         existing = self._module_cfg_classes.get(adapter)

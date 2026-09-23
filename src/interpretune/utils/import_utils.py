@@ -189,9 +189,14 @@ _DOTENV_AVAILABLE = module_available("dotenv")
 _LIGHTNING_AVAILABLE = package_available("lightning")
 _NEURONPEDIA_AVAILABLE = package_available("neuronpedia")
 _CT_AVAILABLE = package_available("circuit_tracer")
-_FTS_AVAILABLE = module_available("finetuning_scheduler")
+# Framework probes are `find_spec` lookups, never imports. `module_available` imports what it probes, and
+# these flags evaluate when `interpretune.utils` is first imported, which nearly every entry point does: an
+# importing probe here loaded finetuning-scheduler (and with it lightning) and sae_lens (and with it
+# TransformerLens) into any process that touched a config. A present-but-broken install now fails at the
+# import that needs it, naming the real error, instead of being reported as absent.
+_FTS_AVAILABLE = package_available("finetuning_scheduler")
 _BNB_AVAILABLE = package_available("bitsandbytes")
-_SL_AVAILABLE = module_available("sae_lens")
+_SL_AVAILABLE = package_available("sae_lens")
 _NNSIGHT_AVAILABLE = package_available("nnsight")
 # local-checkout package (neuronpedia repo, utils/neuronpedia-utils) — not installable from PyPI
 _NEURONPEDIA_UTILS_AVAILABLE = module_available("neuronpedia_utils")

@@ -76,6 +76,28 @@ def test_import_interpretune_does_not_pull_adapters_and_is_fast():
     )
 
 
+_ADAPTER_FRAMEWORKS = ["transformer_lens", "sae_lens", "nnsight", "circuit_tracer", "lightning", "finetuning_scheduler"]
+
+
+@pytest.mark.parametrize("entry", ["interpretune.config", "interpretune.utils", "interpretune.adapters.registration"])
+def test_core_entry_points_do_not_pull_adapter_frameworks(entry):
+    """The core packages one level below ``import interpretune`` must not import an adapter framework either.
+
+    The top-level guard above passed while these did not: importing ``interpretune.utils`` (and so any config) loaded
+    sae_lens and TransformerLens through an availability probe that imported what it probed, and finetuning-scheduler
+    with lightning through another. Guarding only the package entry point let the breakage sit on the adjacent path.
+    Subprocess-only, so the test runner's own imports cannot mask a violation.
+    """
+    script = "import sys, json, %s; print(json.dumps([m for m in %s if m in sys.modules]))" % (
+        entry,
+        json.dumps(_ADAPTER_FRAMEWORKS),
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr[-2000:]
+    imported = json.loads(result.stdout.strip().splitlines()[-1])
+    assert not imported, f"importing {entry} pulled in adapter frameworks: {imported}"
+
+
 def test_it_hub_resolves_in_fresh_process():
     """`it.hub` must resolve in a process that never imported interpretune.hub another way.
 

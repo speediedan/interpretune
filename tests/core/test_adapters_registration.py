@@ -79,11 +79,11 @@ def test_lazy_adapter_registry_initializes(caplog):
 
 
 class TestRegistryBackedConfigDiscovery:
-    """A hub adapter's config class is reachable only through the registry, so these cover that route.
+    """Every adapter's config class, bundled or hub-delivered, reaches auto-composition only through the registry.
 
-    Bundled adapters are found by importing a module path derived from the adapter's name. A hub-delivered adapter runs
-    from a revision-scoped synthetic module, so no such path exists; without the registry its config class is invisible
-    and its settings arrive as a stray attribute.
+    A hub-delivered adapter runs from a revision-scoped synthetic module, so no import path can name it. Bundled
+    adapters therefore register the same way rather than being found by a path derived from their name, which would be a
+    route only the bundled set could ever take.
     """
 
     @staticmethod
@@ -153,20 +153,32 @@ class TestRegistryBackedConfigDiscovery:
         after, _ = shared.find_adapter_subclasses(ITConfig)
         assert after.get(Adapter.circuit_tracer) is cls
 
-    def test_an_import_path_wins_over_a_registration(self, monkeypatch):
-        """Registering cannot change what a bundled adapter composes.
+    def test_bundled_adapters_register_their_config_class(self):
+        """Bundled adapters take the hub route: each registers its module config class in ``register_adapter_ctx``."""
+        from interpretune.adapter_registry import ADAPTER_REGISTRY
+        from interpretune.adapters.nnsight.config import ITNNsightConfig
+        from interpretune.adapters.sae_lens.config import SAELensConfig
+        from interpretune.adapters.transformer_lens.config import ITLensConfig
 
-        The registry pass runs after the templates and skips an adapter they already resolved, so adding a registration
-        is inert for anything reachable by import. That is what makes this safe to land without re-validating every
-        bundled adapter.
+        registered = {a: ADAPTER_REGISTRY.module_cfg_class(a) for a in Adapter.__members__.values()}
+        expected = {
+            Adapter.transformer_lens: ITLensConfig,
+            Adapter.sae_lens: SAELensConfig,
+            Adapter.nnsight: ITNNsightConfig,
+        }
+        assert {a: c for a, c in registered.items() if c is not None} == expected
+
+    def test_discovery_reads_only_the_registry(self, monkeypatch):
+        """With the registry emptied, a bundled adapter is not discoverable either: there is no second route.
+
+        The first assertion is the positive control: nnsight IS discoverable through the live registry, so its absence
+        afterwards is caused by the emptied registry rather than by nnsight never having been reachable.
         """
         from interpretune.config.module import ITConfig
         from interpretune.config import shared
 
-        found_by_import, _ = shared.find_adapter_subclasses(ITConfig)
-        assert Adapter.nnsight in found_by_import, "expected nnsight to be reachable by import path"
-        expected = found_by_import[Adapter.nnsight]
+        found, _ = shared.find_adapter_subclasses(ITConfig)
+        assert Adapter.nnsight in found, "positive control failed: nnsight is not discoverable through the registry"
 
-        monkeypatch.setattr(shared, "_registered_cfg_classes", lambda space: {Adapter.nnsight: self._cfg_cls()})
-        after, _ = shared.find_adapter_subclasses(ITConfig)
-        assert after[Adapter.nnsight] is expected
+        monkeypatch.setattr(shared, "_registered_cfg_classes", lambda space: {})
+        assert shared.find_adapter_subclasses(ITConfig) == ({}, {})

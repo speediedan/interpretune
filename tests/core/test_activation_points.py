@@ -29,18 +29,32 @@ class TestParse:
         assert parse("blocks.5.hook_resid_post") == parse("blocks.5.hook_out")
         assert parse("blocks.5.hook_resid_mid") == parse("blocks.5.ln2.hook_in")
 
-    def test_a_deprecated_alias_parses_to_its_point_and_remembers_the_spelling(self):
+    def test_an_alias_parses_to_its_point_and_remembers_the_spelling(self):
         from dataclasses import replace
 
-        from interpretune.analysis.points.vocabulary import DeprecatedPointError
+        from interpretune.analysis.points.vocabulary import NonCanonicalPointError
 
         legacy = parse("blocks.5.attn.hook_z")
         assert legacy.alias == "attn.hook_z"
         assert replace(legacy, alias=None) == parse("blocks.5.attn.o.hook_in")
         assert parse("blocks.5.attn.o.hook_in").alias is None
-        with pytest.raises(DeprecatedPointError, match="deprecated spelling 'attn.hook_z'.*write 'attn.o.hook_in'"):
+        with pytest.raises(
+            NonCanonicalPointError, match="uses the alias 'attn.hook_z'; strict.*write 'attn.o.hook_in'"
+        ):
             parse("blocks.5.attn.hook_z", strict=True)
         parse("blocks.5.attn.o.hook_in", strict=True)  # canonical spellings are always accepted
+
+    def test_the_transformer_lens_aliases_are_not_marked_deprecated(self):
+        """TransformerLens still documents these spellings as current vocabulary, so none carries a retirement.
+
+        Marking them deprecated would tell a user the spelling is leaving TransformerLens when it is not; the only
+        thing interpretune expresses about them is a preference for canonical names, which ``strict`` enforces.
+        """
+        from interpretune.analysis.points.vocabulary import ALIASES
+
+        bundled = [e for e in ALIASES if e.source == "bundled"]
+        assert len(bundled) == 11
+        assert [e.alias for e in bundled if e.deprecated_since is not None] == []
 
     def test_the_alias_table_is_one_table_and_refuses_to_shadow(self):
         from interpretune.analysis.points.vocabulary import ALIASES, register_alias, spellings
@@ -55,6 +69,8 @@ class TestParse:
         entry = register_alias("hook_attn_z_legacy_probe", "attn.o.hook_in", deprecated_since="probe")
         try:
             assert parse("blocks.2.hook_attn_z_legacy_probe").alias == "hook_attn_z_legacy_probe"
+            with pytest.raises(ValueError, match=r"alias 'hook_attn_z_legacy_probe' \(deprecated since probe\)"):
+                parse("blocks.2.hook_attn_z_legacy_probe", strict=True)
             assert "blocks.2.hook_attn_z_legacy_probe" in spellings("blocks.2.attn.o.hook_in")
         finally:
             ALIASES._entries.pop(entry.alias)

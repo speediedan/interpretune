@@ -224,38 +224,28 @@ class TestClassBaseConfigs:
         # with open(cfg_file, "r") as f:
         #     cfg = yaml.load(f, Loader=yaml.FullLoader)
 
-    def test_find_adapter_subclasses_with_nonexistent_module(self):
-        """find_adapter_subclasses skips adapters whose module cannot be resolved.
+    def test_find_adapter_subclasses_skips_an_adapter_that_registered_nothing(self):
+        """An adapter with no registered config class is absent from discovery, not guessed at.
 
-        Per-adapter packages (#401) moved the searched modules to ``interpretune.adapters.<name>.config``
-        and ``.adapter``, and the search now IMPORTS a candidate rather than only reading sys.modules, so
-        an unresolvable adapter is skipped via ImportError instead of via absence.
+        Discovery reads only the composition registry, so this drives the real ``_registered_cfg_classes`` path with
+        a registry that answers for one adapter and not the other.
         """
         from interpretune.config.shared import find_adapter_subclasses
-        from types import ModuleType
 
-        # Create two fake adapters
         adapter1 = Mock()
         adapter1.name = "existing_adapter"
         adapter2 = Mock()
         adapter2.name = "nonexistent_adapter"
 
-        # Build a real module containing one subclass of object
         class DummySubclass:
             pass
 
-        DummySubclass.__module__ = "interpretune.adapters.existing_adapter.config"
-        mod = ModuleType("interpretune.adapters.existing_adapter.config")
-        setattr(mod, "DummySubclass", DummySubclass)
-
-        # Inject only our fake module, but leave the rest of sys.modules intact
-        with patch.dict("sys.modules", {"interpretune.adapters.existing_adapter.config": mod}, clear=False):
+        registry = Mock()
+        registry.module_cfg_class.side_effect = lambda a: DummySubclass if a is adapter1 else None
+        with patch("interpretune.adapter_registry.ADAPTER_REGISTRY", registry):
             subs, supers = find_adapter_subclasses(object, target_adapters=[adapter1, adapter2])
 
-        # Verify only adapter1 appears
-        assert adapter1 in subs
-        assert adapter2 not in subs
-        assert subs[adapter1] is DummySubclass
+        assert subs == {adapter1: DummySubclass}
         assert supers == {}
 
 
