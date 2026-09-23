@@ -362,6 +362,9 @@ def _rewrite_concept_direction_snapshot(out_dir: Path, manifest: dict) -> None:
         "pipeline_patterns.py": "exp/pipeline_patterns.py",
         "concept_direction/analysis/concept_direction_analysis.py": "exp/analysis/concept_direction_analysis.py",
         "concept_direction/analysis/intervention_drift_analysis.py": ("exp/analysis/intervention_drift_analysis.py"),
+        # The package init only registers the experiment's harness hooks; staged
+        # under a private name (it must be manifest-declared to be staged).
+        "concept_direction/__init__.py": "exp/_experiment_hooks.py",
     }
     swaps = [
         (
@@ -440,6 +443,11 @@ def _experiment_session(*args, **kwargs):
         ("exp/_prompt_shim.py", _EXPERIMENT_PROMPT_SHIM_TEXT),
     ]:
         (out_dir / generated).write_text(body, encoding="utf-8")
+    # Importing the pipeline package is what registers the experiment's harness
+    # hooks (the staged equivalent of the source package init): the import runs
+    # at pipeline load, before any pipeline function executes.
+    with (out_dir / "exp" / "concept_direction.py").open("a", encoding="utf-8") as fh:
+        fh.write("\nfrom exp import _experiment_hooks  # noqa: F401,E402 - registers experiment hooks\n")
     # Generated files join each entry's `files`: partial materialization (`pull_experiment_payloads`)
     # fetches exactly the manifest-declared payloads, so an undeclared generated file would ship on
     # the Hub yet never arrive in a partial fetch — a pipeline that imports from a full snapshot
@@ -467,7 +475,7 @@ def _experiment_session(*args, **kwargs):
             if rel in moves:
                 entry[field] = moves[rel]
         entry["files"] = [moves.get(rel, rel) for rel in entry.get("files") or []]
-        for rel in generated_rels:
+        for rel in [*generated_rels, "exp/_experiment_hooks.py"]:
             if rel not in entry["files"]:
                 entry["files"].append(rel)
     _rewrite_concept_direction_template_if_staged(out_dir, manifest)

@@ -707,6 +707,7 @@ class TestSnapshotRewrite:
                 "from it_examples.experiments.notebook.concept_direction.concept_direction "
                 "import NotebookHarnessConfig\nVALUE = 1\n"
             ),
+            "concept_direction/__init__.py": "HOOKS = True\n",
             "pipeline_patterns.py": "PATTERN = True\n",
             "concept_direction/analysis/concept_direction_analysis.py": "ANALYSIS = True\n",
             "concept_direction/analysis/intervention_drift_analysis.py": (
@@ -841,6 +842,7 @@ class TestTemplatePort:
             "    return _harness().resolve_session_surface_preset_config_defaults(*args, **kwargs)\n"
         )
         (out / "concept_direction" / "concept_direction.py").write_text(harness_block, encoding="utf-8")
+        (out / "concept_direction" / "__init__.py").write_text("HOOKS = True\n", encoding="utf-8")
         (out / "pipeline_patterns.py").write_text("PATTERN = True\n", encoding="utf-8")
         (out / "concept_direction" / "analysis" / "concept_direction_analysis.py").write_text(
             "ANALYSIS = True\n", encoding="utf-8"
@@ -880,3 +882,29 @@ class TestTemplatePort:
             encoding="utf-8",
         )
         assert _nested_blocked_refs(clean) == []
+
+    def test_experiment_hooks_staged_and_wired(self, tmp_path):
+        from interpretune.hub.publish import EXPERIMENT_SNAPSHOT_REWRITES
+
+        out = tmp_path / "staged"
+        (out / "concept_direction" / "analysis").mkdir(parents=True)
+        (out / "concept_direction" / "concept_direction.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (out / "concept_direction" / "__init__.py").write_text("HOOKS = True\n", encoding="utf-8")
+        (out / "concept_direction" / "__init__.py").write_text(
+            "from it_examples.experiments.notebook.concept_direction.analysis.concept_direction_analysis import (X,)\n",
+            encoding="utf-8",
+        )
+        (out / "pipeline_patterns.py").write_text("PATTERN = True\n", encoding="utf-8")
+        (out / "concept_direction" / "analysis" / "concept_direction_analysis.py").write_text(
+            "ANALYSIS = True\n", encoding="utf-8"
+        )
+        (out / "concept_direction" / "analysis" / "intervention_drift_analysis.py").write_text(
+            "DRIFT = True\n", encoding="utf-8"
+        )
+        manifest = {"experiments": {}}
+        EXPERIMENT_SNAPSHOT_REWRITES["concept-direction-v1"](out, manifest)
+        hooks = (out / "exp" / "_experiment_hooks.py").read_text(encoding="utf-8")
+        assert "from exp.analysis.concept_direction_analysis import (" in hooks
+        assert "it_examples" not in hooks
+        pipeline = (out / "exp" / "concept_direction.py").read_text(encoding="utf-8")
+        assert "from exp import _experiment_hooks" in pipeline
