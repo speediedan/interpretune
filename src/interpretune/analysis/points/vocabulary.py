@@ -8,8 +8,10 @@ level read as the other: ``hook_mlp_out`` is the MLP's CONTRIBUTION to the resid
 module output on GPT-2 and the post-norm output on a sandwich-norm model, and a table that stored it as a
 fixed path had to be wrong on one of them.
 
-Legacy ``HookedTransformer`` spellings that are neither semantic points nor component points (``attn.hook_z``,
-``hook_embed``, ``hook_q``) are served through ONE alias table, :data:`ALIASES`, which the parser consults once.
+TransformerLens spellings that are neither semantic points nor component points (``attn.hook_z``, ``hook_embed``,
+``hook_q``) are served through ONE alias table, :data:`ALIASES`, which the parser consults once. They are current
+TransformerLens vocabulary (its bridge carries them as ``hook_aliases``), so they are accepted, not deprecated: an
+alias is a spelling interpretune does not treat as canonical, and ``strict`` parsing refuses it as a matter of style.
 An alias asserts only that a spelling MEANS a point; whether two spellings name the same tensor is answered by
 resolution, per architecture, never by the table.
 
@@ -78,8 +80,8 @@ class ActivationPoint:
     caution: str | None = None
     """A note the resolver surfaces for names that are precise but widely misread."""
     alias: str | None = None
-    """The deprecated spelling this point was parsed from, when it came through the alias table, so a caller or a
-    linter can report "you wrote X, this means Y"."""
+    """The alias this point was parsed from, when it came through the alias table, so a caller or a linter can
+    report "you wrote X, this means Y"."""
     stack: str | None = None
     """The block stack for an indexed point when it is not the primary one (``"encoder"``, ``"vision"``)."""
 
@@ -153,8 +155,8 @@ class UnknownPointError(ValueError):
     """
 
 
-class DeprecatedPointError(UnknownPointError):
-    """A deprecated spelling was used where the caller asked for canonical names only (``strict=True``)."""
+class NonCanonicalPointError(UnknownPointError):
+    """An alias was used where the caller asked for canonical names only (``strict=True``)."""
 
 
 class AliasLevel(str, Enum):
@@ -166,7 +168,7 @@ class AliasLevel(str, Enum):
 
 @dataclass(frozen=True)
 class Alias:
-    """One deprecated spelling and the canonical point it means.
+    """One alias and the canonical point it means.
 
     ``canonical`` is a block-relative or global base name in the vocabulary (``attn.o.hook_in``, ``embed.hook_out``,
     ``hook_resid_pre``); ``replacement`` is what a caller should write instead, which is usually the canonical
@@ -176,7 +178,7 @@ class Alias:
     alias: str
     canonical: str
     level: AliasLevel
-    deprecated_since: str
+    deprecated_since: str | None = None
     replacement: str | None = None
     caution: str | None = None
     source: str = "bundled"
@@ -188,7 +190,7 @@ class Alias:
 
 
 class AliasTable:
-    """``alias -> Alias``: the legacy ``HookedTransformer`` spellings the parser accepts, served through ONE table.
+    """``alias -> Alias``: the non-canonical spellings the parser accepts, served through ONE table.
 
     The parser consults it once, so an alias never has to be listed by hand beside the point it names and cannot
     disagree with it. Adapters may :meth:`register` aliases for their own vocabulary; a ``strict`` parse refuses
@@ -215,11 +217,11 @@ class AliasTable:
         self._entries[entry.alias] = entry
 
     def get(self, name: str) -> Alias | None:
-        """The entry for a deprecated spelling, or ``None``."""
+        """The entry for an alias, or ``None``."""
         return self._entries.get(name)
 
     def aliases_for(self, canonical: str) -> tuple[str, ...]:
-        """Every deprecated spelling that means ``canonical`` (a base name), sorted."""
+        """Every alias that means ``canonical`` (a base name), sorted."""
         return tuple(sorted(a for a, e in self._entries.items() if e.canonical == canonical))
 
     def __iter__(self) -> Iterator[Alias]:
@@ -231,25 +233,24 @@ class AliasTable:
 
 def _bundled_aliases() -> list[Alias]:
     c = AliasLevel.COMPONENT
-    since = "0.1.0"
     # Not here: `hook_in` / `hook_out` (the block's own slots) and `attn.hook_in` / `mlp.hook_in` (the sublayers'
-    # arguments, addressed at the norm output in `_SEMANTIC`). Those are component spellings, not deprecated ones.
+    # arguments, addressed at the norm output in `_SEMANTIC`). Those are component spellings, not aliases.
     return [
         # attention internals
-        Alias("attn.hook_z", "attn.o.hook_in", c, since),
-        Alias("hook_q_input", "attn.q.hook_in", c, since),
-        Alias("hook_k_input", "attn.k.hook_in", c, since),
-        Alias("hook_v_input", "attn.v.hook_in", c, since),
-        Alias("hook_q", "attn.q.hook_out", c, since),
-        Alias("hook_k", "attn.k.hook_out", c, since),
-        Alias("hook_v", "attn.v.hook_out", c, since),
+        Alias("attn.hook_z", "attn.o.hook_in", c),
+        Alias("hook_q_input", "attn.q.hook_in", c),
+        Alias("hook_k_input", "attn.k.hook_in", c),
+        Alias("hook_v_input", "attn.v.hook_in", c),
+        Alias("hook_q", "attn.q.hook_out", c),
+        Alias("hook_k", "attn.k.hook_out", c),
+        Alias("hook_v", "attn.v.hook_out", c),
         # MLP internals: TransformerLens defines `hook_pre` as the up-projection's OUTPUT (the pre-activation) and
         # `hook_post` as the activation's output feeding the down projection
-        Alias("mlp.hook_pre", "mlp.in.hook_out", c, since),
-        Alias("mlp.hook_post", "mlp.out.hook_in", c, since),
+        Alias("mlp.hook_pre", "mlp.in.hook_out", c),
+        Alias("mlp.hook_post", "mlp.out.hook_in", c),
         # embeddings
-        Alias("hook_embed", "embed.hook_out", c, since),
-        Alias("hook_pos_embed", "pos_embed.hook_out", c, since),
+        Alias("hook_embed", "embed.hook_out", c),
+        Alias("hook_pos_embed", "pos_embed.hook_out", c),
     ]
 
 
@@ -264,10 +265,10 @@ ALIASES = _bundled_table()
 
 
 def parse(name: str, *, strict: bool = False) -> ActivationPoint:
-    """Parse any accepted spelling (component, semantic, or a deprecated alias) into an :class:`ActivationPoint`.
+    """Parse any accepted spelling (component, semantic, or an alias) into an :class:`ActivationPoint`.
 
     Total and strict: a name outside the vocabulary raises :class:`UnknownPointError` naming valid forms. With
-    ``strict=True`` a deprecated alias raises :class:`DeprecatedPointError` naming what to write instead; otherwise
+    ``strict=True`` an alias raises :class:`NonCanonicalPointError` naming what to write instead; otherwise
     it parses to its canonical point with ``alias`` set to the spelling used.
     """
     match = _BLOCK_RE.match(name)
@@ -296,8 +297,9 @@ def parse(name: str, *, strict: bool = False) -> ActivationPoint:
         return ActivationPoint(f"ln{int(after.group('k')) + 2}", Slot.IN, layer, None, subhook, None, stack=stack)
     if (entry := ALIASES.get(base)) is not None:
         if strict:
-            raise DeprecatedPointError(
-                f"{name!r} uses the deprecated spelling {base!r} (since {entry.deprecated_since}); write "
+            retiring = f" (deprecated since {entry.deprecated_since})" if entry.deprecated_since else ""
+            raise NonCanonicalPointError(
+                f"{name!r} uses the alias {base!r}{retiring}; strict parsing accepts canonical names only, so write "
                 f"{entry.suggested!r} instead"
             )
         canonical = parse(entry.canonical)
@@ -329,13 +331,17 @@ def register_alias(
     canonical: str,
     *,
     level: AliasLevel | str = AliasLevel.COMPONENT,
-    deprecated_since: str = "unversioned",
+    deprecated_since: str | None = None,
     replacement: str | None = None,
     caution: str | None = None,
     source: str = "runtime",
     replace: bool = False,
 ) -> Alias:
-    """Register an adapter's own deprecated spelling; ``canonical`` must itself parse without the table."""
+    """Register an adapter's own alias; ``canonical`` must itself parse without the table.
+
+    Set ``deprecated_since`` only for a spelling the adapter is actually retiring; an alias its framework still
+    documents is accepted vocabulary, and marking it deprecated would tell users it is leaving when it is not.
+    """
     parse(canonical, strict=True)
     entry = Alias(alias, canonical, AliasLevel(level), deprecated_since, replacement, caution, source)
     ALIASES.register(entry, replace=replace)

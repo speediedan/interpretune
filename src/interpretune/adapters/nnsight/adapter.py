@@ -295,6 +295,11 @@ class NNsightAdapter(NNsightAttributeMixin):
         - (core, nnsight): Basic NNsight support
         - (lightning, nnsight): NNsight with Lightning integration
         """
+        # Registered rather than discovered by import path, so a bundled adapter and a hub-delivered one
+        # reach auto-composition through the same seam.
+        from interpretune.adapters.nnsight.config import ITNNsightConfig
+
+        adapter_ctx_registry.register_module_cfg_class(Adapter.nnsight, ITNNsightConfig)
         # ======================================================================
         # Core + NNsight registrations
         # ======================================================================

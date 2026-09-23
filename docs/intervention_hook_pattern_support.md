@@ -22,13 +22,13 @@ norm (they are the same tensor as `hook_resid_mid` / `hook_resid_pre`), one norm
 argument (`mlp.hook_in`, `attn.hook_in`, which the vocabulary addresses at the norm's output). Consumers surface the
 caution; whether to refuse the name is their policy.
 
-## Deprecated spellings: the alias table
+## TransformerLens spellings: the alias table
 
-Legacy `HookedTransformer` names that are neither semantic nor component points are served through ONE table,
+TransformerLens names that are neither semantic nor component points are served through ONE table,
 `interpretune.analysis.points.vocabulary.ALIASES`. An alias asserts only that a spelling MEANS a point; whether two
 spellings name the same tensor is answered by resolution, per architecture, never by the table.
 
-| deprecated spelling | means | level |
+| alias | means | level |
 |---|---|---|
 | `attn.hook_z` | `attn.o.hook_in` | component |
 | `hook_q_input` / `hook_k_input` / `hook_v_input` | `attn.q.hook_in` / `attn.k.hook_in` / `attn.v.hook_in` | component |
@@ -38,8 +38,8 @@ spellings name the same tensor is answered by resolution, per architecture, neve
 | `hook_embed` / `hook_pos_embed` | `embed.hook_out` / `pos_embed.hook_out` | component |
 
 `parse(name)` returns the canonical point with `alias` set to the spelling used, so a linter can say "you wrote X,
-this means Y"; `parse(name, strict=True)` refuses every alias with `DeprecatedPointError` naming the replacement,
-for configs that want to be canonical. Adapters register their own deprecated spellings with `register_alias`; a
+this means Y"; `parse(name, strict=True)` refuses every alias with `NonCanonicalPointError` naming the replacement,
+for configs that want to be canonical. Adapters register their own aliases with `register_alias`; a
 registration that would shadow a semantic point, a component spelling or another alias is refused.
 
 ## What replaced the alias groups
@@ -71,7 +71,7 @@ matched literally against the model's hook names.
 
 - Ask for semantic points when you mean a tensor's role (`hook_resid_pre`, `hook_mlp_out`) and component points
   when you mean a specific module (`blocks.5.ln2.hook_out`, `unembed.hook_in`).
-- Write canonical spellings in new configs and validate with `parse(name, strict=True)`; keep a deprecated alias
-  only while an older notebook is being migrated.
+- Write canonical spellings in new configs and validate with `parse(name, strict=True)`; an alias stays
+  accepted, since TransformerLens itself still documents these spellings as current vocabulary.
 - A backend that cannot honour a point refuses by name (`Unresolvable`, or the backend's own error). Nothing is
   narrowed, widened or substituted for you, because every substitution produces plausible activations.

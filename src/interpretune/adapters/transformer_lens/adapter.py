@@ -443,6 +443,11 @@ class TransformerLensAdapter(TLensAttributeMixin):
     @classmethod
     def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
         """Register the TransformerLens datamodule and module compositions."""
+        # Registered rather than discovered by import path, so a bundled adapter and a hub-delivered one
+        # reach auto-composition through the same seam.
+        from interpretune.adapters.transformer_lens.config import ITLensConfig
+
+        adapter_ctx_registry.register_module_cfg_class(Adapter.transformer_lens, ITLensConfig)
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="datamodule",

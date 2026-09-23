@@ -47,10 +47,37 @@ Two related surfaces worth knowing about, which the gate does not cover:
   Nothing new is downloaded, but a hostile configuration can select and call code you already have
   installed, with arguments it chooses. Read a configuration before instantiating from a publisher
   you do not trust.
-- **Adapters** ([#125](https://github.com/speediedan/interpretune/issues/125)) are not shareable
-  yet. When they are, they compose into your class hierarchy through the MRO, which is a stronger
-  capability than an op collection's; whether they are held to a stricter bar than "the session
-  opted in" is an open decision on that issue, deliberately not pre-empted here.
+- **Adapters** compose into your class hierarchy through the MRO, so their code sits on the
+  resolution path of methods you never handed over. They are held to the **same** bar as every
+  other path above, and that is a decision rather than a default. See the next section.
+
+## Why adapters get the same bar, not a stricter one
+
+A hub adapter composes into the MRO of the module a session runs, which looks like a stronger
+capability than an op collection's: an op is called, while an adapter's methods run whenever the
+session calls the methods it overrides. It was an open question whether that deserves a separate,
+narrower opt-in. It does not, for three reasons:
+
+- **The ceiling is already reached by any executed code.** An op collection's module code runs at
+  import, as ordinary Python in your process. From there it can patch any class, including the ones
+  an adapter would compose into, and wrap any method it likes. An MRO-resident adapter reaches
+  nothing an imported op module cannot, so a stricter gesture for adapters would guard a door that
+  the op path leaves open. What the gate controls is whether publisher code runs in your process at
+  all, and that question is the same for both.
+- **What composes is declared before anything runs.** An adapter component names the `Adapter`
+  members it adds (`adapters.declares`) and the compositions it supports in its manifest, which is
+  data you can read after a `pull` that executes nothing. The loader checks afterwards that the
+  entrypoint registered exactly what it declared, so a component cannot quietly register more.
+- **Inspection works to the same degree.** The code that runs is the entrypoint the manifest names
+  and whatever it imports. Inherited behaviour comes from interpretune itself or from declared
+  dependencies, not from anything the component can hide, so reading the entrypoint tells you what
+  the adapter adds.
+
+Two consequences follow. Opting in for ops also opts in for adapters, because one environment
+variable governs one question. And the residual risk that differs is not the MRO but
+**dependencies**: an adapter's `requires.pip` names packages that run their own code when
+installed and imported. How those are installed is a separate design question
+([#457](https://github.com/speediedan/interpretune/issues/457)), and nothing here installs anything.
 
 ## The default, and how to opt in
 

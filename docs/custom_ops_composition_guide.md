@@ -420,7 +420,9 @@ Four things to internalize before you pick a version or a window:
    (or raises under `IT_STRICT_OP_LOAD=1`), because a partial load presents half a contract set.
 3. **`>=0.1` does not mean what you want.** `setuptools_scm` produces `0.1.0.devN+g<sha>` between
    tags, and PEP 440 sorts a dev release *before* its release, so a bare floor silently skips your
-   whole collection for anyone on a source install. Write `>=0.1.0.dev0`.
+   whole collection for anyone on a source install. Write `>=0.1.0.dev0`. The same applies to the
+   `requires.interpretune` of any component manifest, and a load refused only because of this ordering
+   says so and names the `.dev0` spelling rather than reporting a version conflict.
 4. **The header lives in the op YAML, not in `it_component.yaml`.** It travels with the definitions,
    so bundled families and local collections — which have no manifest at all — declare it the same
    way, and there is no second place for it to disagree with itself.

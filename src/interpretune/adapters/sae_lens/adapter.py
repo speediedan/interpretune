@@ -23,7 +23,7 @@ from interpretune.adapters import (
 )
 from interpretune.utils.import_utils import _resolve_dtype
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
-from interpretune.config import SAELensFromPretrainedConfig, SAELensCustomConfig, SAELensConfig
+from interpretune.adapters.sae_lens.config import SAELensFromPretrainedConfig, SAELensCustomConfig, SAELensConfig
 from interpretune.utils import rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
 
@@ -444,6 +444,9 @@ class SAELensAdapter(SAELensAttributeMixin):
         backend rather than standing alone; the backend-agnostic ``(core, sae_lens)`` entries default
         to the TransformerLens backend.
         """
+        # Registered rather than discovered by import path, so a bundled adapter and a hub-delivered one
+        # reach auto-composition through the same seam.
+        adapter_ctx_registry.register_module_cfg_class(Adapter.sae_lens, SAELensConfig)
         # ======================================================================
         # Backend-agnostic registrations: (core, sae_lens) — defaults to TL backend
         # ======================================================================

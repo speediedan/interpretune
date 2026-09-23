@@ -1,10 +1,8 @@
 from typing import Any, TypeVar, TypeAlias, Sequence
 from dataclasses import dataclass, field, fields, make_dataclass
-import importlib
 import inspect
 import logging
 import os
-import sys
 from pathlib import PosixPath, WindowsPath
 
 import yaml
@@ -16,26 +14,6 @@ from interpretune.protocol import Adapter
 
 log = logging.getLogger(__name__)
 
-# DEFAULT auto-composition search TEMPLATES, formatted with an adapter name.
-#
-# Each adapter now owns one package holding its module composition and its config (#401), so
-# auto-composition looks inside that package rather than at two parallel namespaces keyed by adapter
-# name. Templates rather than base paths because the interesting modules are no longer all the same
-# depth, and because a template states the convention it depends on instead of implying it.
-#
-# A hub-delivered adapter is NOT reachable this way: its module is executed from a cache under a
-# revision-scoped synthetic name, so no import path can be derived from the adapter name. Discovery for
-# those goes through the registry the component's entrypoint writes to, which is why this list stays
-# BUNDLED-only rather than growing a "search everything" mode that would still miss them.
-# NOT the bare package: `inspect.getmembers` below calls `dir()` and then `getattr` for every name, and
-# these packages export lazily, so scanning the package would RESOLVE every export and import each
-# adapter's framework as a side effect of composing a config. The submodules define the classes anyway
-# (the `member.__module__` guard already discards anything merely re-exported), so the package entry
-# would contribute nothing while costing heavy imports.
-AUTOCOMP_SEARCH_TEMPLATES = [
-    "interpretune.adapters.{adapter}.config",
-    "interpretune.adapters.{adapter}.adapter",
-]
 
 AdapterSeq: TypeAlias = Sequence[Adapter | str] | Adapter | str
 
@@ -181,54 +159,20 @@ T = TypeVar("T")
 def find_adapter_subclasses(
     target_type: type, target_adapters: AdapterSeq | None = None
 ) -> tuple[dict[Adapter, type], dict[Adapter, type]]:
-    """Searches `interpretune.adapters` and `interpretune.config` for subclasses of `target_type` and returns them.
+    """The config classes adapters registered that subclass, or are superclasses of, ``target_type``.
 
-    If target_adapters is provided, only considers subclasses from the specified adapters.
+    Every adapter, bundled or hub-delivered, registers its module config class with the composition registry
+    (``register_module_cfg_class``), and this reads only that registration. There is deliberately no second route
+    that derives a module path from the adapter's name: that route could only ever find bundled adapters, which made
+    the bundled set privileged by construction.
+
+    If target_adapters is provided, only considers classes registered by the specified adapters.
     """
     subclasses, superclasses = {}, {}
     adapter_space = (
         adapter_seq_to_list(target_adapters) if target_adapters is not None else Adapter.__members__.values()
     )
-    # Search the submodules that DEFINE each adapter's composition and config classes, IMPORTING them
-    # rather than only considering what is already in sys.modules.
-    #
-    # Importing is required for correctness now that adapter configs resolve lazily: before the
-    # per-adapter packages (#401) `interpretune.config.<name>` was imported eagerly and so was always
-    # present, and a sys.modules-only scan silently found nothing once that stopped being true --
-    # auto-composition would return no candidates and the caller would get a bare ITConfig.
-    #
-    # It does not cost the bare-install property this restructure exists to buy, because
-    # auto-composition runs when a caller CONSTRUCTS a config carrying adapter-specific kwargs, never at
-    # import time; at that point importing that adapter is exactly what the caller asked for. An adapter
-    # whose framework is absent raises ImportError here and is skipped, which is the correct answer to
-    # "can this adapter satisfy these kwargs".
-    for template in AUTOCOMP_SEARCH_TEMPLATES:
-        candidate_modules = {}
-        for val in adapter_space:
-            module_path = template.format(adapter=val.name)
-            module = sys.modules.get(module_path)
-            if module is None:
-                try:
-                    module = importlib.import_module(module_path)
-                except Exception:  # absent framework, or an adapter that fails to import here
-                    continue
-            candidate_modules[val] = (module_path, module)
-        for adapter, (module_fqn, module) in candidate_modules.items():
-            for _, member in inspect.getmembers(module, inspect.isclass):
-                if member.__module__ != module_fqn:
-                    continue
-                if issubclass(member, target_type) and member is not target_type:
-                    subclasses[adapter] = member
-                elif issubclass(target_type, member):
-                    superclasses[adapter] = member
-
-    # A hub-delivered adapter executes from a revision-scoped synthetic module, so the templates above
-    # cannot name it and it is absent from everything they find. Its entrypoint registers a config class
-    # instead. Consulted AFTER the templates so an adapter reachable both ways resolves the same as it
-    # always did, and registration cannot change what a bundled adapter composes.
     for adapter, member in _registered_cfg_classes(adapter_space).items():
-        if adapter in subclasses or adapter in superclasses:
-            continue
         if issubclass(member, target_type) and member is not target_type:
             subclasses[adapter] = member
         elif issubclass(target_type, member):
@@ -239,8 +183,10 @@ def find_adapter_subclasses(
 def _registered_cfg_classes(adapter_space) -> dict[Adapter, type]:
     """Config classes adapters registered with the composition registry, keyed by adapter.
 
-    Empty in a session where nothing registered one, which is every bundled-only session, so this costs a dict lookup
-    per adapter and changes no existing resolution.
+    Reading the registry populates it on first access, which imports every adapter whose declared requirements are met.
+    That happens when a caller constructs a config carrying adapter-specific kwargs, never at import time, so importing
+    the adapters is exactly what the caller asked for; an adapter whose framework is absent registers nothing and is
+    correctly not a candidate.
     """
     from interpretune.adapter_registry import ADAPTER_REGISTRY
 

@@ -24,7 +24,8 @@ from interpretune.adapters import (
     BaseNNsightModule,
 )
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
-from interpretune.config import CircuitTracerConfig, ITConfig
+from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig
+from interpretune.config import ITConfig
 from interpretune.analysis.backends.capabilities import get_model_backend
 from interpretune.utils import rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter

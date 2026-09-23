@@ -21,12 +21,11 @@ from interpretune.config.module import ITConfig, ITState
 from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg
 from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg, init_analysis_dirs, init_analysis_cfgs
 
-# ADAPTER CONFIGS RESOLVE LAZILY, and this is the point of the per-adapter package layout (#401).
-# Each adapter's config now lives with its adapter (`interpretune.adapters.<name>.config`), so a
-# BUNDLED adapter's config has exactly the standing a hub-delivered one does. These names stay
-# importable from here because they always have been, but importing them is no longer a condition of
-# importing `interpretune.config`: `transformer_lens` and `sae_lens` were previously eager, which made
-# two optional-extra frameworks de facto hard requirements of the core config package.
+# Each adapter's config lives with its adapter (`interpretune.adapters.<name>.config`), and every adapter,
+# bundled or hub-delivered, reaches auto-composition only by registering its config class with the
+# composition registry. The table below is a naming convenience for the bundled set and nothing more: it
+# resolves on first attribute access, participates in no discovery, and importing `interpretune.config`
+# imports none of these frameworks (`tests/core/test_adapters_import_time.py` pins that).
 _ADAPTER_CONFIG_EXPORTS = {
     "ITLensBridgeConfig": "transformer_lens",
     "ITLensCfg": "transformer_lens",

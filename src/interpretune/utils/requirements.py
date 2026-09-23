@@ -82,6 +82,40 @@ def install_command(entry: str) -> str:
     return f"uv pip install {entry!r}"
 
 
+def _interpretune_unmet_message(source: str, it_spec: str, it_version: str) -> str:
+    """Explain an unmet ``requires.interpretune``, naming the pre-release case when it is the only reason.
+
+    A development build sorts BEFORE its own final release under PEP 440, so ``>=0.1.0`` excludes
+    ``0.1.0.dev349``: the spelling an author writes when targeting the current version locks out everyone on a
+    development build of it. Reported as an ordinary version conflict, that reads as a broken environment. When the
+    installed build's own release WOULD satisfy the specifier, the pre-release ordering is the whole cause, so the
+    message says that and names the spelling that admits development builds.
+    """
+    from packaging.specifiers import SpecifierSet
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        installed: Version | None = Version(it_version)
+    except InvalidVersion:
+        installed = None
+    if (
+        installed is not None
+        and installed.is_prerelease
+        and SpecifierSet(str(it_spec)).contains(installed.base_version)
+    ):
+        return (
+            f"{source}: requires interpretune {it_spec!r}, and {it_version!r} is a development build of "
+            f"{installed.base_version}, which PEP 440 orders BEFORE {installed.base_version} itself. Your environment "
+            f"is fine: the specifier excludes development builds. A component meant to load on them declares "
+            f"'>={installed.base_version}.dev0'."
+        )
+    return (
+        f"{source}: requires interpretune {it_spec!r} but {it_version!r} is installed. "
+        "(If this version looks wrong for your checkout, stale packaging metadata — e.g. an old "
+        "src/*.egg-info directory — can shadow the real installation when src/ is on sys.path.)"
+    )
+
+
 def requirement_status(requires: dict, source: str = "<component>") -> list[UnmetRequirement]:
     """Evaluate a ``requires`` block against this environment, returning EVERY unmet requirement.
 
@@ -113,13 +147,7 @@ def requirement_status(requires: dict, source: str = "<component>") -> list[Unme
             it_version = getattr(interpretune, "__version__", None)
         if it_version is not None and not SpecifierSet(str(it_spec)).contains(it_version, prereleases=True):
             unmet.append(
-                UnmetRequirement(
-                    "interpretune",
-                    str(it_spec),
-                    f"{source}: requires interpretune {it_spec!r} but {it_version!r} is installed. "
-                    "(If this version looks wrong for your checkout, stale packaging metadata — e.g. an old "
-                    "src/*.egg-info directory — can shadow the real installation when src/ is on sys.path.)",
-                )
+                UnmetRequirement("interpretune", str(it_spec), _interpretune_unmet_message(source, it_spec, it_version))
             )
     from interpretune.protocol import Adapter
 

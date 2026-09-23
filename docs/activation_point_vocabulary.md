@@ -210,9 +210,12 @@ therefore never silently displaces a bundled one, and never silently loses to on
 bundled document is the moment the pulled map takes effect, and it takes effect by the same lookup that
 refused the architecture the day before.
 
-## Legacy names
+## TransformerLens aliases
 
-The legacy `HookedTransformer` vocabulary is deprecated except for the semantic names above. Deprecated spellings
-are served through an explicit alias table (alias, canonical, level, deprecated-since, replacement, optional
-caution); a parse reports the canonical spelling and the alias it came from; a strict mode refuses deprecated
-aliases; adapters may register aliases for their own vocabulary rather than carrying private tables.
+TransformerLens spellings that are neither the semantic names above nor component points (`attn.hook_z`,
+`hook_q`, `hook_embed`) are served through an explicit alias table (alias, canonical, level, an optional
+deprecated-since, replacement, optional caution). They are accepted, not deprecated: TransformerLens's own bridge
+carries them as current vocabulary, so the only thing interpretune expresses about them is a preference for
+canonical names. A parse reports the canonical spelling and the alias it came from; a strict mode refuses aliases
+as a matter of style; adapters may register aliases for their own vocabulary rather than carrying private tables,
+and mark one deprecated only when they are actually retiring it.
