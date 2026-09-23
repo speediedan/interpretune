@@ -763,3 +763,63 @@ class TestSnapshotRewrite:
         manifest = yaml.safe_load((out / "it_component.yaml").read_text(encoding="utf-8"))
         with pytest.raises(ValueError, match="refuses unmapped it_examples imports"):
             EXPERIMENT_SNAPSHOT_REWRITES["concept-direction-v1"](out, manifest)
+
+
+class TestTemplatePort:
+    """Template execution port for snapshot runs (#498 slice 1)."""
+
+    def _staged_tree_with_template(self, root: Path) -> tuple[Path, dict]:
+        import json
+
+        out = root / "staged"
+        (out / "concept_direction").mkdir(parents=True)
+        template = {
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "source": [
+                        "from tests.nb_experiments.session import experiment_session\n",
+                        "with experiment_session('w', 'r') as (_, _, tok):\n",
+                        "    print(tok)\n",
+                    ],
+                },
+                {"cell_type": "markdown", "source": ["# title\n"]},
+            ],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5,
+        }
+        (out / "concept_direction" / "concept_direction_template.ipynb").write_text(
+            json.dumps(template), encoding="utf-8"
+        )
+        manifest = {"experiments": {"demo": {"config": "c.yaml", "pipeline": "p.py", "files": []}}}
+        from interpretune.hub.publish import _rewrite_concept_direction_template
+
+        _rewrite_concept_direction_template(out, manifest)
+        return out, manifest
+
+    def test_template_port_rewrites_imports_and_generates_loader(self, tmp_path):
+        import json
+
+        out, manifest = self._staged_tree_with_template(tmp_path)
+        assert (out / "exp" / "_tokenizer_loader.py").is_file()
+        code = "\n".join(
+            "".join(c.get("source", []))
+            for c in json.loads(
+                (out / "concept_direction" / "concept_direction_template.ipynb").read_text(encoding="utf-8")
+            )["cells"]
+            if c.get("cell_type") == "code"
+        )
+        assert "from exp._tokenizer_loader import experiment_session" in code
+        assert "tests.nb_experiments" not in code
+        files = manifest["experiments"]["demo"]["files"]
+        assert "exp/_tokenizer_loader.py" in files
+        assert "concept_direction/concept_direction_template.ipynb" in files
+
+    def test_template_missing_template_refused(self, tmp_path):
+        from interpretune.hub.publish import _rewrite_concept_direction_template
+
+        out = tmp_path / "staged"
+        out.mkdir()
+        with pytest.raises(FileNotFoundError, match="declare the template"):
+            _rewrite_concept_direction_template(out, {"experiments": {}})

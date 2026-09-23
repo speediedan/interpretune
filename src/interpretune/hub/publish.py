@@ -408,7 +408,156 @@ def _rewrite_concept_direction_snapshot(out_dir: Path, manifest: dict) -> None:
         for rel in generated_rels:
             if rel not in entry["files"]:
                 entry["files"].append(rel)
+    _rewrite_concept_direction_template(out_dir, manifest)
     (out_dir / IT_COMPONENT_MANIFEST).write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+
+#: Exact import swaps applied to the staged notebook template so it executes against the
+#: snapshot (staged ``exp/`` package plus core) instead of the deleted in-repo trees.
+_TEMPLATE_IMPORT_SWAPS = [
+    (
+        "from tests.nb_experiments.concept_direction.concept_direction import (",
+        "from exp.concept_direction import (",
+    ),
+    (
+        "from tests.nb_experiments.nb_harness_utils import (",
+        "from interpretune.harness.nb_harness_utils import (",
+    ),
+    (
+        "from tests.nb_experiments.pipeline_patterns import (",
+        "from exp.pipeline_patterns import (",
+    ),
+    (
+        "from tests.nb_experiments.session import experiment_session",
+        "from exp._tokenizer_loader import experiment_session",
+    ),
+    (
+        "from tests.nb_experiments.concept_direction.analysis.concept_direction_analysis "
+        "import compare_top_feature_sets",
+        "from exp.analysis.concept_direction_analysis import compare_top_feature_sets",
+    ),
+]
+
+#: The in-repo bootstrap block the template port replaces: a repo-root walk plus test-harness
+#: path wiring. No repository exists on Hub, so snapshot execution roots at the working directory.
+_SNAPSHOT_BOOTSTRAP_OLD = """def _find_repo_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / "pyproject.toml").exists():
+            return candidate
+    raise FileNotFoundError(f"Could not locate repo root from {start}")
+
+
+CWD = Path.cwd().resolve()
+REPO_ROOT = _find_repo_root(CWD)
+TESTS_DIR = REPO_ROOT / "tests"
+HARNESS_DIR = TESTS_DIR / "nb_experiments" / "concept_direction"
+SHARED_HARNESS_DIR = TESTS_DIR / "nb_experiments"
+
+for path in (REPO_ROOT, TESTS_DIR, SHARED_HARNESS_DIR):
+    path_str = str(path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
+
+from tests.nb_experiments.notebook_bootstrap import bootstrap_notebook_imports
+
+bootstrap_notebook_imports(cwd=CWD, extra_paths=[HARNESS_DIR])"""
+
+_SNAPSHOT_BOOTSTRAP_NEW = """CWD = Path.cwd().resolve()
+SNAPSHOT_ROOT = CWD
+# Snapshot execution: no repository exists on Hub. The staged snapshot root lands on
+# sys.path, so `exp.*` resolves to the staged package and core names import directly;
+# the in-repo bootstrap (repo-root walk plus test-harness paths) is dropped.
+if str(SNAPSHOT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SNAPSHOT_ROOT))"""
+
+#: Snapshot-carried tokenizer access for the template's display cells: they only ever use
+#: the yielded tokenizer, while the in-repo helper builds a full wheel-excluded test session
+#: no Hub consumer could construct. Gated weights resolve with the ambient Hub credential.
+_TOKENIZER_LOADER_TEXT = '''"""Snapshot-local tokenizer access for display cells (no test session on Hub)."""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterator
+
+
+@contextmanager
+def experiment_session(
+    work_root: str | Path, run_name: str, **kwargs: Any
+) -> Iterator[tuple[Any, Any, Any]]:
+    """Yield ``(None, None, tokenizer)``: display cells only ever use the tokenizer."""
+    session_dir = Path(work_root) / run_name
+    session_dir.mkdir(parents=True, exist_ok=True)
+    model_name = kwargs.get("model_name")
+    if not model_name:
+        raise ValueError("experiment_session needs model_name in the session kwargs")
+    from transformers import AutoTokenizer
+
+    yield None, None, AutoTokenizer.from_pretrained(model_name)
+'''
+
+#: The staged template, relative to the snapshot root. Staged verbatim by the manifest like
+#: any payload, then ported in place below.
+_TEMPLATE_REL = "concept_direction/concept_direction_template.ipynb"
+
+
+def _rewrite_concept_direction_template(out_dir: Path, manifest: dict) -> None:
+    """Port the staged notebook template to snapshot execution.
+
+    Applies the exact import swaps, replaces the repo-root bootstrap with snapshot-root
+    path logic, generates the snapshot-local tokenizer loader, and refuses any remaining
+    references to the deleted in-repo trees in code cells. The template file itself must
+    be manifest-declared (it ships); its rel joins every entry's ``files`` like the other
+    generated/carried payloads.
+    """
+    import json
+
+    template = out_dir / _TEMPLATE_REL
+    if not template.is_file():
+        raise FileNotFoundError(
+            f"concept-direction snapshot rewrite needs staged {_TEMPLATE_REL!r}: declare the "
+            "template in the manifest `files` to ship template execution."
+        )
+    notebook = json.loads(template.read_text(encoding="utf-8"))
+    for cell in notebook.get("cells", []):
+        if cell.get("cell_type") != "code":
+            continue
+        source = "".join(cell.get("source", []))
+        if _SNAPSHOT_BOOTSTRAP_OLD in source:
+            source = source.replace(_SNAPSHOT_BOOTSTRAP_OLD, _SNAPSHOT_BOOTSTRAP_NEW)
+        for old, new in _TEMPLATE_IMPORT_SWAPS:
+            if old in source:
+                source = source.replace(old, new)
+        cell["source"] = [source]
+    template.write_text(json.dumps(notebook, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    (out_dir / "exp").mkdir(parents=True, exist_ok=True)
+    (out_dir / "exp" / "_tokenizer_loader.py").write_text(_TOKENIZER_LOADER_TEXT, encoding="utf-8")
+
+    blockers: list[str] = []
+    for cell in notebook.get("cells", []):
+        if cell.get("cell_type") != "code":
+            continue
+        for lineno, line in enumerate("".join(cell.get("source", [])).splitlines(), 1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            for marker in ("tests.nb_experiments", "it_examples.experiments", "REPO_ROOT", "TESTS_DIR"):
+                if marker in stripped:
+                    blockers.append(f"{_TEMPLATE_REL}:{lineno}:{marker}")
+    if blockers:
+        raise ValueError(
+            "concept-direction template port refuses references to the deleted in-repo trees "
+            f"(extend the swaps): {sorted(blockers)}"
+        )
+
+    for entry in (manifest.get("experiments") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        for rel in ("exp/_tokenizer_loader.py", _TEMPLATE_REL):
+            if rel not in (entry.get("files") or []):
+                entry.setdefault("files", []).append(rel)
 
 
 #: Snapshot rewrites by manifest-declared name. A name with no entry here is refused at build time
