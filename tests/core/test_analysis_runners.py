@@ -553,9 +553,9 @@ class TestGeneratorCacheSharing:
         module.analysis_cfg.output_store.cache_dir = cache_dir
         return module
 
-    def _run(self, monkeypatch, module, shared, base, split="validation"):
+    def _run(self, monkeypatch, module, shared, base, split="validation", value=1):
         def fake_gen(**_kwargs):
-            yield {"value": 1}
+            yield {"value": value}
 
         monkeypatch.setattr("interpretune.runners.analysis.analysis_store_generator", fake_gen)
         return generate_analysis_dataset(
@@ -564,7 +564,7 @@ class TestGeneratorCacheSharing:
             it_format_kwargs={},
             gen_kwargs={},
             split=split,
-            fingerprint=base,
+            dataset_fingerprint=base,
             generator_cache_dir=shared,
         )
 
@@ -588,6 +588,78 @@ class TestGeneratorCacheSharing:
         self._run(monkeypatch, module, shared, base="base-key", split="test")
         self._run(monkeypatch, module, shared, base="other-key", split="validation")
         assert len(self._cache_files(shared)) == 3
+
+    def test_a_key_shared_by_different_computations_serves_the_first_ones_rows(self, monkeypatch, tmp_path):
+        """The base key is the only thing separating computations that share a split and output features.
+
+        Two generations whose generators yield different rows, under one base, get the first one's rows back. So the
+        base must identify the whole computation, op inputs included; the split and features do not.
+        """
+        shared = tmp_path / "shared"
+        module = self._module(tmp_path / "workdir")
+        first = self._run(monkeypatch, module, shared, base="base-key", value=1)
+        second = self._run(monkeypatch, module, shared, base="base-key", value=2)
+        assert first.to_dict() == {"value": [1]}
+        assert second.to_dict() == {"value": [1]}, "the second computation was served the first one's rows"
+
+    def test_the_runner_config_key_reaches_generation(self, tmp_path):
+        """The runner hands its config to the loop by field name, so the key must arrive under that name.
+
+        It once arrived as ``dataset_fingerprint`` at a function taking ``fingerprint``, was absorbed as error
+        context, and every generation took a random fingerprint while writing into the persistent directory.
+        """
+        from interpretune.runners import analysis as runner
+
+        assert {"dataset_fingerprint", "generator_cache_dir"} <= set(AnalysisRunnerCfg.__dataclass_fields__)
+        module = MagicMock()
+        module.analysis_cfg.output_store.save_dir = str(tmp_path / "out")
+        features = Features({"value": Value("int64")})
+        seen: list[dict] = []
+
+        def _from_generator(*_args, **kwargs):
+            seen.append(kwargs)
+            return MagicMock()
+
+        def _loop(base):
+            runner.core_analysis_loop(
+                module, MagicMock(), dataset_fingerprint=base, generator_cache_dir=str(tmp_path / "shared")
+            )
+
+        with (
+            patch.object(runner, "dataset_features_and_format", side_effect=lambda _m, kw: (features, {}, kw)),
+            patch.object(runner.Dataset, "from_generator", side_effect=_from_generator),
+        ):
+            _loop("base-key")
+            _loop("base-key")
+            _loop("other-key")
+        assert [call["cache_dir"] for call in seen] == [str(tmp_path / "shared")] * 3
+        fingerprints = [call["fingerprint"] for call in seen]
+        assert fingerprints[0] == fingerprints[1], f"one key produced two fingerprints: {fingerprints[:2]}"
+        assert fingerprints[2] != fingerprints[0], "two keys produced one fingerprint"
+
+    def test_a_persistent_dir_without_a_key_is_refused(self, tmp_path):
+        """Random fingerprints in a persistent directory only accumulate files no run can reuse."""
+        shared = tmp_path / "shared"
+        with pytest.raises(ValueError, match="without a dataset_fingerprint"):
+            generate_analysis_dataset(
+                module=self._module(tmp_path / "workdir"),
+                features=Features({"value": Value("int64")}),
+                it_format_kwargs={},
+                gen_kwargs={},
+                generator_cache_dir=shared,
+            )
+        assert not shared.exists(), "the refusal must come before anything is written"
+
+    def test_the_old_keyword_is_refused_by_name(self, tmp_path):
+        """``fingerprint`` would be absorbed as error context and silently ignored, so it is refused."""
+        with pytest.raises(TypeError, match="dataset_fingerprint"):
+            generate_analysis_dataset(
+                module=self._module(tmp_path / "workdir"),
+                features=Features({"value": Value("int64")}),
+                it_format_kwargs={},
+                gen_kwargs={},
+                fingerprint="base-key",
+            )
 
     def test_default_stays_per_run(self, monkeypatch, tmp_path):
         module = self._module(tmp_path / "workdir")

@@ -142,7 +142,7 @@ def generate_analysis_dataset(
     it_format_kwargs,
     gen_kwargs,
     split="validation",
-    fingerprint: str | None = None,
+    dataset_fingerprint: str | None = None,
     generator_cache_dir: str | Path | None = None,
     **kwargs,
 ) -> Dataset:
@@ -154,12 +154,14 @@ def generate_analysis_dataset(
         it_format_kwargs: Kwargs for interpretune format
         gen_kwargs: Dictionary of generator parameters (module, datamodule, limit_analysis_batches, etc.)
         split: The split to use for dataset generation
-        fingerprint: Explicit datasets fingerprint, or a stable base key the split and output
-            features are mixed into (conformance runs pass their run key; see interpretune#554).
-            None (default) keeps the historical per-run random fingerprint.
-        generator_cache_dir: Where datasets writes generator cache files. None (default) keeps the
-            historical `output_store.cache_dir`; pass a shared persistent directory to reuse cache
-            files across runs. See interpretune#554.
+        dataset_fingerprint: A stable base key the split and output features are mixed into. It must
+            identify the whole computation: two generations sharing it, the split and the output features
+            share cache files, so a key that omits an op's inputs serves one computation another's rows.
+            None (default) keeps the per-run random fingerprint. Named as the `AnalysisRunnerCfg` field
+            because the runner forwards its config by field name.
+        generator_cache_dir: Where datasets writes generator cache files. None (default) keeps
+            `output_store.cache_dir`. A persistent directory requires `dataset_fingerprint`: with random
+            fingerprints it would only accumulate files no run can reuse, so that combination is refused.
         **kwargs: Additional arguments for error context
 
     Returns:
@@ -168,14 +170,28 @@ def generate_analysis_dataset(
     Raises:
         Exception: If dataset generation fails, with detailed debug information
     """
+    # The runner forwards its whole config as kwargs, and anything unrecognized lands in **kwargs as error context.
+    # A key passed under the wrong name was absorbed there once, so every run fell back to a random fingerprint
+    # while still writing into a persistent directory: cache files accumulated that nothing could ever read.
+    if "fingerprint" in kwargs:
+        raise TypeError(
+            "generate_analysis_dataset takes its cache key as `dataset_fingerprint` (the AnalysisRunnerCfg field); "
+            "`fingerprint` would be absorbed as error context and silently ignored"
+        )
+    if generator_cache_dir is not None and dataset_fingerprint is None:
+        raise ValueError(
+            f"generator_cache_dir={generator_cache_dir!s} was given without a dataset_fingerprint: every generation "
+            "would get a random fingerprint, so a persistent directory would only accumulate cache files no run "
+            "can reuse. Pass a dataset_fingerprint that identifies the whole computation, or leave "
+            "generator_cache_dir unset."
+        )
     # Use an explicit fingerprint so datasets doesn't hash gen_kwargs via dill.
     # gen_kwargs includes the module/datamodule, and hashing those objects can serialize model
     # weights and fail on memory-constrained runners. The fingerprint is random per run unless the
-    # caller passes a deterministic base key (conformance runs do; see interpretune#554), in which
-    # case the split and output features are mixed in so one base serves every case without two
-    # different computations ever sharing cache files. A general deterministic AnalysisStore cache
-    # key remains post-MVP work under issue #183.
-    if fingerprint is None:
+    # caller passes a deterministic base key, which is mixed with the split and output features. Those
+    # two do not separate different op inputs, so the base has to: a general deterministic AnalysisStore
+    # cache key remains post-MVP work under issue #183.
+    if dataset_fingerprint is None:
         resolved_fingerprint = generate_random_fingerprint()
     else:
         import hashlib
@@ -184,7 +200,11 @@ def generate_analysis_dataset(
         from datasets.fingerprint import Hasher
 
         mix = Hasher.hash(
-            {"base": fingerprint, "split": str(split), "features": json.dumps(features, sort_keys=True, default=str)}
+            {
+                "base": dataset_fingerprint,
+                "split": str(split),
+                "features": json.dumps(features, sort_keys=True, default=str),
+            }
         )
         resolved_fingerprint = hashlib.sha256(mix.encode()).hexdigest()[:32]
     try:
