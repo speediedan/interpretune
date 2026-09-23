@@ -1,3 +1,5 @@
+"""Low-dimensional projections of embedding matrices for latent-state visualization."""
+
 from __future__ import annotations
 
 import importlib
@@ -15,6 +17,8 @@ UmapBackendPreference = Literal["cpu", "gpu", "auto"]
 
 @dataclass(frozen=True)
 class ProjectionResult:
+    """Outcome of projecting an embedding matrix to a low-dimensional coordinate array."""
+
     method: str
     backend: str
     coordinates: np.ndarray
@@ -64,6 +68,7 @@ def project_embeddings(
     umap_init: str = "random",
     umap_backend_preference: UmapBackendPreference = "cpu",
 ) -> ProjectionResult:
+    """Project an embedding matrix to ``n_components`` dimensions for visualization."""
     matrix = torch.as_tensor(values, dtype=torch.float32).detach().cpu()
     if matrix.ndim == 1:
         matrix = matrix.unsqueeze(0)

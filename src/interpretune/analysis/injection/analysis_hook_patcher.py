@@ -176,8 +176,7 @@ def patch_file_with_hooks(
             lines.insert(line_num, hook_call)
 
     # Add import at top of file (after any existing imports, including from __future__)
-    # Use the new package path for the in-repo analysis_injection package located under utils
-    import_line = "from it_examples.utils.analysis_injection.analysis_hook_patcher import HOOK_REGISTRY\n"
+    import_line = "from interpretune.analysis.injection.analysis_hook_patcher import HOOK_REGISTRY\n"
 
     # Find where to insert import (after last import or at beginning)
     # Must handle: docstrings (single/multi-line), comments, blank lines, __future__ imports,
@@ -364,8 +363,22 @@ def install_patched_modules_with_references(patched_modules: dict[str, Path]) ->
 
             # Check each attribute in the importing module
             for attr_name, attr_value in list(importer_module.__dict__.items()):
+                # Check for stale submodule attributes on parent packages: the import
+                # system caches the original submodule object as an attribute of the
+                # parent, which survives the sys.modules swap above. Without this,
+                # any consumer reaching the module through its parent (attribute
+                # access, or a lazy package __getattr__) silently executes the
+                # original unpatched code.
+                if isinstance(attr_value, types.ModuleType) and getattr(attr_value, "__name__", None) == module_name:
+                    setattr(importer_module, attr_name, patched_module)
+
+                    # Log the update for debugging
+                    logging.getLogger("analysis_injection").debug(
+                        f"Updated module reference to {module_name} in {importer_name}"
+                    )
+
                 # Check for functions
-                if (
+                elif (
                     isinstance(attr_value, types.FunctionType)
                     and getattr(attr_value, "__module__", None) == module_name
                 ):
@@ -477,7 +490,7 @@ def get_module_debug_info(module_name: str) -> dict[str, Any]:
             with open(module.__file__) as f:
                 source = f.read()
                 info["hook_call_count"] = source.count("HOOK_REGISTRY.execute")
-                info["has_analysis_import"] = "from it_examples.utils.analysis_injection" in source
+                info["has_analysis_import"] = "from interpretune.analysis.injection" in source
         except Exception as e:
             info["read_error"] = str(e)
 

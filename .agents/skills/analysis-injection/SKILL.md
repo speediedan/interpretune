@@ -147,7 +147,7 @@ source /mnt/cache/$USER/.venvs/it_latest/bin/activate   # development
 
 ```python
 # In notebook or test, after setup:
-from it_examples.utils.analysis_injection import orchestrator
+from interpretune.analysis.injection import orchestrator
 
 print("Hook registry status:")
 print(f"  Enabled: {orchestrator.HOOK_REGISTRY._enabled}")

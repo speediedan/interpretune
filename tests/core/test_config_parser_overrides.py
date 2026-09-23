@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from it_examples.utils.analysis_injection.config_parser import (
+from interpretune.analysis.injection.config_parser import (
     merge_config_dict,
     parse_config_dict,
 )

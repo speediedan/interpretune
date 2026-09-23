@@ -6,8 +6,8 @@ from typing import Any
 
 import torch
 
-from it_examples.utils.analysis_injection.analysis_hook_patcher import HOOK_REGISTRY, get_analysis_vars
-from it_examples.utils.analysis_injection.orchestrator import (
+from interpretune.analysis.injection.analysis_hook_patcher import HOOK_REGISTRY, get_analysis_vars
+from interpretune.analysis.injection.orchestrator import (
     analysis_log_point,
     VarAnnotate,
     format_per_token,

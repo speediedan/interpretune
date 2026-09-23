@@ -52,7 +52,7 @@ def test_framework():
     # Step 2: Import and test the new API
     print("\n2. Testing new API...")
     try:
-        from it_examples.utils.analysis_injection import (
+        from interpretune.analysis.injection import (
             setup_analysis_injection,
             get_module_debug_info,
             HOOK_REGISTRY,
@@ -102,7 +102,7 @@ def test_framework():
     # Step 6: Test module debug info
     print("\n6. Testing module debug info...")
     try:
-        from it_examples.utils.analysis_injection import get_module_debug_info
+        from interpretune.analysis.injection import get_module_debug_info
 
         target_module = "circuit_tracer.attribution.attribute"
         info = get_module_debug_info(target_module)
@@ -120,7 +120,7 @@ def test_framework():
 
     # Step 7: Verify HOOK_REGISTRY state
     print("\n7. Verifying HOOK_REGISTRY state...")
-    from it_examples.utils.analysis_injection import HOOK_REGISTRY
+    from interpretune.analysis.injection import HOOK_REGISTRY
 
     print(f"   [OK] Enabled: {HOOK_REGISTRY._enabled}")
     print(f"   [OK] Registered hooks: {len(HOOK_REGISTRY._hooks)}")
@@ -186,12 +186,12 @@ def test_orchestrator_access():
     print("\n2. Defining test analysis functions...")
 
     def test_point_1(local_vars):
-        from it_examples.utils.analysis_injection.orchestrator import analysis_log_point
+        from interpretune.analysis.injection.orchestrator import analysis_log_point
 
         analysis_log_point("Test point 1 executed", {"value": 1, "status": "executed"})
 
     def test_point_2(local_vars):
-        from it_examples.utils.analysis_injection.orchestrator import analysis_log_point
+        from interpretune.analysis.injection.orchestrator import analysis_log_point
 
         analysis_log_point("Test point 2 executed", {"value": 2, "status": "executed"})
 
@@ -200,7 +200,7 @@ def test_orchestrator_access():
     # Step 3: Create orchestrator and register hooks
     print("\n3. Creating orchestrator and registering hooks...")
     try:
-        from it_examples.utils.analysis_injection import orchestrator
+        from interpretune.analysis.injection import orchestrator
 
         # Clear any existing data
         orchestrator.clear_analysis_data()
@@ -373,4 +373,92 @@ def test_orchestrator_access():
 
     print("\n" + "=" * 80)
     print("[PASS] Orchestrator iteration test passed!")
+    print("=" * 80)
+
+
+def test_install_updates_stale_submodule_attributes(tmp_path):
+    """Installing patched modules must replace stale submodule attributes on parent packages.
+
+    The import system caches the original submodule object as an attribute of the parent package, which survives a
+    sys.modules swap. Without the module-attribute branch of install_patched_modules_with_references, any consumer
+    reaching the module through its parent silently executes the original unpatched code. Measured against the pinned
+    circuit-tracer, whose lazy package __getattr__ resolves exactly this path: the attribution hooks were inserted and
+    verified yet never fired.
+    """
+    import sys
+    import textwrap
+
+    print("=" * 80)
+    print("Testing stale submodule attribute replacement")
+    print("=" * 80)
+
+    pkg_dir = tmp_path / "staleattr_pkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("")
+    (pkg_dir / "worker.py").write_text(
+        textwrap.dedent(
+            """\
+            def run():
+                result = 21 * 2
+                return result
+            """
+        )
+    )
+
+    sys.path.insert(0, str(tmp_path))
+    for mod in [m for m in sys.modules if m == "staleattr_pkg" or m.startswith("staleattr_pkg.")]:
+        del sys.modules[mod]
+
+    from interpretune.analysis.injection import HOOK_REGISTRY
+    from interpretune.analysis.injection.analysis_hook_patcher import (
+        install_patched_modules_with_references,
+        patch_target_package_files,
+    )
+    from interpretune.analysis.injection.config_parser import FileHook
+
+    saved_enabled = HOOK_REGISTRY._enabled
+    saved_hooks = dict(HOOK_REGISTRY._hooks)
+    fired = []
+    try:
+        import staleattr_pkg
+        import staleattr_pkg.worker  # -- sets the (soon stale) parent attribute
+
+        from pathlib import Path
+
+        hooks = {
+            "stale_point": FileHook(
+                point_id="stale_point",
+                file_path=Path("worker.py"),
+                regex_pattern=r"result = ",
+                description="stale attribute probe",
+            )
+        }
+        patched = patch_target_package_files(hooks, pkg_dir, "staleattr_pkg")
+        assert list(patched) == ["staleattr_pkg.worker"], f"unexpected patched set: {list(patched)}"
+        print("   [OK] Patched module produced")
+
+        HOOK_REGISTRY.register("stale_point", lambda local_vars: fired.append(True))
+        HOOK_REGISTRY.enable()
+
+        install_patched_modules_with_references(patched)
+
+        assert staleattr_pkg.worker is sys.modules["staleattr_pkg.worker"], (
+            "parent package still holds the original submodule object"
+        )
+        print("   [OK] Parent attribute now resolves to the patched module")
+
+        assert staleattr_pkg.worker.run() == 42
+        assert fired, "hook reached through the parent attribute never fired"
+        print("   [OK] Call through the parent attribute fired the hook")
+    finally:
+        HOOK_REGISTRY._hooks.clear()
+        HOOK_REGISTRY._hooks.update(saved_hooks)
+        if not saved_enabled:
+            HOOK_REGISTRY.disable()
+        sys.path.remove(str(tmp_path))
+        for mod in [m for m in sys.modules if m == "staleattr_pkg" or m.startswith("staleattr_pkg.")]:
+            del sys.modules[mod]
+
+    print("\n" + "=" * 80)
+    print("[PASS] Stale submodule attribute test passed!")
     print("=" * 80)
