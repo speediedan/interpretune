@@ -1393,10 +1393,12 @@ def invoke_explanation_cli(
     stdout_text, stderr_text = stdout.strip(), stderr.strip()
     if resolved_spec.cleanup_session:
         # The session id rides the stdout events on success AND on failure (measured), so cleanup
-        # runs before the returncode check: a failed call must not leak its session either.
+        # runs before the returncode check: a failed call must not leak its session either. The
+        # delete reuses the resolved executable path, not the bare spec name: on Windows a bare
+        # name only resolves real binaries, while the resolved path is what just ran.
         session_id = extract_session_id_from_cli_events(stdout)
         if session_id is not None:
-            _delete_cli_session(resolved_spec.executable, session_id)
+            _delete_cli_session(executable, session_id)
     if returncode != 0:
         detail = stderr_text or stdout_text or f"exit code {returncode}"
         raise NeuronpediaExplanationError(f"Explanation CLI ('{resolved_spec.executable}') invocation failed: {detail}")
