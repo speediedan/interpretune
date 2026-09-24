@@ -14,7 +14,10 @@ torchvision==0.28.0  # requires torch==2.13.0
 torch==2.13.0  # source of truth for the stable torch pin; torch-override.txt is generated from this line
 transformers>=5.5.0
 datasets>=5.0.0
-huggingface-hub>=1.4.1
+# An override replaces EVERY requirement on the package, transformers' own `<2.0` ceiling included, so the ceiling
+# is restated here: without it a fresh build_it_env.sh resolved huggingface-hub 2.0.0 and `import transformers`
+# refused it. The floor matches pyproject's `huggingface_hub[hf_xet] >= 1.9.0`, which this line also replaces.
+huggingface-hub>=1.9.0,<2.0
 accelerate>=1.12.0  # for SAELens from source
 pyright==1.1.411  # match the CI lock; SAELens' exported reqs pin 1.1.365, whose TOML parser cannot read PEP 735 groups (unscoped type checks)
 dictionary-learning>=0.1.0
