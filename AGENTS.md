@@ -6,7 +6,7 @@
 
 Interpretune is a flexible framework for collaborative AI world model analysis and tuning. **Pre-MVP stage** — features and APIs are subject to change.
 
-**Stack:** Python 3.10+ (CI on 3.13), PyTorch 2.7.1+, transformer_lens >= 3.0.0, sae_lens, datasets, jsonargparse
+**Stack:** Python 3.10+ (CI on 3.13), PyTorch 2.7.1+, transformer_lens >= 4, < 5, sae_lens, datasets, jsonargparse
 
 ## Tooling Reliability
 
@@ -125,9 +125,10 @@ thing it asserted is not true, and the weakened form carries a false premise for
 | **Bare pip** | `pip install .` | **nobody. Not supported.** | **NO** |
 
 **`pip install .` is not a supported way to install interpretune, and it fails in a way that looks
-like an application bug.** The `transformer-lens==3.5.1` / `nnsight==0.7.0` pins live in
+like an application bug.** The `transformer-lens==4.0.0` / `nnsight==0.7.0` pins live in
 `[tool.uv] override-dependencies`, a **uv** mechanism that pip ignores. They exist precisely to force
-the TL v3 line over sae-dashboard's `^2.2.0` cap, so pip happily resolves TL **2.16.1**, and every
+TransformerLens 4.0 over sae-dashboard's `^2.2.0` cap, so pip happily resolves a TL 2.x release
+(**2.16.1** when this was measured), and every
 failure downstream of that (a `sae_dashboard` import error, `BertForPreTraining` from a sae_lens /
 transformers mismatch) is a symptom of the wrong resolution rather than a defect worth filing. One
 session lost time filing exactly those before the version table explained them. If you catch yourself
@@ -226,15 +227,16 @@ pins provide. Reconcile this list against `pyproject.toml`'s `git-deps` block be
 | Package | Current governance | From-source still appropriate? |
 | --- | --- | --- |
 | `sae-dashboard` | git-deps pin (SD#74 still open) | yes, while the fork surface is required |
-| `circuit-tracer` | git-deps pin (`3fde7e2`) | yes, no release carries the attribution-target surface |
-| `sae-lens` | **released floor `6.49.0`** | **NO. Retired from git-deps 2026-08-09.** |
+| `circuit-tracer` | git-deps pin | yes, no release carries the attribution-target surface |
+| `sae-lens` | **temporary git-deps pin: the head of decoderesearch/SAELens#739** | only for SAELens upstream work |
 | `transformer-lens`, `nnsight` | release pins in `[tool.uv] override-dependencies` | only for upstream work |
 
-**`sae_lens` must not be resurrected as a from-source or git pin.** `pyproject.toml` records why: the
-retired pin (`speediedan/SAELens@86f90b3d`) carries 20 duplicate YAML keys in `pretrained_saes.yaml` from
-a bad rebase, silently binding 10 `-pt-` transcoder entries to the WRONG weights. It was the wave's first
-git-dep to go, and `6.49.0` matches `requirements/ci/requirements.txt` exactly. A registry entry recording
-a plain `6.49.0` with no fork/branch/sha for sae_lens is therefore CORRECT, not a provenance loss.
+**sae-lens is git-pinned again, temporarily, and only to decoderesearch/SAELens#739.** No sae-lens
+release imports under transformer-lens 4.0, so the pin carries that PR's head until a release does; the
+retirement condition lives beside the pin in `pyproject.toml`. While it stands, a registry entry recording
+the #739 fork and sha for sae_lens is CORRECT. **The old fork pin (`speediedan/SAELens@86f90b3d`) must never
+come back**: it carries 20 duplicate YAML keys in `pretrained_saes.yaml` from a bad rebase, silently
+binding 10 `-pt-` transcoder entries to the WRONG weights.
 
 Canonical rebuild for someone developing SAEDashboard and circuit-tracer alongside interpretune:
 
@@ -269,8 +271,9 @@ When a from-source package brings in git-pinned dependencies, UV caches those re
 
 Where pins live and how to refresh them:
 
-- `pyproject.toml` `[tool.uv] override-dependencies` — the `transformer-lens==3.5.1` / `nnsight==0.7.0`
-  release pins, which force the v3 TL line over downstream v2 caps; keep them in sync with
+- `pyproject.toml` `[tool.uv] override-dependencies` — the `transformer-lens==4.0.0` / `nnsight==0.7.0`
+  release pins (plus `jaxtyping>=0.3`, which TL 4.0 needs over sae-dashboard's `^0.2.28`), which force
+  TransformerLens 4.0 over downstream v2 caps; keep them in sync with
   `requirements/ci/overrides.txt` (and `requirements/ci/excludes.txt` still keeps those caps from
   re-resolving TL during `--from-source` installs).
 - `pyproject.toml` `[dependency-groups] git-deps` — the remaining git SHA pins (circuit-tracer, sae-lens,

@@ -51,8 +51,8 @@ def _ensure_bridge_processed_weight_device_patch() -> None:
     option: GeneralizedComponent.__getattr__ resolves neither _parameters nor _buffers, so register_buffer() makes the
     attribute unreachable. Instead, extend _apply so each component transforms its own cached tensors alongside its
     real parameters. Applies to every bridge regardless of which adapter constructed it (transformer_lens or
-    sae_lens). Upstream TransformerLens defect present in transformer-lens 3.5.1; gpt2-class MLP bridges are
-    unaffected (no processed-tensor caching on the component).
+    sae_lens). Upstream TransformerLens defect, present in 3.5.1 and still in 4.0.0, whose GeneralizedComponent has
+    no ``_apply`` override; gpt2-class MLP bridges are unaffected (no processed-tensor caching on the component).
     """
     global _BRIDGE_PROCESSED_WEIGHT_PATCH_APPLIED
     if _BRIDGE_PROCESSED_WEIGHT_PATCH_APPLIED:
@@ -257,7 +257,9 @@ class BaseITLensModule(BaseITModule):
         tl_cfg = self.it_cfg.tl_cfg
         cfg = tl_cfg.cfg
         self._resolve_vocab_sentinels(cfg, self.it_cfg.tokenizer)
-        bridge = TransformerBridge.boot_native(
+        # TransformerLens 4.0 attaches `boot_native` when `transformer_lens` imports its native source module, so it
+        # exists at runtime but not on the class pyright reads.
+        bridge = TransformerBridge.boot_native(  # pyright: ignore[reportAttributeAccessIssue]
             cfg,
             tokenizer=self.it_cfg.tokenizer,
             device=getattr(cfg, "device", None) if getattr(tl_cfg, "move_to_device", True) else None,
@@ -840,11 +842,11 @@ if _FTS_AVAILABLE:
 
                 canonical_params.extend(canonical_names)
 
-            # Append implicit LayerNorm params if enabled
-            # TL nomenclature doesn't include LayerNorm, but canonical params need them for training
+            # Append implicit LayerNorm params if enabled, skipping any the schedule already named explicitly
             implicit_ln_params = []
             if self.implicit_ln_thaw:
-                implicit_ln_params = self._get_implicit_layernorm_params(param_names)
+                explicit = set(canonical_params)
+                implicit_ln_params = [p for p in self._get_implicit_layernorm_params(param_names) if p not in explicit]
                 canonical_params.extend(implicit_ln_params)
 
             if not inspect_only:
@@ -1134,8 +1136,10 @@ if _FTS_AVAILABLE:
         def _get_implicit_layernorm_params(self, tl_param_names: list[str]) -> list[str]:
             """Get implicit LayerNorm canonical params for the layers referenced by TL params.
 
-            TL-style nomenclature doesn't include LayerNorm parameters, but canonical training
-            needs them. This method extracts the layer indices from TL param names and returns
+            A schedule written in TL-style names thaws a block's LayerNorms along with the rest of the block.
+            Before TransformerLens 4.0 the LayerNorms had no TL-style names at all; 4.0 names them, so they are
+            searched among every canonical parameter rather than only the unmapped ones, and a schedule behaves
+            the same under either version. This method extracts the layer indices from TL param names and returns
             the corresponding canonical LayerNorm params.
 
             For each layer index found in tl_param_names:
@@ -1151,7 +1155,8 @@ if _FTS_AVAILABLE:
             Returns:
                 List of canonical LayerNorm parameter names to implicitly thaw
             """
-            if not self._unmapped_canonical_params:
+            candidates = set(self._canonical_to_tl_mapping or {}) | set(self._unmapped_canonical_params or ())
+            if not candidates:
                 return []
 
             implicit_ln_params: list[str] = []
@@ -1168,8 +1173,8 @@ if _FTS_AVAILABLE:
                 elif tl_name.startswith(("embed.", "pos_embed.", "unembed.")):
                     has_embed_params = True
 
-            # Find matching LayerNorm params from unmapped canonical params
-            for canonical_name in sorted(self._unmapped_canonical_params):
+            # Find matching LayerNorm params among all canonical params
+            for canonical_name in sorted(candidates):
                 # Check for block LayerNorm params (ln_1, ln_2)
                 block_ln_match = re.search(r"blocks\.(\d+)\..*?(ln_1|ln_2)", canonical_name)
                 if block_ln_match:

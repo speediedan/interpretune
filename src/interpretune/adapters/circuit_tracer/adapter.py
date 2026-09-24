@@ -10,8 +10,6 @@ from torch import nn
 
 from circuit_tracer import ReplacementModel, Graph, attribute
 from circuit_tracer.utils import create_graph_files
-from circuit_tracer.replacement_model.replacement_model_transformerlens import TransformerLensReplacementModel
-from circuit_tracer.replacement_model.replacement_model_nnsight import NNSightReplacementModel
 
 from interpretune.adapters import (
     CompositionRegistry,
@@ -47,10 +45,11 @@ if TYPE_CHECKING:
 #: contributes a class no module in core can name, so the union would reject it -- the privileged
 #: position #401 removed, expressed in the type system instead of in a branch.
 #:
-#: The bundled aliases stay importable for callers that genuinely mean one specific backend, and
-#: `CT_BACKEND_REGISTRY` remains the runtime authority on what a given backend must have produced.
+#: `CT_BACKEND_REGISTRY` is the runtime authority on what a given backend must have produced. The
+#: TransformerLens product is deliberately not imported here: it subclasses `HookedTransformer`, which
+#: transformer-lens 4.0 removed, so importing it would make this whole module, nnsight backend included,
+#: unimportable. That backend is refused by name in `CircuitTracerConfig` instead.
 ReplacementModelType: TypeAlias = nn.Module
-BundledReplacementModelType = TransformerLensReplacementModel | NNSightReplacementModel
 
 # The registries live in `registry.py`, which imports NOTHING from circuit-tracer. They are the seam a
 # third-party backend enters, and a seam that can only be reached by importing this module -- which
@@ -133,8 +132,7 @@ class BaseCircuitTracerModule(BaseITModule):
             rank_zero_warn("No circuit_tracer_cfg found, using defaults")
             return
 
-        # Use backend from configuration (defaults to 'transformerlens')
-        backend = cfg.backend if cfg else "transformerlens"
+        backend = cfg.backend
         rank_zero_info(f"Loading ReplacementModel with backend: {backend}")
 
         # Add NNsight-specific kwargs if using NNsight backend

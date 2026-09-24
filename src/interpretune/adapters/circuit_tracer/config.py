@@ -6,6 +6,36 @@ import torch
 from interpretune.config.shared import ITSerializableCfg
 
 
+def _installed_version(dist: str) -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(dist)
+    except PackageNotFoundError:
+        return "version unknown"
+
+
+def _require_hooked_transformer() -> None:
+    """Refuse circuit-tracer's TransformerLens backend when ``HookedTransformer`` is unavailable.
+
+    circuit-tracer builds that backend's replacement model as a ``HookedTransformer`` subclass, and transformer-lens
+    4.0 removed the class, so the backend cannot even be imported there. Checked on the installed module rather than
+    its version string, because a source install reports ``0.0.0``. Tracked upstream as
+    decoderesearch/circuit-tracer#115; remove this refusal once a circuit-tracer pin supports transformer-lens 4.0.
+    """
+    import transformer_lens
+
+    try:
+        getattr(transformer_lens, "HookedTransformer")  # the access itself is the check
+    except (AttributeError, ImportError):  # 4.0 raises ImportError with a migration note, not AttributeError
+        raise ValueError(
+            "circuit-tracer backend 'transformerlens' needs transformer_lens.HookedTransformer, which the installed "
+            f"transformer-lens ({_installed_version('transformer-lens')}) does not provide: "
+            "transformer-lens 4.0 removed it, and circuit-tracer builds this backend's replacement model on it. Use "
+            "backend='nnsight' instead."
+        ) from None
+
+
 @dataclass(kw_only=True)
 class CircuitTracerConfig(ITSerializableCfg):
     """Configuration for Circuit Tracer functionality.
@@ -17,13 +47,14 @@ class CircuitTracerConfig(ITSerializableCfg):
     """Backend to use for attribution.
 
     Bundled options:
-        - 'transformerlens': Use TransformerLens/HookedTransformer backend (default)
-        - 'nnsight': Use NNsight/LanguageModel backend
+        - 'nnsight': Use NNsight/LanguageModel backend (default)
+        - 'transformerlens': Use TransformerLens/HookedTransformer backend. Refused under transformer-lens 4.0,
+          which removed ``HookedTransformer``; see ``_require_hooked_transformer``.
 
     Not an exhaustive list: any name present in ``CT_BACKEND_REGISTRY`` is valid, which is how a
     third-party adapter adds a backend without a change here.
     """
-    backend: str = "transformerlens"
+    backend: str = "nnsight"
 
     # Model and transcoder settings
     """Model name to use for attribution. If None, uses the base model name."""
@@ -135,6 +166,8 @@ class CircuitTracerConfig(ITSerializableCfg):
                 f"Invalid backend '{self.backend}'. Registered backends: {sorted(CT_BACKEND_REGISTRY)}. "
                 "A third-party backend registers itself into CT_BACKEND_REGISTRY before its config is built."
             )
+        if self.backend == "transformerlens":
+            _require_hooked_transformer()
 
         valid_intervention_value_sources = ["top_feature_scores", "top_feature_activation_values", "constant"]
         if self.intervention_value_source not in valid_intervention_value_sources:
