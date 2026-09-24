@@ -310,3 +310,19 @@ def restore_gemma_eager_attention(originals: Dict[str, Callable]) -> Callable[[]
             module.eager_attention_forward = found[name]
 
     return put_back
+
+
+def boot_no_processing_bridge(model_id: str, device: str = "cpu", **boot_kwargs: Any):
+    """A ``TransformerBridge`` over unprocessed checkpoint weights, with TransformerLens hook naming.
+
+    The replacement for ``HookedTransformer.from_pretrained_no_processing``, which TransformerLens 4.0 removed.
+    Weight processing (LayerNorm folding, weight centering) changes the residual basis, so a test comparing a
+    TransformerLens model against HF or nnsight in the same basis needs it off.
+    """
+    # TransformerLens 4.0 attaches `boot_transformers` when this module is imported; 3.x defines it on the class.
+    import transformer_lens.model_bridge.sources.transformers  # noqa: F401
+    from transformer_lens.model_bridge import TransformerBridge
+
+    bridge = TransformerBridge.boot_transformers(model_id, device=device, **boot_kwargs)
+    bridge.enable_compatibility_mode(no_processing=True)
+    return bridge

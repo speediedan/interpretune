@@ -25,7 +25,7 @@ class _Tok:
         return f"<{ids[0]}>"
 
 
-class _Norm(torch.nn.Module):  # class name drives kind detection
+class _Norm(torch.nn.Module):  # kind is read from what forward computes, so each stub must really normalize
     def __init__(self, scale):
         super().__init__()
         self.weight = torch.nn.Parameter(scale)
@@ -298,8 +298,9 @@ class TestCrossBackendReadoutAgreement:
 
     @RunIf(standalone=True)
     def test_tl_and_hf_resolved_readouts_agree_on_gpt2(self):
-        from transformer_lens import HookedTransformer
         from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        from tests.utils import boot_no_processing_bridge
 
         from interpretune.analysis.optools import resolve_unembed_and_norm_scale
 
@@ -308,7 +309,7 @@ class TestCrossBackendReadoutAgreement:
         # tests: the default from_pretrained folds LayerNorm and centers weights, which changes both
         # the unembed and the residual basis. Comparing a processed TL model against HF would measure
         # that transformation rather than the seam, and would fail while nothing was wrong.
-        tl_model = HookedTransformer.from_pretrained_no_processing("gpt2", device="cpu")
+        tl_model = boot_no_processing_bridge("gpt2", device="cpu")
         hf_model = AutoModelForCausalLM.from_pretrained("gpt2")
         hf_model.tokenizer = AutoTokenizer.from_pretrained("gpt2")
 

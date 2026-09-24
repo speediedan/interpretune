@@ -273,6 +273,48 @@ def _rmsnorm_scale(norm: Any, weight: torch.Tensor) -> torch.Tensor:
     return scale
 
 
+#: Mean-zero probe pattern for :func:`_final_norm_kind`. It and the pattern shifted by ``_NORM_KIND_SHIFT`` are
+#: exact in bf16, so the shift cannot introduce rounding that a LayerNorm's centering would then fail to cancel.
+_NORM_KIND_PATTERN = (-1.0, -0.5, 0.5, 1.0)
+_NORM_KIND_SHIFT = 2.0
+
+
+def _final_norm_kind(norm: Any, weight: torch.Tensor) -> str:
+    """Classify a final norm as ``"layernorm"`` or ``"rmsnorm"`` by what it computes rather than its class name.
+
+    LayerNorm subtracts the mean, so shifting its input by a constant leaves the output unchanged; RMSNorm has no
+    centering step, so the same shift moves it by order one. The class name cannot answer this, because the
+    wrappers this seam serves hide it: a ``TransformerBridge`` presents a LayerNorm as ``NormalizationBridge`` and
+    nnsight as ``Envoy``. Reading those as RMSNorm probed a centering norm with a constant vector, which returns
+    the norm's BIAS, and every LayerNorm-family direction then used the bias as its scale.
+    """
+    d_model = weight.shape[-1]
+    pattern = torch.tensor(_NORM_KIND_PATTERN, dtype=weight.dtype, device=weight.device)
+    probe = pattern.repeat(d_model // len(_NORM_KIND_PATTERN) + 1)[:d_model].unsqueeze(0)
+    try:
+        with torch.no_grad():
+            base = norm(probe).reshape(-1).detach().float()
+            shifted = norm(probe + _NORM_KIND_SHIFT).reshape(-1).detach().float()
+    except Exception as exc:  # -- the cause is reported; guessing a kind is the defect
+        raise RuntimeError(
+            f"could not classify the final norm {type(norm).__name__!r} by evaluating it on a probe vector: "
+            f"{exc!r}. Refused rather than assuming a kind, because LayerNorm and RMSNorm need different "
+            "readout directions and choosing wrong is silent."
+        ) from exc
+    magnitude = float(torch.maximum(base.abs().max(), shifted.abs().max()))
+    if base.shape != weight.shape or not (torch.isfinite(base).all() and torch.isfinite(shifted).all()):
+        raise RuntimeError(
+            f"probing {type(norm).__name__!r} returned an output of shape {tuple(base.shape)} (expected "
+            f"{tuple(weight.shape)}) or with non-finite entries, so its kind cannot be read from it."
+        )
+    if magnitude == 0.0:
+        raise RuntimeError(
+            f"{type(norm).__name__!r} returned all zeros for the probe, so it cannot be classified as a LayerNorm "
+            "or an RMSNorm. Refused rather than defaulting to either."
+        )
+    return "layernorm" if float((base - shifted).abs().max()) <= 1e-2 * magnitude else "rmsnorm"
+
+
 class UnembedNormInfo(NamedTuple):
     """Unembed matrix plus the final norm's elementwise scale, in readout orientation.
 
@@ -346,7 +388,7 @@ def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
                     norm = getattr(inner, norm_attr, None)
                     weight = getattr(norm, "weight", None) if norm is not None else None
                     if isinstance(weight, torch.Tensor):
-                        kind = "layernorm" if "LayerNorm" in type(norm).__name__ else "rmsnorm"
+                        kind = _final_norm_kind(norm, weight)
                         scale = weight if kind != "rmsnorm" else _rmsnorm_scale(norm, weight)
                         bias = getattr(norm, "bias", None)
                         return UnembedNormInfo(

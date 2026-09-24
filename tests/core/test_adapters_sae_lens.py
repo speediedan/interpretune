@@ -6,7 +6,7 @@ import pytest
 import torch
 from torch.testing import assert_close
 from transformer_lens.ActivationCache import ActivationCache
-from transformer_lens.utils import get_device as tl_get_device
+from transformer_lens.utilities.devices import get_device as tl_get_device
 from sae_lens.saes.sae import SAE, SAEMetadata
 from sae_lens.saes.transcoder import Transcoder, TranscoderConfig
 
