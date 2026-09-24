@@ -49,6 +49,11 @@ RTX 4090, 24 GiB; three-way ~25 min, full mode ~2 h there).
 - Detached baseline worktrees present for 3-way mode (`SAEDashboard-7886eaa` + siblings; created by the
   setup script above — point `IT_NP_BASELINE_WORKTREES` at their root when it is not the legacy default
   `${IT_NP_CACHE}/baseline_worktrees_20260826`).
+- A transformer-lens 3.x interpreter for the detached-legacy legs, named by `IT_NP_BASELINE_PYTHON`. The frozen
+  baseline worktrees import names TransformerLens 4.0 removed, so they cannot share a 4.x benchmark venv. The setup
+  script builds `<venv>_baseline` (the benchmark venv's build, held at transformer-lens 3.5.1) and exports the
+  variable in `benchmark_env.sh`. A detached-legacy leg refuses to start on a 4.x interpreter rather than failing
+  at import partway through a run.
 - The four benchmark prompt datasets present under `${IT_NP_CACHE}` (`pretokenized/` + `legacy_pretokenized/`); they
   are not published to the HF Hub — the setup script above offers to build any missing ones, or regenerate them per
   ["Regenerating the benchmark prompt datasets"](../docs/neuronpedia_dashboard_pipeline.md#regenerating-the-benchmark-prompt-datasets).

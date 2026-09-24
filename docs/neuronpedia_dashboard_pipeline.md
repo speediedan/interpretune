@@ -651,7 +651,9 @@ python -m interpretune.utils.neuronpedia_dashboard_pipeline \
 
 Key extra controls in this mode:
 
-1. `--model-wrapper bridge` switches the runner from the legacy HookedTransformer path to `SAETransformerBridge`.
+1. `--model-wrapper bridge` runs the model as a `SAETransformerBridge`. It is the default, and it is what every
+   shipped config and published corpus uses. `--model-wrapper hooked` selects the legacy `HookedSAETransformer`
+   path, which needs `transformer-lens<4` (TransformerLens 4.0 removed `HookedTransformer`).
 2. `--bridge-enable-compatibility-mode` restores the legacy hook aliases (`blocks.<n>.hook_mlp_in`, `hook_mlp_out`) expected by the current dashboard metadata.
 3. `--prompts-dataset-mode` makes the prompt artifact contract explicit:
   - `load_dataset` means the runner reads raw prompt rows or tokenized Hub/local datasets through `load_dataset(...)` style inputs;

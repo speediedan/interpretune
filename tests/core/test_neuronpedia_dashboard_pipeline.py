@@ -5,6 +5,7 @@ import json
 import logging
 import threading
 import importlib.util
+import subprocess
 import sys
 import time
 from enum import Enum
@@ -224,6 +225,60 @@ def test_profile_preset_detached_legacy_rte_smoke_applies_baseline_args() -> Non
     assert any(arg.startswith("--saelens-repo-root=") for arg in args.dashboard_extra_arg)
     assert any(arg.startswith("--neuronpedia-utils-root=") for arg in args.dashboard_extra_arg)
     assert "--runner-implementation=legacy" in args.dashboard_extra_arg
+
+
+def test_pipeline_defaults_to_the_bridge_wrapper() -> None:
+    """Every shipped config and published corpus uses the bridge; the hooked wrapper needs transformer-lens<4."""
+    defaults = {f.name: f.default for f in dataclasses.fields(dashboard_pipeline.NeuronpediaDashboardPipelineConfig)}
+    assert defaults["model_wrapper"] == "bridge"
+
+
+def test_profile_presets_flag_exactly_the_preserved_baseline_legs() -> None:
+    profile_module = _load_dashboard_profile_module()
+    presets = profile_module.PROFILE_PRESETS
+
+    def runs_frozen_worktrees(preset: Any) -> bool:
+        return any(arg.startswith("--saedashboard-repo-root=") for arg in preset.dashboard_extra_args)
+
+    flagged = {name for name, preset in presets.items() if preset.preserved_baseline}
+    assert "detached-legacy-rte-smoke" in flagged
+    assert flagged == {name for name, preset in presets.items() if runs_frozen_worktrees(preset)}
+
+
+def test_preserved_baseline_preset_uses_the_baseline_interpreter(monkeypatch: pytest.MonkeyPatch) -> None:
+    profile_module = _load_dashboard_profile_module()
+    monkeypatch.setattr(profile_module, "DEFAULT_PHASE3_BASELINE_PYTHON", "/opt/baseline/bin/python")
+    parser = profile_module.build_parser()
+
+    detached = parser.parse_args(["--preset", "detached-legacy-rte-smoke"])
+    profile_module.apply_profile_preset(detached)
+    assert detached.python_executable == "/opt/baseline/bin/python"
+
+    lazy = parser.parse_args(["--preset", "phase3-lazy-rte-reduced"])
+    interpreter = lazy.python_executable
+    profile_module.apply_profile_preset(lazy)
+    assert lazy.python_executable == interpreter, "only the preserved-baseline legs move interpreter"
+
+
+@pytest.mark.parametrize(("tl_version", "refused"), [("3.5.1", False), ("0.0.0", False), ("4.0.0", True)])
+def test_preserved_baseline_interpreter_refuses_transformer_lens_4(
+    monkeypatch: pytest.MonkeyPatch, tl_version: str, refused: bool
+) -> None:
+    """The frozen worktrees import names TransformerLens 4.0 removed; 0.0.0 is an editable 3.x checkout."""
+    profile_module = _load_dashboard_profile_module()
+    seen: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=f"{tl_version}\n", stderr="")
+
+    monkeypatch.setattr(profile_module.subprocess, "run", fake_run)
+    if refused:
+        with pytest.raises(SystemExit, match="need transformer-lens<4"):
+            profile_module.require_preserved_baseline_interpreter("/opt/baseline/bin/python")
+    else:
+        profile_module.require_preserved_baseline_interpreter("/opt/baseline/bin/python")
+    assert seen and seen[0][0] == "/opt/baseline/bin/python", "the version must be read in the leg's interpreter"
 
 
 def test_profile_preset_phase_era_aliases_resolve_to_canonical_presets() -> None:

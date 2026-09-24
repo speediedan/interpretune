@@ -213,7 +213,9 @@ class NeuronpediaDashboardPipelineConfig:
     clt_dtype: str = ""
     clt_weights_filename: str = ""
     dataset_streaming: bool = True
-    model_wrapper: str = "hooked"
+    # "bridge" (SAETransformerBridge) is what every shipped config and published corpus uses. "hooked"
+    # (HookedSAETransformer) needs transformer-lens<4, which removed HookedTransformer.
+    model_wrapper: str = "bridge"
     # Capture activations at this hook rather than the one the SAE's metadata declares. Needed where
     # the declared TransformerLens name denotes a different tensor from the one the SAE was trained
     # on: Gemma Scope 2 transcoders declare ``blocks.{layer}.hook_mlp_in``, the residual BEFORE the
