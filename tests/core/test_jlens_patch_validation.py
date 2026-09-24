@@ -515,7 +515,8 @@ def _tl_gap_for_pair(model_id: str, case: dict[str, object]) -> dict[str, object
         with torch.no_grad():
             tl_pre, tl_post = tl_backend.fwd_w_intervention(
                 model=tl_model,
-                batch={"input": case["ids"]},
+                # HookedTransformer moved input tokens to its device itself; a bridge leaves that to the caller
+                batch={"input": case["ids"].to(tl_model.cfg.device)},
                 interventions=InterventionDict({case["hook"]: (spec,)}),
             )
         return {
