@@ -129,6 +129,7 @@ usage/analysis_store_serialization
 usage/cache_behavior
 usage/hub_trust_posture
 usage/generation_precedence
+usage/jlens_usage
 ```
 
 ```{toctree}
