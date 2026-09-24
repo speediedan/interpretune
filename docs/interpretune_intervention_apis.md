@@ -64,6 +64,24 @@ basis-agnostic: any pair of directions can serve as the patch pair, so embed-bas
 source as Jacobian lens rows; which basis produced the pair is the configuration the paragraph above requires the
 op to state.
 
+What each mode preserves and what it moves, in one place:
+
+- `replace`: preserves nothing — the region becomes the target tensor (broadcast to shape).
+- `add`: preserves everything except the shift — `h + target · scale_factor`, perturbing every
+  component the added vector overlaps.
+- `project`: preserves the component parallel to the basis and discards the rest (the opposite of
+  `reject`; at full strength the two modes sum to the input).
+- `patch`: preserves the component orthogonal to the pair and swaps the two in-pair coordinates
+  (`V(σ(c) − c)` with `c = V⁺h`), exact by pseudoinverse rather than transpose.
+- `reject`: preserves the component orthogonal to `span(V)` and removes the in-span part
+  (`h − α·VV⁺h`); `scale_factor` is the removal fraction (1.0 removes, 0.0 is the identity),
+  which is what makes graded ablation bands one mode with a parameter instead of three.
+- `clamp`: preserves in-range coordinates exactly and bounds the out-of-range ones into
+  `[clamp_min, clamp_max]` measured in `V⁺` coordinates (`h + (c′ − c)V`); a clamp with
+  neither bound is the identity and is refused rather than run. Bound-into-range and
+  assign-to-value are different operations sharing an English word: no choice of bounds swaps
+  two coordinates, so `patch` is a special case of assignment, never of clamping.
+
 > **The pair and the model must share a residual basis, and TransformerLens weight processing changes it.**
 > `HookedTransformer.from_pretrained` defaults to folding LayerNorm and centering weights, which rewrites the
 > residual stream's geometry at every `hook_resid_*` point: a patch pair built from unprocessed weights (which is

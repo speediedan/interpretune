@@ -262,8 +262,6 @@ The current preferred direction is:
 - default demo-friendly module composition
 - first-class aggregate analysis flows
 
-That direction is described in the current IG-7 design proposal in the workstream design folder.
-
 ## How to use this document
 
 - read this before making significant architecture changes

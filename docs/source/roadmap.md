@@ -82,12 +82,13 @@ Tracked here until a Wave 2 issue is opened for it. The stub should not outlive 
 - **Jacobian-space (J-lens) analysis support**
   ([#225](https://github.com/speediedan/interpretune/issues/225) in-tree,
   [#273](https://github.com/speediedan/interpretune/issues/273) as a separately published op
-  collection): J-space read/probe/steer ops, a `basis="jlens"` selector for `concept_direction`,
-  and per-feature J-space signatures as the principled generalization of 1-D logit-diff output
-  projections, co-designed with AnalysisStore hub sharing. The lens-coordinate write primitive
-  (intervention mode `patch`, which moves an activation along a stacked pair of directions while
-  preserving the orthogonal component) has already shipped; the separately published collection
-  doubles as the first genuinely non-bundled proving ground for hub registration.
+  collection): the read/probe/steer ops, the `concept_basis="jlens_*"` selector for
+  `concept_direction`, per-feature J-space signatures, and the `patch` / `clamp` /
+  `reject` write modes have shipped, and the separately published collection is
+  the first genuinely non-bundled proving ground for hub registration. Remaining
+  research: the task-fitted lens over RTE ([#424](https://github.com/speediedan/interpretune/issues/424)),
+  the experimental battery ([#425](https://github.com/speediedan/interpretune/issues/425)),
+  and the workspace demo refresh ([#426](https://github.com/speediedan/interpretune/issues/426)).
 - **Self-interpretability**: interpretability that accelerates model advancement via
   self-reflection — in addition to serving as the bridge for human access to AI world models.
   Internal model-reflection heuristics offered by Interpretune could enduringly improve RL
