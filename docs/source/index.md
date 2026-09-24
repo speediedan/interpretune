@@ -137,6 +137,7 @@ usage/generation_precedence
 :hidden:
 
 usage/custom_ops_composition_guide
+usage/hub_op_collection_authoring
 usage/interpretune_intervention_apis
 usage/jlens_norm_folding
 usage/jlens_paper_alignment
