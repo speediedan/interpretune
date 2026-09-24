@@ -671,7 +671,7 @@ class ModelBackendConformance:
 
     @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.PATCH)
     def test_patch_is_symmetric_in_pair_order(self, suite):
-        """``h + V(sigma(c) - c)`` is the same update for ``(s, t)`` and ``(t, s)``, and it moves the logits.
+        r"""$h + V(\sigma(c) - c)$ is the same update for $(s, t)$ and $(t, s)$, and it moves the logits.
 
         Both orders exchange the same two coordinates, so the pair is unordered; a backend that treated index 0
         as "from" and index 1 as "to" in some other sense would break this without breaking the identity case.

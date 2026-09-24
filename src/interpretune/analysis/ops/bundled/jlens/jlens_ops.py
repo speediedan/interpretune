@@ -67,7 +67,7 @@ def _activations(analysis_batch: AnalysisBatch, cache_key: str) -> torch.Tensor:
 
 
 def _apply_readout_norm(y: torch.Tensor, info: UnembedNormInfo, include_rms_scale: bool) -> torch.Tensor:
-    """Normalize lens output exactly as the model's final norm would, per norm kind.
+    r"""Normalize lens output exactly as the model's final norm would, per norm kind.
 
     ``include_rms_scale`` controls only the input-dependent divisor. It changes no ranking WITHIN a
     position, because it is a positive scalar, and it does change magnitude comparisons ACROSS
@@ -75,8 +75,8 @@ def _apply_readout_norm(y: torch.Tensor, info: UnembedNormInfo, include_rms_scal
     cross-position comparison someone eventually makes.
 
     The divisor is computed on the unweighted activation, before the elementwise scale is applied,
-    because that is where the norm divides: ``((y - mean) / rms(y)) * scale``. Dividing the
-    weighted vector instead agrees only for uniform scale.
+    because that is where the norm divides: $((y - \mathrm{mean}) / \mathrm{rms}(y)) \cdot \mathrm{scale}$.
+    Dividing the weighted vector instead agrees only for uniform scale.
     """
     if info.norm_kind == "layernorm":
         y = y - y.mean(dim=-1, keepdim=True)

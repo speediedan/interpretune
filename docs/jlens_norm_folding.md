@@ -58,7 +58,7 @@ offset and `gemma3n` does not, so no name prefix separates them. Getting this wr
 every path still produces a plausible direction.
 
 **So the seam does not decide it by name at all: it reads the scale out of the norm module.** Since
-`rms(c * 1) = c` for any constant `c`, evaluating the module on a constant vector returns the
+$\mathrm{rms}(c \cdot 1) = c$ for any constant $c$, evaluating the module on a constant vector returns the
 elementwise scale the module actually applies, whatever convention its family uses. There is no
 membership test to be exact about and no unrecognized family to warn on, because an unrecognized family
 is precisely the case this handles without special treatment. A norm that cannot be probed is refused by
