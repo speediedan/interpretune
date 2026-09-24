@@ -131,7 +131,7 @@ python tests/benchmarks/run_benchmarks.py --benchmark rte_boolq/gemma2_2b_it_l -
 
 ## Adding a New Experiment
 
-1. **Create the experiment config** under `src/it_examples/experiments/cli/<experiment>/`.
+1. **Create the experiment config** under `tests/benchmarks/configs/<experiment>/`.
 
 2. **Register in `benchmark_registry.yaml`**:
    ```yaml
@@ -183,7 +183,7 @@ Diagnostics logs are written to `/tmp/benchmark_debug/` by default (override wit
 ```bash
 # Entailment mapping and prediction diagnostics
 python tests/benchmarks/debug_utils/rte_boolq/dbg_rte_boolq.py \
-  --config src/it_examples/experiments/cli/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml
+  --config tests/benchmarks/configs/rte_boolq/gemma2/2b_chat_lightning_zs_test.yaml
 
 # Batch collapse debugging
 python tests/benchmarks/debug_utils/rte_boolq/debug_batch_collapse.py
