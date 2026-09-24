@@ -1,8 +1,10 @@
 """Unit tests for the opencode explanation-CLI route (fake executable, no network).
 
-A shell script stands in for ``opencode``: it records its argv, prints canned stdout JSON event
-lines (the error shape below is the measured ``opencode run --format json`` envelope), and
-honors a mode env var for failure, delete-failure, and sleep (timeout) paths.
+A Python fake stands in for ``opencode`` (a shell script cannot execute on Windows): it records
+its argv, prints canned stdout JSON event lines (the error shape below is the measured
+``opencode run --format json`` envelope), and honors a mode env var for failure, delete-failure,
+and sleep (timeout) paths. POSIX executes it via shebang; Windows via a ``.cmd`` trampoline,
+both resolved through the same bare executable name.
 """
 
 from __future__ import annotations
@@ -28,22 +30,40 @@ from interpretune.utils.neuronpedia_explanations import (
     resolve_explanation_cli_spec,
 )
 
-FAKE_SCRIPT = """#!/bin/sh
-echo "$@" >> "$FAKE_MARKER_DIR/argv.log"
-prev=""
-for a in "$@"; do
-  if [ "$prev" = "-f" ]; then cp "$a" "$FAKE_MARKER_DIR/prompt_copy.md" 2>/dev/null; fi
-  prev="$a"
-done
-if [ "$1" = "session" ]; then
-  if [ "$FAKE_MODE" = "faildelete" ]; then exit 1; fi
-  echo "$3" >> "$FAKE_MARKER_DIR/deleted.log"
-  exit 0
-fi
-if [ "$FAKE_MODE" = "sleep" ]; then echo $$ > "$FAKE_MARKER_DIR/sleeper.pid"; sleep 30; fi
-cat "$FAKE_STDOUT_FILE"
-exit "${FAKE_EXIT_CODE:-0}"
+FAKE_IMPL = """import json
+import os
+import shutil
+import sys
+import time
+
+marker = os.environ["FAKE_MARKER_DIR"]
+
+
+def log(name, text):
+    with open(os.path.join(marker, name), "a") as handle:
+        print(text, file=handle)
+
+
+log("argv.log", " ".join(sys.argv[1:]))
+args = sys.argv[1:]
+if args[:1] == ["session"]:
+    if os.environ.get("FAKE_MODE") == "faildelete":
+        sys.exit(1)
+    log("deleted.log", args[2])
+    sys.exit(0)
+if "-f" in args:
+    shutil.copy(args[args.index("-f") + 1], os.path.join(marker, "prompt_copy.md"))
+if os.environ.get("FAKE_MODE") == "sleep":
+    with open(os.path.join(marker, "sleeper.pid"), "w") as handle:
+        handle.write(str(os.getpid()))
+    time.sleep(30)
+with open(os.environ["FAKE_STDOUT_FILE"]) as handle:
+    sys.stdout.write(handle.read())
+sys.exit(int(os.environ.get("FAKE_EXIT_CODE", "0")))
 """
+
+# .cmd trampoline so the same bare name executes on Windows (shebangs do not).
+FAKE_CMD = '@python "%~dp0fakeopencode_impl.py" %*\n'
 
 SUCCESS_EVENT = {
     "type": "message",
@@ -59,9 +79,15 @@ def fake_cli(tmp_path, monkeypatch):
     """An executable fake `opencode` on PATH plus a marker dir; returns (spec, marker_dir, set_output)."""
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
-    exe = tmp_path / "fakeopencode"
-    exe.write_text(FAKE_SCRIPT)
-    exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    (tmp_path / "fakeopencode_impl.py").write_text(FAKE_IMPL)
+    if os.name == "nt":
+        # Only the .cmd trampoline: a bare same-named file could win shutil.which resolution
+        # on Windows without being executable there.
+        (tmp_path / "fakeopencode.cmd").write_text(FAKE_CMD)
+    else:
+        exe = tmp_path / "fakeopencode"
+        exe.write_text("#!/usr/bin/env python3\n" + FAKE_IMPL)
+        exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("FAKE_MARKER_DIR", str(marker_dir))
     monkeypatch.setenv("FAKE_MODE", "success")
@@ -147,8 +173,13 @@ class TestSessionCleanup:
         with pytest.raises(subprocess.TimeoutExpired):
             invoke_explanation_cli("hi", timeout_seconds=1, cli_spec=spec)
         sleeper_pid = int((marker_dir / "sleeper.pid").read_text().strip())
-        with pytest.raises(ProcessLookupError):
-            os.kill(sleeper_pid, 0)
+        if os.name == "nt":
+            # os.kill(pid, 0) terminates on Windows; tasklist is the safe liveness probe.
+            seen = subprocess.run(["tasklist", "/FI", f"PID eq {sleeper_pid}"], capture_output=True, text=True).stdout
+            assert str(sleeper_pid) not in seen
+        else:
+            with pytest.raises(ProcessLookupError):
+                os.kill(sleeper_pid, 0)
 
     def test_missing_executable_refused_by_name(self):
         spec = ExplanationCliSpec(executable="definitely-not-on-path-xyz")

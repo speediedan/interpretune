@@ -389,7 +389,7 @@ class ExplanationCliSpec:
     cleanup_session: bool = False
     """Parse ``sessionID`` from stdout JSON event lines and delete the session afterwards."""
     kill_process_group_on_timeout: bool = False
-    """Kill the whole process group on timeout (CLIs that spawn servers outlive a plain kill)."""
+    """Kill the whole process tree on timeout (CLIs that spawn servers outlive a plain kill)."""
     json_event_output: bool = False
     """Stdout is JSON event lines; extract the response text instead of returning it raw."""
 
@@ -620,6 +620,23 @@ def extract_response_text_from_cli_events(stdout: str) -> str:
     if not texts:
         raise NeuronpediaExplanationError(f"no response text found in {parsed_lines} JSON event lines of CLI stdout")
     return "\n".join(texts)
+
+
+def _kill_timed_out_process(proc: subprocess.Popen[str]) -> None:
+    """Kill a timed-out CLI call and the servers it spawned.
+
+    POSIX takes the whole process group (``opencode run`` outlives a plain child kill); Windows
+    has no process groups, so ``taskkill /T`` fells the tree instead (which also covers the
+    launcher trampolines CLIs may hide behind).
+    """
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            capture_output=True,
+            check=False,
+        )
+    else:
+        os.killpg(proc.pid, signal.SIGKILL)
 
 
 def _delete_cli_session(executable: str, session_id: str) -> None:
@@ -1342,14 +1359,18 @@ def invoke_explanation_cli(
                 stderr=subprocess.PIPE,
                 text=True,
                 env=env,
-                start_new_session=True,
+                **({"start_new_session": True} if os.name != "nt" else {}),  # type: ignore[arg-type]
             ) as proc:
                 try:
                     stdout, stderr = proc.communicate(timeout=timeout_seconds)
                     returncode = proc.returncode
                 except subprocess.TimeoutExpired:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    stdout, stderr = proc.communicate()
+                    _kill_timed_out_process(proc)
+                    try:
+                        stdout, stderr = proc.communicate(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        stdout, stderr = proc.communicate()
                     raise
         else:
             completed = subprocess.run(
