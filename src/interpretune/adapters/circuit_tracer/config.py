@@ -15,7 +15,7 @@ def _installed_version(dist: str) -> str:
         return "version unknown"
 
 
-def _require_hooked_transformer() -> None:
+def require_hooked_transformer() -> None:
     """Refuse circuit-tracer's TransformerLens backend when ``HookedTransformer`` is unavailable.
 
     circuit-tracer builds that backend's replacement model as a ``HookedTransformer`` subclass, and transformer-lens
@@ -48,8 +48,9 @@ class CircuitTracerConfig(ITSerializableCfg):
 
     Bundled options:
         - 'nnsight': Use NNsight/LanguageModel backend (default)
-        - 'transformerlens': Use TransformerLens/HookedTransformer backend. Refused under transformer-lens 4.0,
-          which removed ``HookedTransformer``; see ``_require_hooked_transformer``.
+        - 'transformerlens': Use TransformerLens/HookedTransformer backend. A config naming it stays loadable, but
+          building its replacement model is refused under transformer-lens 4.0, which removed ``HookedTransformer``;
+          see ``require_hooked_transformer``.
 
     Not an exhaustive list: any name present in ``CT_BACKEND_REGISTRY`` is valid, which is how a
     third-party adapter adds a backend without a change here.
@@ -166,8 +167,6 @@ class CircuitTracerConfig(ITSerializableCfg):
                 f"Invalid backend '{self.backend}'. Registered backends: {sorted(CT_BACKEND_REGISTRY)}. "
                 "A third-party backend registers itself into CT_BACKEND_REGISTRY before its config is built."
             )
-        if self.backend == "transformerlens":
-            _require_hooked_transformer()
 
         valid_intervention_value_sources = ["top_feature_scores", "top_feature_activation_values", "constant"]
         if self.intervention_value_source not in valid_intervention_value_sources:

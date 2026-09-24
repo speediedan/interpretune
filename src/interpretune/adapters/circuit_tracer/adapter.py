@@ -22,7 +22,7 @@ from interpretune.adapters import (
     BaseNNsightModule,
 )
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
-from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig
+from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig, require_hooked_transformer
 from interpretune.config import ITConfig
 from interpretune.analysis.backends.capabilities import get_model_backend
 from interpretune.utils import rank_zero_warn, rank_zero_info
@@ -133,6 +133,10 @@ class BaseCircuitTracerModule(BaseITModule):
             return
 
         backend = cfg.backend
+        if backend == "transformerlens":
+            # A config naming this backend is declarative and stays loadable; building its replacement model is what
+            # needs HookedTransformer, so this is where it is refused.
+            require_hooked_transformer()
         rank_zero_info(f"Loading ReplacementModel with backend: {backend}")
 
         # Add NNsight-specific kwargs if using NNsight backend

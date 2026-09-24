@@ -22,6 +22,7 @@ import nnsight
 from circuit_tracer.replacement_model.replacement_model_nnsight import NNSightReplacementModel
 
 from interpretune.config import CircuitTracerConfig
+from interpretune.adapters.circuit_tracer.config import require_hooked_transformer
 from interpretune.adapters.circuit_tracer import ReplacementModelType
 from tests.runif import RunIf
 
@@ -67,12 +68,36 @@ class TestCircuitTracerConfig:
     def test_transformerlens_backend_is_refused_without_hooked_transformer(self, monkeypatch, mode):
         _stub_transformer_lens(monkeypatch, mode)
         with pytest.raises(ValueError, match=r"backend 'transformerlens' needs transformer_lens\.HookedTransformer"):
-            CircuitTracerConfig(backend="transformerlens")
+            require_hooked_transformer()
 
     def test_transformerlens_backend_is_accepted_where_hooked_transformer_exists(self, monkeypatch):
         """Positive control: the refusal keys on the class being absent, not on the backend name."""
         _stub_transformer_lens(monkeypatch, "hooked")
+        require_hooked_transformer()
+
+    def test_a_config_naming_the_transformerlens_backend_stays_loadable(self, monkeypatch):
+        """Configs are declarative: loading, validating and serializing one must not need the backend's model."""
+        _stub_transformer_lens(monkeypatch, "missing")
         assert CircuitTracerConfig(backend="transformerlens").backend == "transformerlens"
+
+    def test_building_the_transformerlens_replacement_model_is_refused(self, monkeypatch):
+        """The refusal fires on the load path, before circuit-tracer is asked for a model it cannot import."""
+        from types import SimpleNamespace
+
+        from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule, ReplacementModel
+
+        _stub_transformer_lens(monkeypatch, "migration_error")
+
+        def _unreachable(*args, **kwargs):
+            raise AssertionError("ReplacementModel.from_pretrained reached despite the refusal")
+
+        monkeypatch.setattr(ReplacementModel, "from_pretrained", _unreachable)
+        stub = SimpleNamespace(
+            circuit_tracer_cfg=CircuitTracerConfig(backend="transformerlens"),
+            it_cfg=SimpleNamespace(model_name_or_path="google/gemma-2-2b"),
+        )
+        with pytest.raises(ValueError, match=r"Use backend='nnsight' instead"):
+            BaseCircuitTracerModule._load_replacement_model(stub)  # type: ignore[arg-type]
 
     def test_backend_validation_nnsight(self):
         """Verify 'nnsight' backend is valid."""

@@ -155,6 +155,16 @@ class BaseITLensModule(BaseITModule):
         super().__init__(*args, **kwargs)
         self.loss_fn = None
 
+    def model_sig_keys(self, target_method: str) -> list:
+        """The bridge method's parameter names, without ``labels``.
+
+        Interpretune batches carry TASK labels under ``labels``, while TransformerLens 4.0's bridge ``forward`` accepts
+        ``labels`` as language-model targets and passes them to the wrapped model, which then computes a causal-LM loss
+        against classification targets and fails on the shape mismatch. Before 4.0 the bridge did not name
+        ``labels``, so pruning dropped them; excluding them here keeps that behaviour.
+        """
+        return [key for key in super().model_sig_keys(target_method) if key != "labels"]
+
     def auto_model_init(self) -> None:
         """Can be overridden by subclasses to automatically initialize model from a configuration (e.g.
         hf_from_pretrained_cfg, tl_from_config etc.)."""

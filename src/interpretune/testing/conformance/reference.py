@@ -19,6 +19,7 @@ from typing import Any
 import torch
 
 from interpretune.analysis.points import TensorRef, component_map_for, describe_unresolvable, parse, resolve
+from interpretune.analysis.backends.positions import accepts_position_ids, mask_derived_position_ids
 
 
 def _unwrap(output: Any) -> torch.Tensor:
@@ -210,6 +211,8 @@ class HFReference:
         kwargs: dict[str, Any] = {"input_ids": input_ids.to(self.device)}
         if attention_mask is not None:
             kwargs["attention_mask"] = attention_mask.to(self.device)
+            if not bool(attention_mask.all()) and accepts_position_ids(self.model.forward):
+                kwargs["position_ids"] = mask_derived_position_ids(attention_mask).to(self.device)
         return self.model(**kwargs)
 
 
