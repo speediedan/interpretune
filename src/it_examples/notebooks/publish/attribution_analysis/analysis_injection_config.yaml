@@ -14,7 +14,7 @@ settings:
   # Refresh after a pin bump with:
   #   uv pip install --no-deps "circuit-tracer @ git+<pinned url>" && python -c \
   #     "from importlib.metadata import version; print(version('circuit-tracer'))"
-  target_package_version: "0.5.3.dev31+g1e40cbf6e"  # circuit_tracer this notebook was validated against
+  target_package_version: "0.5.3.dev36+gc3e298f5a"  # circuit_tracer this notebook was validated against
   log_to_console: false
   log_to_file: true
   log_dir: /tmp
@@ -28,49 +28,49 @@ shared_context:
 
 file_hooks:
   ap_precomputation_phase_end:
-    file_path: attribution/attribute_transformerlens.py
+    file_path: attribution/attribute_nnsight.py
     enable: true
     regex_pattern: '^\\s*logger\\.info\\("Phase 1: Running forward pass"\\)'
     insert_after: true
     description: "End of precomputation of activations and vectors"
 
   ap_forward_pass_end:
-    file_path: attribution/attribute_transformerlens.py
+    file_path: attribution/attribute_nnsight.py
     enable: true
-    regex_pattern: '^\\s*ctx\\._resid_activations\\[-1\\]\\s*=\\s*model\\.ln_final'
+    regex_pattern: '^\\s*logger\\.info\\(f"Forward pass completed'
     insert_after: true
     description: "After forward pass on original replacement model"
 
   ap_build_input_vectors_end:
-    file_path: attribution/attribute_transformerlens.py
+    file_path: attribution/attribute_nnsight.py
     enable: true
     regex_pattern: '^\\s*logger\\.info\\(f"Input vectors built'
     insert_after: true
     description: "After building input vectors with target logits"
 
   ap_compute_logit_attribution_end:
-    file_path: attribution/attribute_transformerlens.py
+    file_path: attribution/attribute_nnsight.py
     enable: true
-    regex_pattern: '^\\s*logger\\.info\\(f"Logit attributions completed'
+    regex_pattern: '^\\s*logger\\.info\\(f"\\{i \\+ 1\\} logit attribution\\(s\\) completed'
     insert_after: true
     description: "End of logit attribution"
 
   ap_compute_feature_attributions_end:
-    file_path: attribution/attribute_transformerlens.py
+    file_path: attribution/attribute_nnsight.py
     enable: true
     regex_pattern: '^\\s*selected_features\\s*=\\s*torch\\.where\\(visited\\)\\[0\\]'
     insert_after: true
     description: "End of feature attribution"
 
   ap_graph_creation_start:
-    file_path: attribution/attribute_transformerlens.py
+    file_path: attribution/attribute_nnsight.py
     enable: true
-    regex_pattern: '^\\s*full_edge_matrix\\[-n_logits:\\] = edge_matrix\\[max_feature_nodes:\\]'
+    regex_pattern: '^\\s*full_edge_matrix\\[-n_logits:\\] = edge_matrix\\[actual_max_feature_nodes:\\]'
     insert_after: true
     description: "Start of attribution graph packaging"
 
   ap_compute_attribution_end:
-    file_path: replacement_model/replacement_model_transformerlens.py
+    file_path: replacement_model/replacement_model_nnsight.py
     enable: true
     regex_pattern: '^\\s*error_vectors\\s*=\\s*mlp_out_cache\\s*-\\s*attribution_data\\["reconstruction"\\]'
     insert_after: false

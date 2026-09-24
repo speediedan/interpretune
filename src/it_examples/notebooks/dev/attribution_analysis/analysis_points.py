@@ -54,7 +54,7 @@ def ap_forward_pass_end(local_vars: dict[str, Any]) -> None:
     v = get_analysis_vars(context_keys=["target_token_analysis"], local_keys=["ctx", "model"], local_vars=local_vars)
 
     resid_final = v["ctx"]._resid_activations[-1][-1, -1, :].detach()
-    target_logits = resid_final @ v["model"].W_U[:, v["target_token_analysis"].token_ids]
+    target_logits = resid_final @ v["model"].unembed_weight[v["target_token_analysis"].token_ids].T
     data = {
         "target_token_ids": v["target_token_analysis"].token_ids,
         "target_logits": target_logits,
@@ -71,7 +71,7 @@ def ap_build_input_vectors_end(local_vars: dict[str, Any]) -> None:
             "targets",
             "total_nodes",
             "total_active_feats",
-            "max_feature_nodes",
+            "actual_max_feature_nodes",
             "edge_matrix",
             "row_to_node_index",
             "n_layers",
@@ -87,7 +87,7 @@ def ap_build_input_vectors_end(local_vars: dict[str, Any]) -> None:
     max_n_logits = len(targets)
 
     HOOK_REGISTRY.set_context(
-        max_feature_nodes=v["max_feature_nodes"],
+        max_feature_nodes=v["actual_max_feature_nodes"],
         total_nodes=v["total_nodes"],
         logit_idx=logit_idx,
         logit_p=logit_p,
@@ -102,7 +102,7 @@ def ap_build_input_vectors_end(local_vars: dict[str, Any]) -> None:
         "target_logit_p": tta.logit_probabilities,
         "logit_cumulative_prob": float(logit_p.sum().item()),
         "total_nodes": v["total_nodes"],
-        "max_feature_nodes": v["max_feature_nodes"],
+        "max_feature_nodes": v["actual_max_feature_nodes"],
         "total_active_feats": v["total_active_feats"],
         "n_logits": len(targets),
         "n_layers": v["n_layers"],
@@ -119,11 +119,11 @@ def ap_compute_logit_attribution_end(local_vars: dict[str, Any]) -> None:
     # Use dict directly for cleaner access
     v = get_analysis_vars(
         context_keys=["target_token_analysis"],
-        local_keys=["edge_matrix", "logit_offset", "n_logits", "max_feature_nodes", "ctx"],
+        local_keys=["edge_matrix", "logit_offset", "n_logits", "actual_max_feature_nodes", "ctx"],
         local_vars=local_vars,
     )
 
-    logit_section = v["edge_matrix"][: v["n_logits"], : v["max_feature_nodes"]]
+    logit_section = v["edge_matrix"][: v["n_logits"], : v["actual_max_feature_nodes"]]
     logit_section_zeros = torch.where(logit_section == 0)[1].unique()
     data = {}
     collect_shapes(data, local_vars, ["edge_matrix", "row_to_node_index"])
@@ -152,7 +152,7 @@ def ap_compute_feature_attributions_end(local_vars: dict[str, Any]) -> None:
     # Use dict directly for cleaner access
     v = get_analysis_vars(
         context_keys=["target_token_analysis"],
-        local_keys=["n_visited", "max_feature_nodes", "targets", "edge_matrix", "ctx"],
+        local_keys=["n_visited", "actual_max_feature_nodes", "targets", "edge_matrix", "ctx"],
         local_vars=local_vars,
     )
     tta = v["target_token_analysis"]
@@ -172,10 +172,10 @@ def ap_compute_feature_attributions_end(local_vars: dict[str, Any]) -> None:
         "top_init_edge_features": tta.top_init_edge_features,
         "top_init_edge_vals": tta.top_init_edge_vals,
         "features_processed": v["n_visited"],
-        "max_features": v["max_feature_nodes"],
+        "max_features": v["actual_max_feature_nodes"],
         "progress": (
-            f"{100 * v['n_visited'] / v['max_feature_nodes']:.1f}%"
-            if v["max_feature_nodes"] and v["n_visited"] is not None
+            f"{100 * v['n_visited'] / v['actual_max_feature_nodes']:.1f}%"
+            if v["actual_max_feature_nodes"] and v["n_visited"] is not None
             else None
         ),
     }
