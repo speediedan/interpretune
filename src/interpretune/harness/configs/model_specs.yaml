@@ -6,6 +6,8 @@ model_specs:
     neuronpedia_set: gemmascope-transcoder-16k
     use_chat_template: false
     cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma2
+    composition: [core, nnsight, circuit_tracer]
+    module_cls: interpretune.adapters.circuit_tracer.adapter.CircuitTracerModule
     nnsight_overrides:
       model_name: "{model_name}"
       device_map: "{device_type}"
@@ -25,6 +27,8 @@ model_specs:
     neuronpedia_set: gemmascope-transcoder-16k
     use_chat_template: true
     cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma2
+    composition: [core, nnsight, circuit_tracer]
+    module_cls: interpretune.adapters.circuit_tracer.adapter.CircuitTracerModule
     nnsight_overrides:
       model_name: "{model_name}"
       device_map: "{device_type}"
@@ -44,6 +48,8 @@ model_specs:
     neuronpedia_set: gemmascope-2-res-16k
     use_chat_template: false
     cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma3
+    composition: [core, nnsight, circuit_tracer]
+    module_cls: interpretune.adapters.circuit_tracer.adapter.CircuitTracerModule
     nnsight_overrides:
       model_name: "{model_name}"
       device_map: "{device_type}"
@@ -62,6 +68,8 @@ model_specs:
     neuronpedia_set: gemmascope-2-transcoder-16k
     use_chat_template: true
     cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma3
+    composition: [core, nnsight, circuit_tracer]
+    module_cls: interpretune.adapters.circuit_tracer.adapter.CircuitTracerModule
     nnsight_overrides:
       model_name: "{model_name}"
       device_map: "{device_type}"
@@ -80,6 +88,8 @@ model_specs:
     neuronpedia_set: gemmascope-2-res-16k
     use_chat_template: false
     cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma3
+    composition: [core, nnsight, circuit_tracer]
+    module_cls: interpretune.adapters.circuit_tracer.adapter.CircuitTracerModule
     hf_model_head: transformers.Gemma3ForConditionalGeneration
     nnsight_overrides:
       model_name: "{model_name}"
@@ -99,6 +109,8 @@ model_specs:
     neuronpedia_set: gemmascope-2-transcoder-16k
     use_chat_template: true
     cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma3
+    composition: [core, nnsight, circuit_tracer]
+    module_cls: interpretune.adapters.circuit_tracer.adapter.CircuitTracerModule
     hf_model_head: transformers.Gemma3ForConditionalGeneration
     nnsight_overrides:
       model_name: "{model_name}"
@@ -118,6 +130,8 @@ model_specs:
     neuronpedia_set: gemmascope-2-res-262k
     use_chat_template: false
     cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma3
+    composition: [core, nnsight, circuit_tracer]
+    module_cls: interpretune.adapters.circuit_tracer.adapter.CircuitTracerModule
     hf_model_head: transformers.Gemma3ForConditionalGeneration
     nnsight_overrides:
       model_name: "{model_name}"
@@ -137,6 +151,8 @@ model_specs:
     neuronpedia_set: gemmascope-2-transcoder-262k
     use_chat_template: true
     cfg_class: tests.core.cfg_aliases.CircuitTracerNNsightGemma3
+    composition: [core, nnsight, circuit_tracer]
+    module_cls: interpretune.adapters.circuit_tracer.adapter.CircuitTracerModule
     hf_model_head: transformers.Gemma3ForConditionalGeneration
     nnsight_overrides:
       model_name: "{model_name}"
