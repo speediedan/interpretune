@@ -5,9 +5,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -20,6 +22,7 @@ from uuid import uuid4
 from interpretune.utils.neuronpedia_db_utils import (
     resolve_local_neuronpedia_db_url,
 )
+from interpretune.utils.model_fallback import ModelCandidate, resolve_model
 
 DEFAULT_NEURONPEDIA_BASE_URL = "https://www.neuronpedia.org"
 DEFAULT_NEURONPEDIA_PUBLIC_DATASET_BASE_URL = "https://neuronpedia-datasets.s3.amazonaws.com"
@@ -363,6 +366,13 @@ class ExplanationCliSpec:
     environment variables. The default spec drives the GitHub Copilot CLI in BYOK mode; other
     conforming CLIs can be described with their own spec (set ``IT_EXPLANATION_CLI`` to override
     just the executable).
+
+    CLIs that take the model as an argv flag rather than an env var (e.g. ``opencode run -m``)
+    use ``model_args`` with a ``{model}`` placeholder instead of ``model_env_var``. CLIs that
+    cannot take a long prompt on argv (``opencode run`` hangs on ~25 kB message arguments) set
+    ``prompt_via_file`` to deliver the prompt through a temp file instead. CLIs that mint a
+    server-side session per call (``opencode run``) set ``cleanup_session`` so the session id
+    parsed from the stdout JSON events is deleted afterwards.
     """
 
     executable: str = DEFAULT_EXPLANATION_CLI
@@ -371,6 +381,54 @@ class ExplanationCliSpec:
     provider_type_env_var: str | None = "COPILOT_PROVIDER_TYPE"
     provider_base_url_env_var: str | None = "COPILOT_PROVIDER_BASE_URL"
     provider_api_key_env_var: str | None = "COPILOT_PROVIDER_API_KEY"
+    model_args: tuple[str, ...] = ()
+    """Argv template carrying ``{model}``, appended after ``prompt_args``; empty means model by env."""
+    prompt_via_file: bool = False
+    """Write the prompt to a temp file and pass its absolute path via ``prompt_file_arg``."""
+    prompt_file_arg: str = "-f"
+    cleanup_session: bool = False
+    """Parse ``sessionID`` from stdout JSON event lines and delete the session afterwards."""
+    kill_process_group_on_timeout: bool = False
+    """Kill the whole process group on timeout (CLIs that spawn servers outlive a plain kill)."""
+    json_event_output: bool = False
+    """Stdout is JSON event lines; extract the response text instead of returning it raw."""
+
+
+#: The ``opencode run`` route to provider models, which is the only route that can use free-tier
+#: models (they refuse keyed BYOK access). Long prompts ride a file, the model rides ``-m``, and
+#: each call's session is deleted afterwards so batch runs do not fill the session list.
+OPENCODE_EXPLANATION_CLI_SPEC = ExplanationCliSpec(
+    executable="opencode",
+    prompt_args=(),
+    model_env_var=None,
+    provider_type_env_var=None,
+    provider_base_url_env_var=None,
+    provider_api_key_env_var=None,
+    model_args=("run", "--pure", "-m", "opencode/{model}", "--format", "json"),
+    prompt_via_file=True,
+    cleanup_session=True,
+    kill_process_group_on_timeout=True,
+    json_event_output=True,
+)
+#: The ``opencode run`` route to OpenCode Go subscription models (stored Go login or key).
+OPENCODE_GO_EXPLANATION_CLI_SPEC = replace(
+    OPENCODE_EXPLANATION_CLI_SPEC,
+    model_args=("run", "--pure", "-m", "opencode-go/{model}", "--format", "json"),
+)
+#: Timeout for the best-effort post-call session delete; a stuck delete must never fail the call.
+DEFAULT_EXPLANATION_CLI_SESSION_DELETE_TIMEOUT_SECONDS = 30
+#: Comma-separated free fallbacks tried before discovery (see ``build_explanation_ladder``).
+EXPLANATION_FREE_FALLBACKS_ENV_VAR = "IT_EXPLANATION_FREE_FALLBACKS"
+#: Comma-separated Go subscription models, tried after the free tier when a Go key is present.
+EXPLANATION_GO_MODELS_ENV_VAR = "IT_EXPLANATION_GO_MODELS"
+DEFAULT_EXPLANATION_GO_MODELS = ("glm-5.3-flash", "kimi-k2.6")
+EXPLANATION_GO_API_KEY_ENV_VAR = "IT_EXPLANATION_GO_API_KEY"
+#: Comma-separated paid fallbacks, tried last through the BYOK paid route when a key is present.
+EXPLANATION_PAID_FALLBACKS_ENV_VAR = "IT_EXPLANATION_PAID_FALLBACKS"
+DEFAULT_EXPLANATION_PAID_FALLBACKS = ("deepseek-v4-flash",)
+#: The tiny probe prompt a fallback candidate answers; success is exit 0, the text is unused.
+EXPLANATION_PROBE_PROMPT = "Reply with exactly: ok"
+EXPLANATION_PROBE_TIMEOUT_SECONDS = 60
 
 
 DEFAULT_EXPLANATION_CLI_SPEC = ExplanationCliSpec()
@@ -382,6 +440,10 @@ def resolve_explanation_cli_spec(cli_spec: ExplanationCliSpec | None = None) -> 
     resolved = cli_spec or DEFAULT_EXPLANATION_CLI_SPEC
     executable_override = os.getenv("IT_EXPLANATION_CLI")
     if executable_override:
+        if executable_override == OPENCODE_EXPLANATION_CLI_SPEC.executable and resolved is DEFAULT_EXPLANATION_CLI_SPEC:
+            # `opencode` needs the whole route (argv model flag, file prompt, session cleanup),
+            # not just the executable swapped onto the copilot shape.
+            return OPENCODE_EXPLANATION_CLI_SPEC
         resolved = replace(resolved, executable=executable_override)
     return resolved
 
@@ -457,6 +519,8 @@ class ExplanationCliInvocationResult:
 
     stdout: str
     stderr: str
+    response_text: str | None = None
+    """The extracted model response for JSON-event CLIs; None means stdout already is the response."""
 
 
 class NeuronpediaExplanationError(RuntimeError):
@@ -496,6 +560,84 @@ class NeuronpediaLocalExplanationCoverage:
     def missing_feature_refs(self) -> list[NeuronpediaFeatureRef]:
         """The feature routes still without a local explanation -- i.e. what a backfill would target."""
         return [status.feature_ref for status in self.statuses if not status.has_local_explanation]
+
+
+def extract_session_id_from_cli_events(stdout: str) -> str | None:
+    """The ``sessionID`` carried by stdout JSON event lines, or None when no line carries one.
+
+    Measured against ``opencode run --format json``: both answer and error events carry the id at
+    top level, so cleanup can run for failed calls too.
+    """
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        session_id = event.get("sessionID") if isinstance(event, dict) else None
+        if isinstance(session_id, str) and session_id:
+            return session_id
+    return None
+
+
+def extract_response_text_from_cli_events(stdout: str) -> str:
+    """Collect the model response text from stdout JSON event lines.
+
+    Format-agnostic by construction: every string found by walking event objects is gathered,
+    except ``error``-type events (whose text is a failure report, measured) and the envelope
+    metadata around them (ids, timestamps, model names, event types). Raises naming what was met
+    when nothing collectible is present, rather than returning an empty string that reads as an
+    empty answer -- or metadata that reads as an answer -- downstream.
+    """
+    #: Envelope keys that describe the event rather than carry the answer.
+    envelope_keys = frozenset({"type", "timestamp", "timestampMs", "sessionID", "sessionId", "id", "model", "provider"})
+    texts: list[str] = []
+    parsed_lines = 0
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        parsed_lines += 1
+        if isinstance(event, dict) and event.get("type") == "error":
+            continue
+        stack: list[tuple[str | None, Any]] = [(None, event)]
+        while stack:
+            key, node = stack.pop()
+            if isinstance(node, dict):
+                stack.extend((k, v) for k, v in node.items() if k not in envelope_keys)
+            elif isinstance(node, list):
+                stack.extend((None, v) for v in node)
+            elif isinstance(node, str) and node.strip():
+                texts.append(node)
+    # The answer dominates by presence, not by length: an event stream of pure metadata with no
+    # answer text is a real absence, and returning the metadata would read as an answer.
+    if not texts:
+        raise NeuronpediaExplanationError(f"no response text found in {parsed_lines} JSON event lines of CLI stdout")
+    return "\n".join(texts)
+
+
+def _delete_cli_session(executable: str, session_id: str) -> None:
+    """Best-effort ``<cli> session delete``; a stuck delete warns rather than failing the call."""
+    try:
+        completed = subprocess.run(
+            [executable, "session", "delete", session_id],
+            capture_output=True,
+            text=True,
+            timeout=DEFAULT_EXPLANATION_CLI_SESSION_DELETE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except Exception as exc:  # -- cleanup must not fail the answered call
+        warnings.warn(f"explanation CLI session delete for {session_id!r} failed: {exc}")
+        return
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or f"exit code {completed.returncode}"
+        warnings.warn(f"explanation CLI session delete for {session_id!r} failed: {detail}")
 
 
 def normalize_base_url(base_url: str) -> str:
@@ -1180,22 +1322,66 @@ def invoke_explanation_cli(
         raise NeuronpediaExplanationError(f"Could not find the '{resolved_spec.executable}' explanation CLI on PATH.")
 
     env = build_explanation_cli_env(resolved_spec, explanation_model=explanation_model)
+    model = explanation_model or env.get("IT_EXPLANATION_CLI_MODEL") or DEFAULT_EXPLANATION_CLI_MODEL
+    argv = [executable, *resolved_spec.prompt_args, *(a.replace("{model}", model) for a in resolved_spec.model_args)]
+    prompt_file: Path | None = None
+    if resolved_spec.prompt_via_file:
+        prompt_file = Path(tempfile.mkdtemp(prefix="it_explanation_prompt_")) / "prompt.md"
+        prompt_file.write_text(prompt)
+        argv += [resolved_spec.prompt_file_arg, str(prompt_file)]
+    else:
+        argv.append(prompt)
 
-    completed = subprocess.run(
-        [executable, *resolved_spec.prompt_args, prompt],
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=timeout_seconds,
-        check=False,
-    )
-    if completed.returncode != 0:
-        stderr = completed.stderr.strip()
-        stdout = completed.stdout.strip()
-        detail = stderr or stdout or f"exit code {completed.returncode}"
+    try:
+        if resolved_spec.kill_process_group_on_timeout:
+            # CLIs that spawn servers (opencode run) outlive a plain child kill; the timeout must
+            # take the whole group, or the retry loop piles up servers instead of failing fast.
+            with subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+                start_new_session=True,
+            ) as proc:
+                try:
+                    stdout, stderr = proc.communicate(timeout=timeout_seconds)
+                    returncode = proc.returncode
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    stdout, stderr = proc.communicate()
+                    raise
+        else:
+            completed = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=timeout_seconds,
+                check=False,
+            )
+            stdout, stderr, returncode = completed.stdout, completed.stderr, completed.returncode
+    finally:
+        if prompt_file is not None:
+            prompt_file.unlink(missing_ok=True)
+            try:
+                prompt_file.parent.rmdir()
+            except OSError:
+                pass
+
+    stdout_text, stderr_text = stdout.strip(), stderr.strip()
+    if resolved_spec.cleanup_session:
+        # The session id rides the stdout events on success AND on failure (measured), so cleanup
+        # runs before the returncode check: a failed call must not leak its session either.
+        session_id = extract_session_id_from_cli_events(stdout)
+        if session_id is not None:
+            _delete_cli_session(resolved_spec.executable, session_id)
+    if returncode != 0:
+        detail = stderr_text or stdout_text or f"exit code {returncode}"
         raise NeuronpediaExplanationError(f"Explanation CLI ('{resolved_spec.executable}') invocation failed: {detail}")
 
-    return ExplanationCliInvocationResult(stdout=completed.stdout.strip(), stderr=completed.stderr.strip())
+    response_text = extract_response_text_from_cli_events(stdout) if resolved_spec.json_event_output else None
+    return ExplanationCliInvocationResult(stdout=stdout_text, stderr=stderr_text, response_text=response_text)
 
 
 def invoke_explanation_cli_with_retries(
@@ -1233,6 +1419,194 @@ def invoke_explanation_cli_with_retries(
     raise NeuronpediaExplanationError(
         f"Explanation CLI timed out after {attempts} attempt{'s' if attempts != 1 else ''}"
     ) from last_timeout
+
+
+def _split_env_list(value: str | None) -> list[str]:
+    """Split a comma-separated env list, dropping empties."""
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
+
+
+def _provider_label_for_key(api_key: str | None) -> str:
+    """The provider label for a BYOK key: OpenRouter keys route to OpenRouter, the rest to Zen."""
+    return "openrouter" if api_key and api_key.startswith(OPENROUTER_API_KEY_PREFIX) else "zen"
+
+
+#: User-Agent for provider listing calls: some front doors (Zen's included, measured) refuse
+#: the urllib default with a 403 that reads as an auth failure.
+_MODEL_FALLBACK_USER_AGENT = "interpretune-model-fallback/1.0 (+https://interpretune.org)"
+
+
+def fetch_free_model_ids(base_url: str, api_key: str, timeout_seconds: int = 30) -> list[str]:
+    """The provider's currently-free model ids (``/models`` ids ending in ``-free`` or ``:free``).
+
+    Free rosters rotate every few weeks, so the ladder discovers them instead of pinning names. Raises the raw error;
+    the ladder builder treats discovery as opportunistic and continues without it rather than failing generation for a
+    listing call.
+    """
+    request = Request(
+        base_url.rstrip("/") + "/models",
+        headers={"Authorization": f"Bearer {api_key}", "User-Agent": _MODEL_FALLBACK_USER_AGENT},
+    )
+    with urlopen(request, timeout=timeout_seconds) as response:
+        payload = json.loads(response.read().decode())
+    entries = payload.get("data", []) if isinstance(payload, dict) else []
+    return sorted(
+        entry["id"]
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("id"), str)
+        and (entry["id"].endswith("-free") or entry["id"].endswith(":free"))
+    )
+
+
+def build_explanation_ladder(
+    *,
+    explanation_model: str | None = None,
+    cli_spec: ExplanationCliSpec | None = None,
+    base_env: dict[str, str] | None = None,
+) -> tuple[ModelCandidate, list[ModelCandidate]]:
+    """The requested rung plus the fallback ladder behind it, cheapest first.
+
+    Tiers: the requested model; configured free fallbacks (``IT_EXPLANATION_FREE_FALLBACKS``);
+    discovered free models (resolved lazily at probe time, so no listing call happens when an
+    earlier rung answers); Go subscription models (``IT_EXPLANATION_GO_MODELS``, only with a Go
+    key); paid BYOK fallbacks (``IT_EXPLANATION_PAID_FALLBACKS``, only with a provider key).
+    Free models ride the ``opencode`` CLI route only -- they refuse keyed access -- and paid
+    rungs ride the default CLI with the keyed BYOK env, which is today's paid route unchanged.
+    """
+    env = dict(os.environ) if base_env is None else base_env
+    resolved_spec = resolve_explanation_cli_spec(cli_spec)
+    requested_name = explanation_model or env.get("IT_EXPLANATION_CLI_MODEL") or DEFAULT_EXPLANATION_CLI_MODEL
+    requested = ModelCandidate(
+        name=requested_name,
+        kind="cli",
+        provider="opencode" if resolved_spec is OPENCODE_EXPLANATION_CLI_SPEC else "cli",
+        cli_spec=resolved_spec,
+    )
+    seen = {(requested.kind, requested.display)}
+    ladder: list[ModelCandidate] = []
+
+    def _add(candidate: ModelCandidate) -> None:
+        if (candidate.kind, candidate.display) not in seen:
+            seen.add((candidate.kind, candidate.display))
+            ladder.append(candidate)
+
+    for name in _split_env_list(env.get(EXPLANATION_FREE_FALLBACKS_ENV_VAR)):
+        _add(
+            ModelCandidate(
+                name=name, kind="cli", provider="opencode", free=True, cli_spec=OPENCODE_EXPLANATION_CLI_SPEC
+            )
+        )
+    if env.get(EXPLANATION_GO_API_KEY_ENV_VAR):
+        go_models = _split_env_list(env.get(EXPLANATION_GO_MODELS_ENV_VAR)) or list(DEFAULT_EXPLANATION_GO_MODELS)
+        for name in go_models:
+            _add(
+                ModelCandidate(
+                    name=name, kind="cli", provider="opencode-go", paid=True, cli_spec=OPENCODE_GO_EXPLANATION_CLI_SPEC
+                )
+            )
+    balance_key = env.get("IT_EXPLANATION_PROVIDER_API_KEY") or env.get(OPENROUTER_API_KEY_ENV_VAR)
+    if balance_key:
+        paid_models = _split_env_list(env.get(EXPLANATION_PAID_FALLBACKS_ENV_VAR)) or list(
+            DEFAULT_EXPLANATION_PAID_FALLBACKS
+        )
+        for name in paid_models:
+            _add(
+                ModelCandidate(
+                    name=name,
+                    kind="cli",
+                    provider=_provider_label_for_key(balance_key),
+                    paid=True,
+                    cli_spec=DEFAULT_EXPLANATION_CLI_SPEC,
+                )
+            )
+    return requested, ladder
+
+
+def discover_explanation_free_models(base_env: dict[str, str] | None = None) -> list[ModelCandidate]:
+    """The provider's current free roster as CLI-route rungs (best effort: [] on any trouble)."""
+    env = dict(os.environ) if base_env is None else base_env
+    api_key = env.get("IT_EXPLANATION_PROVIDER_API_KEY") or env.get(OPENROUTER_API_KEY_ENV_VAR)
+    if not api_key:
+        return []
+    base_url = env.get("IT_EXPLANATION_PROVIDER_BASE_URL") or (
+        OPENROUTER_PROVIDER_BASE_URL
+        if api_key.startswith(OPENROUTER_API_KEY_PREFIX)
+        else DEFAULT_EXPLANATION_PROVIDER_BASE_URL
+    )
+    try:
+        ids = fetch_free_model_ids(base_url, api_key)
+    except Exception as exc:  # -- discovery is opportunistic, not load-bearing
+        warnings.warn(f"explanation free-model discovery failed, continuing without it: {exc}")
+        return []
+    return [
+        ModelCandidate(
+            name=model_id, kind="cli", provider="opencode", free=True, cli_spec=OPENCODE_EXPLANATION_CLI_SPEC
+        )
+        for model_id in ids
+    ]
+
+
+def probe_explanation_candidate(
+    candidate: ModelCandidate, *, timeout_seconds: int = EXPLANATION_PROBE_TIMEOUT_SECONDS
+) -> str:
+    """Answer a tiny prompt on the rung's route; success is exit 0, failures raise for classification.
+
+    Every rung rides a CLI (the requested spec, the opencode free route, or the default BYOK
+    route), so this is one ``invoke_explanation_cli`` with the rung's spec and model. Auth-shaped
+    and missing-CLI failures classify as unavailable downstream; timeouts propagate for the
+    caller's retry loop.
+    """
+    result = invoke_explanation_cli(
+        EXPLANATION_PROBE_PROMPT,
+        explanation_model=candidate.name,
+        timeout_seconds=timeout_seconds,
+        cli_spec=candidate.cli_spec if isinstance(candidate.cli_spec, ExplanationCliSpec) else None,
+    )
+    return result.response_text or result.stdout
+
+
+@dataclass(frozen=True)
+class ResolvedExplanationModel:
+    """The rung generation runs on: the model name, its CLI spec, and the resolution behind it."""
+
+    model_name: str
+    requested_name: str
+    cli_spec: ExplanationCliSpec
+    resolved: Any
+    """The :class:`ResolvedModel`: winning rung, skip reasons, and cache provenance."""
+
+
+def resolve_explanation_model(
+    *,
+    explanation_model: str | None = None,
+    cli_spec: ExplanationCliSpec | None = None,
+    base_env: dict[str, str] | None = None,
+) -> ResolvedExplanationModel:
+    """Resolve the explanation rung: requested first, then the ladder cheapest first.
+
+    Probes each rung with a tiny prompt (cached per process and on disk, so a batch probes once),
+    and raises :class:`ModelUnavailableError` naming the shape and the switch when fallback is off
+    and the requested model is unavailable -- fail fast instead of retrying a gone model.
+    """
+    env = dict(os.environ) if base_env is None else base_env
+    requested, ladder = build_explanation_ladder(explanation_model=explanation_model, cli_spec=cli_spec, base_env=env)
+    resolved = resolve_model(
+        "explanation",
+        requested=requested,
+        candidates=ladder,
+        probe=probe_explanation_candidate,
+        discover=lambda: discover_explanation_free_models(env),
+        env=dict(env),
+    )
+    winner = resolved.candidate
+    winner_spec = winner.cli_spec if isinstance(winner.cli_spec, ExplanationCliSpec) else resolve_explanation_cli_spec()
+    return ResolvedExplanationModel(
+        model_name=winner.name,
+        requested_name=requested.name,
+        cli_spec=winner_spec,
+        resolved=resolved,
+    )
 
 
 def artifact_output_path(output_dir: Path, feature_ref: NeuronpediaFeatureRef) -> Path:
@@ -1281,7 +1655,12 @@ def build_explanation_export_record(
     explanation_model_name: str | None = None,
     explanation_cli: str = DEFAULT_EXPLANATION_CLI,
 ) -> dict[str, Any]:
-    """Build a Neuronpedia-compatible explanation row for import or direct DB insertion."""
+    """Build a Neuronpedia-compatible explanation row for import or direct DB insertion.
+
+    ``explanation_model`` is the model that actually wrote the explanation; ``explanation_model_name``
+    is the model that was asked for, recorded in the notes so a fallback stays visible. The row's
+    ``explanationModelName`` always names the writer.
+    """
 
     notes = _with_requested_generation_metadata(
         {
@@ -1302,7 +1681,7 @@ def build_explanation_export_record(
         "authorId": author_id,
         "description": cleaned_explanation,
         "typeName": None,
-        "explanationModelName": explanation_model_name or explanation_model,
+        "explanationModelName": explanation_model,
         "triggeredByUserId": triggered_by_user_id,
         "notes": _serialize_notes(notes),
         "umap_x": 0,
@@ -1492,8 +1871,10 @@ def generate_explanation_artifact(
 ) -> NeuronpediaExplanationArtifact:
     """Generate a Neuronpedia-style explanation artifact using cached activations and an explanation CLI."""
 
-    resolved_spec = resolve_explanation_cli_spec(cli_spec)
-    selected_model = explanation_model or os.getenv("IT_EXPLANATION_CLI_MODEL") or DEFAULT_EXPLANATION_CLI_MODEL
+    resolved_model = resolve_explanation_model(explanation_model=explanation_model, cli_spec=cli_spec)
+    resolved_spec = resolved_model.cli_spec
+    selected_model = resolved_model.model_name
+    requested_model_name = explanation_model_name or resolved_model.requested_name
     feature_payload, cached_activations_path = load_feature_payload_with_cached_activations(
         feature_ref,
         cache_dir=cache_dir,
@@ -1509,7 +1890,8 @@ def generate_explanation_artifact(
         retry_backoff_seconds=retry_backoff_seconds,
         cli_spec=resolved_spec,
     )
-    cleaned_explanation = clean_explanation_text(cli_result.stdout)
+    cleaned_explanation = clean_explanation_text(cli_result.response_text or cli_result.stdout)
+    raw_response = cli_result.response_text or cli_result.stdout
 
     output_dir.mkdir(parents=True, exist_ok=True)
     artifact_path = artifact_output_path(output_dir, feature_ref)
@@ -1527,7 +1909,7 @@ def generate_explanation_artifact(
             author_id=explanation_author_id,
             triggered_by_user_id=triggered_by_user_id,
             type_name=type_name,
-            explanation_model_name=explanation_model_name,
+            explanation_model_name=requested_model_name,
             explanation_cli=resolved_spec.executable,
         )
     if write_neuronpedia_import_data and explanation_record is not None:
@@ -1553,7 +1935,7 @@ def generate_explanation_artifact(
             feature_ref=feature_ref,
             prompt_inputs=prompt_inputs,
             prompt=prompt,
-            raw_response=cli_result.stdout,
+            raw_response=raw_response,
             cleaned_explanation=cleaned_explanation,
             explanation_model=selected_model,
             prompt_style=prompt_style,
@@ -1567,7 +1949,7 @@ def generate_explanation_artifact(
     return NeuronpediaExplanationArtifact(
         feature_ref=feature_ref,
         prompt=prompt,
-        raw_response=cli_result.stdout,
+        raw_response=raw_response,
         cleaned_explanation=cleaned_explanation,
         artifact_path=artifact_path,
         cached_activations_path=cached_activations_path,
