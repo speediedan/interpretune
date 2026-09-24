@@ -324,8 +324,10 @@ def experiment_session(
         datamodule = session.datamodule
         assert module is not None, "experiment session built no module"
         assert datamodule is not None, "experiment session built no datamodule"
+        tokenizer = getattr(datamodule, "tokenizer", None)
+        assert tokenizer is not None, "experiment session built no tokenizer"
         try:
-            yield session, module, datamodule.tokenizer
+            yield session, module, tokenizer
         finally:
             from interpretune.utils.resource_mgmt import cleanup_python_cuda
 
