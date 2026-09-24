@@ -48,7 +48,8 @@ if TYPE_CHECKING:
 #: `CT_BACKEND_REGISTRY` is the runtime authority on what a given backend must have produced. The
 #: TransformerLens product is deliberately not imported here: it subclasses `HookedTransformer`, which
 #: transformer-lens 4.0 removed, so importing it would make this whole module, nnsight backend included,
-#: unimportable. That backend is refused by name in `CircuitTracerConfig` instead.
+#: unimportable. That backend is refused by name when its replacement model is built
+#: (`require_hooked_transformer`), so a config naming it still loads.
 ReplacementModelType: TypeAlias = nn.Module
 
 # The registries live in `registry.py`, which imports NOTHING from circuit-tracer. They are the seam a
