@@ -1,4 +1,4 @@
-"""Manifest-routed op-collection discovery and the revision-pinned pull (#266 Phase 3, item 1).
+"""Manifest-routed op-collection discovery and the revision-pinned pull.
 
 Op discovery used to glob every ``*.yaml`` in a cached snapshot. It is now routed through
 ``it_component.yaml``'s ``ops.files`` list, which is a contract change with three consequences worth pinning

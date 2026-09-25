@@ -1,4 +1,4 @@
-"""#454: the unstated rails invariants a component author cannot discover, now stated and checked."""
+"""The unstated rails invariants a component author cannot discover, now stated and checked."""
 
 from __future__ import annotations
 

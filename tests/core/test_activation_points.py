@@ -76,7 +76,7 @@ class TestParse:
             ALIASES._entries.pop(entry.alias)
 
     def test_spellings_never_offer_a_different_tensor(self):
-        """The dissolved alias groups (#375, #376): spellings of one point never include another point."""
+        """The dissolved alias groups: spellings of one point never include another point."""
         from interpretune.analysis.points.vocabulary import spellings
 
         assert "blocks.5.hook_mlp_in" not in spellings("blocks.5.mlp.hook_in")
@@ -179,7 +179,7 @@ class TestResolverLayerShape:
 
 
 class TestDocumentsAreVersioned:
-    """#479: every component-map document says which schema it was written against."""
+    """Every component-map document says which schema it was written against."""
 
     def test_a_document_without_the_field_is_refused_naming_it(self, tmp_path):
         import yaml

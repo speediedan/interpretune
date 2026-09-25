@@ -106,7 +106,7 @@ class TestClassModuleRegistration:
 
 
 class TestComponentTreeRegistryLaziness:
-    """Per-key hydration guarantees for the core hydrator machinery (interpretune#236 / #1).
+    """Per-key hydration guarantees for the core hydrator machinery.
 
     Post-flip, no runtime registry reads the in-tree example trees — these tests exercise the CORE
     ``ModuleHydrator``/``LazyModuleRegistry`` machinery against the seed publish sources as fixture data

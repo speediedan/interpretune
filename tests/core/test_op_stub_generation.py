@@ -149,11 +149,11 @@ class TestCollectionStubs:
 
 
 class TestCompositeProtocolResolution:
-    """#60: a composite's stub names the protocol it can actually justify.
+    """A composite's stub names the protocol it can actually justify.
 
     Composites had no implementation to introspect, so the generator hardcoded the BASE protocol while
     simple ops were introspected into the richer `Default`. Two better answers exist now: a declared
-    `protocol_cls` (#56), or the protocol every constituent agrees on.
+    `protocol_cls`, or the protocol every constituent agrees on.
     """
 
     @staticmethod

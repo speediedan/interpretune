@@ -1,4 +1,4 @@
-"""The first-order intervention check (#539): predict the metric change from the edit.
+"""The first-order intervention check: predict the metric change from the edit.
 
 Runs downstream of `model_fwd_intervention` in a composite: the measured change comes from its
 recorded pre/post logits, while the prediction is built here from the metric gradient at the clean

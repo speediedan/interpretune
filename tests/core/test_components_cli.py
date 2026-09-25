@@ -110,7 +110,7 @@ def test_compose_config_relative(clean_cli_env, cli_test_configs, fnf_error, glo
                     cli_cfg.run, cli_cfg.cli_adapter, cli_cfg.compose_cfg, cfg_files, cli_cfg.extra_args
                 )
             elif glob_search:  # we always warn with glob_search
-                # NOTE (#499): the bare basename must name a file shipped under IT_BASE for the
+                # NOTE: the bare basename must name a file shipped under IT_BASE for the
                 # glob fallback to find; the benchmark configs moved to tests/benchmarks/configs/,
                 # so this names a stable examples-tree config instead of the relocated base_debug.yaml.
                 file_name_only_path = "datamodule.rte_boolq.yaml"

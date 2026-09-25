@@ -1,4 +1,4 @@
-"""#432: a hub-delivered adapter's classes are nameable from YAML through a stable, unversioned import path."""
+"""A hub-delivered adapter's classes are nameable from YAML through a stable, unversioned import path."""
 
 from __future__ import annotations
 

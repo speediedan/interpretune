@@ -1,4 +1,4 @@
-"""#128: datamodules as independently shareable/addressable hub components.
+"""Datamodules as independently shareable/addressable hub components.
 
 ``RegisteredCfg`` binds datamodule and module inseparably, which is right for task components. These
 tests pin the datamodule-only half: the ``datamodule`` manifest kind, name-addressed standalone

@@ -3,8 +3,7 @@
 ``AnalysisOpDispatcher._normalize_op_name`` case-folds and maps ``-``/``/``, and its docstring has always said it does
 so "for consistent lookup". Only the storage half implemented that: definitions registered under the normalized name
 while ``_resolve_name_safe`` did not normalize, so an op declared ``my-hyphen-op`` or ``MyCasedOp`` was unreachable by
-the name its own author wrote and ``get_op`` raised ``Unknown operation`` with nothing warned at load (#266 Phase 3,
-D12).
+the name its own author wrote and ``get_op`` raised ``Unknown operation`` with nothing warned at load.
 
 Fixing lookup alone would be a regression rather than an improvement: two declared names that normalize to one key
 collapse silently, last-writer-wins, so a symmetric lookup would *succeed* and hand back a different collection's op --
@@ -194,7 +193,7 @@ class TestNonOpYamlIsNotParsedAsOps:
     the ``.yaml`` suffix that discovery keys on. Feeding it to the op compiler raised ``AttributeError: 'int' object
     has no attribute 'get'`` on its own scalar keys (``it_schema_version: 1``) from
     ``_compile_required_ops_schemas``, which catches only ``ValueError`` -- so the whole load died and
-    ``_op_definitions`` came back EMPTY, bundled ops included (#266 Phase 3).
+    ``_op_definitions`` came back EMPTY, bundled ops included.
     """
 
     _MANIFEST = "it_schema_version: 1\nkinds: [ops]\nops:\n  files: [my_ops.yaml]\n"

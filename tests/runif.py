@@ -147,7 +147,7 @@ class RunIf:
             requires_env: Skip test if the named environment variable(s) are ABSENT or empty. The inverse of
                 ``env_mask``, for tests that need a credential or path the machine may not have -- notably gated-model
                 tokens. Without it such a test can only FAIL where the value is missing, which is indistinguishable
-                from a real defect (interpretune#354).
+                from a real defect.
             standalone: Mark the test as standalone, our CI will run it in a separate process.
                 This requires that the ``IT_RUN_STANDALONE_TESTS=1`` environment variable is set.
             profiling: Mark the test as profiling. It will run as a separate process and only be included in CI

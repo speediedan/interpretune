@@ -1,7 +1,7 @@
 """A bundled adapter's compositions must not vanish silently when its optional dependency is absent.
 
 Measured on `main` before this change: with circuit-tracer absent, `register_all_adapters` survived, **18 of
-48 compositions disappeared, and nothing was printed** (#431). The skip itself was never the defect --
+48 compositions disappeared, and nothing was printed**. The skip itself was never the defect --
 registering a subset is correct when a dependency is genuinely absent. The defect was that "this
 composition is unavailable here" and "this composition does not exist" became indistinguishable at exactly
 the moment a user needs to tell them apart.
@@ -161,7 +161,8 @@ class TestDiscoveryIsEntrypointDriven:
     def test_an_empty_group_warns_rather_than_registering_nothing_quietly(self, monkeypatch):
         """Registering nothing must never be indistinguishable from an environment with no adapters.
 
-        This is the #431 lesson at the discovery layer: the failure is silent by default, and its most likely cause --
+        This is the silent-skip lesson at the discovery layer: the failure is silent by default, and its most likely
+        cause --
         installed metadata predating the group -- looks exactly like a correct empty result.
         """
         import importlib.metadata as md

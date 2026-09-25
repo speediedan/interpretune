@@ -1,4 +1,4 @@
-"""Snapshot-entrypoint class resolution for module/datamodule payloads (#497 groundwork).
+"""Snapshot-entrypoint class resolution for module/datamodule payloads.
 
 A payload ``class_path`` normally imports from the environment. Once an experiment moves out of
 the tree, its payloads address the component's own entrypoint file instead, which is importable

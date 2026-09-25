@@ -78,7 +78,7 @@ class TestConditionalityIsVisibleBeforePulling:
     def test_the_skip_is_described_as_reported_not_absent(self):
         body = str(generate_component_card(_manifest(TWO_COMPOSITIONS), REPO))
         assert "skipped and reported" in body, (
-            '"unavailable here" and "does not exist" are the two states #431 exists to keep distinct; the '
+            '"unavailable here" and "does not exist" are the two states the skip reporting keeps distinct; the '
             "card is where a reader first meets that distinction"
         )
 

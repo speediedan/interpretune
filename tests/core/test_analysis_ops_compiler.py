@@ -1569,7 +1569,7 @@ class TestCacheManagerHubFunctionality:
             # The test passes because the non-model repository is skipped by the continue statement
 
     def test_discover_hub_yaml_files_unset_trust_denies_with_advice(self, tmp_path, monkeypatch):
-        """An UNSET trust decision denies once, naming a real cached repo in the advice (#255).
+        """An UNSET trust decision denies once, naming a real cached repo in the advice.
 
         The per-repo interactive prompt this replaced is gone entirely; the deny/opt-in/opt-out matrix itself lives in
         tests/core/test_hub_trust.py.
@@ -1854,7 +1854,7 @@ class TestParseCompositionString:
 
 class TestCacheFormatVersionCoversCompilerChanges:
     """The op cache fingerprint omits the compiler source, so `CACHE_FORMAT_VERSION` needs a manual bump that
-    nothing enforced (#290).
+    nothing enforced.
 
     `OpDefinitionsCacheManager.fingerprint` hashes the YAML **declarations** plus `CACHE_FORMAT_VERSION`
     and the interpretune version. It does not hash the **code that interprets those declarations**. So
@@ -1863,7 +1863,7 @@ class TestCacheFormatVersionCoversCompilerChanges:
     release and on commit, but not on a working-tree edit, which is exactly when someone is changing
     compilation semantics and running tests against the result.
 
-    This is not hypothetical. #289 changed inherited inputs to compile as `required=False`; without its
+    This is not hypothetical. An earlier change made inherited inputs compile as `required=False`; without its
     bump the fix silently would not have taken effect for anyone holding a cache, and the presenting
     symptom would have been "the fix didn't work", which points nowhere near caching. Its own end-to-end
     tests passed against a stale cache until the bump landed.
@@ -1897,7 +1897,7 @@ class TestCacheFormatVersionCoversCompilerChanges:
         # Normalize line endings before hashing. Without this the digest is a property of the CHECKOUT
         # rather than of the content: the repo has no `.gitattributes`, so GitHub's Windows runners check
         # out with `core.autocrlf=true` and every guarded file hashes differently there. Observed on
-        # #293's first run -- ubuntu and macos passed, windows-2022 failed with BOTH files "drifted",
+        # a CI run -- ubuntu and macos passed, windows-2022 failed with BOTH files "drifted",
         # which is the tell: real content drift shows on every platform, checkout drift on one.
         return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:12]
 

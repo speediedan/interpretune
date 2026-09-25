@@ -1,5 +1,5 @@
-"""#435 / #436: the published artifact is the manifest's allowlist plus declared extras, and the Hub tree is made
-to MATCH the staged tree rather than merely receive it.
+"""The published artifact is the manifest's allowlist plus declared extras, and the Hub tree is made to MATCH the
+staged tree rather than merely receive it.
 
 Before this, the only way to publish a collection's tests was a hand-push, which carried whatever else sat in the
 working directory (a `.pytest_cache/` tree reached the first published collection that way), and a renamed entrypoint

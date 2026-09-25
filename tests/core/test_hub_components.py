@@ -63,7 +63,7 @@ class TestOpsKindSpec:
     and ``promptconfigs``, and the sole ops-aware code copied an unvalidated ``ops.files`` list at publish time.
 
     That list is what makes op discovery manifest-routed rather than a blind glob over every YAML in the repo, which is
-    also what makes the registration claim "one manifest fetch per logical load" true for the ops kind (#266 Phase 3).
+    also what makes the registration claim "one manifest fetch per logical load" true for the ops kind.
     """
 
     _VALID = {"it_schema_version": 1, "kinds": ["ops"], "ops": {"files": ["concept_ops.yaml"]}}
@@ -398,7 +398,8 @@ def _experiment_component_dir(root: Path, *, key: str = "demo_experiment", name:
 
 
 class TestExperimentKindSpec:
-    """``kinds: [experiment]`` per the #498 ruling: own parity, snapshot confinement, declared sessions."""
+    """``kinds: [experiment]`` per the experiment-kind ruling: own parity, snapshot confinement, declared
+    sessions."""
 
     _VALID_ENTRY = {"config": "configs/demo_experiment.yaml", "pipeline": "pipeline/run.py"}
 
@@ -685,7 +686,7 @@ class TestExperimentKindSpec:
 
 
 class TestSnapshotRewrite:
-    """Restored snapshot-rewrite machinery for the concept-direction experiment (#498)."""
+    """Restored snapshot-rewrite machinery for the concept-direction experiment."""
 
     def test_unknown_rewrite_name_refused_at_build(self, tmp_path):
         from interpretune.hub.publish import build_component_tree
@@ -767,7 +768,7 @@ class TestSnapshotRewrite:
 
 
 class TestTemplatePort:
-    """Template execution port for snapshot runs (#498 slice 1)."""
+    """Template execution port for snapshot runs."""
 
     def _staged_tree_with_template(self, root: Path) -> tuple[Path, dict]:
         import json

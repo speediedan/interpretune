@@ -1,4 +1,4 @@
-"""#462: cache presence is not Hub presence; every rendered revision must say which kind a reader is looking at."""
+"""Cache presence is not Hub presence; every rendered revision must say which kind a reader is looking at."""
 
 from __future__ import annotations
 

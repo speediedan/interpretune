@@ -4,8 +4,8 @@
 missing and left the user to work out the command. The adapter lane's evidence for why the message is the
 product rather than a detail: a hub adapter that could not be loaded reported "manifest declares adapters
 entrypoint 'adapter.py', which is not present in the snapshot", which is accurate and names the wrong
-problem — nothing was partial, nothing was mis-declared, and the fetch had simply never happened
-(speediedan/interpretune#458). The fix there was a better message, not a new capability.
+problem — nothing was partial, nothing was mis-declared, and the fetch had simply never happened.
+The fix there was a better message, not a new capability.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ class TestInstallCommandIsEmitted:
     def test_the_modules_axis_does_not_claim_an_install_fixes_it(self):
         """An absent module is not always an absent distribution, so it must not suggest one.
 
-        Measured case behind #472: a checkout two commits off its pin had the distribution installed at a plausible
+        Measured case: a checkout two commits off its pin had the distribution installed at a plausible
         version with three modules absent. `uv pip install <dist>` would resolve, exit green, and change nothing.
         """
         unmet = requirement_status({"modules": ["packaging.no_such_module_here"]}, "t")

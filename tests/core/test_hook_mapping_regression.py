@@ -1,6 +1,6 @@
 """The derived resolver reproduces the retired hand-written tables row for row, except where they were wrong.
 
-The tables in the old ``hook_mapping.py`` were the five-architecture, 555-line encoding that #444 replaced with
+The tables in the old ``hook_mapping.py`` were the five-architecture, 555-line encoding replaced with
 component-map documents. This pins that the replacement is behaviour-preserving for every row that was right,
 and enumerates the rows that changed, each with its reason, so a future edit to a map cannot silently move a
 row that the old table had correct.
