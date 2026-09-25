@@ -118,6 +118,22 @@ class DatasetProcessingConfig(ITSerializableCfg):
     prepare_data_map_cfg: dict[str, Any] = field(default_factory=dict)
 
 
+def hf_datasets_cache_root() -> Path:
+    """The directory ``datasets`` caches under, resolved from the environment at call time.
+
+    Same precedence as ``datasets.config``: ``HF_DATASETS_CACHE``, else ``$HF_HOME/datasets``, else
+    ``$XDG_CACHE_HOME/huggingface/datasets`` (``~/.cache`` when unset), so a task dataset lands on the filesystem the
+    user pointed Hugging Face at. Read here rather than imported from ``datasets.config``, whose values freeze when
+    ``datasets`` is first imported and would ignore an environment set afterwards.
+    """
+    if datasets_cache := os.environ.get("HF_DATASETS_CACHE"):
+        return Path(datasets_cache)
+    if hf_home := os.environ.get("HF_HOME"):
+        return Path(hf_home).expanduser() / "datasets"
+    xdg_cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(xdg_cache).expanduser() / "huggingface" / "datasets"
+
+
 @dataclass(kw_only=True)
 class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingConfig):
     """The datamodule-side configuration: batch sizes and dataloading, over tokenization and dataset processing.
@@ -147,15 +163,8 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
         # Use pathlib for cross-platform path handling and sanitize task name for Windows compatibility
         sanitized_task_name = self.task_name.replace(":", "_").replace("|", "_")
         rank_zero_debug(f"[DATAMODULE_CONFIG] Sanitized task name: '{sanitized_task_name}'")
-        hf_datasets_cache = os.environ.get("HF_DATASETS_CACHE")
-
-        if hf_datasets_cache:
-            cache_home = Path(hf_datasets_cache)
-            rank_zero_debug(f"[DATAMODULE_CONFIG] Using HF_DATASETS_CACHE: {cache_home}")
-        else:
-            # Use Path.home() for cross-platform home directory detection
-            cache_home = Path.home() / ".cache" / "huggingface" / "datasets"
-            rank_zero_debug(f"[DATAMODULE_CONFIG] Using default cache path: {cache_home}")
+        cache_home = hf_datasets_cache_root()
+        rank_zero_debug(f"[DATAMODULE_CONFIG] Using datasets cache root: {cache_home}")
 
         default_dataset_save_path = cache_home / sanitized_task_name
         rank_zero_debug(f"[DATAMODULE_CONFIG] Default dataset path: {default_dataset_save_path}")

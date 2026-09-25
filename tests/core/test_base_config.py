@@ -1,4 +1,5 @@
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
@@ -205,6 +206,58 @@ class TestClassBaseConfigs:
         test_core_datamodule = {**TestClassBaseConfigs.core_gpt2_shared_config, "signature_columns": ["input_ids"]}
         itdm_cfg = deepcopy(test_core_datamodule) | {"defer_model_init": True}
         assert ITDataModuleConfig(**itdm_cfg)
+
+    @pytest.mark.parametrize(
+        "env, expected_root",
+        [
+            pytest.param(
+                {"HF_DATASETS_CACHE": "{tmp}/ds", "HF_HOME": "{tmp}/home"}, "{tmp}/ds", id="datasets_cache_wins"
+            ),
+            pytest.param({"HF_HOME": "{tmp}/home"}, "{tmp}/home/datasets", id="hf_home_only"),
+            pytest.param({"XDG_CACHE_HOME": "{tmp}/xdg"}, "{tmp}/xdg/huggingface/datasets", id="xdg_only"),
+        ],
+    )
+    def test_datamodule_cfg_default_dataset_path_follows_hf_env(self, monkeypatch, tmp_path, env, expected_root):
+        """The default ``dataset_path`` sits under the root ``datasets`` itself caches under.
+
+        ``hf_home_only`` is the case that once resolved to ``~/.cache/huggingface/datasets``: nothing failed, the
+        dataset simply landed on a different filesystem than the one ``HF_HOME`` named.
+        """
+        for var in ("HF_DATASETS_CACHE", "HF_HOME", "XDG_CACHE_HOME"):
+            monkeypatch.delenv(var, raising=False)
+        for var, value in env.items():
+            monkeypatch.setenv(var, value.format(tmp=tmp_path))
+        itdm_cfg = ITDataModuleConfig(**deepcopy(TestClassBaseConfigs.core_gpt2_shared_config))
+        expected = (Path(expected_root.format(tmp=tmp_path)) / default_test_task).resolve()
+        assert Path(itdm_cfg.dataset_path) == expected
+
+    def test_hf_datasets_cache_root_agrees_with_datasets(self, tmp_path):
+        """Checked against ``datasets.config`` itself rather than a restatement of its precedence.
+
+        ``datasets.config`` reads the environment once at import, so each case reloads it in a fresh interpreter.
+        """
+        import json
+        import os
+        import subprocess
+        import sys
+
+        script = (
+            "import json, sys\n"
+            "import datasets.config as dc\n"
+            "from interpretune.config.datamodule import hf_datasets_cache_root\n"
+            "print(json.dumps([str(dc.HF_DATASETS_CACHE), str(hf_datasets_cache_root())]))\n"
+        )
+        cases = [
+            {"HF_HOME": str(tmp_path / "home")},
+            {"HF_HOME": str(tmp_path / "home"), "HF_DATASETS_CACHE": str(tmp_path / "ds")},
+            {"XDG_CACHE_HOME": str(tmp_path / "xdg")},
+        ]
+        for case in cases:
+            env = {k: v for k, v in os.environ.items() if k not in ("HF_DATASETS_CACHE", "HF_HOME", "XDG_CACHE_HOME")}
+            env.update(case)
+            out = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True, check=True)
+            theirs, ours = json.loads(out.stdout.strip().splitlines()[-1])
+            assert Path(ours) == Path(theirs), case
 
     def test_hf_from_pretrained_cfg_validation(self):
         pretrained_kwargs = {"pretrained_kwargs": {"device_map": "cpu", "dtype": "float32", "token": "strip-me"}}
