@@ -1,7 +1,7 @@
 """The NNsight adapter: its module composition, its config, and (where it has one) its backend.
 
 Everything an adapter owns lives in ONE package, so a bundled adapter is structurally identical to a
-hub-delivered one (interpretune#401). Nothing here is privileged over a component that arrives from the
+hub-delivered one. Nothing here is privileged over a component that arrives from the
 Hub: same layout, same registration path, same discovery seam.
 
 Exports resolve LAZILY. Several submodules import their framework at module level, and this package sits

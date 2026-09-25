@@ -5,7 +5,7 @@ any single extension submodule executes this ``__init__``, so an eager sibling i
 make every bundled extension a hard import-time requirement of all the others. Concretely, the
 neuronpedia extension pulls in the full analysis stack (sae_lens et al.), which a bare interpretune
 install does not carry -- and bundled-extension detection (config/extensions.py) imports
-``debug_generation`` on the ``import interpretune.config`` path (#403).
+``debug_generation`` on the ``import interpretune.config`` path.
 """
 
 from typing import TYPE_CHECKING

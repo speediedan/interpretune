@@ -1,4 +1,4 @@
-"""The one trust gate for code that arrives from the Hub (interpretune#255).
+"""The one trust gate for code that arrives from the Hub.
 
 Interpretune's value proposition is running other people's analysis components, so "what am I
 consenting to execute?" needs one answer in one place. Three paths execute hub-resident Python:

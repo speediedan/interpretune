@@ -636,7 +636,7 @@ class AnalysisCfg(ITSerializableCfg):
         column names against op output schemas would consult `DISPATCHER.op_precedence`, which is
         session-mutable and re-read from `IT_OP_PRECEDENCE` on every access -- so a bare name can resolve to
         a different collection by the time a store is published, and the store keeps no trace of which
-        naming form was used to tell the safe case from the unsafe one (#284).
+        naming form was used to tell the safe case from the unsafe one.
 
         Leaves the store's empty default in place when there is nothing to record, rather than substituting
         a guess.

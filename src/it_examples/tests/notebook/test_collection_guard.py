@@ -30,7 +30,7 @@ def test_relocated_notebook_test_count_pinned():
         if line.startswith(prefix) and "::" in line and "test_collection_guard" not in line
     ]
     # 4 local-graph-cleanup tests: the concept-direction experiment tests moved out with
-    # src/it_examples/experiments/ (#499; the experiment is Hub-published), leaving only the
+    # src/it_examples/experiments/ (the experiment is Hub-published now), leaving only the
     # graph-cleanup tests under this root. This guard file's own additions excluded.
     assert len(collected) == 4, (
         f"relocated notebook test count changed: {len(collected)} != 4 — if deliberate, update this pin; "

@@ -460,7 +460,7 @@ class HubDatasetStore:
     """Git-backed dataset repo: versioned, branchable, collection-eligible, pinnable.
 
     Keeps revisions, which is why it stays supported even once buckets are the default: a bucket
-    cannot express "the corpus PR #217 referred to", and `bucket -> dataset` migration does not exist
+    cannot express "the corpus a past review's numbers refer to", and `bucket -> dataset` migration does not exist
     yet, so dropping this backend would be one-way.
     """
 

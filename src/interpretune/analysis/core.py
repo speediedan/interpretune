@@ -19,7 +19,7 @@ from transformers import PreTrainedTokenizerBase
 if TYPE_CHECKING:
     # HfDataset is used only in annotations here, and `from __future__ import annotations` keeps them
     # strings at runtime. Importing it eagerly made sae_lens -- an `examples`-extra package -- a hard
-    # requirement of `import interpretune.config`, which reaches this module (#401/#403). Same pattern
+    # requirement of `import interpretune.config`, which reaches this module. Same pattern
     # protocol.py already uses for exactly this name.
     from sae_lens.config import HfDataset
 else:
@@ -400,7 +400,7 @@ def analysis_store_from_batches(
 ) -> "AnalysisStore":
     """Materialize in-memory analysis results into an :class:`AnalysisStore` (savable, pushable).
 
-    The direct-op-call twin of the runner's generator path (#124 MVP): rows serialize through the
+    The direct-op-call twin of the runner's generator path: rows serialize through the
     SAME ``op.save_batch`` schema machinery, features derive from the same schema, and the returned
     store carries backend-aware format kwargs so local access hydrates exactly as a pulled store
     would. ``analysis_backend`` accepts a registered backend NAME (preferred — it is what the

@@ -18,7 +18,7 @@ _EXAMPLES_ROOT = _PKG_ROOT / "examples"
 # whose entrypoint lives inside the component dir). Seed repos live under the maintainer org by
 # convention; users publish their OWN components under their own orgs.
 #
-# speediedan/rte left this table in #497: the experiment is Hub-resident now, and tests resolve it
+# speediedan/rte left this table when the experiment moved to the Hub: it is Hub-resident now, and tests resolve it
 # from the warmed components cache instead of a local publish.
 SEED_COMPONENTS: dict[str, tuple[Path, Path | None]] = {
     "speediedan/prompt-configs": (_EXAMPLES_ROOT / "prompt_configs", None),

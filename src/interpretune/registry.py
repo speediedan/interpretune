@@ -55,7 +55,7 @@ class RegisteredCfg(NamedTuple):
 
 
 class RegisteredDataModuleCfg(NamedTuple):
-    """The datamodule-only half of the two-path contract (#128).
+    """The datamodule-only half of the two-path contract.
 
     ``RegisteredCfg`` binds datamodule and module inseparably, which is right for task components. A
     standalone datamodule entry hydrates to this instead: no module coupling, so a datamodule can be
@@ -502,8 +502,8 @@ class ModuleHydrator:
 
         Bulk hydration suppresses per-entry config-normalization feedback (`ITInstantiationFeedbackWarning`) just
         as the pre-decomposition bulk loader did — callers listing or tuple-resolving the registry did not ask for
-        any single entry's feedback. Single-key `hydrate()` stays verbose: per-key construction is exactly the
-        "directly instantiating a config" case where feedback should surface (interpretune#236).
+        any single entry's feedback. Single-key `hydrate()` stays verbose: directly instantiating a config
+        is exactly the case where feedback should surface.
         """
         from interpretune.utils import ITInstantiationFeedbackWarning
 

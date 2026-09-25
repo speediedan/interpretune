@@ -1,7 +1,7 @@
-"""Durable per-repo revision pins for op collections (interpretune#334).
+"""Durable per-repo revision pins for op collections.
 
 The trust posture tells users to pin a revision "so trusted code cannot change under you", and
-``pull_ops(revision=...)`` honors the pin for the DOWNLOAD — but until #334, op discovery ignored
+``pull_ops(revision=...)`` honors the pin for the DOWNLOAD — but op discovery used to ignore
 pins entirely and loaded whatever revision the cache surfaced (``refs/main`` preferred). Pin ``A``,
 let anyone republish ``B``, and the next session that resolved ``main`` would scan, trust-gate,
 compile and execute ``B``: the precise thing the pinning advice promises cannot happen.
@@ -15,7 +15,7 @@ interpretune-owned sidecar directory beside the ops hub cache rather than inside
   as corrupted ("Reference(s) refer to missing commit hashes", measured against huggingface_hub
   1.28.0) — a failure mode worse than the one being fixed — and huggingface_hub's own GC deletes
   ref files, so the record's durability would rest on an upstream layout contract that upstream
-  actively mutates. That is the same trust-what-you-don't-control failure class #334 exists to
+  actively mutates. That is the same trust-what-you-don't-control failure class this module exists to
   close.
 - A stray file or directory at the scanned cache ROOT survives scanning but pollutes every scan
   with a per-entry warning.

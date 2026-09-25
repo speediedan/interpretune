@@ -42,8 +42,8 @@ if TYPE_CHECKING:
 #: under either narrower annotation.
 #:
 #: A union would also be closed by construction: a backend registered from outside this package
-#: contributes a class no module in core can name, so the union would reject it -- the privileged
-#: position #401 removed, expressed in the type system instead of in a branch.
+#: contributes a class no module in core can name, so the union would reject it -- the old
+#: privileged position, expressed in the type system instead of in a branch.
 #:
 #: `CT_BACKEND_REGISTRY` is the runtime authority on what a given backend must have produced. The
 #: TransformerLens product is deliberately not imported here: it subclasses `HookedTransformer`, which

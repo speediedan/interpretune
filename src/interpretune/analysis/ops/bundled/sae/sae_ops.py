@@ -168,7 +168,7 @@ def latent_correct_acts_impl(
     Latent-model-agnostic despite living in the `sae` op family: it reads the activation `cache`,
     `alive_latents`, `answer_indices` and `logit_diffs` off the batch and filters by
     `analysis_cfg.names_filter`. Nothing here is SAE-specific, which is why it was renamed from
-    `sae_correct_acts` (latent-model terminology normalization, #227).
+    `sae_correct_acts` (latent-model terminology normalization).
     """
     # Validate required inputs # TODO: refactor all required input checks to use shared AnalysisOp or Dispatcher logic
     required_inputs = ["logit_diffs", "answer_indices", "cache"]

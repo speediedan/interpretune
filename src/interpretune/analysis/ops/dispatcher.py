@@ -53,7 +53,7 @@ def _cached_op_revision(source: str) -> str | None:
     """Cached commit a hub op collection currently resolves to (``None`` for bundled/local ops).
 
     Read from the ops hub cache, never the network: this answers "which revision am I running", and a lookup that could
-    silently fetch would change the answer while reporting it. A durable pin (#334) beats ``refs/main`` here exactly as
+    silently fetch would change the answer while reporting it. A durable pin beats ``refs/main`` here exactly as
     it does in discovery, so a pinned session reports the revision it actually loads rather than wherever ``main``
     moved; the loaded-path lookup (``hub_commit_for_namespace``) is still consulted first by dispatcher methods, this
     is the filesystem fallback.
@@ -556,7 +556,7 @@ class AnalysisOpDispatcher:
 
         Replaces dot-counting on the op NAME as the hub test. A dotted name means "namespaced", which
         is how hub ops are addressed, but it is a property of the name rather than of provenance --
-        and provenance is what the version/precedence work in #266 Phase 3 needs to key on.
+        and provenance is what the version/precedence work needs to key on.
         """
         try:
             resolved = Path(yaml_file).resolve()
@@ -1076,7 +1076,7 @@ class AnalysisOpDispatcher:
     _SANCTIONED_HUB_PARAM_NAMESPACE = "interpretune.analysis.optools"
 
     def _resolve_protocol_cls(self, op_name: str, op_def: OpDef):
-        """Import an op's declared `BaseAnalysisBatchProtocol` subclass, or None to use the default (#56).
+        """Import an op's declared `BaseAnalysisBatchProtocol` subclass, or None to use the default.
 
         Trust-gated for hub ops on the SAME footing as `importable_params`, and for the same reason: a
         declared protocol is an arbitrary class import, so a hub collection pointing one at an

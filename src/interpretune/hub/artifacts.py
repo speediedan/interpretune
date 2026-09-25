@@ -119,10 +119,10 @@ def _resolve_protocol_path(path: str):
 
 
 def _protocol_cls_entry(store) -> dict[str, str]:
-    """The store's batch protocol as a PORTABLE import path, omitted when it is the default (#62).
+    """The store's batch protocol as a PORTABLE import path, omitted when it is the default.
 
-    Recorded at write time rather than reconstructed on pull, for the reason #284 settled for op
-    provenance: what a name resolves to later is not what produced the store. Mirrors
+    Recorded at write time rather than reconstructed on pull, for the same reason op provenance is:
+    what a name resolves to later is not what produced the store. Mirrors
     `_analysis_backend_name` -- a portable reference rather than an instance, resolved on the way back.
 
     Omitted for the default, so an envelope only carries the key when it says something. A reader seeing

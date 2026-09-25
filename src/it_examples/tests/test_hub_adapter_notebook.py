@@ -264,7 +264,7 @@ class TestTheHubDeliveryCellActuallyRuns:
 
     **Marked ``hf_live`` rather than added to ``tests/hf_warm_manifest.yaml``, and the distinction is
     the point of the test.** Warming the component into the cache would make this pass without ever
-    exercising the fetch -- precisely the state that hid #490, where a pinned pull wrote a snapshot but
+    exercising the fetch -- precisely the state that once hid a real defect: a pinned pull wrote a snapshot but
     no ``refs/main`` and every local run was green because an earlier unpinned pull had left the ref
     behind. A test whose subject is "the documented pull-then-load works from nothing" cannot be given a
     warm cache without becoming a test of something else. Verified both ways: clean caches online, 9

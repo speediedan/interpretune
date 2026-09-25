@@ -112,14 +112,14 @@ def load_session_cfg(
         if set(dm_cfg_body) != {"ref"}:
             raise ValueError(
                 "datamodule_cfg with `ref` must contain ONLY `ref` -- a datamodule reference is a "
-                f"REPLACEMENT, not a base to layer onto (no merge semantics, #128). Got extra keys: "
+                f"REPLACEMENT, not a base to layer onto (no merge semantics). Got extra keys: "
                 f"{sorted(set(dm_cfg_body) - {'ref'})}"
             )
         if registered.get("datamodule_cls") is not None:
             raise ValueError(
                 "a body whose datamodule_cfg is a `ref` must not also declare `datamodule_cls` -- the "
                 "reference supplies BOTH the configuration and the class, wholesale. Declaring one half "
-                "locally would be a partial merge by the back door (#128)."
+                "locally would be a partial merge by the back door."
             )
         dm_cfg, ref_dm_cls = _resolve_datamodule_ref(dm_cfg_body["ref"], cache_dir=cache_dir)
         if ref_dm_cls is not None:
@@ -151,7 +151,7 @@ def load_session_cfg(
 def _hydrate_datamodule_cfg(
     dm_cfg_body: dict[str, Any], shared: dict[str, Any], cache_dir: Any = None
 ) -> "ITDataModuleConfig":
-    """The ONE datamodule-hydration path, shared by inline bodies and standalone payloads (#128)."""
+    """The ONE datamodule-hydration path, shared by inline bodies and standalone payloads."""
     from interpretune.registry import itdm_cfg_factory
 
     if "class_path" in dm_cfg_body:
@@ -182,7 +182,7 @@ def parse_datamodule_ref(ref: str) -> tuple[str, str]:
 
 
 def _resolve_datamodule_ref(ref: str, cache_dir: Any = None) -> tuple["ITDataModuleConfig", Any]:
-    """Resolve a REPLACEMENT datamodule reference through the hub layer (cache-only, #128).
+    """Resolve a REPLACEMENT datamodule reference through the hub layer (cache-only).
 
     The referenced payload is used WHOLESALE: its own ``shared_config`` applies to it (through the same
     one-merge-site factory path), and the referring body's ``shared_config`` does NOT leak in. That is
@@ -210,7 +210,7 @@ def _resolve_datamodule_ref(ref: str, cache_dir: Any = None) -> tuple["ITDataMod
 def load_datamodule_cfg(
     body: dict[str, Any], *, datamodule_cls: Any = None, cache_dir: Any = None
 ) -> tuple["ITDataModuleConfig", Any]:
-    """Hydrate a STANDALONE datamodule payload (#128): ``datamodule_cfg`` + optional ``shared_config``.
+    """Hydrate a STANDALONE datamodule payload: ``datamodule_cfg`` + optional ``shared_config``.
 
     Same one-merge-site semantics as :func:`load_session_cfg` -- ``shared_config`` applies through the
     registry factories, nothing else merges. The payload must be module-free (the resolver enforces
