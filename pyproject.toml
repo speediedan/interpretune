@@ -207,12 +207,16 @@ git-deps = [
     # sae-dashboard stays pinned while SD#74 is open: the dashboard pipeline imports fork-only surface
     # (e.g. `sae_dashboard.neuronpedia.prompt_bucketing`). Flip to a released floor at merge.
     #
+    # The pin is the fork's `tl4-safe-imports` branch: SD#74's head (which carries the explicit capture-hook
+    # option the published corpora record) plus one commit that keeps every module importable under
+    # TransformerLens 4.0. That commit is fork-only; SD#74 targets an upstream that caps transformer-lens <3.
+    #
     # `columnar_parquet_row_group_size` and `columnar_write_page_index` are hard floors, not probed
     # capabilities: interpretune passes --columnar-write-page-index unconditionally, so an older
     # SAEDashboard fails loudly rather than producing an unindexed corpus. Neither can be added after
     # generation. The row-group default is what makes an artifact streamable (readers prune per row
     # group), so corpora generated before this pin need regenerating to benefit.
-    "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@823ae3b61c0c33d7cf40e68d043a4dfe3375342d",
+    "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@f428a579132aa68061304c51492f79fb6d47dbda",
 ]
 
 dev = [

@@ -97,6 +97,9 @@ REFERENCE_GPU = "NVIDIA GeForce RTX 4090 (24 GiB)"
 SD_BASELINE_SHA = "7886eaa227398a52cd77a4483c94ecc74d204d34"
 SL_BASELINE_SHA = "3eea65526345e0df384a7c89b3c7f9d6f541d687"
 NP_BASELINE_SHA = "789942edf920d64f221ca1be1443f539f8b4c47d"
+# The frozen baseline worktrees import HookedTransformer and transformer_lens.utils at module level, both removed
+# in TransformerLens 4.0, so the legs that run them get their own venv held at this release.
+BASELINE_TRANSFORMER_LENS = "3.5.1"
 
 # Benchmark patches applied (in this order) on top of the clean SD baseline commit.
 SD_BASELINE_PATCHES = (
@@ -669,30 +672,8 @@ class Setup:
                     self.fail("aborted at user request (existing venv)")
                 if action == "k":
                     return venv_path
-        it, ov = self.repo_paths["interpretune"], "requirements/ci/overrides.txt"
-        ex = "requirements/ci/excludes.txt"
-        # Only SAEDashboard builds from source, because its fix is unreleased and a maintainer needs the
-        # checkout. Everything else comes from the locked pins: sae-lens (released as 6.49.0, retired
-        # from git-deps 2026-08-09), TransformerLens/nnsight (override-dependencies + overrides.txt) and
-        # circuit-tracer (the git-deps group).
-        #
-        # Do NOT re-add `--from-source=sae_lens:...`. Beyond substituting a retired commit for the
-        # released pin, that path hands uv `requirements/ci/sl_uv_requirements.txt`, the vendored
-        # SAELens Poetry export, which is how pytest-timeout/docstr-coverage/ruff reach environments
-        # while being declared in neither pyproject.toml nor the CI lock. The README-flow lanes exist
-        # to detect exactly that superset, so importing it here would make this env less like a user's
-        # than the pins already make it.
-        cmd = [
-            str(it / "scripts" / "build_it_env.sh"),
-            f"--repo-home={it}",
-            f"--target-env-name={self.args.venv_name}",
-            f"--venv-dir={venv_dir}",
-            f"--torch-backend={self.args.torch_backend}",
-            (
-                f"--from-source=sae_dashboard:{self.repo_paths['sae_dashboard']}:dev"
-                f":UV_EXCLUDE={it / ex}:UV_OVERRIDE={it / ov}"
-            ),
-        ]
+        it = self.repo_paths["interpretune"]
+        cmd = self._build_it_env_cmd(self.args.venv_name, venv_dir)
         self.say(
             "- integrated env build (SAEDashboard from source, sae-lens from the pins; typically a few "
             "minutes with a warm uv cache; first-time torch/CUDA wheel downloads can add ~5-10 min):"
@@ -721,6 +702,86 @@ class Setup:
         self._install_baseline_only_deps(venv_path)
         self._check_gated_model_access(venv_path)
         return venv_path
+
+    def _build_it_env_cmd(self, venv_name: str, venv_dir: Path) -> list[str]:
+        it, ov = self.repo_paths["interpretune"], "requirements/ci/overrides.txt"
+        ex = "requirements/ci/excludes.txt"
+        # Only SAEDashboard builds from source, because its fix is unreleased and a maintainer needs the
+        # checkout. Everything else comes from the locked pins: sae-lens (released as 6.49.0, retired
+        # from git-deps 2026-08-09), TransformerLens/nnsight (override-dependencies + overrides.txt) and
+        # circuit-tracer (the git-deps group).
+        #
+        # Do NOT re-add `--from-source=sae_lens:...`. Beyond substituting a retired commit for the
+        # released pin, that path hands uv `requirements/ci/sl_uv_requirements.txt`, the vendored
+        # SAELens Poetry export, which is how pytest-timeout/docstr-coverage/ruff reach environments
+        # while being declared in neither pyproject.toml nor the CI lock. The README-flow lanes exist
+        # to detect exactly that superset, so importing it here would make this env less like a user's
+        # than the pins already make it.
+        return [
+            str(it / "scripts" / "build_it_env.sh"),
+            f"--repo-home={it}",
+            f"--target-env-name={venv_name}",
+            f"--venv-dir={venv_dir}",
+            f"--torch-backend={self.args.torch_backend}",
+            (
+                f"--from-source=sae_dashboard:{self.repo_paths['sae_dashboard']}:dev"
+                f":UV_EXCLUDE={it / ex}:UV_OVERRIDE={it / ov}"
+            ),
+        ]
+
+    def build_baseline_env(self, venv_path: Path) -> Path:
+        """Build the preserved-baseline legs' venv: the benchmark venv's build, held at transformer-lens 3.x.
+
+        The detached-legacy legs run the frozen pre-PR worktrees, which import names TransformerLens 4.0
+        removed. Sharing the benchmark venv would lose the acceptance reference the moment that venv moves
+        to 4.x, and nothing would say so until the legs failed at import. The pin is applied with
+        ``--no-config`` from outside the repository, because uv otherwise applies interpretune's own
+        transformer-lens override over it.
+        """
+        self.say("\n=== Step 5b/7: preserved-baseline venv (transformer-lens 3.x) ===")
+        baseline_path = venv_path.parent / f"{self.args.venv_name}_baseline"
+        baseline_python = baseline_path / "bin" / "python"
+        if self.args.skip_env_build:
+            self.say(f"- skipped (--skip-env-build); assuming the baseline venv at {baseline_path}")
+            return baseline_path
+        cmd = self._build_it_env_cmd(baseline_path.name, venv_path.parent)
+        pin = [
+            "uv",
+            "pip",
+            "install",
+            "--no-config",
+            "--python",
+            str(baseline_python),
+            f"transformer-lens=={BASELINE_TRANSFORMER_LENS}",
+        ]
+        if not self.confirm("  build the preserved-baseline venv now?"):
+            self.warn("baseline venv build skipped; set IT_NP_BASELINE_PYTHON to a transformer-lens 3.x interpreter.")
+            return baseline_path
+        self.say(f"  $ {' '.join(cmd)}")
+        self.say(f"  $ {' '.join(pin)}")
+        if self.args.dry_run:
+            return baseline_path
+        self.actions_taken.append(" ".join(cmd))
+        if self._run_streamed(cmd, cwd=self.repo_paths["interpretune"]) != 0:
+            self.fail("build_it_env.sh failed for the preserved-baseline venv")
+        self.actions_taken.append(" ".join(pin))
+        with tempfile.TemporaryDirectory() as outside_repo:
+            if self._run_streamed(pin, cwd=Path(outside_repo)) != 0:
+                self.fail(f"could not pin transformer-lens=={BASELINE_TRANSFORMER_LENS} in {baseline_path}")
+        probe = subprocess.run(
+            [str(baseline_python), "-c", "import importlib.metadata as m; print(m.version('transformer-lens'))"],
+            capture_output=True,
+            text=True,
+        )
+        found = probe.stdout.strip()
+        if found != BASELINE_TRANSFORMER_LENS:
+            self.fail(
+                f"the preserved-baseline venv has transformer-lens {found or '(unreadable)'}, "
+                f"expected {BASELINE_TRANSFORMER_LENS}"
+            )
+        self.say(f"- [OK] preserved-baseline venv at {baseline_path} (transformer-lens {found})")
+        self._install_baseline_only_deps(baseline_path)
+        return baseline_path
 
     def _install_baseline_only_deps(self, venv_path: Path) -> None:
         """Install runtime deps the PRESERVED BASELINE trees need and the current pins no longer carry.
@@ -904,7 +965,7 @@ class Setup:
         except Exception:
             return None
 
-    def write_env_file(self, venv_path: Path) -> None:
+    def write_env_file(self, venv_path: Path, baseline_path: Path) -> None:
         self.say("\n=== Step 7/7: benchmark_env.sh + next steps ===")
         wt_root = Path(self.args.worktrees_dir).expanduser()
         cache = Path(self.args.np_cache).expanduser()
@@ -924,6 +985,7 @@ class Setup:
             f'export NEURONPEDIA_REPO_ROOT="{np_repo}"',
             f'export NEURONPEDIA_UTILS_ROOT="{np_repo / "utils" / "neuronpedia-utils"}"',
             f'export IT_BENCH_PYTHON="{venv_path / "bin" / "python"}"',
+            f'export IT_NP_BASELINE_PYTHON="{baseline_path / "bin" / "python"}"',
         ]
         env_file = wt_root / "benchmark_env.sh"
         self.say(f"- writing {env_file}")
@@ -978,8 +1040,9 @@ class Setup:
         self.create_worktrees()
         self.check_db()
         venv_path = self.build_env()
+        baseline_path = self.build_baseline_env(venv_path)
         self.ensure_datasets(venv_path)
-        self.write_env_file(venv_path)
+        self.write_env_file(venv_path, baseline_path)
         return 0
 
 

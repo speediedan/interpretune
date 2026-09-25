@@ -5,8 +5,8 @@ folded-at-load, LayerNorm `weight` plus centering) previously lived only in an o
 private copy, where each consumer was free to get a different row wrong. This seam is their single
 home, so a convention is asserted once here rather than rediscovered per caller.
 
-Tests use real transformers norm classes rather than stubs wherever the convention depends on the
-CLASS (kind detection reads the class name), and stubs where only the attribute shape matters.
+Tests use real transformers norm classes rather than stubs wherever the convention depends on what the
+norm COMPUTES (kind and scale are both read by evaluating it), and stubs where only the attribute shape matters.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import torch
 
 from interpretune.analysis.optools import (
     UnembedNormInfo,
+    _final_norm_kind,
     _rmsnorm_scale,
     fold_norm_into_unembed_rows,
     jlens_basis_name,
@@ -90,6 +91,83 @@ class TestHFFamilies:
         module.model = model
         info = resolve_unembed_and_norm_scale(module)
         assert info.norm_scale is None and info.norm_kind == "none"
+
+
+class _Wrapped(torch.nn.Module):
+    """A norm behind a wrapper that hides its class, the way a TransformerBridge component does."""
+
+    def __init__(self, inner):
+        super().__init__()
+        self.inner = inner
+        self.weight = inner.weight
+        self.bias = getattr(inner, "bias", None)
+
+    def forward(self, x):
+        return self.inner(x)
+
+
+def _layernorm(dtype=torch.float32):
+    torch.manual_seed(1)
+    norm = torch.nn.LayerNorm(D).to(dtype)
+    norm.weight.data = (0.5 + torch.rand(D)).to(dtype)
+    norm.bias.data = (torch.arange(D).float() * 0.25 - 1.0).to(dtype)
+    return norm
+
+
+class TestNormKindIsReadFromBehaviourNotClassName:
+    """The seam's real inputs arrive wrapped (``NormalizationBridge`` under a TransformerBridge, ``Envoy`` under
+    nnsight), so a class-name test read every wrapped LayerNorm as an RMSNorm and returned its bias as the
+    scale."""
+
+    @pytest.mark.parametrize("name", ["NormalizationBridge", "Envoy"])
+    def test_a_wrapped_layernorm_keeps_its_kind_scale_and_bias(self, name):
+        norm = _layernorm()
+        wrapped = type(name, (_Wrapped,), {})(norm)
+        info = resolve_unembed_and_norm_scale(_hf_module("gpt2", wrapped, inner_attr="transformer"))
+        assert info.norm_kind == "layernorm"
+        torch.testing.assert_close(info.norm_scale, norm.weight)
+        torch.testing.assert_close(info.norm_bias, norm.bias)
+
+    def test_a_wrapped_rmsnorm_is_still_probed_for_its_applied_scale(self):
+        from transformers.models.gemma2.modeling_gemma2 import Gemma2RMSNorm
+
+        norm = Gemma2RMSNorm(D)
+        norm.weight.data = torch.full((D,), 0.5)
+        info = resolve_unembed_and_norm_scale(_hf_module("gemma2", type("NormalizationBridge", (_Wrapped,), {})(norm)))
+        assert info.norm_kind == "rmsnorm"
+        torch.testing.assert_close(info.norm_scale, torch.full((D,), 1.5))
+
+    def test_a_real_nnsight_envoy_over_a_layernorm(self):
+        envoy = pytest.importorskip("nnsight.intervention.envoy")
+        norm = _layernorm()
+        info = resolve_unembed_and_norm_scale(_hf_module("gpt2", envoy.Envoy(norm), inner_attr="transformer"))
+        assert info.norm_kind == "layernorm"
+        torch.testing.assert_close(info.norm_scale.float(), norm.weight.float())
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16], ids=["fp32", "bf16"])
+    def test_the_probe_holds_in_reduced_precision(self, dtype):
+        """The probe and its shift are exact in bf16, so a LayerNorm's centering cancels the shift there too."""
+        from transformers.models.llama.modeling_llama import LlamaRMSNorm
+
+        rms = LlamaRMSNorm(D).to(dtype)
+        assert _final_norm_kind(_layernorm(dtype), _layernorm(dtype).weight) == "layernorm"
+        assert _final_norm_kind(rms, rms.weight) == "rmsnorm"
+
+    def test_a_norm_that_cannot_be_evaluated_is_refused_by_name(self):
+        class Unprobeable(torch.nn.Module):
+            def forward(self, x):
+                raise RuntimeError("needs an attention mask")
+
+        with pytest.raises(RuntimeError, match=r"could not classify the final norm 'Unprobeable'"):
+            _final_norm_kind(Unprobeable(), torch.ones(D))
+
+    def test_an_all_zero_output_is_refused_rather_than_defaulted(self):
+        class Zeros(torch.nn.Module):
+            def forward(self, x):
+                return torch.zeros_like(x)
+
+        with pytest.raises(RuntimeError, match=r"returned all zeros"):
+            _final_norm_kind(Zeros(), torch.ones(D))
 
 
 class TestTransformerLensOrientation:

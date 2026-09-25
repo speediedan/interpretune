@@ -6,7 +6,7 @@ import pytest
 import torch
 from torch.testing import assert_close
 from transformer_lens.ActivationCache import ActivationCache
-from transformer_lens.utils import get_device as tl_get_device
+from transformer_lens.utilities.devices import get_device as tl_get_device
 from sae_lens.saes.sae import SAE, SAEMetadata
 from sae_lens.saes.transcoder import Transcoder, TranscoderConfig
 
@@ -331,6 +331,33 @@ class TestClassSAELens:
         mock_print.assert_called_with(expected_url)
         mock_iframe.assert_called_with(expected_url, width=1000, height=700)
         mock_display.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("aliased_sibling", "hint"),
+        [
+            pytest.param(True, "that do publish aliases: sibling-res", id="sibling_publishes_aliases"),
+            pytest.param(False, "No release for model-a", id="no_release_publishes_aliases"),
+        ],
+    )
+    @pytest.mark.parametrize("sae_id", ["layer_0_width_16k", "not_in_release"], ids=["none_alias", "missing_sae_id"])
+    @patch("interpretune.adapters.sae_lens.adapter.get_pretrained_saes_directory")
+    @patch("interpretune.adapters.sae_lens.adapter.display")
+    def test_display_dashboard_refuses_a_release_without_an_alias(
+        self, mock_display, mock_get_dir, sae_id, aliased_sibling, hint
+    ):
+        """A ``None``-valued alias (how most releases publish them) must refuse rather than render ``/None/``."""
+        from interpretune.adapters.sae_lens import SAELensAnalysisMixin
+
+        release = MagicMock(model="model-a", neuronpedia_id={"layer_0_width_16k": None})
+        sibling = MagicMock(model="model-a", neuronpedia_id={"layer_0": "model-a/0-res" if aliased_sibling else None})
+        other_model = MagicMock(model="model-b", neuronpedia_id={"layer_0": "model-b/0-res"})
+        mock_get_dir.return_value = {"transcoders": release, "sibling-res": sibling, "other": other_model}
+
+        with pytest.raises(
+            ValueError, match=rf"'transcoders' publishes no Neuronpedia alias for sae_id '{sae_id}'.*{hint}"
+        ):
+            SAELensAnalysisMixin.display_dashboard(sae_release="transcoders", sae_id=sae_id)
+        mock_display.assert_not_called()
 
     @patch("interpretune.adapters.sae_lens.SAELensAnalysisMixin.display_dashboard")
     @patch("interpretune.adapters.sae_lens.adapter.print")

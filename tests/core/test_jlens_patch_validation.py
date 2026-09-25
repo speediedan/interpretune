@@ -370,9 +370,9 @@ class TestCrossBackendAgreement:
     @RunIf(standalone=True)
     def test_tl_and_nnsight_patch_deltas_agree_on_gpt2(self, tmp_path):
         from nnsight import LanguageModel
-        from transformer_lens import HookedTransformer
 
         from interpretune.adapters.transformer_lens.backends import TLModelBackend
+        from tests.utils import boot_no_processing_bridge
 
         prompt = "The capital of France is"
         hook = "blocks.8.hook_resid_post"
@@ -406,7 +406,7 @@ class TestCrossBackendAgreement:
         # loads unprocessed for SAE compatibility, which is why the demo's backends agreed; this
         # test matches that contract, and documents that patch pairs are defined in the UNPROCESSED
         # residual basis.
-        tl_model = HookedTransformer.from_pretrained_no_processing("gpt2", device="cpu")
+        tl_model = boot_no_processing_bridge("gpt2", device="cpu")
         tl_backend = TLModelBackend()
         with torch.no_grad():
             tl_pre, tl_post = tl_backend.fwd_w_intervention(
@@ -495,12 +495,11 @@ def _tl_gap_for_pair(model_id: str, case: dict[str, object]) -> dict[str, object
     """Run the same pair through TL no-processing; returns gaps, delta, and the scale gap."""
     from types import SimpleNamespace
 
-    from transformer_lens import HookedTransformer
-
     from interpretune.adapters.transformer_lens.backends import TLModelBackend
     from interpretune.analysis.optools import resolve_unembed_and_norm_scale
+    from tests.utils import boot_no_processing_bridge
 
-    tl_model = HookedTransformer.from_pretrained_no_processing(model_id, device="cuda")
+    tl_model = boot_no_processing_bridge(model_id, device="cuda")
     try:
         info_tl = resolve_unembed_and_norm_scale(SimpleNamespace(model=tl_model))
         scale_gap = float(
@@ -516,7 +515,8 @@ def _tl_gap_for_pair(model_id: str, case: dict[str, object]) -> dict[str, object
         with torch.no_grad():
             tl_pre, tl_post = tl_backend.fwd_w_intervention(
                 model=tl_model,
-                batch={"input": case["ids"]},
+                # HookedTransformer moved input tokens to its device itself; a bridge leaves that to the caller
+                batch={"input": case["ids"].to(tl_model.cfg.device)},
                 interventions=InterventionDict({case["hook"]: (spec,)}),
             )
         return {

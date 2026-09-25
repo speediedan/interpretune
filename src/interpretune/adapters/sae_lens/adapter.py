@@ -680,9 +680,30 @@ class SAELensAnalysisMixin:
 
         Resolves the Neuronpedia id from the pretrained-SAE directory, so the caller names an SAE release and hook
         rather than a Neuronpedia-specific identifier.
+
+        Raises:
+            ValueError: If the release publishes no Neuronpedia alias for ``sae_id``. Many releases list their SAEs
+                with a ``None`` alias, which would otherwise interpolate into a ``/None/`` URL and render a blank
+                dashboard with no error.
         """
-        release = get_pretrained_saes_directory()[sae_release]
-        neuronpedia_id = release.neuronpedia_id[sae_id]
+        directory = get_pretrained_saes_directory()
+        release = directory[sae_release]
+        neuronpedia_id = (release.neuronpedia_id or {}).get(sae_id)
+        if not neuronpedia_id:
+            aliased = [
+                name
+                for name, candidate in directory.items()
+                if candidate.model == release.model and any((candidate.neuronpedia_id or {}).values())
+            ]
+            hint = (
+                f"Releases for {release.model} that do publish aliases: {', '.join(sorted(aliased))}."
+                if aliased
+                else f"No release for {release.model} in the installed sae_lens directory publishes one."
+            )
+            raise ValueError(
+                f"SAE release {sae_release!r} publishes no Neuronpedia alias for sae_id {sae_id!r}, so there is no "
+                f"dashboard URL to build. {hint}"
+            )
         embed_cfg = "embed=true&embedexplanation=true&embedplots=true&embedtest=true"
         url = f"https://neuronpedia.org/{neuronpedia_id}/{latent_idx}?{embed_cfg}&height=300"
         print(url)

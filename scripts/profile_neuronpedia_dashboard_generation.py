@@ -47,6 +47,10 @@ DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT = Path(
     os.getenv("IT_NP_BASELINE_WORKTREES", str(NP_CACHE_ROOT / "baseline_worktrees_20260826"))
 )
 DEFAULT_PHASE3_BASELINE_SAEDASHBOARD_ROOT = DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "SAEDashboard-7886eaa"
+# Interpreter for the preserved-baseline legs. They run the frozen pre-PR worktrees, which import names
+# TransformerLens 4.0 removed, so they need an environment on transformer-lens<4 even after the benchmark venv
+# has moved on. scripts/setup_dashboard_benchmark_env.py builds one; unset means the leg's own interpreter.
+DEFAULT_PHASE3_BASELINE_PYTHON = os.getenv("IT_NP_BASELINE_PYTHON")
 DEFAULT_PHASE3_BASELINE_SAELENS_ROOT = DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "SAELens-3eea6552"
 DEFAULT_PHASE3_BASELINE_NEURONPEDIA_UTILS_ROOT = (
     DEFAULT_PHASE3_BASELINE_WORKTREES_ROOT / "neuronpedia-789942ed" / "utils" / "neuronpedia-utils"
@@ -129,6 +133,8 @@ class ProfilePreset:
     summary_warmup_batches: int
     pretokenized_dataset_path: Path | None
     dashboard_extra_args: tuple[str, ...] = ()
+    # Runs the frozen pre-PR worktrees (the detached-legacy acceptance reference), which need transformer-lens<4.
+    preserved_baseline: bool = False
 
 
 @dataclass
@@ -514,6 +520,7 @@ def _phase3_rte_preset(
         summary_warmup_batches=0 if target_batches <= 2 else 1,
         pretokenized_dataset_path=pretokenized_dataset_path,
         dashboard_extra_args=tuple(dashboard_extra_args),
+        preserved_baseline=legacy and detached_baseline,
     )
 
 
@@ -569,6 +576,7 @@ def _phase3_monology_preset(
         summary_warmup_batches=0 if target_batches <= 2 else 1,
         pretokenized_dataset_path=pretokenized_dataset_path,
         dashboard_extra_args=tuple(dashboard_extra_args),
+        preserved_baseline=legacy and detached_baseline,
     )
 
 
@@ -738,7 +746,32 @@ def apply_profile_preset(args: argparse.Namespace) -> ProfilePreset | None:
     if not getattr(args, "prompts_pretokenized_dataset_path_explicit", False):
         args.prompts_pretokenized_dataset_path = preset.pretokenized_dataset_path
     args.dashboard_extra_arg = [*preset.dashboard_extra_args, *args.dashboard_extra_arg]
+    if preset.preserved_baseline and DEFAULT_PHASE3_BASELINE_PYTHON:
+        args.python_executable = DEFAULT_PHASE3_BASELINE_PYTHON
     return preset
+
+
+def require_preserved_baseline_interpreter(python_executable: str) -> None:
+    """Refuse to run a preserved-baseline leg under transformer-lens>=4, naming the fix.
+
+    The frozen pre-PR worktrees import ``HookedTransformer`` and ``transformer_lens.utils`` at module level, so on
+    4.x the leg would die at import hours into a benchmark, with nothing pointing at the environment. The version
+    is read in the leg's own interpreter, which is not necessarily the one running this script.
+    """
+    probe = "import importlib.metadata as m; print(m.version('transformer-lens'))"
+    result = subprocess.run([python_executable, "-c", probe], capture_output=True, text=True, check=False)
+    tl_version = result.stdout.strip()
+    if result.returncode != 0 or not tl_version:
+        raise SystemExit(
+            f"cannot read the transformer-lens version of {python_executable}, the interpreter for the "
+            f"preserved-baseline legs: {result.stderr.strip()[-300:]}"
+        )
+    if int(tl_version.split(".")[0]) >= 4:
+        raise SystemExit(
+            f"the preserved-baseline legs need transformer-lens<4, but {python_executable} has {tl_version}: the "
+            "frozen pre-PR worktrees import names TransformerLens 4.0 removed. Set IT_NP_BASELINE_PYTHON to a "
+            "transformer-lens 3.x interpreter (scripts/setup_dashboard_benchmark_env.py builds one)."
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2285,6 +2318,8 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     preset = apply_profile_preset(args)
+    if preset is not None and preset.preserved_baseline:
+        require_preserved_baseline_interpreter(args.python_executable)
     configs = [parse_config_spec(spec) for spec in args.config]
     if not configs and preset is not None:
         configs = [preset.config]
