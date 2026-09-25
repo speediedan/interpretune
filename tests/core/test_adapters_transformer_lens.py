@@ -48,6 +48,9 @@ class ArchitectureExpectations:
         expected_mapped_canonical_count: Expected number of canonical params with TL mappings
         expected_unmapped_canonical_count: Expected number of unmapped canonical params
                                           (LayerNorms, pre-split QKV, etc.)
+        hf_block_path: Wrapped HuggingFace model's path to a block, with ``{i}`` for the layer index
+        hf_block_norms: The block's norm submodules, by the HuggingFace model's own names
+        hf_final_norm: Path to the final norm in the wrapped HuggingFace model
     """
 
     model_name: str
@@ -75,6 +78,12 @@ class ArchitectureExpectations:
     expected_unmapped_tl_count: int = 0  # All TL params should map
     expected_mapped_canonical_count: int | None = None
     expected_unmapped_canonical_count: int | None = None
+
+    # The norms an implicit thaw must cover, named from the HuggingFace side so the expectation does not share a
+    # source with the component index the adapter builds.
+    hf_block_path: str = "model.layers.{i}"
+    hf_block_norms: tuple[str, ...] = ("input_layernorm", "post_attention_layernorm")
+    hf_final_norm: str = "model.norm"
 
 
 # Pre-defined architecture expectations
@@ -126,6 +135,12 @@ GEMMA2_EXPECTATIONS = ArchitectureExpectations(
     expected_unmapped_tl_count=156,  # synthetic attn/mlp biases only
     expected_mapped_canonical_count=237,
     expected_unmapped_canonical_count=52,
+    hf_block_norms=(
+        "input_layernorm",
+        "post_attention_layernorm",
+        "pre_feedforward_layernorm",
+        "post_feedforward_layernorm",
+    ),
 )
 
 # GPT-2 small architecture expectations
@@ -163,6 +178,9 @@ GPT2_EXPECTATIONS = ArchitectureExpectations(
     expected_unmapped_tl_count=0,
     expected_mapped_canonical_count=221,  # 198 TL + 24 q/k/v split components - 1 shared embed/unembed
     expected_unmapped_canonical_count=0,
+    hf_block_path="transformer.h.{i}",
+    hf_block_norms=("ln_1", "ln_2"),
+    hf_final_norm="transformer.ln_f",
 )
 
 # GPT-2 with weight processing enabled (fold_ln=True, fold_value_biases=True, center_writing_weights=True, etc.)
@@ -202,6 +220,9 @@ GPT2_PROCESSED_EXPECTATIONS = ArchitectureExpectations(
     expected_unmapped_tl_count=0,
     expected_mapped_canonical_count=198,
     expected_unmapped_canonical_count=24,  # QKV joint params (compatible mode)
+    hf_block_path="transformer.h.{i}",
+    hf_block_norms=("ln_1", "ln_2"),
+    hf_final_norm="transformer.ln_f",
 )
 
 
@@ -488,6 +509,25 @@ class TestBasicTransformerBridgeAdapter:
         assert callable(adapter.gen_ft_schedule)
 
 
+# Every architecture the mapping tests cover; the gated models need bf16 CUDA and the gated-repo token.
+ARCH_MAPPING_CASES = [
+    pytest.param("get_it_session__l_tl_bridge_gpt2__setup", GPT2_EXPECTATIONS, id="gpt2"),
+    pytest.param("get_it_session__l_tl_bridge_gpt2_processed__setup", GPT2_PROCESSED_EXPECTATIONS, id="gpt2_processed"),
+    pytest.param(
+        "get_it_session__l_tl_bridge_llama3__setup",
+        LLAMA3_EXPECTATIONS,
+        marks=RunIf(bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
+        id="llama3",
+    ),
+    pytest.param(
+        "get_it_session__l_tl_bridge_gemma2__setup",
+        GEMMA2_EXPECTATIONS,
+        marks=RunIf(bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
+        id="gemma2",
+    ),
+]
+
+
 # =============================================================================
 # Parameter Mapping Validation Tests
 # =============================================================================
@@ -704,33 +744,7 @@ class TestArchitectureParameterMapping:
 
         return tl_params, canonical_params
 
-    @pytest.mark.parametrize(
-        "session_fixture, arch_expectations",
-        [
-            pytest.param(
-                "get_it_session__l_tl_bridge_gpt2__setup",
-                GPT2_EXPECTATIONS,
-                id="gpt2",
-            ),
-            pytest.param(
-                "get_it_session__l_tl_bridge_gpt2_processed__setup",
-                GPT2_PROCESSED_EXPECTATIONS,
-                id="gpt2_processed",
-            ),
-            pytest.param(
-                "get_it_session__l_tl_bridge_llama3__setup",
-                LLAMA3_EXPECTATIONS,
-                marks=RunIf(bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
-                id="llama3",
-            ),
-            pytest.param(
-                "get_it_session__l_tl_bridge_gemma2__setup",
-                GEMMA2_EXPECTATIONS,
-                marks=RunIf(bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
-                id="gemma2",
-            ),
-        ],
-    )
+    @pytest.mark.parametrize("session_fixture, arch_expectations", ARCH_MAPPING_CASES)
     def test_bidirectional_mapping(self, request, session_fixture: str, arch_expectations: ArchitectureExpectations):
         """Validate bidirectional TL <-> canonical parameter mapping using component tracing.
 
@@ -838,6 +852,53 @@ class TestArchitectureParameterMapping:
                 f"[{arch_expectations.model_name}] Bidirectional inconsistency: "
                 f"canonical '{canonical_name}' -> TL '{tl_name}' but TL doesn't map back"
             )
+
+    @pytest.mark.parametrize("session_fixture, arch_expectations", ARCH_MAPPING_CASES)
+    def test_implicit_norm_thaw_covers_every_norm(
+        self, request, session_fixture: str, arch_expectations: ArchitectureExpectations
+    ):
+        """Thawing part of a block thaws every norm of that block, and thawing an embedding thaws the final norm.
+
+        The expected norms come from the wrapped HuggingFace model's own module paths, not from the bridge's components,
+        so a component index that missed a norm (or matched one family's names) fails here.
+        """
+        module = request.getfixturevalue(session_fixture).it_session.module
+        adapter = TransformerBridgeStrategyAdapter(use_tl_names=True)
+
+        class MockTrainer:
+            pass
+
+        class MockFTSHandle:
+            def __init__(self, pl_module):
+                self.pl_module = pl_module
+                self.trainer = MockTrainer()
+
+        adapter.fts_handle = MockFTSHandle(module)
+        adapter.on_before_init_fts()
+        view = adapter.model_view
+        canonical = dict(module.named_parameters())
+        hf_model = module.model.original_model
+
+        def ptrs_of(canonical_names):
+            return {canonical[name].data_ptr() for name in canonical_names}
+
+        def hf_ptrs(*paths):
+            return {p.data_ptr() for path in paths for p in hf_model.get_submodule(path).parameters()}
+
+        for layer in (0, arch_expectations.n_layers - 1):
+            block = arch_expectations.hf_block_path.format(i=layer)
+            thawed = view._get_implicit_layernorm_params([f"blocks.{layer}.attn.W_Q"])
+            expected = hf_ptrs(*(f"{block}.{norm}" for norm in arch_expectations.hf_block_norms))
+            assert expected, f"[{arch_expectations.model_name}] no HF norm params found under {block}"
+            assert ptrs_of(thawed) == expected, (
+                f"[{arch_expectations.model_name}] layer {layer}: implicit thaw {sorted(thawed)} does not cover "
+                f"exactly {arch_expectations.hf_block_norms}"
+            )
+
+        final = view._get_implicit_layernorm_params(["embed.W_E"])
+        assert ptrs_of(final) == hf_ptrs(arch_expectations.hf_final_norm), (
+            f"[{arch_expectations.model_name}] implicit thaw {sorted(final)} is not {arch_expectations.hf_final_norm}"
+        )
 
 
 # =============================================================================
