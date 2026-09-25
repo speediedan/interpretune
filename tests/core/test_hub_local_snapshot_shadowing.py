@@ -1,4 +1,4 @@
-"""#437: a stale ``local_publish`` snapshot must not shadow the Hub silently.
+"""A stale ``local_publish`` snapshot must not shadow the Hub silently.
 
 Resolution is cache-only by design and stays so. What changes is that a local snapshot resolving for a repo whose cache
 ALSO holds a Hub revision is named, and a caller verifying a publish can refuse it outright.

@@ -36,7 +36,7 @@ Scope limits (deliberate, so this lint is not read as more than it proves):
 - ``composites.yaml`` is skipped: compositions reference ops by name and cross family boundaries.
 
 So this lint establishes the *import* half of the contract (no privileged latent dependency), not
-literal publish-as-is liftability. Closing the remaining gaps is tracked in issue #266.
+literal publish-as-is liftability. Closing the remaining gaps is tracked hub work.
 """
 
 from __future__ import annotations

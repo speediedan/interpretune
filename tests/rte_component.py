@@ -1,6 +1,6 @@
 """RTEBoolq experiment classes, resolved from the Hub-resident component.
 
-The experiment moved out of the tree (#497): ``speediedan/rte`` is the only source of truth.
+The experiment moved out of the tree: ``speediedan/rte`` is the only source of truth.
 Class bindings resolve lazily (PEP 562) so importing this module costs nothing: only the
 attribute actually requested triggers the cache-only snapshot import (warmed in CI from the
 manifest; one ``it.hub.pull('speediedan/rte')`` ever for a dev checkout). An uncached component

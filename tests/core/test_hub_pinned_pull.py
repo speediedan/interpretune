@@ -1,4 +1,4 @@
-"""#490: a revision-pinned pull into a clean cache must leave a component the loader can address.
+"""A revision-pinned pull into a clean cache must leave a component the loader can address.
 
 hf_hub_download writes `refs/main` only for an unpinned fetch, and resolution read nothing else, so following the
 trust posture's own advice (pin a revision) on a clean machine produced a complete snapshot the loader reported as

@@ -150,7 +150,7 @@ def _record_or_report_pin(repo_id: str, revision: str | None, commit: str, cache
     freezing a user who explicitly asked for ``main`` would be the opposite surprise. Every other
     explicit revision (commit, tag, branch) pins the RESOLVED commit: op discovery loads that
     revision from now on, beating ``refs/main``, until the pin is moved (re-pull at another
-    revision) or released (``it.hub.unpin_ops``). See ``interpretune.hub.pins`` (#334).
+    revision) or released (``it.hub.unpin_ops``). See ``interpretune.hub.pins``.
     """
     from interpretune.hub.pins import read_op_pin, record_op_pin
 

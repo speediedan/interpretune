@@ -1,6 +1,6 @@
 """Helpers for building cached hub op-collection fixtures in HF cache layout.
 
-Op discovery is manifest-routed (#266 Phase 3): the op YAMLs of a cached snapshot are exactly the ones its
+Op discovery is manifest-routed: the op YAMLs of a cached snapshot are exactly the ones its
 ``it_component.yaml`` declares in ``ops.files``. A fixture that only drops a YAML into a snapshot therefore
 describes a repo the dispatcher correctly refuses to read ops from, which is the contract, not a bug -- so
 every fixture that means "a well-formed cached collection" declares its op files through here rather than

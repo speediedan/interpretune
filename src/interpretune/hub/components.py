@@ -541,7 +541,7 @@ def resolve_experiment_config(
 def resolve_datamodule_config(
     repo_id: str, name: str, cache_dir: Path | None = None, *, revision: str | None = None
 ) -> dict:
-    """CACHE-ONLY resolution of one datamodule entry's standalone payload (#128).
+    """CACHE-ONLY resolution of one datamodule entry's standalone payload.
 
     Datamodule entries are named by the manifest's ``datamodules`` index rather than by derived
     configuration keys, so there is no key-parity check here -- the name IS the address. The returned

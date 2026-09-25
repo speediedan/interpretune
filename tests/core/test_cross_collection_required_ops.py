@@ -1,4 +1,4 @@
-"""Cross-collection ``required_ops`` declarability and its failure mode (#266 Phase 3, §3.6a item 1).
+"""Cross-collection ``required_ops`` declarability and its failure mode.
 
 §3.6a recorded this as an open liftability gap against `7b44ba5`: `sae` and `attribution` both require
 `get_answer_indices`, which only `core` defines, and an op whose `required_ops` do not resolve was

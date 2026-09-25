@@ -1,4 +1,4 @@
-"""Which adapter a name reaches when a hub component and a bundled adapter both define it (interpretune#125).
+"""Which adapter a name reaches when a hub component and a bundled adapter both define it.
 
 This is the adapter half of the story ``prefer_ops`` / ``op_info`` tells for ops, and it is deliberately the
 SAME story: bundled wins bare names by default, opting out is explicit and per-namespace, and there is a

@@ -652,7 +652,7 @@ class TestBridgeTranscoderSupport:
 
 
 class TestLatentModelHandleLifecycle:
-    """Latent-model handle lifecycle across backend splice paths (interpretune#201, task 3).
+    """Latent-model handle lifecycle across backend splice paths.
 
     Contract validated for every model backend: after any ``fwd_w_cache_and_latent_models``
     call, (a) the model produces baseline (unspliced) outputs again — no residual splice
@@ -676,7 +676,7 @@ class TestLatentModelHandleLifecycle:
         # Cache the SAE *stage* subhooks (production pattern) rather than the base activation at the
         # spliced site: on the nnsight backend, requesting the base hook at a site being spliced
         # double-reads the envoy input and raises OutOfOrderError (recorded as a known limitation in
-        # the backend compatibility matrix, interpretune#201). The TL-mixin resolve_sae_hook_name
+        # the backend compatibility matrix). The TL-mixin resolve_sae_hook_name
         # already yields the full stage-subhook name; nnsight modules derive it from SAE metadata.
         resolve = getattr(module, "resolve_sae_hook_name", None)
         names_filter = [

@@ -136,7 +136,7 @@ def test_import_promoted_utils_adds_no_examples_modules():
     """`import interpretune.analysis.injection` and `import interpretune.utils.latent_state_projection` must not pull
     in the examples package: core never imports examples.
 
-    The executable form of the #577 dependency-direction boundary, in the same subprocess-diff form as the #574
+    The executable form of the dependency-direction boundary, in the same subprocess-diff form as the
     harness guard above.
     """
     import subprocess
@@ -156,8 +156,8 @@ def test_import_promoted_utils_adds_no_examples_modules():
 def test_import_harness_adds_no_examples_modules():
     """`import interpretune.harness` must not pull in the examples package: core never imports examples.
 
-    The executable form of the #574 dependency-direction boundary. Subprocess-only: a diff around the import, so modules
-    the test runner already holds cannot mask a violation.
+    The executable form of the dependency-direction boundary. Subprocess-only: a diff around the import, so modules the
+    test runner already holds cannot mask a violation.
     """
     import subprocess
     import sys

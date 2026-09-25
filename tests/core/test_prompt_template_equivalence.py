@@ -3,8 +3,7 @@
 The chat-template-first re-point is gated per model family on BYTE equivalence between the manual
 token-spelling definition and the tokenizer's native ``apply_chat_template`` output. This module is
 that gate — and it SURVIVES the re-point as a living guard: upstream chat-template drift in a model
-revision must fail here, named, rather than silently altering published prompt bytes (#202's concern
-carried into the new mechanism).
+revision must fail here, named, rather than silently altering published prompt bytes.
 
 Measured 2026-08-11:
 - gemma-2-2b-it / gemma-3-1b-it: byte-IDENTICAL → re-point eligible.

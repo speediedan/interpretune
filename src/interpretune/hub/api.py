@@ -120,7 +120,7 @@ def pull_ops(
     collections before paying for one reload. Reloading re-runs the trust gate and every collection's
     compatibility window; it does not import any op implementation, which still happens lazily.
 
-    An explicit ``revision`` (other than ``"main"``) is a durable PIN (#334): op discovery loads that
+    An explicit ``revision`` (other than ``"main"``) is a durable PIN: op discovery loads that
     revision from now on, beating ``refs/main``, so a republish cannot change what a pinned environment
     executes. Move the pin by pulling at another revision; release it with :func:`unpin_ops`; inspect it
     with :func:`op_pins`. A pinned revision evicted from the cache is refused at discovery (with the
@@ -257,7 +257,7 @@ def load(
 def load_datamodule(
     repo_id: str, name: str, *, cache_dir: Path | None = None, revision: str | None = None
 ) -> "RegisteredDataModuleCfg":
-    """Cache-only hydration of one STANDALONE datamodule entry (#128) — never touches the network.
+    """Cache-only hydration of one STANDALONE datamodule entry — never touches the network.
 
     The datamodule-only half of the two-path contract: the returned pair has no module coupling, and the
     payload's own ``shared_config`` is the only shared configuration applied. Same cache discipline as

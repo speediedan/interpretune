@@ -188,9 +188,9 @@ def __getattr__(name: str):
     # SNAPSHOT when `interpretune.analysis` first loads, so a collection pulled mid-session (hub ops,
     # #273) exists in the dispatcher while `it.<its_op>` raises unless something re-syncs; the
     # reload-time re-sync covers the known paths and this covers every other one, because access-time
-    # resolution cannot go stale. (Build 849's AttributeError, for the record, was NOT this class --
-    # the op never reached the dispatcher at all, a refs/main-vs-pinned-snapshot mismatch fixed in the
-    # cache scan -- but this fallback is what makes the surface robust to the class generally.)
+    # resolution cannot go stale. (The AttributeError behind this fallback, for the record, was NOT this
+    # class -- the op never reached the dispatcher at all, a refs/main-vs-pinned-snapshot mismatch fixed in
+    # the cache scan -- but this fallback is what makes the surface robust to the class generally.)
     # Guarded on the analysis package already being imported so hasattr() probes on arbitrary names
     # stay cheap and import nothing.
     if "interpretune.analysis" in sys.modules:

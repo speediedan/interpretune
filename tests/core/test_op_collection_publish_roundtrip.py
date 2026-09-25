@@ -1,4 +1,4 @@
-"""Publish -> pull -> op-parity round trip on the concept family (#266 Phase 3, exit criteria).
+"""Publish -> pull -> op-parity round trip on the concept family.
 
 Two claims about the bundled-op refactor were previously evidenced only indirectly, and this is where both
 become demonstrated rather than argued:

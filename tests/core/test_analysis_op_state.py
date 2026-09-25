@@ -485,7 +485,7 @@ class TestOpDefCacheRoundTrip:
 
     # Fields this round-trip deliberately does not exercise, each with the reason it is exempt. An
     # exemption is a decision someone made; the enumeration below turns forgetting into a failure and
-    # leaves deliberate omission as an explicit entry here (#296).
+    # leaves deliberate omission as an explicit entry here.
     ROUND_TRIP_EXEMPT = {
         # identity//structural fields the constructor requires, exercised by every other assertion here
         "name",
@@ -504,7 +504,7 @@ class TestOpDefCacheRoundTrip:
     }
 
     def test_opdef_fields_are_enumerated_not_hand_listed(self):
-        """Fail when `OpDef` gains a field this round-trip does not exercise (#296).
+        """Fail when `OpDef` gains a field this round-trip does not exercise.
 
         The sibling assertion below pins `CACHE_FORMAT_VERSION` as a literal, which is an ACKNOWLEDGEMENT
         gate: it fires when someone bumps the version. It does not fire when someone adds a field and
@@ -611,7 +611,7 @@ class TestOpDefCacheRoundTrip:
         # otherwise changing compiled output) without a bump makes stale caches deserialize silently wrong.
         # Updating it is the acknowledgement, so it should move only alongside a new `# N:` rationale line on
         # CACHE_FORMAT_VERSION itself. Note this only guards fields reaching THIS test; the compiler source is
-        # not part of the cache fingerprint at all, which is #290.
+        # not part of the cache fingerprint at all.
         assert CACHE_FORMAT_VERSION == "8"
 
 

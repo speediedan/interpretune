@@ -206,7 +206,7 @@ def _resolve_env_auth_token(os_env_model_auth_key: str | None) -> str | None:
     """Resolve a configured auth-token environment variable, warning rather than raising when unset.
 
     Returns None when no variable is configured, and None WITH A WARNING when one is configured but
-    absent from the environment. Deliberately not ``os.environ[...]`` (#354): a bare ``KeyError`` from
+    absent from the environment. Deliberately not ``os.environ[...]``: a bare ``KeyError`` from
     deep inside model init names a variable and nothing else, and a user who followed the README and
     forgot to export a token gets no actionable message.
 

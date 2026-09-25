@@ -98,7 +98,7 @@ class BaseTestDataModule:
                 dataset[split] = self._remove_unused_columns(dataset[split])
             # Overwriting the dataset in place rewrites Arrow files that earlier tests in this
             # process may still hold memory-mapped. POSIX allows that silently; Windows refuses with
-            # OSError(EINVAL) from the writer open (#326: 18 stderr tracebacks per CI run from a
+            # OSError(EINVAL) from the writer open (18 stderr tracebacks per CI run from a
             # swallowed exception here, loud enough to misdirect unrelated failure diagnosis, while
             # force_prepare silently degraded to keeping the stale copy). Build beside the target and
             # swap; when live maps block the swap, keep the existing copy and say so in ONE debug

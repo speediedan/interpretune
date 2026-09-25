@@ -7,7 +7,7 @@ fetch. Resolution is CACHE-ONLY (the no-implicit-network invariant): referenced 
 via an explicit ``it.hub.pull`` or the local-publish bridge.
 
 ``compose_ref`` is deliberately named: a future bare ``ref:`` is reserved for REPLACEMENT references
-(datamodule refs, interpretune#128), so one mechanism carries two declared intents.
+(datamodule refs), so one mechanism carries two declared intents.
 """
 
 from __future__ import annotations

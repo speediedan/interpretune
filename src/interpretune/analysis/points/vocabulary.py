@@ -195,7 +195,7 @@ class AliasTable:
     The parser consults it once, so an alias never has to be listed by hand beside the point it names and cannot
     disagree with it. Adapters may :meth:`register` aliases for their own vocabulary; a ``strict`` parse refuses
     every entry, for configs that want to be canonical. The former ``HOOK_ALIAS_GROUPS`` in the interventions
-    module asserted tensor IDENTITY between spellings, and two of its groups were wrong (measured, #375, #376);
+    module asserted tensor IDENTITY between spellings, and two of its groups were wrong (measured);
     an alias here asserts only that a spelling MEANS a point, and the point resolves per architecture.
     """
 

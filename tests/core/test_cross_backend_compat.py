@@ -46,7 +46,7 @@ from tests import load_dotenv
 from it_examples.tests.notebook._harness.session import resolve_model_spec
 from tests.runif import RunIf
 ###############################################################################
-# Vendored analysis fixtures (issue #499): prompt-alignment, context-enhanced
+# Vendored analysis fixtures: prompt-alignment, context-enhanced
 # extraction, and feature-parity helpers, derived from the deleted
 # ``concept_direction_analysis`` experiment module. They are pure tensor/text
 # utilities with no experiment coupling; the runnable source of truth for the

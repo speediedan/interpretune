@@ -337,14 +337,14 @@ class TestHubAndBundledCompositionsAreIndistinguishable:
       the tests below make.
     - **Diagnostic** -- ``__module__`` as a debugging channel when a composition is misbehaving. Real, and
       not something code may branch on.
-    - **Functionally load-bearing, tracked as #432** -- anything round-tripping a class by DOTTED PATH
+    - **Functionally load-bearing** -- anything round-tripping a class by DOTTED PATH
       inherits the revision: ``class_path:`` YAML, ``instantiate_class(..., import_only=True)``, pickling,
-      any config recording a class by qualified name. #432 is this same fact from the other side --
+      any config recording a class by qualified name. This is the same fact from the other side --
       registration parity holds while CONFIGURATION parity breaks, because a hub component has no stable
       dotted path to put in a ``class_path:`` at all.
 
     Saying only "diagnostic, not contract" would invite a reader to conclude nothing depends on it, and
-    #432 is a standing counterexample.
+    the dotted-path round-trip is a standing counterexample.
 
     An earlier draft of this class asserted the stronger "nothing anywhere reveals provenance" and failed on
     first run -- correctly. **That is the good failure mode**: an assertion stronger than the truth fails
@@ -438,14 +438,14 @@ class TestHubAndBundledCompositionsAreIndistinguishable:
         since the name is a loader implementation detail and depending on it would recreate the second-class
         delivery path parity exists to prevent.
 
-        But it is not merely cosmetic either, and #432 is the reason to say so here: because the path
+        But it is not merely cosmetic either, and the dotted-path round-trip is why that matters: because the path
         carries a revision that changes on every publish, nothing a hub component defines has a stable
         dotted path, so ``class_path:`` YAML cannot name a hub component's classes at all. Registration
-        parity holds; configuration parity does not. Any stable-alias scheme answering #432 therefore has to
-        resolve the PRECEDENCE-WINNING component, which is where that issue meets this module.
+        parity holds; configuration parity does not. Any stable-alias scheme answering that question therefore has to
+        resolve the PRECEDENCE-WINNING component, which is where that question meets this module.
 
         If a refactor ever flattens these module names, this test fails -- and both consequences (a lost
-        debugging channel, and a changed premise under #432) become a decision rather than a side effect.
+        debugging channel, and a changed round-tripping premise) become a decision rather than a side effect.
         """
         registry, hub_member = parity_registry
         _, hub_key = self._keys(registry, hub_member)

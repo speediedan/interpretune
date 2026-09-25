@@ -1,4 +1,4 @@
-"""#441: an intervention changes exactly the positions its scope selects, and no other.
+"""An intervention changes exactly the positions its scope selects, and no other.
 
 The last-token slice is correct by construction, but every backend calls it by convention and nothing verified
 that the OTHER positions were left alone: a backend applying an intervention to every prompt position produces

@@ -106,7 +106,7 @@ class TestClampRefusesAProvableNoOp:
 
 class TestClampReachesTheSharedDispatch:
     def test_it_dispatches_through_the_shared_region_path(self, basis):
-        """Reaching the mode by direct call only is how `patch` nearly shipped unreachable (#320)."""
+        """Reaching the mode by direct call only is how `patch` nearly shipped unreachable."""
         h = torch.tensor([[5.0, -5.0, 2.0]])
         spec = _spec(basis, clamp_min=-1.0, clamp_max=1.0)
         direct = _apply_span_clamp(spec, input_value=h, target=basis)

@@ -546,7 +546,7 @@ class TestGradStateAcrossAFailingRun:
 
 
 class TestGeneratorCacheSharing:
-    """Deterministic fingerprints share generator cache files across runs (interpretune#554)."""
+    """Deterministic fingerprints share generator cache files across runs."""
 
     def _module(self, cache_dir):
         module = MagicMock()

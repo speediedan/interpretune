@@ -1,5 +1,5 @@
-"""#472: a composition can declare the modules it imports, so a distribution present at a checkout that lacks the
-module is skipped-and-reported rather than registered-and-broken."""
+"""A composition can declare the modules it imports, so a distribution present at a checkout that lacks the module
+is skipped-and-reported rather than registered-and-broken."""
 
 from __future__ import annotations
 
