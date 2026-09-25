@@ -1,15 +1,15 @@
-"""Build 849's crash half: discovery must not route through a manifest-less refs/main snapshot.
+"""Discovery must not route through a manifest-less refs/main snapshot.
 
 huggingface_hub materializes one snapshot dir per resolved revision containing only the files
 actually fetched at it. A revision-pinned pull therefore leaves a COMPLETE pinned snapshot beside
 whatever partial snapshot any single-file fetch at `main` created -- and `refs/main` points at the
 partial one. Routing discovery by refs alone then skips the entire collection ("no it_component.yaml
-in the cached snapshot") while the pull reports success: measured as #327's build-849 failure, where
+in the cached snapshot") while the pull reports success: measured in a failure where
 the demo pulled the collection and `it.jlens_patch_intervention` raised one line later.
 
 The fixture fabricates exactly that cache state; huggingface_hub's scanner works on any conforming
 layout, so no network and no real repo is involved. The SILENT half (a complete newer main snapshot
-winning over the revision a user pinned) was #334, solved by durable pins -- see
+winning over the revision a user pinned) was the pin-binding gap, solved by durable pins -- see
 tests/core/test_hub_op_pins.py; the tests here cover the UNPINNED path, which keeps the fallback.
 """
 

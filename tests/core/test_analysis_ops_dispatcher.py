@@ -768,9 +768,9 @@ test_op:
             patch.object(
                 OpWrapper,
                 "__eq__",
-                lambda self, other: self._op_name == getattr(other, "_op_name", other)
-                if isinstance(other, (str, OpWrapper))
-                else False,
+                lambda self, other: (
+                    self._op_name == getattr(other, "_op_name", other) if isinstance(other, (str, OpWrapper)) else False
+                ),
             ),
             patch.object(OpWrapper, "__hash__", lambda self: hash(self._op_name)),
         ):
@@ -2650,7 +2650,7 @@ dependent_op:
 
 
 class TestUserDefinedBatchProtocols:
-    """#56: an op may declare a `BaseAnalysisBatchProtocol` subclass its batches conform to.
+    """An op may declare a `BaseAnalysisBatchProtocol` subclass its batches conform to.
 
     Declared as an IMPORT PATH on `OpDef` rather than a class, so a definition stays serializable into the
     generated cache module and a YAML author can name one without importing it. Resolution is the
@@ -2749,7 +2749,7 @@ class TestUserDefinedBatchProtocols:
 
 
 class TestNormalParamsChannel:
-    """`normal_params` carries non-importable implementation params from a definition to the impl (#61).
+    """`normal_params` carries non-importable implementation params from a definition to the impl.
 
     Ops declare implementation params through two channels, both merged into `impl_params` at
     instantiation: `importable_params` for dotted paths resolved at load, and `normal_params` for
@@ -2762,8 +2762,8 @@ class TestNormalParamsChannel:
     Python. It is declared at its existing effective default (`None`), which makes this
     behavior-preserving rather than a tuning change.
 
-    #61's other half -- ignoring framework args an implementation does not accept -- is covered by
-    `TestResolveCallParams` and was already implemented; see the issue for the measurements.
+    The other half -- ignoring framework args an implementation does not accept -- is covered by
+    `TestResolveCallParams` and was already implemented.
     """
 
     def test_declared_normal_param_reaches_the_implementation(self):

@@ -32,8 +32,7 @@ import torch
 import torch.distributed
 
 # The suite deliberately consents to executing hub-resident code: the local-publish bridge and the
-# compose_ref entries in the test registry import component entrypoints, which are gated by default
-# since interpretune#255. Set before any registry hydration (module import is the only point early
+# compose_ref entries in the test registry import component entrypoints, which are gated by default.
 # enough for collection-time parametrization) and unconditionally, so a developer's own opt-out in
 # the ambient environment cannot make the suite nondeterministic. Tests that assert the DENY path
 # monkeypatch this away per-test — see tests/core/test_hub_trust.py.
@@ -1279,7 +1278,7 @@ def restore_env_variables():
         "HF_MCP_TOKEN_RW",
         "COPILOT_PROVIDER_API_KEY",  # explanation-CLI BYOK key (see neuronpedia_explanations.py)
         "READTHEDOCS_TOKEN",  # RTD API token added to .env for docs automation
-        # the unified CLI (#245) calls load_dotenv() inside the tested code path, so any .env key not
+        # the unified CLI calls load_dotenv() inside the tested code path, so any .env key not
         # already exported when the fixture snapshots appears as a leak on a fresh shell (CI has no
         # .env, so this is local-only). Recent .env additions:
         "IT_HF_TOKEN",  # hub-examples workstream publish token

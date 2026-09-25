@@ -546,7 +546,7 @@ class TestCompileOpSchemaIntegration:
 
 
 class TestInheritedInputRequiredness:
-    """`required_ops` inheritance must not manufacture obligations (issue #161).
+    """`required_ops` inheritance must not manufacture obligations.
 
     NOTE [Inherited Inputs Are Not Obligations] in `schema_compiler.py` states the contract: `required_ops`
     declares "the fields I consume are produced by that op", not "I need what it needs". It is a compile-time

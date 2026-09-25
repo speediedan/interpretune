@@ -146,7 +146,7 @@ def _hf_steered_final_resid(hf_model, prompt_ids, vector, *, all_positions: bool
 
 @pytest.mark.skipif(not INTERP_ENGINE_AVAILABLE, reason="interp-engine is not installed")
 class TestInterpEngineSteeringIsAllPositions:
-    """Interp-engine steers EVERY prompt position, and that is a capability we now express (#441).
+    """Interp-engine steers EVERY prompt position, and that is a capability we now express.
 
     Its ``SteeringSpec`` carries ``layers``, ``point`` and ``stream`` and no position field, so whole-prompt
     is the only scope it implements. **That is not a bug in interp-engine.** "Steer the whole prompt" is a

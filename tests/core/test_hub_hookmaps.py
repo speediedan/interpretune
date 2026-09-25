@@ -1,4 +1,4 @@
-"""#375 / #444: per-architecture component maps as a DATA hub kind (``hookmaps``).
+"""Per-architecture component maps as a DATA hub kind (``hookmaps``).
 
 Pins the kind contract: manifest shape, publish-time structural check, cache-only registration through the
 vocabulary's own registry (so a hub map is indistinguishable from a bundled one to every consumer), the

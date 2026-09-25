@@ -1,4 +1,4 @@
-"""Test-owned module registry (interpretune#1 / #236 workstream, lane 3d).
+"""Test-owned module registry.
 
 Owns the pytest-scale entries split out of the former monolithic example registry — the ones whose
 datamodule/module classes live in ``tests.modules`` and therefore cannot ship. Registers BOTH YAMLs (test entries

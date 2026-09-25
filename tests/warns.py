@@ -50,7 +50,7 @@ LIGHTING_CTX_WARNS = (
         #   3. `LightningCLI._add_instantiators` -> `parser.add_instantiator`             (cli.py:596, 601)
         # Enumerated by grepping jsonargparse._deprecated's message set against lightning/pytorch/cli.py
         # rather than discovered one test failure at a time, so this list is the complete surface.
-        # Our own call site migrated to `parser.instantiate` in #278; this residue is Lightning's and no
+        # Our own call site already migrated to `parser.instantiate`; this residue is Lightning's and no
         # change here can remove it. Deliberately scoped to the LIGHTNING contexts ONLY -- every Lightning
         # key derives from this list while the core keys do not, so a regression in our own call site
         # still fails the suite. Remove these when Lightning migrates.

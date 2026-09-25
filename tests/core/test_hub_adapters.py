@@ -1,4 +1,4 @@
-"""The ``adapters`` component kind (#125): manifest schema, the enum extension, and the load path.
+"""The ``adapters`` component kind: manifest schema, the enum extension, and the load path.
 
 Tested against a trivial in-test fixture component rather than a real adapter, deliberately: the rails and the passenger
 have to be able to fail independently, or a broken adapter and broken rails present identically.
@@ -65,7 +65,7 @@ REGISTERS_DECLARED = '''
                 component_key="module",
                 adapter_combination=("core", "fixture_adapter"),
                 composition_classes=(FixtureAdapterModule,),
-                description="fixture adapter for the #125 rails",
+                description="fixture adapter for the adapter rails",
             )
 '''
 
@@ -299,7 +299,7 @@ CONDITIONAL_COMPOSITIONS = REGISTERS_DECLARED
 
 class TestSkippedCompositionsAreVisible:
     """A declared composition this environment cannot support is reported where an UNCONFIGURED consumer sees it,
-    and returned, so the skip is never silent (#465)."""
+    and returned, so the skip is never silent."""
 
     @staticmethod
     def _conditional_component(tmp_path):
@@ -369,8 +369,8 @@ class TestSkippedCompositionsAreVisible:
 
 
 class TestLoadingTwiceIsIdempotent:
-    """#484: a second `load_hub_adapter` of the same component into the same registry returns the same members
-    without re-executing the entrypoint; the docstring promised it and the delta-based guard refused it."""
+    """A second `load_hub_adapter` of the same component into the same registry returns the same members without
+    re-executing the entrypoint; the docstring promised it and the delta-based guard refused it."""
 
     def test_a_second_load_returns_the_same_members_and_runs_nothing_twice(
         self, tmp_path, monkeypatch, restore_adapter_enum

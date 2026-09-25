@@ -1,6 +1,6 @@
 """The `reject`/`clamp` mode contract, stated algebraically.
 
-#423's cross-tree oracle handed the adapter lane four identities that pin the mode CLASS rather than one case; they land
+# A cross-tree oracle handed the adapter lane four identities that pin the mode CLASS rather than one case; they land
 here as in-tree tests rather than living only in the adapter's suite. Each expectation is recomputed from an independent
 expression (a fresh pseudoinverse, never the implementation's own arithmetic), and the fixture is guarded to be
 discriminating: with an orthonormal basis the transpose and the pseudoinverse agree, and every test below would pass for

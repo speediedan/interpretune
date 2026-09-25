@@ -1,4 +1,4 @@
-"""Bare-name precedence opt-in and ``op_info`` introspection (#266 Phase 3, D8 item 2).
+"""Bare-name precedence opt-in and ``op_info`` introspection.
 
 Bundled ops win bare names by default, which is what makes a session work offline and identically for everyone. Opting
 into a hub collection's copy of an op is explicit, per-namespace, reversible within a session, and never a side effect

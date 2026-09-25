@@ -1,4 +1,4 @@
-"""#300: `--check-stale` can see output-only drift, not just source drift.
+"""`--check-stale` can see output-only drift, not just source drift.
 
 The comparator behind the original check builds its signature from ``(cell_type, source)``, so output drift is not
 merely unchecked -- it is unrepresentable in the comparison. Confirmed in the wild: one rename touched two artifacts,
@@ -125,7 +125,7 @@ def test_yaml_absence_degrades_output_drift_but_keeps_source_drift(renderer, mon
 
 
 class TestDriftExitCodeContract:
-    """#311: `docs-build` must be able to tell "an artifact drifted" from "the check failed to run".
+    """`docs-build` must be able to tell "an artifact drifted" from "the check failed to run".
 
     Both exit non-zero, so the previous `|| { echo "...drifted..."; }` wrapper could only ever assert the
     first. It got that wrong in production: a `ModuleNotFoundError` was reported as drift. Rewording cannot
@@ -278,12 +278,12 @@ class TestSkippedSectionIsDrift:
 
 
 class TestStampUnderRecording:
-    """#318: an artifact re-rendered while the stamping machinery changed under it carries CURRENT outputs with a
-    STALE stamp.
+    """An artifact re-rendered while the stamping machinery changed under it carries CURRENT outputs with a STALE
+    stamp.
 
     `stale_output_references` stays silent -- the outputs are genuinely current -- but every op the stamp
     fails to record is invisible to the next rename's drift check. Two correct PRs composed into this on
-    main (#308 re-rendered, #310 stamped; merged in either order the result is the same), so neither
+    main (one re-rendered, one stamped; merged in either order the result is the same), so neither
     PR's CI could have caught it.
     """
 

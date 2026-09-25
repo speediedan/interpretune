@@ -1,4 +1,4 @@
-"""#255: the trust gate for hub-resident code — default-deny, call-time, non-interactive.
+"""The trust gate for hub-resident code — default-deny, call-time, non-interactive.
 
 The suite as a whole opts in (tests/conftest.py), so every test here removes that consent explicitly. That asymmetry is
 deliberate: the gate is only meaningful if something asserts the refusal, and a blanket-trusted suite would never notice
@@ -112,7 +112,7 @@ def unexecuted_entrypoint(monkeypatch):
 
 
 class TestPromptConfigEntrypointIsGated:
-    """The exec_module path (#255's real hole): importing a component entrypoint runs its code."""
+    """The exec_module path (the gate's real hole): importing a component entrypoint runs its code."""
 
     def test_entrypoint_import_refused_without_consent(self, unexecuted_entrypoint):
         from interpretune.hub.promptconfigs import import_cached_entrypoint

@@ -192,7 +192,7 @@ def test_benchmark_subprocess_env_is_color_neutral():
 # `expected_accuracy`, so a refresh from a dirty tree writes a lineage no clean checkout can
 # reproduce. `--force-update-registry` is the safe shape of an escape hatch because it cannot outlive
 # the command that typed it; a FILE can, and an unconsumed one would disarm the guard on every future
-# refresh rather than the single one it was created for (#275). These pin both halves of the fix: the
+# refresh rather than the single one it was created for. These pin both halves of the fix: the
 # bypass is consumed, and it can never be committed.
 
 

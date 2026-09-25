@@ -1,4 +1,4 @@
-"""Unit tests for Hub-runnable model-spec resolution (interpretune#498 slice 1)."""
+"""Unit tests for Hub-runnable model-spec resolution."""
 
 from __future__ import annotations
 

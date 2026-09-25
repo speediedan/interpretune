@@ -1,6 +1,6 @@
-"""#329: expected-vs-actual validation for J-lens patch interventions (+ the #337 magnitude sweep).
+"""Expected-vs-actual validation for J-lens patch interventions (+ the magnitude sweep).
 
-THE FREEZE-SET DECISION (the deliverable this issue names). The circuit-tracer validation
+THE FREEZE-SET DECISION (this module's deliverable). The circuit-tracer validation
 (`_verify_feature_edges_direct`) freezes components because its EXPECTED values come from attribution
 edge weights -- a linear surrogate that only matches a finite intervention when the nonlinearities
 between the perturbation and the readout are pinned. The J-lens patch case decomposes differently:
@@ -14,7 +14,7 @@ between the perturbation and the readout are pinned. The J-lens patch case decom
 2. **Surrogate validation is a different claim with a different owner.** "The J-lens transport
    predicts the logit effect" is a statement about lens quality (an AVERAGED Jacobian standing in for
    the per-prompt one); its finite-magnitude form is exactly where a freeze set would re-enter, and it
-   belongs to the folding investigation (#330) and future J-lens subspace attribution work. What this
+   belongs to the folding investigation and future J-lens subspace attribution work. What this
    module pins instead is the bridge both must satisfy: for small perturbations, the measured logit
    delta converges to the TRUE per-prompt Jacobian-vector product -- no freezing, no surrogate, just
    calculus. Any frozen linearization that disagrees with this limit is wrong by construction.
@@ -217,7 +217,7 @@ class TestFirstOrderAgainstTrueJacobian:
 
 
 class TestMagnitudeSweepMonotonicity:
-    """#337: characterize monotonicity across a wide magnitude grid, and PIN where it stops being linear.
+    """Characterize monotonicity across a wide magnitude grid, and PIN where it stops being linear.
 
     The patch displacement is AFFINE in the scale: ``Delta(s) = V(s*sigma(c) - c) = -Vc + s*V*sigma(c)``,
     so the entire first-order prediction across the sweep costs two JVPs (one along ``-Vc``, one along
@@ -228,7 +228,7 @@ class TestMagnitudeSweepMonotonicity:
 
     Measured on the seeded tiny model (float64, projection ``m`` onto the unit ``jvpu`` direction).
 
-    The fixture pairs a tokenizer-sized vocabulary with the real gpt2 tokenizer (#339: sizing the
+    The fixture pairs a tokenizer-sized vocabulary with the real gpt2 tokenizer (sizing the
     config to the tokenizer by construction), so this table was re-measured on that RNG stream;
     the regime boundary below is stream-dependent, the tolerance is not::
 
@@ -532,7 +532,7 @@ def _tl_gap_for_pair(model_id: str, case: dict[str, object]) -> dict[str, object
 
 
 class TestGemmaPairLevel3:
-    """#339: level-3 on the real gemma demo pair, built through the production seam.
+    """Level-3 on the real gemma demo pair, built through the production seam.
 
     The synthetic sweep pins the machinery; this pins the PRODUCTION construction (resolve_unembed_and_norm_scale +
     resolve_jlens_layer + jlens_direction_rows over real lens artifacts) on both demo models, asserting the cross-

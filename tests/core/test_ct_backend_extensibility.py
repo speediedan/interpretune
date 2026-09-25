@@ -2,7 +2,7 @@
 
 Before N2 these were identity branches (`if backend == "nnsight": ... else: TL`), which a third-party
 adapter could not enter and which OVERWROTE any model backend already attached in the MRO. Both are
-the shapes the per-adapter package work (#401) exists to remove: core owns protocols, capability
+the shapes the per-adapter package work exists to remove: core owns protocols, capability
 vocabulary and registries, and knows nothing about any particular hub adapter.
 """
 
@@ -85,9 +85,9 @@ class TestAttachDoesNotOverride:
 class TestCoreKnowsNothingOfAnyHubAdapter:
     """Zero references to a hub-delivered adapter anywhere in core.
 
-    The rails (#125) exist so a component registers ITSELF. Anything core did on its behalf would recreate the
-    privileged position #401 removed, and it would do so silently -- a name in a branch reads as support rather than as
-    a special case.
+    The rails exist so a component registers ITSELF. Anything core did on its behalf would recreate the privileged
+    position that was removed, and it would do so silently -- a name in a branch reads as support rather than as a
+    special case.
     """
 
     def test_no_core_module_mentions_interp_engine(self):

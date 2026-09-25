@@ -1,4 +1,4 @@
-"""Build 849's silent half (#334): a pin must bind EXECUTION, not just the download.
+"""A pin must bind EXECUTION, not just the download.
 
 The trust posture tells users to pin a revision "so trusted code cannot change under you", and
 ``pull_ops(revision=...)`` always honored the pin for the fetch — but discovery ignored pins
@@ -81,7 +81,7 @@ class TestPinBindsDiscovery:
         record_op_pin("pinuser/pinned_repo", PINNED_SHA, "v0.0.1", cache_root=republished_hub_cache)
         _, yaml_files = _discover(republished_hub_cache, tmp_path, monkeypatch)
         assert any(PINNED_SHA[:12] in str(p) for p in yaml_files), (
-            "discovery loaded the republished refs/main revision over the pin -- the #334 gap"
+            "discovery loaded the republished refs/main revision over the pin"
         )
         assert not any(REPUBLISHED_SHA[:12] in str(p) for p in yaml_files)
 

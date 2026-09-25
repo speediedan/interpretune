@@ -1,4 +1,4 @@
-"""Tests for the J-lens subspace attribution decomposition (#338).
+"""Tests for the J-lens subspace attribution decomposition.
 
 The decomposition splits the first-order prediction ``gᵀΔh`` per dictionary direction, so its
 contract is algebraic before it is empirical: shares plus remainder reconstruct the prediction

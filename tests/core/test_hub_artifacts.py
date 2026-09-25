@@ -1,4 +1,4 @@
-"""#124 MVP: artifact envelope, push/pull/describe, and formatter re-attach round-trip."""
+"""Artifact envelope, push/pull/describe, and formatter re-attach round-trip."""
 
 from __future__ import annotations
 
@@ -103,7 +103,7 @@ class TestEnvelope:
 
 
 class TestSchemaVersionPolicy:
-    """#257: hub artifacts outlive the code that wrote them, so the reader accepts a WINDOW."""
+    """Hub artifacts outlive the code that wrote them, so the reader accepts a WINDOW."""
 
     @staticmethod
     def _envelope(schema):
@@ -186,7 +186,7 @@ class TestSchemaVersionPolicy:
 
 
 class TestWriterSideGuard:
-    """#257: refuse to PUBLISH an envelope this build could not itself read back."""
+    """Refuse to PUBLISH an envelope this build could not itself read back."""
 
     def test_build_returns_a_validated_envelope(self, small_store):
         env = build_analysis_store_envelope(small_store)
@@ -402,7 +402,7 @@ def test_artifact_surface_resolves_in_fresh_process():
 
 
 class TestWriteTimeOpProvenance:
-    """#284: op-collection provenance is RECORDED at write time, never reconstructed at push time.
+    """Op-collection provenance is RECORDED at write time, never reconstructed at push time.
 
     The reconstruction path these tests exist to foreclose is not merely inaccurate, it is undetectably so:
     `op_precedence` is session-mutable and re-read from the environment on every access, and the store keeps
@@ -617,11 +617,11 @@ class TestWriteTimeOpProvenance:
 
 
 class TestProtocolClsThreading:
-    """#62: an op's declared protocol reaches the stores it produces, and survives a hub round trip.
+    """An op's declared protocol reaches the stores it produces, and survives a hub round trip.
 
-    The issue's literal ask -- "pass protocol_cls to the AnalysisStore constructor" -- was already satisfied; the
-    parameter has existed since before it was actionable. The real gaps were that nothing PASSED it, and that a pushed
-    store lost its protocol on pull because the envelope did not record it.
+    The literal ask -- "pass protocol_cls to the AnalysisStore constructor" -- was already satisfied; the parameter has
+    existed since before it was actionable. The real gaps were that nothing PASSED it, and that a pushed store lost its
+    protocol on pull because the envelope did not record it.
     """
 
     @staticmethod
@@ -641,7 +641,7 @@ class TestProtocolClsThreading:
 
         protocol = self._custom_protocol()
         op = DISPATCHER.get_op("labels_to_ids")
-        op.protocol_cls = protocol  # as the #56 resolver sets it
+        op.protocol_cls = protocol  # as the dispatcher resolver sets it
         try:
             cfg = AnalysisCfg(target_op=op)
             module = MagicMock()

@@ -1997,7 +1997,7 @@ class TestOpIdentityComparison:
 
 
 class TestInheritedInputsAreNotObligations:
-    """End-to-end pins for issue #161 against the REAL shipped op definitions.
+    """End-to-end pins against the REAL shipped op definitions.
 
     `tests/core/test_schema_compiler.py::TestInheritedInputRequiredness` pins the compiler rule on synthetic
     definitions. These pin that the rule produces the right outcome for the ops that actually ship, which is
@@ -2051,7 +2051,7 @@ class TestInheritedInputsAreNotObligations:
 
 
 class TestDeclaredInputsAreConsumed:
-    """Pins for issue #299: a `required: true` input must be one the implementation actually consumes.
+    """A `required: true` input must be one the implementation actually consumes.
 
     The audit behind these tests checked all 41 `required: true` declarations across the bundled ops and found exactly
     one that no code path reads. The number matters: an earlier detector that scanned only for direct attribute access

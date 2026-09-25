@@ -1,4 +1,4 @@
-"""The ``collection:`` header an op YAML may declare, and its compatibility window (#266 Phase 3, D8).
+"""The ``collection:`` header an op YAML may declare, and its compatibility window.
 
 A collection versions a *contract set* -- the names, schemas and traits its ops present to callers -- and declares one
 window against the installed interpretune. There is no cross-collection resolution and no solver: an incompatible
