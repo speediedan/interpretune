@@ -222,16 +222,16 @@ def resolve_tokenizer(module: Any) -> Any:
     raise ValueError("A tokenizer is required for this analysis operation")
 
 
-#: Probe amplitude. `rms(c * 1) = c` for any c, but at c = 1 the RMSNorm `eps` is not negligible
+#: Probe amplitude. $\mathrm{rms}(c \cdot 1) = c$ for any $c$, but at $c = 1$ the RMSNorm `eps` is not negligible
 #: against it (error near 1e-6); by c = 10 the recovery is exact.
 _RMSNORM_PROBE_CONSTANT = 10.0
 
 
 def _rmsnorm_scale(norm: Any, weight: torch.Tensor) -> torch.Tensor:
-    """The elementwise scale an RMSNorm APPLIES, read from the module rather than declared.
+    r"""The elementwise scale an RMSNorm APPLIES, read from the module rather than declared.
 
-    Since ``rms(c * 1) = c``, a constant vector normalizes to ones and an RMSNorm returns its own
-    effective scale: ``norm(c * 1) = s``. So the module reports what it does and nothing here has to
+    Since $\mathrm{rms}(c \cdot 1) = c$, a constant vector normalizes to ones and an RMSNorm returns its own
+    effective scale: $\mathrm{norm}(c \cdot 1) = s$. So the module reports what it does and nothing here has to
     know which convention its family uses.
 
     This replaces a hardcoded table of ``model_type`` values, and the table was a standing liability
@@ -327,9 +327,10 @@ class UnembedNormInfo(NamedTuple):
             LayerNorms. ``None`` when no final-norm weight is resolvable.
         norm_kind: ``"rmsnorm"``, ``"layernorm"``, or ``"none"`` -- callers constructing readout
             DIRECTIONS need this because LayerNorm additionally centers, so its readout-faithful
-            direction is ``C(W_U[c] * scale)`` with the centering projector ``C = I - 11^T/d``,
-            while RMSNorm's is ``W_U[c] * scale`` unchanged. Unlike a uniform rescaling, which
-            cancels in patch mode because scaling ``V`` scales its pseudoinverse inversely, centering
+            direction is $C(W_U[c] \\odot \\mathrm{scale})$ with the centering projector $C = I -
+            \\mathbf{1}\\mathbf{1}^{\\mathsf{T}}/d$, while RMSNorm's is $W_U[c] \\odot \\mathrm{scale}$
+            unchanged. Unlike a uniform rescaling, which cancels in patch mode because scaling $V$
+            scales its pseudoinverse inversely, centering
             removes an ADDITIVE uniform component, so it moves the direction and with it the plane a
             swap happens in. :func:`fold_norm_into_unembed_rows` applies the right one per kind.
         norm_bias: The final norm's additive bias (LayerNorm families), or ``None`` when the norm
@@ -690,19 +691,20 @@ def resolve_jlens_layer(
 
 
 def fold_norm_into_unembed_rows(info: UnembedNormInfo, token_ids: Any, *, apply_norm: bool) -> torch.Tensor:
-    """Readout-faithful unembed rows for ``token_ids``, with the final norm folded in per kind.
+    r"""Readout-faithful unembed rows for ``token_ids``, with the final norm folded in per kind.
 
     Returns ``(n_tokens, d_model)`` float rows, one per id, in the order given. Composing a lens
     direction is the caller's job (``rows @ J`` for a J-lens, ``rows`` alone for a logit lens); this
     function owns only the part that is easy to get subtly wrong.
 
     Two conventions, both exact rather than heuristic. For an RMSNorm the readout
-    ``W_U[c] . norm(x)`` equals ``(W_U[c] * scale) . x / rms(x)``, so folding the elementwise scale
-    into the row reproduces the readout's own direction and the input-dependent ``1/rms(x)`` scales
-    magnitude only. A LayerNorm additionally subtracts the mean, and pushing that through the dot
-    product moves a centering onto the row: ``(W_U[c] * scale) . (x - mean(x)1) = C(W_U[c] * scale) . x``
-    with ``C = I - 11^T/d``. The learned bias contributes an input-independent logit offset and drops
-    out of a direction.
+    $W_U[c] \cdot \mathrm{norm}(x)$ equals $(W_U[c] \odot \mathrm{scale}) \cdot x / \mathrm{rms}(x)$, so folding
+    the elementwise scale into the row reproduces the readout's own direction and the input-dependent
+    $1/\mathrm{rms}(x)$ scales magnitude only. A LayerNorm additionally subtracts the mean, and pushing that
+    through the dot product moves a centering onto the row: $(W_U[c] \odot \mathrm{scale}) \cdot (x -
+    \mathrm{mean}(x)\mathbf{1}) = C(W_U[c] \odot \mathrm{scale}) \cdot x$ with $C = I -
+    \mathbf{1}\mathbf{1}^{\mathsf{T}}/d$. The learned bias contributes an input-independent logit offset and
+    drops out of a direction.
 
     ``apply_norm=False`` returns the raw rows, which is the paper's probing shorthand ("rows of
     ``W_U J``") rather than its readout formula. The two agree only when the scale is uniform, and

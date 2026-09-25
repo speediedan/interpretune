@@ -574,28 +574,28 @@ def _apply_lens_coordinate_patch(
 ) -> torch.Tensor:
     """Swap a concept pair in lens coordinates, preserving everything orthogonal to the pair.
 
-    Implements ``h <- h + V(sigma(c) - c)`` from the J-space workspace paper, where ``V = [v_s v_t]``
-    holds the two lens vectors as columns, ``c = V^+ h`` are the activation's coordinates in their span,
-    and ``sigma`` swaps the two entries. Because the update lies entirely in ``span(V)``, the orthogonal
-    component of ``h`` is mathematically untouched -- which is the property that distinguishes this from
-    naive steering (``h <- h + alpha * v``), where the added vector perturbs every component it overlaps.
+    Implements $h \\gets h + V(\\sigma(c) - c)$ from the J-space workspace paper, where $V = [v_s v_t]$
+    holds the two lens vectors as columns, $c = V^{+} h$ are the activation's coordinates in their span,
+    and $\\sigma$ swaps the two entries. Because the update lies entirely in $\\mathrm{span}(V)$, the orthogonal
+    component of $h$ is mathematically untouched -- which is the property that distinguishes this from
+    naive steering ($h \\gets h + \alpha v$), where the added vector perturbs every component it overlaps.
 
     ``spec.intervention_tensor`` must supply exactly two vectors, stacked on a leading axis of size 2:
-    index 0 is the source concept ``v_s`` and index 1 the target ``v_t``. A single vector cannot express
+    index 0 is the source concept $v_s$ and index 1 the target $v_t$. A single vector cannot express
     a swap, so this mode rejects one rather than guessing a partner.
 
-    ``spec.scale_factor`` scales the swapped coordinates, the paper's optional ``alpha``. It defaults to
-    1.0, a pure exchange. The paper reports oversteering as a real failure mode and uses alpha=2 only
+    ``spec.scale_factor`` scales the swapped coordinates, the paper's optional $\alpha$. It defaults to
+    1.0, a pure exchange. The paper reports oversteering as a real failure mode and uses $\alpha = 2$ only
     where needed, so values above 1 should be justified per-case rather than tuned by default.
 
     The pseudoinverse is used rather than a transpose because lens vectors are not orthonormal, and it is
     worth being precise about what that buys. Orthogonal preservation holds EITHER way: the update lies in
-    ``span(V)`` by construction, so nothing outside that span can move no matter how the coordinates are
-    computed. What ``pinv`` buys is that the swap is a swap. ``V^+`` gives the true oblique coordinates, so
-    the patched activation satisfies ``V^+ h' == sigma(c)`` exactly. With ``V^T`` on a non-orthonormal pair
-    the result lands somewhere else entirely -- measured on a correlated pair, target ``sigma(c)`` of
-    ``[3.37, -3.49]`` came out as ``[-2.98, 2.86]``. The failure is silent, because the orthogonal component
-    still looks untouched and the activation still moved.
+    $\\mathrm{span}(V)$ by construction, so nothing outside that span can move no matter how the coordinates
+    are computed. What the pseudoinverse buys is that the swap is a swap. $V^{+}$ gives the true oblique
+    coordinates, so the patched activation satisfies $V^{+} h' = \\sigma(c)$ exactly. With $V^{\\mathsf{T}}$
+    on a non-orthonormal pair the result lands somewhere else entirely -- measured on a correlated pair,
+    target $\\sigma(c)$ of $[3.37, -3.49]$ came out as $[-2.98, 2.86]$. The failure is silent, because the
+    orthogonal component still looks untouched and the activation still moved.
     """
     if target.ndim < 1 or target.shape[0] != 2:
         raise ValueError(
@@ -626,9 +626,9 @@ def _apply_span_clamp(
     input_value: torch.Tensor,
     target: torch.Tensor,
 ) -> torch.Tensor:
-    """Bound the activation's coordinates along ``span(V)`` into ``[clamp_min, clamp_max]``.
+    r"""Bound the activation's coordinates along $\mathrm{span}(V)$ into ``[clamp_min, clamp_max]``.
 
-    Implements ``c <- clip(c, lo, hi)`` with ``c = V^+ h``, writing back ``h + (c' - c) V``. A
+    Implements $c \gets \mathrm{clip}(c, lo, hi)$ with $c = V^{+} h$, writing back $h + (c' - c) V$. A
     coordinate already inside its range is left ALONE, which is what distinguishes this from assigning a
     value: the operation is a no-op on activations that were never out of bounds, and that is the
     property the paper's coordinate-clamping ablation depends on.
@@ -637,9 +637,9 @@ def _apply_span_clamp(
     parameterization. No choice of bounds makes a clamp swap two coordinates, so ``patch`` is a special
     case of ASSIGNMENT and not of this. They share an English word and nothing else.
 
-    ``V`` is ``(k, d_model)`` for any ``k >= 1``, and the coordinates are pseudoinverse coefficients
+    $V$ is ``(k, d_model)`` for any $k \ge 1$, and the coordinates are pseudoinverse coefficients
     rather than dot products, matching ``patch`` and ``reject``: lens vectors are not orthonormal, and
-    with ``V^T`` the bounded quantity is not the coordinate the caller named.
+    with $V^{\mathsf{T}}$ the bounded quantity is not the coordinate the caller named.
     """
     lo, hi = spec.clamp_min, spec.clamp_max
     if lo is None and hi is None:
@@ -685,15 +685,15 @@ def _apply_span_rejection(
 ) -> torch.Tensor:
     """Remove the activation's component inside ``span(V)``, leaving the orthogonal complement.
 
-    Implements ``h <- h - alpha * V V^+ h``. This is the OPPOSITE of ``project``, which keeps the
+    Implements $h \\gets h - \alpha V V^{+} h$. This is the OPPOSITE of ``project``, which keeps the
     component in the span and discards the rest, and the two are complementary rather than inverse: at
-    ``alpha = 1`` the results of the two modes sum to ``h``. Naming them as opposites matters because a
+    $\alpha = 1$ the results of the two modes sum to $h$. Naming them as opposites matters because a
     caller who reaches for "project out" and finds ``project`` gets exactly the complement of what they
     asked for, with no error and a plausible activation.
 
     ``V`` is ``(k, d_model)`` stacked on a leading axis, any ``k >= 1``, unlike ``patch`` which requires
     exactly two because a swap needs a partner. The pseudoinverse is used for the same reason it is used
-    there: lens vectors are not orthonormal, and with ``V^T`` the removed component is not the one in the
+    there: lens vectors are not orthonormal, and with $V^{\\mathsf{T}}$ the removed component is not the one in the
     span. Unlike ``patch``, orthogonal preservation is not automatic here, it IS the operation, so
     getting the coordinates wrong changes the answer rather than merely the coordinates.
 
