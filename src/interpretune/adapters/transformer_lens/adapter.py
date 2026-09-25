@@ -10,6 +10,7 @@ from transformers import PretrainedConfig as HFPretrainedConfig, PreTrainedModel
 from transformer_lens.config import TransformerBridgeConfig
 from transformer_lens.utilities.multi_gpu import get_best_available_device
 from transformer_lens.model_bridge import TransformerBridge
+from transformer_lens.model_bridge.generalized_components import NormalizationBridge
 from transformer_lens.factories.architecture_adapter_factory import ArchitectureAdapterFactory
 from transformer_lens.model_bridge.sources.transformers import (
     determine_architecture_from_hf_config,
@@ -709,18 +710,18 @@ if _FTS_AVAILABLE:
         """TransformerLens-style parameter naming strategy.
 
         Provides clean TL-style names (e.g., blocks.9.attn.W_Q) instead of verbose
-        canonical names. Optionally includes implicit LayerNorm thawing since TL
-        nomenclature doesn't include LayerNorm parameters.
+        canonical names, and by default thaws a block's norms along with the rest of the block.
 
         Args:
             adapter: The strategy adapter instance
-            implicit_ln_thaw: If True (default), automatically thaws LayerNorm parameters
-                when attention or MLP blocks are thawed. If False, LayerNorms are not
-                implicitly thawed and must be explicitly included in schedules if needed.
+            implicit_ln_thaw: If True (default), thawing any parameter of a block also thaws every norm of that
+                block, and thawing an embedding also thaws the final norm. If False, norms are thawed only
+                where the schedule names them.
 
         Note:
-            Users needing fine-grained LayerNorm control can either use canonical mode
-            or set implicit_ln_thaw=False and explicitly manage LayerNorm parameters.
+            TransformerLens 4.0 names the block norms it emits (``blocks.N.ln1.w``), so a schedule can address
+            them directly with implicit_ln_thaw=False. Norms it does not emit (Gemma 2's ``ln1_post`` /
+            ``ln2_post``) need canonical names in that mode.
         """
 
         def __init__(self, adapter: "StrategyAdapter", implicit_ln_thaw: bool = True):
@@ -729,6 +730,8 @@ if _FTS_AVAILABLE:
             self._tl_to_canonical_mapping: dict[str, list[str]] | None = None
             self._canonical_to_tl_mapping: dict[str, str] | None = None
             self._unmapped_canonical_params: set | None = None
+            self._block_norm_params: dict[int, list[str]] = {}
+            self._final_norm_params: list[str] = []
 
         def build_param_mapping(self) -> None:
             """Build bidirectional parameter name mappings using component structure tracing.
@@ -741,13 +744,12 @@ if _FTS_AVAILABLE:
             This approach works for any architecture since it introspects the actual bridge
             component structure rather than relying on hardcoded pattern lists.
 
-            Note on LayerNorm parameters:
-                Canonical LayerNorm parameters (ln_1, ln_2, ln_final) are always present in
-                named_parameters() but are NOT mapped to TL parameters. This is expected:
-                - TransformerLens (if configured to) folds LayerNorm into subsequent layers mathematically
-                - The canonical params remain (weight=1, bias=0 when folded) but have no TL equivalent
-                - These canonical LayerNorm params appear in `unmapped_canonical` and can be
-                  handled specially during schedule validation
+            Note on normalization parameters:
+                TransformerLens 4.0 names the block and final norms (``blocks.N.ln1.w``, ``ln_final.w``), so
+                those map like any other parameter. Norms it does not emit stay unmapped (Gemma 2's
+                ``ln1_post`` / ``ln2_post``), and so do joint parameters with no TL counterpart (GPT-2's
+                ``c_attn``). The implicit norm thaw does not depend on the mapping: it indexes each block's norm
+                components by type here, so it covers the unemitted norms too.
             """
             rank_zero_info("Building TL-style to canonical parameter name mapping...")
 
@@ -766,6 +768,20 @@ if _FTS_AVAILABLE:
                 if ptr not in canonical_by_ptr:
                     canonical_by_ptr[ptr] = []
                 canonical_by_ptr[ptr].append(name)
+
+            # Index every block's norms, and the final norm, by component TYPE rather than by name: the wrapped
+            # model's spelling differs per architecture (GPT-2 `ln_1`, Llama `input_layernorm`, Gemma 2's four
+            # per-block norms), and matching one family's names is what left the implicit thaw empty elsewhere.
+            self._block_norm_params = {
+                idx: self._norm_canonical_names(block, canonical_by_ptr)
+                for idx, block in enumerate(bridge.blocks)  # type: ignore[attr-defined]
+            }
+            final_norm = getattr(bridge, "ln_final", None)
+            self._final_norm_params = (
+                [name for p in final_norm.parameters() for name in canonical_by_ptr.get(p.data_ptr(), [])]
+                if isinstance(final_norm, NormalizationBridge)
+                else []
+            )
 
             # Build mappings using component structure tracing
             self._tl_to_canonical_mapping = {}
@@ -801,11 +817,8 @@ if _FTS_AVAILABLE:
                     f"First few: {unmapped_tl[:5]}"
                 )
 
-            # Store unmapped canonical params for later use in validation
-            # Expected unmapped canonical params vary by architecture, e.g.:
-            # - LayerNorm params (ln_1, ln_2, ln_final) - TL often folds these into subsequent layers, irrespective of
-            #   folding though, does not expose them when following the TL naming convention
-            # - Combined QKV params - TL exposes separate W_Q, W_K, W_V instead of joint e.g. c_attn
+            # Store unmapped canonical params for later use in validation. They vary by architecture: norms TL does not
+            # emit (Gemma 2's post-attention / post-feedforward norms) and joint params TL splits (GPT-2's c_attn).
             self._unmapped_canonical_params = unmapped_canonical
 
             if unmapped_canonical:
@@ -1146,39 +1159,38 @@ if _FTS_AVAILABLE:
 
             return None
 
+        @staticmethod
+        def _norm_canonical_names(block: Any, canonical_by_ptr: dict[int, list[str]]) -> list[str]:
+            """Canonical names of a block's own norm parameters, found by component type.
+
+            Only the block's direct norm components count (GPT-2 ``ln1``/``ln2``, Gemma 2's four): a norm nested
+            inside attention (e.g. a query/key norm) belongs to the attention component, not to the block.
+            """
+            return [
+                name
+                for component in block._modules.values()
+                if isinstance(component, NormalizationBridge)
+                for param in component.parameters()
+                for name in canonical_by_ptr.get(param.data_ptr(), [])
+            ]
+
         def _get_implicit_layernorm_params(self, tl_param_names: list[str]) -> list[str]:
-            """Get implicit LayerNorm canonical params for the layers referenced by TL params.
+            """Get the canonical norm params a TL-named schedule implicitly thaws.
 
-            A schedule written in TL-style names thaws a block's LayerNorms along with the rest of the block.
-            Before TransformerLens 4.0 the LayerNorms had no TL-style names at all; 4.0 names them, so they are
-            searched among every canonical parameter rather than only the unmapped ones, and a schedule behaves
-            the same under either version. This method extracts the layer indices from TL param names and returns
-            the corresponding canonical LayerNorm params.
-
-            For each layer index found in tl_param_names:
-            - Adds ln_1 params (weight/bias) for that block
-            - Adds ln_2 params (weight/bias) for that block
-
-            Also handles embeddings:
-            - If any embed/unembed params are present, includes ln_final
+            A schedule written in TL-style names thaws a block's norms along with the rest of the block, and the final
+            norm along with the embeddings. The norms come from the per-block index `build_param_mapping` builds by
+            component type, so every norm of the block is included whatever the wrapped model calls it, including
+            norms TransformerLens does not emit under a TL name (Gemma 2's post-attention / post-feedforward norms).
 
             Args:
                 tl_param_names: List of TL-style parameter names being thawed
 
             Returns:
-                List of canonical LayerNorm parameter names to implicitly thaw
+                Sorted canonical norm parameter names to implicitly thaw
             """
-            candidates = set(self._canonical_to_tl_mapping or {}) | set(self._unmapped_canonical_params or ())
-            if not candidates:
-                return []
-
-            implicit_ln_params: list[str] = []
-            layer_indices_seen: set = set()
+            layer_indices_seen: set[int] = set()
             has_embed_params = False
-
-            # Extract layer indices from TL param names
             block_pattern = re.compile(r"^blocks\.(\d+)\.")
-
             for tl_name in tl_param_names:
                 match = block_pattern.match(tl_name)
                 if match:
@@ -1186,21 +1198,10 @@ if _FTS_AVAILABLE:
                 elif tl_name.startswith(("embed.", "pos_embed.", "unembed.")):
                     has_embed_params = True
 
-            # Find matching LayerNorm params among all canonical params
-            for canonical_name in sorted(candidates):
-                # Check for block LayerNorm params (ln_1, ln_2)
-                block_ln_match = re.search(r"blocks\.(\d+)\..*?(ln_1|ln_2)", canonical_name)
-                if block_ln_match:
-                    layer_idx = int(block_ln_match.group(1))
-                    if layer_idx in layer_indices_seen:
-                        implicit_ln_params.append(canonical_name)
-                        continue
-
-                # Check for ln_final (associated with embeddings/unembed)
-                if has_embed_params and "ln_final" in canonical_name:
-                    implicit_ln_params.append(canonical_name)
-
-            return implicit_ln_params
+            implicit_ln_params = {name for idx in layer_indices_seen for name in self._block_norm_params.get(idx, [])}
+            if has_embed_params:
+                implicit_ln_params.update(self._final_norm_params)
+            return sorted(implicit_ln_params)
 
 else:
     TransformerBridgeStrategyAdapter = object  # type: ignore[misc,assignment]
