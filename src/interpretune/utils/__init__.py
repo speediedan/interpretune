@@ -1,6 +1,24 @@
 from interpretune.utils.exceptions import MisconfigurationException
 from typing import TYPE_CHECKING
 
+from interpretune.utils.model_fallback import (
+    FREE_TIER_REQUIRES_OPENCODE,
+    MODEL_ALLOW_PAID_ENV_VAR,
+    MODEL_AUTO_FALLBACK_ENV_VAR,
+    MODEL_FALLBACK_CACHE_TTL_SECONDS,
+    NO_FALLBACK_NEEDED,
+    ModelCandidate,
+    ModelUnavailableError,
+    ResolvedModel,
+    SkippedCandidate,
+    auto_fallback_enabled,
+    classify_error,
+    paid_tiers_allowed,
+    probe_failure,
+    probe_openai_chat,
+    resolve_model,
+)
+
 if TYPE_CHECKING:
     # Static-only: gives type checkers the lazy pipeline exports without the runtime sae_dashboard import.
     from interpretune.utils.neuronpedia_dashboard_pipeline import (
@@ -225,6 +243,22 @@ __all__ = [
     "ensure_local_feature_explanations",
     "generate_explanation_artifact",
     "invoke_explanation_cli_with_retries",
+    # model_fallback
+    "FREE_TIER_REQUIRES_OPENCODE",
+    "MODEL_ALLOW_PAID_ENV_VAR",
+    "MODEL_AUTO_FALLBACK_ENV_VAR",
+    "MODEL_FALLBACK_CACHE_TTL_SECONDS",
+    "NO_FALLBACK_NEEDED",
+    "ModelCandidate",
+    "ModelUnavailableError",
+    "ResolvedModel",
+    "SkippedCandidate",
+    "auto_fallback_enabled",
+    "classify_error",
+    "paid_tiers_allowed",
+    "probe_failure",
+    "probe_openai_chat",
+    "resolve_model",
     # neuronpedia_dashboard_pipeline
     "NeuronpediaDashboardLayerResult",
     "NeuronpediaDashboardPipelineConfig",

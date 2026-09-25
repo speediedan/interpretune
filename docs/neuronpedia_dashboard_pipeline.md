@@ -1306,6 +1306,38 @@ Model and provider routing:
 - BYOK provider env vars are injected only when an API key is resolvable — from `IT_EXPLANATION_PROVIDER_API_KEY` or the CLI-specific key env var (`COPILOT_PROVIDER_API_KEY`, e.g. from `.env`). With a key present, the Copilot CLI is routed via `COPILOT_PROVIDER_TYPE`/`COPILOT_PROVIDER_BASE_URL`/`COPILOT_PROVIDER_API_KEY`; without one, the CLI's native auth (e.g. Copilot's GitHub auth) is used unchanged — in that case pass a model your native provider actually serves (the BYOK default model will not resolve).
 - Generic overrides win over environment values, which win over the OpenCode Zen defaults: `IT_EXPLANATION_PROVIDER_TYPE`, `IT_EXPLANATION_PROVIDER_BASE_URL`, `IT_EXPLANATION_PROVIDER_API_KEY`, and `IT_EXPLANATION_CLI_MODEL`. Pointing the base URL/key at any OpenAI-compatible provider (e.g. OpenRouter) is supported.
 
+### Model fallback
+
+Free-tier model ids rotate every few weeks, so a pinned default only moves the failure date. When
+the requested model is unavailable on its route, generation falls back down a ladder instead of
+retrying the same failure: the requested model, then configured free fallbacks, then the
+provider's currently-free roster (discovered from `/models`, never pinned), then Go subscription
+models, then paid BYOK fallbacks. Each rung answers a tiny probe prompt first; a rung whose
+failure shape says it cannot answer (rotated out, free tier refused on a keyed route, no funds,
+region-gated, auth refused, CLI absent) is skipped, never retried. Timeouts and bare 5xx keep the
+existing retry behavior. The choice is cached per process and on disk (hourly re-probe), so a
+batch probes once.
+
+Why free models need the `opencode` route: free-tier ids refuse keyed BYOK access, so free rungs
+ride `opencode run --pure -m opencode/<model>` with the prompt in an attached file (long prompts
+on argv hang) and the session deleted afterwards. Set `IT_EXPLANATION_CLI=opencode` to route even
+the requested model that way.
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `IT_MODEL_AUTO_FALLBACK` | `1` | Master switch; `0` uses the requested model as-is and fails fast, naming the shape and the variable. |
+| `IT_EXPLANATION_MODEL_AUTO_FALLBACK` | unset | Per-service override; wins over the master when set. |
+| `IT_MODEL_ALLOW_PAID` | `1` | `0` stops the ladder after the free tier. |
+| `IT_EXPLANATION_FREE_FALLBACKS` | unset | Comma-separated free models to try before discovery. |
+| `IT_EXPLANATION_GO_MODELS` | `glm-5.3-flash,kimi-k2.6` | Tried when `IT_EXPLANATION_GO_API_KEY` is set. |
+| `IT_EXPLANATION_PAID_FALLBACKS` | `deepseek-v4-flash` | Tried last when a provider key is set. |
+
+A fallback is never silent: one warning per process names the unavailable model, the reason, and
+the model actually used (paid choices say so), and each generated explanation records the actual
+model next to `generated_by` with the requested model in the notes. The policy lives in
+`interpretune.utils.model_fallback` (`resolve_model`), service-agnostic, so later model-backed
+services reuse it instead of reimplementing it.
+
 ### Re-generating explanations that already exist
 
 `ensure_local_feature_explanations(..., regenerate_existing=True)` re-generates features that
