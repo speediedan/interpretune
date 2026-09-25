@@ -87,6 +87,10 @@ SL_LIGHTNING_CTX_WARNS = SL_CTX_WARNS + LIGHTING_CTX_WARNS
 NS_EXPECTED_WARNS = [
     "model_name_or_path .* differs from nnsight_cfg.model_name",  # for nnsight config sync warnings
     "NNsight LanguageModel initialized",  # info-level but may appear as warning in some contexts
+    # astor, which nnsight imports, uses `ast.Num` (deprecated since Python 3.12). It warns once, when nnsight is first
+    # imported, which lands inside a test whenever nothing imported nnsight during collection (a fresh process per
+    # test, as the profiling and standalone harnesses run them).
+    "ast.Num is deprecated",
 ]
 
 NS_CTX_WARNS = NS_EXPECTED_WARNS + CORE_CTX_WARNS
