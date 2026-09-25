@@ -1036,7 +1036,10 @@ if _FTS_AVAILABLE:
                     elif component_type == "mlp":
                         return self._get_mlp_component_tensor(block.mlp, param_name)
                     elif component_type in ("ln1", "ln2"):
-                        ln = block.ln_1 if component_type == "ln1" else getattr(block, "ln_2", None)
+                        # The bridge's TL-named norm component, not the HF attribute: `ln_1`/`ln_2` exist only on
+                        # GPT-2 (Llama names them `input_layernorm`/`post_attention_layernorm`), so an HF-name lookup
+                        # left every non-GPT-2 block norm unmapped once TransformerLens 4.0 began naming them.
+                        ln = getattr(block, component_type, None)
                         if ln is not None:
                             return self._get_ln_component_tensor(ln, param_name)
 
