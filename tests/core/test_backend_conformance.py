@@ -147,9 +147,10 @@ class TestCompatibilityModeConformance(ModelBackendConformance):
     # batch, at the pad positions and at real positions of the padded row, while the forward stays finite and
     # 3.5.1 is finite throughout. The inherited cases are overridden rather than marked, because a mark on the
     # shared method would reach every target. Strict, so the pass that follows an upstream fix fails loudly and
-    # these overrides get removed.
+    # these overrides get removed. Reported upstream as TransformerLensOrg/TransformerLens#1809.
     _TL4_MASKED_GRADIENTS = (
-        "TransformerLens 4.0: non-finite gradients through a compatibility-mode bridge on a padded, masked batch"
+        "TransformerLens 4.0: non-finite gradients through a compatibility-mode bridge on a padded, masked batch "
+        "(TransformerLensOrg/TransformerLens#1809)"
     )
 
     @pytest.mark.xfail(strict=True, reason=_TL4_MASKED_GRADIENTS)
