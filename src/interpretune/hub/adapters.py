@@ -1,8 +1,8 @@
-"""Loading the ``adapters`` component kind: hub-delivered execution adapters (interpretune#125).
+"""Loading the ``adapters`` component kind: hub-delivered execution adapters.
 
 Adapters are the rarest hub artifact and the riskiest, because unlike ops and prompt configs they
 compose into the MRO of the module a session runs. They therefore ride the SAME trust gate as every
-other hub-resident code path (#255) with no bypass, and they raise rather than warn on refusal: an
+other hub-resident code path with no bypass, and they raise rather than warn on refusal: an
 adapter that silently fails to load leaves a session whose composition key resolves to something the
 user did not ask for, which is worse than not starting.
 
@@ -226,7 +226,7 @@ def load_hub_adapter(
     collection and still give a working session, whereas a component that loads nothing cannot be a
     partial success.
 
-    A single COMPOSITION is different, and since #431 may be SKIPPED. An entry whose ``requires`` this
+    A single COMPOSITION is different, and so may be SKIPPED. An entry whose ``requires`` this
     environment cannot satisfy is not an error -- registering the others is the correct outcome, and it
     is what lets ONE published component serve whatever compositions the installed environment supports.
     What must never happen is skipping it silently, because "this composition is unavailable here" and

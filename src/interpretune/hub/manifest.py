@@ -192,7 +192,7 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
                     f"{source}: datamodule entry {name!r} requires a repo-relative `config` path (its "
                     "standalone-consumption payload). Module configurations inline their own datamodule "
                     "configuration and never read this payload -- consumption is strictly two-path with "
-                    "no merge semantics (#128)."
+                    "no merge semantics."
                 )
     if "adapters" in kinds:
         ad = manifest.get("adapters") or {}

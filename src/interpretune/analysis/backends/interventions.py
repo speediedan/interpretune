@@ -277,8 +277,8 @@ def expand_intervention_patterns(
     Every spelling of a pattern's point in the vocabulary (the pattern itself, its canonical component form, the
     semantic names of the same slot, and the registered aliases of each) is tried against the backend's available
     hooks, in that order. The vocabulary is the ONE table: the alias groups this function used to carry asserted
-    tensor identity between spellings, and two of them were wrong by measurement (#375: `mlp.hook_in` is one norm
-    away from `hook_mlp_in`; #376: `hook_resid_mid` is the residual after the attention write, not the attention
+    tensor identity between spellings, and two of them were wrong by measurement (`mlp.hook_in` is one norm
+    away from `hook_mlp_in`; `hook_resid_mid` is the residual after the attention write, not the attention
     output, and `hook_attn_out` is the post-norm output on a sandwich-norm model). A spelling the vocabulary does
     not know (`attn.hook_pattern`) is tried literally and nothing else.
     """

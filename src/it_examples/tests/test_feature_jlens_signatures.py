@@ -1,4 +1,4 @@
-"""Tests for per-feature J-space signatures and the decoupling comparison (#421).
+"""Tests for per-feature J-space signatures and the decoupling comparison.
 
 The signature reads a feature's decoder vector through the folded J-lens; the decoupling score compares that disposition
 against the input-side concept share. CPU-synthetic throughout (stub graph, stub transcoders, tiny random lens): the

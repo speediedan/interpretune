@@ -207,7 +207,7 @@ class OpDefinitionsCacheManager:
         reporting it is the point, since under the old glob such a repo appeared to work until one of its
         non-op YAMLs reached the compiler and dropped every op in the process.
 
-        PIN-FIRST (#334): a repo pinned by a revision-pinned pull loads exactly the pinned revision,
+        PIN-FIRST: a repo pinned by a revision-pinned pull loads exactly the pinned revision,
         beating ``refs/main``; an unpinned repo keeps the refs-based selection below.
 
         Returns:
