@@ -11,18 +11,19 @@ cleanup_cuda fixture ensures GPU memory is freed after each test.
 from __future__ import annotations
 
 import os
+import sys
+import types
 
 import httpx
 import pytest
 
 import nnsight
 
+from circuit_tracer.replacement_model.replacement_model_nnsight import NNSightReplacementModel
+
 from interpretune.config import CircuitTracerConfig
-from interpretune.adapters.circuit_tracer import (
-    ReplacementModelType,
-    TransformerLensReplacementModel,
-    NNSightReplacementModel,
-)
+from interpretune.adapters.circuit_tracer.config import require_hooked_transformer
+from interpretune.adapters.circuit_tracer import ReplacementModelType
 from tests.runif import RunIf
 
 
@@ -31,18 +32,72 @@ from tests.runif import RunIf
 # =============================================================================
 
 
+@pytest.fixture
+def third_party_backend(monkeypatch):
+    """A registered backend other than nnsight, so the non-nnsight paths do not depend on the TL backend."""
+    from interpretune.adapters.circuit_tracer.registry import CT_BACKEND_REGISTRY
+
+    monkeypatch.setitem(CT_BACKEND_REGISTRY, "thirdparty", "ThirdPartyReplacementModel")
+    return "thirdparty"
+
+
+def _stub_transformer_lens(monkeypatch, mode: str) -> None:
+    """``hooked`` has the class; ``missing`` lacks it; ``migration_error`` raises ImportError on access, as 4.0
+    does."""
+    stub = types.ModuleType("transformer_lens")
+    if mode == "hooked":
+        stub.HookedTransformer = type("HookedTransformer", (), {})
+    elif mode == "migration_error":
+
+        def __getattr__(name):
+            raise ImportError(f"'{name}' was removed in TransformerLens 4.0.")
+
+        stub.__getattr__ = __getattr__  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "transformer_lens", stub)
+
+
 class TestCircuitTracerConfig:
     """Test CircuitTracerConfig backend configuration."""
 
-    def test_default_backend_is_transformerlens(self):
-        """Verify default backend is 'transformerlens'."""
+    def test_default_backend_is_nnsight(self):
+        """The TransformerLens backend needs HookedTransformer, which transformer-lens 4.0 removed."""
         cfg = CircuitTracerConfig()
-        assert cfg.backend == "transformerlens"
+        assert cfg.backend == "nnsight"
 
-    def test_backend_validation_transformerlens(self):
-        """Verify 'transformerlens' backend is valid."""
-        cfg = CircuitTracerConfig(backend="transformerlens")
-        assert cfg.backend == "transformerlens"
+    @pytest.mark.parametrize("mode", ["missing", "migration_error"])
+    def test_transformerlens_backend_is_refused_without_hooked_transformer(self, monkeypatch, mode):
+        _stub_transformer_lens(monkeypatch, mode)
+        with pytest.raises(ValueError, match=r"backend 'transformerlens' needs transformer_lens\.HookedTransformer"):
+            require_hooked_transformer()
+
+    def test_transformerlens_backend_is_accepted_where_hooked_transformer_exists(self, monkeypatch):
+        """Positive control: the refusal keys on the class being absent, not on the backend name."""
+        _stub_transformer_lens(monkeypatch, "hooked")
+        require_hooked_transformer()
+
+    def test_a_config_naming_the_transformerlens_backend_stays_loadable(self, monkeypatch):
+        """Configs are declarative: loading, validating and serializing one must not need the backend's model."""
+        _stub_transformer_lens(monkeypatch, "missing")
+        assert CircuitTracerConfig(backend="transformerlens").backend == "transformerlens"
+
+    def test_building_the_transformerlens_replacement_model_is_refused(self, monkeypatch):
+        """The refusal fires on the load path, before circuit-tracer is asked for a model it cannot import."""
+        from types import SimpleNamespace
+
+        from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule, ReplacementModel
+
+        _stub_transformer_lens(monkeypatch, "migration_error")
+
+        def _unreachable(*args, **kwargs):
+            raise AssertionError("ReplacementModel.from_pretrained reached despite the refusal")
+
+        monkeypatch.setattr(ReplacementModel, "from_pretrained", _unreachable)
+        stub = SimpleNamespace(
+            circuit_tracer_cfg=CircuitTracerConfig(backend="transformerlens"),
+            it_cfg=SimpleNamespace(model_name_or_path="google/gemma-2-2b"),
+        )
+        with pytest.raises(ValueError, match=r"Use backend='nnsight' instead"):
+            BaseCircuitTracerModule._load_replacement_model(stub)  # type: ignore[arg-type]
 
     def test_backend_validation_nnsight(self):
         """Verify 'nnsight' backend is valid."""
@@ -68,15 +123,13 @@ class TestCircuitTracerConfig:
         assert cfg.nnsight_remote is False
         assert cfg.ndif_api_key is None
 
-    def test_warning_on_nnsight_remote_with_tl_backend(self):
-        """Verify warning when nnsight_remote=True with transformerlens backend."""
+    def test_warning_on_nnsight_remote_with_a_non_nnsight_backend(self, third_party_backend):
         with pytest.warns(UserWarning, match="nnsight_remote=True but backend is not 'nnsight'"):
-            CircuitTracerConfig(backend="transformerlens", nnsight_remote=True)
+            CircuitTracerConfig(backend=third_party_backend, nnsight_remote=True)
 
-    def test_warning_on_ndif_api_key_with_tl_backend(self):
-        """Verify warning when ndif_api_key provided with transformerlens backend."""
+    def test_warning_on_ndif_api_key_with_a_non_nnsight_backend(self, third_party_backend):
         with pytest.warns(UserWarning, match="ndif_api_key is set but backend is not 'nnsight'"):
-            CircuitTracerConfig(backend="transformerlens", ndif_api_key="test_key")
+            CircuitTracerConfig(backend=third_party_backend, ndif_api_key="test_key")
 
     def test_backend_serialization(self):
         """Verify backend configuration serializes correctly."""
@@ -88,9 +141,9 @@ class TestCircuitTracerConfig:
         assert serialized["nnsight_remote"] is True
         assert serialized["ndif_api_key"] == "test_key"
 
-    def test_all_backends_with_default_settings(self):
-        """Verify both backends work with default attribution settings."""
-        for backend in ["transformerlens", "nnsight"]:
+    def test_all_backends_with_default_settings(self, third_party_backend):
+        """Verify backends share the default attribution settings."""
+        for backend in [third_party_backend, "nnsight"]:
             cfg = CircuitTracerConfig(backend=backend)
             assert cfg.max_n_logits == 10
             assert cfg.desired_logit_prob == 0.95
@@ -116,10 +169,8 @@ class TestCircuitTracerConfig:
 class TestCircuitTracerBackendTypes:
     """Test backend type handling in CircuitTracerAdapter."""
 
-    def test_backend_type_alias_supports_both(self):
-        """Verify ReplacementModelType union includes both backends."""
-        # This is a type-level check - just verify the types are importable
-        assert TransformerLensReplacementModel is not None
+    def test_backend_types_are_importable(self):
+        """The adapter must import under transformer-lens 4.0, so it no longer imports the TL product."""
         assert NNSightReplacementModel is not None
         # The union type itself is checked at type-check time
         assert ReplacementModelType is not None
@@ -159,7 +210,7 @@ class TestCircuitTracerTLBackend:
         assert it_session.module.replacement_model is not None
 
         # Replacement model type matches backend
-        assert isinstance(it_session.module.replacement_model, TransformerLensReplacementModel)
+        assert type(it_session.module.replacement_model).__name__ == "TransformerLensReplacementModel"
 
         # Original HF config preserved after conversion
         assert hasattr(it_session.module.model, "config")

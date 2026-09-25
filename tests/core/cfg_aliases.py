@@ -239,6 +239,16 @@ class LightningTLBridgeLlama3(BaseCfg):
             default_padding_side="left",
         )
     )
+    # The registry's llama3 entry loads nf4 4-bit weights with LoRA. TransformerLens 4.0 refuses to read TL-layout
+    # weights (W_Q, W_in, ...) from packed 4-bit storage, and `tl_named_parameters()` then omits every attention and
+    # MLP weight, so a quantized model cannot exercise the mapping this fixture exists for. Load it unquantized;
+    # `precision` sets the dtype and device.
+    hf_from_pretrained_cfg: HFFromPretrainedConfig | None = field(
+        default_factory=lambda: HFFromPretrainedConfig(
+            pretrained_kwargs={"device_map": "cpu", "dtype": "float32"},
+            model_head="transformers.LlamaForCausalLM",
+        )
+    )
 
 
 @dataclass(kw_only=True)

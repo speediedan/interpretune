@@ -71,11 +71,14 @@ PATCHES_DIR = SCRIPT_DIR / "benchmark_baseline_patches"
 #
 # SAELens is cloned at the wave branch too, but ONLY as the source of the preserved-baseline worktree
 # (`SL_BASELINE_SHA`, materialised in `create_worktrees`). It is deliberately NOT installed from that
-# checkout: SAELens#721 merged and released as 6.49.0, and sae-lens was retired from interpretune's
-# git-deps on 2026-08-09, so the CI pins resolve the released code the artifacts were produced with.
-# The wave branch head additionally carries the `pretrained_saes.yaml` entries retired as corrupt, so
-# installing it would put a retired commit into the very environment used to verify a corpus.
+# checkout: the integrated env takes sae-lens from interpretune's pins (currently the git-deps pin to
+# the transformer-lens 4.0 support PR). The wave branch head additionally carries the
+# `pretrained_saes.yaml` entries retired as corrupt, so installing it would put a retired commit into
+# the very environment used to verify a corpus.
 WAVE_BRANCH = "streamlined-streamable-dashboard-generation-phase-1"
+# SAEDashboard builds from source at the branch interpretune pins: the wave branch plus the commit that
+# keeps every module importable under transformer-lens 4.0. The wave branch alone fails to import there.
+SAE_DASHBOARD_BRANCH = "tl4-safe-imports"
 INTERPRETUNE_BRANCH = "main"
 DEFAULT_DB_URL = "postgres://postgres:postgres@127.0.0.1:5432/postgres"
 GATED_MODEL = "google/gemma-3-1b-it"
@@ -226,7 +229,7 @@ class RepoSpec:
 
 REPOS: tuple[RepoSpec, ...] = (
     RepoSpec("interpretune", "interpretune", "https://github.com/speediedan/interpretune.git", INTERPRETUNE_BRANCH),
-    RepoSpec("sae_dashboard", "SAEDashboard", "https://github.com/speediedan/SAEDashboard.git", WAVE_BRANCH),
+    RepoSpec("sae_dashboard", "SAEDashboard", "https://github.com/speediedan/SAEDashboard.git", SAE_DASHBOARD_BRANCH),
     RepoSpec("sae_lens", "SAELens", "https://github.com/speediedan/SAELens.git", WAVE_BRANCH),
     RepoSpec("neuronpedia", "neuronpedia", "https://github.com/speediedan/neuronpedia.git", WAVE_BRANCH),
 )
@@ -410,7 +413,7 @@ class Setup:
                 self.say(f"- {spec.dirname}: using existing checkout {path} ({branch}@{head})")
                 if spec.ref and branch != spec.ref:
                     self.warn(
-                        f"{spec.dirname} is on '{branch}', not the expected wave branch '{spec.ref}'. "
+                        f"{spec.dirname} is on '{branch}', not the expected branch '{spec.ref}'. "
                         "This script never switches branches for you; switch manually if intended."
                     )
                 dirty = self.run(["git", "-C", str(path), "status", "--porcelain"], mutating=False)
@@ -707,9 +710,8 @@ class Setup:
         it, ov = self.repo_paths["interpretune"], "requirements/ci/overrides.txt"
         ex = "requirements/ci/excludes.txt"
         # Only SAEDashboard builds from source, because its fix is unreleased and a maintainer needs the
-        # checkout. Everything else comes from the locked pins: sae-lens (released as 6.49.0, retired
-        # from git-deps 2026-08-09), TransformerLens/nnsight (override-dependencies + overrides.txt) and
-        # circuit-tracer (the git-deps group).
+        # checkout. Everything else comes from the pins: sae-lens and circuit-tracer (the git-deps group),
+        # TransformerLens/nnsight (override-dependencies + overrides.txt).
         #
         # Do NOT re-add `--from-source=sae_lens:...`. Beyond substituting a retired commit for the
         # released pin, that path hands uv `requirements/ci/sl_uv_requirements.txt`, the vendored

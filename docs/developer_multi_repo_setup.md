@@ -73,7 +73,7 @@ duration of that package's install. Three keywords matter in practice:
   stop a from-source package from downgrading shared pins. Two maintained files:
   - `requirements/ci/torch-override.txt`: auto-generated, pins only torch. Use for simple cases.
   - `requirements/ci/overrides.txt`: manually maintained; pins torch **and** triton/torchvision plus the
-    `transformer-lens==3.5.1`/`nnsight==0.7.0` release pins and several ecosystem floors. Use for packages
+    `transformer-lens==4.0.0`/`nnsight==0.7.0` release pins and several ecosystem floors. Use for packages
     with aggressive constraints (nnsight, SAEDashboard's `<2.8` torch pin, etc.). If the override file
     mentions the package currently being installed, the builder automatically filters that line out so the
     editable install still wins.
@@ -121,7 +121,7 @@ Two supported mechanisms, no interface changes required:
   reinstall the same pinned version from `https://download.pytorch.org/whl/cpu`; and the exported
   `jaxtyping`/`transformer-lens`
   pins (the SAELens export pins `transformer-lens==2.16.1`) must yield to the `overrides.txt`
-  `transformer-lens==3.5.1` release pin in a joint resolution (see the workflow's requirements-pruning step).
+  `transformer-lens==4.0.0` release pin in a joint resolution (see the workflow's requirements-pruning step).
 
 ## Environment variable contract (dashboard pipeline)
 

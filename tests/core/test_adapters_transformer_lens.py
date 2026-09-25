@@ -93,16 +93,15 @@ LLAMA3_EXPECTATIONS = ArchitectureExpectations(
     canonical_attn_pattern=r"model\.layers\.\d+\.self_attn\.(q_proj|k_proj|v_proj|o_proj)\.weight",
     canonical_mlp_pattern=r"model\.layers\.\d+\.mlp\.(gate_proj|up_proj|down_proj)\.weight",
     canonical_embed_pattern=r"model\.(embed_tokens|lm_head)\.weight",
-    # Mapping counts: 368 TL params total (includes synthetic biases from TransformerBridge)
-    # 28 layers * (4 attn weights + 4 attn biases + 3 mlp weights + 3 mlp biases)
-    # + 2 embed + 1 pos_embed + 2 unembed = 368
-    # 199 of these map to canonical (weights only, biases are synthetic)
-    # Canonical: 198 mapped (lm_head weight is shared with embed)
-    # + 57 LayerNorms (28 * 2 + 1 final) = 255 total
-    expected_mapped_tl_count=199,
-    expected_unmapped_tl_count=169,  # Synthetic biases and pos_embed don't map to canonical
-    expected_mapped_canonical_count=198,  # lm_head weight is shared with embed
-    expected_unmapped_canonical_count=57,  # LayerNorms (input_layernorm, post_attention_layernorm, norm)
+    # Mapping counts, measured on TransformerLens 4.0 with the model loaded unquantized (see LightningTLBridgeLlama3).
+    # 424 TL params: 28 layers * (4 attn weights + 4 attn biases + 3 mlp weights + 2 mlp biases + ln1.w + ln2.w)
+    # + embed.W_E + ln_final.w + unembed.W_U + unembed.b_U; a rotary model gets no pos_embed.W_pos under 4.0.
+    # Every TL param maps except the 168 synthetic biases (28 * 6) the bridge zero-fills for a bias-free model, and
+    # all 255 canonical params map (lm_head's weight is tied to the embedding).
+    expected_mapped_tl_count=256,
+    expected_unmapped_tl_count=168,  # synthetic attn/mlp biases only
+    expected_mapped_canonical_count=255,
+    expected_unmapped_canonical_count=0,
 )
 
 GEMMA2_EXPECTATIONS = ArchitectureExpectations(
@@ -118,17 +117,15 @@ GEMMA2_EXPECTATIONS = ArchitectureExpectations(
     canonical_attn_pattern=r"model\.layers\.\d+\.self_attn\.(q_proj|k_proj|v_proj|o_proj)\.weight",
     canonical_mlp_pattern=r"model\.layers\.\d+\.mlp\.(gate_proj|up_proj|down_proj)\.weight",
     canonical_embed_pattern=r"model\.(embed_tokens)\.weight",
-    # Mapping counts: 342 TL params total (includes synthetic biases from TransformerBridge)
-    # 26 layers * (4 attn weights + 4 attn biases + 3 mlp weights + 3 mlp biases)
-    # + 1 embed + 1 pos_embed + 2 unembed = 342
-    # 185 of these map to canonical (weights only, biases are synthetic)
-    # Canonical: 184 mapped (lm_head weight shares with embed)
-    # + 105 LayerNorms (26 * 4 + 1 final) = 289 total
-    expected_mapped_tl_count=185,
-    expected_unmapped_tl_count=157,  # Synthetic biases and pos_embed don't map to canonical
-    expected_mapped_canonical_count=184,  # lm_head weight shares with embed
-    expected_unmapped_canonical_count=105,  # LayerNorms (input_layernorm,
-    # post_attention_layernorm, pre_feedforward_layernorm, post_feedforward_layernorm, norm)
+    # Mapping counts, measured on TransformerLens 4.0. 394 TL params: 26 layers * (4 attn weights + 4 attn biases
+    # + 3 mlp weights + 2 mlp biases + ln1.w + ln2.w) + embed.W_E + ln_final.w + unembed.W_U + unembed.b_U.
+    # Every TL param maps except the 156 synthetic biases (26 * 6). Of the 289 canonical params, the 52 unmapped
+    # are each block's post_attention_layernorm and post_feedforward_layernorm: the bridge names them
+    # ln1_post/ln2_post, but tl_named_parameters() does not emit them.
+    expected_mapped_tl_count=238,
+    expected_unmapped_tl_count=156,  # synthetic attn/mlp biases only
+    expected_mapped_canonical_count=237,
+    expected_unmapped_canonical_count=52,
 )
 
 # GPT-2 small architecture expectations
@@ -158,17 +155,18 @@ GPT2_EXPECTATIONS = ArchitectureExpectations(
     canonical_attn_pattern=r"model\.blocks\.\d+\._original_component\.attn\.(q|k|v|o)\._original_component\.(weight|bias)",
     canonical_mlp_pattern=r"model\.blocks\.\d+\._original_component\.mlp\._original_component\.(c_fc|c_proj)\._original_component\.(weight|bias)",
     canonical_embed_pattern=r"model\.(embed|pos_embed|unembed)\._original_component\.(weight|bias)",
-    # Mapping counts: 12 layers * (8 attn + 4 mlp) + 4 embed/pos_embed/unembed = 148 TL params
-    # Canonical: 171 mapped (148 TL + 24 from q/k/v split components) + 50 unmapped - 1 shared embed/unembed = 221 total
-    # Unmapped: 50 LayerNorms (12*4 + 2 ln_final) (all QKV joint params remain mapped along with split views)
-    expected_mapped_tl_count=148,
+    # Mapping counts: 12 layers * (8 attn + 4 mlp + 4 LayerNorm) + 4 embed/pos_embed/unembed + 2 ln_final = 198 TL
+    # params. TransformerLens 4.0 gives LayerNorms TL-style names (`blocks.N.ln1.w`, `ln_final.b`, ...); before it
+    # they had none, the TL count was 148 and the 50 LayerNorm params were the unmapped canonical remainder.
+    # Canonical: 221 = 198 TL + 24 q/k/v split components - 1 shared embed/unembed, every one mapped.
+    expected_mapped_tl_count=198,
     expected_unmapped_tl_count=0,
-    expected_mapped_canonical_count=171,  # 148 TL + 24 q/k/v split components - 1 shared embed/unembed
-    expected_unmapped_canonical_count=50,  # 50 LayerNorm params (QKV joint params remain mapped)
+    expected_mapped_canonical_count=221,  # 198 TL + 24 q/k/v split components - 1 shared embed/unembed
+    expected_unmapped_canonical_count=0,
 )
 
 # GPT-2 with weight processing enabled (fold_ln=True, fold_value_biases=True, center_writing_weights=True, etc.)
-# LN params aren't represented with TL style names (whether folded or not).
+# LN params carry TL-style names under TransformerLens 4.0, folded or not.
 # This tests the mapping behavior when TL processing transformations are applied.
 GPT2_PROCESSED_EXPECTATIONS = ArchitectureExpectations(
     model_name="GPT-2 (processed)",
@@ -179,7 +177,7 @@ GPT2_PROCESSED_EXPECTATIONS = ArchitectureExpectations(
     has_pos_embed=True,
     has_gate_proj=False,
     has_biases=True,
-    # LayerNorm params do not appear in TL params
+    # LayerNorm params appear in TL params too (see the counts below); the lists here name the attn/MLP subset
     # When fold_value_biases=True, value biases are folded into output bias
     expected_tl_attn_params=[
         "attn.W_Q",
@@ -196,15 +194,14 @@ GPT2_PROCESSED_EXPECTATIONS = ArchitectureExpectations(
     canonical_attn_pattern=r"model\.blocks\.\d+\._original_component\.attn\.(q|k|v|o)\._original_component\.(weight|bias)",
     canonical_mlp_pattern=r"model\.blocks\.\d+\._original_component\.mlp\._original_component\.(c_fc|c_proj)\._original_component\.(weight|bias)",
     canonical_embed_pattern=r"model\.(embed|pos_embed|unembed)\._original_component\.(weight|bias)",
-    # Mapping counts same as unprocessed GPT-2
-    # 12 layers * (8 attn + 4 mlp) + 4 embed/pos_embed/unembed = 148 TL params
+    # TL counts match unprocessed GPT-2: 198, LayerNorms included (see GPT2_EXPECTATIONS).
     # Compatible mode adds extra canonical params: 222 total (vs 221 for unprocessed)
-    # Canonical: 148 TL mapped + 74 unmapped = 222 total (embed/unembed not shared with processed mode)
-    # Unmapped: 50 LayerNorms (12*4 + 2 ln_final) + 24 QKV joints (12*2)
-    expected_mapped_tl_count=148,
+    # Canonical: 198 TL mapped + 24 unmapped = 222 total (embed/unembed not shared with processed mode)
+    # Unmapped: 24 QKV joints (12*2)
+    expected_mapped_tl_count=198,
     expected_unmapped_tl_count=0,
-    expected_mapped_canonical_count=148,
-    expected_unmapped_canonical_count=74,  # 50 LayerNorm params + 24 QKV joint params (compatible mode)
+    expected_mapped_canonical_count=198,
+    expected_unmapped_canonical_count=24,  # QKV joint params (compatible mode)
 )
 
 

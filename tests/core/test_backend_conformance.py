@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import pytest
 
+from interpretune.analysis.backends import ModelBackendCapability
 from interpretune.testing.conformance import ConformanceTarget, ModelBackendConformance, OpCollectionConformance
+from interpretune.testing.conformance.gates import conformance_case
 from interpretune.testing.conformance.inputs import CAPTURE_LAYER, ConformanceInputs
 from interpretune.utils.import_utils import package_available
 from tests.runif import RunIf
@@ -140,6 +142,26 @@ class TestCompatibilityModeConformance(ModelBackendConformance):
             "unembed.hook_in",
         )
     )
+
+    # TransformerLens 4.0 returns non-finite gradients through a compatibility-mode bridge on a masked (padded)
+    # batch, at the pad positions and at real positions of the padded row, while the forward stays finite and
+    # 3.5.1 is finite throughout. The inherited cases are overridden rather than marked, because a mark on the
+    # shared method would reach every target. Strict, so the pass that follows an upstream fix fails loudly and
+    # these overrides get removed. Reported upstream as TransformerLensOrg/TransformerLens#1809.
+    _TL4_MASKED_GRADIENTS = (
+        "TransformerLens 4.0: non-finite gradients through a compatibility-mode bridge on a padded, masked batch "
+        "(TransformerLensOrg/TransformerLens#1809)"
+    )
+
+    @pytest.mark.xfail(strict=True, reason=_TL4_MASKED_GRADIENTS)
+    @conformance_case(capability=ModelBackendCapability.GRADIENTS)
+    def test_gradient_op_stores_the_declared_schema(self, suite):
+        super().test_gradient_op_stores_the_declared_schema(suite)
+
+    @pytest.mark.xfail(strict=True, reason=_TL4_MASKED_GRADIENTS)
+    @conformance_case(capability=ModelBackendCapability.GRADIENTS)
+    def test_gradient_predicts_a_small_perturbation_to_first_order(self, suite):
+        super().test_gradient_predicts_a_small_perturbation_to_first_order(suite)
 
     def test_the_family_label_is_true_of_the_model(self, suite):
         """Positive control on the label: this target's weights really are processed, not raw HF weights.

@@ -54,7 +54,7 @@ TransformerLens v3 hook surface.
 | Backend | Status | Model Types |
 |---------|--------|-------------|
 | NNsight (`NNSightReplacementModel`) | Supported | Gemma-2, Gemma-3 |
-| TransformerLens (`TransformerLensReplacementModel`) | Supported | Gemma-2 |
+| TransformerLens (`TransformerLensReplacementModel`) | Unavailable under TransformerLens 4.0; refused by name (below) | Gemma-2 |
 
 Backend selection is automatic based on the module's adapter context. Configurations with
 `(core, nnsight, circuit_tracer)` use NNsight; `(core, transformer_lens, circuit_tracer)` use TransformerLens.
@@ -63,7 +63,8 @@ Backend selection is automatic based on the module's adapter context. Configurat
 legacy `HookedTransformer` path — upstream circuit-tracer's `TransformerLensReplacementModel`
 subclasses `HookedTransformer` directly. TransformerLens 4.0 REMOVED that class, so the backend cannot be
 imported at all and the CT TransformerLens registry entries are disabled pending an upstream port to
-`TransformerBridge`; use `backend: nnsight` for circuit-tracer compositions meanwhile. Tracked in
+`TransformerBridge`. `CircuitTracerConfig` refuses `backend: transformerlens` by name when `HookedTransformer` is
+absent, and `backend` defaults to `nnsight`, so use that for circuit-tracer compositions meanwhile. Tracked in
 [interpretune#223](https://github.com/speediedan/interpretune/issues/223) — revisit when upstream
 circuit-tracer gains bridge support; historically this limitation (plus minor NNsight efficiencies and keeping
 experimental variables fixed) is why the (now Hub-published) concept-direction experimentation
