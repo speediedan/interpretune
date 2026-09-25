@@ -549,6 +549,128 @@ def display_attribution_comparison(
     return summary
 
 
+class JlensReadoutComparisonSummary(NamedTuple):
+    """What the pre/post J-space readout table asserts, in notebook-assertable form."""
+
+    pre_labels: tuple[str, ...]
+    post_labels: tuple[str, ...]
+    pre_scores: tuple[float, ...]
+    post_scores: tuple[float, ...]
+    rank_moves: tuple[int | None, ...]
+    layer: int
+    basis: str
+
+
+def build_jlens_readout_comparison_html(
+    pre_top: Sequence[tuple[str, float]],
+    post_top: Sequence[tuple[str, float]],
+    *,
+    layer: int,
+    basis: str,
+) -> tuple[str, JlensReadoutComparisonSummary]:
+    """Build a pre/post J-space readout comparison table.
+
+    Each side is a ranked ``(token_label, readout_score)`` sequence as produced by the readout used in
+    the steering demos (folded-norm path, top-*k* by logit). Ranks are 1-based in the movement column:
+    ``=`` kept its rank, ``+n``/``-n`` moved up/down *n* places, ``new`` was outside the pre top-*k*.
+
+    Returns the markup plus a summary a notebook can assert on.
+    """
+    pre_labels = tuple(t for t, _ in pre_top)
+    post_labels = tuple(t for t, _ in post_top)
+    pre_scores = tuple(float(s) for _, s in pre_top)
+    post_scores = tuple(float(s) for _, s in post_top)
+    pre_rank = {t: i + 1 for i, t in enumerate(pre_labels)}
+    rank_moves: tuple[int | None, ...] = tuple(
+        None if t not in pre_rank else pre_rank[t] - (i + 1) for i, t in enumerate(post_labels)
+    )
+
+    def _move_text(move: int | None) -> str:
+        if move is None:
+            return "new"
+        if move == 0:
+            return "="
+        return f"+{move}" if move > 0 else f"{move}"
+
+    rows = ""
+    for i in range(max(len(pre_top), len(post_top))):
+        pre_t = pre_labels[i] if i < len(pre_labels) else ""
+        pre_s = f"{pre_scores[i]:+.2f}" if i < len(pre_scores) else ""
+        post_t = post_labels[i] if i < len(post_labels) else ""
+        post_s = f"{post_scores[i]:+.2f}" if i < len(post_scores) else ""
+        move = _move_text(rank_moves[i]) if i < len(rank_moves) else ""
+        row_class = "even-row" if i % 2 == 0 else "odd-row"
+        rows += (
+            f'<tr class="{row_class}">'
+            f'<td style="text-align:right;">{i + 1}</td>'
+            f'<td class="monospace" title="{html.escape(pre_t)}">{html.escape(pre_t)}</td>'
+            f'<td style="text-align:right;">{pre_s}</td>'
+            f'<td class="monospace" title="{html.escape(post_t)}">{html.escape(post_t)}</td>'
+            f'<td style="text-align:right;">{post_s}</td>'
+            f'<td style="text-align:center;">{move}</td>'
+            f"</tr>\n"
+        )
+
+    markup = f"""
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:640px;margin-bottom:10px;font-size:13px;">
+        <div style="font-weight:bold;font-size:14px;margin-bottom:4px;padding:4px 6px;
+            border-radius:3px;background:#555;color:white;display:inline-block;">
+            {html.escape(f"J-space readout @ answer position (layer {layer}, basis {basis})")}</div>
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align:right;padding:3px 6px;
+                        border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">#</th>
+                    <th style="text-align:left;padding:3px 6px;
+                        border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">Pre token</th>
+                    <th style="text-align:right;padding:3px 6px;
+                        border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">Pre</th>
+                    <th style="text-align:left;padding:3px 6px;
+                        border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">Post token</th>
+                    <th style="text-align:right;padding:3px 6px;
+                        border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">Post</th>
+                    <th style="text-align:center;padding:3px 6px;
+                        border:1px solid rgba(150,150,150,0.5);
+                        background:rgba(200,200,200,0.3);">Move</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows}
+            </tbody>
+        </table>
+    </div>
+    """
+    summary = JlensReadoutComparisonSummary(
+        pre_labels=pre_labels,
+        post_labels=post_labels,
+        pre_scores=pre_scores,
+        post_scores=post_scores,
+        rank_moves=rank_moves,
+        layer=int(layer),
+        basis=str(basis),
+    )
+    return markup, summary
+
+
+def display_jlens_readout_comparison(
+    pre_top: Sequence[tuple[str, float]],
+    post_top: Sequence[tuple[str, float]],
+    *,
+    layer: int,
+    basis: str,
+) -> JlensReadoutComparisonSummary:
+    """Render :func:`build_jlens_readout_comparison_html` and return its summary (see that function for the
+    columns)."""
+    markup, summary = build_jlens_readout_comparison_html(pre_top, post_top, layer=layer, basis=basis)
+    display(HTML(markup))
+    return summary
+
+
 # ---------------------------------------------------------------------------
 # Token probability display
 # ---------------------------------------------------------------------------
