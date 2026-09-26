@@ -481,6 +481,79 @@ class TestInnerModelSelectionNeverTruthTestsAModule:
         assert float(info.norm_scale.max()) != 99.0, "selection fell through to the decoy"
 
 
+class TestMultimodalTextDecoderNorm:
+    """A multimodal checkpoint keeps its text decoder's final norm one level below the backbone.
+
+    Gemma 3 at 4b and up is `Gemma3ForConditionalGeneration`, whose backbone (`model.model`) carries no `norm`
+    of its own; the norm lives at `model.model.language_model.norm`. Missing it raised nothing: the model
+    read as norm-less, `jlens_read` dropped the final norm's gain from its readout, and every norm-aware
+    direction came back unfolded while still being labelled `jlens_norm_aware`.
+    """
+
+    WEIGHT = 0.5
+
+    def test_norm_nested_under_the_text_decoder_is_found(self):
+        from transformers.models.gemma3.modeling_gemma3 import Gemma3RMSNorm
+
+        norm = Gemma3RMSNorm(D)
+        with torch.no_grad():
+            norm.weight.fill_(self.WEIGHT)
+        text_decoder = type("TextDecoder", (), {})()
+        text_decoder.norm = norm
+        backbone = type("Backbone", (), {})()
+        backbone.language_model = text_decoder
+        model = type("Model", (), {})()
+        model.config = _Cfg("gemma3")
+        model.lm_head = _Head()
+        model.model = backbone
+        module = type("Module", (), {})()
+        module.model = model
+
+        info = resolve_unembed_and_norm_scale(module)
+        assert info.norm_kind == "rmsnorm"
+        torch.testing.assert_close(info.norm_scale.float(), torch.full((D,), 1.0 + self.WEIGHT))
+
+    def test_real_gemma3_conditional_generation_resolves_like_its_text_only_twin(self):
+        """The real architecture, built tiny from a local config: no download, no gated weights."""
+        from types import SimpleNamespace
+
+        from transformers import Gemma3Config, Gemma3ForCausalLM, Gemma3ForConditionalGeneration
+
+        text = dict(
+            vocab_size=VOCAB,
+            hidden_size=D,
+            intermediate_size=16,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=4,
+        )
+        vision = dict(
+            hidden_size=D,
+            intermediate_size=16,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            image_size=28,
+            patch_size=14,
+        )
+        torch.manual_seed(0)
+        multimodal = Gemma3ForConditionalGeneration(
+            Gemma3Config(text_config=text, vision_config=vision, mm_tokens_per_image=4)
+        )
+        text_only = Gemma3ForCausalLM(multimodal.config.get_text_config())
+        assert getattr(multimodal.model, "norm", None) is None, "premise: the backbone itself carries no norm"
+        with torch.no_grad():
+            multimodal.model.language_model.norm.weight.fill_(self.WEIGHT)
+            text_only.model.norm.weight.fill_(self.WEIGHT)
+
+        mm_info = resolve_unembed_and_norm_scale(SimpleNamespace(model=multimodal))
+        txt_info = resolve_unembed_and_norm_scale(SimpleNamespace(model=text_only))
+        assert mm_info.norm_kind == txt_info.norm_kind == "rmsnorm"
+        torch.testing.assert_close(mm_info.norm_scale.float(), txt_info.norm_scale.float())
+        rows = fold_norm_into_unembed_rows(mm_info, [3], apply_norm=True)
+        torch.testing.assert_close(rows, mm_info.w_u[[3]].float() * (1.0 + self.WEIGHT))
+
+
 class TestTheBasisMustBeStated:
     """`apply_norm` is required, and the one construction is shared rather than rewritten.
 
