@@ -164,9 +164,26 @@ class CircuitTracerAnalysisBackend:
         concept_group_a_token_ids: Any = None,
         concept_group_b_token_ids: Any = None,
         concept_direction_mode: Any = None,
+        concept_basis: Any = None,
     ) -> list[Any] | None:
-        """Build circuit-tracer ``LogitTarget``s expressing a concept direction, or None if unavailable."""
+        r"""Build circuit-tracer ``LogitTarget``s expressing a concept direction, or None if unavailable.
+
+        Circuit-tracer applies a ``CustomTarget`` vector to the FINAL residual stream. A J-lens-basis direction is
+        $J_\ell^{\mathsf{T}} u$, whose inner product with the residual at layer $\ell$ approximates the token's
+        readout; scored against the final residual it is approximately right only where $J_\ell \approx I$, and
+        nothing downstream could tell. It is refused by name.
+        """
         from circuit_tracer.attribution.targets import CustomTarget
+
+        from interpretune.analysis.optools import JLENS_BASIS_NAMES
+
+        if concept_basis in JLENS_BASIS_NAMES.values():
+            raise ValueError(
+                f"concept_basis={concept_basis!r} builds a direction in the residual space of the lens layer, but "
+                "circuit-tracer applies attribution-target vectors to the final residual stream, where that "
+                "direction does not belong. Build the target direction with concept_basis='embed' (unembedding "
+                "rows, which do live there), or pass explicit attribution_targets."
+            )
 
         group_a_token_ids = [int(token_id) for token_id in (concept_group_a_token_ids or [])]
         if group_a_token_ids:

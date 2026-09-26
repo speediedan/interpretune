@@ -102,11 +102,14 @@ class SupportsAttributionGraph(Protocol):
         concept_group_a_token_ids: Any = None,
         concept_group_b_token_ids: Any = None,
         concept_direction_mode: Any = None,
+        concept_basis: Any = None,
     ) -> list[Any] | None:
         """Build backend-native attribution targets for a concept direction, or None if unsupported.
 
         Returning None is a valid answer: a backend that cannot express concept-directed attribution
-        targets says so here rather than raising, and the caller falls back.
+        targets says so here rather than raising, and the caller falls back. ``concept_basis`` names the
+        space the direction was built in; a backend refuses a basis whose directions do not live where it
+        applies targets, because the resulting graph would be plausible and wrong.
         """
         ...
 

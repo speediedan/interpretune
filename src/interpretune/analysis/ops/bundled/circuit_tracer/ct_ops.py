@@ -43,6 +43,7 @@ def compute_attribution_graph_impl(
     concept_group_a_token_ids = analysis_batch.get("concept_group_a_token_ids")
     concept_group_b_token_ids = analysis_batch.get("concept_group_b_token_ids")
     concept_direction_mode = analysis_batch.get("concept_direction_mode")
+    concept_basis = analysis_batch.get("concept_basis")
     if concept_direction is not None and "attribution_targets" not in kwargs:
         kwargs["attribution_targets"] = analysis_backend.build_concept_attribution_targets(
             module,
@@ -52,6 +53,7 @@ def compute_attribution_graph_impl(
             concept_group_a_token_ids=concept_group_a_token_ids,
             concept_group_b_token_ids=concept_group_b_token_ids,
             concept_direction_mode=concept_direction_mode,
+            concept_basis=concept_basis,
         )
 
     # Only forward kwargs consumed by graph construction. Composite pipeline
@@ -83,6 +85,8 @@ def compute_attribution_graph_impl(
     extra_metadata["batch_idx"] = batch_idx
     if concept_label is not None:
         extra_metadata["concept_label"] = concept_label
+    if concept_basis is not None:
+        extra_metadata["concept_basis"] = concept_basis
     analysis_batch.update(**analysis_backend.decompose_graph(graph, extra_metadata=extra_metadata))
 
     # Resolve virtual logit_target_ids from concept-direction graphs.

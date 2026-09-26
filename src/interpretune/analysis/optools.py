@@ -12,6 +12,7 @@ caveats); anything not exported is internal. Backend-specific behavior stays beh
 
 from __future__ import annotations
 
+import itertools
 import json
 import pathlib
 from typing import Any, Callable, Literal, NamedTuple
@@ -385,8 +386,13 @@ def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
                     ),
                     model,
                 )
-                for norm_attr in ("norm", "ln_f", "final_layer_norm"):
-                    norm = getattr(inner, norm_attr, None)
+                # A multimodal checkpoint (Gemma 3 at 4b and up) nests its text decoder one level deeper, so
+                # the final norm lives at `<backbone>.language_model.norm`. Missing it is not an error anywhere:
+                # the model reads as norm-less and every norm-aware construction silently runs unfolded.
+                text_decoder = getattr(inner, "language_model", None)
+                containers = (inner,) if text_decoder is None else (inner, text_decoder)
+                for container, norm_attr in itertools.product(containers, ("norm", "ln_f", "final_layer_norm")):
+                    norm = getattr(container, norm_attr, None)
                     weight = getattr(norm, "weight", None) if norm is not None else None
                     if isinstance(weight, torch.Tensor):
                         kind = _final_norm_kind(norm, weight)
