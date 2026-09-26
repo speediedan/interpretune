@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 import torch
 from datasets import Dataset, load_from_disk
 
@@ -274,6 +275,52 @@ def test_compute_attribution_graph_impl_builds_custom_target_from_concept_direct
     assert targets[0].token_str == "Concept: Capitals - States"
     assert torch.allclose(targets[0].vec, torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32))
     assert json.loads(result.graph_metadata)["concept_label"] == "Concept: Capitals - States"
+
+
+@pytest.mark.parametrize("basis", ["jlens_paper", "jlens_norm_aware"])
+def test_a_jlens_basis_direction_is_refused_as_a_final_residual_target(basis: str) -> None:
+    """Circuit-tracer applies target vectors to the final residual; a J-lens direction belongs to the lens layer.
+
+    Before the basis was threaded through, this built a CustomTarget from the layer-l direction and returned a plausible
+    graph.
+    """
+    graph = _make_graph()
+    module = _FakeModule(graph=graph)
+    module.generate_attribution_graph = lambda prompt, **kwargs: graph  # type: ignore[method-assign]
+    analysis_batch = AnalysisBatch(
+        prompts=[graph.input_string],
+        concept_direction=torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32),
+        concept_label="Concept: Capitals - States",
+        concept_group_a_token_ids=[0, 3],
+        concept_basis=basis,
+        jlens_layer=4,
+    )
+    with pytest.raises(ValueError, match=rf"concept_basis='{basis}'.*final residual stream.*concept_basis='embed'"):
+        compute_attribution_graph_impl(module, analysis_batch, batch=None, batch_idx=0)
+
+
+def test_an_embed_basis_direction_still_builds_its_target_and_records_the_basis() -> None:
+    graph = _make_graph()
+    module = _FakeModule(graph=graph)
+    captured: dict[str, object] = {}
+
+    def _capture_generate(prompt: str, **kwargs) -> Graph:
+        captured.update(kwargs)
+        return graph
+
+    module.generate_attribution_graph = _capture_generate  # type: ignore[method-assign]
+    analysis_batch = AnalysisBatch(
+        prompts=[graph.input_string],
+        concept_direction=torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32),
+        concept_label="Concept: Capitals - States",
+        concept_group_a_token_ids=[0, 3],
+        concept_basis="embed",
+    )
+    result = compute_attribution_graph_impl(module, analysis_batch, batch=None, batch_idx=0)
+    (target,) = captured["attribution_targets"]  # type: ignore[misc]
+    assert isinstance(target, CustomTarget)
+    assert torch.allclose(target.vec, torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32))
+    assert json.loads(result.graph_metadata)["concept_basis"] == "embed"
 
 
 def test_compute_attribution_graph_impl_filters_downstream_pipeline_kwargs() -> None:
