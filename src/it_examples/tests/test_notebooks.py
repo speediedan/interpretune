@@ -494,6 +494,47 @@ def test_ct_concept_steering_notebook_local(params: dict[str, Any], tmp_path: Pa
     _run_ct_concept_steering_notebook(params, tmp_path, "ct_concept_steering_demo_local_np.ipynb")
 
 
+# J-space workspace readout ("think X, say Y"). The default prompt was chosen because the intermediate is readable
+# before the answer on it; the second case is one where it is not, so the notebook's computed verdict is exercised in
+# both directions and the prose that describes the default cannot drift from what the run shows.
+JSPACE_WORKSPACE_PARAMS = [
+    pytest.param({}, "before", id="jspace_workspace_default"),
+    pytest.param(
+        {
+            "PROMPT": "Fact: The language spoken in the country where the Amazon River ends is",
+            "THINK_TOKEN": "Brazil",
+            "SAY_TOKEN": "Portuguese",
+        },
+        "no later than",
+        id="jspace_workspace_counter_case",
+    ),
+]
+
+
+@RunIf(bf16_cuda=True)
+@pytest.mark.parametrize("params, expected_order", JSPACE_WORKSPACE_PARAMS)
+def test_jspace_workspace_notebook(params: dict[str, Any], expected_order: str, tmp_path: Path):
+    """Execute the workspace readout notebook and check its computed verdict matches the case."""
+    import json
+
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "circuit_tracer_examples" / "jspace_workspace_demo.ipynb",
+        parameters=params,
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    text = "".join("".join(out.get("text", [])) for out in outputs)
+    verdicts = [
+        line for line in text.splitlines() if " was readable at layer " in line or "never became readable" in line
+    ]
+    assert verdicts, "the notebook printed no verdict"
+    assert expected_order in verdicts[-1], f"expected the verdict to say {expected_order!r}, got: {verdicts[-1]}"
+    _cleanup_notebook_artifacts()
+
+
 # The Neuronpedia example validates a Neuronpedia API key before it builds a session, so gate on the
 # same variable it checks. Executing it publishes NOTHING: generate_graph is called with
 # upload_to_np=False and the upload cell is commented out, so the graph stays local.
@@ -591,6 +632,7 @@ def test_notebook_discovery():
         "circuit_tracer_examples/ct_analysis_backend_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb",
+        "circuit_tracer_examples/jspace_workspace_demo.ipynb",
         "example_op_collections/bundled_ops_hub_optin.ipynb",
         "example_op_collections/op_collection_example.ipynb",
         "interp_engine_example/interp_engine_hub_adapter.ipynb",
