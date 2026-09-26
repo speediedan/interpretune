@@ -433,24 +433,33 @@ def _install_mask_derived_positions(hf_model: torch.nn.Module) -> None:
 
 
 def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:
-    """Invoke an NNsight trace with only model-consumable batch fields."""
-    tracer_model = getattr(tracer, "model", None)
+    """Invoke an NNsight trace with only model-consumable batch fields.
+
+    The attention mask always travels with the tokens, synthesized as all-ones
+    when the batch carries none. A missing second invoke's mask otherwise merges
+    to zeros in ``Batcher._batch``, and the mask-derived positions hook then
+    assigns garbage (all-ones) positions to every later invoke of a multi-invoke
+    trace -- deterministic, plausible-scale corruption of exactly the shape
+    measured in interpretune#630. An explicit all-ones mask is semantically
+    identical to no mask (attend everything; the hook stands aside on all-ones
+    masks exactly as it does when no mask is passed).
+    """
     invoke_kwargs = {
         key: value for key, value in batch.items() if key in {"attention_mask", "position_ids", "token_type_ids"}
     }
     if "input" in batch:
-        if hasattr(tracer_model, "pre_logit_location"):
-            return tracer.invoke(batch["input"])
-        return tracer.invoke(batch["input"], **invoke_kwargs)
-    if "input_ids" in batch:
-        if hasattr(tracer_model, "pre_logit_location"):
-            return tracer.invoke(batch["input_ids"])
-        return tracer.invoke(batch["input_ids"], **invoke_kwargs)
-    if not invoke_kwargs:
-        raise ValueError(
-            f"NNsight trace invocation requires 'input' or 'input_ids'; got batch keys: {sorted(batch.keys())}"
-        )
-    return tracer.invoke(**invoke_kwargs)
+        tokens = batch["input"]
+    elif "input_ids" in batch:
+        tokens = batch["input_ids"]
+    else:
+        if not invoke_kwargs:
+            raise ValueError(
+                f"NNsight trace invocation requires 'input' or 'input_ids'; got batch keys: {sorted(batch.keys())}"
+            )
+        return tracer.invoke(**invoke_kwargs)
+    if "attention_mask" not in invoke_kwargs and isinstance(tokens, torch.Tensor):
+        invoke_kwargs["attention_mask"] = torch.ones_like(tokens)
+    return tracer.invoke(tokens, **invoke_kwargs)
 
 
 #: Forward order of a sublayer's children, for the trace-order sort. Distinct ranks in execution order, because
