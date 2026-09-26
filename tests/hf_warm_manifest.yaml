@@ -29,6 +29,10 @@ models:
     allow_patterns: ["blocks.0.hook_resid_pre/*", "blocks.1.hook_resid_pre/*", "blocks.9.hook_resid_pre/*"]
   - repo_id: ckkissane/attn-saes-gpt2-small-all-layers
     allow_patterns: ["gpt2-small_L1_*", "gpt2-small_L2_*", "gpt2-small_L9_*", "gpt2-small_L10_*"]
+  # Gemma Scope 2 residual SAE the conformance suite attaches for the gemma-3-1b-it circuit-tracer
+  # target (one layer only; the full release is tens of gigabytes the suite never loads).
+  - repo_id: google/gemma-scope-2-1b-it
+    allow_patterns: ["resid_post/layer_13_width_16k_l0_big/*"]
   # TransformerLens' `tiny-stories-1M` alias, used by the transcoder tests.
   - repo_id: roneneldan/TinyStories-1M
   # gpt2-small Jacobian lens, input to the #420 real-lens non-collinearity measurement (offline CPU:
