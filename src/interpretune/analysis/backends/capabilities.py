@@ -510,11 +510,15 @@ def normalize_backend_capability(capability: Any) -> Capability:
 
 
 def get_model_backend(module: Any) -> ModelBackend | None:
-    """Return the module's model backend while avoiding mock-created private attrs."""
+    """Return the module's model backend while avoiding mock-created private attrs.
 
+    Reads the property without a ``hasattr`` guard: the property may assert on a module that is not
+    fully set up, and ``hasattr`` re-raises anything but ``AttributeError`` -- so the guard meant to
+    protect the read is what would raise out of this capability probe. "Not set up yet" answers None.
+    """
     module_dict = getattr(module, "__dict__", None)
     backend = module_dict.get("_model_backend") if isinstance(module_dict, dict) else None
-    if backend is None and hasattr(module, "model_backend"):
+    if backend is None:
         try:
             backend = module.model_backend
         except (AssertionError, AttributeError):
@@ -527,11 +531,12 @@ def get_analysis_backend(module: Any) -> AnalysisBackend | None:
 
     Reads ``__dict__`` directly before touching the ``analysis_backend`` property, because the property
     may assert on a module that is not fully set up -- and "not set up yet" must answer None here rather
-    than raising out of a capability probe.
+    than raising out of a capability probe. The property itself is read without a ``hasattr`` guard for
+    the same reason: ``hasattr`` re-raises an assertion instead of answering False.
     """
     module_dict = getattr(module, "__dict__", None)
     backend = module_dict.get("_analysis_backend") if isinstance(module_dict, dict) else None
-    if backend is None and hasattr(module, "analysis_backend"):
+    if backend is None:
         try:
             backend = module.analysis_backend
         except (AssertionError, AttributeError):

@@ -20,10 +20,13 @@ from interpretune.adapters import (
     TLensAttributeMixin,
     NNsightAttributeMixin,
     BaseNNsightModule,
+    SAELensAnalysisMixin,
+    SAELensAdapter,
+    BaseSAELensModule,
 )
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
-from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig, require_hooked_transformer
-from interpretune.config import ITConfig
+from interpretune.config import CircuitTracerConfig, ITConfig, SAELensConfig
+from interpretune.adapters.circuit_tracer.config import require_hooked_transformer
 from interpretune.analysis.backends.capabilities import get_model_backend
 from interpretune.utils import rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
@@ -608,6 +611,31 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
             description="Circuit Tracer configuration with NNsight backend and Lightning...",
         )
 
+        # ======================================================================
+        # NNsight backend + SAE latent models: (core, nnsight, circuit_tracer, sae_lens)
+        # ======================================================================
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="datamodule",
+            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(ITDataModule,),
+            description="Circuit Tracer adapter with NNsight backend and SAE latent models...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="module",
+            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(CircuitTracerNNsightSAELensModule,),
+            description="Circuit Tracer adapter with NNsight backend and SAE latent models...",
+        )
+        adapter_ctx_registry.register(
+            Adapter.circuit_tracer,
+            component_key="module_cfg",
+            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer, Adapter.sae_lens),  # type: ignore[arg-type]
+            composition_classes=(CircuitTracerConfig, SAELensConfig),
+            description="Circuit Tracer configuration with NNsight backend and SAE latent models...",
+        )
+
     def setup(self, *args, **kwargs) -> None:
         """Run normal setup, then resolve the graph output directory from the run's log directory.
 
@@ -770,3 +798,29 @@ class CircuitTracerNNsightModule(
     """
 
     ...
+
+
+class CircuitTracerNNsightSAELensModule(
+    CircuitTracerNNsightModuleMixin,
+    CircuitTracerAnalysisMixin,
+    SAELensAnalysisMixin,
+    CircuitTracerAdapter,
+    SAELensAdapter,
+    CoreHelperAttributes,
+    BaseCircuitTracerModule,
+    BaseSAELensModule,
+    BaseNNsightModule,
+):
+    """Circuit-tracer attribution over NNsight with attachable sae_lens latent models.
+
+    The circuit-tracer side owns model init (the NNSightReplacementModel wins by MRO, and the
+    attach-don't-override seam in ``BaseCircuitTracerModule`` leaves an already-attached model
+    backend alone), while the sae_lens side contributes only what the latent-model cases need:
+    the ``sae_handles`` properties and ``instantiate_saes``. The SAE weights are model-independent,
+    so they load after the replacement model without splicing anything into it.
+    """
+
+    def auto_model_init(self) -> None:
+        """Init the replacement model, then load the attached latent models."""
+        super().auto_model_init()  # the circuit-tracer NNsight init wins by MRO
+        self.instantiate_saes()  # type: ignore[attr-defined]  # from BaseSAELensModule

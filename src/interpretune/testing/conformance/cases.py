@@ -1154,7 +1154,12 @@ class ModelBackendConformance:
         logits = self._forward_with_hooks(suite, index, fwd_hooks)
         positions = torch.as_tensor(store.answer_indices[index]).reshape(-1)
         answer_logits = logits[torch.arange(logits.shape[0]), positions]
-        batch = AnalysisBatch(label_ids=store.label_ids[index], orig_labels=store.orig_labels[index])
+        # The store holds CPU copies; the recomputed forward may run anywhere (CUDA on device
+        # targets), and the loss and gather below require index tensors on the logits' device.
+        batch = AnalysisBatch(
+            label_ids=torch.as_tensor(store.label_ids[index]).to(answer_logits.device),
+            orig_labels=torch.as_tensor(store.orig_labels[index]).to(answer_logits.device),
+        )
         # typed for the module's analysis-batch protocol; a bare AnalysisBatch carries the two fields it reads
         _loss, logit_diffs, _preds, _ = get_loss_preds_diffs(
             suite.module, cast(Any, batch), answer_logits, boolean_logits_to_avg_logit_diff

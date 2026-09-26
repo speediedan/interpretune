@@ -121,7 +121,10 @@ class BaseSAELensModule(BaseITModule):
                 original_cfg = original_cfg or {}
                 sparsity = sparsity or {}
             self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))  # type: ignore[arg-type]
-            if self.it_cfg.add_saes_on_init and hasattr(self.model, "add_sae"):
+            # `getattr` with the field's own default: a module composition can carry the SAE mixin without
+            # the SAE config mixin (the circuit-tracer + sae_lens composition attaches `sae_cfgs` onto a
+            # pre-composed config), in which case there is no splice setting and splicing stays off.
+            if getattr(self.it_cfg, "add_saes_on_init", False) and hasattr(self.model, "add_sae"):
                 self.model.add_sae(added_sae.handle)  # type: ignore[operator]
 
     def _capture_hyperparameters(self) -> None:
