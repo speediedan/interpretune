@@ -28,6 +28,62 @@ from interpretune.analysis.optools import (
 )
 
 
+#: Where attribution targets come from when the caller does not pass them. ``None`` keeps the default path (a concept
+#: direction if the batch carries one, otherwise the backend's configured or salient logits).
+ATTRIBUTION_TARGET_SOURCES = (None, "jlens_readout")
+DEFAULT_JLENS_ATTRIBUTION_TOP_K = 5
+
+
+def _jlens_readout_targets(analysis_batch: AnalysisBatch, kwargs: dict) -> tuple[torch.Tensor, dict[str, Any]] | None:
+    """Token targets selected by a preceding ``jlens_read``: the top-k readout tokens at its last read position.
+
+    The J-lens chooses WHICH tokens to attribute; attribution itself runs on their ordinary logits at the final
+    layer, where circuit-tracer applies targets. A target living at the lens layer needs a layer-local injection
+    that circuit-tracer does not provide yet, and a J-lens-basis direction used as a final-residual target is refused
+    (see ``build_concept_attribution_targets``).
+    """
+    source = kwargs.pop("attribution_target_source", analysis_batch.get("attribution_target_source"))
+    if source not in ATTRIBUTION_TARGET_SOURCES:
+        raise ValueError(f"attribution_target_source={source!r} is not one of {ATTRIBUTION_TARGET_SOURCES}")
+    if source is None:
+        return None
+    if "attribution_targets" in kwargs:
+        raise ValueError(
+            "attribution_target_source='jlens_readout' and explicit attribution_targets both name the attribution "
+            "target; drop one of them"
+        )
+    if analysis_batch.get("concept_direction") is not None:
+        raise ValueError(
+            "attribution_target_source='jlens_readout' and a concept_direction both name the attribution target; "
+            "drop one of them"
+        )
+    top_ids = analysis_batch.get("jlens_top_token_ids")
+    if top_ids is None:
+        raise ValueError(
+            "attribution_target_source='jlens_readout' needs jlens_top_token_ids in the analysis batch: run "
+            "jlens_read (with jlens_top_k at least the number of targets) before compute_attribution_graph"
+        )
+    top_ids = torch.as_tensor(top_ids, dtype=torch.long)
+    # (positions, k) per sample as the schema declares it, or (1, positions, k) from a direct jlens_read call
+    if top_ids.ndim == 2:
+        top_ids = top_ids.unsqueeze(0)
+    if top_ids.ndim != 3 or top_ids.shape[0] != 1:
+        raise ValueError(
+            f"expected jlens_top_token_ids of shape (positions, k) or (1, positions, k), got {tuple(top_ids.shape)}"
+        )
+    k = int(kwargs.pop("jlens_attribution_top_k", None) or analysis_batch.get("jlens_attribution_top_k") or 0)
+    k = k or DEFAULT_JLENS_ATTRIBUTION_TOP_K
+    if k > top_ids.shape[-1]:
+        raise ValueError(f"jlens_attribution_top_k={k} exceeds the {top_ids.shape[-1]} tokens jlens_read returned")
+    selected = top_ids[0, -1, :k]
+    metadata = {
+        "attribution_target_source": source,
+        "jlens_layer": analysis_batch.get("jlens_layer"),
+        "jlens_target_token_ids": selected.tolist(),
+    }
+    return selected, metadata
+
+
 def compute_attribution_graph_impl(
     module,
     analysis_batch: AnalysisBatch,
@@ -44,7 +100,10 @@ def compute_attribution_graph_impl(
     concept_group_b_token_ids = analysis_batch.get("concept_group_b_token_ids")
     concept_direction_mode = analysis_batch.get("concept_direction_mode")
     concept_basis = analysis_batch.get("concept_basis")
-    if concept_direction is not None and "attribution_targets" not in kwargs:
+    jlens_selected = _jlens_readout_targets(analysis_batch, kwargs)
+    if jlens_selected is not None:
+        kwargs["attribution_targets"] = jlens_selected[0]
+    elif concept_direction is not None and "attribution_targets" not in kwargs:
         kwargs["attribution_targets"] = analysis_backend.build_concept_attribution_targets(
             module,
             prompt,
@@ -87,6 +146,8 @@ def compute_attribution_graph_impl(
         extra_metadata["concept_label"] = concept_label
     if concept_basis is not None:
         extra_metadata["concept_basis"] = concept_basis
+    if jlens_selected is not None:
+        extra_metadata.update(jlens_selected[1])
     analysis_batch.update(**analysis_backend.decompose_graph(graph, extra_metadata=extra_metadata))
 
     # Resolve virtual logit_target_ids from concept-direction graphs.

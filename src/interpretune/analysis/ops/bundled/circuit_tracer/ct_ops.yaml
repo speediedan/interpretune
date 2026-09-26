@@ -18,6 +18,23 @@ compute_attribution_graph:
       datasets_dtype: float32
       required: false
       sequence_type: true
+    # `attribution_target_source: jlens_readout` takes the top `jlens_attribution_top_k` tokens of a preceding
+    # jlens_read at its last read position and attributes them as ordinary logit targets
+    attribution_target_source:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_attribution_top_k:
+      datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_top_token_ids:
+      datasets_dtype: int64
+      required: false
+      array_shape: [null, null]
+      sequence_type: false
   output_schema:
     input_string:
       datasets_dtype: string

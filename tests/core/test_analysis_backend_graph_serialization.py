@@ -323,6 +323,68 @@ def test_an_embed_basis_direction_still_builds_its_target_and_records_the_basis(
     assert json.loads(result.graph_metadata)["concept_basis"] == "embed"
 
 
+class TestJlensReadoutSelectedTargets:
+    """``attribution_target_source='jlens_readout'`` attributes the tokens a preceding jlens_read ranked
+    highest."""
+
+    # (positions, k): the last row is the read position whose top tokens become the targets
+    TOP = torch.tensor([[9, 8, 7, 6], [3, 1, 2, 0]], dtype=torch.long)
+
+    def _run(self, batch_fields: dict, **kwargs):
+        graph = _make_graph()
+        module = _FakeModule(graph=graph)
+        captured: dict[str, object] = {}
+
+        def _capture_generate(prompt: str, **kw) -> Graph:
+            captured.update(kw)
+            return graph
+
+        module.generate_attribution_graph = _capture_generate  # type: ignore[method-assign]
+        batch = AnalysisBatch(prompts=[graph.input_string], **batch_fields)
+        result = compute_attribution_graph_impl(module, batch, batch=None, batch_idx=0, **kwargs)
+        return captured, result
+
+    @pytest.mark.parametrize("shape", ["per_sample", "batched"])
+    def test_the_top_k_readout_tokens_become_logit_targets(self, shape: str) -> None:
+        top = self.TOP if shape == "per_sample" else self.TOP.unsqueeze(0)
+        captured, result = self._run(
+            {"jlens_top_token_ids": top, "jlens_layer": 12},
+            attribution_target_source="jlens_readout",
+            jlens_attribution_top_k=3,
+        )
+        assert torch.equal(captured["attribution_targets"], torch.tensor([3, 1, 2]))
+        meta = json.loads(result.graph_metadata)
+        assert meta["attribution_target_source"] == "jlens_readout"
+        assert meta["jlens_layer"] == 12 and meta["jlens_target_token_ids"] == [3, 1, 2]
+
+    def test_without_a_readout_the_source_is_refused_by_name(self) -> None:
+        with pytest.raises(ValueError, match=r"needs jlens_top_token_ids.*run jlens_read"):
+            self._run({}, attribution_target_source="jlens_readout")
+
+    def test_a_concept_direction_alongside_is_ambiguous(self) -> None:
+        with pytest.raises(ValueError, match=r"concept_direction both name the attribution target"):
+            self._run(
+                {"jlens_top_token_ids": self.TOP, "concept_direction": torch.tensor([1.0, 0.0, 0.0])},
+                attribution_target_source="jlens_readout",
+            )
+
+    def test_explicit_targets_alongside_are_ambiguous(self) -> None:
+        with pytest.raises(ValueError, match=r"explicit attribution_targets both name the attribution target"):
+            self._run(
+                {"jlens_top_token_ids": self.TOP}, attribution_target_source="jlens_readout", attribution_targets=[2]
+            )
+
+    def test_an_unknown_source_is_refused_by_name(self) -> None:
+        with pytest.raises(ValueError, match=r"attribution_target_source='logit_lens' is not one of"):
+            self._run({"jlens_top_token_ids": self.TOP}, attribution_target_source="logit_lens")
+
+    def test_more_targets_than_the_readout_returned_is_refused(self) -> None:
+        with pytest.raises(ValueError, match=r"jlens_attribution_top_k=9 exceeds the 4 tokens"):
+            self._run(
+                {"jlens_top_token_ids": self.TOP}, attribution_target_source="jlens_readout", jlens_attribution_top_k=9
+            )
+
+
 def test_compute_attribution_graph_impl_filters_downstream_pipeline_kwargs() -> None:
     graph = _make_graph()
     module = _FakeModule(graph=graph)

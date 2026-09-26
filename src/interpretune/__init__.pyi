@@ -146,6 +146,9 @@ def compute_attribution_graph(
 
     Input Schema:
         concept_direction (float32)
+        attribution_target_source (string)
+        jlens_attribution_top_k (int64)
+        jlens_top_token_ids (int64)
 
     Output Schema:
         input_string (string)
