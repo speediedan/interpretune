@@ -618,6 +618,20 @@ class AnalysisRunner(SessionRunner):
         analysis_cfg.reset_op_state()
         try:
             with activated_analysis_cfg(self.run_cfg.module, analysis_cfg, ignore_manual=ignore_manual):
+                self._derive_case_key(analysis_cfg)
                 return self.analysis(step_fn=analysis_cfg.step_fn, **self.run_cfg.__dict__)
         finally:
             analysis_cfg.finalize_op_state()
+
+    def _derive_case_key(self, analysis_cfg: AnalysisCfg) -> None:
+        """Set this run's ``dataset_fingerprint`` from the case identity, post-activation.
+
+        Called after the cfg is applied (op resolved, ``names_filter`` materialized): setup mutates
+        the cfg in place, so a key taken before the run would differ from the same case's key on any
+        later run. Only when ``run_cfg.case_key_target_part`` is set; otherwise the configured
+        ``dataset_fingerprint`` (usually ``None``: random per run) passes through untouched.
+        """
+        target_part = getattr(self.run_cfg, "case_key_target_part", None)
+        if target_part is None:
+            return
+        self.run_cfg.dataset_fingerprint = analysis_cfg_fingerprint(analysis_cfg, target_part=target_part)

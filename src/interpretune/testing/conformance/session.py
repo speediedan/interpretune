@@ -62,27 +62,10 @@ class ConformanceSession:
     def run(self, analysis_cfg):
         """Run one op through the runner and return its store.
 
-        Every case goes through here. When a shared generator-cache directory is opted in
-        (``IT_CONFORMANCE_GENERATOR_CACHE_DIR``), the case's ``dataset_fingerprint`` is computed
-        from the target part plus this cfg's op, inputs and filter and set on the runner config for
-        exactly this run, so each case addresses its own cache entries. Single ``AnalysisCfg`` only:
-        a list of cfgs cannot carry per-case keys through the runner's single ``dataset_fingerprint``
-        field, so lists keep the run config's value (random per run unless the caller set one).
+        Every case goes through here. When a shared generator-cache directory is opted in, the
+        runner derives each run's ``dataset_fingerprint`` itself (post-activation, from the target
+        part set at build plus the resolved case identity), so this stays a passthrough.
         """
-        from interpretune.config import AnalysisCfg
-        from interpretune.runners.analysis import analysis_cfg_fingerprint
-
-        from .inputs import shared_generator_cache, target_cache_part
-
-        shared_dir, _ = shared_generator_cache()
-        if shared_dir is not None and isinstance(analysis_cfg, AnalysisCfg):
-            import interpretune
-
-            self.runner.run_cfg.dataset_fingerprint = analysis_cfg_fingerprint(
-                analysis_cfg,
-                target_part=target_cache_part(self.target, self.inputs),
-                package_version=interpretune.__version__,
-            )
         return self.runner.run_analysis(analysis_cfgs=analysis_cfg)
 
     def capturable_points(self) -> list[str]:
@@ -152,7 +135,7 @@ def build_conformance_session(target: ConformanceTarget, inputs: ConformanceInpu
         target.load()
     session = ITSession(target.build_session_cfg(inputs))
     runner = AnalysisRunner(run_cfg=dict(it_session=session, **inputs.runner_kwargs()))
-    from .inputs import shared_generator_cache
+    from .inputs import shared_generator_cache, target_cache_part
 
     shared_dir, max_bytes = shared_generator_cache()
     if shared_dir is not None:
@@ -162,6 +145,9 @@ def build_conformance_session(target: ConformanceTarget, inputs: ConformanceInpu
         pruned = prune_generator_cache(shared_dir, max_bytes=max_bytes)
         log = logging.getLogger(__name__)
         log.info("conformance generator cache %s bounded at %d bytes: %r", shared_dir, max_bytes, pruned)
+        # The per-case half of every key; the runner mixes in each case post-activation. Set once:
+        # setup mutates each cfg in place, so a key taken here could not survive a run.
+        runner.run_cfg.case_key_target_part = target_cache_part(target, inputs)
     caps = get_module_capabilities(session.module)
     # The dataloader is deterministic and the runner reads it in order, so the first N batches here are the
     # batches every store's rows came from; cases needing the raw inputs (the HF reference) use these.

@@ -204,6 +204,11 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
     # a persistent directory only accumulate files no run can reuse.
     dataset_fingerprint: str | None = None
     generator_cache_dir: str | Path | None = None
+    # Per-case key derivation. When set, each run derives its own `dataset_fingerprint` from this
+    # target part plus the case identity AFTER the cfg is applied (resolved op, materialized filter),
+    # because setup mutates the cfg in place: a key taken before the run would differ from the same
+    # case's key on its second run. Unset (default) leaves `dataset_fingerprint` exactly as given.
+    case_key_target_part: str | None = None
     # Add optional latent_analysis_targets as a fallback
     latent_analysis_targets: LatentAnalysisTargets | None = None
     # Add artifact configuration

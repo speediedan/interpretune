@@ -205,37 +205,43 @@ class TestSharedCacheEnv:
 
 
 class TestRunInjection:
-    def test_per_case_key_set_on_opt_in(self, monkeypatch, tmp_path):
-        from unittest.mock import MagicMock
+    def test_derive_case_key(self):
+        from types import SimpleNamespace
 
-        from interpretune.testing.conformance.session import ConformanceSession
+        from interpretune.runners.analysis import AnalysisRunner
 
-        monkeypatch.setenv("IT_CONFORMANCE_GENERATOR_CACHE_DIR", str(tmp_path))
-        runner = MagicMock()
-        session = ConformanceSession(
-            target=ConformanceTarget(composition=("core",)),
-            inputs=ConformanceInputs(),
-            session=None,
-            runner=runner,
-            capabilities=None,
-        )
+        def _stub(target_part):
+            return SimpleNamespace(run_cfg=SimpleNamespace(case_key_target_part=target_part, dataset_fingerprint=None))
+
         cfg = AnalysisCfg(target_op="model_fwd_intervention", run_inputs={"mode": "add"})
-        session.run(cfg)
-        key = runner.run_cfg.dataset_fingerprint
+        stub = _stub("target")
+        AnalysisRunner._derive_case_key(stub, cfg)
+        key = stub.run_cfg.dataset_fingerprint
         assert isinstance(key, str) and len(key) == 32
-        runner.run_analysis.assert_called_once_with(analysis_cfgs=cfg)
+        AnalysisRunner._derive_case_key(stub, cfg)
+        assert stub.run_cfg.dataset_fingerprint == key
         cfg2 = AnalysisCfg(target_op="model_fwd_intervention", run_inputs={"mode": "clamp"})
-        session.run(cfg2)
-        assert runner.run_cfg.dataset_fingerprint != key
+        AnalysisRunner._derive_case_key(stub, cfg2)
+        assert stub.run_cfg.dataset_fingerprint != key
 
-    def test_no_opt_in_leaves_config_alone(self, monkeypatch):
+    def test_no_target_part_leaves_alone(self):
+        from types import SimpleNamespace
+
+        from interpretune.runners.analysis import AnalysisRunner
+
+        cfg = AnalysisCfg(target_op="model_fwd_intervention")
+        stub = SimpleNamespace(run_cfg=SimpleNamespace(dataset_fingerprint="preset"))
+        AnalysisRunner._derive_case_key(stub, cfg)
+        assert stub.run_cfg.dataset_fingerprint == "preset"
+
+    def test_run_is_passthrough(self, monkeypatch):
         from unittest.mock import MagicMock
 
         from interpretune.testing.conformance.session import ConformanceSession
 
-        monkeypatch.delenv("IT_CONFORMANCE_GENERATOR_CACHE_DIR", raising=False)
+        monkeypatch.setenv("IT_CONFORMANCE_GENERATOR_CACHE_DIR", "/tmp/aux621-probe")
         runner = MagicMock()
-        runner.run_cfg.dataset_fingerprint = None
+        runner.run_cfg.dataset_fingerprint = "sentinel"
         session = ConformanceSession(
             target=ConformanceTarget(composition=("core",)),
             inputs=ConformanceInputs(),
@@ -243,5 +249,7 @@ class TestRunInjection:
             runner=runner,
             capabilities=None,
         )
-        session.run(AnalysisCfg(target_op="model_fwd_intervention"))
-        assert runner.run_cfg.dataset_fingerprint is None
+        cfg = AnalysisCfg(target_op="model_fwd_intervention")
+        session.run(cfg)
+        runner.run_analysis.assert_called_once_with(analysis_cfgs=cfg)
+        assert runner.run_cfg.dataset_fingerprint == "sentinel"
