@@ -36,6 +36,84 @@ SEED_CONFIGS = {
 #: adapters' config classes and need those adapters installed to hydrate.
 SEED_DATAMODULE = "rte_boolq"
 
+#: Opt-in shared generator-cache directory for conformance runs (env
+#: ``IT_CONFORMANCE_GENERATOR_CACHE_DIR``). Unset (the default) keeps per-run workdirs under random
+#: fingerprints -- current behavior, zero change. Set, and every case writes through per-case keys
+#: (:func:`target_cache_part` plus the case identity) into this directory, with
+#: :func:`~interpretune.runners.analysis.prune_generator_cache` bounding it at session build.
+SHARED_GENERATOR_CACHE_ENV = "IT_CONFORMANCE_GENERATOR_CACHE_DIR"
+#: Byte cap for the shared directory (env ``IT_CONFORMANCE_GENERATOR_CACHE_MAX_BYTES``). The default
+#: is sized against the failure #618 measured: an unkeyed run wrote about 30 GB into the agent's fixed
+#: 150 GB HF cache volume, so the cap leaves headroom for the volume's other residents.
+SHARED_GENERATOR_CACHE_MAX_ENV = "IT_CONFORMANCE_GENERATOR_CACHE_MAX_BYTES"
+SHARED_GENERATOR_CACHE_DEFAULT_MAX_BYTES = 40_000_000_000
+
+
+def shared_generator_cache() -> tuple[Path | None, int]:
+    """The opted-in shared generator-cache directory and byte cap, or ``(None, 0)``.
+
+    Refuses a non-integer cap by name: silently falling back to the default would let a typo'd
+    environment grow the shared volume without bound, which is the failure this directory exists to bound.
+    """
+    import os
+
+    raw_dir = os.environ.get(SHARED_GENERATOR_CACHE_ENV, "").strip()
+    if not raw_dir:
+        return None, 0
+    raw_max = os.environ.get(SHARED_GENERATOR_CACHE_MAX_ENV, "").strip()
+    if not raw_max:
+        return Path(raw_dir), SHARED_GENERATOR_CACHE_DEFAULT_MAX_BYTES
+    try:
+        max_bytes = int(raw_max)
+    except ValueError:
+        raise ValueError(
+            f"{SHARED_GENERATOR_CACHE_MAX_ENV}={raw_max!r} is not an integer byte count; "
+            f"unset it for the default ({SHARED_GENERATOR_CACHE_DEFAULT_MAX_BYTES}) or set digits"
+        ) from None
+    if max_bytes <= 0:
+        raise ValueError(f"{SHARED_GENERATOR_CACHE_MAX_ENV}={raw_max!r} must be a positive byte count")
+    return Path(raw_dir), max_bytes
+
+
+def target_cache_part(target: ConformanceTarget, inputs: ConformanceInputs) -> str:
+    """The target half of a per-case generator-cache key: everything about the run that is not the case.
+
+    Composition (sorted -- targets declare it in any order), forward family, datamodule flavour, model
+    and suite inputs (device and precision included: rows differ across them), latent specs, seed
+    revision and supplied extras. Workdir-derived paths are deliberately absent: they differ per run by
+    design, and keying on them would make every entry single-use. Normalized through the same
+    fingerprintable reduction as the case half so exotic extras fail by name here rather than as an
+    unreadable cache miss later. Only computed when a shared directory is opted in.
+    """
+    import json
+
+    from interpretune.runners.analysis import _fingerprintable
+
+    extras = {**(inputs.supplied_extras or {}), **(target.module_cfg_extras or {})}
+    part = {
+        "composition": sorted(target.composition),
+        "forward_family": target.forward_family,
+        "datamodule_flavour": target.datamodule_flavour,
+        "model_id": inputs.model_id,
+        "device_type": inputs.device_type,
+        "precision": inputs.precision,
+        "limit_batches": inputs.limit_batches,
+        "batch_size": inputs.batch_size,
+        "max_epochs": inputs.max_epochs,
+        "capture_layer": inputs.capture_layer,
+        "capture_points": list(inputs.capture_points),
+        "intervention_point": inputs.intervention_point,
+        "observe_point": inputs.observe_point,
+        "prompts": list(inputs.prompts),
+        "attribution_top_n": inputs.attribution_top_n,
+        "attribution_scale_factor": inputs.attribution_scale_factor,
+        "latent_models": list(inputs.latent_models_for_model()),
+        "seed_revision": SEED_REVISION,
+        "supplied_extras": extras,
+    }
+    return json.dumps(_fingerprintable(part, path="target"), sort_keys=True)
+
+
 #: Canonical capture points, spelled in the TransformerLens bridge grammar every backend accepts through
 #: `names_filter`. The norm's module output is a point; its derived tensors (`hook_normalized`, `hook_scale`)
 #: are not, because the reference captures what a module emits and a derived tensor is computed.
@@ -343,18 +421,23 @@ class ConformanceInputs:
         ``max_epochs`` is explicit because the runner's default of
         ``-1`` makes the analysis generator iterate zero epochs and yield an empty store.
 
-        Generator cache files stay in the per-run workdir under random fingerprints. A key shared
-        across runs would have to identify each case's computation, and the cases on one target run
-        the same op with different ``run_inputs`` (intervention mode, scale, scope, vector): a key
-        built from the target and these inputs alone served one case another case's rows.
+        Generator cache files stay in the per-run workdir under random fingerprints unless
+        ``IT_CONFORMANCE_GENERATOR_CACHE_DIR`` names a shared directory: then this sets it as
+        ``generator_cache_dir`` and each case computes its own ``dataset_fingerprint`` from
+        :func:`target_cache_part` plus its op, inputs and filter (see ``ConformanceSession.run``),
+        so entries are per computation and reusable across runs instead of per target.
         """
-        return dict(
+        kwargs = dict(
             limit_analysis_batches=self.limit_batches,
             max_epochs=self.max_epochs,
             ignore_manual=True,
             cache_dir=str(self._ensure_workdir() / "cache"),
             op_output_dataset_path=str(self._ensure_workdir() / "out"),
         )
+        shared_dir, _ = shared_generator_cache()
+        if shared_dir is not None:
+            kwargs["generator_cache_dir"] = str(shared_dir)
+        return kwargs
 
 
 @dataclass(frozen=True)

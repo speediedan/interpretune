@@ -13,6 +13,12 @@ from interpretune.runners.analysis import (
 )
 from interpretune.analysis.ops.base import AnalysisOp, ColCfg, OpSchema
 from interpretune.config import AnalysisCfg
+from interpretune.testing.conformance.inputs import (
+    ConformanceInputs,
+    ConformanceTarget,
+    shared_generator_cache,
+    target_cache_part,
+)
 
 
 def _base_kwargs(**overrides):
@@ -115,9 +121,10 @@ class TestCfgWrapper:
         assert analysis_cfg_fingerprint(cfg, target_part="t", package_version="v1") == analysis_case_fingerprint(
             target_part="t",
             op=cfg.op if cfg.op is not None else cfg.target_op,
-            run_inputs={"mode": "add"},
+            run_inputs={"mode": "add", "__latent_targets__": cfg.latent_analysis_targets},
             names_filter=["h"],
             package_version="v1",
+            extra_case_part={"step_fn": cfg.step_fn, "ignore_manual": cfg.ignore_manual},
         )
 
 
@@ -147,3 +154,94 @@ class TestPruneGeneratorCache:
             "evicted_stems": 0,
             "evicted_bytes": 0,
         }
+
+
+class TestTargetPart:
+    def _target(self, **overrides):
+        kwargs = dict(composition=("core",))
+        kwargs.update(overrides)
+        return ConformanceTarget(**kwargs)
+
+    def test_stable_and_sorted_composition(self):
+        inputs = ConformanceInputs()
+        target = self._target()
+        assert target_cache_part(target, inputs) == target_cache_part(target, inputs)
+        assert target_cache_part(self._target(composition=("b", "a")), inputs) == target_cache_part(
+            self._target(composition=("a", "b")), inputs
+        )
+
+    def test_discriminates(self):
+        inputs = ConformanceInputs()
+        assert target_cache_part(self._target(), inputs) != target_cache_part(
+            self._target(), ConformanceInputs(precision="bfloat16")
+        )
+        assert target_cache_part(self._target(), inputs) != target_cache_part(
+            self._target(datamodule_flavour="bridge"), inputs
+        )
+
+    def test_workdir_excluded(self):
+        inputs = ConformanceInputs()
+        inputs._ensure_workdir()
+        assert target_cache_part(self._target(), inputs) == target_cache_part(self._target(), ConformanceInputs())
+        inputs.cleanup()
+
+
+class TestSharedCacheEnv:
+    def test_unset_is_noop(self, monkeypatch):
+        monkeypatch.delenv("IT_CONFORMANCE_GENERATOR_CACHE_DIR", raising=False)
+        assert shared_generator_cache() == (None, 0)
+
+    def test_dir_and_cap(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("IT_CONFORMANCE_GENERATOR_CACHE_DIR", str(tmp_path))
+        assert shared_generator_cache() == (tmp_path, 40_000_000_000)
+        monkeypatch.setenv("IT_CONFORMANCE_GENERATOR_CACHE_MAX_BYTES", "123")
+        assert shared_generator_cache() == (tmp_path, 123)
+
+    def test_garbage_cap_refused(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("IT_CONFORMANCE_GENERATOR_CACHE_DIR", str(tmp_path))
+        monkeypatch.setenv("IT_CONFORMANCE_GENERATOR_CACHE_MAX_BYTES", "lots")
+        with pytest.raises(ValueError, match="not an integer"):
+            shared_generator_cache()
+
+
+class TestRunInjection:
+    def test_per_case_key_set_on_opt_in(self, monkeypatch, tmp_path):
+        from unittest.mock import MagicMock
+
+        from interpretune.testing.conformance.session import ConformanceSession
+
+        monkeypatch.setenv("IT_CONFORMANCE_GENERATOR_CACHE_DIR", str(tmp_path))
+        runner = MagicMock()
+        session = ConformanceSession(
+            target=ConformanceTarget(composition=("core",)),
+            inputs=ConformanceInputs(),
+            session=None,
+            runner=runner,
+            capabilities=None,
+        )
+        cfg = AnalysisCfg(target_op="model_fwd_intervention", run_inputs={"mode": "add"})
+        session.run(cfg)
+        key = runner.run_cfg.dataset_fingerprint
+        assert isinstance(key, str) and len(key) == 32
+        runner.run_analysis.assert_called_once_with(analysis_cfgs=cfg)
+        cfg2 = AnalysisCfg(target_op="model_fwd_intervention", run_inputs={"mode": "clamp"})
+        session.run(cfg2)
+        assert runner.run_cfg.dataset_fingerprint != key
+
+    def test_no_opt_in_leaves_config_alone(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from interpretune.testing.conformance.session import ConformanceSession
+
+        monkeypatch.delenv("IT_CONFORMANCE_GENERATOR_CACHE_DIR", raising=False)
+        runner = MagicMock()
+        runner.run_cfg.dataset_fingerprint = None
+        session = ConformanceSession(
+            target=ConformanceTarget(composition=("core",)),
+            inputs=ConformanceInputs(),
+            session=None,
+            runner=runner,
+            capabilities=None,
+        )
+        session.run(AnalysisCfg(target_op="model_fwd_intervention"))
+        assert runner.run_cfg.dataset_fingerprint is None
