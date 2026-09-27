@@ -309,6 +309,15 @@ jobs:
       - bash: |
           source scripts/gpu_lease_wrap.sh
           ci_gpu_lease_release /gpu_leases /tmp/azp_cpu_heavy_lease.pid cpu-heavy
+          # Fail CLOSED from here: a bash step's result is its last command's exit code, so a timed-out
+          # `gpu` acquire followed by a succeeding `cpu-heavy` acquire used to read as success, and the
+          # GPU phases then ran unleased beside whoever held the lease (#656: 19 failures and errors plus
+          # 30 reruns, all CUDA out-of-memory, with nothing in the timeline saying the lease was missed).
+          # `set -e` stops the step at the first failed acquire instead. It goes AFTER the release above
+          # deliberately: the release tolerates a stale pidfile from a previous job on this host, while an
+          # acquire failure must always fail the step. The `condition: always()` cleanup below releases
+          # whatever is held, so the failure path leaves no lease behind.
+          set -e
           ci_gpu_lease_acquire /gpu_leases /tmp/azp_gpu_lease.pid 2400 "azure-it-$(Build.BuildId)" gpu
           ci_gpu_lease_acquire /gpu_leases /tmp/azp_cpu_heavy_lease.pid 2400 "azure-it-$(Build.BuildId)" cpu-heavy
         displayName: 'Acquire host GPU lease'
