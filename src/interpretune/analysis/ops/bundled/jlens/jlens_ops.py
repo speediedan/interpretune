@@ -41,6 +41,17 @@ def _resolve_lens_layer(module: Any, analysis_batch: AnalysisBatch, kwargs: dict
     return resolve_jlens_layer(module, analysis_batch, kwargs, default_percentile=DEFAULT_LAYER_PERCENTILE)
 
 
+def default_jlens_cache_key(layer: int) -> str:
+    """The cache point a lens fitted at ``layer`` reads by default: the OUTPUT of block ``layer``.
+
+    Jacobian lenses are fitted on each block's output (the reference implementation records every source layer
+    with a forward hook on ``layers[l]``, and the published artifacts are fitted with it), so that is the
+    residual the lens transports. ``blocks.{layer}.hook_in`` is the block's input, the output of the block
+    before, and reading it through this lens silently reports layer ``layer - 1`` as ``layer``.
+    """
+    return f"blocks.{layer}.hook_out"
+
+
 def _readout_device(info: UnembedNormInfo) -> torch.device:
     """Where the readout runs: the unembed's device.
 
@@ -126,7 +137,7 @@ def jlens_read_impl(
     """Rank vocabulary tokens by the J-lens readout at the selected layer and positions."""
     j, layer, artifact = _resolve_lens_layer(module, analysis_batch, kwargs)
     info = resolve_unembed_and_norm_scale(module)
-    cache_key = kwargs.get("jlens_cache_key", analysis_batch.get("jlens_cache_key")) or f"blocks.{layer}.hook_in"
+    cache_key = kwargs.get("jlens_cache_key", analysis_batch.get("jlens_cache_key")) or default_jlens_cache_key(layer)
     include_rms_scale = bool(kwargs.get("jlens_include_rms_scale", analysis_batch.get("jlens_include_rms_scale")))
     top_k = int(kwargs.get("jlens_top_k", analysis_batch.get("jlens_top_k") or 10))
 
@@ -163,7 +174,7 @@ def jlens_concept_probe_impl(
     """
     j, layer, artifact = _resolve_lens_layer(module, analysis_batch, kwargs)
     info = resolve_unembed_and_norm_scale(module)
-    cache_key = kwargs.get("jlens_cache_key", analysis_batch.get("jlens_cache_key")) or f"blocks.{layer}.hook_in"
+    cache_key = kwargs.get("jlens_cache_key", analysis_batch.get("jlens_cache_key")) or default_jlens_cache_key(layer)
     apply_norm = kwargs.get("jlens_apply_final_norm", analysis_batch.get("jlens_apply_final_norm"))
     token_ids = kwargs.get("jlens_concept_token_ids", analysis_batch.get("jlens_concept_token_ids"))
     if token_ids is None:
@@ -245,7 +256,7 @@ def jlens_sparse_inventory_impl(
     """
     j, layer, artifact = _resolve_lens_layer(module, analysis_batch, kwargs)
     info = resolve_unembed_and_norm_scale(module)
-    cache_key = kwargs.get("jlens_cache_key", analysis_batch.get("jlens_cache_key")) or f"blocks.{layer}.hook_in"
+    cache_key = kwargs.get("jlens_cache_key", analysis_batch.get("jlens_cache_key")) or default_jlens_cache_key(layer)
     k = int(kwargs.get("jlens_inventory_k", analysis_batch.get("jlens_inventory_k") or 25))
 
     activations = _activations(analysis_batch, cache_key)

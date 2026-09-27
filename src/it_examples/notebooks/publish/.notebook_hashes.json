@@ -13,6 +13,7 @@
   "notebooks/dev/circuit_tracer_examples/ct_cross_backend_demo.ipynb": "73e71eb9a991f98d7704c00064998680d6ac2f41e8a1551680ec1cc355b4038a",
   "notebooks/dev/circuit_tracer_examples/ct_cross_backend_demo_gemma2_ref.ipynb": "66f43497da48180357c2d87cc5e8fbd2f34137bd9cb460a6c4d9316599693f14",
   "notebooks/dev/circuit_tracer_examples/gradient_flow_analysis.ipynb": "21818d3fa9765b29b84d38d977a744c185d89fced8913893147d61600c124b45",
+  "notebooks/dev/circuit_tracer_examples/jspace_workspace_demo.ipynb": "4bd201d2cc6f15118b538a6501720c30e47c47b37def4b7766c01fafe7dc01c2",
   "notebooks/dev/circuit_tracer_examples/logo_fts.png": "2ea31ac2b94dacb4301da51d2e3307fa9183bab5321fc51fa291c00fb2759664",
   "notebooks/dev/example_op_collections/__pycache__/op_collection_demo_utils.cpython-310.pyc": "4df5302c879b8ae9cd51b4c2e19f877e3532f64494f4f2bf0facc57a103176cd",
   "notebooks/dev/example_op_collections/__pycache__/op_collection_demo_utils.cpython-312.pyc": "26040b9a677df03c8b52c34bb31682936a16a5fa6e790b856e8596d64452b12e",

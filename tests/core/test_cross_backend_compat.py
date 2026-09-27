@@ -1673,6 +1673,36 @@ def test_concept_direction_prefers_run_scoped_inputs_over_row_store_values(tmp_p
 
 
 @pytest.mark.parametrize("backend", ["transformerlens", "nnsight"])
+def test_ct_attribution_targets_selected_by_a_stored_jlens_readout_across_backends(tmp_path, backend: str) -> None:
+    """A jlens_read result round-tripped through a store selects the graph's logit targets on either CT backend.
+
+    The store returns the readout in its per-sample ``(positions, k)`` form, so this also exercises the schema entry
+    and the shape the op accepts from a dataset row rather than a direct call.
+    """
+    readout_store = _round_trip_store(
+        tmp_path,
+        f"jlens_readout_{backend}",
+        Dataset.from_dict({"jlens_top_token_ids": [[[0, 1, 2, 3], [3, 2, 1, 0]]], "jlens_layer": [12]}),
+    )
+    consumer = _FakeCircuitTracerConsumerModule(backend=backend, input_store=readout_store)
+
+    result = it.compute_attribution_graph(
+        consumer,
+        AnalysisBatch(prompts=["Paris Austin"]),
+        batch=None,
+        batch_idx=0,
+        attribution_target_source="jlens_readout",
+        jlens_attribution_top_k=2,
+    )
+
+    assert consumer.generate_calls, "compute_attribution_graph should invoke the CT producer"
+    assert torch.equal(torch.as_tensor(consumer.generate_calls[0]["attribution_targets"]), torch.tensor([3, 2]))
+    metadata = json.loads(result.graph_metadata)
+    assert metadata["attribution_target_source"] == "jlens_readout"
+    assert metadata["jlens_target_token_ids"] == [3, 2]
+
+
+@pytest.mark.parametrize("backend", ["transformerlens", "nnsight"])
 def test_ct_feature_intervention_consumes_round_tripped_store_across_backends(tmp_path, backend: str) -> None:
     input_store = _round_trip_store(
         tmp_path,

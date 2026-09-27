@@ -17,7 +17,7 @@ from interpretune.analysis.optools import JLensArtifact
 from tests.runif import RunIf
 
 VOCAB, D, LAYERS = 24, 8, (0, 4, 8)
-KEY = "blocks.4.hook_in"
+KEY = "blocks.4.hook_out"
 
 
 class _Tok:
@@ -333,12 +333,12 @@ class TestCrossBackendReadoutAgreement:
                 hf_model_name="openai-community/gpt2",
                 provenance={},
             )
-            batch = AnalysisBatch(cache={"blocks.6.hook_in": activations})
+            batch = AnalysisBatch(cache={"blocks.6.hook_out": activations})
             original = optools.resolve_jlens
             optools.resolve_jlens = lambda m, **k: artifact
             try:
                 return jlens_ops.jlens_read_impl(
-                    module, batch, None, 0, jlens_layer=6, jlens_cache_key="blocks.6.hook_in", jlens_top_k=20
+                    module, batch, None, 0, jlens_layer=6, jlens_cache_key="blocks.6.hook_out", jlens_top_k=20
                 )
             finally:
                 optools.resolve_jlens = original
@@ -386,7 +386,7 @@ class TestRealLensSmoke:
         activations = torch.randn(1, 4, artifact.d_model)
         out = jlens_ops.jlens_read_impl(
             module,
-            AnalysisBatch(cache={f"blocks.{layer}.hook_in": activations}),
+            AnalysisBatch(cache={jlens_ops.default_jlens_cache_key(layer): activations}),
             None,
             0,
             jlens_layer=layer,
@@ -394,3 +394,57 @@ class TestRealLensSmoke:
         )
         assert out["jlens_top_token_ids"].shape == (1, 1, 5)
         assert len(out["jlens_top_token_strings"][0][0]) == 5
+
+
+class TestDefaultCacheKeyIsTheBlockOutput:
+    """The lenses are fitted on each block's OUTPUT, so the key the ops read by default must hold exactly that.
+
+    The synthetic cases above feed random activations under whatever key they name, so they cannot tell the
+    block's input from its output. This one takes the cache from a real forward through the NNsight model
+    backend and compares both keys with the model's own hidden states: ``hidden_states[L + 1]`` is the output
+    of block ``L`` and ``hidden_states[L]`` its input.
+    """
+
+    N_LAYERS, D_MODEL, LAYER = 4, 32, 2
+
+    @pytest.fixture(scope="class")
+    def nnsight_tiny_gpt2(self, tmp_path_factory):
+        from nnsight import LanguageModel
+        from transformers import AutoTokenizer, GPT2Config, GPT2LMHeadModel
+
+        from interpretune.adapters.nnsight.backends import (
+            HookNameResolver,
+            NNsightModelBackend,
+            get_default_configs_per_pass,
+        )
+
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        torch.manual_seed(0)
+        config = GPT2Config(
+            n_layer=self.N_LAYERS, n_head=4, n_embd=self.D_MODEL, vocab_size=len(tokenizer), n_positions=32
+        )
+        path = tmp_path_factory.mktemp("tiny_gpt2_cache_key")
+        GPT2LMHeadModel(config).eval().save_pretrained(path)
+        tokenizer.save_pretrained(path)
+        lm = LanguageModel(str(path), device_map="cpu", dispatch=True)
+        hf_model = NNsightModelBackend._get_hf_model(lm)
+        backend = NNsightModelBackend(
+            HookNameResolver(hf_model.config.architectures[0]), configs_per_pass=get_default_configs_per_pass()
+        )
+        backend.register_model_hooks(lm)
+        return lm, hf_model, backend
+
+    def test_the_default_key_holds_the_output_of_the_lens_layer(self, nnsight_tiny_gpt2):
+        lm, hf_model, backend = nnsight_tiny_gpt2
+        layer = self.LAYER
+        ids = torch.tensor([[464, 3139, 318, 257, 1332]])
+        default_key, input_key = jlens_ops.default_jlens_cache_key(layer), f"blocks.{layer}.hook_in"
+        assert default_key == f"blocks.{layer}.hook_out"
+        with torch.no_grad():
+            _, cache = backend.fwd_w_cache(lm, {"input_ids": ids}, names_filter=[default_key, input_key])
+            hidden = hf_model(ids, output_hidden_states=True).hidden_states
+        block_output, block_input = hidden[layer + 1], hidden[layer]
+        torch.testing.assert_close(cache[default_key].float(), block_output.float())
+        # the positive control: the input key really is a different residual, so the assertion above can fail
+        torch.testing.assert_close(cache[input_key].float(), block_input.float())
+        assert not torch.allclose(block_output, block_input)
