@@ -231,6 +231,225 @@ def generate_analysis_dataset(
         raise  # Re-raise after logging to ensure proper error handling
 
 
+def _fingerprintable(value: Any, *, path: str = "root") -> Any:
+    """Reduce ``value`` to plain data the datasets Hasher takes deterministically.
+
+    Tensors hash by value (shape, dtype and bytes), mappings sort by key, and every branch that cannot
+    be identified stably -- a closure, an unhandled type -- raises :class:`TypeError` naming the path
+    instead of falling back to ``repr``, whose address component would silently make the key unique per
+    run (the failure #618 measured: entries nothing could reuse).
+    """
+    import dataclasses
+    import enum
+
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, torch.Tensor):
+        detached = value.detach().to("cpu", copy=True).contiguous()
+        import hashlib
+
+        return {
+            "kind": "tensor",
+            "shape": list(detached.shape),
+            "dtype": str(detached.dtype),
+            "sha256": hashlib.sha256(detached.numpy().tobytes()).hexdigest(),
+        }
+    if isinstance(value, range):
+        return {"kind": "range", "start": value.start, "stop": value.stop, "step": value.step}
+    try:
+        import hashlib
+
+        import numpy as np
+
+        if isinstance(value, np.ndarray):
+            contiguous = np.ascontiguousarray(value)
+            return {
+                "kind": "ndarray",
+                "shape": list(contiguous.shape),
+                "dtype": str(contiguous.dtype),
+                "sha256": hashlib.sha256(contiguous.tobytes()).hexdigest(),
+            }
+    except ImportError:
+        pass
+    if isinstance(value, enum.Enum):
+        return {"kind": "enum", "type": f"{type(value).__module__}.{type(value).__qualname__}", "value": value.value}
+    if isinstance(value, dict):
+        return {
+            "kind": "dict",
+            "items": sorted(
+                ((repr(k), _fingerprintable(v, path=f"{path}[{k!r}]")) for k, v in value.items()),
+                key=lambda item: item[0],
+            ),
+        }
+    if isinstance(value, (list, tuple)):
+        return {
+            "kind": "list" if isinstance(value, list) else "tuple",
+            "items": [_fingerprintable(v, path=f"{path}[{i}]") for i, v in enumerate(value)],
+        }
+    if isinstance(value, (set, frozenset)):
+        return {
+            "kind": "set",
+            "items": sorted((repr(_fingerprintable(v, path=f"{path}{{...}}")) for v in value)),
+        }
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {
+            "kind": "dataclass",
+            "type": f"{type(value).__module__}.{type(value).__qualname__}",
+            "fields": sorted(
+                (
+                    (f.name, _fingerprintable(getattr(value, f.name), path=f"{path}.{f.name}"))
+                    for f in dataclasses.fields(value)
+                ),
+                key=lambda item: item[0],
+            ),
+        }
+    from interpretune.analysis.ops.base import AnalysisOp
+
+    if isinstance(value, AnalysisOp):
+        return {
+            "kind": "op",
+            "name": value.name,
+            "definition": _fingerprintable(
+                {
+                    "description": value.description,
+                    "input_schema": value.input_schema,
+                    "output_schema": value.output_schema,
+                    "impl_params": value.impl_params,
+                    "uses_default_hooks": value.uses_default_hooks,
+                    "requires_grad": value.requires_grad,
+                    "per_latent_preds": value.per_latent_preds,
+                    "required_intervention_modes": sorted(str(m) for m in value.required_intervention_modes),
+                    "required_position_scopes": sorted(str(s) for s in value.required_position_scopes),
+                },
+                path=f"{path}<op:{value.name}>",
+            ),
+        }
+    if callable(value):
+        qualname = getattr(value, "__qualname__", None)
+        module = getattr(value, "__module__", None)
+        if not qualname or not module or "<locals>" in qualname or "<lambda>" in qualname:
+            raise TypeError(
+                f"cannot fingerprint {path}: {value!r} has no stable identity "
+                "(closure or lambda); pass an equivalent named callable"
+            )
+        return {"kind": "callable", "id": f"{module}.{qualname}"}
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return {
+            "kind": "todict",
+            "type": f"{type(value).__module__}.{type(value).__qualname__}",
+            "value": _fingerprintable(value.to_dict(), path=f"{path}.to_dict()"),
+        }
+    raise TypeError(
+        f"cannot fingerprint {path}: no stable normalization for {type(value).__module__}.{type(value).__qualname__}"
+    )
+
+
+def analysis_case_fingerprint(
+    *,
+    target_part: str,
+    op: Any,
+    run_inputs: dict[str, Any] | None = None,
+    names_filter: Any = None,
+    package_version: str | None = None,
+) -> str:
+    """Build the per-case generator-cache key #621 needs: one entry per computation, shared across runs.
+
+    The mix covers the target part (composition, datamodule flavour, batch shape, suite inputs -- built
+    by the caller, which owns those), the op (name AND definition, so a redefined hub op cannot serve
+    another definition's rows), the case's ``run_inputs`` hashed by value, the ``names_filter``, and the
+    package version. Two cases sharing any of those share cache files, which is exactly the #606 failure
+    (eight intervention cases landing in two entries); two runs sharing all of them share everything.
+
+    The version must be the full code identity (commit included): a coarse version would serve rows
+    generated by different code. That makes CI write-only per commit by construction, so a shared
+    directory also needs :func:`prune_generator_cache` -- key correctness and storage boundedness are
+    the two halves of this issue, and neither substitutes for the other.
+    """
+    from datasets.fingerprint import Hasher
+
+    import hashlib
+
+    if package_version is None:
+        try:
+            from importlib.metadata import version
+
+            package_version = version("interpretune")
+        except Exception:
+            package_version = "unknown"
+    mix = Hasher.hash(
+        {
+            "target": target_part,
+            "op": _fingerprintable(op, path="op"),
+            "run_inputs": _fingerprintable(dict(run_inputs or {}), path="run_inputs"),
+            "names_filter": _fingerprintable(names_filter, path="names_filter"),
+            "package_version": str(package_version),
+        }
+    )
+    return hashlib.sha256(mix.encode()).hexdigest()[:32]
+
+
+def analysis_cfg_fingerprint(
+    cfg: AnalysisCfg,
+    *,
+    target_part: str,
+    package_version: str | None = None,
+) -> str:
+    """Thin wrapper reading the case identity off a resolved :class:`AnalysisCfg`.
+
+    Takes the resolved ``cfg.op`` (post ``init_analysis_cfgs``) rather than ``target_op`` so the key
+    names what actually runs, plus ``run_inputs`` and ``names_filter`` as given.
+    """
+    return analysis_case_fingerprint(
+        target_part=target_part,
+        op=cfg.op if cfg.op is not None else cfg.target_op,
+        run_inputs=cfg.run_inputs,
+        names_filter=cfg.names_filter,
+        package_version=package_version,
+    )
+
+
+def prune_generator_cache(cache_dir: str | Path, *, max_bytes: int) -> dict[str, int]:
+    """Delete oldest-first generator cache files over ``max_bytes``; the bounded-storage half of #621.
+
+    Datasets names generator files ``<fingerprint>-*.arrow`` (plus adjacent ``.json``/``.lock`` sidecars
+    sharing the fingerprint stem), so eviction is per fingerprint stem by oldest mtime. Returns counts
+    ``{"kept_stems": n, "evicted_stems": m, "evicted_bytes": b}``; a missing directory is a no-op.
+    """
+    import os
+
+    root = Path(cache_dir)
+    stats = {"kept_stems": 0, "evicted_stems": 0, "evicted_bytes": 0}
+    if not root.is_dir():
+        return stats
+    stems: dict[str, dict[str, Any]] = {}
+    for entry in os.scandir(root):
+        if not entry.is_file():
+            continue
+        stem = entry.name.split("-", 1)[0] if "-" in entry.name else entry.name
+        record = stems.setdefault(stem, {"size": 0, "mtime": entry.stat().st_mtime, "files": []})
+        stat = entry.stat()
+        record["size"] += stat.st_size
+        record["mtime"] = min(record["mtime"], stat.st_mtime)
+        record["files"].append(entry.path)
+    total = sum(record["size"] for record in stems.values())
+    for stem in sorted(stems, key=lambda s: stems[s]["mtime"]):
+        if total <= max_bytes:
+            break
+        record = stems[stem]
+        for path in record["files"]:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        total -= record["size"]
+        stats["evicted_stems"] += 1
+        stats["evicted_bytes"] += record["size"]
+    stats["kept_stems"] = len(stems) - stats["evicted_stems"]
+    return stats
+
+
 def core_analysis_loop(
     module: ITModule,
     datamodule: ITDataModule,
