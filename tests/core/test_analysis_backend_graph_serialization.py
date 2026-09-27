@@ -278,12 +278,38 @@ def test_compute_attribution_graph_impl_builds_custom_target_from_concept_direct
 
 
 @pytest.mark.parametrize("basis", ["jlens_paper", "jlens_norm_aware"])
-def test_a_jlens_basis_direction_is_refused_as_a_final_residual_target(basis: str) -> None:
-    """Circuit-tracer applies target vectors to the final residual; a J-lens direction belongs to the lens layer.
+def test_a_jlens_basis_direction_is_read_at_the_lens_layer(basis: str) -> None:
+    """A J-lens direction lives in the output of the lens layer, so its target is read there, not at the final
+    residual where it would be approximately right only where the lens Jacobian is near the identity."""
+    graph = _make_graph()
+    module = _FakeModule(graph=graph)
+    captured: dict[str, object] = {}
 
-    Before the basis was threaded through, this built a CustomTarget from the layer-l direction and returned a plausible
-    graph.
-    """
+    def _capture_generate(prompt: str, **kwargs) -> Graph:
+        captured.update(kwargs)
+        return graph
+
+    module.generate_attribution_graph = _capture_generate  # type: ignore[method-assign]
+    analysis_batch = AnalysisBatch(
+        prompts=[graph.input_string],
+        concept_direction=torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32),
+        concept_label="Concept: Capitals - States",
+        concept_group_a_token_ids=[0, 3],
+        concept_basis=basis,
+        jlens_layer=4,
+    )
+    result = compute_attribution_graph_impl(module, analysis_batch, batch=None, batch_idx=0)
+    (target,) = captured["attribution_targets"]  # type: ignore[misc]
+    assert isinstance(target, CustomTarget)
+    assert target.layer == 4 and target.position is None  # the lens layer's output, at the last position
+    assert torch.allclose(target.vec, torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32))
+    assert json.loads(result.graph_metadata)["concept_basis"] == basis
+
+
+@pytest.mark.parametrize("basis", ["jlens_paper", "jlens_norm_aware"])
+def test_a_jlens_basis_direction_without_its_layer_is_refused(basis: str) -> None:
+    """Without the lens layer a J-lens direction has nowhere correct to be read; falling back to the final residual
+    would return a plausible graph for the wrong read."""
     graph = _make_graph()
     module = _FakeModule(graph=graph)
     module.generate_attribution_graph = lambda prompt, **kwargs: graph  # type: ignore[method-assign]
@@ -293,9 +319,8 @@ def test_a_jlens_basis_direction_is_refused_as_a_final_residual_target(basis: st
         concept_label="Concept: Capitals - States",
         concept_group_a_token_ids=[0, 3],
         concept_basis=basis,
-        jlens_layer=4,
     )
-    with pytest.raises(ValueError, match=rf"concept_basis='{basis}'.*final residual stream.*concept_basis='embed'"):
+    with pytest.raises(ValueError, match=rf"concept_basis='{basis}'.*no jlens_layer names that layer"):
         compute_attribution_graph_impl(module, analysis_batch, batch=None, batch_idx=0)
 
 
@@ -315,10 +340,12 @@ def test_an_embed_basis_direction_still_builds_its_target_and_records_the_basis(
         concept_label="Concept: Capitals - States",
         concept_group_a_token_ids=[0, 3],
         concept_basis="embed",
+        jlens_layer=4,  # left by an earlier jlens_read; must not site an embed-basis target
     )
     result = compute_attribution_graph_impl(module, analysis_batch, batch=None, batch_idx=0)
     (target,) = captured["attribution_targets"]  # type: ignore[misc]
     assert isinstance(target, CustomTarget)
+    assert target.layer is None  # unembedding rows live in the final residual, where an unsited target is read
     assert torch.allclose(target.vec, torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32))
     assert json.loads(result.graph_metadata)["concept_basis"] == "embed"
 

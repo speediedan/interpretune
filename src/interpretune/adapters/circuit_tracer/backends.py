@@ -165,25 +165,30 @@ class CircuitTracerAnalysisBackend:
         concept_group_b_token_ids: Any = None,
         concept_direction_mode: Any = None,
         concept_basis: Any = None,
+        jlens_layer: Any = None,
     ) -> list[Any] | None:
         r"""Build circuit-tracer ``LogitTarget``s expressing a concept direction, or None if unavailable.
 
-        Circuit-tracer applies a ``CustomTarget`` vector to the FINAL residual stream. A J-lens-basis direction is
-        $J_\ell^{\mathsf{T}} u$, whose inner product with the residual at layer $\ell$ approximates the token's
-        readout; scored against the final residual it is approximately right only where $J_\ell \approx I$, and
-        nothing downstream could tell. It is refused by name.
+        A ``CustomTarget`` vector is read at the final residual stream unless it names a block, in which case it
+        is read at that block's output. A J-lens-basis direction is $J_\ell^{\mathsf{T}} u$, whose inner product
+        with the output of block $\ell$ approximates the token's readout, so it is read there: at the final
+        residual it would be approximately right only where $J_\ell \approx I$, and nothing downstream could
+        tell. Without the lens layer such a direction has nowhere correct to be read and is refused by name.
         """
         from circuit_tracer.attribution.targets import CustomTarget
 
         from interpretune.analysis.optools import JLENS_BASIS_NAMES
 
+        target_layer = None
         if concept_basis in JLENS_BASIS_NAMES.values():
-            raise ValueError(
-                f"concept_basis={concept_basis!r} builds a direction in the residual space of the lens layer, but "
-                "circuit-tracer applies attribution-target vectors to the final residual stream, where that "
-                "direction does not belong. Build the target direction with concept_basis='embed' (unembedding "
-                "rows, which do live there), or pass explicit attribution_targets."
-            )
+            if jlens_layer is None:
+                raise ValueError(
+                    f"concept_basis={concept_basis!r} builds a direction in the residual space of the lens layer, "
+                    "but no jlens_layer names that layer, so the target has nowhere correct to be read. Build the "
+                    "direction with concept_direction (which records jlens_layer), or pass explicit "
+                    "attribution_targets."
+                )
+            target_layer = int(jlens_layer)
 
         group_a_token_ids = [int(token_id) for token_id in (concept_group_a_token_ids or [])]
         if group_a_token_ids:
@@ -203,6 +208,7 @@ class CircuitTracerAnalysisBackend:
                 token_str=str(concept_label or concept_direction_mode or "concept_direction"),
                 prob=float(concept_prob),
                 vec=concept_direction_tensor,
+                layer=target_layer,
             )
         ]
 
