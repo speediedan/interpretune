@@ -6,6 +6,7 @@ definitions can stay thin and delegate backend-specific logic to a dedicated ana
 
 from __future__ import annotations
 
+import contextlib
 import json
 from typing import Any, Mapping
 
@@ -34,12 +35,13 @@ class CircuitTracerAnalysisBackend:
 
     @property
     def feature_intervention_support(self) -> FeatureInterventionSupport:
-        """The three value sources circuit-tracer's feature intervention accepts, with layer constraints and
-        returns."""
+        """The three value sources circuit-tracer's feature intervention accepts, with layer constraints, returns
+        and norm-denominator freezing."""
         return FeatureInterventionSupport(
             value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"}),
             constrainable_layers=True,
             returns_activations=True,
+            freezable_norms=True,
         )
 
     @property
@@ -242,6 +244,7 @@ class CircuitTracerAnalysisBackend:
             "apply_activation_function": _resolve("intervention_apply_activation_function", None),
             "sparse": bool(_resolve("intervention_sparse", False)),
             "return_activations": bool(_resolve("intervention_return_activations", False)),
+            "freeze_norms": bool(_resolve("intervention_freeze_norms", False)),
         }
 
         why = self.feature_intervention_support.refusal(settings)
@@ -391,6 +394,7 @@ class CircuitTracerAnalysisBackend:
             "apply_activation_function": settings["apply_activation_function"],
             "sparse": settings["sparse"],
             "return_activations": settings["return_activations"],
+            "freeze_norms": settings["freeze_norms"],
         }
         payload = {
             "intervention_config": json.dumps(config_payload, default=str),
@@ -421,6 +425,15 @@ class CircuitTracerAnalysisBackend:
         if settings["apply_activation_function"] is not None:
             kwargs["apply_activation_function"] = settings["apply_activation_function"]
         return kwargs
+
+    def feature_intervention_context(self, module: Any, prompt: Any, settings: Mapping[str, Any]) -> Any:
+        """The context the feature-intervention call runs in: norm denominators held at their clean values when
+        ``freeze_norms`` is set, nothing otherwise."""
+        if not settings.get("freeze_norms"):
+            return contextlib.nullcontext()
+        from interpretune.adapters.circuit_tracer.norm_freeze import frozen_norm_denominators
+
+        return frozen_norm_denominators(module.replacement_model, prompt)
 
     def _hydrate_intervention_specs(self, specs_json: str | None) -> list[tuple[int, int, int, float]] | None:
         if not specs_json:
@@ -482,6 +495,47 @@ class CircuitTracerAnalysisBackend:
         if extra:
             metadata.update(extra)
         return json.dumps(metadata, default=str)
+
+    def layer_local_target_provenance(self, graph: Any, attribution_targets: Any) -> list[dict[str, Any]]:
+        """For each target read at a block's output, the share of its direct attribution carried by features in the
+        first half of the layers below the read.
+
+        A graph's edges are exact with norm denominators frozen, and letting the denominators move cancels most of
+        the effect of features far upstream of a read, so a large share says to validate the read's edges with
+        ``intervention_freeze_norms``. The share is of absolute edge mass over every source of the row (features,
+        error nodes and token embeddings).
+        """
+        if not isinstance(attribution_targets, (list, tuple)):
+            return []
+        sites = [getattr(target, "layer", None) for target in attribution_targets]
+        if all(layer is None for layer in sites):
+            return []
+        adjacency = graph.adjacency_matrix
+        n_targets = len(attribution_targets)
+        if len(graph.logit_targets) != n_targets:
+            raise ValueError(
+                f"the graph carries {len(graph.logit_targets)} target rows for {n_targets} attribution targets, so "
+                "its rows cannot be matched to the targets that named a block"
+            )
+        feature_layers = graph.active_features[graph.selected_features][:, 0].to(adjacency.device)
+        n_features = int(feature_layers.numel())
+        n_sources = n_features + int(graph.cfg.n_layers) * int(graph.n_pos) + int(graph.n_pos)
+        provenance = []
+        for index, (target, layer) in enumerate(zip(attribution_targets, sites)):
+            if layer is None:
+                continue
+            row = adjacency[adjacency.shape[0] - n_targets + index].abs()
+            total = float(row[:n_sources].sum())
+            far = float(row[:n_features][feature_layers <= int(layer) // 2].sum())
+            provenance.append(
+                {
+                    "target": str(target.token_str),
+                    "layer": int(layer),
+                    "position": getattr(target, "position", None),
+                    "far_upstream_feature_share": far / total if total > 0 else 0.0,
+                }
+            )
+        return provenance
 
     def decompose_graph(self, graph: Any, extra_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         """Flatten a circuit-tracer graph into CPU tensors and JSON strings for storage."""

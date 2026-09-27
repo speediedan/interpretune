@@ -116,6 +116,9 @@ class TestFeatureInterventionSupport:
         assert "cannot return" in self.record.refusal(
             {"value_source": "constant", "value": 1.0, "return_activations": True}
         )
+        assert "cannot hold norm denominators" in self.record.refusal(
+            {"value_source": "constant", "value": 1.0, "freeze_norms": True}
+        )
 
     def test_the_bundled_backend_refuses_through_its_record(self):
         from interpretune.adapters.circuit_tracer.backends import CircuitTracerAnalysisBackend

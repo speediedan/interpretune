@@ -49,6 +49,27 @@ Interpretune now expands the supported canonical and legacy HookedTransformer sp
 backend resolution, but the portable cross-backend subset is still intentionally smaller than the full
 TransformerLens v3 hook surface.
 
+### Targets read at a block: J-lens directions
+
+A `concept_direction` built with a J-lens `concept_basis` is $J_\ell^{\mathsf T} u$, a direction in the output of the
+lens layer $\ell$. `compute_attribution_graph` attributes it there: its circuit-tracer target names the block, and the
+graph's nodes stay the transcoder features, error nodes and token embeddings. Its edges are exact in the same sense as a
+logit target's: each equals the effect of intervening on its source with attention patterns, norm denominators and MLP
+outputs held at their clean values.
+
+Validate such a graph with the norm denominators frozen. Set `intervention_freeze_norms=True` on
+`feature_intervention_forward` (it holds every residual-stream norm at its clean scale while the MLPs recompute).
+The graph treats the denominators as constants, so this is the regime its feature paths describe. When they move, the
+rescaling cancels much of the effect of features far upstream of the read, and the graph does not represent that.
+
+For each target read at a block, the graph metadata records `layer_local_targets`, including
+`far_upstream_feature_share`: the share of the target's direct attribution carried by features in the first half of
+the layers below the read. It says how much a measurement with the denominators free will differ from the graph. On
+gemma-3-1b-pt with Gemma Scope 2 transcoders, lens reads at blocks 16 and 20 drew 7 to 14% of their top features from
+the first seven layers and kept 74 to 87% of their predicted effect with everything free, as logit targets do. A read
+at block 12 drew about half and kept a quarter. With the denominators frozen, the graph's path-summed prediction
+explained 94% of that read's response (measurements on #660).
+
 ## Backend Support
 
 | Backend | Status | Model Types |

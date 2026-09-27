@@ -7,6 +7,7 @@ exception.
 
 from __future__ import annotations
 
+import json
 from typing import Any, ClassVar, cast
 
 import pytest
@@ -1444,6 +1445,14 @@ class ModelBackendConformance:
             with pytest.raises(ValueError) as refused:
                 run(intervention_constrained_layers=[0])
             assert "constrained_layers" in str(refused.value), str(refused.value)
+        if record.freezable_norms:
+            out = run(intervention_freeze_norms=True)
+            assert out.post_intervention_logits is not None
+            assert json.loads(out.intervention_config)["freeze_norms"] is True, out.intervention_config
+        else:
+            with pytest.raises(ValueError) as refused:
+                run(intervention_freeze_norms=True)
+            assert "freeze_norms" in str(refused.value), str(refused.value)
 
     @conformance_case(capability=AnalysisBackendCapability.ATTRIBUTION_GRAPH)
     def test_foreign_attention_is_refused_before_graph_construction(self, suite):

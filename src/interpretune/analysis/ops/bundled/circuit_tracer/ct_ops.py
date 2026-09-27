@@ -148,6 +148,11 @@ def compute_attribution_graph_impl(
         extra_metadata["concept_basis"] = concept_basis
     if jlens_selected is not None:
         extra_metadata.update(jlens_selected[1])
+    layer_local = analysis_backend.layer_local_target_provenance(
+        graph, attribution_graph_kwargs.get("attribution_targets")
+    )
+    if layer_local:
+        extra_metadata["layer_local_targets"] = layer_local
     analysis_batch.update(**analysis_backend.decompose_graph(graph, extra_metadata=extra_metadata))
 
     # Resolve virtual logit_target_ids from concept-direction graphs.
@@ -402,11 +407,12 @@ def feature_intervention_forward_impl(
     intervention_activation_cache = None
 
     if interventions:
-        post_logits_raw, intervention_activation_cache = replacement_model.feature_intervention(
-            prompt,
-            interventions,
-            **analysis_backend.feature_intervention_call_kwargs(settings),
-        )
+        with analysis_backend.feature_intervention_context(module, prompt, settings):
+            post_logits_raw, intervention_activation_cache = replacement_model.feature_intervention(
+                prompt,
+                interventions,
+                **analysis_backend.feature_intervention_call_kwargs(settings),
+            )
         post_logits = last_token_logits(post_logits_raw)
     else:
         post_logits = pre_logits.clone()

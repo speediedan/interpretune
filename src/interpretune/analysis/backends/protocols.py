@@ -115,6 +115,16 @@ class SupportsAttributionGraph(Protocol):
         """
         ...
 
+    def layer_local_target_provenance(self, graph: Any, attribution_targets: Any) -> list[dict[str, Any]]:
+        """Per target read at a block's output rather than the final residual: where its direct attribution comes
+        from.
+
+        Empty when no target names a block. The entry a validation needs is the share carried by features far upstream
+        of the read, because the norm-denominator response the graph holds fixed cancels most of those features' effect
+        once the model runs freely.
+        """
+        ...
+
     def decompose_graph(self, graph: Any, extra_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         """Flatten a backend-native attribution graph into serializable, storable components.
 
@@ -189,6 +199,15 @@ class SupportsFeatureInterventions(Protocol):
 
         Optional settings are omitted rather than passed as None, so a backend whose signature does not accept them
         still works.
+        """
+        ...
+
+    def feature_intervention_context(self, module: Any, prompt: Any, settings: dict[str, Any]) -> Any:
+        """The context manager the feature-intervention call runs inside, for settings a forward kwarg cannot
+        carry.
+
+        ``freeze_norms`` is the case: holding norm denominators at their clean values needs a clean pass over
+        ``prompt`` and hooks for the duration of the call. A backend with nothing to set up returns a null context.
         """
         ...
 

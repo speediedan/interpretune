@@ -170,7 +170,7 @@ Gate `FEATURE_INTERVENTION` (with `feature_intervention_support`):
 
 | case | oracle | asserts |
 | --- | --- | --- |
-| feature-intervention settings are decided by the declaration | negative, with positive control | a value source outside `value_sources` is refused by name before any forward and a declared one runs through the same path; a layer constraint and returned activations are each honoured when declared and refused by name when not |
+| feature-intervention settings are decided by the declaration | negative, with positive control | a value source outside `value_sources` is refused by name before any forward and a declared one runs through the same path; a layer constraint, returned activations and frozen norm denominators are each honoured when declared (a frozen run records `freeze_norms` in its intervention config) and refused by name when not |
 | the edge predicts the measured feature intervention | causal | scaling a top feature's activation moves the other active features and the target logits by the graph's edge weights into it, times the scale; skips by name when the record says layers cannot be constrained, since the graph is a linear model of the intervention only with every layer constrained |
 
 ## Per-mode invariants and distinguishability

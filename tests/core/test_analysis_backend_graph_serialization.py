@@ -278,9 +278,22 @@ def test_compute_attribution_graph_impl_builds_custom_target_from_concept_direct
 
 
 @pytest.mark.parametrize("basis", ["jlens_paper", "jlens_norm_aware"])
-def test_a_jlens_basis_direction_is_read_at_the_lens_layer(basis: str) -> None:
+def test_a_jlens_basis_direction_is_read_at_the_lens_layer(basis: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """A J-lens direction lives in the output of the lens layer, so its target is read there, not at the final
-    residual where it would be approximately right only where the lens Jacobian is near the identity."""
+    residual where it would be approximately right only where the lens Jacobian is near the identity.
+
+    The fake graph does not follow circuit-tracer's node layout, so the provenance seam is stubbed here to check only
+    that the op hands it the sited targets and records its answer; the computation is tested on a real model.
+    """
+    from interpretune.adapters.circuit_tracer.backends import CircuitTracerAnalysisBackend
+
+    seen_targets: list[object] = []
+
+    def _provenance(self, graph, attribution_targets):
+        seen_targets.extend(attribution_targets)
+        return [{"target": "stub", "layer": 4, "position": None, "far_upstream_feature_share": 0.5}]
+
+    monkeypatch.setattr(CircuitTracerAnalysisBackend, "layer_local_target_provenance", _provenance)
     graph = _make_graph()
     module = _FakeModule(graph=graph)
     captured: dict[str, object] = {}
@@ -303,7 +316,10 @@ def test_a_jlens_basis_direction_is_read_at_the_lens_layer(basis: str) -> None:
     assert isinstance(target, CustomTarget)
     assert target.layer == 4 and target.position is None  # the lens layer's output, at the last position
     assert torch.allclose(target.vec, torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32))
-    assert json.loads(result.graph_metadata)["concept_basis"] == basis
+    metadata = json.loads(result.graph_metadata)
+    assert metadata["concept_basis"] == basis
+    assert seen_targets == [target]
+    assert metadata["layer_local_targets"][0]["far_upstream_feature_share"] == 0.5
 
 
 @pytest.mark.parametrize("basis", ["jlens_paper", "jlens_norm_aware"])
