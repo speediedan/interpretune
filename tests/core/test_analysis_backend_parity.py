@@ -816,7 +816,9 @@ def _verify_feature_edges_direct(
         layer, position, feature_id = (int(value) for value in context.active_features[chosen_node].tolist())
         old_activation = context.activation_cache[layer, position, feature_id]
         new_activation = float((old_activation * value_scale_factor).item())
-        expected_effects = context.adjacency_matrix[:, chosen_node]
+        # an edge is the first-order effect of changing the source by its own activation, and this sets it to
+        # value_scale_factor times that, a change of (value_scale_factor - 1) activations
+        expected_effects = context.adjacency_matrix[:, chosen_node] * (value_scale_factor - 1.0)
         new_logits, new_activation_cache = model.feature_intervention(
             context.prompt,
             [(layer, position, feature_id, new_activation)],
@@ -843,6 +845,63 @@ def _verify_feature_edges_direct(
         )
 
     return summaries
+
+
+def _tiny_gemma2_replacement_model() -> NNSightReplacementModel:
+    """A three-layer, 8-wide Gemma 2 replacement model with random transcoders; runs on CPU in seconds."""
+    from circuit_tracer.transcoder import SingleLayerTranscoder, TranscoderSet
+    from circuit_tracer.transcoder.activation_functions import JumpReLU
+    from transformers import Gemma2Config
+
+    cfg = Gemma2Config(
+        architectures=["Gemma2ForCausalLM"],  # circuit-tracer's nnsight mapping keys on the architecture
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=3,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        head_dim=4,
+        vocab_size=16,
+        query_pre_attn_scalar=4,
+        final_logit_softcapping=None,
+        torch_dtype="float32",
+    )
+    cfg._name_or_path = "openai-community/gpt2"  # the tokenizer from_config loads; warmed for offline CI
+    torch.manual_seed(670)
+    transcoders = {
+        layer: SingleLayerTranscoder(cfg.hidden_size, cfg.hidden_size * 4, JumpReLU(torch.tensor(0.0), 0.1), layer)
+        for layer in range(cfg.num_hidden_layers)
+    }
+    for transcoder in transcoders.values():
+        for param in transcoder.parameters():
+            torch.nn.init.uniform_(param, a=-1, b=1)
+    transcoder_set = TranscoderSet(transcoders, feature_input_hook="hook_resid_mid", feature_output_hook="hook_mlp_out")
+    model = ReplacementModel.from_config(cfg, transcoder_set, backend="nnsight")
+    for param in model.parameters():
+        torch.nn.init.uniform_(param, a=-1, b=1)
+    for transcoder in model.transcoders[0]:  # type: ignore[index]
+        torch.nn.init.uniform_(transcoder.activation_function.threshold, a=0, b=1)
+    assert isinstance(model, NNSightReplacementModel)
+    return model
+
+
+@pytest.mark.parametrize("value_scale_factor", [0.5, 3.0])
+def test_feature_edge_verifier_scales_its_expectation_with_the_intervention(value_scale_factor: float) -> None:
+    """The verifier must predict the change it makes, not the change a factor of 2.0 would make.
+
+    Every GPU case runs at 2.0, the one factor where a unit-change expectation happens to be right, so this is the only
+    case that fails if the expectation stops scaling with the factor.
+    """
+    model = _tiny_gemma2_replacement_model()
+    tokenizer_class = type(model.tokenizer)
+    original = tokenizer_class.all_special_ids  # type: ignore[attr-defined]
+    tokenizer_class.all_special_ids = property(lambda self: [0])  # type: ignore[attr-defined]
+    try:
+        graph = attribute(torch.tensor([0, 3, 4, 3, 2, 5, 3, 8]), model)
+        summaries = _verify_feature_edges_direct(model, graph, n_samples=8, value_scale_factor=value_scale_factor)
+    finally:
+        tokenizer_class.all_special_ids = original  # type: ignore[attr-defined]
+    assert len(summaries) == 8
 
 
 def _configure_gemma3_it_op_settings(module: Any, case: Gemma3InstructionInterventionCase) -> None:
