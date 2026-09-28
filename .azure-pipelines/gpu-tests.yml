@@ -10,10 +10,14 @@
 #
 # What the filters DO buy is skipping a PR whose whole diff is docs, so the exclusions below are
 # still worth stating explicitly rather than relying on the include list not matching.
+# NO `main` IN THE CI TRIGGER (2026-09-28). The self-hosted GPU agent is one serial slot shared across
+# repositories, and a post-merge main build re-ran trees that the merged PR's gate had just validated on
+# its merge ref: several such builds queued per day, each costing a full slot or a manual rejection.
+# Main is validated by the PR gates (run on the merge commit), release/tag builds, and a MANUAL run
+# (`az pipelines run --branch main`) queued when it adds coverage and the agent is otherwise idle.
 trigger:
   branches:
     include:
-      - main
       - release/*
       - refs/tags/*
   paths:
