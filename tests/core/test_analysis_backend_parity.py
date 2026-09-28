@@ -28,6 +28,7 @@ from tests.analysis_resource_utils import clear_nnsight_test_state, serial_test_
 from tests.configuration import config_modules
 from tests.conftest import FixtPhase, clean_cuda, session_fixture_hook_exec
 from tests.core.cfg_aliases import CircuitTracerNNsightGemma2, CircuitTracerNNsightGemma3
+from tests.core.circuit_tracer_toy import TOY_PROMPT, only_token_zero_special, tiny_gemma2_replacement_model
 from tests.runif import RunIf
 
 
@@ -816,7 +817,9 @@ def _verify_feature_edges_direct(
         layer, position, feature_id = (int(value) for value in context.active_features[chosen_node].tolist())
         old_activation = context.activation_cache[layer, position, feature_id]
         new_activation = float((old_activation * value_scale_factor).item())
-        expected_effects = context.adjacency_matrix[:, chosen_node]
+        # an edge is the first-order effect of changing the source by its own activation, and this sets it to
+        # value_scale_factor times that, a change of (value_scale_factor - 1) activations
+        expected_effects = context.adjacency_matrix[:, chosen_node] * (value_scale_factor - 1.0)
         new_logits, new_activation_cache = model.feature_intervention(
             context.prompt,
             [(layer, position, feature_id, new_activation)],
@@ -843,6 +846,20 @@ def _verify_feature_edges_direct(
         )
 
     return summaries
+
+
+@pytest.mark.parametrize("value_scale_factor", [0.5, 3.0])
+def test_feature_edge_verifier_scales_its_expectation_with_the_intervention(value_scale_factor: float) -> None:
+    """The verifier must predict the change it makes, not the change a factor of 2.0 would make.
+
+    Every GPU case runs at 2.0, the one factor where a unit-change expectation happens to be right, so this is the only
+    case that fails if the expectation stops scaling with the factor.
+    """
+    model = tiny_gemma2_replacement_model()
+    with only_token_zero_special(model):
+        graph = attribute(TOY_PROMPT, model)
+        summaries = _verify_feature_edges_direct(model, graph, n_samples=8, value_scale_factor=value_scale_factor)
+    assert len(summaries) == 8
 
 
 def _configure_gemma3_it_op_settings(module: Any, case: Gemma3InstructionInterventionCase) -> None:

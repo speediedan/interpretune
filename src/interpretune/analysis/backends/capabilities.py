@@ -281,6 +281,8 @@ class FeatureInterventionSupport:
     """Whether ``constrained_layers`` can restrict the intervention to a layer subset."""
     returns_activations: bool = False
     """Whether the intervened activations can be returned beside the logits."""
+    freezable_norms: bool = False
+    """Whether ``freeze_norms`` can hold every residual-stream norm's denominator at its clean value."""
 
     def __post_init__(self) -> None:
         if not self.value_sources:
@@ -300,13 +302,15 @@ class FeatureInterventionSupport:
             )
         if settings.get("return_activations") and not self.returns_activations:
             return "return_activations was requested, and this backend cannot return the intervened activations"
+        if settings.get("freeze_norms") and not self.freezable_norms:
+            return "freeze_norms was requested, and this backend cannot hold norm denominators at their clean values"
         return None
 
     def describe(self) -> str:
         """One line for a card or a report."""
         return (
             f"value sources {sorted(self.value_sources)}, constrainable layers {self.constrainable_layers}, "
-            f"returns activations {self.returns_activations}"
+            f"returns activations {self.returns_activations}, freezable norms {self.freezable_norms}"
         )
 
 

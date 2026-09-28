@@ -199,7 +199,8 @@ def measured_capabilities_lines(report: dict[str, Any] | None, source_revision: 
             lines.append(
                 f"- feature intervention: value sources {', '.join(f'`{v}`' for v in fi.get('value_sources') or [])}; "
                 f"constrainable layers {fi.get('constrainable_layers')};"
-                f" returns activations {fi.get('returns_activations')}"
+                f" returns activations {fi.get('returns_activations')};"
+                f" freezable norms {fi.get('freezable_norms')}"
             )
     lines += [
         "",

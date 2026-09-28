@@ -1600,6 +1600,7 @@
         "intervention_apply_activation_function": null,
         "intervention_sparse": false,
         "intervention_return_activations": false,
+        "intervention_freeze_norms": false,
         "nnsight_remote": false,
         "ndif_api_key": null
       }
@@ -2101,6 +2102,7 @@
         "intervention_apply_activation_function": null,
         "intervention_sparse": false,
         "intervention_return_activations": false,
+        "intervention_freeze_norms": false,
         "nnsight_remote": false,
         "ndif_api_key": null
       }
@@ -2356,6 +2358,7 @@
         "intervention_apply_activation_function": null,
         "intervention_sparse": false,
         "intervention_return_activations": false,
+        "intervention_freeze_norms": false,
         "nnsight_remote": false,
         "ndif_api_key": null
       }
@@ -3090,6 +3093,7 @@
         "intervention_apply_activation_function": null,
         "intervention_sparse": false,
         "intervention_return_activations": false,
+        "intervention_freeze_norms": false,
         "nnsight_remote": false,
         "ndif_api_key": null
       }
@@ -3358,6 +3362,7 @@
         "intervention_apply_activation_function": null,
         "intervention_sparse": false,
         "intervention_return_activations": false,
+        "intervention_freeze_norms": false,
         "nnsight_remote": false,
         "ndif_api_key": null
       }

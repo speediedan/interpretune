@@ -135,6 +135,9 @@ class CircuitTracerConfig(ITSerializableCfg):
     intervention_sparse: bool = False
     """Whether to request intervention activations alongside logits from circuit-tracer."""
     intervention_return_activations: bool = False
+    """Whether to hold every residual-stream norm denominator at its clean value during intervention, the regime an
+    attribution graph's edges describe (the graph treats the denominators as constants)."""
+    intervention_freeze_norms: bool = False
 
     # NNsight backend-specific settings
     """Whether to use remote execution for NNsight backend.

@@ -38,9 +38,8 @@ def _jlens_readout_targets(analysis_batch: AnalysisBatch, kwargs: dict) -> tuple
     """Token targets selected by a preceding ``jlens_read``: the top-k readout tokens at its last read position.
 
     The J-lens chooses WHICH tokens to attribute; attribution itself runs on their ordinary logits at the final
-    layer, where circuit-tracer applies targets. A target living at the lens layer needs a layer-local injection
-    that circuit-tracer does not provide yet, and a J-lens-basis direction used as a final-residual target is refused
-    (see ``build_concept_attribution_targets``).
+    layer. To attribute the lens read itself, at the lens layer, build a J-lens-basis ``concept_direction``: its
+    target is read at the output of the lens layer (see ``build_concept_attribution_targets``).
     """
     source = kwargs.pop("attribution_target_source", analysis_batch.get("attribution_target_source"))
     if source not in ATTRIBUTION_TARGET_SOURCES:
@@ -113,6 +112,7 @@ def compute_attribution_graph_impl(
             concept_group_b_token_ids=concept_group_b_token_ids,
             concept_direction_mode=concept_direction_mode,
             concept_basis=concept_basis,
+            jlens_layer=analysis_batch.get("jlens_layer"),
         )
 
     # Only forward kwargs consumed by graph construction. Composite pipeline
@@ -148,6 +148,11 @@ def compute_attribution_graph_impl(
         extra_metadata["concept_basis"] = concept_basis
     if jlens_selected is not None:
         extra_metadata.update(jlens_selected[1])
+    layer_local = analysis_backend.layer_local_target_provenance(
+        graph, attribution_graph_kwargs.get("attribution_targets")
+    )
+    if layer_local:
+        extra_metadata["layer_local_targets"] = layer_local
     analysis_batch.update(**analysis_backend.decompose_graph(graph, extra_metadata=extra_metadata))
 
     # Resolve virtual logit_target_ids from concept-direction graphs.
@@ -402,11 +407,12 @@ def feature_intervention_forward_impl(
     intervention_activation_cache = None
 
     if interventions:
-        post_logits_raw, intervention_activation_cache = replacement_model.feature_intervention(
-            prompt,
-            interventions,
-            **analysis_backend.feature_intervention_call_kwargs(settings),
-        )
+        with analysis_backend.feature_intervention_context(module, prompt, settings):
+            post_logits_raw, intervention_activation_cache = replacement_model.feature_intervention(
+                prompt,
+                interventions,
+                **analysis_backend.feature_intervention_call_kwargs(settings),
+            )
         post_logits = last_token_logits(post_logits_raw)
     else:
         post_logits = pre_logits.clone()

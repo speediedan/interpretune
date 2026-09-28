@@ -186,17 +186,20 @@ git-deps = [
     #   decoderesearch/circuit-tracer#79    transformers v5 compatibility
     #   decoderesearch/circuit-tracer#111   interp-engine support (supplies InterpEngineReplacementModel,
     #                                       which the adapter composition consumes rather than reimplements)
+    # plus one fork-only change, not yet proposed upstream:
+    #   layer-local custom targets          a CustomTarget read at a block's output rather than the final
+    #                                       residual, which a J-lens-basis attribution target needs (#661)
     #
     # No release carries what we need: PyPI has only 0.5.0, and the correctness fix below is in no
-    # upstream tag. RETIRE this pin once both PRs merge -- a fork pin outliving upstream is how a fork
-    # becomes a maintenance surface.
+    # upstream tag. RETIRE this pin once both PRs merge and the layer-local change lands upstream -- a
+    # fork pin outliving upstream is how a fork becomes a maintenance surface.
     #
     # The pin MUST include "Canonicalize nnsight trace inputs via tokenized tensors". Before it, a raw
     # `str` prompt was re-tokenized with add_special_tokens=True, double-prefixing BOS and silently
     # shifting every position index in the feature-intervention path. The branch is rebased as the PRs
     # evolve, so VERIFY BY CONTENT, not by SHA:
     #   git log --grep="Canonicalize nnsight trace" <pin>   -> must return exactly one commit
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@c3e298f5a71b6b0b01b717e8b446639e730e2485",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@28d94f8c60c6e5351c6cc707f52bb3ce0e48fc2d",
     # sae-lens: pinned to the head of decoderesearch/SAELens#739 (transformer-lens 4.0 support), because
     # every sae-lens release through 6.51.2 fails `import sae_lens` under transformer-lens 4.0
     # (`No module named 'transformer_lens.HookedTransformer'`). RETIRE this pin for a released floor in

@@ -103,13 +103,25 @@ class SupportsAttributionGraph(Protocol):
         concept_group_b_token_ids: Any = None,
         concept_direction_mode: Any = None,
         concept_basis: Any = None,
+        jlens_layer: Any = None,
     ) -> list[Any] | None:
         """Build backend-native attribution targets for a concept direction, or None if unsupported.
 
         Returning None is a valid answer: a backend that cannot express concept-directed attribution
         targets says so here rather than raising, and the caller falls back. ``concept_basis`` names the
         space the direction was built in; a backend refuses a basis whose directions do not live where it
-        applies targets, because the resulting graph would be plausible and wrong.
+        applies targets, because the resulting graph would be plausible and wrong. ``jlens_layer`` is the
+        block whose output a J-lens-basis direction lives in, for a backend that can read a target there.
+        """
+        ...
+
+    def layer_local_target_provenance(self, graph: Any, attribution_targets: Any) -> list[dict[str, Any]]:
+        """Per target read at a block's output rather than the final residual: where its direct attribution comes
+        from.
+
+        Empty when no target names a block. The entry a validation needs is the share carried by features far upstream
+        of the read, because the norm-denominator response the graph holds fixed cancels most of those features' effect
+        once the model runs freely.
         """
         ...
 
@@ -187,6 +199,15 @@ class SupportsFeatureInterventions(Protocol):
 
         Optional settings are omitted rather than passed as None, so a backend whose signature does not accept them
         still works.
+        """
+        ...
+
+    def feature_intervention_context(self, module: Any, prompt: Any, settings: dict[str, Any]) -> Any:
+        """The context manager the feature-intervention call runs inside, for settings a forward kwarg cannot
+        carry.
+
+        ``freeze_norms`` is the case: holding norm denominators at their clean values needs a clean pass over
+        ``prompt`` and hooks for the duration of the call. A backend with nothing to set up returns a null context.
         """
         ...
 
