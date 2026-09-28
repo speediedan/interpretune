@@ -17,7 +17,6 @@ from interpretune.base import _call_itmodule_hook, ITDataModule
 from interpretune.runners import SessionRunner, run_step
 from interpretune.protocol import AllPhases, AnalysisStoreProtocol
 from interpretune.config import AnalysisRunnerCfg, AnalysisCfg, init_analysis_cfgs
-from interpretune.utils import rank_zero_warn
 from interpretune.utils.exceptions import handle_exception_with_debug_dump
 
 
@@ -289,26 +288,6 @@ class AnalysisRunner(SessionRunner):
         # Extend supported commands to include analysis
         self.supported_commands = (*self.supported_commands, "analysis")
         self.analysis_results = {}
-
-    def it_init(self):
-        """Initialize the session, then verify the module can serve the requested phase.
-
-        Analysis needs an ``analysis_step``, which a module composed for training alone will not have;
-        checking at init makes that a setup error rather than a failure several batches in.
-        """
-        super().it_init()
-        module = self.run_cfg.module
-        # Check if running analysis and the module needs an analysis_step
-        if hasattr(self, "phase") and self.phase == "analysis":
-            if not hasattr(module, "analysis_step") or getattr(module, "_generated_analysis_step", False):
-                if hasattr(module, "analysis_cfg") and hasattr(module.analysis_cfg, "op"):  # type: ignore[attr-defined]  # protocol provides analysis_cfg
-                    # Apply the analysis config to generate the analysis_step
-                    module.analysis_cfg.apply(module)  # type: ignore[attr-defined]  # protocol provides analysis_cfg
-                else:
-                    rank_zero_warn(
-                        f"Module {module.__class__.__name__} has no analysis_step method and "
-                        "no analysis configuration to generate one."
-                    )
 
     def _run(self, phase, loop_fn, step_fn: str | None = None, *args: Any, **kwargs: Any) -> Any | None:
         self.phase = AllPhases[phase]  # type: ignore[assignment]  # phase attribute assignment

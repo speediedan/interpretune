@@ -1,7 +1,7 @@
 """Dispatcher for analysis operations."""
 
 from __future__ import annotations
-from typing import Dict, NamedTuple, Iterator, Callable, Any
+from typing import Dict, Iterator, Callable, Any
 from dataclasses import dataclass
 from pathlib import Path
 from functools import wraps
@@ -36,12 +36,6 @@ def _ensure_loaded(func):
         return func(self, *args, **kwargs)
 
     return wrapper
-
-
-class DispatchContext(NamedTuple):
-    """Context for dispatching operations."""
-
-    pass  # We don't use context keys yet but may in the future
 
 
 # Ordered, comma-separated namespaces whose ops win bare-name resolution. The env parity for
@@ -204,7 +198,7 @@ class AnalysisOpDispatcher:
         # Namespaces (`user.repo`) whose ops win BARE-name resolution, highest precedence first. Empty by
         # default: bundled ops win bare names, and opting into a newer hub copy is explicit (D8 item 2).
         self._preferred_op_namespaces: list[str] = []
-        self._dispatch_table = {}  # {op_name: {context: instantiated_op}}
+        self._dispatch_table = {}  # {op_name: factory or instantiated_op}
         self._aliases = {}  # {alias: op_name}
         self._op_to_aliases = defaultdict(list)  # {op_name: [aliases]}
         self._loaded = False
@@ -1244,20 +1238,16 @@ class AnalysisOpDispatcher:
             return False
 
     @_ensure_loaded
-    def get_op(self, op_name: str, context: DispatchContext | None = None, lazy: bool = False) -> AnalysisOp | Callable:
+    def get_op(self, op_name: str, lazy: bool = False) -> AnalysisOp | Callable:
         """Get an operation by name, optionally instantiating it if needed.
 
         Args:
             op_name: Name of the operation to retrieve
-            context: Optional context for operation dispatching
             lazy: If True, defer instantiation until the operation is actually used
 
         Returns:
             The requested operation or None if lazy=True and the op hasn't been instantiated yet
         """
-        if context is None:
-            context = DispatchContext()
-
         # Resolve names with cycle detection
         resolved_name = self._resolve_name_safe(op_name)
 
@@ -1265,36 +1255,28 @@ class AnalysisOpDispatcher:
         if resolved_name not in self._op_definitions:
             raise ValueError(f"Unknown operation: {op_name}")
 
-        # Get or create dispatch table entry for this operation
-        if resolved_name not in self._dispatch_table:
-            self._dispatch_table[resolved_name] = {}
-
-        ctx_dict = self._dispatch_table[resolved_name]
-
-        # Check if we already have an entry for this context
-        if context in ctx_dict:
-            existing = ctx_dict[context]
+        existing = self._dispatch_table.get(resolved_name)
+        if existing is None:
+            # No entry yet
             if lazy:
-                # For lazy requests, return whatever we have (factory or instance)
-                return existing
-            elif self._is_lazy_op_handle(existing):
-                # We have a factory function but need an instance
-                ctx_dict[context] = self._instantiate_op(resolved_name)
-                return ctx_dict[context]
+                # Store a factory function that will instantiate the op when needed
+                self._dispatch_table[resolved_name] = lambda: self._instantiate_op(resolved_name)
             else:
-                # We already have an instantiated operation
-                return existing
-
-        # No entry for this context yet
+                # Eagerly instantiate the operation
+                self._dispatch_table[resolved_name] = self._instantiate_op(resolved_name)
+            return self._dispatch_table[resolved_name]
         if lazy:
-            # Store a factory function that will instantiate the op when needed
-            ctx_dict[context] = lambda: self._instantiate_op(resolved_name)
+            # For lazy requests, return whatever we have (factory or instance)
+            return existing
+        elif self._is_lazy_op_handle(existing):
+            # We have a factory function but need an instance
+            self._dispatch_table[resolved_name] = self._instantiate_op(resolved_name)
+            return self._dispatch_table[resolved_name]
         else:
-            # Eagerly instantiate the operation
-            ctx_dict[context] = self._instantiate_op(resolved_name)
-        return ctx_dict[context]
+            # We already have an instantiated operation
+            return existing
 
-    def _maybe_instantiate_op(self, op_ref, context: DispatchContext = DispatchContext()) -> AnalysisOp:
+    def _maybe_instantiate_op(self, op_ref) -> AnalysisOp:
         """Ensure an operation is instantiated based on various reference types."""
         # If it's an OpWrapper, use its _ensure_instantiated method to get the actual op
         if isinstance(op_ref, OpWrapper):
@@ -1310,8 +1292,7 @@ class AnalysisOpDispatcher:
             assert isinstance(op_ref, str), "op_ref must be an OpWrapper, AnalysisOp or a string"
             op_name = op_ref
 
-        ctx_dict = self._dispatch_table.get(op_name, {})
-        op = ctx_dict.get(context)
+        op = self._dispatch_table.get(op_name)
 
         # TODO: decide if we want to handle this edge case where the dispatch_table contains a factory function
         #       that was not added by OpWrapper, basically custom op lazy loading
@@ -1321,7 +1302,7 @@ class AnalysisOpDispatcher:
             instantiated_op = op()
             if not isinstance(instantiated_op, AnalysisOp):
                 raise TypeError(f"Factory function returned {type(instantiated_op)}, expected AnalysisOp")
-            ctx_dict[context] = instantiated_op
+            self._dispatch_table[op_name] = instantiated_op
             return instantiated_op
         elif op is not None:
             if not isinstance(op, AnalysisOp):
@@ -1329,7 +1310,7 @@ class AnalysisOpDispatcher:
             return op
         else:
             # Try to get the op if it's not in the dispatch table
-            result = self.get_op(op_name, context)
+            result = self.get_op(op_name)
             if not isinstance(result, AnalysisOp):
                 raise TypeError(f"get_op returned {type(result)}, expected AnalysisOp")
             return result

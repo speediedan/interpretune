@@ -381,121 +381,28 @@ class TestAnalysisRunner:
         assert "serializable_col_cfg" in kwargs
         assert kwargs["serializable_col_cfg"] == {}
 
-    @patch("interpretune.runners.analysis.rank_zero_warn")
-    def test_analysis_runner_it_init_branches(self, mock_warn):
-        """Test all branches of AnalysisRunner.it_init when phase='analysis'."""
+    def test_analysis_runner_it_init_has_no_dead_branch(self):
+        """#279: the dead it_init branch is deleted; construction runs the base init only.
 
-        # Common setup
-        mock_module = MagicMock()
-        mock_run_cfg = MagicMock()
-        mock_run_cfg.module = mock_module
+        The override called ``analysis_cfg.apply`` only under a guard that was false at call time
+        (``phase`` is assigned in ``_run``, strictly after ``__init__``), so removing the override
+        is behavior-identical -- and repairing the guard would have pre-empted the live application
+        with a degenerate one. This pins that a runner constructed without a phase never touches
+        ``analysis_step`` generation: the module mock forbids every attribute access.
+        """
+        assert "it_init" not in it.runners.analysis.AnalysisRunner.__dict__
 
-        # Case 1: phase='analysis', no analysis_step, has analysis_cfg with op
-        runner1 = it.runners.analysis.AnalysisRunner.__new__(it.runners.analysis.AnalysisRunner)
-        runner1.phase = "analysis"
-        runner1.run_cfg = mock_run_cfg
+        module = MagicMock(spec=[])
+        runner = it.runners.analysis.AnalysisRunner.__new__(it.runners.analysis.AnalysisRunner)
+        runner.run_cfg = MagicMock()
+        runner.run_cfg.it_session = {}
+        runner.run_cfg.module = module
 
-        # Remove analysis_step attribute
-        del mock_module.analysis_step
+        with patch("interpretune.runners.core.it_init") as mock_init:
+            runner.it_init()
 
-        # Set up analysis_cfg with op
-        mock_module.analysis_cfg = MagicMock()
-        mock_module.analysis_cfg.op = MagicMock()
-
-        # Create and patch apply method
-        mock_apply = MagicMock()
-        mock_module.analysis_cfg.apply = mock_apply
-
-        # Run it_init
-        with patch("interpretune.runners.SessionRunner.it_init"):
-            runner1.it_init()
-
-        # Verify apply was called
-        mock_apply.assert_called_once_with(mock_module)
-        mock_warn.assert_not_called()
-
-        # Reset mocks
-        mock_warn.reset_mock()
-        mock_apply.reset_mock()
-
-        # Case 2: phase='analysis', has generated analysis_step, has analysis_cfg with op
-        runner2 = it.runners.analysis.AnalysisRunner.__new__(it.runners.analysis.AnalysisRunner)
-        runner2.phase = "analysis"
-        runner2.run_cfg = mock_run_cfg
-
-        # Add analysis_step and set _generated_analysis_step flag
-        mock_module.analysis_step = MagicMock()
-        mock_module._generated_analysis_step = True
-
-        # Run it_init
-        with patch("interpretune.runners.SessionRunner.it_init"):
-            runner2.it_init()
-
-        # Verify apply was called (should regenerate the step)
-        mock_apply.assert_called_once_with(mock_module)
-        mock_warn.assert_not_called()
-
-        # Reset mocks
-        mock_warn.reset_mock()
-        mock_apply.reset_mock()
-
-        # Case 3: phase='analysis', no analysis_step, no analysis_cfg with op
-        runner3 = it.runners.analysis.AnalysisRunner.__new__(it.runners.analysis.AnalysisRunner)
-        runner3.phase = "analysis"
-        runner3.run_cfg = mock_run_cfg
-
-        # Remove analysis_step
-        del mock_module.analysis_step
-
-        # Remove op from analysis_cfg
-        del mock_module.analysis_cfg.op
-
-        # Run it_init
-        with patch("interpretune.runners.SessionRunner.it_init"):
-            runner3.it_init()
-
-        # Verify warning was issued and apply was not called
-        mock_warn.assert_called_once()
-        warning_msg = mock_warn.call_args[0][0]
-        assert "has no analysis_step method" in warning_msg
-        mock_apply.assert_not_called()
-
-        # Reset mocks
-        mock_warn.reset_mock()
-
-        # Case 4: phase='analysis', has regular (non-generated) analysis_step
-        runner4 = it.runners.analysis.AnalysisRunner.__new__(it.runners.analysis.AnalysisRunner)
-        runner4.phase = "analysis"
-        runner4.run_cfg = mock_run_cfg
-
-        # Add analysis_step but no _generated_analysis_step flag
-        mock_module.analysis_step = MagicMock()
-        if hasattr(mock_module, "_generated_analysis_step"):
-            delattr(mock_module, "_generated_analysis_step")
-
-        # Run it_init
-        with patch("interpretune.runners.SessionRunner.it_init"):
-            runner4.it_init()
-
-        # Verify neither apply nor warning was called
-        mock_apply.assert_not_called()
-        mock_warn.assert_not_called()
-
-        # Case 5: phase != 'analysis'
-        runner5 = it.runners.analysis.AnalysisRunner.__new__(it.runners.analysis.AnalysisRunner)
-        runner5.phase = "train"  # Not 'analysis'
-        runner5.run_cfg = mock_run_cfg
-
-        # Remove analysis_step to make sure the check would trigger if it ran
-        del mock_module.analysis_step
-
-        # Run it_init
-        with patch("interpretune.runners.SessionRunner.it_init"):
-            runner5.it_init()
-
-        # Verify neither apply nor warning was called - branch not entered
-        mock_apply.assert_not_called()
-        mock_warn.assert_not_called()
+        mock_init.assert_called_once_with()
+        assert module.mock_calls == []
 
 
 class TestAnalysisGeneratorRefusesZeroEpochs:
