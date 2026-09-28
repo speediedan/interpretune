@@ -61,10 +61,20 @@ class LatentModelSpec:
 
 
 #: The latent model the LATENT_MODELS and GRADIENTS cases run over: one gpt2 residual SAE at the first block,
-#: from the release core's own adapter tests load. A target that declares LATENT_MODELS attaches
-#: ``inputs.latent_models`` in its session config (the seed path does so whenever the module config carries
-#: ``sae_cfgs``); a declaration with no handle attached fails those cases by name rather than skipping them.
-LATENT_MODELS = (LatentModelSpec(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre"),)
+#: from the release core's own adapter tests load, plus one Gemma Scope 2 residual SAE for the gemma-3-1b-it
+#: circuit-tracer target (layer 13, 16k width: the SAE the shared host's Hub cache already carries, so the
+#: hosted matrix warms it from ``tests/hf_warm_manifest.yaml`` rather than downloading it). A target that
+#: declares LATENT_MODELS attaches ``inputs.latent_models`` in its session config (the seed path does so
+#: whenever the module config carries ``sae_cfgs``); a declaration with no handle attached fails those cases
+#: by name rather than skipping them.
+LATENT_MODELS = (
+    LatentModelSpec(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre"),
+    LatentModelSpec(
+        release="gemma-scope-2-1b-it-res",
+        sae_id="layer_13_width_16k_l0_big",
+        model_id="google/gemma-3-1b-it",
+    ),
+)
 #: The point interventions are applied at, and the downstream point the scope discriminator observes.
 INTERVENTION_POINT = f"blocks.{CAPTURE_LAYER}.hook_in"
 OBSERVE_POINT = "blocks.11.hook_out"
@@ -244,7 +254,7 @@ class ConformanceInputs:
 
         self.supplied_extras = dict(module_cfg_extras or {})
         dm_cfg, it_cfg, dm_cls, m_cls = self.seed_config(flavour, module_cfg_extras=self.supplied_extras)
-        self._attach_latent_models(it_cfg)
+        self._attach_latent_models(it_cfg, adapter_ctx)
         it_cfg.optimizer_init = {}
         it_cfg.lr_scheduler_init = {}
         it_cfg.core_log_dir = str(self._ensure_workdir() / "logs")
@@ -288,14 +298,18 @@ class ConformanceInputs:
         for name, value in self.supplied_extras.items():
             setattr(it_cfg, name, value)
 
-    def _attach_latent_models(self, it_cfg: Any) -> None:
+    def _attach_latent_models(self, it_cfg: Any, adapter_ctx: Sequence[Any] | None = None) -> None:
         """Replace the seed's latent models with the suite's, on the suite's device and precision.
 
-        Only a module config carrying ``sae_cfgs`` (the sae_lens adapter's field) can attach one. The adapter-free
-        config has no such field and its backend declares no LATENT_MODELS, so nothing is attached and the gated
-        cases skip as undeclared. The import is deferred so this module stays importable on a bare core install.
+        Only a module config carrying ``sae_cfgs`` (the sae_lens adapter's field) can attach one -- unless the
+        session composes the sae_lens module mixin anyway (``adapter_ctx`` names it), in which case the suite
+        sets ``sae_cfgs`` itself: the mixin consumes it at setup (``instantiate_saes``), so it is a real
+        setting, not a stray attribute. The adapter-free config has no such field and its backend declares
+        no LATENT_MODELS, so nothing is attached and the gated cases skip as undeclared. The import is
+        deferred so this module stays importable on a bare core install.
         """
-        if not hasattr(it_cfg, "sae_cfgs"):
+        ctx = {getattr(a, "value", a) for a in (adapter_ctx or ())}
+        if not hasattr(it_cfg, "sae_cfgs") and "sae_lens" not in ctx:
             return
         from interpretune.adapters.sae_lens.config import SAELensFromPretrainedConfig
 

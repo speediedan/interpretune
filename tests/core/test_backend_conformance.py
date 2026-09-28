@@ -69,7 +69,9 @@ def _gemma3_circuit_tracer(inputs):
         ct.intervention_freeze_attention = None
         ct.intervention_sparse = False
 
-    return inputs.session_cfg(("core", "nnsight", "circuit_tracer"), flavour="circuit_tracer", prepare=_settings)
+    return inputs.session_cfg(
+        ("core", "nnsight", "circuit_tracer", "sae_lens"), flavour="circuit_tracer", prepare=_settings
+    )
 
 
 @RunIf(min_cuda_gpus=1)
@@ -81,12 +83,13 @@ class TestCircuitTracerConformance(ModelBackendConformance):
     selector reads class-level marks for exactly this reason. The unpatched-attention fixture is class-scoped for
     the same reason: circuit-tracer resolves its attention locations through nnsight's source tracing, which a
     TransformerLens bridge built earlier in the session breaks for every gemma model in the process (see the
-    fixture). The model backend cases run too, on a model the suite carries no latent model for, so the latent
-    cases skip with that reason.
+    fixture). The model backend cases run too, over the suite's Gemma Scope 2 latent model, so the latent
+    cases run rather than skipping: ``sae_lens`` is in the session composition, the suite attaches its
+    gemma-3-1b-it spec, and the module exposes the resulting handle.
     """
 
     target = ConformanceTarget(
-        composition=("core", "nnsight", "circuit_tracer"),
+        composition=("core", "nnsight", "circuit_tracer", "sae_lens"),
         session_cfg_factory=_gemma3_circuit_tracer,
         forward_family="hf_native",
         datamodule_flavour="circuit_tracer",
