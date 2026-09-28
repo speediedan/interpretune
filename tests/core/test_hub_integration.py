@@ -126,6 +126,7 @@ test_hub_op:
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
 
             dispatcher.load_definitions()
+            dispatcher.ensure_compiled()
 
             all_ops = dispatcher.list_operations()
 
@@ -159,6 +160,8 @@ test_hub_op:
         ):
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
             dispatcher.load_definitions()
+            # Dependency namespacing resolves at compile time (session setup), not at load (#280)
+            dispatcher.ensure_compiled()
 
             # Get the operation with dependencies
             another_op_def = dispatcher._op_definitions["testuser.test.another_op"]

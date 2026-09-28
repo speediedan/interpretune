@@ -457,6 +457,17 @@ class AnalysisOpDispatcher:
 
         compile_all_required_schemas(raw_definitions)
 
+        # Drop OpDefs converted at load for ops compilation just removed (unresolvable required
+        # ops): conversion ran on raw definitions before their fate was known, so without this
+        # the dropped ops would keep serving uncompiled schemas. Alias entries die with their
+        # target; entries for surviving ops are refreshed (not replaced) by population below.
+        # (Raw keys are declaration-spelled; OpDef names are normalized, so compare normalized.)
+        raw_names = {self._normalize_op_name(k) for k in raw_definitions}
+        for name in list(self._op_definitions):
+            op_def = self._op_definitions[name]
+            if self._normalize_op_name(getattr(op_def, "name", "")) not in raw_names:
+                del self._op_definitions[name]
+
         # Process composite operations with schema compilation
         if self._raw_composites:
             from interpretune.analysis.ops.compiler.schema_compiler import build_operation_compositions
@@ -479,11 +490,21 @@ class AnalysisOpDispatcher:
                     if "output_schema" in op_def:
                         raw_definitions[op_name]["output_schema"] = op_def["output_schema"]
 
-        # Re-convert: replaces the uncompiled OpDefs with compiled ones (deterministic rebuild)
+        # Re-convert: replaces the uncompiled OpDefs with compiled ones (deterministic rebuild).
+        # Snapshot alias registrations first: the rebuild below clears the maps, which would drop
+        # aliases registered directly on a loaded dispatcher (tests and tooling do this); restore
+        # any dropped entry whose target still exists afterwards.
+        saved_aliases = dict(self._aliases)
         self._convert_raw_definitions_to_opdefs(raw_definitions)
         self._set_default_hub_op_aliases()
         # Build aliases mapping
         self._populate_aliases_from_definitions()
+        for alias, target in saved_aliases.items():
+            if alias not in self._aliases and target in self._op_definitions:
+                self._aliases[alias] = target
+                if alias not in self._op_to_aliases[target]:
+                    self._op_to_aliases[target].append(alias)
+                self._op_definitions.setdefault(alias, self._op_definitions[target])
 
         # Save to cache for next time
         self._cache_manager.save_cache(self._op_definitions)
@@ -691,10 +712,14 @@ class AnalysisOpDispatcher:
                 if alias_norm == op_name_norm:
                     continue
 
-                # Add alias reference to definitions if not already present (normally should be already present)
-                if alias_norm not in self._op_definitions:
+                # Add alias reference to definitions if not already present (normally should be already present).
+                # An entry naming the SAME op is refreshed rather than kept: re-conversion replaces
+                # canonical OpDefs, so an entry left by an earlier population pass is a stale object
+                # with pre-compile schemas. Only a genuinely different op keeps its entry (with a
+                # warning) -- comparing names, not objects, is what tells those cases apart.
+                incumbent = self._op_definitions.get(alias_norm)
+                if incumbent is None or self._normalize_op_name(incumbent.name) == op_name_norm:
                     self._op_definitions[alias_norm] = op_def
-                if self._op_definitions[alias_norm] == op_def:
                     self._aliases[alias_norm] = op_name_norm
                     self._op_to_aliases[op_name_norm].append(alias_norm)
                 else:
