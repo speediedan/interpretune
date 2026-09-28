@@ -66,14 +66,11 @@ def test_central_difference_slopes_recover_a_linear_gap(monkeypatch):
 def test_readout_top_tokens_matches_the_jlens_read_readout():
     torch.manual_seed(0)
     d, vocab = 4, 6
-    info = UnembedNormInfo(
-        w_u=torch.randn(vocab, d),
-        norm_scale=torch.rand(d) + 0.5,
-        norm_kind="rmsnorm",
-    )
+    scale = torch.rand(d) + 0.5
+    info = UnembedNormInfo(w_u=torch.randn(vocab, d), norm_scale=scale, norm_kind="rmsnorm")
     lens = torch.randn(d, d)
     h = torch.randn(d)
-    expected = (((h @ lens.T) * info.norm_scale) @ info.w_u.T).topk(3)
+    expected = (((h @ lens.T) * scale) @ info.w_u.T).topk(3)
     top = helpers.jlens_readout_top_tokens(h, lens, info, _Tokenizer(), k=3)
     assert [label for label, _ in top] == [f"t{int(i)}" for i in expected.indices]
     assert [score for _, score in top] == pytest.approx(expected.values.tolist(), rel=1e-5)
