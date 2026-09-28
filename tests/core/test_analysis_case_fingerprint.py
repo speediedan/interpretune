@@ -89,9 +89,25 @@ class TestNormalization:
         kwargs = dict(target_part="t", run_inputs={}, names_filter=None, package_version="v1")
         assert analysis_case_fingerprint(**kwargs, op=["a", "b"]) != analysis_case_fingerprint(**kwargs, op=["a", "c"])
 
-    def test_lambda_refused_by_name(self):
-        with pytest.raises(TypeError, match="no stable identity"):
-            analysis_case_fingerprint(**_base_kwargs(op="op", run_inputs={"fn": lambda x: x}))
+    def test_lambdas_key_by_behavior(self):
+        def _make(scale):
+            return lambda x: x * scale
+
+        kwargs = dict(target_part="t", op="op", package_version="v1")
+        assert analysis_case_fingerprint(**kwargs, run_inputs={"fn": _make(2)}) == analysis_case_fingerprint(
+            **kwargs, run_inputs={"fn": _make(2)}
+        )
+        assert analysis_case_fingerprint(**kwargs, run_inputs={"fn": _make(2)}) != analysis_case_fingerprint(
+            **kwargs, run_inputs={"fn": _make(3)}
+        )
+
+    def test_bound_method_receiver_refused(self):
+        class Helper:
+            def method(self):
+                pass
+
+        with pytest.raises(TypeError, match="closes over"):
+            analysis_case_fingerprint(**_base_kwargs(run_inputs={"fn": Helper().method}))
 
     def test_unknown_type_refused_by_name(self):
         class Opaque:

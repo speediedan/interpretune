@@ -327,14 +327,7 @@ def _fingerprintable(value: Any, *, path: str = "root") -> Any:
             ),
         }
     if callable(value):
-        qualname = getattr(value, "__qualname__", None)
-        module = getattr(value, "__module__", None)
-        if not qualname or not module or "<locals>" in qualname or "<lambda>" in qualname:
-            raise TypeError(
-                f"cannot fingerprint {path}: {value!r} has no stable identity "
-                "(closure or lambda); pass an equivalent named callable"
-            )
-        return {"kind": "callable", "id": f"{module}.{qualname}"}
+        return _fingerprint_callable(value, path)
     if hasattr(value, "to_dict") and callable(value.to_dict):
         return {
             "kind": "todict",
@@ -344,6 +337,71 @@ def _fingerprintable(value: Any, *, path: str = "root") -> Any:
     raise TypeError(
         f"cannot fingerprint {path}: no stable normalization for {type(value).__module__}.{type(value).__qualname__}"
     )
+
+
+def _fingerprint_callable(value: Any, path: str) -> Any:
+    """Identify a callable by what it does, not where it lives.
+
+    Module-level named callables key on ``module.qualname``. Closures and lambdas have no stable
+    address, but their behavior is stable: key on the code (bytecode plus constants, recursively,
+    so a nested comprehension counts) together with default arguments and closed-over cell values.
+    Same behavior always keys together; different closed-over values key apart. Anything without
+    introspectable code (builtins without ``__code__`` get the qualname path only if module-level,
+    bound methods whose receiver is not a module or class) is refused by name: guessing would serve
+    one computation another's rows.
+    """
+    import types
+
+    if isinstance(value, types.MethodType):
+        receiver = value.__self__
+        if isinstance(receiver, types.ModuleType) or isinstance(receiver, type):
+            return _fingerprint_callable(value.__func__, path)
+        raise TypeError(
+            f"cannot fingerprint {path}: bound method {value!r} closes over a "
+            f"{type(receiver).__name__} instance with no stable normalization"
+        )
+    qualname = getattr(value, "__qualname__", None)
+    module = getattr(value, "__module__", None)
+    code = getattr(value, "__code__", None)
+    if code is None:
+        if qualname and module and "<locals>" not in qualname and "<lambda>" not in qualname:
+            return {"kind": "callable", "id": f"{module}.{qualname}"}
+        raise TypeError(f"cannot fingerprint {path}: {value!r} has neither stable identity nor introspectable code")
+    return {
+        "kind": "function-code",
+        "id": f"{module}.{qualname}" if qualname and module else None,
+        "code": _fingerprint_code(code, path),
+        "defaults": _fingerprintable(getattr(value, "__defaults__", None), path=f"{path}.__defaults__"),
+        "kwdefaults": _fingerprintable(getattr(value, "__kwdefaults__", None), path=f"{path}.__kwdefaults__"),
+        "closure": _fingerprintable(
+            tuple(cell.cell_contents for cell in (value.__closure__ or ())), path=f"{path}.__closure__"
+        ),
+    }
+
+
+def _fingerprint_code(code: Any, path: str) -> Any:
+    """A code object as plain data: bytecode plus recursively normalized constants.
+
+    ``co_code`` fixes the operations; ``co_consts`` fixes the values baked into them (numbers,
+    strings, and nested code objects from comprehensions and inner lambdas). Names, varnames and
+    filenames are deliberately excluded: renaming a local or moving the file changes neither behavior
+    nor rows, so keying on them would only split entries that should share.
+    """
+    import hashlib
+    import types
+
+    def _const(value: Any, at: str) -> Any:
+        if isinstance(value, types.CodeType):
+            return _fingerprint_code(value, at)
+        if value is Ellipsis:
+            return {"kind": "ellipsis"}
+        return _fingerprintable(value, path=at)
+
+    return {
+        "kind": "code",
+        "sha256": hashlib.sha256(code.co_code).hexdigest(),
+        "consts": [_const(c, f"{path}.co_consts[{i}]") for i, c in enumerate(code.co_consts)],
+    }
 
 
 def analysis_case_fingerprint(
