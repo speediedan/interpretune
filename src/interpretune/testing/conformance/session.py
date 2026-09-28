@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -61,7 +62,9 @@ class ConformanceSession:
     def run(self, analysis_cfg):
         """Run one op through the runner and return its store.
 
-        Every case goes through here.
+        Every case goes through here. When a shared generator-cache directory is opted in, the
+        runner derives each run's ``dataset_fingerprint`` itself (post-activation, from the target
+        part set at build plus the resolved case identity), so this stays a passthrough.
         """
         return self.runner.run_analysis(analysis_cfgs=analysis_cfg)
 
@@ -132,6 +135,21 @@ def build_conformance_session(target: ConformanceTarget, inputs: ConformanceInpu
         target.load()
     session = ITSession(target.build_session_cfg(inputs))
     runner = AnalysisRunner(run_cfg=dict(it_session=session, **inputs.runner_kwargs()))
+    from .inputs import shared_generator_cache, target_cache_part
+
+    shared_dir, max_bytes = shared_generator_cache()
+    if shared_dir is not None:
+        from interpretune.runners.analysis import prune_generator_cache
+
+        shared_dir.mkdir(parents=True, exist_ok=True)
+        pruned = prune_generator_cache(shared_dir, max_bytes=max_bytes)
+        log = logging.getLogger(__name__)
+        log.info("conformance generator cache %s bounded at %d bytes: %r", shared_dir, max_bytes, pruned)
+        # The per-case half of every key; the runner mixes in each case post-activation. Set once:
+        # setup mutates each cfg in place, so a key taken here could not survive a run.
+        runner.run_cfg.case_key_target_part = target_cache_part(  # type: ignore[assignment]  # run_cfg statically typed as the base SessionRunnerCfg
+            target, inputs
+        )
     caps = get_module_capabilities(session.module)
     # The dataloader is deterministic and the runner reads it in order, so the first N batches here are the
     # batches every store's rows came from; cases needing the raw inputs (the HF reference) use these.
