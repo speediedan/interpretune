@@ -25,6 +25,8 @@ from interpretune.analysis.backends import (
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.backends.capabilities import ModelBackendCapability
 from interpretune.analysis.optools import (
+    JLENS_BASIS_NAMES,
+    refuse_retired_jlens_basis,
     require_backend_capability,
     jlens_direction_rows,
     last_token_logits,
@@ -92,12 +94,12 @@ CONCEPT_AGGREGATE_ROW_FIELDS: tuple[str, ...] = (
 )
 
 #: Where a concept direction comes from. ``embed`` and ``store`` are the two pre-existing
-#: constructions; ``jlens_paper`` and ``jlens_norm_aware`` build through the read path and are two
+#: constructions; ``jlens_unfolded`` and ``jlens_folded`` build through the read path and are two
 #: values rather than one with a fold flag, because a fold parameter would be accepted and ignored
 #: for ``embed`` and ``store``. There is deliberately no default: paper reproduction wants the
-#: unfolded basis while the readout direction wants the norm-aware one, so an absent basis is
+#: unfolded basis while the readout direction wants the folded one, so an absent basis is
 #: refused by name rather than resolved to either.
-CONCEPT_BASES: tuple[str, ...] = ("embed", "store", "jlens_paper", "jlens_norm_aware")
+CONCEPT_BASES: tuple[str, ...] = ("embed", "store", "jlens_unfolded", "jlens_folded")
 
 
 def reset_concept_streaming_state(state: Any) -> None:
@@ -823,7 +825,7 @@ def _concept_direction_jlens(module: Any, analysis_batch: AnalysisBatch, kwargs:
     """
     j, layer, _artifact = resolve_jlens_layer(module, analysis_batch, kwargs)
     info = resolve_unembed_and_norm_scale(module)
-    apply_norm = basis == "jlens_norm_aware"
+    apply_norm = basis == "jlens_folded"
     tokenizer = resolve_tokenizer(module)
     raw_group_a = analysis_batch.get("concept_group_a")
     raw_group_b = analysis_batch.get("concept_group_b")
@@ -896,8 +898,8 @@ def concept_direction_impl(
     """Compute a concept direction in the basis ``concept_basis`` names.
 
     ``concept_basis`` is required and has no default: ``embed`` builds from token-group embedding
-    rows, ``store`` aggregates latent-example rows (streaming or in-memory), and ``jlens_paper`` /
-    ``jlens_norm_aware`` build per-token J-lens direction rows through the read path. An absent or
+    rows, ``store`` aggregates latent-example rows (streaming or in-memory), and ``jlens_unfolded`` /
+    ``jlens_folded`` build per-token J-lens direction rows through the read path. An absent or
     unknown basis is refused by name, and a basis whose inputs are not on the batch is refused
     naming what is missing: the previous silent fallback from missing store rows to embeddings is
     removed, because it returned a plausible direction for a basis nobody asked for.
@@ -931,11 +933,12 @@ def concept_direction_impl(
         raise ValueError(
             "concept_direction requires `concept_basis` naming where the concept vector comes from: "
             f"{list(CONCEPT_BASES)}. There is no default: paper reproduction wants the unfolded basis "
-            "while the readout direction wants the norm-aware one."
+            "while the readout direction wants the folded one."
         )
+    refuse_retired_jlens_basis(basis)
     if basis not in CONCEPT_BASES:
         raise ValueError(f"concept_basis {basis!r} is not a basis: expected one of {list(CONCEPT_BASES)}.")
-    if basis in ("jlens_paper", "jlens_norm_aware"):
+    if basis in JLENS_BASIS_NAMES.values():
         return _concept_direction_jlens(module, analysis_batch, kwargs, basis)
     aggregate_mode = analysis_batch.get("concept_aggregate_output_mode")
     analysis_inputs = kwargs.get("analysis_inputs")
@@ -1227,6 +1230,7 @@ def intervention_first_order_check_impl(
             "intervention_first_order_check requires `concept_basis` naming which basis the run "
             f"used: {list(CONCEPT_BASES)}. A result that does not name its basis cannot be compared."
         )
+    refuse_retired_jlens_basis(basis)
     if basis not in CONCEPT_BASES:
         raise ValueError(f"concept_basis {basis!r} is not a basis: expected one of {list(CONCEPT_BASES)}.")
 

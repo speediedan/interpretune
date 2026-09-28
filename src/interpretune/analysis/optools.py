@@ -737,7 +737,20 @@ def fold_norm_into_unembed_rows(info: UnembedNormInfo, token_ids: Any, *, apply_
 
 #: The two named bases, as the values an artifact records and #420's selector resolves to. Keyed by
 #: whether the final norm is folded in, because that is the only thing that distinguishes them.
-JLENS_BASIS_NAMES = {True: "jlens_norm_aware", False: "jlens_paper"}
+JLENS_BASIS_NAMES = {True: "jlens_folded", False: "jlens_unfolded"}
+
+#: Names the two bases carried before they were named for what they do, each with its replacement. They are refused
+#: rather than aliased, so a stale caller learns the new name instead of silently keeping the old one alive.
+RETIRED_JLENS_BASIS_NAMES = {"jlens_norm_aware": "jlens_folded", "jlens_paper": "jlens_unfolded"}
+
+
+def refuse_retired_jlens_basis(basis: object) -> None:
+    """Raise, naming the replacement, when ``basis`` is a retired J-lens basis name."""
+    if isinstance(basis, str) and basis in RETIRED_JLENS_BASIS_NAMES:
+        raise ValueError(
+            f"concept_basis {basis!r} was renamed to {RETIRED_JLENS_BASIS_NAMES[basis]!r}: the J-lens bases are named "
+            "for whether the final norm's scale is folded into the direction (jlens_folded) or not (jlens_unfolded)."
+        )
 
 
 def jlens_basis_name(apply_norm: bool) -> str:
@@ -922,6 +935,8 @@ __all__ = [
     "jlens_basis_name",
     "jlens_direction_rows",
     "JLENS_BASIS_NAMES",
+    "RETIRED_JLENS_BASIS_NAMES",
+    "refuse_retired_jlens_basis",
     "FEATURE_SCORE_SOURCE_ALIASES",
     "get_loss_preds_diffs",
     "last_token_logits",

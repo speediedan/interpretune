@@ -487,7 +487,7 @@ class TestMultimodalTextDecoderNorm:
     Gemma 3 at 4b and up is `Gemma3ForConditionalGeneration`, whose backbone (`model.model`) carries no `norm`
     of its own; the norm lives at `model.model.language_model.norm`. Missing it raised nothing: the model
     read as norm-less, `jlens_read` dropped the final norm's gain from its readout, and every norm-aware
-    direction came back unfolded while still being labelled `jlens_norm_aware`.
+    direction came back unfolded while still being labelled `jlens_folded`.
     """
 
     WEIGHT = 0.5
@@ -572,7 +572,7 @@ class TestTheBasisMustBeStated:
         with pytest.raises(TypeError):
             fold_norm_into_unembed_rows(self._info(), [1])  # type: ignore[call-arg]
 
-    @pytest.mark.parametrize("apply_norm,expected", [(True, "jlens_norm_aware"), (False, "jlens_paper")])
+    @pytest.mark.parametrize("apply_norm,expected", [(True, "jlens_folded"), (False, "jlens_unfolded")])
     def test_the_basis_has_a_name_to_record(self, apply_norm, expected):
         assert jlens_basis_name(apply_norm) == expected
 

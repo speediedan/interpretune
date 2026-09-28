@@ -204,7 +204,7 @@ class TestAllModesReport:
             "intervention_hook_pattern": SITE,
             "intervention_position_scope": "last_token",
             "logit_target_ids": [3, 7],
-            "concept_basis": "jlens_norm_aware",
+            "concept_basis": "jlens_folded",
         }
         if mode == "clamp":
             fields = {
@@ -228,7 +228,7 @@ class TestAllModesReport:
         batch = AnalysisBatch(**fields)
         out = concept_ops.model_fwd_intervention_impl(module, batch, raw, 0)
         checked = concept_ops.intervention_first_order_check_impl(module, out, raw, 0)
-        assert checked.concept_basis == "jlens_norm_aware"
+        assert checked.concept_basis == "jlens_folded"
         for field in ("fo_predicted_delta", "fo_measured_delta", "fo_residual"):
             assert torch.isfinite(getattr(checked, field)), (mode, field)
 
@@ -237,6 +237,13 @@ class TestRefusals:
     def test_absent_basis_is_refused(self):
         with pytest.raises(ValueError, match="concept_basis"):
             concept_ops.intervention_first_order_check_impl(_module(), AnalysisBatch(), {"input_ids": _ids()}, 0)
+
+    def test_a_retired_basis_name_is_refused_naming_its_replacement(self):
+        """A stored result carrying an old name is refused with the new one, not compared under a stale label."""
+        with pytest.raises(ValueError, match="'jlens_norm_aware' was renamed to 'jlens_folded'"):
+            concept_ops.intervention_first_order_check_impl(
+                _module(), AnalysisBatch(concept_basis="jlens_norm_aware"), {"input_ids": _ids()}, 0
+            )
 
     def test_missing_pre_post_is_refused_naming_the_composition(self):
         with pytest.raises(ValueError, match="downstream of `model_fwd_intervention`"):
