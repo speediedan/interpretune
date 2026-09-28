@@ -277,7 +277,7 @@ def test_compute_attribution_graph_impl_builds_custom_target_from_concept_direct
     assert json.loads(result.graph_metadata)["concept_label"] == "Concept: Capitals - States"
 
 
-@pytest.mark.parametrize("basis", ["jlens_paper", "jlens_norm_aware"])
+@pytest.mark.parametrize("basis", ["jlens_unfolded", "jlens_folded"])
 def test_a_jlens_basis_direction_is_read_at_the_lens_layer(basis: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """A J-lens direction lives in the output of the lens layer, so its target is read there, not at the final
     residual where it would be approximately right only where the lens Jacobian is near the identity.
@@ -322,7 +322,7 @@ def test_a_jlens_basis_direction_is_read_at_the_lens_layer(basis: str, monkeypat
     assert metadata["layer_local_targets"][0]["far_upstream_feature_share"] == 0.5
 
 
-@pytest.mark.parametrize("basis", ["jlens_paper", "jlens_norm_aware"])
+@pytest.mark.parametrize("basis", ["jlens_unfolded", "jlens_folded"])
 def test_a_jlens_basis_direction_without_its_layer_is_refused(basis: str) -> None:
     """Without the lens layer a J-lens direction has nowhere correct to be read; falling back to the final residual
     would return a plausible graph for the wrong read."""

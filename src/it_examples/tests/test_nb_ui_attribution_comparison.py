@@ -20,7 +20,7 @@ def _attribution() -> dict:
         "attribution_total": 1.0,
         "predicted_delta": 1.2,
         "unexplained_remainder": 0.2,
-        "basis": "jlens_norm_aware",
+        "basis": "jlens_folded",
     }
 
 
