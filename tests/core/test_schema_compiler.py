@@ -391,11 +391,8 @@ class TestCompileOpSchemaIntegration:
             compile_op_schema("parent_op", op_definitions)
 
     def test_compile_ops_schemas_error_handling(self, recwarn):
-        """Test that _compile_required_ops_schemas handles errors and continues processing."""
-        from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
-
-        # Create a dispatcher instance to test the private method
-        dispatcher = AnalysisOpDispatcher()
+        """Test that compile_all_required_schemas handles errors and continues processing."""
+        from interpretune.analysis.ops.compiler.schema_compiler import compile_all_required_schemas
 
         op_definitions = {
             "good_op": {
@@ -431,7 +428,7 @@ class TestCompileOpSchemaIntegration:
         original_count = len(op_definitions)
 
         # This should not raise an error, just issue warnings and remove bad ops
-        dispatcher._compile_required_ops_schemas(op_definitions)
+        compile_all_required_schemas(op_definitions)
 
         w_expected = [
             ".*Operation 'bad_op_unresolvable' cannot be compiled due to unresolved required operations.*",

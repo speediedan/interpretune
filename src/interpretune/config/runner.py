@@ -139,6 +139,12 @@ def init_analysis_cfgs(
         latent_analysis_targets: Optional analysis targets to use
         ignore_manual: Whether to ignore existing manual analysis steps
     """
+    # Schemas compile here -- at analysis setup -- rather than at dispatcher load (#280), so
+    # sessions that never run analysis never pay for compilation. Lazy import: the dispatcher
+    # reaches back into config, so a top-level import would cycle.
+    from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+    DISPATCHER.ensure_compiled()
     analysis_cfgs = to_analysis_cfgs(analysis_cfgs)
 
     # Initialize directories

@@ -18,7 +18,6 @@ from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
 from interpretune.analysis.inputs import OpStateSpec
 from interpretune.analysis.ops.base import AnalysisOp, CompositeAnalysisOp, OpSchema, ColCfg, OpWrapper
 from interpretune.analysis.ops.collection import COLLECTION_HEADER_KEY, CollectionSpec
-from interpretune.analysis.ops.auto_columns import apply_auto_columns
 from interpretune.analysis.ops.compiler.cache_manager import OpDefinitionsCacheManager, OpDef
 from interpretune.analysis.ops.compiler.load_policy import OpLoadError, op_load_failure, strict_op_load
 from interpretune.analysis.ops.dynamic_module_utils import ensure_op_paths_in_syspath, get_function_from_dynamic_module
@@ -209,6 +208,15 @@ class AnalysisOpDispatcher:
         self._op_to_aliases = defaultdict(list)  # {op_name: [aliases]}
         self._loaded = False
         self._loading_in_progress = False
+        # Raw YAML definitions as parsed, pre-compilation. Retained so schema compilation can run
+        # at session setup rather than at load (#280): the compiled result feeds OpDef conversion,
+        # so load converts uncompiled schemas first (names/aliases resolve immediately) and
+        # `_finish_compilation` re-converts once schemas are merged.
+        self._raw_definitions: dict[str, Dict] | None = None
+        self._raw_composites: dict[str, Dict] = {}
+        # Whether `_op_definitions` currently holds compiled schemas (warm cache hits set this at
+        # load; cold loads set it in `_finish_compilation`).
+        self._compiled = False
         # resolve op_paths from yaml_paths
         self.op_paths = []
         # Resolve op_paths from yaml_paths
@@ -277,13 +285,16 @@ class AnalysisOpDispatcher:
                 rank_zero_debug(f"[DISPATCHER] Cache HIT: Loaded {len(cached_definitions)} definitions from cache")
                 self._op_definitions = cached_definitions
                 self._set_default_hub_op_aliases()
+                self._compiled = True
+                self._raw_definitions = None
             else:
-                rank_zero_debug("[DISPATCHER] Cache MISS: Compiling from source")
-                # Cache miss or invalid - load from YAML and compile
-                rank_zero_debug("Cache miss or invalid, loading from YAML and compiling")
-                self._load_from_yaml_and_compile(yaml_files)
+                rank_zero_debug("[DISPATCHER] Cache MISS: loading raw definitions from source")
+                # Cache miss or invalid - parse YAML now; schemas compile at session setup
+                # (`ensure_compiled`), not here, so importing definitions stays cheap (#280).
+                rank_zero_debug("Cache miss or invalid, loading raw definitions from YAML")
+                self._load_raw_definitions(yaml_files)
 
-            # Build aliases mapping
+            # Build aliases mapping (name-level: valid on uncompiled schemas, refreshed after compile)
             self._populate_aliases_from_definitions()
 
             self._loaded = True
@@ -311,6 +322,9 @@ class AnalysisOpDispatcher:
         self._dispatch_table = {}
         self._cache_manager._yaml_files = []
         self._cache_manager._fingerprint = None
+        self._raw_definitions = None
+        self._raw_composites = {}
+        self._compiled = False
         self._loaded = False
         self.load_definitions()
         # Re-sync the top-level `it.<op>` wrappers with the reloaded registry. `OpWrapper.register_operations`
@@ -333,8 +347,8 @@ class AnalysisOpDispatcher:
             target_module = _sys.modules.get("interpretune", OpWrapper._target_module)
             OpWrapper.register_operations(target_module, self)
 
-    def _load_from_yaml_and_compile(self, yaml_files: list[Path]):
-        """Load from YAML files and compile to cache."""
+    def _load_raw_definitions(self, yaml_files: list[Path]):
+        """Parse YAML files into raw definitions, retained for compilation at session setup."""
         # Load and merge all YAML files
         raw_definitions = {}
         composite_operations = {}
@@ -388,7 +402,7 @@ class AnalysisOpDispatcher:
                             self._op_declaration_sites[comp_name] = str(yaml_file)
                     else:
                         if not isinstance(value, dict):
-                            # Reject at INGEST, not at conversion: `_compile_required_ops_schemas` runs
+                            # Reject at INGEST, not at conversion: schema compilation runs
                             # first and catches only ValueError, so a scalar reaching it raised
                             # AttributeError from `op_def.get(...)` and took down every op in the process,
                             # bundled included. The usual cause is a non-op YAML being read as op
@@ -414,16 +428,42 @@ class AnalysisOpDispatcher:
                 # Continue processing other files rather than failing completely
                 continue
 
-        # Second pass: Compile schemas with required_ops dependencies
-        self._compile_required_ops_schemas(raw_definitions)
+        # Retain raw definitions; schemas compile in `_finish_compilation` at session setup (#280),
+        # not here, so importing definitions stays cheap. Names, aliases and `it.<op>` gating resolve
+        # immediately below from the uncompiled schemas; merged fields arrive with compilation.
+        self._raw_definitions = raw_definitions
+        self._raw_composites = composite_operations
+        self._compiled = False
+
+        # Convert raw definitions to OpDef objects (uncompiled schemas; refreshed after compile)
+        self._convert_raw_definitions_to_opdefs(raw_definitions)
+        self._set_default_hub_op_aliases()
+
+    def _finish_compilation(self) -> None:
+        """Compile retained raw definitions, convert, and cache. Idempotent.
+
+        Runs once per load: repeated calls are no-ops, and a hub pull between loads reloads raw
+        definitions (resetting the flag), so compiled output can never outlive the definitions it
+        was built from. Strict-load failures surface here -- at first analysis setup or first op
+        use -- rather than at dispatcher load; that timing move is deliberate (#280): sessions
+        that never run analysis never pay for compilation and never fail on op definitions.
+        """
+        if self._compiled or self._raw_definitions is None:
+            return
+        raw_definitions = self._raw_definitions
+
+        # Compile schemas with required_ops dependencies (moved here from load, #280)
+        from interpretune.analysis.ops.compiler.schema_compiler import compile_all_required_schemas
+
+        compile_all_required_schemas(raw_definitions)
 
         # Process composite operations with schema compilation
-        if composite_operations:
+        if self._raw_composites:
             from interpretune.analysis.ops.compiler.schema_compiler import build_operation_compositions
 
             # Create a complete YAML structure for build_operation_compositions
             complete_yaml = raw_definitions.copy()
-            complete_yaml["composite_operations"] = composite_operations
+            complete_yaml["composite_operations"] = self._raw_composites
 
             # Apply schema compilation for composite operations
             compiled_ops = build_operation_compositions(complete_yaml)
@@ -439,7 +479,7 @@ class AnalysisOpDispatcher:
                     if "output_schema" in op_def:
                         raw_definitions[op_name]["output_schema"] = op_def["output_schema"]
 
-        # Convert raw definitions to OpDef objects
+        # Re-convert: replaces the uncompiled OpDefs with compiled ones (deterministic rebuild)
         self._convert_raw_definitions_to_opdefs(raw_definitions)
         self._set_default_hub_op_aliases()
         # Build aliases mapping
@@ -447,26 +487,19 @@ class AnalysisOpDispatcher:
 
         # Save to cache for next time
         self._cache_manager.save_cache(self._op_definitions)
+        self._compiled = True
 
-        self._loaded = True
+    def ensure_compiled(self) -> None:
+        """Compile definitions if a cold load left them raw. The session-setup entry point (#280).
 
-    def _compile_required_ops_schemas(self, definitions_to_compile: dict[str, Dict]):
-        """Compile schemas by recursively including required_ops dependencies."""
-        from interpretune.analysis.ops.compiler.schema_compiler import compile_op_schema
-
-        # TODO: consider moving this compilation to schema_compiler.py, we're keeping this here for now because
-        #       applying auto-columns should not be part of schema_compiler.py
-        # Compile all operations
-        for op_name in list(definitions_to_compile.keys()):
-            try:
-                compile_op_schema(op_name, definitions_to_compile)
-                # Apply optional auto-columns after compilation
-                apply_auto_columns(definitions_to_compile[op_name])
-            except ValueError as e:
-                # Dropping an op whose required_ops do not resolve is exactly the silent failure
-                # hub-op contract flags, so strict loading turns it into an error.
-                definitions_to_compile.pop(op_name, None)
-                op_load_failure(f"Failed to compile operation '{op_name}': {e}")
+        Analysis setup calls this before resolving ops; op-executing paths call it defensively so a hub pull between
+        setup and use still resolves against fresh schemas. Cheap after the first call (one flag check).
+        """
+        if self._compiled:
+            return
+        if not self._loaded:
+            self.load_definitions()
+        self._finish_compilation()
 
     def _collection_for(self, yaml_file: Path, yaml_content: dict[str, Any]) -> CollectionSpec | None:
         """Parse a YAML's ``collection:`` header, recording it per file for later attribution.
@@ -1255,6 +1288,7 @@ class AnalysisOpDispatcher:
         Returns:
             The requested operation or None if lazy=True and the op hasn't been instantiated yet
         """
+        self.ensure_compiled()
         if context is None:
             context = DispatchContext()
 
@@ -1337,6 +1371,9 @@ class AnalysisOpDispatcher:
     @_ensure_loaded
     def instantiate_all_ops(self) -> dict[str, AnalysisOp]:
         """Get all operations as instantiated AnalysisOp objects."""
+        # Ensure before iterating: compiling appends composite names, which would otherwise
+        # resize the table mid-loop (`get_op` inside the loop is too late).
+        self.ensure_compiled()
         instantiated_ops = {}
 
         # Only instantiate operations that are not aliases pointing to other operations

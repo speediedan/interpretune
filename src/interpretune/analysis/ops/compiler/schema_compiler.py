@@ -367,6 +367,29 @@ def _parse_composition_string(composition_str: str) -> list[str]:
     return operations
 
 
+def compile_all_required_schemas(definitions_to_compile: dict[str, dict[str, Any]]) -> None:
+    """Compile every definition's schema in place, then apply auto-columns per op.
+
+    A definition whose required ops do not resolve is dropped and reported through the load
+    policy (raising under strict loading); auto-columns live in ``auto_columns.py`` and are only
+    INVOKED here, which retires the dispatcher TODO that kept this loop out of this module.
+    (Per-load memoization of shared required ops arrives separately in #281.)
+    """
+    from interpretune.analysis.ops.auto_columns import apply_auto_columns
+    from interpretune.analysis.ops.compiler.load_policy import op_load_failure
+
+    for op_name in list(definitions_to_compile.keys()):
+        try:
+            compile_op_schema(op_name, definitions_to_compile)
+            # Apply optional auto-columns after compilation
+            apply_auto_columns(definitions_to_compile[op_name])
+        except ValueError as e:
+            # Dropping an op whose required_ops do not resolve is exactly the silent failure
+            # hub-op contract flags, so strict loading turns it into an error.
+            definitions_to_compile.pop(op_name, None)
+            op_load_failure(f"Failed to compile operation '{op_name}': {e}")
+
+
 def compile_op_schema(
     op_name: str, op_definitions: dict[str, dict[str, Any]], _processing: set[str] | None = None
 ) -> dict[str, Any]:  # type: ignore[assignment]
