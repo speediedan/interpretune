@@ -368,7 +368,10 @@ def _parse_composition_string(composition_str: str) -> list[str]:
 
 
 def compile_op_schema(
-    op_name: str, op_definitions: dict[str, dict[str, Any]], _processing: set[str] | None = None
+    op_name: str,
+    op_definitions: dict[str, dict[str, Any]],
+    _processing: set[str] | None = None,
+    _memo: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:  # type: ignore[assignment]
     """Compile operation schema by merging schemas from required operations.
 
@@ -376,6 +379,10 @@ def compile_op_schema(
         op_name: Name of the operation to compile
         op_definitions: Dictionary of all available operation definitions
         _processing: Set of operations currently being processed (used internally for circular dependency detection)
+        _memo: Per-load memo of already-compiled definitions, keyed by op name. A required op shared
+            by N dependents compiles once per load instead of N times. Scoped to a single load ON
+            PURPOSE: `op_definitions` is mutable and hub `pull_ops` mutates it between loads, so a
+            process-global memo would serve pre-pull schemas after a pull (#281).
 
     Returns:
         Compiled operation definition with merged schemas
@@ -386,9 +393,13 @@ def compile_op_schema(
     if op_name not in op_definitions:
         raise ValueError(f"Operation {op_name} not found in definitions")
 
-    # Initialize processing set on first call
+    # Initialize per-load state on first call
     if _processing is None:
         _processing = set()
+    if _memo is None:
+        _memo = {}
+    if op_name in _memo:
+        return _memo[op_name]
 
     op_def = op_definitions[op_name]
 
@@ -411,6 +422,7 @@ def compile_op_schema(
 
     if not resolved_required_ops:
         op_definitions[op_name] = compiled_def
+        _memo[op_name] = op_definitions[op_name]
         return op_definitions[op_name]  # No required ops, return as is
 
     # Initialize schemas if they don't exist
@@ -426,7 +438,7 @@ def compile_op_schema(
         # Recursively merge schemas from required operations
         for req_op_name in resolved_required_ops:
             # Recursively compile the required operation first
-            compiled_req_def = compile_op_schema(req_op_name, op_definitions, _processing)
+            compiled_req_def = compile_op_schema(req_op_name, op_definitions, _processing, _memo)
 
             # Merge input schemas (required op schemas have lower precedence).
             #
@@ -468,4 +480,5 @@ def compile_op_schema(
         _processing.discard(op_name)
 
     op_definitions[op_name] = compiled_def
+    _memo[op_name] = op_definitions[op_name]
     return op_definitions[op_name]  # ref usually not usually needed, but return for consistency

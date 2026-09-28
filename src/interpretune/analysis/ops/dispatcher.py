@@ -450,10 +450,13 @@ class AnalysisOpDispatcher:
 
         # TODO: consider moving this compilation to schema_compiler.py, we're keeping this here for now because
         #       applying auto-columns should not be part of schema_compiler.py
+        # One memo for the whole load: a required op shared by N dependents compiles once. Fresh per
+        # load, so a hub pull between loads can never read pre-pull schemas (#281).
+        memo: dict[str, Dict] = {}
         # Compile all operations
         for op_name in list(definitions_to_compile.keys()):
             try:
-                compile_op_schema(op_name, definitions_to_compile)
+                compile_op_schema(op_name, definitions_to_compile, _memo=memo)
                 # Apply optional auto-columns after compilation
                 apply_auto_columns(definitions_to_compile[op_name])
             except ValueError as e:
