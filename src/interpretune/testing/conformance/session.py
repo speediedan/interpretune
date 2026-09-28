@@ -147,7 +147,9 @@ def build_conformance_session(target: ConformanceTarget, inputs: ConformanceInpu
         log.info("conformance generator cache %s bounded at %d bytes: %r", shared_dir, max_bytes, pruned)
         # The per-case half of every key; the runner mixes in each case post-activation. Set once:
         # setup mutates each cfg in place, so a key taken here could not survive a run.
-        runner.run_cfg.case_key_target_part = target_cache_part(target, inputs)
+        runner.run_cfg.case_key_target_part = target_cache_part(  # type: ignore[assignment]  # run_cfg statically typed as the base SessionRunnerCfg
+            target, inputs
+        )
     caps = get_module_capabilities(session.module)
     # The dataloader is deterministic and the runner reads it in order, so the first N batches here are the
     # batches every store's rows came from; cases needing the raw inputs (the HF reference) use these.

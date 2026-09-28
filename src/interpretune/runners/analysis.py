@@ -258,21 +258,18 @@ def _fingerprintable(value: Any, *, path: str = "root") -> Any:
         }
     if isinstance(value, range):
         return {"kind": "range", "start": value.start, "stop": value.stop, "step": value.step}
-    try:
-        import hashlib
+    import hashlib
 
-        import numpy as np
+    import numpy as np  # guaranteed present: datasets (a hard dependency) requires it
 
-        if isinstance(value, np.ndarray):
-            contiguous = np.ascontiguousarray(value)
-            return {
-                "kind": "ndarray",
-                "shape": list(contiguous.shape),
-                "dtype": str(contiguous.dtype),
-                "sha256": hashlib.sha256(contiguous.tobytes()).hexdigest(),
-            }
-    except ImportError:
-        pass
+    if isinstance(value, np.ndarray):
+        contiguous = np.ascontiguousarray(value)
+        return {
+            "kind": "ndarray",
+            "shape": list(contiguous.shape),
+            "dtype": str(contiguous.dtype),
+            "sha256": hashlib.sha256(contiguous.tobytes()).hexdigest(),
+        }
     if isinstance(value, enum.Enum):
         return {"kind": "enum", "type": f"{type(value).__module__}.{type(value).__qualname__}", "value": value.value}
     if isinstance(value, dict):
@@ -692,4 +689,6 @@ class AnalysisRunner(SessionRunner):
         target_part = getattr(self.run_cfg, "case_key_target_part", None)
         if target_part is None:
             return
-        self.run_cfg.dataset_fingerprint = analysis_cfg_fingerprint(analysis_cfg, target_part=target_part)
+        self.run_cfg.dataset_fingerprint = analysis_cfg_fingerprint(  # type: ignore[assignment]  # run_cfg statically typed as the base SessionRunnerCfg
+            analysis_cfg, target_part=target_part
+        )
