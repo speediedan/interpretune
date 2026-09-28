@@ -129,6 +129,7 @@ class TestCrossCollectionDeclarability:
         """
         dispatcher = _load(tmp_path, monkeypatch, COLLECTION_YAML)
         dispatcher.load_definitions()
+        dispatcher.ensure_compiled()
         dependent = dispatcher._op_definitions["depender.ops.needs_a_bundled_op"]
         inherited = set(dependent.input_schema) | set(dependent.output_schema)
         assert inherited, (
@@ -140,8 +141,10 @@ class TestCrossCollectionDeclarability:
 class TestUnresolvableDependencyIsLoud:
     def test_an_unresolvable_dependency_warns_and_drops_only_that_op(self, tmp_path, monkeypatch):
         dispatcher = _load(tmp_path, monkeypatch, UNRESOLVABLE_YAML)
+        dispatcher.load_definitions()
+        # Unresolvable dependencies surface at compile time (session setup), not at load (#280)
         with pytest.warns(UserWarning, match="no_such_op_anywhere"):
-            dispatcher.load_definitions()
+            dispatcher.ensure_compiled()
         assert "depender.ops.needs_a_nonexistent_op" not in dispatcher._op_definitions
         assert "model_fwd" in dispatcher._op_definitions, "one bad dependency must not take the session down"
 
@@ -149,5 +152,6 @@ class TestUnresolvableDependencyIsLoud:
         """The 'loud failure mode' half of the exit criterion: silent op loss is what §3.6a objected to."""
         monkeypatch.setenv(IT_STRICT_OP_LOAD_ENV_VAR, "1")
         dispatcher = _load(tmp_path, monkeypatch, UNRESOLVABLE_YAML)
+        dispatcher.load_definitions()
         with pytest.raises(OpLoadError, match="no_such_op_anywhere"):
-            dispatcher.load_definitions()
+            dispatcher.ensure_compiled()

@@ -1563,6 +1563,10 @@ class TestOpWrapper:
 
         monkeypatch.setattr(test_dispatcher, "_import_callable", patched_import)
 
+        # Compile first: schemas merge at session setup, and this fixture relaxes the COMPILED
+        # definition. Modifying the table before compiling would be discarded by the rebuild (#280).
+        test_dispatcher.ensure_compiled()
+
         # Check what fields are actually available in the test operation definition
         test_op_def = test_dispatcher._op_definitions["test_op"]
         # Make any required input fields optional for testing by creating new OpSchema

@@ -441,14 +441,16 @@ test_op:
             mock_load.assert_called_once()
             mock_load.reset_mock()
 
-            # Test get_op triggers load_definitions when _loaded is False
+            # Test get_op triggers load_definitions when _loaded is False. It reaches load twice:
+            # once through the load decorator and once through the compile check, which loads raw
+            # definitions when nothing is loaded yet (#280) -- both calls are the same idempotent load.
             test_dispatcher._loaded = False
             with patch.object(test_dispatcher, "_dispatch_table", {}):
                 try:
                     test_dispatcher.get_op("some_op")
                 except ValueError:
                     pass  # Expected error due to empty dispatch table
-            mock_load.assert_called_once()
+            assert mock_load.called
 
     def test_get_op_with_loading_in_progress(self):
         """Test get_op behavior when loading is in progress."""
@@ -841,8 +843,18 @@ test_op:
         ):
             test_dispatcher.load_definitions()
 
+            # Load retains raw definitions only: nothing compiled, nothing cached yet (#280)
+            mock_save.assert_not_called()
+            assert not test_dispatcher._compiled
+            dep_raw = test_dispatcher._op_definitions["dependent_op"]
+            assert "base_input" not in dep_raw.input_schema
+
+            # Compilation happens explicitly at session setup
+            test_dispatcher.ensure_compiled()
+
             # Verify save_cache was called (indicating definitions were processed)
             mock_save.assert_called_once()
+            assert test_dispatcher._compiled
 
         # Check that dependent_op now includes base_op's schemas
         dep_def = test_dispatcher._op_definitions["dependent_op"]
@@ -854,8 +866,10 @@ test_op:
 
     def test_required_ops_with_real_operations(self):
         """Test required_ops compilation with actual operations from the YAML."""
-        # We use the real dispatcher to test with actual operation definitions
-        # DISPATCHER.load_definitions()  # note not required, definitions are loaded on import
+        # We use the real dispatcher to test with actual operation definitions.
+        # Compilation runs at session setup, not at load: ensure it explicitly so this test does
+        # not depend on whatever ran before it in the process (#280).
+        DISPATCHER.ensure_compiled()
 
         # Check that model_forward includes get_answer_indices schemas
         model_forward_def = DISPATCHER._op_definitions["model_forward"]
@@ -872,6 +886,7 @@ test_op:
     def test_required_ops_transitive_dependencies(self):
         """Test that transitive dependencies are properly resolved."""
         DISPATCHER.load_definitions()
+        DISPATCHER.ensure_compiled()
 
         # Check model_fwd_w_cache_latent_models which requires both get_answer_indices and get_alive_latents
         # get_alive_latents also requires get_answer_indices
@@ -930,6 +945,7 @@ test_op:
     def test_instantiate_op_with_compiled_schemas(self):
         """Test that instantiated operations have the compiled schemas."""
         DISPATCHER.load_definitions()
+        DISPATCHER.ensure_compiled()
 
         # Instantiate model_forward which has required_ops
         model_forward_op = DISPATCHER._instantiate_op("model_forward")
@@ -950,6 +966,7 @@ test_op:
     def test_required_ops_with_aliases(self):
         """Test that required_ops compilation works correctly with aliases."""
         DISPATCHER.load_definitions()
+        DISPATCHER.ensure_compiled()
 
         # Test with model_fwd which retains the model_forward alias
         cache_forward_def = DISPATCHER._op_definitions["model_forward"]
@@ -982,15 +999,17 @@ test_op:
             patch.object(test_dispatcher._cache_manager, "add_yaml_file"),
             patch.object(test_dispatcher._cache_manager, "load_cache", return_value=None),
         ):
+            # Load retains raw definitions; unresolvable required_ops surface at session setup (#280)
+            test_dispatcher.load_definitions()
             with pytest.warns(match="Required operation 'nonexistent_op' not found for operation 'broken_op'"):
-                test_dispatcher.load_definitions()
+                test_dispatcher.ensure_compiled()
 
     def test_compile_required_ops_schemas_called_during_load(self):
-        """Test that _compile_required_ops_schemas is called during load_definitions."""
+        """Test that schema compilation runs at session setup, not during load_definitions."""
         test_dispatcher = AnalysisOpDispatcher()
 
         with (
-            patch.object(test_dispatcher, "_compile_required_ops_schemas") as mock_compile,
+            patch("interpretune.analysis.ops.compiler.schema_compiler.compile_all_required_schemas") as mock_compile,
             patch("builtins.open"),
             patch("yaml.safe_load", return_value={}),
             patch.object(test_dispatcher, "_discover_yaml_files", return_value=[Path("fake_file.yaml")]),
@@ -999,7 +1018,9 @@ test_op:
             patch.object(test_dispatcher._cache_manager, "save_cache"),
         ):
             test_dispatcher.load_definitions()
+            mock_compile.assert_not_called()
 
+            test_dispatcher.ensure_compiled()
             mock_compile.assert_called_once()
 
     def test_no_required_ops_doesnt_break_compilation(self):
@@ -1917,6 +1938,7 @@ dependent_op:
         ):
             dispatcher = AnalysisOpDispatcher(enable_hub_ops=True)
             dispatcher.load_definitions()
+            dispatcher.ensure_compiled()
 
             # Both operations should be namespaced
             assert "testuser.deps.base_op" in dispatcher._op_definitions
@@ -1992,8 +2014,8 @@ dependent_op:
             # Should return unchanged for non-hub files
             assert result == yaml_content
 
-    def test_load_from_yaml_and_compile_exception_handling(self, tmp_path):
-        """Test exception handling in _load_from_yaml_and_compile (line 295)."""
+    def test_load_raw_definitions_exception_handling(self, tmp_path):
+        """Test exception handling in _load_raw_definitions."""
         dispatcher = AnalysisOpDispatcher()
 
         # Create a temporary invalid YAML file
@@ -2006,14 +2028,15 @@ dependent_op:
             patch.object(dispatcher._cache_manager, "save_cache"),
         ):
             # This should trigger the exception handling for invalid YAML
-            dispatcher._load_from_yaml_and_compile([invalid_yaml])
+            dispatcher._load_raw_definitions([invalid_yaml])
 
-            # Should still complete despite the invalid file
-            assert dispatcher._loaded
+            # Should still complete despite the invalid file: nothing retained, nothing compiled
+            assert dispatcher._raw_definitions == {}
+            assert not dispatcher._compiled
 
-    def test_compile_required_ops_schemas_warning(self, tmp_path):
-        """Test warning in _compile_required_ops_schemas (line 301)."""
-        dispatcher = AnalysisOpDispatcher()
+    def test_compile_all_required_schemas_warning(self, tmp_path):
+        """Test warning in compile_all_required_schemas for unresolvable required ops."""
+        from interpretune.analysis.ops.compiler.schema_compiler import compile_all_required_schemas
 
         # Create a definition that will fail compilation
         definitions = {
@@ -2027,7 +2050,7 @@ dependent_op:
         # paths route through `load_policy.op_load_failure` now, so patching this module's
         # `rank_zero_warn` would silently intercept nothing.
         with pytest.warns(UserWarning, match="Failed to compile operation 'test_op'"):
-            dispatcher._compile_required_ops_schemas(definitions)
+            compile_all_required_schemas(definitions)
 
         # Should have issued a warning and removed the failed operation
         assert "test_op" not in definitions
