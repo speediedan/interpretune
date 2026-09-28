@@ -62,7 +62,7 @@ measurements on gemma-2-2b and gemma-3-1b-it, and the decision rule are in
 [Folding the final norm into lens directions](jlens_norm_folding.md); this page only names the two bases and
 which one each operation uses.
 
-Interpretune names the two bases `jlens_paper` (unfolded) and `jlens_norm_aware` (folded), selected by
+Interpretune names the two bases `jlens_unfolded` and `jlens_folded`, selected by
 `jlens_apply_final_norm`, and the folding is a per-model decision rather than a default: it is essential on
 gemma-3-1b-it and roughly three times weaker at late layers on gemma-2-2b, because a uniform scale cancels exactly in
 patching and only its anisotropy can matter.
@@ -90,12 +90,12 @@ two one-vector operations in sequence cannot reproduce a coordinate swap when th
 
 ## The decision rule
 
-1. A result states its basis. `jlens_paper` and `jlens_norm_aware` are declared configurations of the intervention
+1. A result states its basis. `jlens_unfolded` and `jlens_folded` are declared configurations of the intervention
    surface, never defaults; an op that does not state one is refused rather than defaulted, and a backend that
    cannot honour the requested one refuses it by name. This is the rule the capability vocabulary in
    [Interpretune Intervention APIs](interpretune_intervention_apis.md) carries for every configuration axis.
-1. Default according to the claim: paper reproduction uses `jlens_paper`; "the direction governing the normalized
-   readout" uses `jlens_norm_aware`.
+1. Default according to the claim: paper reproduction uses `jlens_unfolded`; "the direction governing the normalized
+   readout" uses `jlens_folded`.
 1. Folded and unfolded behavioural results are never compared as though they differed by a coefficient.
    Measured on the shipped gpt2-small lens at layer 8 (Paris-vs-London concept direction, collection
    revision `0731326e`): $1 - \lvert \cos \rvert = 0.0681$. The bases differ in practice, not only in

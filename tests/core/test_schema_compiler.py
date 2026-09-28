@@ -626,3 +626,50 @@ class TestInheritedInputRequiredness:
         compiled = compile_op_schema("consumer", op_definitions)
 
         assert compiled["output_schema"]["produced"]["required"] is False
+
+
+class TestPerLoadMemoization:
+    """#281: a required op shared by N dependents compiles once per load, never process-globally."""
+
+    @staticmethod
+    def _diamond():
+        leaf = lambda name: {
+            "input_schema": {f"{name}_in": {"datasets_dtype": "float32"}},
+            "output_schema": {f"{name}_out": {"datasets_dtype": "float32"}},
+        }
+        return {
+            "shared": leaf("shared"),
+            "left": {**leaf("left"), "required_ops": ["shared"]},
+            "right": {**leaf("right"), "required_ops": ["shared"]},
+            "top": {**leaf("top"), "required_ops": ["left", "right"]},
+        }
+
+    def test_shared_dependency_compiled_once(self):
+        """A diamond compiles the shared op's body once: count resolve_required_ops calls for it."""
+        import interpretune.analysis.ops.compiler.schema_compiler as compiler
+
+        real_resolve = compiler.resolve_required_ops
+        calls = []
+
+        def counting(op_name, op_def, definitions):
+            calls.append(op_name)
+            return real_resolve(op_name, op_def, definitions)
+
+        with patch.object(compiler, "resolve_required_ops", counting):
+            compiled = compiler.compile_op_schema("top", self._diamond())
+
+        assert calls.count("shared") == 1
+        assert "shared_in" in compiled["input_schema"]
+        assert "shared_out" in compiled["output_schema"]
+
+    def test_fresh_memo_sees_mutated_definitions(self):
+        """The memo is caller-scoped: a new load after a pull sees the pulled schema (#281's trap)."""
+        import interpretune.analysis.ops.compiler.schema_compiler as compiler
+
+        definitions = {"leaf": {"output_schema": {"v": {"datasets_dtype": "float32"}}}}
+        first = compiler.compile_op_schema("leaf", definitions, _memo={})
+        assert first["output_schema"]["v"]["datasets_dtype"] == "float32"
+
+        definitions["leaf"] = {"output_schema": {"v": {"datasets_dtype": "int64"}}}
+        second = compiler.compile_op_schema("leaf", definitions, _memo={})
+        assert second["output_schema"]["v"]["datasets_dtype"] == "int64"

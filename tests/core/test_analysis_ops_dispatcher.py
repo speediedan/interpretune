@@ -12,7 +12,7 @@ from collections import defaultdict
 from tests.hub_op_fixtures import declare_cached_op_files
 from tests.warns import unmatched_warns
 import interpretune as it
-from interpretune.analysis.ops.dispatcher import DISPATCHER, AnalysisOpDispatcher, DispatchContext
+from interpretune.analysis.ops.dispatcher import DISPATCHER, AnalysisOpDispatcher
 from interpretune.analysis.ops.base import AnalysisOp, OpSchema, CompositeAnalysisOp, AnalysisBatch, ColCfg, OpWrapper
 from interpretune.analysis.ops.compiler.cache_manager import OpDef
 from tests.core.test_analysis_ops_base import op_impl_test
@@ -193,11 +193,10 @@ test_op:
 
         # Test with an already instantiated op (should return cached version)
         del DISPATCHER._dispatch_table["labels_to_ids"]
-        test_context = DispatchContext()
-        op = DISPATCHER.get_op("labels_to_ids", context=test_context, lazy=True)
+        op = DISPATCHER.get_op("labels_to_ids", lazy=True)
         assert callable(op) and not isinstance(op, AnalysisOp)
-        op = DISPATCHER._maybe_instantiate_op("labels_to_ids", test_context)
-        assert op is DISPATCHER._dispatch_table["labels_to_ids"][test_context]
+        op = DISPATCHER._maybe_instantiate_op("labels_to_ids")
+        assert op is DISPATCHER._dispatch_table["labels_to_ids"]
 
     def test_get_all_aliases(self, test_dispatcher):
         """Test getting all operation aliases."""
@@ -280,30 +279,29 @@ test_op:
         test_dispatcher.load_definitions()
 
         # Get a reference to the operation without instantiating it
-        context = DispatchContext()
         op_name = "labels_to_ids"
-        lazy_op = test_dispatcher.get_op(op_name, context=context, lazy=True)
+        lazy_op = test_dispatcher.get_op(op_name, lazy=True)
 
         # Verify it's a factory function (callable but not an AnalysisOp)
         assert callable(lazy_op)
         assert not isinstance(lazy_op, AnalysisOp)
 
         # Check if it's in the dispatch table as a factory function
-        dispatch_entry = test_dispatcher._dispatch_table[op_name][context]
+        dispatch_entry = test_dispatcher._dispatch_table[op_name]
         assert callable(dispatch_entry) and not isinstance(dispatch_entry, AnalysisOp)
 
         # Now instantiate the operation
-        instantiated_op = test_dispatcher._maybe_instantiate_op(op_name, context)
+        instantiated_op = test_dispatcher._maybe_instantiate_op(op_name)
 
         # Verify it's now an AnalysisOp instance
         assert isinstance(instantiated_op, AnalysisOp)
         assert instantiated_op.name == op_name
 
         # Verify the dispatch table was updated with the instantiated op
-        assert test_dispatcher._dispatch_table[op_name][context] is instantiated_op
+        assert test_dispatcher._dispatch_table[op_name] is instantiated_op
 
         # Get it again - should return the instantiated version
-        cached_op = test_dispatcher.get_op(op_name, context=context, lazy=True)
+        cached_op = test_dispatcher.get_op(op_name, lazy=True)
         assert cached_op is instantiated_op
 
     def test_lazy_op_execution(self):
@@ -314,7 +312,6 @@ test_op:
         test_dispatcher.load_definitions()
 
         op_name = "labels_to_ids"
-        context = DispatchContext()
 
         # Create necessary mocks for execution
         module_mock = MagicMock()
@@ -324,14 +321,14 @@ test_op:
         module_mock.labels_to_ids.return_value = (torch.tensor([0, 1]), torch.tensor([0, 1]))
 
         # Get lazy reference
-        lazy_op = test_dispatcher.get_op(op_name, context=context, lazy=True)
+        lazy_op = test_dispatcher.get_op(op_name, lazy=True)
         assert callable(lazy_op) and not isinstance(lazy_op, AnalysisOp)
 
         # Execute via dispatcher
         result = test_dispatcher(op_name, module=module_mock, analysis_batch=None, batch=batch_mock, batch_idx=0)
 
         # Verify the op got instantiated during execution
-        instantiated_op = test_dispatcher._dispatch_table[op_name][context]
+        instantiated_op = test_dispatcher._dispatch_table[op_name]
         assert isinstance(instantiated_op, AnalysisOp)
 
         # Verify the result came through properly
@@ -341,7 +338,7 @@ test_op:
         # Create a fresh batch dictionary since the first call pops 'labels'
         batch_mock2 = {"labels": ["label3", "label4"]}
         test_dispatcher(op_name, module=module_mock, analysis_batch=None, batch=batch_mock2, batch_idx=0)
-        assert test_dispatcher._dispatch_table[op_name][context] is instantiated_op
+        assert test_dispatcher._dispatch_table[op_name] is instantiated_op
 
     def test_call_with_dot_notation(self):
         """Test calling operations with dot notation creates and executes a composition."""
@@ -580,7 +577,7 @@ test_op:
             result = test_dispatcher._maybe_instantiate_op("test_op")
 
             # Verify it called get_op
-            mock_get_op.assert_called_with("test_op", DispatchContext())
+            mock_get_op.assert_called_with("test_op")
             assert result == mock_op
 
             # Test with a string op_ref that returns None from get_op
@@ -605,7 +602,7 @@ test_op:
 
         test_op = test_dispatcher.get_op("test_op")
         # test directly instantiating the op if necessary
-        op = test_dispatcher._maybe_instantiate_op(test_op, DispatchContext())
+        op = test_dispatcher._maybe_instantiate_op(test_op)
         assert isinstance(op, AnalysisOp)
         assert op.name == "test_op"
 
@@ -740,7 +737,7 @@ test_op:
         assert op.name == "custom_composition"
 
         # test directly instantiating the op if necessary
-        op = test_dispatcher._maybe_instantiate_op(test_op_wrapper, DispatchContext())
+        op = test_dispatcher._maybe_instantiate_op(test_op_wrapper)
         assert isinstance(op, AnalysisOp)
         assert op.name == "test_op"
 

@@ -1,7 +1,7 @@
 """The `concept_basis` selector on `concept_direction` (#420).
 
 Four named values, no default: `embed` builds from token-group embedding rows, `store` aggregates
-latent-example rows, and `jlens_paper` / `jlens_norm_aware` build per-token J-lens direction rows
+latent-example rows, and `jlens_unfolded` / `jlens_folded` build per-token J-lens direction rows
 through the read path. An absent or unknown basis is refused by name, and a basis whose inputs are
 not on the batch is refused naming what is missing -- the previous silent fallback from missing
 store rows to embeddings is removed, because it returned a plausible direction for a basis nobody
@@ -116,7 +116,7 @@ def _concept_vectors(module_fn, **batch_extra):
     """Both bases' concept vectors plus their recorded names, bases-checked-first by the caller."""
     outs = {}
     direction_mode = batch_extra.pop("concept_direction_mode", "mean_difference")
-    for basis in ("jlens_paper", "jlens_norm_aware"):
+    for basis in ("jlens_unfolded", "jlens_folded"):
         outs[basis] = concept_ops.concept_direction_impl(
             module_fn(),
             AnalysisBatch(
@@ -129,9 +129,9 @@ def _concept_vectors(module_fn, **batch_extra):
             batch=None,
             batch_idx=0,
         )
-    assert outs["jlens_paper"].concept_basis == "jlens_paper"
-    assert outs["jlens_norm_aware"].concept_basis == "jlens_norm_aware"
-    return outs["jlens_paper"].concept_direction, outs["jlens_norm_aware"].concept_direction
+    assert outs["jlens_unfolded"].concept_basis == "jlens_unfolded"
+    assert outs["jlens_folded"].concept_basis == "jlens_folded"
+    return outs["jlens_unfolded"].concept_direction, outs["jlens_folded"].concept_direction
 
 
 def _one_minus_abs_cos(a, b):
@@ -152,13 +152,23 @@ def _groups():
 
 class TestBasisIsRequired:
     def test_absent_basis_is_refused_naming_the_values(self):
-        with pytest.raises(ValueError, match="concept_basis.*embed.*store.*jlens_paper.*jlens_norm_aware"):
+        with pytest.raises(ValueError, match="concept_basis.*embed.*store.*jlens_unfolded.*jlens_folded"):
             concept_ops.concept_direction_impl(_module(), AnalysisBatch(**_groups()), batch=None, batch_idx=0)
 
     def test_unknown_basis_is_refused(self):
         with pytest.raises(ValueError, match="not a basis"):
             concept_ops.concept_direction_impl(
                 _module(), AnalysisBatch(**_groups(), concept_basis="logit"), batch=None, batch_idx=0
+            )
+
+    @pytest.mark.parametrize(
+        "retired,current", [("jlens_norm_aware", "jlens_folded"), ("jlens_paper", "jlens_unfolded")]
+    )
+    def test_a_retired_basis_name_is_refused_naming_its_replacement(self, retired, current):
+        """No alias: a caller still passing an old name learns the new one instead of keeping the old one alive."""
+        with pytest.raises(ValueError, match=rf"'{retired}' was renamed to '{current}'"):
+            concept_ops.concept_direction_impl(
+                _module(), AnalysisBatch(**_groups(), concept_basis=retired), batch=None, batch_idx=0
             )
 
 
@@ -195,7 +205,7 @@ class TestBasesAreRecorded:
 
     def test_jlens_paths_record_their_bases(self, seam_lens):
         seam_lens["J"] = torch.eye(D)
-        for basis in ("jlens_paper", "jlens_norm_aware"):
+        for basis in ("jlens_unfolded", "jlens_folded"):
             out = concept_ops.concept_direction_impl(
                 _module(),
                 AnalysisBatch(**_groups(), concept_basis=basis, jlens_layer=4),
@@ -267,7 +277,7 @@ class TestSyntheticGuard:
         seam_lens["J"] = torch.diag(torch.arange(1.0, D + 1))
         module = _module()
         out = concept_ops.concept_direction_impl(
-            module, AnalysisBatch(**_groups(), concept_basis="jlens_paper", jlens_layer=4), batch=None, batch_idx=0
+            module, AnalysisBatch(**_groups(), concept_basis="jlens_unfolded", jlens_layer=4), batch=None, batch_idx=0
         )
         w_u = module.model.lm_head.weight.float()
         j = torch.diag(torch.arange(1.0, D + 1))
@@ -281,7 +291,7 @@ class TestJLensRefusals:
         with pytest.raises(ValueError, match="does not include 5"):
             concept_ops.concept_direction_impl(
                 _module(),
-                AnalysisBatch(**_groups(), concept_basis="jlens_paper", jlens_layer=5),
+                AnalysisBatch(**_groups(), concept_basis="jlens_unfolded", jlens_layer=5),
                 batch=None,
                 batch_idx=0,
             )
@@ -323,13 +333,13 @@ class TestRealLensNonCollinearity:
             "jlens_layer": 8,
         }
         outs = {}
-        for basis in ("jlens_paper", "jlens_norm_aware"):
+        for basis in ("jlens_unfolded", "jlens_folded"):
             outs[basis] = concept_ops.concept_direction_impl(
                 module, AnalysisBatch(**fields, concept_basis=basis), batch=None, batch_idx=0
             )
-        assert outs["jlens_paper"].concept_basis == "jlens_paper"
-        assert outs["jlens_norm_aware"].concept_basis == "jlens_norm_aware"
-        paper, aware = outs["jlens_paper"].concept_direction, outs["jlens_norm_aware"].concept_direction
+        assert outs["jlens_unfolded"].concept_basis == "jlens_unfolded"
+        assert outs["jlens_folded"].concept_basis == "jlens_folded"
+        paper, aware = outs["jlens_unfolded"].concept_direction, outs["jlens_folded"].concept_direction
         gap = 1 - abs(
             float(torch.dot(paper, aware) / torch.linalg.vector_norm(paper) / torch.linalg.vector_norm(aware))
         )

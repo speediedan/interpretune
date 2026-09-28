@@ -19,7 +19,7 @@ D = 16
 
 
 def _report(v: torch.Tensor, g: torch.Tensor, d: torch.Tensor) -> dict[str, object]:
-    return subspace_attribution_scores(g, d, v, [0, 1], "jlens_norm_aware")
+    return subspace_attribution_scores(g, d, v, [0, 1], "jlens_folded")
 
 
 class TestSubspaceAttributionIdentity:
@@ -31,7 +31,7 @@ class TestSubspaceAttributionIdentity:
         out = _report(v, g, d)
         assert out["predicted_delta"] == pytest.approx(float(g @ d))
         assert out["attribution_total"] + out["unexplained_remainder"] == pytest.approx(out["predicted_delta"])
-        assert out["basis"] == "jlens_norm_aware"
+        assert out["basis"] == "jlens_folded"
         assert out["token_ids"] == [0, 1]
         assert len(out["attribution_shares"]) == 2
 
@@ -144,7 +144,7 @@ class TestRealPairSubspaceAttribution:
             delta_h.detach().float().cpu()[0, -1],
             pair.cpu(),
             ids_a + ids_b,
-            "jlens_norm_aware",
+            "jlens_folded",
         )
         assert out["predicted_delta"] != pytest.approx(0.0)
         assert abs(out["unexplained_remainder"]) < 0.05 * abs(out["predicted_delta"])
