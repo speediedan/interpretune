@@ -211,6 +211,9 @@ class TestBundledFamiliesDeclareCollections:
         first.load_definitions()
         assert (first._op_definitions["my_collection_op"].collection_name) == "my_collection"
 
+        # Schemas compile (and the cache saves) at session setup, not at load (#280)
+        first.ensure_compiled()
+
         # Same YAML dir and cache dir: this load hits the cache rather than recompiling.
         second = AnalysisOpDispatcher(yaml_paths=[tmp_path / "collection"], enable_hub_ops=False)
         second._cache_manager.cache_dir = tmp_path / "cache"
