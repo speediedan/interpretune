@@ -508,8 +508,9 @@ class SupportsIntervention(Protocol):
         1. **Baseline**: captures pre-intervention logits.
         2. **Intervention**: for each key in *interventions*, matches the key (which may
            contain ``*`` wildcards) against available hook names, then applies each
-           ``InterventionSpec`` at the last sequence position according to its ``mode``
-           (``"replace"``, ``"add"``, or ``"project"``).
+           ``InterventionSpec`` at the positions its ``position_scope`` names (the last token by default)
+           according to its ``mode`` (``"replace"``, ``"add"``, ``"patch"``, ``"project"``, ``"reject"`` or
+           ``"clamp"``).
 
         Args:
             model: The model to run.

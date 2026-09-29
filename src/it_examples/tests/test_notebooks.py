@@ -390,10 +390,10 @@ def test_ct_analysis_backend_notebook_local(params: dict[str, Any], tmp_path: Pa
 
 
 # Test parameters for the concept-direction steering demo notebooks (replaced the archived
-# RTE-focused cross-backend demo, 2026-07-11; rebuilt on the gemma-2-2b public-dashboard default,
-# 2026-07-16 — see EXPERIMENT_STATUS.md "7c Amendments" items 4-5 and their 2026-07-16 revision
-# notes). Split into two notebooks 2026-07-30: the DASHBOARD_MODE switch made every downstream cell
-# branch, so each substrate is now a notebook whose defaults ARE its substrate. The public notebook
+# RTE-focused cross-backend demo, 2026-07-11; rebuilt 2026-07-16 on the gemma-2-2b public-dashboard
+# default, a substrate that needs no local services). Split into two notebooks 2026-07-30: the
+# DASHBOARD_MODE switch made every downstream cell branch, so each substrate is now a notebook whose
+# defaults ARE its substrate. The public notebook
 # needs no services and is the CI lane; the local one is opt-in (see below).
 CT_CONCEPT_STEERING_PARAMS = [
     pytest.param({}, id="ct_concept_steering_public"),

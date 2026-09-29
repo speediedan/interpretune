@@ -56,7 +56,11 @@ class InterventionSpec(NamedTuple):
               current hook input is projected onto the span of ``intervention_tensor``, so the
               intervention tensor acts as the projection basis. When
               ``use_intervention_tensor_as_basis`` is ``False``, the direction is reversed and
-              ``intervention_tensor`` is projected onto the span of the current hook input.
+              ``intervention_tensor`` is projected onto the span of the current hook input;
+              ``"reject"`` removes the activation's component in the span of ``intervention_tensor``
+              (``h - scale_factor * V V^+ h``, so ``scale_factor`` is the removal fraction);
+              ``"clamp"`` bounds the activation's pseudoinverse coordinates into
+              ``[clamp_min, clamp_max]`` and leaves in-range coordinates exactly as they were.
         scale_factor: Scalar multiplier applied to *intervention_tensor* before the intervention
             (not used in ``"replace"`` mode and applied to the projected activation in
             ``"project"`` mode).

@@ -28,6 +28,7 @@ from interpretune.analysis.optools import (
     UnembedNormInfo,
     jlens_basis_name,
     jlens_direction_rows,
+    resolve_jlens_fold_choice,
     resolve_jlens_layer,
     resolve_tokenizer,
     resolve_unembed_and_norm_scale,
@@ -177,13 +178,12 @@ def jlens_concept_probe_impl(
     j, layer, artifact = _resolve_lens_layer(module, analysis_batch, kwargs)
     info = resolve_unembed_and_norm_scale(module)
     cache_key = kwargs.get("jlens_cache_key", analysis_batch.get("jlens_cache_key")) or default_jlens_cache_key(layer)
-    apply_norm = kwargs.get("jlens_apply_final_norm", analysis_batch.get("jlens_apply_final_norm"))
+    apply_norm = resolve_jlens_fold_choice(analysis_batch, kwargs)
     token_ids = kwargs.get("jlens_concept_token_ids", analysis_batch.get("jlens_concept_token_ids"))
     if token_ids is None:
         raise ValueError("jlens_concept_probe requires jlens_concept_token_ids")
 
     device = _readout_device(info)
-    apply_norm = True if apply_norm is None else bool(apply_norm)
     # (n_concepts, d_model), in the residual basis
     directions = jlens_direction_rows(info, token_ids, j.to(device), apply_norm=apply_norm).detach().cpu()
     activations = _activations(analysis_batch, cache_key)
@@ -269,8 +269,7 @@ def jlens_sparse_inventory_impl(
     # Stated rather than inherited. This call previously omitted the flag and took the basis from
     # `fold_norm_into_unembed_rows`' default two layers away, so the op had no way to be asked for the
     # other basis and nothing recorded which one it used.
-    raw_apply = kwargs.get("jlens_apply_final_norm", analysis_batch.get("jlens_apply_final_norm"))
-    apply_norm = True if raw_apply is None else bool(raw_apply)
+    apply_norm = resolve_jlens_fold_choice(analysis_batch, kwargs)
 
     def atom_of(token_id: int) -> torch.Tensor:
         return jlens_direction_rows(info, [token_id], j, apply_norm=apply_norm)[0].detach().cpu()
