@@ -2058,7 +2058,10 @@ class TestDeclaredInputsAreConsumed:
     """A `required: true` input must be one the implementation actually consumes.
 
     The audit behind these tests checked all 41 `required: true` declarations across the bundled ops and found exactly
-    one that no code path reads. The number matters: an earlier detector that scanned only for direct attribute access
+    one that no code path reads. (#282 recount: promoting `get_loss_preds_diffs` to the `loss_preds_diffs` op removed
+    8 direct declarations -- `label_ids`/`orig_labels` on `logit_diffs`, `logit_diffs_cache`, `model_gradient` and
+    `ablation_attribution` -- and added 3 on the new op itself. The finding count is unchanged: still exactly one
+    unread field.) The number matters: an earlier detector that scanned only for direct attribute access
     reported 22 of ~40 ops as over-declaring, because implementations reach batch fields six different ways and five of
     them are invisible to a scan (see "Make schemas explicit" in `docs/custom_ops_composition_guide.md`). These pin the
     outcome, not the detector.
@@ -2075,9 +2078,10 @@ class TestDeclaredInputsAreConsumed:
     def test_ablation_attribution_does_not_gate_on_answer_indices(self):
         """The one real finding.
 
-        `ablation_attribution_impl` reads `answer_logits`, `alive_latents` and `logit_diffs`, and the only
-        helper it hands the batch to (`get_loss_preds_diffs`) reads `label_ids` / `orig_labels`. Nothing reads
-        `answer_indices`, so requiring it gated the op on a field it never uses.
+        `ablation_attribution_impl` reads `answer_logits`, `alive_latents` and `logit_diffs`, and the
+        per-latent metrics come from the `loss_preds_diffs` required op, which reads `label_ids` /
+        `orig_labels`. Nothing reads `answer_indices`, so requiring it gated the op on a field it
+        never uses.
         """
         schema = self._op("ablation_attribution").input_schema
         assert "answer_indices" in schema, "dropping the field would also pass, while changing column derivation"
@@ -2091,11 +2095,27 @@ class TestDeclaredInputsAreConsumed:
         prevent.
         """
         for op_name, field in (
-            ("logit_diffs", "label_ids"),  # via get_loss_preds_diffs
-            ("logit_diffs", "orig_labels"),  # via get_loss_preds_diffs
             ("model_gradient", "input"),  # via get_batch_input(batch)
             ("extract_concept_latent_state", "answer_indices"),  # via extract_concept_latent_state_from_cache
             ("graph_prune", "adjacency_matrix"),  # via backend.hydrate_graph_from_batch
         ):
             schema = self._op(op_name).input_schema
             assert schema[field].required is True, f"{op_name}.{field} is consumed via a helper; keep it required"
+
+    def test_promoted_helper_fields_stayed_required_on_the_new_op(self):
+        """The companion to the guard above, for fields that moved behind an op.
+
+        `logit_diffs.label_ids` / `orig_labels` used to be required here because the
+        `get_loss_preds_diffs` helper read them. They are now inherited through the `loss_preds_diffs`
+        required op (required=False on the dependent, by design), and the requirement lives on the op
+        itself, which validates its own inputs at the point of invocation. If the op ever stopped
+        requiring them, the columns would become satisfiable-but-meaningless on every dependent.
+        """
+        schema = self._op("loss_preds_diffs").input_schema
+        for field in ("label_ids", "orig_labels"):
+            assert schema[field].required is True, f"loss_preds_diffs.{field} must stay required"
+        for op_name in ("logit_diffs", "model_gradient", "ablation_attribution"):
+            schema = self._op(op_name).input_schema
+            for field in ("label_ids", "orig_labels"):
+                assert field in schema, f"{op_name} must still derive {field} through its required op"
+                assert schema[field].required is False, f"{op_name}.{field} is inherited, not an obligation"

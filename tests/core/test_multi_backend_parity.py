@@ -250,23 +250,10 @@ class TestTheOpLayerIsBackendIndependent:
     @staticmethod
     def _run(answer_logits, answer_indices):
         import torch as _t
+        from unittest.mock import patch
 
+        from interpretune.analysis.ops.base import AnalysisBatch
         from interpretune.analysis.ops.bundled.core.core_ops import logit_diffs_impl
-
-        captured = {}
-
-        class _Batch(dict):
-            """Minimal analysis batch: the op only reads two fields and calls `.update`."""
-
-            answer_logits = None
-            answer_indices = None
-
-            def update(self, **kw):
-                captured.update(kw)
-
-        ab = _Batch()
-        ab.answer_logits = answer_logits
-        ab.answer_indices = answer_indices
 
         def _fake_get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn):
             # Stand in for the label-dependent half; the point under test is that the op consults its
@@ -278,13 +265,24 @@ class TestTheOpLayerIsBackendIndependent:
                 answer_logits,
             )
 
-        logit_diffs_impl(
-            module=object(),  # deliberately not a backend: the op must not consult it
-            analysis_batch=ab,
-            batch={"input_ids": _t.zeros(answer_logits.shape[0], 4, dtype=_t.long)},
-            get_loss_preds_diffs=_fake_get_loss_preds_diffs,
+        n = answer_logits.shape[0]
+        ab = AnalysisBatch(
+            answer_logits=answer_logits,
+            answer_indices=answer_indices,
+            label_ids=_t.zeros(n, dtype=_t.long),
+            orig_labels=_t.zeros(n, dtype=_t.long),
         )
-        return captured
+        with patch(
+            "interpretune.analysis.ops.bundled.core.core_ops.get_loss_preds_diffs",
+            side_effect=_fake_get_loss_preds_diffs,
+        ):
+            out = logit_diffs_impl(
+                module=object(),  # deliberately not a backend: the op must not consult it
+                analysis_batch=ab,
+                batch={"input_ids": _t.zeros(n, 4, dtype=_t.long)},
+                batch_idx=0,
+            )
+        return {"logit_diffs": out.logit_diffs}
 
     def test_identical_inputs_give_identical_outputs(self):
         logits = torch.randn(3, 1, 5)

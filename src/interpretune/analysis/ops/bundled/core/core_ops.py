@@ -109,12 +109,29 @@ def model_fwd_w_cache_impl(
     return analysis_batch
 
 
+def loss_preds_diffs_impl(
+    module: torch.nn.Module,
+    analysis_batch: DefaultAnalysisBatchProtocol,
+    batch: BatchEncoding,
+    batch_idx: int,
+    logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
+) -> DefaultAnalysisBatchProtocol:
+    """Implementation for computing loss, predictions, and logit differences from answer logits."""
+    answer_logits = analysis_batch.answer_logits
+    assert isinstance(answer_logits, torch.Tensor), "answer_logits must be a tensor"
+    loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn)
+    if logit_diffs.dim() == 0:
+        logit_diffs.unsqueeze_(0)
+    analysis_batch.update(loss=loss, logit_diffs=logit_diffs, preds=preds, answer_logits=answer_logits)
+    return analysis_batch
+
+
 def logit_diffs_impl(
     module: torch.nn.Module,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
+    batch_idx: int,
     logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
-    get_loss_preds_diffs: Callable = get_loss_preds_diffs,
 ) -> DefaultAnalysisBatchProtocol:
     """Implementation for computing logit differences."""
 
@@ -123,8 +140,9 @@ def logit_diffs_impl(
     assert isinstance(logits, torch.Tensor) and isinstance(indices, torch.Tensor), "logits and indices must be tensors"
     indexed_logits = logits[torch.arange(get_batch_input(batch).size(0)), indices]  # type: ignore[attr-defined]  # BatchEncoding tensor has size
     answer_logits = torch.squeeze(indexed_logits, dim=1)
-    loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn)
-    if logit_diffs.dim() == 0:
-        logit_diffs.unsqueeze_(0)
-    analysis_batch.update(loss=loss, logit_diffs=logit_diffs, preds=preds, answer_logits=answer_logits)
-    return analysis_batch
+    # Stage the indexed logits for the declared required op, invoked via the public op surface
+    # (see NOTE [Op-Driven Transitive Dependency Atomicity])
+    import interpretune as it
+
+    analysis_batch.update(answer_logits=answer_logits)
+    return it.loss_preds_diffs(module, analysis_batch, batch, batch_idx, logit_diff_fn=logit_diff_fn)

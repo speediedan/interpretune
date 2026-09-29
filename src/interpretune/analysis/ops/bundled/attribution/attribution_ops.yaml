@@ -13,17 +13,12 @@ model_gradient:
   implementation: interpretune.analysis.ops.bundled.attribution.attribution_ops.model_gradient_impl
   importable_params:
     logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
-    get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
-  required_ops: [get_answer_indices]
+  required_ops: [get_answer_indices, loss_preds_diffs]
   aliases: []
   input_schema:
     input:
       datasets_dtype: int64
       connected_obj: datamodule
-    label_ids:
-      datasets_dtype: int64
-    orig_labels:
-      datasets_dtype: int64
   output_schema:
     answer_logits:
       datasets_dtype: float32
@@ -81,16 +76,15 @@ ablation_attribution:
   implementation: interpretune.analysis.ops.bundled.attribution.attribution_ops.ablation_attribution_impl
   importable_params:
     logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
-    get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
+  required_ops: [loss_preds_diffs]
   aliases: []
-  # TODO: remove appropriate output_schema input_schema columns if/when get_loss_preds_diffs is made an op
   input_schema:
     input:
       datasets_dtype: float32
       connected_obj: datamodule
     # Not consumed by ablation_attribution_impl (#299 audit): the impl reads answer_logits,
-    # alive_latents and logit_diffs, and the only helper it hands the batch to
-    # (get_loss_preds_diffs) reads label_ids/orig_labels. Declared for column derivation, so
+    # alive_latents and logit_diffs, and the per-latent metrics come from the loss_preds_diffs
+    # required op, which reads label_ids/orig_labels. Declared for column derivation, so
     # `required: false` per NOTE [Inherited Inputs Are Not Obligations] -- keeping it required
     # gated the op on a field it never reads.
     answer_indices:
@@ -107,10 +101,6 @@ ablation_attribution:
       per_latent: true
       sequence_type: false
       array_shape: [batch_size, vocab_size]
-    label_ids:
-      datasets_dtype: int64
-    orig_labels:
-      datasets_dtype: int64
   output_schema:
     attribution_values:
       datasets_dtype: float32
