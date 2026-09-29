@@ -159,12 +159,20 @@ $$
 \Delta\mathrm{gap} = (c_b - c_a) (v_a - v_b)^{\top} (W_U[a] - W_U[b]),
 $$
 
-and it pushes toward $a$ only when the clean state sits nearer pole $b$. On gemma-3-1b-it the clean state already
-leans to the fruit pole, with $c = (+10.87, -6.07)$ from a standalone forward that reproduces the demo's clean gap
-to within 0.3. The swap therefore moves the gap toward Color, and the prediction is $-3.83$ against $-4.00$
-measured. The pole pair is well conditioned on both models (condition numbers 1.21 and 1.49), so this is not the
-pole-conditioning effect either. The cell prints the clean coordinates and asserts that the measured change has
-the predicted sign.
+and it pushes toward $a$ only when the clean state sits nearer pole $b$. The demos' rendered 4a cells print the
+clean coordinates $c = (c_{\mathrm{fruit}}, c_{\mathrm{color}})$ and this prediction:
+
+| model | clean coordinates | predicted $\Delta\mathrm{gap}$ | measured $\Delta\mathrm{gap}$ |
+| --- | --- | --- | --- |
+| gemma-3-1b-it | $(+11.37, -6.27)$ | $-3.99$ | $-4.00$ |
+| gemma-2-2b | $(+7.42, +12.99)$ | $+3.67$ | $+0.875$ |
+
+On gemma-3-1b-it the clean state already leans to the fruit pole, so the swap moves the gap toward Color, and the
+prediction matches the measurement. On gemma-2-2b it leans to the color pole, so the swap moves toward Fruit. The
+sign agrees but the magnitude does not. gemma-2 applies a final logit softcap, so its readout at this site is not
+the linear $W_U x$ the formula assumes, and the formula's magnitude is not a prediction there; the cell asserts the
+sign only. The pole pair is well conditioned on both models
+(condition numbers 1.21 and 1.49), so the difference is not the pole-conditioning effect either.
 
 ## The decision rule
 
