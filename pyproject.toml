@@ -163,7 +163,11 @@ examples = [
     # The pin is `~=` at the minor (floats patches only) rather than a floor: upstream minors have
     # carried surface changes (1.11.0 named the steering methods once as `SteerMethod`), so each
     # minor is validated deliberately via #600's successors instead of arriving silently.
-    "interp-engine ~=1.11.1; python_version >= '3.11'",
+    # Moved 1.11.1 -> 1.12.0 for the hub adapter's republished component, whose manifest requires
+    # mask-derived position ids (decoderesearch/interp-engine#28, released in 1.12.0): the
+    # notebook end-to-end executes the current component, so the env must satisfy its floor.
+    # Validated as a #600 successor: adapter gate 1466 green on 1.12.0 (167 passed, 19 skipped).
+    "interp-engine ~=1.12.0; python_version >= '3.11'",
     # we comment these out when installing from git urls to avoid dep conflicts
     # note packages that have need to have git url deps override transitive dependencies (e.g. needing to override
     # sae-lens' transformer-lens dependency with a git url dep) need to be moved to git-deps as well
