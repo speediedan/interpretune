@@ -34,6 +34,12 @@ def test_shifts_are_signed_and_coloured_by_convention_and_flips_are_reported():
     assert 'color:inherit;font-weight:600">+0.000' in markup
 
 
+def test_a_gap_that_lands_on_zero_is_a_tie_not_a_flip():
+    """Measured in the gemma-2-2b render: a J-space run moved the gap from -1.875 by exactly +1.875."""
+    markup = build_steering_scale_sweep_html([_point("J-space patch", 20, (25.0, 26.875), (28.0, 28.0))], ["a", "b"])
+    assert markup.split("<tbody>")[1].split("</tr>")[0].endswith("<td>no</td>")
+
+
 def test_labels_are_escaped_and_the_label_count_is_enforced():
     markup = build_steering_scale_sweep_html([_point("<arm>", 5, (0.0, 1.0), (1.0, 0.0))], ["<a>", "b"])
     assert "&lt;arm&gt;" in markup and "&lt;a&gt;" in markup and "<arm>" not in markup

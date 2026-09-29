@@ -1640,7 +1640,8 @@ def build_steering_scale_sweep_html(points: Sequence[Any], token_labels: Sequenc
 
     rows = ""
     for p in points:
-        flipped = (p.pre_gap < 0) != (p.post_gap < 0)
+        # A strict sign change: a gap that lands exactly on zero is a tie, not a flip.
+        flipped = p.pre_gap * p.post_gap < 0
         rows += (
             f'<tr><td class="lbl">{html.escape(str(p.arm))}</td><td>{p.scale:g}</td>'
             + _signed(p.post_logits[0] - p.pre_logits[0], "+.3f")
