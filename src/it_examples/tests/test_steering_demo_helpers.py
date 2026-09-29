@@ -93,3 +93,15 @@ def test_pole_swap_prediction_is_exact_for_a_linear_readout_and_signed_by_the_cl
         sign_of_pole_alignment = float((poles[0] - poles[1]) @ (u_a - u_b)) > 0
         leans_to_a = pred.coordinates[0] > pred.coordinates[1]
         assert (pred.predicted_gap_delta > 0) == (leans_to_a != sign_of_pole_alignment)
+
+
+def test_steering_scale_point_reads_both_targets_and_normalizes_over_the_whole_vocabulary():
+    pre = torch.tensor([1.0, 3.0, 0.0, 0.0])
+    post = torch.tensor([4.0, 2.0, 0.0, 0.0])
+    point = helpers.steering_scale_point("arm", 5, pre, post, target_a_id=0, target_b_id=1)
+    assert point.pre_logits == (1.0, 3.0) and point.post_logits == (4.0, 2.0)
+    assert point.pre_gap == -2.0 and point.post_gap == 2.0
+    # Probabilities over all four tokens, not a two-way softmax over the targets.
+    expected = torch.softmax(pre, dim=-1)
+    assert point.pre_probs == pytest.approx((float(expected[0]), float(expected[1])))
+    assert sum(point.pre_probs) < 1.0

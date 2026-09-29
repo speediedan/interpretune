@@ -1587,6 +1587,134 @@ def _collision_aware_label_positions(
     return chosen_positions
 
 
+def _plotly_figure_html(fig: Any, id_prefix: str) -> str:
+    """Embed a plotly figure as HTML that sizes itself correctly on a static docs page.
+
+    `responsive` alone is not enough on a static docs page. Plotly sizes an autosize figure to its container AT
+    INIT, and in the rendered docs the output container has no final width at that moment, so the figure draws too
+    narrow and its colorbar and legend are clipped until the reader resizes the window, which is the first event
+    that triggers a relayout. Force that relayout once layout has settled, and keep a ResizeObserver for later
+    changes (theme toggle, sidebar collapse) that do not fire a window resize. Div ids come from a per-run counter,
+    so rendered artifacts stay diffable.
+    """
+    _decoder_map_html_counter[0] += 1
+    div_id = f"{id_prefix}-{_decoder_map_html_counter[0]}"
+    plot_html = fig.to_html(full_html=False, include_plotlyjs="cdn", config={"responsive": True}, div_id=div_id)
+    resize_shim = f"""
+<script>
+(function () {{
+  var el = document.getElementById("{div_id}");
+  if (!el) return;
+  var resize = function () {{
+    if (!window.Plotly || !el.isConnected) return;
+    try {{ window.Plotly.Plots.resize(el); }} catch (e) {{ /* figure not ready yet */ }}
+  }};
+  if (window.requestAnimationFrame) {{
+    requestAnimationFrame(function () {{ requestAnimationFrame(resize); }});
+  }}
+  setTimeout(resize, 0);
+  setTimeout(resize, 300);
+  if (window.ResizeObserver && el.parentNode) {{
+    new window.ResizeObserver(resize).observe(el.parentNode);
+  }}
+}})();
+</script>
+"""
+    return '<div style="width:100%;max-width:100%;overflow-x:hidden">' + plot_html + resize_shim + "</div>"
+
+
+def build_steering_scale_sweep_html(points: Sequence[Any], token_labels: Sequence[str]) -> str:
+    """Build the per-arm, per-scale table of logit and probability shifts for the two target tokens.
+
+    ``points`` are :class:`~it_examples.utils.steering_demo_helpers.SteeringScalePoint` rows. Each shift is signed
+    and coloured by the repository convention (green positive, red negative), and the last column says whether the
+    answer flipped, which is what the chart above it shows. Pure (no display), so a test can check the markup.
+    """
+    if len(token_labels) != 2:
+        raise ValueError(f"expected two target token labels, got {len(token_labels)}")
+    a, b = (html.escape(str(t)) for t in token_labels)
+
+    def _signed(v: float, fmt: str) -> str:
+        colour = "#1a7f37" if v > 0 else ("#d1242f" if v < 0 else "inherit")
+        return f'<td style="color:{colour};font-weight:600">{v:{fmt}}</td>'
+
+    rows = ""
+    for p in points:
+        flipped = (p.pre_gap < 0) != (p.post_gap < 0)
+        rows += (
+            f'<tr><td class="lbl">{html.escape(str(p.arm))}</td><td>{p.scale:g}</td>'
+            + _signed(p.post_logits[0] - p.pre_logits[0], "+.3f")
+            + _signed(p.post_logits[1] - p.pre_logits[1], "+.3f")
+            + _signed(p.post_gap - p.pre_gap, "+.3f")
+            + _signed(100 * (p.post_probs[0] - p.pre_probs[0]), "+.2f")
+            + _signed(100 * (p.post_probs[1] - p.pre_probs[1]), "+.2f")
+            + f"<td>{'yes' if flipped else 'no'}</td></tr>"
+        )
+    style = """
+    <style>
+    .sweep { font-family: system-ui, -apple-system, sans-serif; font-size: 13px; margin-bottom: 12px; }
+    .sweep .scroll { overflow-x: auto; }
+    .sweep table { width: max-content; border-collapse: collapse; }
+    .sweep th, .sweep td { padding: 3px 8px; border: 1px solid rgba(150,150,150,0.5); text-align: right; }
+    .sweep td.lbl, .sweep th.lbl { text-align: left; }
+    .sweep .footnote { font-size: 12px; color: #666; margin-top: 6px; max-width: 900px; }
+    </style>
+    """
+    header = (
+        '<tr><th class="lbl">Arm</th><th>Scale</th>'
+        f"<th>&#916; logit {a}</th><th>&#916; logit {b}</th><th>&#916; gap ({a} &#8722; {b})</th>"
+        f"<th>&#916; prob {a} (pp)</th><th>&#916; prob {b} (pp)</th><th>Answer flipped</th></tr>"
+    )
+    footnote = (
+        "Shifts are post minus pre at the answer position; probabilities are over the full vocabulary, in percentage "
+        "points. Scales are each arm's own multiplier, not matched displacements across arms."
+    )
+    return (
+        f'{style}<div class="sweep"><div class="scroll"><table><thead>{header}</thead><tbody>{rows}</tbody>'
+        f'</table></div><div class="footnote">{footnote}</div></div>'
+    )
+
+
+def display_steering_scale_sweep(points: Sequence[Any], token_labels: Sequence[str], title: str) -> None:
+    """Chart each arm's post-intervention gap against scale, with the answer-flip line, then show the shift table.
+
+    The chart plots the gap after intervention rather than its change, so the flip threshold is one line at zero shared
+    by every arm (all arms start from the same clean gap), and the smallest scale at which each arm crosses it is read
+    off the chart rather than asserted in prose.
+    """
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        print("[plotly unavailable] scale-sweep chart skipped; the table below carries the same numbers")
+    else:
+        fig = go.Figure()
+        for arm in dict.fromkeys(p.arm for p in points):
+            arm_points = sorted((p for p in points if p.arm == arm), key=lambda p: p.scale)
+            fig.add_trace(
+                go.Scatter(
+                    x=[p.scale for p in arm_points], y=[p.post_gap for p in arm_points], mode="lines+markers", name=arm
+                )
+            )
+        fig.add_hline(
+            y=0.0,
+            line_dash="dash",
+            line_color="gray",
+            annotation_text=f"answer flips above ({token_labels[0]} > {token_labels[1]})",
+            annotation_position="top left",
+        )
+        fig.update_layout(
+            title=title,
+            autosize=True,
+            height=420,
+            template="simple_white",
+            xaxis=dict(title="intervention scale (each arm's own multiplier)", type="log"),
+            yaxis=dict(title=f"gap after intervention ({token_labels[0]} − {token_labels[1]}, logits)"),
+            legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0),
+        )
+        display(HTML(_plotly_figure_html(fig, "it-scale-sweep")))
+    display(HTML(build_steering_scale_sweep_html(points, token_labels)))
+
+
 def plot_decoder_projection_map(
     analyzed_profiles: Sequence[Any],
     analyzed_vectors: torch.Tensor,
@@ -1719,36 +1847,7 @@ def plot_decoder_projection_map(
             yaxis=dict(showticklabels=False, title=None),
             legend=dict(orientation="h", yanchor="top", y=-0.04, xanchor="left", x=0),
         )
-        # `responsive` alone is not enough on a static docs page. Plotly sizes an autosize figure to
-        # its container AT INIT, and in the rendered docs the output container has no final width at
-        # that moment -- so the figure draws too narrow and the colorbar and legend are clipped until
-        # the reader resizes the window, which is the first event that triggers a relayout. Force that
-        # relayout ourselves once layout has settled, and keep a ResizeObserver for later changes
-        # (theme toggle, sidebar collapse) that do not fire a window resize.
-        _decoder_map_html_counter[0] += 1
-        div_id = f"it-decoder-map-{_decoder_map_html_counter[0]}"
-        plot_html = fig.to_html(full_html=False, include_plotlyjs="cdn", config={"responsive": True}, div_id=div_id)
-        resize_shim = f"""
-<script>
-(function () {{
-  var el = document.getElementById("{div_id}");
-  if (!el) return;
-  var resize = function () {{
-    if (!window.Plotly || !el.isConnected) return;
-    try {{ window.Plotly.Plots.resize(el); }} catch (e) {{ /* figure not ready yet */ }}
-  }};
-  if (window.requestAnimationFrame) {{
-    requestAnimationFrame(function () {{ requestAnimationFrame(resize); }});
-  }}
-  setTimeout(resize, 0);
-  setTimeout(resize, 300);
-  if (window.ResizeObserver && el.parentNode) {{
-    new window.ResizeObserver(resize).observe(el.parentNode);
-  }}
-}})();
-</script>
-"""
-        display(HTML('<div style="width:100%;max-width:100%;overflow-x:hidden">' + plot_html + resize_shim + "</div>"))
+        display(HTML(_plotly_figure_html(fig, "it-decoder-map")))
         plotly_rendered = True
     except Exception:
         plotly_rendered = False

@@ -233,3 +233,40 @@ def _cpu_info(info: UnembedNormInfo) -> UnembedNormInfo:
             if isinstance(value, torch.Tensor) and value.device.type != "cpu"
         }
     )
+
+
+class SteeringScalePoint(NamedTuple):
+    """One steering arm at one scale: the two target tokens' logits and probabilities before and after."""
+
+    arm: str
+    scale: float
+    pre_logits: tuple[float, float]
+    post_logits: tuple[float, float]
+    pre_probs: tuple[float, float]
+    post_probs: tuple[float, float]
+
+    @property
+    def pre_gap(self) -> float:
+        return self.pre_logits[0] - self.pre_logits[1]
+
+    @property
+    def post_gap(self) -> float:
+        return self.post_logits[0] - self.post_logits[1]
+
+
+def steering_scale_point(
+    arm: str, scale: float, pre_logits: torch.Tensor, post_logits: torch.Tensor, target_a_id: int, target_b_id: int
+) -> SteeringScalePoint:
+    """Summarize one arm at one scale from its full last-position logits (probabilities over the whole
+    vocabulary)."""
+    pre = pre_logits.detach().float().cpu().reshape(-1)
+    post = post_logits.detach().float().cpu().reshape(-1)
+    pre_p, post_p = torch.softmax(pre, dim=-1), torch.softmax(post, dim=-1)
+    return SteeringScalePoint(
+        arm=arm,
+        scale=float(scale),
+        pre_logits=(float(pre[target_a_id]), float(pre[target_b_id])),
+        post_logits=(float(post[target_a_id]), float(post[target_b_id])),
+        pre_probs=(float(pre_p[target_a_id]), float(pre_p[target_b_id])),
+        post_probs=(float(post_p[target_a_id]), float(post_p[target_b_id])),
+    )
