@@ -134,6 +134,76 @@ class TestUnavailableAdaptersAreReported:
         assert not [w for w in caught if issubclass(w.category, UnavailableCompositionWarning)]
 
 
+class TestCircuitTracerIsIndependentOfSAELens:
+    """Only the circuit-tracer composition that attaches sae_lens latent models may need sae_lens.
+
+    When the circuit-tracer adapter module imported sae_lens at its top level, an environment without the sae_lens extra
+    lost EVERY circuit-tracer composition (measured: 12 compositions registered where 30 should), and a downstream
+    component building its own circuit-tracer pairing from that module could not import it at all.
+    """
+
+    SL_CT_KEY = ("module", "circuit_tracer", "core", "nnsight", "sae_lens")
+
+    @staticmethod
+    def _keys_by_value(registry):
+        return {tuple(getattr(part, "value", part) for part in key): key for key in registry.keys()}
+
+    def test_circuit_tracer_registers_with_sae_lens_blocked(self):
+        """Runtime proof, in a subprocess so the import blocker cannot leak into the rest of the suite."""
+        probe = textwrap.dedent("""
+            import sys, importlib.abc, warnings
+            warnings.filterwarnings("ignore")
+
+            # Installed BEFORE interpretune is imported, so its availability flag sees sae_lens as absent.
+            class Blocker(importlib.abc.MetaPathFinder):
+                def find_spec(self, name, path=None, target=None):
+                    if name.split(".")[0] == "sae_lens":
+                        raise ModuleNotFoundError(f"No module named {name!r}")
+                    return None
+
+            sys.meta_path.insert(0, Blocker())
+            try:
+                import sae_lens  # noqa: F401
+                print("CONTROL_FAILED")
+                raise SystemExit(0)
+            except ModuleNotFoundError:
+                print("CONTROL_OK")
+
+            from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule  # noqa: F401
+            print("CT_IMPORT_OK")
+            from interpretune.adapters._light_register import register_all_adapters
+            from interpretune.adapters.registration import CompositionRegistry
+
+            reg = CompositionRegistry()
+            register_all_adapters(reg)
+            for key in reg.keys():
+                if "circuit_tracer" in str(key):
+                    print("KEY", ",".join(getattr(part, "value", part) for part in key))
+        """)
+        proc = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=300)
+        out = proc.stdout
+        assert "CONTROL_OK" in out, f"blocker did not block; probe proves nothing.\n{out}\n{proc.stderr}"
+        assert "CT_IMPORT_OK" in out, (
+            f"the circuit-tracer adapter module is unimportable without sae_lens.\n{out}\n{proc.stderr}"
+        )
+        keys = {tuple(line[len("KEY ") :].split(",")) for line in out.splitlines() if line.startswith("KEY ")}
+        assert ("module", "circuit_tracer", "core", "nnsight") in keys, (
+            f"the circuit-tracer compositions that do not need sae_lens did not register:\n{out}\n{proc.stderr}"
+        )
+        assert self.SL_CT_KEY not in keys, "the sae_lens composition registered in an environment without sae_lens"
+
+    def test_the_sae_lens_composition_registers_when_sae_lens_is_present(self):
+        """Positive control: the guard removes the composition only where sae_lens is absent."""
+        pytest.importorskip("sae_lens")
+        reg = CompositionRegistry()
+        register_all_adapters(reg)
+        keys = self._keys_by_value(reg)
+        assert self.SL_CT_KEY in keys
+        from interpretune.adapters.circuit_tracer import CircuitTracerNNsightSAELensModule
+
+        assert reg.get(keys[self.SL_CT_KEY]) == (CircuitTracerNNsightSAELensModule,)
+
+
 class TestImplementationModuleResolution:
     """The entry point names the IMPORT-SAFE module; the registrable classes may live one level down.
 

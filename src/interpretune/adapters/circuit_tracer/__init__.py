@@ -46,6 +46,9 @@ if TYPE_CHECKING:
     from interpretune.adapters.circuit_tracer.config import (
         CircuitTracerConfig as CircuitTracerConfig,
     )
+    from interpretune.adapters.circuit_tracer.sae_lens_composition import (
+        CircuitTracerNNsightSAELensModule as CircuitTracerNNsightSAELensModule,
+    )
 
 # public name -> the submodule that defines it
 _EXPORT_MODULES = {
@@ -60,6 +63,7 @@ _EXPORT_MODULES = {
     "CircuitTracerModule": "adapter",
     "CircuitTracerNNsightModule": "adapter",
     "CircuitTracerNNsightModuleMixin": "adapter",
+    "CircuitTracerNNsightSAELensModule": "sae_lens_composition",
     "CircuitTracerTLModule": "adapter",
     "CircuitTracerTLModuleMixin": "adapter",
     "DEFAULT_CT_ANALYSIS_BACKEND": "backends",
@@ -79,6 +83,7 @@ __all__ = [
     "CircuitTracerModule",
     "CircuitTracerNNsightModule",
     "CircuitTracerNNsightModuleMixin",
+    "CircuitTracerNNsightSAELensModule",
     "CircuitTracerTLModule",
     "CircuitTracerTLModuleMixin",
     "DEFAULT_CT_ANALYSIS_BACKEND",
