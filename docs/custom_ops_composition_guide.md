@@ -162,17 +162,20 @@ getattr(analysis_batch, key)                           dynamic key
 resolve_aggregate_input(module, analysis_batch, "...")  scoped by string
 backend.hydrate_graph_from_batch(analysis_batch)       whole batch to a backend
 get_batch_input(batch)                                 helper reads the BatchEncoding
-get_loss_preds_diffs(module, analysis_batch, ...)      helper reads the analysis batch
+it.loss_preds_diffs(module, analysis_batch, ...)       required op reads the analysis batch
 ```
 
-The last two are the common ones and the easiest to miss: `get_loss_preds_diffs` alone accounts for
-every `label_ids` / `orig_labels` declaration in the bundled ops, and `get_batch_input` for most
+The last two are the common ones and the easiest to miss: the `loss_preds_diffs` op alone accounts for
+every `label_ids` / `orig_labels` declaration in the bundled ops (inherited through `required_ops`, so
+compiled `required: false` on the dependents and enforced on the op itself, which validates its own
+inputs at the point of invocation), and `get_batch_input` for most
 `input` declarations. **Do not conclude a declaration is spurious because the field name does not
 appear in the function body** -- follow anything the implementation hands the batch to.
 
 A detector that scanned only for direct attribute access once reported 22 of ~40 bundled ops as
 over-declaring; a full audit of all 41 `required: true` declarations found exactly one
-(#299). Declare what your op needs present, and let the enforcement be about presence.
+(#299, plus the #282 recount when `get_loss_preds_diffs` was promoted from a helper to the
+`loss_preds_diffs` op). Declare what your op needs present, and let the enforcement be about presence.
 
 ### 2. Keep implementation logic small and composable
 

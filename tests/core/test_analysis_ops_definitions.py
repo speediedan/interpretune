@@ -338,8 +338,9 @@ class TestGradientOperations:
         scalar_logit_diff = torch.tensor(0.3)
         assert scalar_logit_diff.dim() == 0, "Setup requires a scalar tensor"
 
-        # Create mock_get_loss_preds_diffs that returns scalar logit_diffs
-        with patch("interpretune.analysis.optools.get_loss_preds_diffs") as mock_get_loss_preds_diffs:
+        # Patch the kernel at its use site: the loss_preds_diffs op implementation calls the
+        # module-global name in core_ops, and every bundled impl reaches it through the op.
+        with patch("interpretune.analysis.ops.bundled.core.core_ops.get_loss_preds_diffs") as mock_get_loss_preds_diffs:
             mock_get_loss_preds_diffs.return_value = (
                 torch.tensor(0.2),  # loss (scalar)
                 scalar_logit_diff,  # logit_diffs (scalar tensor)
@@ -399,8 +400,8 @@ class TestGradientOperations:
         # Create analysis batch with required attributes
         analysis_batch = AnalysisBatch(
             answer_indices=torch.tensor([2]),  # Single example, answer at position 2
-            labels=torch.tensor([0]),  # Required for get_loss_preds_diffs
-            orig_labels=torch.tensor([0]),  # Required for get_loss_preds_diffs
+            label_ids=torch.tensor([0]),  # Required by the loss_preds_diffs op
+            orig_labels=torch.tensor([0]),  # Required by the loss_preds_diffs op
         )
 
         # Import the function to be tested
@@ -425,10 +426,9 @@ class TestGradientOperations:
             mock_logits[0, 2, 0] = 1.0  # Put a value at the expected answer index
             mock_module.model.return_value = mock_logits
 
-            # Run the function
-            result_batch = model_gradient_impl(
-                mock_module, analysis_batch, mock_batch, 0, get_loss_preds_diffs=mock_get_loss_preds_diffs
-            )
+            # Run the function (the loss_preds_diffs op is reached through the public surface,
+            # with the kernel mocked by the fixture)
+            result_batch = model_gradient_impl(mock_module, analysis_batch, mock_batch, 0)
 
             # Verify backward was called on the scalar tensor
             mock_backward.assert_called_once()
@@ -461,17 +461,15 @@ class TestGradientOperations:
         analysis_batch = AnalysisBatch(
             answer_logits=torch.tensor([[[0.9, 0.1]]]),  # Single example logits
             answer_indices=torch.tensor([0]),  # Answer index
-            labels=torch.tensor([0]),  # For loss computation
+            label_ids=torch.tensor([0]),  # For loss computation
             orig_labels=torch.tensor([0]),  # For logit diff computation
         )
 
         # Import the function to be tested
         from interpretune.analysis.ops.bundled.core.core_ops import logit_diffs_impl
 
-        # Run the function - this will use our mocked get_loss_preds_diffs
-        result_batch = logit_diffs_impl(
-            mock_module, analysis_batch, mock_batch, 0, get_loss_preds_diffs=mock_get_loss_preds_diffs
-        )
+        # Run the function - this will use our mocked kernel through the loss_preds_diffs op
+        result_batch = logit_diffs_impl(mock_module, analysis_batch, mock_batch, 0)
 
         # Verify the key edge case: scalar logit_diffs should be unsqueezed to 1D tensor
         assert result_batch.logit_diffs.dim() == 1, "Scalar logit_diffs should be unsqueezed to 1D"
@@ -802,7 +800,7 @@ class TestGradientOperations:
         assert hasattr(result_batch, "alive_latents")
         assert "hook1" in result_batch.alive_latents
 
-    def test_ablation_attribution_impl_scalar_and_error_cases(self, mock_module_base):
+    def test_ablation_attribution_impl_scalar_and_error_cases(self, mock_module_base, request):
         """Test ablation_attribution_impl function with scalar tensor handling and required input validation.
 
         This test specifically targets:
@@ -838,9 +836,12 @@ class TestGradientOperations:
         mock_module.sae_handles = [MagicMock()]
         mock_module.sae_handles[0].cfg.d_sae = 2  # Small feature dimension for testing
 
-        # Create a mock for get_loss_preds_diffs that will return a scalar logit diff
-        # This will trigger the creation of a scalar example_mask in the implementation
-        mock_get_loss_preds_diffs = MagicMock()
+        # Patch the kernel at its use site: ablation reaches it through the loss_preds_diffs op,
+        # which calls the module-global name in core_ops. Return a scalar logit diff to trigger
+        # the creation of a scalar example_mask in the implementation.
+        kernel_patch = patch("interpretune.analysis.ops.bundled.core.core_ops.get_loss_preds_diffs")
+        mock_get_loss_preds_diffs = kernel_patch.start()
+        request.addfinalizer(kernel_patch.stop)
         scalar_result = torch.tensor(0.1)  # A small positive scalar -> positive example_mask
         assert scalar_result.dim() == 0, "Setup requires a scalar tensor"
 
@@ -858,6 +859,8 @@ class TestGradientOperations:
             alive_latents={"hook1": [0]},
             # Use a scalar tensor for logit_diffs to trigger the unsqueeze_ logic
             logit_diffs=torch.tensor(0.3),  # Scalar positive value -> attribution should be calculated
+            label_ids=torch.tensor([0]),  # Required by the loss_preds_diffs op
+            orig_labels=torch.tensor([0]),  # Required by the loss_preds_diffs op
         )
         assert scalar_batch.logit_diffs.dim() == 0, "Test requires a scalar logit_diffs"
 
@@ -871,10 +874,9 @@ class TestGradientOperations:
             return original_unsqueeze_(self, *args, **kwargs)
 
         with patch.object(torch.Tensor, "unsqueeze_", spy_unsqueeze_):
-            # Run the function
-            result_batch = ablation_attribution_impl(
-                mock_module, scalar_batch, mock_batch, 0, get_loss_preds_diffs=mock_get_loss_preds_diffs
-            )
+            # Run the function (the loss_preds_diffs op is reached through the public surface,
+            # with the kernel mocked above)
+            result_batch = ablation_attribution_impl(mock_module, scalar_batch, mock_batch, 0)
 
         # Verify that at least one scalar tensor was unsqueezed
         assert 0 in unsqueezed_tensors, "Expected at least one scalar tensor to be unsqueezed"
@@ -902,6 +904,8 @@ class TestGradientOperations:
             answer_logits={"hook1": {0: torch.tensor([[0.6, 0.4]])}},
             alive_latents={"hook1": [0]},
             logit_diffs=torch.tensor(-0.3),  # Negative scalar
+            label_ids=torch.tensor([0]),  # Required by the loss_preds_diffs op
+            orig_labels=torch.tensor([0]),  # Required by the loss_preds_diffs op
         )
         assert negative_scalar_batch.logit_diffs.dim() == 0, "Test requires a scalar logit_diffs"
 
@@ -914,9 +918,7 @@ class TestGradientOperations:
         )
 
         # Run the function again with negative scalar
-        result_batch = ablation_attribution_impl(
-            mock_module, negative_scalar_batch, mock_batch, 0, get_loss_preds_diffs=mock_get_loss_preds_diffs
-        )
+        result_batch = ablation_attribution_impl(mock_module, negative_scalar_batch, mock_batch, 0)
 
         # Verify that attribution values for negative logit_diffs are zero
         assert hasattr(result_batch, "attribution_values")
@@ -942,15 +944,32 @@ SERIALIZATION_TEST_CONFIGS = (
         alias="model_fwd_w_cache_latent_models", cfg=OpTestConfig(target_op=it.model_fwd_w_cache_latent_models)
     ),
     BaseAugTest(alias="model_ablation", cfg=OpTestConfig(target_op=it.model_ablation)),
-    BaseAugTest(alias="model_gradient", cfg=OpTestConfig(target_op=it.model_gradient)),
-    BaseAugTest(alias="logit_diffs", cfg=OpTestConfig(target_op=it.logit_diffs)),
-    BaseAugTest(alias="logit_diffs_cache", cfg=OpTestConfig(target_op=it.logit_diffs_cache)),
+    # label_ids/orig_labels are inherited (required=False) through the loss_preds_diffs required op;
+    # the generator skips them, but the op validates its own inputs at invocation, so generate them.
+    BaseAugTest(
+        alias="model_gradient",
+        cfg=OpTestConfig(target_op=it.model_gradient, override_req_cols=("label_ids", "orig_labels")),
+    ),
+    BaseAugTest(
+        alias="logit_diffs",
+        cfg=OpTestConfig(target_op=it.logit_diffs, override_req_cols=("label_ids", "orig_labels")),
+    ),
+    BaseAugTest(
+        alias="logit_diffs_cache",
+        cfg=OpTestConfig(target_op=it.logit_diffs_cache, override_req_cols=("label_ids", "orig_labels")),
+    ),
     BaseAugTest(
         alias="model_fwd_w_cache_latent_models.logit_diffs_cache",
-        cfg=OpTestConfig(target_op=[it.model_fwd_w_cache_latent_models, it.logit_diffs_cache]),
+        cfg=OpTestConfig(
+            target_op=[it.model_fwd_w_cache_latent_models, it.logit_diffs_cache],
+            override_req_cols=("label_ids", "orig_labels"),
+        ),
     ),
     BaseAugTest(alias="latent_correct_acts", cfg=OpTestConfig(target_op=it.latent_correct_acts)),
-    BaseAugTest(alias="ablation_attribution", cfg=OpTestConfig(target_op=it.ablation_attribution)),
+    BaseAugTest(
+        alias="ablation_attribution",
+        cfg=OpTestConfig(target_op=it.ablation_attribution, override_req_cols=("label_ids", "orig_labels")),
+    ),
     BaseAugTest(alias="gradient_attribution", cfg=OpTestConfig(target_op=it.gradient_attribution)),
     BaseAugTest(alias="logit_diffs_attr_ablation", cfg=OpTestConfig(target_op=it.logit_diffs_attr_ablation)),
 )

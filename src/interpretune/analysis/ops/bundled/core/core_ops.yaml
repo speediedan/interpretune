@@ -90,22 +90,43 @@ model_fwd_w_cache:
       required: false
       non_tensor: true
 
+loss_preds_diffs:
+  description: Compute loss, predictions, and logit differences from answer logits
+  implementation: interpretune.analysis.ops.bundled.core.core_ops.loss_preds_diffs_impl
+  importable_params:
+    logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
+  aliases: []
+  input_schema:
+    label_ids:
+      datasets_dtype: int64
+    orig_labels:
+      datasets_dtype: int64
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+  output_schema:
+    loss:
+      datasets_dtype: float32
+      sequence_type: false
+    logit_diffs:
+      datasets_dtype: float32
+    preds:
+      datasets_dtype: int64
+    answer_logits:
+      datasets_dtype: float32
+      sequence_type: false
+
 logit_diffs:
   description: Clean forward pass for computing logit differences
   implementation: interpretune.analysis.ops.bundled.core.core_ops.logit_diffs_impl
   importable_params:
     logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
-    get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
+  required_ops: [get_answer_indices, loss_preds_diffs]
   aliases: []
-  # TODO: remove appropriate output_schema input_schema columns if/when get_loss_preds_diffs is made an op
   input_schema:
     input:
       datasets_dtype: float32
       connected_obj: datamodule
-    label_ids:
-      datasets_dtype: int64
-    orig_labels:
-      datasets_dtype: int64
     answer_logits:
       datasets_dtype: float32
       sequence_type: false
@@ -132,9 +153,8 @@ logit_diffs_cache:
   implementation: interpretune.analysis.ops.bundled.core.core_ops.logit_diffs_impl
   importable_params:
     logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
-    get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
+  required_ops: [get_answer_indices, loss_preds_diffs]
   aliases: []
-  # TODO: remove appropriate output_schema input_schema columns if/when get_loss_preds_diffs is made an op
   input_schema:
     input:
       datasets_dtype: float32
@@ -146,10 +166,6 @@ logit_diffs_cache:
       dyn_dim_ceil: max_seq_len
       array_shape: [null, batch_size, vocab_size]
     answer_indices:
-      datasets_dtype: int64
-    label_ids:
-      datasets_dtype: int64
-    orig_labels:
       datasets_dtype: int64
     cache:
       datasets_dtype: object

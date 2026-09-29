@@ -29,7 +29,6 @@ def model_gradient_impl(
     batch: BatchEncoding,
     batch_idx: int,
     logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
-    get_loss_preds_diffs: Callable = get_loss_preds_diffs,
 ) -> DefaultAnalysisBatchProtocol:
     """Implementation for gradient-based attribution.
 
@@ -63,6 +62,8 @@ def model_gradient_impl(
     # ---- backward_fn closure: captures op-specific state ---------------------
     # Applied to raw logits inside the backend.  Must use only standard PyTorch ops
     # so NNsight can trace through it (all operations intercepted via __torch_function__).
+    # It calls the shared optools kernel directly rather than the loss_preds_diffs op: an op
+    # invocation goes through dispatcher validation and batch updates, which is not traceable.
     def backward_fn(raw_logits: torch.Tensor) -> torch.Tensor:
         """Extract answer logits, compute logit diffs via get_loss_preds_diffs, return scalar."""
         sliced = raw_logits[torch.arange(raw_logits.size(0)), answer_indices]
@@ -87,16 +88,15 @@ def model_gradient_impl(
         raw_logits[torch.arange(get_batch_input(batch).size(0)), answer_indices],  # type: ignore[attr-defined]  # BatchEncoding tensor has size
         dim=1,
     )
-    loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(module, analysis_batch, answer_logits, logit_diff_fn)
-    if logit_diffs.dim() == 0:
-        logit_diffs.unsqueeze_(0)
+    # Stage the indexed logits for the declared required op, invoked via the public op surface
+    # (see NOTE [Op-Driven Transitive Dependency Atomicity])
+    import interpretune as it
+
+    analysis_batch.update(answer_logits=answer_logits)
+    analysis_batch = it.loss_preds_diffs(module, analysis_batch, batch, batch_idx, logit_diff_fn=logit_diff_fn)
 
     analysis_batch.update(
-        answer_logits=answer_logits,
         answer_indices=answer_indices,
-        logit_diffs=logit_diffs,
-        preds=preds,
-        loss=loss,
         grad_cache=module.analysis_cfg.cache_dict,  # Store the gradient cache
     )
     return analysis_batch
@@ -193,10 +193,14 @@ def ablation_attribution_impl(
     module,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
+    batch_idx: int,
     logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
-    get_loss_preds_diffs: Callable = get_loss_preds_diffs,
 ) -> DefaultAnalysisBatchProtocol:
     """Implementation for computing attribution values using latent ablation."""
+    # Declared required_op invoked via the public op surface
+    # (see NOTE [Op-Driven Transitive Dependency Atomicity])
+    import interpretune as it
+
     # Ensure we have required inputs
     required_inputs = ["answer_logits", "alive_latents", "logit_diffs"]
     for key in required_inputs:
@@ -217,12 +221,21 @@ def ablation_attribution_impl(
         "Missing required attributes in analysis_batch"
     )
     assert isinstance(analysis_batch.answer_logits, dict), "Expected answer_logits to be a dictionary"
-    for act_name, logits in analysis_batch.answer_logits.items():
+    # Captured up front: the loop stages each latent's logits onto `analysis_batch.answer_logits`
+    # for the required-op call below, so it must not iterate the attribute it mutates.
+    per_latent_logits = analysis_batch.answer_logits
+    for act_name, logits in per_latent_logits.items():
         attribution_values[act_name] = torch.zeros(get_batch_input(batch).size(0), module.sae_handles[0].cfg.d_sae)  # type: ignore[attr-defined]
         for latent_idx in analysis_batch.alive_latents[act_name]:
-            # Calculate metrics for this latent using the instance's get_loss_preds_diffs method
-            loss, logit_diffs, preds, answer_logits = get_loss_preds_diffs(
-                module, analysis_batch, logits[latent_idx], logit_diff_fn
+            # Stage this latent's logits for the declared required op, invoked via the public op
+            # surface (see NOTE [Op-Driven Transitive Dependency Atomicity])
+            analysis_batch.update(answer_logits=logits[latent_idx])
+            latent_batch = it.loss_preds_diffs(module, analysis_batch, batch, batch_idx, logit_diff_fn=logit_diff_fn)
+            loss, logit_diffs, preds, answer_logits = (
+                latent_batch.loss,
+                latent_batch.logit_diffs,
+                latent_batch.preds,
+                latent_batch.answer_logits,
             )
 
             # Store per-latent metrics

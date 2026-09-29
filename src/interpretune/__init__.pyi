@@ -112,8 +112,8 @@ def ablation_attribution(
     module,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
+    batch_idx: int,
     logit_diff_fn: Callable = ...,
-    get_loss_preds_diffs: Callable = ...,
 ) -> DefaultAnalysisBatchProtocol:
     """Compute attribution values from ablation
 
@@ -123,8 +123,6 @@ def ablation_attribution(
         alive_latents (int64)
         logit_diffs (float32)
         answer_logits (float32)
-        label_ids (int64)
-        orig_labels (int64)
 
     Output Schema:
         attribution_values (float32)
@@ -135,7 +133,6 @@ def ablation_attribution(
 
     Function parameter defaults (from YAML):
         logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
-        get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
     """
     ...
 
@@ -581,15 +578,13 @@ def logit_diffs(
     module: torch.nn.Module,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
+    batch_idx: int,
     logit_diff_fn: Callable = ...,
-    get_loss_preds_diffs: Callable = ...,
 ) -> DefaultAnalysisBatchProtocol:
     """Clean forward pass for computing logit differences
 
     Input Schema:
         input (float32)
-        label_ids (int64)
-        orig_labels (int64)
         answer_logits (float32)
         answer_indices (int64)
 
@@ -601,7 +596,6 @@ def logit_diffs(
 
     Function parameter defaults (from YAML):
         logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
-        get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
     """
     ...
 
@@ -609,8 +603,8 @@ def logit_diffs_cache(
     module: torch.nn.Module,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
+    batch_idx: int,
     logit_diff_fn: Callable = ...,
-    get_loss_preds_diffs: Callable = ...,
 ) -> DefaultAnalysisBatchProtocol:
     """Clean forward pass for computing logit differences including cache activations (composition only)
 
@@ -618,8 +612,6 @@ def logit_diffs_cache(
         input (float32)
         answer_logits (float32)
         answer_indices (int64)
-        label_ids (int64)
-        orig_labels (int64)
         cache (object)
 
     Output Schema:
@@ -630,7 +622,31 @@ def logit_diffs_cache(
 
     Function parameter defaults (from YAML):
         logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
-        get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
+    """
+    ...
+
+def loss_preds_diffs(
+    module: torch.nn.Module,
+    analysis_batch: DefaultAnalysisBatchProtocol,
+    batch: BatchEncoding,
+    batch_idx: int,
+    logit_diff_fn: Callable = ...,
+) -> DefaultAnalysisBatchProtocol:
+    """Compute loss, predictions, and logit differences from answer logits
+
+    Input Schema:
+        label_ids (int64)
+        orig_labels (int64)
+        answer_logits (float32)
+
+    Output Schema:
+        loss (float32)
+        logit_diffs (float32)
+        preds (int64)
+        answer_logits (float32)
+
+    Function parameter defaults (from YAML):
+        logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
     """
     ...
 
@@ -741,14 +757,11 @@ def model_gradient(
     batch: BatchEncoding,
     batch_idx: int,
     logit_diff_fn: Callable = ...,
-    get_loss_preds_diffs: Callable = ...,
 ) -> DefaultAnalysisBatchProtocol:
     """Model gradient-based attribution
 
     Input Schema:
         input (int64)
-        label_ids (int64)
-        orig_labels (int64)
 
     Output Schema:
         answer_logits (float32)
@@ -761,7 +774,6 @@ def model_gradient(
 
     Function parameter defaults (from YAML):
         logit_diff_fn: interpretune.analysis.optools.boolean_logits_to_avg_logit_diff
-        get_loss_preds_diffs: interpretune.analysis.optools.get_loss_preds_diffs
     """
     ...
 
