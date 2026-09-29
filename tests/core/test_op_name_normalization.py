@@ -165,12 +165,16 @@ class TestStrictLoadVetoesTheCache:
         """
         op_dir = _collection(tmp_path, "ops", _op_yaml("my-collide-op") + _op_yaml("my_collide_op"))
 
-        # Warm the cache with a non-strict load.
+        # Warm the cache with a non-strict load. Schemas compile (and the cache saves) at
+        # session setup, not at load (#280), so the save needs the explicit setup call.
         with pytest.warns(UserWarning, match="Operation name collision"):
-            _dispatcher(cache_dir, op_dir).load_definitions()
-        assert list(cache_dir.glob("op_definitions_*.py")), "expected the non-strict load to cache"
+            first = _dispatcher(cache_dir, op_dir)
+            first.load_definitions()
+        first.ensure_compiled()
+        assert list(cache_dir.glob("op_definitions_*.py")), "expected setup to cache"
 
-        # Same cache dir, strict enabled: must still fail.
+        # Same cache dir, strict enabled: must still fail. Name collisions are detected at
+        # conversion, which still runs at load, so this raises before setup like before.
         monkeypatch.setenv(IT_STRICT_OP_LOAD_ENV_VAR, "1")
         with pytest.raises(OpLoadError, match="Operation name collision"):
             _dispatcher(cache_dir, op_dir).load_definitions()
