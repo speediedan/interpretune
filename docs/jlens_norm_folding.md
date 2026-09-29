@@ -124,6 +124,48 @@ which is worth distinguishing: the concept contrast is nearly absent in the unfo
 norm 869 yet displacement norm 6.1) and anti-aligned with the task pathway (cosine -0.67). Not weak,
 wrong.
 
+## Folding-sensitive substrates
+
+A model is a *folding-sensitive substrate* for a task when the choice between the `jlens_folded` and
+`jlens_unfolded` bases decides whether a steering edit works at all, not only how strongly. From the sweep above,
+in patch mode at late layers on the concept-contrast task:
+
+| model | classification | evidence |
+| --- | --- | --- |
+| gemma-3-1b-it | sensitive: fold | unfolded vectors never flip; folded vectors flip from about 70% depth |
+| gemma-2-2b | not sensitive | both flip; unfolded is about 3x larger at L24 (+17.77 against +5.69) |
+| pythia-70m | not sensitive | folding is a no-op after the lens (cosine 1.000) |
+| gpt2 | undetermined | at the capability floor for this task |
+
+The cause is the coordinate alignment described above, so the size of the norm's scale does not tell you which
+side of the line a new model falls on. Measure it with the first-order check in the decision rule below. The
+steering demos use the folded basis in their J-space section, and on gemma-3-1b-it that is the configuration the
+sweep says is required.
+
+### Sites after the final norm
+
+Folding concerns directions written into the residual stream *before* the final norm, where the norm's elementwise
+scale still stands between the edit and the logits. At a site after it, such as `unembed.hook_in`, the logits are
+$W_U x$ with no norm left to apply, so unembed rows already are the readout directions and the choice does not
+arise.
+
+The steering demos' embed-basis patch (section 4a) runs at that site, with poles built from per-group mean token
+embeddings. Both gemma checkpoints tie the embedding to the unembed, so these are means of unembed rows. Its outcome
+differs between the demos (a gap change of $+0.875$ on gemma-2-2b, $-4.00$ on gemma-3-1b-it) for a reason
+unrelated to folding. A patch-mode swap exchanges the clean activation's two pole coordinates $c = V^{+} x$, so
+under the linear readout it moves the $a$ minus $b$ gap by
+
+$$
+\Delta\mathrm{gap} = (c_b - c_a) (v_a - v_b)^{\top} (W_U[a] - W_U[b]),
+$$
+
+and it pushes toward $a$ only when the clean state sits nearer pole $b$. On gemma-3-1b-it the clean state already
+leans to the fruit pole, with $c = (+10.87, -6.07)$ from a standalone forward that reproduces the demo's clean gap
+to within 0.3. The swap therefore moves the gap toward Color, and the prediction is $-3.83$ against $-4.00$
+measured. The pole pair is well conditioned on both models (condition numbers 1.21 and 1.49), so this is not the
+pole-conditioning effect either. The cell prints the clean coordinates and asserts that the measured change has
+the predicted sign.
+
 ## The decision rule
 
 Fold when the model stores the task-relevant contrast in the coordinates the final norm amplifies.

@@ -74,3 +74,22 @@ def test_readout_top_tokens_matches_the_jlens_read_readout():
     top = helpers.jlens_readout_top_tokens(h, lens, info, _Tokenizer(), k=3)
     assert [label for label, _ in top] == [f"t{int(i)}" for i in expected.indices]
     assert [score for _, score in top] == pytest.approx(expected.values.tolist(), rel=1e-5)
+
+
+def test_pole_swap_prediction_is_exact_for_a_linear_readout_and_signed_by_the_clean_lean():
+    """The swap exchanges c = V^+ x; under a linear readout the prediction must equal the realized gap change, and
+    a clean state leaning to pole a must move the gap AWAY from a."""
+    torch.manual_seed(1)
+    d = 6
+    poles = torch.randn(2, d)
+    u_a, u_b = torch.randn(d), torch.randn(d)
+    for lean in (poles[0] * 3.0 + poles[1] * 0.5, poles[0] * 0.5 + poles[1] * 3.0):
+        x = lean + 0.1 * torch.randn(d)
+        pred = helpers.pole_swap_prediction(x, poles, u_a, u_b)
+        c = torch.tensor(pred.coordinates)
+        swapped = x + (c.flip(0) - c) @ poles
+        realized = float((u_a - u_b) @ (swapped - x))
+        assert pred.predicted_gap_delta == pytest.approx(realized, rel=1e-6, abs=1e-9)
+        sign_of_pole_alignment = float((poles[0] - poles[1]) @ (u_a - u_b)) > 0
+        leans_to_a = pred.coordinates[0] > pred.coordinates[1]
+        assert (pred.predicted_gap_delta > 0) == (leans_to_a != sign_of_pole_alignment)

@@ -51,6 +51,59 @@ def outside_span_share(direction: torch.Tensor, poles: torch.Tensor) -> float:
     return float(torch.linalg.vector_norm(residual))
 
 
+class PoleSwapPrediction(NamedTuple):
+    """A ``patch``-mode pole swap's clean coordinates and its first-order effect on the target gap."""
+
+    coordinates: tuple[float, float]
+    predicted_gap_delta: float
+
+
+def pole_swap_prediction(
+    activation: torch.Tensor, poles: torch.Tensor, unembed_a: torch.Tensor, unembed_b: torch.Tensor
+) -> PoleSwapPrediction:
+    """Predict what exchanging the two pole coordinates of ``activation`` does to the ``a`` minus ``b`` logit gap.
+
+    A swap maps ``c = V^+ x`` to its reverse, a displacement of ``(c_b - c_a)(v_a - v_b)``, so under a linear
+    readout the gap moves by ``(c_b - c_a) (v_a - v_b) . (u_a - u_b)``. Its SIGN is therefore set by which pole the
+    clean activation already leans toward: a swap pushes toward ``a`` only when the clean state sits nearer ``b``.
+    Exact where the readout is linear in ``activation``, as it is at the unembed's input.
+    """
+    x = activation.detach().double().cpu().reshape(-1)
+    v = poles.detach().double().cpu()
+    c = x @ torch.linalg.pinv(v)
+    gap_direction = unembed_a.detach().double().cpu() - unembed_b.detach().double().cpu()
+    predicted = (c[1] - c[0]) * ((v[0] - v[1]) @ gap_direction)
+    return PoleSwapPrediction(coordinates=(float(c[0]), float(c[1])), predicted_gap_delta=float(predicted))
+
+
+def final_norm_output(module: Any, batch: Any) -> torch.Tensor:
+    """The final norm's output at the last position (the unembed's input), from one forward pass, on CPU."""
+    hf = getattr(module.model, "_model", None) or getattr(module.model, "_module", None)
+    if hf is not None:
+        target = hf.model.norm
+
+        def forward() -> Any:
+            return hf(input_ids=batch["input_ids"], attention_mask=batch.get("attention_mask"))
+    else:
+        target = module.model.ln_final
+
+        def forward() -> Any:
+            return module.model(batch["input"])
+
+    cache: dict[str, torch.Tensor] = {}
+
+    def _capture(_mod: Any, _inputs: Any, output: Any) -> None:
+        cache["x"] = (output[0] if isinstance(output, tuple) else output).detach()
+
+    handle = target.register_forward_hook(_capture)
+    try:
+        with torch.no_grad():
+            forward()
+    finally:
+        handle.remove()
+    return cache["x"][0, -1].float().cpu()
+
+
 class SiteGradient(NamedTuple):
     """The clean activation at a residual site and the target gap's gradient there, both on CPU."""
 
