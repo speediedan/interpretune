@@ -23,15 +23,16 @@ attention bound at the attention call site, a fact the configured `eager` does n
 library can replace that function for the whole process).
 
 **Basis is a configuration, not a capability.** Where an intervention is defined in a basis (the J-lens work's
-paper basis versus the norm-aware folded basis; the two are not interchangeable and are not related by a
-coefficient), the basis is a declared configuration of the intervention surface: stated on the op's spec, carried
+`jlens_unfolded` basis, the paper's convention, versus the `jlens_folded` basis, which folds in the final norm's
+scale; the two are not interchangeable and are not related by a coefficient), the basis is a declared configuration of the intervention surface: stated on the op's spec, carried
 by the backend's record as honoured or not, and refused by name when unstated or unhonoured. A silent default is
 exactly the failure the results' non-interchangeability names.
 
 ## Current surfaces
 
 - `ModelBackend.fwd_w_intervention(...)` is the model-level API for hook-tensor (embed-path) interventions,
-  implemented with identical last-token math by both the TransformerLens and NNsight model backends (including
+  implemented with the same maths by both the TransformerLens and NNsight model backends at either position
+  scope, `last_token` or `all_positions` (including
   SAE/latent sub-hook targets via `use_latent_models`/`sae_handles`). Its record, `InterventionSupport`, declares
   the modes and position scopes; an op declares what it needs through `required_intervention_modes` and
   `required_position_scopes`, and the gate compares the two before the op runs.
@@ -92,7 +93,7 @@ What each mode preserves and what it moves, in one place:
 > `tests/core/test_jlens_patch_validation.py`.)
 
 > **A folded vector counts its fold exactly once, against the matrix whose processing state matches the scale.**
-> The norm-aware J-lens construction multiplies unembedding rows by the final norm's scale, and that scale
+> The folded (`jlens_folded`) J-lens construction multiplies unembedding rows by the final norm's scale, and that scale
 > lives on a specific side: `(1 + weight)` for HF gemma RMSNorms, plain `weight` elsewhere including TL
 > models, whose gemma conversion folds the `+1` at load. Building folded vectors from a *processed* `W_U`
 > while applying an HF-convention scale counts the norm twice — once baked into the weights, once in the
@@ -105,9 +106,16 @@ What each mode preserves and what it moves, in one place:
 
 The registered analysis ops (all callable as `it.<name>(...)`):
 
-- `concept_direction` (alias `semantic_direction`): builds a normalized direction from store latents
-  (modes `mean_difference` / `paired_rejection` / `single_group`; `streaming` or `in_memory` aggregation)
-  with an embed-difference fallback when no latent rows exist.
+- `concept_direction` (alias `semantic_direction`): builds a normalized direction in the basis named by the
+  required `concept_basis`: `embed`, `store` (from store latents), `jlens_unfolded` or `jlens_folded`
+  (modes `mean_difference` / `paired_rejection` / `single_group`; `streaming` or `in_memory` aggregation).
+  There is no default basis and no fallback: `store` with no latent rows raises rather than returning an
+  embedding direction, and the retired names `jlens_paper` / `jlens_norm_aware` are refused with their
+  replacements.
+- `jlens_read` (`jacobian_lens_read`), `jlens_concept_probe` (`jacobian_lens_concept_probe`) and
+  `jlens_sparse_inventory` (`jacobian_lens_sparse_inventory`): the J-lens read path (ranked readout, concept
+  cosine, and sparse nonnegative decomposition with its residual); see `jlens_usage.md`.
+- `intervention_first_order_check`: checks an applied intervention against its first-order prediction per basis.
 - `compute_attribution_graph` (`ct_graph`), `graph_node_influence` (`ct_node_influence`),
   `extract_top_features` (`ct_top_features`), `feature_intervention_forward` (`ct_feature_intervention`),
   `model_fwd_intervention` (`direction_intervention` / `direct_concept_direction_intervention`).
