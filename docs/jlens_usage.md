@@ -36,8 +36,8 @@ activation variance yet most of the causal weight for verbal report.
 
 `concept_direction` takes `concept_basis` naming where the concept vector
 comes from, with no default: paper reproduction wants the unfolded basis
-(`jlens_paper`) while the readout direction wants the norm-aware one
-(`jlens_norm_aware`), and silently picking either would corrupt the other
+(`jlens_unfolded`) while the readout direction wants the norm-folded one
+(`jlens_folded`), and silently picking either would corrupt the other
 use. `embed` and `store` remain for the non-lens bases.
 
 ## Steering and the folding default

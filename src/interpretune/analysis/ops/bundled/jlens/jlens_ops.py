@@ -102,7 +102,9 @@ def _apply_readout_norm(y: torch.Tensor, info: UnembedNormInfo, include_rms_scal
     return y
 
 
-def _lens_readout(h: torch.Tensor, j: torch.Tensor, info: UnembedNormInfo, include_rms_scale: bool) -> torch.Tensor:
+def jlens_readout_logits(
+    h: torch.Tensor, j: torch.Tensor, info: UnembedNormInfo, include_rms_scale: bool
+) -> torch.Tensor:
     """``W_U . norm(J h)`` for activations ``h`` shaped ``(..., d_model)``.
 
     The norm's additive bias, when one resolved, is applied as the logit offset ``W_U @ bias``: it
@@ -145,7 +147,7 @@ def jlens_read_impl(
     activations = _activations(analysis_batch, cache_key)
     positions = _selected_positions(analysis_batch, kwargs, activations.shape[1])
     selected = activations[:, positions, :].to(device)
-    logits = _lens_readout(selected, j.to(device), info, include_rms_scale)
+    logits = jlens_readout_logits(selected, j.to(device), info, include_rms_scale)
     scores, ids = torch.topk(logits, k=min(top_k, logits.shape[-1]), dim=-1)
     scores, ids = scores.detach().cpu(), ids.detach().cpu()
 

@@ -342,8 +342,8 @@ def display_top_features_comparison(
     display(HTML(style + body))
 
 
-class AttributionComparisonSummary(NamedTuple):
-    """What :func:`display_attribution_comparison` rendered, for assertions without re-deriving it."""
+class JlensDirectionValidationSummary(NamedTuple):
+    """What :func:`display_jlens_direction_validation` rendered, for assertions without re-deriving it."""
 
     direction_labels: tuple[str, ...]
     direction_shares: tuple[float, ...]
@@ -351,49 +351,28 @@ class AttributionComparisonSummary(NamedTuple):
     attribution_total: float
     predicted_delta: float
     unexplained_remainder: float
-    feature_fractions: tuple[float, ...]
 
 
-def _neuronpedia_feature_link(
-    layer: int, feat_idx: int, model: str | None, source_set: str, base_url: str, css_class: str
-) -> str:
-    if model is None:
-        return str(feat_idx)
-    url = f"{html.escape(base_url.rstrip('/'))}/{html.escape(model)}/{layer}-{html.escape(source_set)}/{feat_idx}"
-    return f'<a class="{css_class}" href="{url}" target="_blank" title="View on Neuronpedia">{feat_idx}</a>'
-
-
-def build_attribution_comparison_html(
+def build_jlens_direction_validation_html(
     attribution: Mapping[str, Any],
     direction_labels: Sequence[str],
     *,
     finite_difference_slopes: Sequence[float] | None = None,
     measured_delta: float | None = None,
-    features: Sequence[tuple[int, int, int]] = (),
-    feature_scores: Sequence[float] = (),
-    feature_explanations: Mapping[tuple[int, int], str] | None = None,
-    neuronpedia_model: str | None = None,
-    neuronpedia_set: str = "gemmascope-transcoder-16k",
-    neuronpedia_base_url: str = "https://www.neuronpedia.org",
-    top_n: int = 5,
-    title: str = "Attribution comparison: J-lens directions vs SAE features",
-    direction_column_title: str = "J-lens directions",
-    feature_column_title: str = "SAE features (signed influence)",
-) -> tuple[str, AttributionComparisonSummary]:
-    """Build the two-column attribution comparison as HTML; :func:`display_attribution_comparison` shows it.
+    title: str = "J-lens direction validation",
+) -> tuple[str, JlensDirectionValidationSummary]:
+    """Build the J-lens direction validation table as HTML; :func:`display_jlens_direction_validation` shows it.
 
-    Left column: one row per J-lens direction from ``attribution`` (the dict
-    :func:`~interpretune.analysis.ops.bundled.jlens.jlens_ops.subspace_attribution_scores` returns),
-    with the coordinate change ``Δc_i``, the gradient readout ``w_i``, their product ``a_i``, and the
-    direction's fraction of the explained total; a footer row each for the explained total, the
-    remainder, the first-order prediction ``gᵀΔh`` and, when given, the measured logit change. Right
-    column: the top ``top_n`` features by ``|score|`` with sign, magnitude, fraction of the summed
-    magnitude, a Neuronpedia link when a model is given, and the explanation when known.
+    One row per J-lens direction from ``attribution`` (the dict
+    :func:`~interpretune.analysis.ops.bundled.jlens.jlens_ops.subspace_attribution_scores` returns), with the
+    coordinate change ``Δc_i``, the gradient readout ``w_i``, their product ``a_i``, the direction's fraction of
+    the explained mass and, when given, an independent central-difference slope; a footer row each for the
+    explained total, the remainder, the first-order prediction ``gᵀΔh`` and, when given, the measured logit change.
 
-    The two columns are shares within their own vocabulary, deliberately: gap units per coordinate and
-    row-normalized graph influence are not comparable as raw numbers, so each side reports where its
-    explained change concentrates rather than whose units are larger. Pure (no display), so a test can
-    check the markup and the summary without a kernel.
+    This validates the J-lens directions against the edit they produced. It deliberately carries no feature
+    column: SAE-feature influence and J-lens gap shares are different vocabularies, and setting them side by side
+    implies a comparison this machinery cannot yet make. Pure (no display), so a test can check the markup and the
+    summary without a kernel.
     """
     shares = [float(x) for x in attribution["attribution_shares"]]
     labels = [str(lbl) for lbl in direction_labels]
@@ -410,141 +389,89 @@ def build_attribution_comparison_html(
     share_mass = sum(abs(a) for a in shares)
     fractions = [abs(a) / share_mass if share_mass else 0.0 for a in shares]
 
-    ranked = sorted(zip(features, feature_scores), key=lambda t: abs(float(t[1])), reverse=True)[:top_n]
-    feat_mass = sum(abs(float(sc)) for _, sc in ranked)
-    feat_fractions = [abs(float(sc)) / feat_mass if feat_mass else 0.0 for _, sc in ranked]
-
-    # Measured against the docs theme rather than guessed: with shrinkable flex items the columns
-    # settle at half the content width and each table overflows its own box, so the two render on top
-    # of one another. Columns are therefore sized to their content and never shrink, and the PAIR
-    # scrolls horizontally inside this widget when the page is narrower than both. The scrollbar stays
-    # inside the element, so the page itself never scrolls sideways.
+    # Sized to its content and scrolling inside the widget when the page is narrower, so the docs theme never
+    # squeezes the table into its own box or scrolls the page sideways.
     style = """
     <style>
-    .attr-cmp { font-family: system-ui, -apple-system, sans-serif; margin-bottom: 12px; font-size: 13px; }
-    .attr-cmp .title { font-weight: bold; font-size: 14px; margin-bottom: 6px; padding: 4px 6px;
-        border-radius: 3px; background: #555; color: white; display: inline-block; }
-    .attr-cmp .cols { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 16px;
-        overflow-x: auto; padding-bottom: 6px; }
-    .attr-cmp .col { flex: 0 0 auto; width: max-content; min-width: 0; }
-    .attr-cmp .col-header { font-weight: bold; font-size: 13px; padding: 4px 8px; border-radius: 3px;
-        color: white; margin-bottom: 6px; }
-    .attr-cmp table { width: max-content; min-width: 100%; max-width: none; border-collapse: collapse; }
-    .attr-cmp th, .attr-cmp td { padding: 3px 6px; border: 1px solid rgba(150,150,150,0.5); text-align: right; }
-    .attr-cmp td { white-space: nowrap; }
-    .attr-cmp th { white-space: normal; }
-    .attr-cmp td.lbl, .attr-cmp th.lbl { text-align: left; }
-    .attr-cmp td.txt, .attr-cmp th.txt { text-align: left; white-space: normal; min-width: 180px; max-width: 260px; }
-    .attr-cmp tr.total td { background: rgba(120,180,240,0.15); font-weight: bold; }
-    .attr-cmp .monospace { font-family: monospace; }
-    .attr-cmp a.np-link { color: inherit; text-decoration: none; border-bottom: 1px dashed rgba(150,150,150,0.6); }
-    .attr-cmp a.np-link:hover { color: #2980B9; border-bottom-style: solid; }
-    .attr-cmp .footnote { font-size: 12px; color: #666; margin-top: 6px; max-width: 900px; }
-    .attr-cmp .footnote code { font-family: monospace; }
+    .jl-val { font-family: system-ui, -apple-system, sans-serif; margin-bottom: 12px; font-size: 13px; }
+    .jl-val .title { font-weight: bold; font-size: 14px; margin-bottom: 6px; padding: 4px 6px;
+        border-radius: 3px; background: #2471A3; color: white; display: inline-block; }
+    .jl-val .scroll { overflow-x: auto; padding-bottom: 6px; }
+    .jl-val table { width: max-content; max-width: none; border-collapse: collapse; }
+    .jl-val th, .jl-val td { padding: 3px 6px; border: 1px solid rgba(150,150,150,0.5); text-align: right; }
+    .jl-val td { white-space: nowrap; }
+    .jl-val th { white-space: normal; }
+    .jl-val td.lbl, .jl-val th.lbl { text-align: left; }
+    .jl-val tr.total td { background: rgba(120,180,240,0.15); font-weight: bold; }
+    .jl-val .footnote { font-size: 12px; color: #666; margin-top: 6px; max-width: 900px; }
     </style>
     """
 
     def _signed(v: float, precision: int = 4) -> str:
         return "n/a" if v != v else f"{v:+.{precision}f}"  # NaN when a factor was not supplied
 
-    # ---- left: directions ------------------------------------------------------------
-    # Headers are short because the columns are sized to their content: a header long enough to want
-    # wrapping simply widens the table instead, since max-content sizing never applies the pressure
-    # that would make it wrap. The symbols are spelled out in the legend under both tables.
+    # Headers are short because the table is sized to its content: a header long enough to want wrapping simply
+    # widens the table instead. The symbols are spelled out in the legend.
     slope_header = "<th>dGap/ds</th>" if slopes is not None else ""
-    left = (
-        f'<div class="col"><div class="col-header" style="background-color:#2471A3;">'
-        f"{html.escape(direction_column_title)}</div><table><thead><tr>"
-        '<th class="lbl">Direction</th><th>&#916;c</th><th>Readout w</th>'
+    table = (
+        '<table><thead><tr><th class="lbl">Direction</th><th>&#916;c</th><th>Readout w</th>'
         f"<th>Share a</th><th>Fraction</th>{slope_header}</tr></thead><tbody>"
     )
     for i, lbl in enumerate(labels):
         slope_cell = f"<td>{_signed(slopes[i])}</td>" if slopes is not None else ""
-        left += (
+        table += (
             f'<tr><td class="lbl">{html.escape(lbl)}</td><td>{_signed(delta_coords[i])}</td>'
             f"<td>{_signed(readouts[i])}</td><td>{shares[i]:+.4f}</td><td>{fractions[i]:.1%}</td>{slope_cell}</tr>"
         )
-    # A footer value is a share-space quantity, so it must not land under the slope header, where it
-    # would read as a slope. That was previously achieved by padding it into the Share column with an
-    # empty cell either side, which left every footer row visibly gapped. One spanning cell, aligned
-    # left, keeps the value beside the label it belongs to and out of every numeric column, so the
-    # constraint holds without the gaps. Spans the whole row bar the label: six columns with the slope
-    # column present, five without.
+    # A footer value is a share-space quantity, so it must not land under the slope header, where it would read as
+    # a slope: one left-aligned cell spanning every column bar the label keeps it beside its label and out of
+    # every numeric column. Six columns with the slope column present, five without.
     span = 5 if slopes is not None else 4
 
     def _footer(label: str, value: float) -> str:
         return f'<tr class="total"><td class="lbl">{label}</td><td class="lbl" colspan="{span}">{value:+.4f}</td></tr>'
 
-    left += _footer("Explained &#931;a", total)
-    left += _footer("Remainder", remainder)
-    left += _footer("First-order g&#7488;&#916;h", predicted)
+    table += _footer("Explained &#931;a", total)
+    table += _footer("Remainder", remainder)
+    table += _footer("First-order g&#7488;&#916;h", predicted)
     if measured_delta is not None:
-        left += _footer("Measured &#916;gap", float(measured_delta))
-    left += "</tbody></table></div>"
+        table += _footer("Measured &#916;gap", float(measured_delta))
+    table += "</tbody></table>"
 
-    # ---- right: features -------------------------------------------------------------
-    explain_header = '<th class="txt">Explanation</th>' if feature_explanations is not None else ""
-    right = (
-        f'<div class="col"><div class="col-header" style="background-color:#27AE60;">'
-        f"{html.escape(feature_column_title)}</div><table><thead><tr>"
-        f'<th>#</th><th class="lbl">Node</th><th>Sign</th><th>|Score|</th><th>Fraction</th>{explain_header}'
-        "</tr></thead><tbody>"
-    )
-    for j, ((layer, pos, feat_idx), score) in enumerate(ranked):
-        value = float(score)
-        sign, colour = ("+", "#1a7f37") if value > 0 else (("−", "#d1242f") if value < 0 else ("0", "inherit"))
-        link = _neuronpedia_feature_link(
-            int(layer), int(feat_idx), neuronpedia_model, neuronpedia_set, neuronpedia_base_url, "np-link"
-        )
-        explain_cell = ""
-        if feature_explanations is not None:
-            explain_cell = (
-                f'<td class="txt">{html.escape(feature_explanations.get((int(layer), int(feat_idx)), ""))}</td>'
-            )
-        right += (
-            f'<tr><td>{j + 1}</td><td class="lbl monospace">({layer},&#8239;{pos},&#8239;{link})</td>'
-            f'<td style="color:{colour};font-weight:600">{sign}</td><td>{format_score(abs(value))}</td>'
-            f"<td>{feat_fractions[j]:.1%}</td>{explain_cell}</tr>"
-        )
-    right += "</tbody></table></div>"
-
-    # The legend defines only the columns actually rendered: naming a column the reader cannot see is the
-    # same defect in prose that an empty column would be in the table.
+    # The legend defines only the columns actually rendered: naming a column the reader cannot see is the same
+    # defect in prose that an empty column would be in the table.
     legend = (
         "&#916;c = V&#8314;&#916;h, the displacement's coordinates in the pair; w = V&#7488;g, the gradient's "
         "readout of each direction; a = w&#183;&#916;c, the direction's share of the first-order prediction "
-        "g&#7488;&#916;h."
+        "g&#7488;&#916;h. Fraction is |a| over &#931;|a|."
     )
     if slopes is not None:
         legend += " dGap/ds is the central-difference slope of the gap along that direction, an independent check on w."
     footnote = (
-        f"{legend} Fractions are within each vocabulary (|a| over &#931;|a|; |score| over &#931;|score| of the "
-        "rows shown): gap units per coordinate and graph influence are not comparable as raw numbers. The "
-        "first-order prediction is the gradient's linear estimate of the patch's effect; the measured change "
-        "includes everything nonlinear downstream of the site."
+        f"{legend} The first-order prediction is the gradient's linear estimate of the patch's effect; the measured "
+        "change includes everything nonlinear downstream of the site."
     )
     markup = (
-        f'{style}<div class="attr-cmp"><div class="title">{html.escape(title)}</div>'
-        f'<div class="cols">{left}{right}</div><div class="footnote">{footnote}</div></div>'
+        f'{style}<div class="jl-val"><div class="title">{html.escape(title)}</div>'
+        f'<div class="scroll">{table}</div><div class="footnote">{footnote}</div></div>'
     )
-    summary = AttributionComparisonSummary(
+    summary = JlensDirectionValidationSummary(
         direction_labels=tuple(labels),
         direction_shares=tuple(shares),
         direction_fractions=tuple(fractions),
         attribution_total=total,
         predicted_delta=predicted,
         unexplained_remainder=remainder,
-        feature_fractions=tuple(feat_fractions),
     )
     return markup, summary
 
 
-def display_attribution_comparison(
+def display_jlens_direction_validation(
     attribution: Mapping[str, Any], direction_labels: Sequence[str], **kwargs: Any
-) -> AttributionComparisonSummary:
-    """Render :func:`build_attribution_comparison_html` and return its summary (see that function for the
+) -> JlensDirectionValidationSummary:
+    """Render :func:`build_jlens_direction_validation_html` and return its summary (see that function for the
     columns)."""
-    markup, summary = build_attribution_comparison_html(attribution, direction_labels, **kwargs)
+    markup, summary = build_jlens_direction_validation_html(attribution, direction_labels, **kwargs)
     display(HTML(markup))
     return summary
 
@@ -1660,6 +1587,135 @@ def _collision_aware_label_positions(
     return chosen_positions
 
 
+def _plotly_figure_html(fig: Any, id_prefix: str) -> str:
+    """Embed a plotly figure as HTML that sizes itself correctly on a static docs page.
+
+    `responsive` alone is not enough on a static docs page. Plotly sizes an autosize figure to its container AT
+    INIT, and in the rendered docs the output container has no final width at that moment, so the figure draws too
+    narrow and its colorbar and legend are clipped until the reader resizes the window, which is the first event
+    that triggers a relayout. Force that relayout once layout has settled, and keep a ResizeObserver for later
+    changes (theme toggle, sidebar collapse) that do not fire a window resize. Div ids come from a per-run counter,
+    so rendered artifacts stay diffable.
+    """
+    _decoder_map_html_counter[0] += 1
+    div_id = f"{id_prefix}-{_decoder_map_html_counter[0]}"
+    plot_html = fig.to_html(full_html=False, include_plotlyjs="cdn", config={"responsive": True}, div_id=div_id)
+    resize_shim = f"""
+<script>
+(function () {{
+  var el = document.getElementById("{div_id}");
+  if (!el) return;
+  var resize = function () {{
+    if (!window.Plotly || !el.isConnected) return;
+    try {{ window.Plotly.Plots.resize(el); }} catch (e) {{ /* figure not ready yet */ }}
+  }};
+  if (window.requestAnimationFrame) {{
+    requestAnimationFrame(function () {{ requestAnimationFrame(resize); }});
+  }}
+  setTimeout(resize, 0);
+  setTimeout(resize, 300);
+  if (window.ResizeObserver && el.parentNode) {{
+    new window.ResizeObserver(resize).observe(el.parentNode);
+  }}
+}})();
+</script>
+"""
+    return '<div style="width:100%;max-width:100%;overflow-x:hidden">' + plot_html + resize_shim + "</div>"
+
+
+def build_steering_scale_sweep_html(points: Sequence[Any], token_labels: Sequence[str]) -> str:
+    """Build the per-arm, per-scale table of logit and probability shifts for the two target tokens.
+
+    ``points`` are :class:`~it_examples.utils.steering_demo_helpers.SteeringScalePoint` rows. Each shift is signed
+    and coloured by the repository convention (green positive, red negative), and the last column says whether the
+    answer flipped, which is what the chart above it shows. Pure (no display), so a test can check the markup.
+    """
+    if len(token_labels) != 2:
+        raise ValueError(f"expected two target token labels, got {len(token_labels)}")
+    a, b = (html.escape(str(t)) for t in token_labels)
+
+    def _signed(v: float, fmt: str) -> str:
+        colour = "#1a7f37" if v > 0 else ("#d1242f" if v < 0 else "inherit")
+        return f'<td style="color:{colour};font-weight:600">{v:{fmt}}</td>'
+
+    rows = ""
+    for p in points:
+        # A strict sign change: a gap that lands exactly on zero is a tie, not a flip.
+        flipped = p.pre_gap * p.post_gap < 0
+        rows += (
+            f'<tr><td class="lbl">{html.escape(str(p.arm))}</td><td>{p.scale:g}</td>'
+            + _signed(p.post_logits[0] - p.pre_logits[0], "+.3f")
+            + _signed(p.post_logits[1] - p.pre_logits[1], "+.3f")
+            + _signed(p.post_gap - p.pre_gap, "+.3f")
+            + _signed(100 * (p.post_probs[0] - p.pre_probs[0]), "+.2f")
+            + _signed(100 * (p.post_probs[1] - p.pre_probs[1]), "+.2f")
+            + f"<td>{'yes' if flipped else 'no'}</td></tr>"
+        )
+    style = """
+    <style>
+    .sweep { font-family: system-ui, -apple-system, sans-serif; font-size: 13px; margin-bottom: 12px; }
+    .sweep .scroll { overflow-x: auto; }
+    .sweep table { width: max-content; border-collapse: collapse; }
+    .sweep th, .sweep td { padding: 3px 8px; border: 1px solid rgba(150,150,150,0.5); text-align: right; }
+    .sweep td.lbl, .sweep th.lbl { text-align: left; }
+    .sweep .footnote { font-size: 12px; color: #666; margin-top: 6px; max-width: 900px; }
+    </style>
+    """
+    header = (
+        '<tr><th class="lbl">Arm</th><th>Scale</th>'
+        f"<th>&#916; logit {a}</th><th>&#916; logit {b}</th><th>&#916; gap ({a} &#8722; {b})</th>"
+        f"<th>&#916; prob {a} (pp)</th><th>&#916; prob {b} (pp)</th><th>Answer flipped</th></tr>"
+    )
+    footnote = (
+        "Shifts are post minus pre at the answer position; probabilities are over the full vocabulary, in percentage "
+        "points. Scales are each arm's own multiplier, not matched displacements across arms."
+    )
+    return (
+        f'{style}<div class="sweep"><div class="scroll"><table><thead>{header}</thead><tbody>{rows}</tbody>'
+        f'</table></div><div class="footnote">{footnote}</div></div>'
+    )
+
+
+def display_steering_scale_sweep(points: Sequence[Any], token_labels: Sequence[str], title: str) -> None:
+    """Chart each arm's post-intervention gap against scale, with the answer-flip line, then show the shift table.
+
+    The chart plots the gap after intervention rather than its change, so the flip threshold is one line at zero shared
+    by every arm (all arms start from the same clean gap), and the smallest scale at which each arm crosses it is read
+    off the chart rather than asserted in prose.
+    """
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        print("[plotly unavailable] scale-sweep chart skipped; the table below carries the same numbers")
+    else:
+        fig = go.Figure()
+        for arm in dict.fromkeys(p.arm for p in points):
+            arm_points = sorted((p for p in points if p.arm == arm), key=lambda p: p.scale)
+            fig.add_trace(
+                go.Scatter(
+                    x=[p.scale for p in arm_points], y=[p.post_gap for p in arm_points], mode="lines+markers", name=arm
+                )
+            )
+        fig.add_hline(
+            y=0.0,
+            line_dash="dash",
+            line_color="gray",
+            annotation_text=f"answer flips above ({token_labels[0]} > {token_labels[1]})",
+            annotation_position="top left",
+        )
+        fig.update_layout(
+            title=title,
+            autosize=True,
+            height=420,
+            template="simple_white",
+            xaxis=dict(title="intervention scale (each arm's own multiplier)", type="log"),
+            yaxis=dict(title=f"gap after intervention ({token_labels[0]} − {token_labels[1]}, logits)"),
+            legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0),
+        )
+        display(HTML(_plotly_figure_html(fig, "it-scale-sweep")))
+    display(HTML(build_steering_scale_sweep_html(points, token_labels)))
+
+
 def plot_decoder_projection_map(
     analyzed_profiles: Sequence[Any],
     analyzed_vectors: torch.Tensor,
@@ -1792,36 +1848,7 @@ def plot_decoder_projection_map(
             yaxis=dict(showticklabels=False, title=None),
             legend=dict(orientation="h", yanchor="top", y=-0.04, xanchor="left", x=0),
         )
-        # `responsive` alone is not enough on a static docs page. Plotly sizes an autosize figure to
-        # its container AT INIT, and in the rendered docs the output container has no final width at
-        # that moment -- so the figure draws too narrow and the colorbar and legend are clipped until
-        # the reader resizes the window, which is the first event that triggers a relayout. Force that
-        # relayout ourselves once layout has settled, and keep a ResizeObserver for later changes
-        # (theme toggle, sidebar collapse) that do not fire a window resize.
-        _decoder_map_html_counter[0] += 1
-        div_id = f"it-decoder-map-{_decoder_map_html_counter[0]}"
-        plot_html = fig.to_html(full_html=False, include_plotlyjs="cdn", config={"responsive": True}, div_id=div_id)
-        resize_shim = f"""
-<script>
-(function () {{
-  var el = document.getElementById("{div_id}");
-  if (!el) return;
-  var resize = function () {{
-    if (!window.Plotly || !el.isConnected) return;
-    try {{ window.Plotly.Plots.resize(el); }} catch (e) {{ /* figure not ready yet */ }}
-  }};
-  if (window.requestAnimationFrame) {{
-    requestAnimationFrame(function () {{ requestAnimationFrame(resize); }});
-  }}
-  setTimeout(resize, 0);
-  setTimeout(resize, 300);
-  if (window.ResizeObserver && el.parentNode) {{
-    new window.ResizeObserver(resize).observe(el.parentNode);
-  }}
-}})();
-</script>
-"""
-        display(HTML('<div style="width:100%;max-width:100%;overflow-x:hidden">' + plot_html + resize_shim + "</div>"))
+        display(HTML(_plotly_figure_html(fig, "it-decoder-map")))
         plotly_rendered = True
     except Exception:
         plotly_rendered = False
