@@ -800,6 +800,41 @@ class TestGradientOperations:
         assert hasattr(result_batch, "alive_latents")
         assert "hook1" in result_batch.alive_latents
 
+    def test_ablation_attribution_is_baseline_minus_ablated(self, mock_module_base):
+        """Attribution must be the CLEAN baseline minus each latent's ablated logit diff, with known values.
+
+        The per-latent metrics come from the ``loss_preds_diffs`` op, which writes its outputs back onto the batch it
+        is given. Invoked on the caller's batch, it overwrote the baseline ``logit_diffs`` with the ablated value before
+        the subtraction, so every attribution came out zero while every shape and key check still passed, and a
+        cross-backend comparison of two zero tensors agreed. The expected values here are nonzero, so that failure
+        cannot pass.
+        """
+        from interpretune.analysis.ops.bundled.attribution.attribution_ops import ablation_attribution_impl
+
+        def kernel(module, analysis_batch, answer_logits, logit_diff_fn):
+            diffs = answer_logits[:, 0] - answer_logits[:, 1]
+            return torch.tensor(0.0), diffs.clone(), (diffs < 0).long(), answer_logits
+
+        mock_module = mock_module_base
+        mock_module.sae_handles = [MagicMock()]
+        mock_module.sae_handles[0].cfg.d_sae = 3
+        # latent 0 ablated -> diffs [0.5, 0.25]; latent 2 ablated -> diffs [1.5, -1.0] (example 1 masked out)
+        per_latent_logits = {
+            "hook1": {0: torch.tensor([[1.0, 0.5], [1.0, 0.75]]), 2: torch.tensor([[2.0, 0.5], [0.0, 1.0]])}
+        }
+        analysis_batch = AnalysisBatch(
+            answer_logits=per_latent_logits,
+            alive_latents={"hook1": [0, 2]},
+            logit_diffs=torch.tensor([2.0, 1.0]),  # the clean baseline
+            label_ids=torch.tensor([0, 0]),
+            orig_labels=torch.tensor([0, 0]),
+        )
+        with patch("interpretune.analysis.ops.bundled.core.core_ops.get_loss_preds_diffs", side_effect=kernel):
+            result = ablation_attribution_impl(mock_module, analysis_batch, {"input": torch.ones(2, 5)}, 0)
+
+        expected = torch.tensor([[2.0 - 0.5, 0.0, 2.0 - 1.5], [1.0 - 0.25, 0.0, 0.0]])
+        assert torch.allclose(result.attribution_values["hook1"], expected), result.attribution_values["hook1"]
+
     def test_ablation_attribution_impl_scalar_and_error_cases(self, mock_module_base, request):
         """Test ablation_attribution_impl function with scalar tensor handling and required input validation.
 

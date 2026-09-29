@@ -7,7 +7,7 @@ Self-contained modulo the sanctioned op-authoring surfaces (:mod:`interpretune.a
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Callable
+from typing import Callable, cast
 
 import torch
 from transformers import BatchEncoding
@@ -221,16 +221,28 @@ def ablation_attribution_impl(
         "Missing required attributes in analysis_batch"
     )
     assert isinstance(analysis_batch.answer_logits, dict), "Expected answer_logits to be a dictionary"
-    # Captured up front: the loop stages each latent's logits onto `analysis_batch.answer_logits`
-    # for the required-op call below, so it must not iterate the attribute it mutates.
-    per_latent_logits = analysis_batch.answer_logits
-    for act_name, logits in per_latent_logits.items():
+    for act_name, logits in analysis_batch.answer_logits.items():
         attribution_values[act_name] = torch.zeros(get_batch_input(batch).size(0), module.sae_handles[0].cfg.d_sae)  # type: ignore[attr-defined]
         for latent_idx in analysis_batch.alive_latents[act_name]:
-            # Stage this latent's logits for the declared required op, invoked via the public op
-            # surface (see NOTE [Op-Driven Transitive Dependency Atomicity])
-            analysis_batch.update(answer_logits=logits[latent_idx])
-            latent_batch = it.loss_preds_diffs(module, analysis_batch, batch, batch_idx, logit_diff_fn=logit_diff_fn)
+            # The declared required op, invoked via the public op surface (see NOTE [Op-Driven Transitive
+            # Dependency Atomicity]) on a SCRATCH batch: the op writes its outputs back onto the batch it
+            # is given, and `analysis_batch.logit_diffs` must stay the clean baseline the attribution
+            # below subtracts from. Run on the caller's batch, every latent's baseline became its own
+            # ablated value and every attribution came out zero.
+            latent_batch = it.loss_preds_diffs(
+                module,
+                cast(
+                    DefaultAnalysisBatchProtocol,
+                    AnalysisBatch(
+                        label_ids=analysis_batch.label_ids,
+                        orig_labels=analysis_batch.orig_labels,
+                        answer_logits=logits[latent_idx],
+                    ),
+                ),
+                batch,
+                batch_idx,
+                logit_diff_fn=logit_diff_fn,
+            )
             loss, logit_diffs, preds, answer_logits = (
                 latent_batch.loss,
                 latent_batch.logit_diffs,
