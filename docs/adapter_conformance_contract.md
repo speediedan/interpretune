@@ -215,6 +215,20 @@ way); and each op declaring a `conformance: {run_inputs: ...}` block in its defi
 yields its output columns. A collection with no sampled op skips that last case naming every op, so the absence is
 reported rather than silently passed.
 
+A collection repository can run the suite against its own working tree before publishing: set `collection` to the
+name its `collection:` header declares and load it with `stage_local_collection(path)`, which adds the directory to
+the dispatcher's op paths in the running process. A sample input only the test environment can supply (a fixture
+file, a locally generated artifact) goes in `run_input_overrides`, keyed by op, which fills a declared sample and is
+refused for an op that declares none. Columns an op marks `intermediate_only` are consumed inside its composition and
+are not expected in the store.
+
+```python
+class TestMyOpsFromThisTree(OpCollectionConformance):
+    target = ConformanceTarget(composition=("core", "my_adapter"), load=stage_local_collection(COLLECTION_DIR))
+    collection = "my_ops"  # the collection header's declared name
+    run_input_overrides = {"my_op": {"fixture_path": str(FIXTURE)}}
+```
+
 ## Adapter example notebooks
 
 An adapter repository ships a notebook per declared capability group under its own examples tree, a dev copy and

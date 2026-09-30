@@ -147,13 +147,13 @@ Use the provided build script for automated setup:
 ./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest
 
 # Quick editable install (without locked requirements).
-# `examples`/`lightning` are EXTRAS; `git-deps`/`dev`/`test`/`profiling` are PEP 735
+# `examples`/`lightning` are EXTRAS; `git-deps`/`dev`/`test` are PEP 735
 # dependency-groups and each needs its own `--group`. Naming a group inside the extras brackets is
 # only a warning and silently drops it; a bare name after `--group git-deps` is parsed as a package
 # to install, not a second group.
-uv pip install -e ".[examples,lightning]" --group git-deps --group test --group profiling
+uv pip install -e ".[examples,lightning]" --group git-deps --group test
 
-# To only RUN the example notebooks, the test/profiling toolchain is unnecessary:
+# To only RUN the example notebooks, the test toolchain is unnecessary:
 uv pip install -e ".[examples]" --group git-deps
 
 # Venv Location Options (for hardlink performance and standalone process wrappers):

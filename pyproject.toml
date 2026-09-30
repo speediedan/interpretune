@@ -263,6 +263,9 @@ test = [
     # build_it_env.sh installs from that lock -- only bare `.[examples]` loses them, which is the point.
     "syrupy >= 4.6",
     "pgpq >=0.11,<0.12",
+    # Performance profiling of the test suite itself (IT_RUN_PROFILING_TESTS); folded here when the
+    # single-package `profiling` group was retired (#287) rather than kept as a group of one.
+    "py-spy",
     # sae_dashboard moved to git-deps (fork-pinned) until the upstream SD PR merges
 ]
 
@@ -277,12 +280,6 @@ docs = [
     "sphinx-copybutton >= 0.5",
     "sphinx-autodoc-typehints >= 3.0",
 ]
-
-profiling = [
-    # Performance profiling tools
-    "py-spy",
-]
-
 
 [tool.uv]
 # mechanism to override specific dependency version for a package, we use the CLI --override overrides.txt

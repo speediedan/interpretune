@@ -66,14 +66,14 @@ source ${VENV_BASE}/${IT_TARGET_VENV}/bin/activate
 uv pip install -e ".[examples]" --group git-deps
 ```
 
-`examples` is an **extra**; `git-deps`, `dev`, `test` and `profiling` are PEP 735
+`examples` is an **extra**; `git-deps`, `dev` and `test` are PEP 735
 **dependency-groups**, and each needs its own `--group`. The distinction is easy to get wrong and
 fails quietly in both directions: naming a group inside the extras brackets is only a *warning* and
 silently drops it, and a bare name after `--group git-deps` is parsed as another package to install
 rather than a second group. For the contributor toolchain:
 
 ```bash
-uv pip install -e ".[examples,lightning]" --group git-deps --group test --group profiling
+uv pip install -e ".[examples,lightning]" --group git-deps --group test
 ```
 
 See {doc}`the examples gallery <examples>` for which notebooks need `git-deps`, a GPU, or gated

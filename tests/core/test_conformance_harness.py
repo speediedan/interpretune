@@ -260,6 +260,63 @@ class TestCollectionSelection:
         assert belongs_to_collection(declared, "org/repo") and belongs_to_collection(by_provenance, "org/repo")
         assert not belongs_to_collection(bundled, "org/repo")
 
+    def test_a_locally_staged_collection_is_identified_by_its_declared_name(self):
+        """A collection repository validates its own working tree, loaded from an op path, before publishing."""
+        from interpretune.testing.conformance.collections import belongs_to_collection
+
+        declared = self._def("op", source="local", collection_name="my_ops")
+        other = self._def("op2", source="local", collection_name="other_ops")
+        undeclared = self._def("op3", source="local")
+        assert belongs_to_collection(declared, "my_ops")
+        assert not belongs_to_collection(other, "my_ops") and not belongs_to_collection(undeclared, "my_ops")
+        composite = self._def("op_then_op2", source="local", composition=["op", "op2"])
+        assert belongs_to_collection(composite, "my_ops", family_members={"op", "op2"})
+        assert not belongs_to_collection(composite, "my_ops", family_members={"op"})
+        # A local op is never admitted by the bundled implementation-path rule, whatever its implementation.
+        impostor = self._def("op4", source="local", implementation="interpretune.analysis.ops.bundled.my_ops.x_impl")
+        assert not belongs_to_collection(impostor, "my_ops")
+
+    def test_stage_local_collection_loads_a_working_tree_the_cases_can_read(self, tmp_path, monkeypatch):
+        """The ``load`` hook a collection repository uses: the ops appear in the dispatcher without a re-import."""
+        from interpretune.analysis.ops import dispatcher as dispatcher_module
+        from interpretune.analysis.ops.base import OpWrapper
+        from interpretune.testing.conformance.collections import ops_in_collection, stage_local_collection
+
+        op_dir = tmp_path / "collection"
+        op_dir.mkdir()
+        (op_dir / "ops.yaml").write_text(
+            "collection:\n  name: staged_ops\n  version: 0.1.0\n\n"
+            "staged_op:\n  description: fixture op\n"
+            "  implementation: interpretune.analysis.ops.bundled.core.core_ops.model_fwd_impl\n"
+            "  input_schema: {}\n  output_schema: {}\n"
+        )
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        fresh = dispatcher_module.AnalysisOpDispatcher(enable_hub_ops=False)
+        fresh._cache_manager.cache_dir = cache_dir
+        monkeypatch.setattr(dispatcher_module, "DISPATCHER", fresh)
+        monkeypatch.setattr(OpWrapper, "_target_module", None)  # keep the fixture op off the real `it` namespace
+
+        fresh.load_definitions()
+        assert not ops_in_collection("staged_ops"), "the collection must be absent before it is staged"
+        stage_local_collection(op_dir)()
+        assert set(ops_in_collection("staged_ops")) == {"staged_op"}
+        stage_local_collection(op_dir)()
+        assert [p for p in fresh.yaml_paths if p.resolve() == op_dir.resolve()] == [op_dir], "staging twice duplicated"
+
+    def test_an_override_cannot_stand_in_for_an_undeclared_sample(self):
+        """``run_input_overrides`` fills a declared ``conformance.run_inputs`` sample; naming an op that declares
+        none is refused by name rather than silently running (or silently skipping) an undeclared sample."""
+        from interpretune.testing.conformance.collections import OpCollectionConformance
+
+        class _Probe(OpCollectionConformance):
+            collection = "my_ops"
+            run_input_overrides = {"undeclared_op": {"x": 1}}
+
+        ops = {"undeclared_op": self._def("undeclared_op", source="local", collection_name="my_ops")}
+        with pytest.raises(AssertionError, match=r"run_input_overrides name \['undeclared_op'\]"):
+            _Probe().test_each_op_runs_on_its_declared_sample(suite=None, collection_ops=ops)
+
     def test_the_bundled_concept_family_resolves_to_its_intervention_ops(self):
         from interpretune.testing.conformance.collections import ops_in_collection
 
