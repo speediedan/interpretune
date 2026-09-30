@@ -50,6 +50,15 @@ if _LIGHTNING_AVAILABLE:
             self.model.train()  # type: ignore[attr-defined]  # provided by LightningModule when mixed in
             return super().on_train_start()  # type: ignore[misc]  # LightningModule method when mixed in
 
+        def _analysis_cfg_of(self):
+            """Read the bound analysis config without tripping the unset warning.
+
+            The ``analysis_cfg`` property warns on every access when no config is set; routing and
+            hooks read it on every batch, so they must go through ``it_cfg`` directly. A missing
+            config reads as None either way.
+            """
+            return getattr(getattr(self, "it_cfg", None), "analysis_cfg", None)
+
         def _ensure_analysis_setup(self) -> None:
             """Run the analysis_cfg setup a Trainer loop needs (mirrors AnalysisRunner.it_init).
 
@@ -62,7 +71,7 @@ if _LIGHTNING_AVAILABLE:
             class-level override would never run for them. Wrapping the instance attribute once reaches
             every composition regardless of MRO order.
             """
-            analysis_cfg = getattr(self, "analysis_cfg", None)
+            analysis_cfg = self._analysis_cfg_of()
             if analysis_cfg is None or getattr(analysis_cfg, "op", None) is None:
                 return
             if not hasattr(self, "analysis_step") or getattr(self, "_generated_analysis_step", False):
@@ -72,7 +81,8 @@ if _LIGHTNING_AVAILABLE:
             original = self.predict_step
 
             def _it_analysis_predict_step(batch, batch_idx: int, dataloader_idx: int = 0):
-                step = getattr(self, getattr(analysis_cfg, "step_fn", "analysis_step"), None)
+                live_cfg = self._analysis_cfg_of() or analysis_cfg
+                step = getattr(self, getattr(live_cfg, "step_fn", "analysis_step"), None)
                 if callable(step):
                     from collections.abc import Iterator
 
@@ -101,7 +111,7 @@ if _LIGHTNING_AVAILABLE:
             materialized; any other return value passes through untouched, preserving the Trainer's per-batch output
             contract. Without analysis configured, this defers to the predict_step it shadowed.
             """
-            analysis_cfg = getattr(self, "analysis_cfg", None)
+            analysis_cfg = self._analysis_cfg_of()
             if analysis_cfg is not None and getattr(analysis_cfg, "op", None) is not None:
                 self._ensure_analysis_setup()
                 step = getattr(self, getattr(analysis_cfg, "step_fn", "analysis_step"), None)
