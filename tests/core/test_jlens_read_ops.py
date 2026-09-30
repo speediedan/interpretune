@@ -287,6 +287,49 @@ class TestSparseInventory:
         assert all(c >= 0.0 for c in out["jlens_inventory_coefficients"][0])
 
 
+class TestFoldChoice:
+    """The probe and inventory resolve the fold through one in-tree resolver, record the basis, and refuse
+    coercion."""
+
+    @pytest.mark.parametrize("op", ["probe", "inventory"])
+    def test_the_default_is_folded_and_either_override_selects_unfolded(self, synthetic_lens, op):
+        def run(batch, **kw):
+            if op == "probe":
+                return jlens_ops.jlens_concept_probe_impl(_module(), batch, None, 0, jlens_concept_token_ids=[3], **kw)
+            return jlens_ops.jlens_sparse_inventory_impl(_module(), batch, None, 0, jlens_inventory_k=2, **kw)
+
+        acts = torch.randn(1, 1, D)
+        assert run(_batch(acts))["jlens_basis"] == "jlens_folded"
+        assert run(_batch(acts), jlens_apply_final_norm=False)["jlens_basis"] == "jlens_unfolded"
+        on_batch = _batch(acts)
+        on_batch.update(jlens_apply_final_norm=False)
+        assert run(on_batch)["jlens_basis"] == "jlens_unfolded"
+
+    @pytest.mark.parametrize("value", ["False", 0, 1.0])
+    def test_a_non_bool_fold_flag_is_refused_rather_than_coerced(self, synthetic_lens, value):
+        """``bool("False")`` is True: coercing would silently pick the basis the caller tried to turn off."""
+        with pytest.raises(TypeError, match="jlens_apply_final_norm must be a bool"):
+            jlens_ops.jlens_concept_probe_impl(
+                _module(),
+                _batch(torch.randn(1, 1, D)),
+                None,
+                0,
+                jlens_concept_token_ids=[3],
+                jlens_apply_final_norm=value,
+            )
+
+    def test_the_flag_reaches_the_construction(self, synthetic_lens):
+        """A recorded basis name is not evidence the direction changed; a non-uniform scale must change the
+        cosine."""
+        module = _module(_RMSNorm, torch.linspace(0.4, 2.2, D))
+        acts = torch.randn(1, 1, D)
+        folded = jlens_ops.jlens_concept_probe_impl(module, _batch(acts), None, 0, jlens_concept_token_ids=[3])
+        unfolded = jlens_ops.jlens_concept_probe_impl(
+            module, _batch(acts), None, 0, jlens_concept_token_ids=[3], jlens_apply_final_norm=False
+        )
+        assert not torch.allclose(folded["jlens_concept_cosine"], unfolded["jlens_concept_cosine"])
+
+
 class TestCrossBackendReadoutAgreement:
     """The readout must not depend on which backend resolved the unembed and the final norm.
 

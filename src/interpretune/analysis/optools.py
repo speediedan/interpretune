@@ -753,6 +753,26 @@ def refuse_retired_jlens_basis(basis: object) -> None:
         )
 
 
+def resolve_jlens_fold_choice(analysis_batch: Any, kwargs: dict | None = None) -> bool:
+    """Whether a J-lens op folds the final norm into its directions: ``jlens_apply_final_norm``, default ``True``.
+
+    The one place the default lives, for every op that builds J-lens directions, in-tree or in a published
+    collection: a fold choice decided separately at each call site is a named basis whose meaning depends on which
+    site built it. Folded is the default because it is the readout-faithful basis the ``jlens_read`` readout itself
+    uses. A kwarg overrides the batch field. A value that is not a bool (a string ``"False"``, an int) is refused by
+    name rather than coerced, since ``bool("False")`` is ``True`` and would silently pick the other basis.
+    """
+    raw = (kwargs or {}).get("jlens_apply_final_norm", analysis_batch.get("jlens_apply_final_norm"))
+    if raw is None:
+        return True
+    if not isinstance(raw, bool):
+        raise TypeError(
+            f"jlens_apply_final_norm must be a bool (True for jlens_folded, False for jlens_unfolded), "
+            f"got {type(raw).__name__} {raw!r}"
+        )
+    return raw
+
+
 def jlens_basis_name(apply_norm: bool) -> str:
     """The name of the basis ``apply_norm`` selects, for recording in an op's output.
 
@@ -937,6 +957,7 @@ __all__ = [
     "JLENS_BASIS_NAMES",
     "RETIRED_JLENS_BASIS_NAMES",
     "refuse_retired_jlens_basis",
+    "resolve_jlens_fold_choice",
     "FEATURE_SCORE_SOURCE_ALIASES",
     "get_loss_preds_diffs",
     "last_token_logits",
