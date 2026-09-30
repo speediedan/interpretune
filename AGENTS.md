@@ -423,8 +423,9 @@ containing the pattern matches itself, and the same shell may be hosting the run
 genuine other run — including an Azure CI container's suite, which is visible on the host and *should*
 block a local run per the serial-execution rule in `CLAUDE.local.md`.
 
-The local coverage harness now mirrors the Azure GPU pipeline's phase split:
-- `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''`
+The local coverage harness runs four phases: the three the Azure GPU pipeline runs, plus the CPU-only phase
+that in CI runs on the GitHub-hosted matrix instead:
+- `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''` (locally only; see the CI/CD section)
 - `Testing: standard gpu cuda-marked` reruns only regular CUDA / bf16-marked tests with `IT_RUN_CUDA_TESTS=1`
 - `Testing: standalone gpu` and `Testing: CI Profiling` remain separate special-test phases
 
@@ -701,11 +702,14 @@ Serialization details matter here:
   `stat -c %g /var/run/docker.sock` errors after a host reboot) is an operator task on the self-hosted
   runner, not something to attempt from a contributor checkout.
 - The build-level queue shown by `az pipelines build show` may still display `Azure Pipelines` even when the YAML job uses the self-hosted `Default` pool. Treat approval state and actual worker dispatch as the source of truth before editing the pool stanza.
-- The current GPU test flow is intentionally phase-split to reduce peak memory while preserving CUDA coverage:
-  1. `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''`
-  2. `Testing: standard gpu cuda-marked` runs regular CUDA-gated tests under `IT_RUN_CUDA_TESTS=1`
-  3. `Testing: standalone gpu` runs standalone GPU tests
-  4. `Testing: CI Profiling` runs `profile_ci` GPU tests
+- The GPU pipeline runs only GPU work, phase-split to reduce peak memory while preserving CUDA coverage:
+  1. `Testing: standard gpu cuda-marked` runs regular CUDA-gated tests under `IT_RUN_CUDA_TESTS=1`
+  2. `Testing: standalone gpu` runs standalone GPU tests
+  3. `Testing: CI Profiling` runs `profile_ci` GPU tests
+
+  The CPU suite is NOT run there: the GitHub-hosted matrix runs it on every pull request the GPU pipeline
+  triggers on. A test that passes only in the self-hosted environment (a gated artifact, say) needs its input
+  warmed in `tests/hf_warm_manifest.yaml`, not a CPU phase on the serial GPU agent.
 - **Hub access in hosted CI:** each matrix job warms the Hugging Face cache from `tests/hf_warm_manifest.yaml`
   and runs the suite with `HF_HUB_OFFLINE=1`; tests that must reach the live Hub are marked `hf_live` and run in
   a separate online pass. A new Hub artifact goes in the manifest. See `docs/ci_hub_cache.md`.
@@ -798,7 +802,7 @@ to have landed. Leave merged commit history alone; a rewrite costs more than the
   not just the locally-run pytest phases: the hosted GitHub workflows (Test full across all three OSes,
   Stale Stubs and Type Checks — BOTH halves: pyright AND `generate_op_stubs.py` freshness — PyPI dry-run,
   regen-ci-req report, benchmark-registry isolation) AND every phase of the gated Azure GPU pipeline
-  (standard, **standard gpu cuda-marked**, standalone, profile_ci). Lesson from the circuit-tracer merge
+  (**standard gpu cuda-marked**, standalone, profile_ci). Lesson from the circuit-tracer merge
   of 2026-07-20: a branch was greened locally on three phases but the cuda-marked phase (whose tests hide
   among the locally-skipped set) plus the hosted stubs/pyright/fixture-scope surfaces were never
   exercised, so `main` went red on merge. Run the cuda-marked phase locally via

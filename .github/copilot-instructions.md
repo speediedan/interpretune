@@ -323,8 +323,9 @@ tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
 # Note: Coverage collection takes approximately 50 minutes
 ```
 
-The local coverage harness now mirrors the Azure GPU pipeline's phase split:
-- `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''`
+The local coverage harness runs four phases: the three the Azure GPU pipeline runs, plus the CPU-only phase
+that in CI runs on the GitHub-hosted matrix instead:
+- `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''` (locally only)
 - `Testing: standard gpu cuda-marked` reruns only regular CUDA / bf16-marked tests with `IT_RUN_CUDA_TESTS=1`
 - `Testing: standalone gpu` and `Testing: CI Profiling` remain separate special-test phases
 
@@ -467,11 +468,12 @@ We now have a separate Azure DevOps pipeline that runs GPU/standalone tests on a
 - Maintainers can drive the approval gate through the Azure DevOps API rather than the web UI. The
   tooling and credentials are machine-specific and live in a local, uncommitted instructions file.
 - The build-level queue shown by `az pipelines build show` may still display `Azure Pipelines` even when the YAML job uses the self-hosted `Default` pool. Treat approval state and actual worker dispatch as the source of truth before editing the pool stanza.
-- The current GPU test flow is intentionally phase-split to reduce peak memory while preserving CUDA coverage:
-  1. `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''`
-  2. `Testing: standard gpu cuda-marked` runs regular CUDA-gated tests under `IT_RUN_CUDA_TESTS=1`
-  3. `Testing: standalone gpu` runs standalone GPU tests
-  4. `Testing: CI Profiling` runs `profile_ci` GPU tests
+- The GPU pipeline runs only GPU work, phase-split to reduce peak memory while preserving CUDA coverage:
+  1. `Testing: standard gpu cuda-marked` runs regular CUDA-gated tests under `IT_RUN_CUDA_TESTS=1`
+  2. `Testing: standalone gpu` runs standalone GPU tests
+  3. `Testing: CI Profiling` runs `profile_ci` GPU tests
+
+  The CPU suite runs on the GitHub-hosted matrix, not on the GPU pipeline.
 
 Note: the GPU pipeline runs only when a PR is ready for review and an admin approves the run — do not expect it to run automatically for draft PRs or early-stage work.
 

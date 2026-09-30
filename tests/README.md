@@ -29,7 +29,8 @@ For more details, see the main CI workflow configuration in `.github/workflows/c
 
 ## Local Coverage Harness Split
 
-The local `scripts/gen_it_coverage.sh` harness now mirrors the Azure GPU pipeline's phase split:
+The local `scripts/gen_it_coverage.sh` harness runs the Azure GPU pipeline's three GPU phases, preceded by the
+CPU-only pass that in CI runs on the GitHub-hosted matrix instead:
 
 1. Base pytest runs with `CUDA_VISIBLE_DEVICES=''` so the normal suite remains CPU-only and avoids GPU OOM churn.
 2. A second `IT_RUN_CUDA_TESTS=1` pytest pass re-enables regular CUDA/bf16-marked tests that should contribute to

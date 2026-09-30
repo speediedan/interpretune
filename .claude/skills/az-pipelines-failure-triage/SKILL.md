@@ -45,10 +45,11 @@ taxonomy and reproduction paths specific to THIS repo's pipeline shape.
 > AGENT_UID=${AGENT_UID:-998}                        # example; the uid the agent runs as
 > ```
 - The GPU test flow is phase-split to reduce peak memory:
-  1. `Testing: standard` is CPU-only with `CUDA_VISIBLE_DEVICES=''`
-  2. `Testing: standard gpu cuda-marked` runs regular CUDA-gated tests under `IT_RUN_CUDA_TESTS=1`
-  3. `Testing: standalone gpu` runs standalone GPU tests
-  4. `Testing: CI Profiling` runs profiling GPU tests
+  1. `Testing: standard gpu cuda-marked` runs regular CUDA-gated tests under `IT_RUN_CUDA_TESTS=1`
+  2. `Testing: standalone gpu` runs standalone GPU tests
+  3. `Testing: CI Profiling` runs profiling GPU tests
+- There is no CPU-only phase: the CPU suite runs on the GitHub-hosted matrix. A red CPU test belongs to that
+  workflow's logs, not this pipeline's.
 
 ## Step 1: Triage Failure Class
 
