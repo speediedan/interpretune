@@ -50,6 +50,68 @@ if _LIGHTNING_AVAILABLE:
             self.model.train()  # type: ignore[attr-defined]  # provided by LightningModule when mixed in
             return super().on_train_start()  # type: ignore[misc]  # LightningModule method when mixed in
 
+        def _ensure_analysis_setup(self) -> None:
+            """Run the analysis_cfg setup a Trainer loop needs (mirrors AnalysisRunner.it_init).
+
+            Under a Trainer, nothing invokes the AnalysisRunner, so a module composed for analysis
+            would reach its first batch without an analysis_step. This runs the same check the runner
+            performs at init: when analysis is configured but no usable step exists, apply the config.
+
+            It then routes predict batches through the configured step. This cannot live on the class:
+            task mixins (e.g. RTEBoolqSteps) define their own predict_step earlier in the MRO, so a
+            class-level override would never run for them. Wrapping the instance attribute once reaches
+            every composition regardless of MRO order.
+            """
+            analysis_cfg = getattr(self, "analysis_cfg", None)
+            if analysis_cfg is None or getattr(analysis_cfg, "op", None) is None:
+                return
+            if not hasattr(self, "analysis_step") or getattr(self, "_generated_analysis_step", False):
+                analysis_cfg.apply(self)
+            if getattr(self, "_it_predict_wrapped", False):
+                return
+            original = self.predict_step
+
+            def _it_analysis_predict_step(batch, batch_idx: int, dataloader_idx: int = 0):
+                step = getattr(self, getattr(analysis_cfg, "step_fn", "analysis_step"), None)
+                if callable(step):
+                    from collections.abc import Iterator
+
+                    result = step(batch, batch_idx, dataloader_idx)
+                    return list(result) if isinstance(result, Iterator) else result
+                return original(batch, batch_idx, dataloader_idx)
+
+            self.predict_step = _it_analysis_predict_step
+            self._it_predict_wrapped = True
+
+        def on_predict_start(self) -> None:
+            """Ensure analysis setup ran before a Trainer predict loop, then defer to Lightning."""
+            self._ensure_analysis_setup()
+            return super().on_predict_start()  # type: ignore[misc]  # LightningModule method when mixed in
+
+        def on_test_start(self) -> None:
+            """Ensure analysis setup ran before a Trainer test loop, then defer to Lightning."""
+            self._ensure_analysis_setup()
+            return super().on_test_start()  # type: ignore[misc]  # LightningModule method when mixed in
+
+        def predict_step(self, batch, batch_idx: int, dataloader_idx: int = 0):
+            """Route predict batches through analysis_step when analysis is configured.
+
+            When the module carries an analysis_cfg with an op, predict executes the configured analysis step (manual or
+            generated, resolved through the config's step_fn). Generated steps stream, so only iterators are
+            materialized; any other return value passes through untouched, preserving the Trainer's per-batch output
+            contract. Without analysis configured, this defers to the predict_step it shadowed.
+            """
+            analysis_cfg = getattr(self, "analysis_cfg", None)
+            if analysis_cfg is not None and getattr(analysis_cfg, "op", None) is not None:
+                self._ensure_analysis_setup()
+                step = getattr(self, getattr(analysis_cfg, "step_fn", "analysis_step"), None)
+                if callable(step):
+                    from collections.abc import Iterator
+
+                    result = step(batch, batch_idx, dataloader_idx)
+                    return list(result) if isinstance(result, Iterator) else result
+            return super().predict_step(batch, batch_idx, dataloader_idx)  # type: ignore[misc]
+
         @classmethod
         def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
             """Register the Lightning datamodule and module compositions."""
