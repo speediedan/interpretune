@@ -60,11 +60,15 @@ if _LIGHTNING_AVAILABLE:
             return getattr(getattr(self, "it_cfg", None), "analysis_cfg", None)
 
         def _ensure_analysis_setup(self) -> None:
-            """Run the analysis_cfg setup a Trainer loop needs (mirrors AnalysisRunner.it_init).
+            """Run the analysis_cfg setup a Trainer loop needs, exactly as the AnalysisRunner does.
 
             Under a Trainer, nothing invokes the AnalysisRunner, so a module composed for analysis
-            would reach its first batch without an analysis_step. This runs the same check the runner
-            performs at init: when analysis is configured but no usable step exists, apply the config.
+            would reach its first batch without an analysis_step. This runs the runner's own setup
+            (``init_analysis_cfgs`` for a config not yet applied to this module) and leaves the choice of
+            step to ``AnalysisCfg.apply``, so ``ignore_manual`` means the same thing here as there: a
+            re-derived check that kept any existing manual step ran it even when the config said to
+            ignore it and generate one from the op. Its output directory comes from ``core_log_dir``,
+            which under a Trainer is the Trainer's log directory.
 
             It then routes predict batches through the configured step. This cannot live on the class:
             task mixins (e.g. RTEBoolqSteps) define their own predict_step earlier in the MRO, so a
@@ -74,24 +78,36 @@ if _LIGHTNING_AVAILABLE:
             analysis_cfg = self._analysis_cfg_of()
             if analysis_cfg is None or getattr(analysis_cfg, "op", None) is None:
                 return
-            if not hasattr(self, "analysis_step") or getattr(self, "_generated_analysis_step", False):
-                analysis_cfg.apply(self)
+            if not analysis_cfg.applied_to(self):
+                from interpretune.config.runner import init_analysis_cfgs
+
+                init_analysis_cfgs(self, analysis_cfg)  # type: ignore[arg-type]  # a mixin; the composed module satisfies it
             if getattr(self, "_it_predict_wrapped", False):
                 return
             original = self.predict_step
 
             def _it_analysis_predict_step(batch, batch_idx: int, dataloader_idx: int = 0):
-                live_cfg = self._analysis_cfg_of() or analysis_cfg
-                step = getattr(self, getattr(live_cfg, "step_fn", "analysis_step"), None)
-                if callable(step):
-                    from collections.abc import Iterator
-
-                    result = step(batch, batch_idx, dataloader_idx)
-                    return list(result) if isinstance(result, Iterator) else result
-                return original(batch, batch_idx, dataloader_idx)
+                ran, result = self._run_configured_step(
+                    self._analysis_cfg_of() or analysis_cfg, batch, batch_idx, dataloader_idx
+                )
+                return result if ran else original(batch, batch_idx, dataloader_idx)
 
             self.predict_step = _it_analysis_predict_step
             self._it_predict_wrapped = True
+
+        def _run_configured_step(self, analysis_cfg, batch, batch_idx: int, dataloader_idx: int):
+            """Run the step the config names (its ``step_fn``); ``(False, None)`` when there is none to run.
+
+            Generated steps stream, so an iterator is materialized; any other return passes through untouched,
+            preserving the Trainer's per-batch output contract.
+            """
+            step = getattr(self, getattr(analysis_cfg, "step_fn", "analysis_step"), None)
+            if not callable(step):
+                return False, None
+            from collections.abc import Iterator
+
+            result = step(batch, batch_idx, dataloader_idx)
+            return True, (list(result) if isinstance(result, Iterator) else result)
 
         def on_predict_start(self) -> None:
             """Ensure analysis setup ran before a Trainer predict loop, then defer to Lightning."""
@@ -114,12 +130,9 @@ if _LIGHTNING_AVAILABLE:
             analysis_cfg = self._analysis_cfg_of()
             if analysis_cfg is not None and getattr(analysis_cfg, "op", None) is not None:
                 self._ensure_analysis_setup()
-                step = getattr(self, getattr(analysis_cfg, "step_fn", "analysis_step"), None)
-                if callable(step):
-                    from collections.abc import Iterator
-
-                    result = step(batch, batch_idx, dataloader_idx)
-                    return list(result) if isinstance(result, Iterator) else result
+                ran, result = self._run_configured_step(analysis_cfg, batch, batch_idx, dataloader_idx)
+                if ran:
+                    return result
             return super().predict_step(batch, batch_idx, dataloader_idx)  # type: ignore[misc]
 
         @classmethod

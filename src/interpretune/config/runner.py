@@ -99,7 +99,14 @@ def init_analysis_dirs(
 
     # Setup output dataset path
     if op_output_dataset_path is None:
-        op_output_dataset_path = module.core_log_dir / "analysis_datasets"  # type: ignore[attr-defined]  # protocol provides core_log_dir
+        # `core_log_dir` is a str OR a Path (a Lightning Trainer supplies a str), and absent until a run owns a log dir
+        log_dir = module.core_log_dir  # type: ignore[attr-defined]  # protocol provides core_log_dir
+        if log_dir is None:
+            raise MisconfigurationException(
+                f"{type(module).__name__} has no log directory to write analysis outputs under: pass "
+                "op_output_dataset_path, or run it where a log directory is set (a runner, or an attached Trainer)."
+            )
+        op_output_dataset_path = Path(log_dir) / "analysis_datasets"
     assert isinstance(op_output_dataset_path, StrOrPath), "op_output_dataset_path must be a str or Path"
     op_output_dataset_path = Path(op_output_dataset_path)
     op_output_dataset_path.mkdir(exist_ok=True, parents=True)

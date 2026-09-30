@@ -52,17 +52,17 @@ def _trainer(tmp_path, limit=1):
     )
 
 
-def _analysis_cfg():
+def _analysis_cfg(ignore_manual: bool = True):
     from interpretune import AnalysisCfg
 
-    return AnalysisCfg(target_op=it.labels_to_ids, ignore_manual=True)
+    return AnalysisCfg(target_op=it.labels_to_ids, ignore_manual=ignore_manual)
 
 
 def test_predict_step_routes_to_manual_analysis_step(tmp_path):
-    """With analysis configured, Trainer.predict executes the module's analysis_step."""
+    """With analysis configured to keep a manual step, Trainer.predict executes the module's analysis_step."""
     it_session = _lightning_cust_session()
     module = it_session.module
-    module.analysis_cfg = _analysis_cfg()
+    module.analysis_cfg = _analysis_cfg(ignore_manual=False)
 
     calls = []
 
@@ -79,6 +79,43 @@ def test_predict_step_routes_to_manual_analysis_step(tmp_path):
     assert isinstance(out, list) and out and out[0] == {"ran": True}
 
 
+def test_ignore_manual_generates_the_step_from_the_op(tmp_path):
+    """``ignore_manual=True`` means "ignore the existing analysis_step and generate one from the op".
+
+    The Trainer path must honor it exactly as the AnalysisRunner does: a manual step present on the module is NOT
+    what runs, and the generated step's output (the op's result for each batch) is what predict returns.
+    """
+    it_session = _lightning_cust_session()
+    module = it_session.module
+    module.analysis_cfg = _analysis_cfg(ignore_manual=True)
+
+    calls = []
+
+    def manual_step(batch, batch_idx, dataloader_idx=0):
+        calls.append(batch_idx)
+        return {"ran": "manual"}
+
+    module.analysis_step = manual_step
+
+    out = _trainer(tmp_path).predict(module, datamodule=it_session.datamodule)
+    assert not calls, "ignore_manual=True, yet the manual analysis_step ran instead of the generated one"
+    assert isinstance(out, list) and out, "the generated analysis step returned nothing"
+    assert out[0] != {"ran": "manual"}
+
+
+def test_generated_step_runs_through_trainer_predict(tmp_path):
+    """The main case the issue is about: no manual step at all, so the op generates one and predict runs it."""
+    it_session = _lightning_cust_session()
+    module = it_session.module
+    if "analysis_step" in vars(module):
+        del module.analysis_step
+    module.analysis_cfg = _analysis_cfg(ignore_manual=True)
+
+    out = _trainer(tmp_path).predict(module, datamodule=it_session.datamodule)
+    assert isinstance(out, list) and out, "the generated analysis step returned nothing"
+    assert module.analysis_cfg.applied_to(module), "the analysis config was never applied to the module"
+
+
 def test_predict_step_falls_through_without_analysis_cfg(tmp_path):
     """Without analysis configured, predict takes Lightning's default path."""
     it_session = _lightning_cust_session()
@@ -86,15 +123,28 @@ def test_predict_step_falls_through_without_analysis_cfg(tmp_path):
     assert isinstance(out, list) and out, "default predict_step returned nothing"
 
 
-def test_on_predict_start_wraps_predict_for_analysis():
+def test_on_predict_start_wraps_predict_for_analysis(tmp_path):
     """The predict-start hook routes predict through the configured step without clobbering it."""
     it_session = _lightning_cust_session()
     module = it_session.module
     module.analysis_cfg = _analysis_cfg()
     manual = module.analysis_step
     assert not getattr(module, "_it_predict_wrapped", False)
-    module.on_predict_start()
+    _trainer(tmp_path).predict(module, datamodule=it_session.datamodule)
     assert getattr(module, "_it_predict_wrapped", False)
-    # the task's own analysis_step is preserved; only predict dispatch is wrapped
-    # (bound methods never preserve identity, so compare the underlying functions)
+    # the task's own analysis_step is preserved (the generated one is added beside it); only predict dispatch is
+    # wrapped (bound methods never preserve identity, so compare the underlying functions)
     assert module.analysis_step.__func__ is manual.__func__
+
+
+def test_setup_without_a_log_directory_is_refused_by_name():
+    """Outside a Trainer or runner there is nowhere to write analysis outputs: say so, rather than fail on a path."""
+    import pytest
+
+    from interpretune.utils import MisconfigurationException
+
+    it_session = _lightning_cust_session()
+    module = it_session.module
+    module.analysis_cfg = _analysis_cfg()
+    with pytest.raises(MisconfigurationException, match="no log directory to write analysis outputs"):
+        module.on_predict_start()
