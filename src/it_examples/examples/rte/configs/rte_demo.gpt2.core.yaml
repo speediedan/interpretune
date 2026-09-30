@@ -47,9 +47,12 @@ registered_cfg:
         init_args:
           enabled: true
           lm_generation_cfg:
-            class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
+            class_path: interpretune.config.mixins.HFGenerationConfig
             init_args:
-              max_new_tokens: 1
+              model_config:
+                max_new_tokens: 1
+                output_logits: true
+                return_dict_in_generate: true
       hf_from_pretrained_cfg:
         class_path: interpretune.config.mixins.HFFromPretrainedConfig
         init_args:
@@ -57,11 +60,6 @@ registered_cfg:
             device_map: cpu
             dtype: float32
           model_head: transformers.GPT2LMHeadModel
-      tl_cfg:
-        class_path: interpretune.adapters.transformer_lens.config.ITLensBridgeConfig
-        init_args:
-          model_name: gpt2-small
-          default_padding_side: left
       optimizer_init:
         class_path: torch.optim.AdamW
         init_args:
