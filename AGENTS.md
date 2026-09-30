@@ -120,7 +120,7 @@ thing it asserted is not true, and the weakened form carries a false premise for
 
 | Flow | Command | Who it is for | Honors the uv overrides? |
 | --- | --- | --- | --- |
-| **User / README** | `uv venv` then `uv pip install -e ".[examples,lightning]" --group git-deps --group test --group profiling` | anyone following `README.md` | **yes** (uv reads `[tool.uv]`) |
+| **User / README** | `uv venv` then `uv pip install -e ".[examples,lightning]" --group git-deps --group test` | anyone following `README.md` | **yes** (uv reads `[tool.uv]`) |
 | **Dev / CI** | `scripts/build_it_env.sh` | this repo's dev envs, CI, and **pins-only validation** (no `--from-source` directives) | **yes** |
 | **Bare pip** | `pip install .` | **nobody. Not supported.** | **NO** |
 

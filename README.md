@@ -110,14 +110,14 @@ drives. That installs the **engine** only: the hub adapter composing it into a s
 with `it.hub.pull`, which is what makes it hub-delivered rather than bundled.
 
 <details>
-<summary><b>Contributor install</b> (adds the test, profiling and dashboard-benchmark tooling)</summary>
+<summary><b>Contributor install</b> (adds the test and dashboard-benchmark tooling)</summary>
 
 ```bash
-# `lightning` and `examples` are EXTRAS; `git-deps`, `test` and `profiling` are PEP 735
+# `lightning` and `examples` are EXTRAS; `git-deps` and `test` are PEP 735
 # dependency-groups, so each needs its own `--group`. Requesting a group as an extra is only a
 # WARNING, not an error, and silently drops it (dropping `test` takes papermill/nbmake with it,
 # so the notebook tests then cannot run at all). `test` includes the `dev` group transitively.
-uv pip install -e ".[examples,lightning]" --group git-deps --group test --group profiling
+uv pip install -e ".[examples,lightning]" --group git-deps --group test
 
 # Optional: only if you will run the Neuronpedia dashboard local-DB import/benchmark lanes —
 # installs the pinned neuronpedia-utils (--no-deps: its unused autointerp/cloud dependency
@@ -125,8 +125,8 @@ uv pip install -e ".[examples,lightning]" --group git-deps --group test --group 
 uv pip install --no-deps -r requirements/ci/nodeps_git_requirements.txt
 ```
 
-`test` carries papermill/nbmake (which execute the published notebooks in CI), `syrupy` and `pgpq`;
-`profiling` carries `py-spy`. None of them are needed to *run* a notebook, which is why they are no
+`test` carries papermill/nbmake (which execute the published notebooks in CI), `syrupy`, `pgpq`
+and `py-spy`. None of them are needed to *run* a notebook, which is why they are no
 longer in the install above.
 
 </details>
