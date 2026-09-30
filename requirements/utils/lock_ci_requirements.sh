@@ -196,7 +196,6 @@ generate_lockfile() {
         --extra lightning
         --group dev
         --group test
-        --group profiling
         --output-file "${rel_output_file}"
         --no-strip-extras
         --resolution "${resolution}"
