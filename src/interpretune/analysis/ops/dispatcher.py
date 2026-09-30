@@ -300,6 +300,21 @@ class AnalysisOpDispatcher:
         finally:
             self._loading_in_progress = False
 
+    def add_op_path(self, path: Path | str) -> None:
+        """Load op definitions from ``path`` in this process, as ``IT_ANALYSIS_OP_PATHS`` would at import.
+
+        The environment variable is read once, when the dispatcher is built, so a collection staged afterwards (a
+        collection repository's own tests, a notebook pointing at a working tree) would otherwise need a purge and
+        re-import of ``interpretune``. Adding the path puts its implementation modules on ``sys.path`` and reloads,
+        so its ops and their ``it.<op>`` wrappers are usable immediately. A path already present is not duplicated.
+        """
+        path = Path(path)
+        if path.resolve() not in {Path(p).resolve() for p in self.yaml_paths}:
+            self.yaml_paths.insert(0, path)
+        self._resolve_op_paths_from_yaml_paths()
+        ensure_op_paths_in_syspath(self.op_paths)
+        self.reload_definitions()
+
     def reload_definitions(self) -> None:
         """Re-discover and reload every op definition, picking up collections cached since the last load.
 

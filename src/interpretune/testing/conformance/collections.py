@@ -2,13 +2,15 @@
 honour or refuse each by name?
 
 A repository subclasses ``OpCollectionConformance``, sets ``target`` (the composition under test, exactly as for
-``ModelBackendConformance``) and ``collection``: a bundled op family name (``"concept"``) or a hub repo id
-(``"org/repo"``, pulled or staged by the target's ``load``). Cases are read off the dispatcher's definitions, so a
+``ModelBackendConformance``) and ``collection``: a bundled op family name (``"concept"``), a hub repo id
+(``"org/repo"``, pulled by the target's ``load``), or the declared name of a collection the target's ``load`` stages
+from a local op path (see :func:`stage_local_collection`). Cases are read off the dispatcher's definitions, so a
 collection is validated through the same objects a session executes.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, ClassVar, cast
 
 import pytest
@@ -27,22 +29,44 @@ def belongs_to_collection(op_def: Any, collection: str, *, family_members: set[s
     """Whether a canonical ``OpDef`` is part of ``collection``.
 
     A hub collection is identified by its declared ``collection_name`` or by ``hub:<user.repo>`` provenance. A
-    bundled family is identified by the implementation path of a leaf op, and a composite belongs when every
-    member does (``family_members`` carries the leaves already admitted, so composites are decided second).
+    locally staged collection (loaded from an op path, ``source == "local"``) is identified by the name its
+    ``collection:`` header declares, which is what lets a collection repository validate its own working tree
+    before it is published. A bundled family is identified by the implementation path of a leaf op. In both of the
+    last two, a composite belongs when every member does (``family_members`` carries the leaves already admitted,
+    so composites are decided second).
     """
     if "/" in collection:
         namespaced = collection.replace("/", ".")
         return op_def.collection_name == collection or op_def.source == f"hub:{namespaced}"
-    if op_def.source != "bundled":
+    if op_def.source not in ("bundled", "local"):
         return False
+    if op_def.source == "local" and op_def.collection_name == collection:
+        return True
     if op_def.composition:
         members = family_members or set()
         return bool(members) and all(name.split(".")[-1] in members for name in op_def.composition)
-    return str(op_def.implementation).startswith(f"{BUNDLED_PREFIX}{collection}.")
+    return op_def.source == "bundled" and str(op_def.implementation).startswith(f"{BUNDLED_PREFIX}{collection}.")
+
+
+def stage_local_collection(path: Any) -> Callable[[], None]:
+    """A ``ConformanceTarget.load`` hook that loads the op collection at ``path`` (a directory of op YAMLs).
+
+    For a collection repository validating its own working tree before publishing: set ``collection`` to the name
+    its ``collection:`` header declares, and the cases read the staged ops through the dispatcher exactly as a
+    session would.
+    """
+
+    def _load() -> None:
+        from interpretune.analysis.ops.dispatcher import DISPATCHER
+
+        DISPATCHER.add_op_path(path)
+
+    return _load
 
 
 def ops_in_collection(collection: str) -> dict[str, Any]:
-    """Canonical ``{name: OpDef}`` for every op of a bundled family or a hub collection, composites last."""
+    """Canonical ``{name: OpDef}`` for every op of a bundled family, a hub collection or a locally staged one,
+    composites last."""
     from interpretune.analysis.ops.dispatcher import DISPATCHER
 
     definitions = {name: d for name, d in DISPATCHER._op_definitions.items() if d.name == name}
@@ -62,6 +86,10 @@ class OpCollectionConformance:
     target: ClassVar[ConformanceTarget]
     collection: ClassVar[str]
     inputs: ClassVar[ConformanceInputs | None] = None
+    #: Per-op values merged over each declared ``conformance.run_inputs`` sample, for inputs only the test
+    #: environment can supply (a fixture path, a locally generated artifact). The declaration still says which
+    #: inputs the sample needs; an override may only fill or replace keys, never add a sample for an undeclared op.
+    run_input_overrides: ClassVar[dict[str, dict[str, Any]]] = {}
 
     @pytest.fixture(scope="class")
     def suite(self, request):
@@ -119,17 +147,26 @@ class OpCollectionConformance:
         sampled = {
             n: d.conformance for n, d in collection_ops.items() if d.conformance and "run_inputs" in d.conformance
         }
+        undeclared = sorted(set(self.run_input_overrides) - set(sampled))
+        assert not undeclared, (
+            f"run_input_overrides name {undeclared}, which declare no `conformance.run_inputs` sample: an override "
+            "fills a declared sample and cannot stand in for one"
+        )
         if not sampled:
             pytest.skip(
                 f"no op in {self.collection!r} declares a `conformance.run_inputs` sample: {sorted(collection_ops)}"
             )
         for name, sample in sampled.items():
-            store = suite.run(AnalysisCfg(target_op=name, run_inputs=dict(sample["run_inputs"])))
+            run_inputs = {**sample["run_inputs"], **self.run_input_overrides.get(name, {})}
+            store = suite.run(AnalysisCfg(target_op=name, run_inputs=run_inputs))
+            # An intermediate-only column is consumed inside the op's composition and never persisted, by definition.
             expected = {
-                col for col, cfg in collection_ops[name].output_schema.items() if getattr(cfg, "required", True)
+                col
+                for col, cfg in collection_ops[name].output_schema.items()
+                if getattr(cfg, "required", True) and not getattr(cfg, "intermediate_only", False)
             }
             present = set(store.dataset.column_names)
             assert expected <= present, f"{name}: output columns {sorted(expected - present)} missing from the store"
 
 
-__all__ = ["OpCollectionConformance", "belongs_to_collection", "ops_in_collection"]
+__all__ = ["OpCollectionConformance", "belongs_to_collection", "ops_in_collection", "stage_local_collection"]
