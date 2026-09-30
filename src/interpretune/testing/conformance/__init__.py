@@ -26,9 +26,10 @@ from interpretune.testing.conformance.gates import Gate, SelectionReport, confor
 from interpretune.testing.conformance.inputs import ConformanceInputs, ConformanceTarget
 
 if TYPE_CHECKING:
-    # The four names below resolve lazily at runtime (their modules import pytest); the checker sees them here.
+    # The five names below resolve lazily at runtime (their modules import pytest); the checker sees them here.
     from interpretune.testing.conformance.cases import ModelBackendConformance as ModelBackendConformance
     from interpretune.testing.conformance.collections import OpCollectionConformance as OpCollectionConformance
+    from interpretune.testing.conformance.collections import stage_local_collection as stage_local_collection
     from interpretune.testing.conformance.notebooks import NotebookFormConformance as NotebookFormConformance
     from interpretune.testing.conformance.reference import HFReference as HFReference
 
@@ -40,6 +41,7 @@ __all__ = [
     "conformance_case",
     "ModelBackendConformance",
     "OpCollectionConformance",
+    "stage_local_collection",
     "NotebookFormConformance",
     "HFReference",
 ]
@@ -55,6 +57,10 @@ def __getattr__(name: str):
         from interpretune.testing.conformance.collections import OpCollectionConformance
 
         return OpCollectionConformance
+    if name == "stage_local_collection":
+        from interpretune.testing.conformance.collections import stage_local_collection
+
+        return stage_local_collection
     if name == "NotebookFormConformance":
         from interpretune.testing.conformance.notebooks import NotebookFormConformance
 

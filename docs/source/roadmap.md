@@ -85,10 +85,12 @@ Tracked here until a Wave 2 issue is opened for it. The stub should not outlive 
   collection): the read/probe/steer ops, the `concept_basis="jlens_*"` selector for
   `concept_direction`, per-feature J-space signatures, and the `patch` / `clamp` /
   `reject` write modes have shipped, and the separately published collection is
-  the first genuinely non-bundled proving ground for hub registration. Remaining
-  research: the task-fitted lens over RTE ([#424](https://github.com/speediedan/interpretune/issues/424)),
-  the experimental battery ([#425](https://github.com/speediedan/interpretune/issues/425)),
-  and the workspace demo refresh ([#426](https://github.com/speediedan/interpretune/issues/426)).
+  the first genuinely non-bundled proving ground for hub registration. Open research:
+  J-space attribution graphs ([#683](https://github.com/speediedan/interpretune/issues/683)),
+  RTE attribution graphs with a learned pruner and graph-guided fine-tuning
+  ([#667](https://github.com/speediedan/interpretune/issues/667)), and fine-tuning defined through the
+  lens ([#666](https://github.com/speediedan/interpretune/issues/666)). The demo and docs refresh
+  ([#426](https://github.com/speediedan/interpretune/issues/426)) is nearly done.
 - **Self-interpretability**: interpretability that accelerates model advancement via
   self-reflection — in addition to serving as the bridge for human access to AI world models.
   Internal model-reflection heuristics offered by Interpretune could enduringly improve RL
