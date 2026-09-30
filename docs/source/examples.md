@@ -16,16 +16,17 @@ setup.
 
 ## What each notebook needs
 
-The base install covers three of these. The rest additionally need the `git-deps` group, because they
+The base install covers four of these. The rest additionally need the `git-deps` group, because they
 use the circuit-tracer adapter and no circuit-tracer release carries the surface interpretune uses.
 
 ```bash
-uv pip install -e ".[examples]"                    # SAELens tutorial + the two hub-only notebooks
+uv pip install -e ".[examples]"                    # CPU quickstart, SAELens tutorial + the two hub-only notebooks
 uv pip install -e ".[examples]" --group git-deps   # everything else
 ```
 
 | Notebook | Install | GPU | Model access |
 |---|---|---|---|
+| CPU quickstart | `.[examples]` | not required | none — `gpt2` |
 | Op collections | `.[examples]` | not required | HF token — it publishes a collection to your namespace |
 | Hub op opt-in | `.[examples]` | not required | HF token |
 | SAELens tutorial | `.[examples]` | bf16 CUDA | none — `gpt2` |
@@ -53,6 +54,7 @@ needs neither.
 
 | Notebook | Adapters | Demonstrates | Colab |
 |---|---|---|---|
+| {doc}`CPU quickstart <notebooks/quickstart/cpu_quickstart>` | `core` | The first run: a CPU-only GPT-2 session, one analysis op over RTE, results in an `AnalysisStore` — no GPU, token, or gated weights. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/quickstart/cpu_quickstart.ipynb) |
 | {doc}`SAELens tutorial <notebooks/saelens_adapter_example/saelens_adapter_example>` | `sae_lens` | The SAELens adapter end to end: SAE-spliced forward passes, `logit_diffs_latent` analysis, per-latent attribution. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/saelens_adapter_example/saelens_adapter_example.ipynb) |
 | {doc}`Circuit Tracer tutorial <notebooks/circuit_tracer_examples/circuit_tracer_adapter_example_basic>` | `circuit_tracer` | Attribution-graph generation basics with the circuit-tracer adapter. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb) |
 | {doc}`CT analysis backend demo <notebooks/circuit_tracer_examples/ct_analysis_backend_demo>` | `circuit_tracer`, `nnsight`, `transformer_lens` | The analysis-ops pipeline running a full semantic concept intervention through the circuit-tracer analysis backend. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/circuit_tracer_examples/ct_analysis_backend_demo.ipynb) |
