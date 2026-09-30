@@ -189,8 +189,9 @@ interfaces, and multimodal world-model support — see the
 
 - [Latest docs](https://interpretune.org/en/latest/) — concepts, usage guides, design
   notes, API reference
-- Demo notebooks: `src/it_examples/notebooks/` (circuit-tracer analysis + concept-steering demos,
-  SAE-Lens and NNsight adapter examples, with Colab badges on published copies)
+- Demo notebooks: `src/it_examples/notebooks/` (start with the CPU-only
+  [quickstart](https://interpretune.org/en/latest/examples.html), then circuit-tracer analysis +
+  concept-steering demos, SAE-Lens and NNsight adapter examples, with Colab badges on published copies)
 
 ## Testing
 

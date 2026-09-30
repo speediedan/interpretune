@@ -35,6 +35,7 @@ module:
     rte_demo.gemma2.circuit_tracer+nnsight: configs/rte_demo.gemma2.circuit_tracer+nnsight.yaml
     rte_demo.gemma2.circuit_tracer.neuronpedia: configs/rte_demo.gemma2.circuit_tracer.neuronpedia.yaml
     rte_demo.gemma3.circuit_tracer.neuronpedia: configs/rte_demo.gemma3.circuit_tracer.neuronpedia.yaml
+    rte_demo.gpt2.core: configs/rte_demo.gpt2.core.yaml
     rte_demo.gpt2.nnsight+sae_lens: configs/rte_demo.gpt2.nnsight+sae_lens.yaml
     rte_demo.gpt2.sae_lens: configs/rte_demo.gpt2.sae_lens.yaml
 datamodules:
