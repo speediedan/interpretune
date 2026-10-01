@@ -35,6 +35,15 @@ def test_the_gpu_count_survives_into_the_mark(gpu_items):
     assert counts and all(isinstance(c, int) and not isinstance(c, bool) for c in counts), counts
 
 
+def test_the_declaration_report_honours_k(gpu_items):
+    """The calibration driver narrows with ``-k``: the report must list only what the run would execute."""
+    narrowed = collect_gpu_items(["-k", "test_memprofiler_remove_hooks"])
+    assert [i["nodeid"] for i in narrowed] == [
+        "tests/core/test_memprofiler.py::TestClassMemProfiler::test_memprofiler_remove_hooks"
+    ], narrowed
+    assert len(gpu_items) > len(narrowed)
+
+
 def test_a_memory_declaration_without_a_gpu_is_refused():
     with pytest.raises(ValueError, match="declares no GPU"):
         RunIf(min_gpu_mem_gb=1.0)

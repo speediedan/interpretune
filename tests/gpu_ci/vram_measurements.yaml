@@ -1,0 +1,450 @@
+tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma2_2b_it_ct_ns]:
+  outcome: failed
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.14
+  date: '2026-10-01'
+tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma2_2b_it_l]:
+  outcome: failed
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.14
+  date: '2026-10-01'
+tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma2_2b_it_l_sl_br]:
+  outcome: failed
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.14
+  date: '2026-10-01'
+tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma2_2b_it_l_sl_ht]:
+  outcome: failed
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.14
+  date: '2026-10-01'
+tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_1b_it_ct_ns]:
+  outcome: failed
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.14
+  date: '2026-10-01'
+tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_1b_it_l_ct_ns]:
+  outcome: failed
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.14
+  date: '2026-10-01'
+tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_1b_it_l_ns]:
+  outcome: failed
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.14
+  date: '2026-10-01'
+tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_1b_it_ns]:
+  outcome: failed
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.14
+  date: '2026-10-01'
+tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_4b_262k_it_ct_ns]:
+  outcome: failed
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.14
+  date: '2026-10-01'
+tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_4b_it_ct_ns]:
+  outcome: failed
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.14
+  date: '2026-10-01'
+? tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerLightningTLBackendInitialization::test_lightning_adapter_backend_support[lightning_transformerlens]
+: outcome: skipped
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.0
+  date: '2026-10-01'
+tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerNNsightBackend::test_nnsight_backend_integration:
+  outcome: passed
+  need_gb: 10.277
+  allocator_peak_gb: 9.797
+  device_peak_gb: 10.277
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 16.21
+  date: '2026-10-01'
+tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerTLBackend::test_tl_backend_integration:
+  outcome: skipped
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.0
+  date: '2026-10-01'
+tests/core/test_adapters_sae_lens.py::TestClassSAELens::test_sl_tl_device_sync_warnings:
+  outcome: passed
+  need_gb: 0.386
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.386
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 0.03
+  date: '2026-10-01'
+tests/core/test_adapters_transformer_lens.py::TestArchitectureParameterMapping::test_bidirectional_mapping[gemma2]:
+  outcome: failed
+  need_gb: 5.581
+  allocator_peak_gb: 5.135
+  device_peak_gb: 5.581
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 7.75
+  date: '2026-10-01'
+tests/core/test_adapters_transformer_lens.py::TestArchitectureParameterMapping::test_bidirectional_mapping[llama3]:
+  outcome: failed
+  need_gb: 9.946
+  allocator_peak_gb: 9.5
+  device_peak_gb: 9.946
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 10.18
+  date: '2026-10-01'
+? tests/core/test_adapters_transformer_lens.py::TestArchitectureParameterMapping::test_implicit_norm_thaw_covers_every_norm[gemma2]
+: outcome: passed
+  need_gb: 5.544
+  allocator_peak_gb: 5.098
+  device_peak_gb: 5.544
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 7.59
+  date: '2026-10-01'
+? tests/core/test_adapters_transformer_lens.py::TestArchitectureParameterMapping::test_implicit_norm_thaw_covers_every_norm[llama3]
+: outcome: passed
+  need_gb: 8.21
+  allocator_peak_gb: 7.764
+  device_peak_gb: 8.21
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 7.28
+  date: '2026-10-01'
+tests/core/test_analysis_backend_parity.py::test_analysis_backend_parity_gemma3_it_direct_session_intervention_graph:
+  outcome: passed
+  need_gb: 14.445
+  allocator_peak_gb: 13.869
+  device_peak_gb: 14.445
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 23.24
+  date: '2026-10-01'
+tests/core/test_analysis_backend_parity.py::test_analysis_backend_parity_gemma3_it_op_intervention_graph:
+  outcome: passed
+  need_gb: 10.443
+  allocator_peak_gb: 9.867
+  device_peak_gb: 10.443
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 24.2
+  date: '2026-10-01'
+tests/core/test_analysis_backend_parity.py::test_analysis_backend_parity_gemma3_it_reference_intervention_graph:
+  outcome: passed
+  need_gb: 14.333
+  allocator_peak_gb: 13.758
+  device_peak_gb: 14.333
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 101.14
+  date: '2026-10-01'
+? tests/core/test_analysis_backend_parity.py::test_analysis_backend_parity_gemma3_it_signed_feature_selection_intervention_graph
+: outcome: passed
+  need_gb: 10.443
+  allocator_peak_gb: 9.867
+  device_peak_gb: 10.443
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 19.69
+  date: '2026-10-01'
+tests/core/test_analysis_backend_parity.py::test_analysis_backend_parity_semantic_intervention_nnsight:
+  outcome: failed
+  need_gb: 18.421
+  allocator_peak_gb: 9.994
+  device_peak_gb: 18.421
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 51.01
+  date: '2026-10-01'
+? tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_a_point_outside_the_declaration_is_refused_by_name
+: outcome: passed
+  need_gb: 6.361
+  allocator_peak_gb: 5.881
+  device_peak_gb: 6.361
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 37.21
+  date: '2026-10-01'
+tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_all_positions_scope_moves_every_real_position:
+  outcome: passed
+  need_gb: 8.687
+  allocator_peak_gb: 8.207
+  device_peak_gb: 8.687
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 42.63
+  date: '2026-10-01'
+tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_answer_logits_converge_on_the_forward:
+  outcome: passed
+  need_gb: 7.017
+  allocator_peak_gb: 6.537
+  device_peak_gb: 7.017
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 55.43
+  date: '2026-10-01'
+tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_block_output_is_the_next_block_input:
+  outcome: passed
+  need_gb: 7.017
+  allocator_peak_gb: 6.537
+  device_peak_gb: 7.017
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 43.76
+  date: '2026-10-01'
+? tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_cache_op_stores_logits_and_every_requested_point
+: outcome: passed
+  need_gb: 7.017
+  allocator_peak_gb: 6.537
+  device_peak_gb: 7.017
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 50.41
+  date: '2026-10-01'
+tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_capture_converges_on_the_forward:
+  outcome: passed
+  need_gb: 7.017
+  allocator_peak_gb: 6.537
+  device_peak_gb: 7.017
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 57.4
+  date: '2026-10-01'
+tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_every_declared_point_is_captured:
+  outcome: passed
+  need_gb: 7.079
+  allocator_peak_gb: 6.6
+  device_peak_gb: 7.079
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 155.85
+  date: '2026-10-01'
+? tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_last_token_scope_moves_exactly_the_final_position
+: outcome: passed
+  need_gb: 8.687
+  allocator_peak_gb: 8.207
+  device_peak_gb: 8.687
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 43.16
+  date: '2026-10-01'
+tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_runner_produces_the_store_schema:
+  outcome: passed
+  need_gb: 7.001
+  allocator_peak_gb: 6.521
+  device_peak_gb: 7.001
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 36.05
+  date: '2026-10-01'
+tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_session_composes_and_declarations_are_coherent:
+  outcome: passed
+  need_gb: 6.361
+  allocator_peak_gb: 5.881
+  device_peak_gb: 6.361
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 35.69
+  date: '2026-10-01'
+tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_supplied_settings_survive_composition:
+  outcome: skipped
+  need_gb: 6.361
+  allocator_peak_gb: 5.881
+  device_peak_gb: 6.361
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 35.52
+  date: '2026-10-01'
+tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_the_backend_declares_what_it_can_capture:
+  outcome: passed
+  need_gb: 6.361
+  allocator_peak_gb: 5.881
+  device_peak_gb: 6.361
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 35.56
+  date: '2026-10-01'
+tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_undeclared_all_positions_is_refused:
+  outcome: skipped
+  need_gb: 6.361
+  allocator_peak_gb: 5.881
+  device_peak_gb: 6.361
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 36.14
+  date: '2026-10-01'
+tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_undeclared_capabilities_are_refused_by_name:
+  outcome: passed
+  need_gb: 6.361
+  allocator_peak_gb: 5.881
+  device_peak_gb: 6.361
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 35.91
+  date: '2026-10-01'
+tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_undeclared_last_token_is_refused:
+  outcome: skipped
+  need_gb: 6.361
+  allocator_peak_gb: 5.881
+  device_peak_gb: 6.361
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 35.86
+  date: '2026-10-01'
+? tests/core/test_debug_generation.py::TestClassDebugGen::test_debug_session_chat[gemma3_decode_override_no_skip_special_batch]
+: outcome: passed
+  need_gb: 2.437
+  allocator_peak_gb: 1.951
+  device_peak_gb: 2.437
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 7.96
+  date: '2026-10-01'
+tests/core/test_debug_generation.py::TestClassDebugGen::test_debug_session_chat[gemma3_default_serial]:
+  outcome: passed
+  need_gb: 2.429
+  allocator_peak_gb: 1.943
+  device_peak_gb: 2.429
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 8.04
+  date: '2026-10-01'
+? tests/core/test_debug_generation.py::TestClassDebugGen::test_debug_session_chat[llama3_decode_override_no_skip_special_batch]
+: outcome: passed
+  need_gb: 3.491
+  allocator_peak_gb: 3.004
+  device_peak_gb: 3.491
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 12.31
+  date: '2026-10-01'
+tests/core/test_debug_generation.py::TestClassDebugGen::test_debug_session_chat[llama3_default_serial]:
+  outcome: passed
+  need_gb: 3.486
+  allocator_peak_gb: 2.998
+  device_peak_gb: 3.486
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 11.0
+  date: '2026-10-01'
+tests/core/test_jlens_patch_validation.py::TestGemmaPairLevel3::test_gemma2_2b_pair_flips_and_backends_agree:
+  outcome: passed
+  need_gb: 10.458
+  allocator_peak_gb: 9.912
+  device_peak_gb: 10.458
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 16.92
+  date: '2026-10-01'
+tests/core/test_jlens_patch_validation.py::TestGemmaPairLevel3::test_gemma3_1b_it_pair_flips_and_backends_agree:
+  outcome: passed
+  need_gb: 4.489
+  allocator_peak_gb: 3.938
+  device_peak_gb: 4.489
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 9.62
+  date: '2026-10-01'
+? tests/core/test_jlens_subspace_attribution.py::TestRealPairSubspaceAttribution::test_pair_dictionary_explains_its_own_patch_displacement
+: outcome: passed
+  need_gb: 5.632
+  allocator_peak_gb: 5.08
+  device_peak_gb: 5.632
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.13.0+cu130
+  seconds: 4.98
+  date: '2026-10-01'

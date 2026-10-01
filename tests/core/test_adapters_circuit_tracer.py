@@ -259,7 +259,7 @@ class TestCircuitTracerNNsightBackend:
     (core, circuit_tracer) adapter combination with backend="nnsight". Requires CUDA with bf16 support (Gemma2 model).
     """
 
-    # unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+    # measured 10.3 GiB in its own process (24 GiB card)
     @RunIf(bf16_cuda=True, min_gpu_mem_gb=12.0, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY")
     def test_nnsight_backend_integration(self, get_it_session__ct_nnsight_gemma2__setup):
         """Verify NNsight backend initialization: property access, model loading, typing, and local mode config."""
