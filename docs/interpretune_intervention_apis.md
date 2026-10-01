@@ -84,13 +84,14 @@ What each mode preserves and what it moves, in one place:
   two coordinates, so `patch` is a special case of assignment, never of clamping.
 
 > **The pair and the model must share a residual basis, and TransformerLens weight processing changes it.**
-> `HookedTransformer.from_pretrained` defaults to folding LayerNorm and centering weights, which rewrites the
-> residual stream's geometry at every `hook_resid_*` point: a patch pair built from unprocessed weights (which is
-> what lens artifacts and the circuit-tracer `ReplacementModel` path use) then swaps in the wrong plane. Measured
-> on gpt2: the same pair's intervention delta disagrees between backends by a **0.948 relative gap** under default
-> processing, versus <10% with `from_pretrained_no_processing`. Load unprocessed when applying patch pairs on TL, or
-> build the pair from the processed model's own weights; never mix. (Pinned by
-> `tests/core/test_jlens_patch_validation.py`.)
+> A `TransformerBridge` with `enable_compatibility_mode()` folds LayerNorm and centers weights by default, which
+> rewrites the residual stream's geometry at every `hook_resid_*` point: a patch pair built from unprocessed weights
+> (which is what lens artifacts and the circuit-tracer `ReplacementModel` path use) then swaps in the wrong plane.
+> Measured on gpt2: the same pair's intervention delta disagrees between nnsight and TransformerLens by a **0.948
+> relative gap** under default processing, against 0.000 with processing off
+> (`enable_compatibility_mode(no_processing=True)`, or interpretune's `ITLensFromPretrainedNoProcessingConfig`).
+> Load unprocessed when applying patch pairs on TL, or build the pair from the processed model's own weights; never
+> mix. (The unprocessed agreement is pinned by `tests/core/test_jlens_patch_validation.py`.)
 
 > **A folded vector counts its fold exactly once, against the matrix whose processing state matches the scale.**
 > The folded (`jlens_folded`) J-lens construction multiplies unembedding rows by the final norm's scale, and that scale
@@ -99,8 +100,8 @@ What each mode preserves and what it moves, in one place:
 > while applying an HF-convention scale counts the norm twice — once baked into the weights, once in the
 > fold — and the resulting directions are wrong in a way no magnitude adjustment repairs, for the same
 > reason the pair basis above is not interchangeable. Go through `resolve_unembed_and_norm_scale` plus
-> `fold_norm_into_unembed_rows`, which pair each matrix with its own scale convention, rather than
-> hand-rolling either side.
+> `jlens_direction_rows`, which pair each matrix with its own scale convention, rather than hand-rolling
+> either side.
 
 ## Op-level entry points and composites
 
