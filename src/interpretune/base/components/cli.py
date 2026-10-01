@@ -91,6 +91,30 @@ class ITSessionMixin:
         parser.add_argument("--shared_config", type=dict, default={}, help="Shared configuration block.")
         parser.add_argument("--registered_cfg", type=dict, default={}, help="Registered session components.")
         parser.add_argument("--adapter_ctx", type=list, default=[], help="Adapter composition context.")
+        # Composable typed surface for the session-config fields with no file-side ambiguity (#15):
+        # adapter_ctx and the explicit component classes. The config SUBTREES
+        # (datamodule_cfg/module_cfg/shared_cfg) and runtime objects (datamodule/module) stay
+        # file-side — duplicating them as argv trees would create two sources of truth, and
+        # shared_cfg is refused by ITSessionConfig itself.
+        from interpretune.session import ITSessionConfig
+
+        parser.add_class_arguments(
+            ITSessionConfig,
+            "it_session_cfg",
+            instantiate=False,
+            sub_configs=True,
+            skip={
+                "datamodule_cfg",
+                "module_cfg",
+                "shared_cfg",
+                "datamodule",
+                "module",
+                "dm_args",
+                "dm_kwargs",
+                "module_args",
+                "module_kwargs",
+            },
+        )
         self.add_base_args(parser)
 
     @staticmethod
@@ -138,7 +162,26 @@ class ITSessionMixin:
         """
         session_mapping = self._deep_merge(session_mapping, dict(self._get(config, "session_cfg") or {}))
         overrides = {k: v for k in ONE_DOOR_BODY_KEYS if (v := self._get(config, k))}
-        return self._deep_merge(session_mapping, overrides) if overrides else session_mapping
+        session_mapping = self._deep_merge(session_mapping, overrides) if overrides else session_mapping
+        # Typed it_session_cfg.* wins over the shim keys above (specific beats general), both win
+        # over files. Only explicitly-set fields merge: adapter_ctx carries a non-empty dataclass
+        # default, so it is compared against that default rather than truthiness-tested. The one
+        # case this cannot see is an explicit --it_session_cfg.adapter_ctx of exactly the default
+        # (core): it reads as unset and files win. The legacy --adapter_ctx shim (empty default,
+        # always explicit when present) covers forcing core.
+        from interpretune.session import ITSessionConfig
+
+        it_session_cfg = self._get(config, "it_session_cfg")
+        if it_session_cfg is not None:
+            typed: dict[str, Any] = {}
+            default_ctx = list(ITSessionConfig.__dataclass_fields__["adapter_ctx"].default)
+            if list(getattr(it_session_cfg, "adapter_ctx", []) or []) != default_ctx:
+                typed["adapter_ctx"] = list(it_session_cfg.adapter_ctx)
+            for cls_key in ("datamodule_cls", "module_cls"):
+                if getattr(it_session_cfg, cls_key, None):
+                    typed[cls_key] = getattr(it_session_cfg, cls_key)
+            session_mapping = self._deep_merge(session_mapping, typed) if typed else session_mapping
+        return session_mapping
 
     def build_it_session(self, session_mapping: dict[str, Any]) -> ITSession:
         """Construct the ITSession from a session mapping via the unified loader."""

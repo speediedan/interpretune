@@ -239,3 +239,50 @@ def test_shipped_configs_use_only_known_top_level_keys():
         top_level = set(yaml.safe_load(config_path.read_text(encoding="utf-8")))
         allowed = shim_keys | {"trainer"} if _is_lightning_config(config_path) else shim_keys
         assert top_level <= allowed, f"{config_path.name} has unknown top-level keys: {sorted(top_level - allowed)}"
+
+
+def _session_mixin_parser():
+    parser = ArgumentParser()
+    ITSessionMixin().add_arguments_to_parser(parser)
+    return parser
+
+
+def test_it_session_cfg_group_declares_only_the_composable_subset():
+    """The typed surface covers exactly the fields with no file-side ambiguity (#15).
+
+    adapter_ctx and the explicit component classes; config subtrees, runtime objects and the unencapsulated escape
+    hatches stay file-side.
+    """
+    parser = _session_mixin_parser()
+    dests = {action.dest for action in parser._actions}
+    assert "it_session_cfg" in dests
+    sub = {d.split(".", 1)[1] for d in dests if d.startswith("it_session_cfg.")}
+    assert sub == {"adapter_ctx", "datamodule_cls", "module_cls"}, f"unexpected subgroup: {sorted(sub)}"
+
+
+def test_it_session_cfg_defaults_merge_as_noops():
+    """Unset typed args must not override file-sourced mappings (adapter_ctx has a non-empty default)."""
+    parser = _session_mixin_parser()
+    config = parser.parse_args([])
+    mapping = ITSessionMixin()._merge_parsed_session_overrides(config, {"adapter_ctx": ["lightning"]})
+    assert mapping["adapter_ctx"] == ["lightning"]
+
+
+def test_it_session_cfg_beats_shim_beats_files():
+    """Precedence: typed it_session_cfg.* > shim keys > files."""
+    parser = _session_mixin_parser()
+    config = parser.parse_args(["--adapter_ctx", '["nnsight"]', "--it_session_cfg.adapter_ctx", '["lightning"]'])
+    mapping = ITSessionMixin()._merge_parsed_session_overrides(config, {"adapter_ctx": ["core"]})
+    assert [getattr(a, "value", a) for a in mapping["adapter_ctx"]] == ["lightning"]
+    config = parser.parse_args(["--adapter_ctx", '["lightning"]'])
+    mapping = ITSessionMixin()._merge_parsed_session_overrides(config, {"adapter_ctx": ["core"]})
+    assert mapping["adapter_ctx"] == ["lightning"]
+
+
+def test_it_session_cfg_component_classes_merge_when_set():
+    """Explicit component classes flow into the mapping; unset ones stay out."""
+    parser = _session_mixin_parser()
+    config = parser.parse_args(["--it_session_cfg.module_cls", "tests.modules.TestITModule"])
+    mapping = ITSessionMixin()._merge_parsed_session_overrides(config, {})
+    assert mapping["module_cls"].__name__ == "TestITModule"
+    assert "datamodule_cls" not in mapping
