@@ -1,0 +1,236 @@
+# GPU test areas: which changed paths need which GPU tests.
+#
+# Composition, for one change set (union over changed paths):
+#   - a path matching `run_all`                       -> the full GPU set (absorbing)
+#   - a path matching `ignore`                        -> no GPU tests
+#   - a path matching an area's `paths`               -> that area's `tests` (several areas may match)
+#   - a changed test module (`test_*.py`)             -> its own GPU tests
+#   - a changed test-support module under `tests/`    -> the GPU tests of every test module importing it,
+#                                                        transitively (computed, not listed here)
+#   - ANY OTHER PATH                                  -> the full GPU set, named in the output (refuse to guess)
+# Globs: `**` crosses directories, `*` stays within one path segment. Area `tests` are node-id prefixes.
+version: 1
+
+run_all:
+  # dependency and build surface
+  - pyproject.toml
+  - setup.*
+  - requirements.txt
+  - requirements/**
+  - .azure-pipelines/**
+  # the selection machinery and the infrastructure every GPU test runs through (fixtures, marks, phases)
+  - tests/gpu_ci/**
+  - tests/conftest.py
+  - tests/runif.py
+  - tests/base_defaults.py
+  - tests/orchestration.py
+  - tests/module_registry.py
+  - tests/modules.py
+  - tests/test_module_registry.yaml
+  - tests/configuration.py
+  - tests/core/cfg_aliases.py
+  - tests/special_tests.sh
+  - tests/test_utils.sh
+  - tests/.experiments
+  # library surface every registry-backed session is built through
+  - src/interpretune/__init__.py
+  - src/interpretune/session.py
+  - src/interpretune/protocol.py
+  - src/interpretune/registry.py
+  - src/interpretune/metadata.py
+  - src/interpretune/module_registry.yaml
+  - src/interpretune/adapter_registry.py
+  - src/interpretune/adapters/__init__.py
+  - src/interpretune/adapters/_light_register.py
+  - src/interpretune/adapters/registration.py
+  - src/interpretune/config/__init__.py
+  - src/interpretune/config/loading.py
+  - src/interpretune/config/shared.py
+  - src/interpretune/config/module.py
+  - src/interpretune/config/datamodule.py
+  - src/interpretune/config/mixins.py
+  - src/interpretune/hub/__init__.py
+  - src/interpretune/hub/api.py
+  - src/interpretune/hub/components.py
+  - src/interpretune/hub/manifest.py
+  - src/interpretune/hub/entrypoints.py
+  - src/interpretune/hub/trust.py
+  - src/interpretune/hub/revisions.py
+  - src/interpretune/hub/cache.py
+  - src/interpretune/hub/pins.py
+  - src/interpretune/hub/precedence.py
+  - src/interpretune/hub/promptconfigs.py
+  - src/interpretune/hub/manager.py
+  - src/interpretune/runners/__init__.py
+  - src/it_examples/seeds.py
+  - src/it_examples/__init__.py
+  - src/it_examples/tests/__init__.py
+
+ignore:
+  # agent tooling, docs and packaging metadata
+  - .agents/**
+  - .claude/**
+  - ".env*.example"
+  - .readthedocs.yml
+  - MANIFEST.in
+  - docs/**
+  - scripts/**
+  - .github/**
+  - "**/*.md"
+  - .codecov.yml
+  - .pre-commit-config.yaml
+  - .gitignore
+  - CITATION.cff
+  - LICENSE
+  - Makefile
+  - dockers/**
+  - src/interpretune/__about__.py
+  - src/interpretune/py.typed
+  # type stubs: no runtime effect (the ops they describe select through their own sources)
+  - "**/*.pyi"
+  - src/interpretune/hub/publish.py
+  - src/interpretune/hub/cards.py
+  - src/interpretune/utils/neuronpedia_*
+  - src/interpretune/utils/_neuronpedia_utils_fallbacks.py
+  - src/interpretune/utils/notebook_publishing.py
+  - src/interpretune/utils/schema_validation.py
+  - src/interpretune/utils/requirements.py
+  - src/it_examples/neuronpedia_dashboard/**
+  - src/it_examples/experiments/**
+  - src/it_examples/utils/dashboard_pretokenization_rte.py
+  # dev notebooks are sources; the tests execute the published copies
+  - src/it_examples/notebooks/dev/**
+  - src/it_examples/notebooks/publish/.notebook_hashes.json
+  - src/it_examples/notebooks/publish/quickstart/**
+  - src/it_examples/notebooks/publish/shared_analysis/**
+  - src/it_examples/notebooks/publish/example_op_collections/**
+  - src/it_examples/notebooks/publish/interp_engine_example/**
+  # the runner-flexibility demo is a CPU notebook, tested on the hosted matrix
+  - src/it_examples/notebooks/publish/runners/**
+  # benchmarks run in no pipeline phase; the warm manifest is read only by the hosted matrix
+  - tests/benchmarks/**
+  - tests/hf_warm_manifest.yaml
+  # read only by the CPU neuronpedia dashboard tests
+  - tests/fixtures/neuronpedia_dashboard_phase4/**
+  - tests/*.md
+
+areas:
+  core:
+    # parity acceptance across the adapter compositions, the CLI, and the CI profiling tests
+    paths:
+      - src/interpretune/adapters/core.py
+      - src/interpretune/adapters/lightning.py
+      - src/interpretune/adapters/model_view.py
+      - src/interpretune/adapters/transformer_lens/**
+      - src/interpretune/adapters/nnsight/**
+      - src/interpretune/adapters/sae_lens/**
+      - src/interpretune/base/**
+      - src/interpretune/config/runner.py
+      - src/interpretune/config/extensions.py
+      - src/interpretune/runners/core.py
+      - src/interpretune/extensions/__init__.py
+      - src/interpretune/extensions/memprofiler.py
+      - src/interpretune/utils/**
+      - src/interpretune/hub/adapters.py
+      - src/it_examples/examples/**
+      - tests/core/fixtures/**
+      - tests/parity_acceptance/**
+    tests:
+      - tests/parity_acceptance/
+      - tests/core/test_components_cli.py
+  base_ext:
+    # HF from_pretrained/peft mixins, debug generation, memory profiler, device utilities
+    paths:
+      - src/interpretune/base/**
+      - src/interpretune/adapters/core.py
+      - src/interpretune/adapters/lightning.py
+      - src/interpretune/adapters/sae_lens/**
+      - src/interpretune/runners/core.py
+      - src/interpretune/extensions/**
+      - src/interpretune/utils/**
+    tests:
+      - tests/core/test_components_mixins.py
+      - tests/core/test_debug_generation.py
+      - tests/core/test_utils.py
+      - tests/core/test_adapters_sae_lens.py
+      - tests/core/test_memprofiler.py
+      - tests/gpu_ci/
+  tl_arch:
+    # TransformerLens bridge parameter mapping on gated llama3/gemma2
+    paths:
+      - src/interpretune/adapters/transformer_lens/**
+      - src/interpretune/adapters/model_view.py
+    tests:
+      - tests/core/test_adapters_transformer_lens.py
+  analysis:
+    # the analysis stack every analysis GPU test runs through
+    paths:
+      - src/interpretune/analysis/*.py
+      - src/interpretune/analysis/points/**
+      - src/interpretune/analysis/backends/**
+      - src/interpretune/analysis/ops/*.py
+      - src/interpretune/analysis/ops/compiler/**
+      - src/interpretune/analysis/ops/bundled/*.py
+      - src/interpretune/analysis/ops/bundled/*.yaml
+      - src/interpretune/analysis/ops/bundled/core/**
+      - src/interpretune/config/analysis.py
+      - src/interpretune/runners/analysis.py
+      - src/interpretune/hub/opcollections.py
+      - src/interpretune/hub/artifacts.py
+      - src/interpretune/hub/hookmaps.py
+    tests:
+      - tests/core/test_backend_conformance.py::TestCircuitTracerConformance
+      - tests/core/test_analysis_backend_parity.py
+      - tests/core/test_jlens_
+  circuit_tracer:
+    # circuit-tracer backends and the model-backend conformance target (gemma-3-1b-it)
+    paths:
+      - src/interpretune/adapters/circuit_tracer/**
+      - src/interpretune/adapters/nnsight/**
+      - src/interpretune/adapters/transformer_lens/**
+      - src/interpretune/adapters/sae_lens/**
+      - src/interpretune/testing/**
+      - src/interpretune/analysis/ops/bundled/circuit_tracer/**
+      - src/interpretune/analysis/ops/bundled/attribution/**
+      - src/interpretune/analysis/ops/bundled/concept/**
+      - src/interpretune/analysis/ops/bundled/sae/**
+    tests:
+      - tests/core/test_backend_conformance.py::TestCircuitTracerConformance
+      - tests/core/test_adapters_circuit_tracer.py
+      - tests/core/test_analysis_backend_parity.py
+  jlens:
+    paths:
+      - src/interpretune/analysis/ops/bundled/jlens/**
+      - src/interpretune/analysis/optools.py
+      - src/interpretune/adapters/nnsight/backends.py
+      - src/interpretune/adapters/transformer_lens/backends.py
+      - src/interpretune/harness/**
+      - src/it_examples/notebooks/publish/circuit_tracer_examples/jspace_workspace_demo.ipynb
+      - src/it_examples/tests/notebook/**
+    tests:
+      - tests/core/test_jlens_
+      - src/it_examples/tests/test_notebooks.py::test_jspace_workspace_notebook
+  ct_notebooks:
+    # Example notebooks on real models (about a third of the GPU phase's time). Selected only by their own sources,
+    # the helpers and harness they use directly, and the injection machinery only the attribution notebook
+    # exercises; every other change reaches them through the nightly full run.
+    paths:
+      - src/interpretune/analysis/injection/**
+      - src/interpretune/extensions/neuronpedia.py
+      - src/interpretune/harness/**
+      - src/it_examples/utils/**
+      - src/it_examples/notebooks/publish/attribution_analysis/**
+      - src/it_examples/notebooks/publish/circuit_tracer_examples/**
+      - src/it_examples/notebooks/publish/neuronpedia_example/**
+      - src/it_examples/tests/notebook/**
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook
+      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_notebooks
+      - src/it_examples/tests/test_notebooks.py::test_ct_
+      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
+  sae_lens_notebooks:
+    paths:
+      - src/it_examples/notebooks/publish/saelens_adapter_example/**
+      - src/it_examples/tests/notebook/**
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_sae_lens_notebooks

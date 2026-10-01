@@ -452,5 +452,25 @@ python tests/gpu_ci/calibrate.py check   # CPU: compares tests/gpu_ci/vram_measu
 - `pytest -p tests.gpu_ci.vram_probe --vram-enforce` caps the allocator at each test's declaration, so an
   under-declared test runs out of memory instead of passing.
 
+**Per-change selection.** `tests/gpu_ci/areas.yaml` maps changed paths to the GPU tests they can affect.
+`tests/gpu_ci/select_gpu_tests.py` turns a change set into a selection:
+
+- a dependency, pipeline or test-infrastructure path selects the full set;
+- a path in `ignore` selects nothing;
+- a changed test module selects itself;
+- a changed test-support module selects the tests that import it;
+- any path no rule classifies selects everything, and the output names it.
+
+To see what a branch would select:
+
+```bash
+python tests/gpu_ci/select_gpu_tests.py --base origin/main --emit /tmp/gpu_selection.txt
+IT_GPU_SELECTION_FILE=/tmp/gpu_selection.txt IT_RUN_CUDA_TESTS=1 python -m pytest tests src/it_examples/tests
+```
+
+The selection narrows only the GPU phases, and is inert when `IT_GPU_SELECTION_FILE` is unset.
+`tests/gpu_ci/test_gpu_selection.py` fails on a tracked file no rule classifies, and on a GPU test no area lists.
+**When you add a module, classify it in `areas.yaml`.**
+
 Class-level `RunIf` marks select every test the class collects: `_marked` in `tests/conftest.py` reads
 `item.iter_markers()`, so a mark on the class is seen by every phase.

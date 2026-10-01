@@ -1410,6 +1410,28 @@ def _write_gpu_declaration_report(items, path: str) -> None:
     Path(path).write_text(json.dumps(rows, indent=1))
 
 
+def _gpu_selection_prefixes() -> list[str] | None:
+    """The node-id prefixes per-change GPU test selection keeps, or None when every test is kept.
+
+    Read from ``IT_GPU_SELECTION_FILE`` (written by ``tests/gpu_ci/select_gpu_tests.py --emit``): the word ``full``,
+    or one prefix per line. Unset means no selection. A named file that does not exist is refused rather than read
+    as "run everything", which would make a broken pipeline step indistinguishable from a full run.
+    """
+    path = os.getenv("IT_GPU_SELECTION_FILE")
+    if not path:
+        return None
+    lines = [ln.strip() for ln in Path(path).read_text().splitlines() if ln.strip()]
+    return None if lines == ["full"] else lines
+
+
+def _gpu_phase_active() -> bool:
+    return (
+        os.getenv("IT_RUN_CUDA_TESTS", "0") == "1"
+        or os.getenv("IT_RUN_STANDALONE_TESTS", "0") == "1"
+        or os.getenv("IT_RUN_PROFILING_TESTS", "0") in ("1", "2")
+    )
+
+
 def pytest_collection_modifyitems(items):
     if report := os.getenv("IT_GPU_DECLARATION_REPORT"):
         # before any phase filter, so the report covers every tier
@@ -1434,6 +1456,10 @@ def pytest_collection_modifyitems(items):
     elif os.getenv("IT_RUN_BENCHMARK_TESTS", "0") == "1":
         # has `@RunIf(benchmark=True)`
         items[:] = [item for item in items if _marked(item, lambda kw: kw.get("benchmark"))]
+    # Per-change GPU test selection narrows a GPU phase to the tests the change can affect; inert when unset and
+    # outside the GPU phases, so the CPU suite is never narrowed.
+    if _gpu_phase_active() and (prefixes := _gpu_selection_prefixes()) is not None:
+        items[:] = [item for item in items if item.nodeid.startswith(tuple(prefixes))]
     # The hosted matrix runs the suite with the Hub client offline against a warmed cache (see
     # docs/ci_hub_cache.md); a test that must reach the live Hub declares it and runs in the online pass.
     if _hub_offline():
