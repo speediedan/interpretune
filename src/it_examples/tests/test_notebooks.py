@@ -668,6 +668,60 @@ def test_cpu_quickstart_notebook(tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+def test_runner_flexibility_demo_notebook(tmp_path: Path):
+    """Runner-flexibility demo (#55): three drivers, one workflow, CPU-only.
+
+    No GPU marks, no token gates. The revision pins the local-publish snapshot so the test validates the in-tree config
+    without a hub push; the notebook defaults to the recorded pin.
+    """
+    import time
+
+    from interpretune.hub.components import local_publish
+
+    from tests.rte_component import rte_entrypoint_src
+
+    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
+    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+
+    notebook_path = NOTEBOOKS_DIR / "runners" / "runner_flexibility_demo.ipynb"
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    wall_start = time.time()
+    output_notebook = execute_notebook_with_params(
+        notebook_path=notebook_path,
+        parameters={"MAX_EXAMPLES": 4, "REVISION": rev},
+        output_dir=output_dir,
+    )
+    wall = time.time() - wall_start
+
+    assert output_notebook.exists(), f"Output notebook not created at {output_notebook}"
+    assert wall < 600, f"flexibility demo exceeded its 10-minute budget: {wall:.1f}s"
+
+    import nbformat
+
+    with open(output_notebook) as f:
+        nb = nbformat.read(f, as_version=4)
+    errors = [
+        (i, output.get("ename", "") + ": " + output.get("evalue", ""))
+        for i, cell in enumerate(nb.cells)
+        if cell.cell_type == "code"
+        for output in cell.get("outputs", [])
+        if output.output_type == "error"
+    ]
+    assert not errors, f"error outputs in executed notebook: {errors}"
+    texts = [
+        "".join(o.get("text", []) if isinstance(o.get("text"), list) else [o.get("text", "")])
+        for cell in nb.cells
+        if cell.cell_type == "code"
+        for o in cell.get("outputs", [])
+        if o.output_type == "stream"
+    ]
+    assert any("raw-loop examples:" in t for t in texts), "demo did not complete the raw loop"
+
+    _cleanup_notebook_artifacts()
+
+
 def test_notebook_discovery():
     """The published notebook set and the roster below must agree in BOTH directions.
 
@@ -693,6 +747,7 @@ def test_notebook_discovery():
         "interp_engine_example/interp_engine_hub_adapter.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
         "quickstart/cpu_quickstart.ipynb",
+        "runners/runner_flexibility_demo.ipynb",
         "saelens_adapter_example/saelens_adapter_example.ipynb",
         "shared_analysis/shared_analysis_roundtrip.ipynb",
     }
