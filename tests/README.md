@@ -405,13 +405,52 @@ Interpretation guidance:
 - for heavy analysis cases, combine the resource flags with `IT_MOCK_RUNNER_RAM_GB` and, when
   relevant, `IT_NNSIGHT_CONFIGS_PER_PASS` to reproduce GitHub-hosted memory conditions locally
 
-### Known Bug: Class-Level Standalone Marks Are Silently Ignored
+## GPU Tests: When to Write One, and What It Must Declare
 
-`pytest_collection_modifyitems` in `tests/conftest.py` uses `item.own_markers`, which only contains
-markers directly on the test *function* — not those inherited from a parent class. Class-level
-`@RunIf(standalone=True)` decorators are invisible to the standalone collection filter, causing those
-tests to be silently excluded from standalone runs.
+The self-hosted GPU pipeline is one serial agent shared by CI, development and research, so a GPU test is a cost
+every gated build pays. Decide in this order:
 
-**Fix (TODO):** Change `item.own_markers` → `item.iter_markers()` (or equivalent) in
-`pytest_collection_modifyitems`. Until this is fixed, **always apply standalone marks at the
-individual test method level, not at the class level**.
+1. **Does the test need a GPU at all?** It does when what it checks depends on a device: CUDA semantics, device
+   placement, bf16 kernels, memory-profiler assertions. Python logic that merely runs faster on a GPU does not.
+   If it does not, write a CPU test.
+2. **If a GPU only helps throughput, can it run on CPU within the hosted runners' limits?** Aim for about 60 s on CPU
+   (about 3 min for a model-scale integration test), peak RSS under about 4 GB, and its Hub artifacts listed in
+   `tests/hf_warm_manifest.yaml`. The public-repository standard Linux runner has 4 vCPU and 16 GB of RAM, and the
+   workflow allows 90 minutes for the whole suite. If it fits, write a CPU test.
+3. **Otherwise it is a GPU test, and it declares what it needs:**
+
+   ```python
+   @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=3.5)
+   ```
+
+   - `min_cuda_gpus`: how many devices. The number is kept in the mark for test selection and the GPU lease.
+   - `min_gpu_mem_gb`: GiB of device **total** memory each device must have, covering the CUDA context and any
+     child process (a notebook kernel, a CLI subprocess). Measure it rather than estimating it (below). Config
+     tables take it per case: `ParityTest(..., marks="cuda", gpu_mem_gb=1.0)`.
+   - A test whose visible device is smaller skips locally, with a reason naming both numbers. With
+     `IT_GPU_STRICT=1` (CI) it **fails** instead, since there a skip would hide a misplaced test.
+   - `tests/gpu_ci/test_gpu_declarations.py` fails on any GPU-marked test without a memory declaration, and
+     `RunIf` refuses a memory declaration on a test that declares no GPU.
+   - A test that touches CUDA must carry a GPU mark (`min_cuda_gpus` or `bf16_cuda`) even when it is also
+     `standalone` or `optional`: an unmarked GPU test fails rather than skips on a machine without one, and no
+     guard can see it.
+
+**Measuring a declaration.** On an idle device, under the GPU lease:
+
+```bash
+$GPU_LEASE_CMD -- python tests/gpu_ci/calibrate.py measure --device GPU-<uuid> -k <pattern>
+python tests/gpu_ci/calibrate.py check   # CPU: compares tests/gpu_ci/vram_measurements.yaml with the declarations
+```
+
+- Each test runs in its own process, because inside a shared process a test's peak mostly reflects what earlier
+  tests and fixtures left resident.
+- The probe (`tests/gpu_ci/vram_probe.py`) records two peaks:
+  - the allocator peak;
+  - a device-level peak, sampled through `torch.cuda.mem_get_info`, which sees child processes and contexts and
+    works unchanged on ROCm.
+- It recommends the need plus 15%, rounded up to the next half GiB.
+- `pytest -p tests.gpu_ci.vram_probe --vram-enforce` caps the allocator at each test's declaration, so an
+  under-declared test runs out of memory instead of passing.
+
+Class-level `RunIf` marks select every test the class collects: `_marked` in `tests/conftest.py` reads
+`item.iter_markers()`, so a mark on the class is seen by every phase.

@@ -406,7 +406,7 @@ class TestRealLensSmoke:
     # records: the GPU pipeline has no offline treatment, and the pipeline that does run offline never
     # runs CUDA-marked tests. Declaring the intent means it stays correct if either changes.
     @pytest.mark.hf_live
-    @RunIf(min_cuda_gpus=1)
+    @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=2.0)
     def test_a_published_gpt2_lens_resolves_and_reads(self):
         from transformers import AutoModelForCausalLM, AutoTokenizer
 

@@ -74,7 +74,7 @@ def _gemma3_circuit_tracer(inputs):
     )
 
 
-@RunIf(min_cuda_gpus=1)
+@RunIf(min_cuda_gpus=1, min_gpu_mem_gb=15.0)
 @pytest.mark.usefixtures("unpatched_gemma_eager_attention")
 class TestCircuitTracerConformance(ModelBackendConformance):
     """circuit-tracer over the nnsight backend on gemma-3-1b-it: the analysis-backend gates' first consumer.

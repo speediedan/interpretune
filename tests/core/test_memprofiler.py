@@ -9,7 +9,7 @@ from interpretune.protocol import CoreSteps
 
 
 class TestClassMemProfiler:
-    @RunIf(min_cuda_gpus=1)
+    @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=1.0)
     def test_memprofiler_remove_hooks(self, get_it_session__core_cust_memprof__initonly):
         fixture = get_it_session__core_cust_memprof__initonly
         it_session, test_cfg = fixture.it_session, fixture.test_cfg()

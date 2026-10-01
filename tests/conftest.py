@@ -1367,7 +1367,53 @@ def _marked(item, predicate) -> bool:
     return any(marker.name == "skipif" and predicate(marker.kwargs) for marker in item.iter_markers())
 
 
+def cuda_phase_selects(kw: dict) -> bool:
+    """Whether a ``RunIf`` mark's kwargs put a test in the cuda-marked phase.
+
+    Every other special tier runs in its own phase (or, for ``benchmark``, in none), so a CUDA mark alone does not
+    select it here: a benchmark selected into this phase only reported as a skip.
+    """
+    special = ("standalone", "profiling", "profiling_ci", "optional", "benchmark")
+    return not any(kw.get(k) for k in special) and bool(kw.get("min_cuda_gpus") or kw.get("bf16_cuda"))
+
+
+def gpu_marks(item) -> dict:
+    """The merged GPU-related ``RunIf`` kwargs of ``item``: device count, bf16, declared memory, special tiers."""
+    merged: dict = {}
+    for m in item.iter_markers():
+        if m.name != "skipif":
+            continue
+        for k in (
+            "min_cuda_gpus",
+            "bf16_cuda",
+            "min_gpu_mem_gb",
+            "standalone",
+            "profiling",
+            "profiling_ci",
+            "optional",
+            "benchmark",
+        ):
+            if m.kwargs.get(k) and k not in merged:
+                merged[k] = m.kwargs[k]
+    return merged
+
+
+def _write_gpu_declaration_report(items, path: str) -> None:
+    """Write every collected GPU test with its declared needs, for the declaration guard and the selector."""
+    import json
+
+    rows = []
+    for item in items:
+        kw = gpu_marks(item)
+        if kw.get("min_cuda_gpus") or kw.get("bf16_cuda"):
+            rows.append({"nodeid": item.nodeid, **kw})
+    Path(path).write_text(json.dumps(rows, indent=1))
+
+
 def pytest_collection_modifyitems(items):
+    if report := os.getenv("IT_GPU_DECLARATION_REPORT"):
+        # before any phase filter, so the report covers every tier
+        _write_gpu_declaration_report(items, report)
     # select special tests, all special tests run standalone
     # non-specific standalone tests and profiling_ci tests run in CI by default
     # all other special tests do not run in CI unless explicitly selected
@@ -1375,20 +1421,7 @@ def pytest_collection_modifyitems(items):
         # has `@RunIf(standalone=True)`
         items[:] = [item for item in items if _marked(item, lambda kw: kw.get("standalone"))]
     elif os.getenv("IT_RUN_CUDA_TESTS", "0") == "1":
-        items[:] = [
-            item
-            for item in items
-            if _marked(
-                item,
-                lambda kw: (
-                    not kw.get("standalone")
-                    and not kw.get("profiling")
-                    and not kw.get("profiling_ci")
-                    and not kw.get("optional")
-                    and (kw.get("min_cuda_gpus") or kw.get("bf16_cuda"))
-                ),
-            )
-        ]
+        items[:] = [item for item in items if _marked(item, cuda_phase_selects)]
     elif os.getenv("IT_RUN_PROFILING_TESTS", "0") == "2":
         # has `@RunIf(profiling=True)`
         items[:] = [item for item in items if _marked(item, lambda kw: kw.get("profiling"))]
@@ -1469,7 +1502,36 @@ def _check_module_identity(item) -> None:
     pytest.fail(f"{item.nodeid} left an interpretune module double-bound.\n\n{split}", pytrace=False)
 
 
+def declared_gpu_mem_gb(item) -> float:
+    """The largest ``RunIf(min_gpu_mem_gb=...)`` declared on ``item`` at any level, or 0.0."""
+    return max(
+        (float(m.kwargs.get("min_gpu_mem_gb") or 0) for m in item.iter_markers() if m.name == "skipif"), default=0.0
+    )
+
+
+def _check_gpu_memory(item) -> None:
+    """Skip (or, with ``IT_GPU_STRICT=1``, fail) a test whose visible devices are smaller than it declares.
+
+    Runs at setup rather than collection: reading device properties initializes CUDA, which every collecting
+    process would otherwise pay, and a GPU test about to run initializes it anyway. Each of the first
+    ``min_cuda_gpus`` visible devices must meet the declaration.
+    """
+    need = declared_gpu_mem_gb(item)
+    if not need or not torch.cuda.is_available():
+        return
+    n = max([int(m.kwargs.get("min_cuda_gpus") or 1) for m in item.iter_markers() if m.name == "skipif"] or [1])
+    for idx in range(min(n, torch.cuda.device_count())):
+        props = torch.cuda.get_device_properties(idx)
+        have = props.total_memory / 2**30
+        if have < need:
+            msg = f"{item.nodeid} declares min_gpu_mem_gb={need:g} but device {idx} ({props.name}) has {have:.1f} GiB"
+            if os.getenv("IT_GPU_STRICT", "0") == "1":
+                pytest.fail(f"{msg}; IT_GPU_STRICT=1, so a misplaced GPU test fails rather than skips", pytrace=False)
+            pytest.skip(msg)
+
+
 def pytest_runtest_setup(item):
+    _check_gpu_memory(item)
     if not _test_resource_debug_enabled():
         return
 

@@ -110,6 +110,7 @@ class RunIf:
         self,
         *args,
         min_cuda_gpus: int = 0,
+        min_gpu_mem_gb: float = 0,
         min_torch: str | None = None,
         max_torch: str | None = None,
         min_python: str | None = None,
@@ -135,7 +136,13 @@ class RunIf:
         """
         Args:
             *args: Any :class:`pytest.mark.skipif` arguments.
-            min_cuda_gpus: Require this number of gpus and that the ``PL_RUN_CUDA_TESTS=1`` environment variable is set.
+            min_cuda_gpus: Require this number of GPUs. The number is kept in the mark's kwargs, for test selection
+                and the GPU lease. The cuda-marked phase runs these tests when ``IT_RUN_CUDA_TESTS=1`` is set.
+            min_gpu_mem_gb: The GPU memory, in GiB of device TOTAL, each device this test uses must have. Measure it
+                with ``tests/gpu_ci/calibrate.py`` rather than estimating it. Checked when the test is set up, not at
+                collection (which would initialize CUDA in every collecting process): a smaller device skips the
+                test, or fails it when ``IT_GPU_STRICT=1`` (CI), where a skip would hide a misplaced test. Requires
+                ``min_cuda_gpus`` or ``bf16_cuda``.
             min_torch: Require that PyTorch is greater or equal to this version.
             max_torch: Require that PyTorch is less than or equal to this version.
             min_python: Require that Python is greater or equal to this version.
@@ -178,8 +185,20 @@ class RunIf:
         if min_cuda_gpus:
             conditions.append(torch.cuda.device_count() < min_cuda_gpus)
             reasons.append(f"GPUs>={min_cuda_gpus}")
-            # used in conftest.py::pytest_collection_modifyitems
-            kwargs["min_cuda_gpus"] = True
+            # used in conftest.py::pytest_collection_modifyitems; the number itself is what test selection and the
+            # GPU lease read, so it is kept rather than reduced to a flag
+            kwargs["min_cuda_gpus"] = min_cuda_gpus
+
+        if min_gpu_mem_gb:
+            if not (min_cuda_gpus or bf16_cuda):
+                raise ValueError(
+                    f"RunIf(min_gpu_mem_gb={min_gpu_mem_gb}) declares GPU memory for a test that declares no GPU: "
+                    "add min_cuda_gpus=N or bf16_cuda=True, or drop the memory declaration."
+                )
+            if min_gpu_mem_gb < 0:
+                raise ValueError(f"RunIf(min_gpu_mem_gb={min_gpu_mem_gb}) must be a positive number of GiB.")
+            # checked in conftest.py::pytest_runtest_setup, when the test is about to use the device anyway
+            kwargs["min_gpu_mem_gb"] = float(min_gpu_mem_gb)
 
         if min_torch:
             torch_version = get_version("torch")

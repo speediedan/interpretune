@@ -27,7 +27,7 @@ def collect_base_config():
 
 
 @pytest.mark.usefixtures("make_deterministic")
-@RunIf(min_cuda_gpus=1, skip_windows=True)
+@RunIf(min_cuda_gpus=1, min_gpu_mem_gb=1.0, skip_windows=True)
 @pytest.mark.parametrize("test_alias, cli_cfg", pytest_factory(TEST_CONFIGS_CLI_UNIT, unpack=False))
 def test_cli_unit_configs(recwarn, clean_cli_env, cli_test_configs, test_alias, cli_cfg):
     expected_warnings = CLI_EXPECTED_WARNS[(cli_cfg.cli_adapter, *cli_cfg.adapter_ctx)]

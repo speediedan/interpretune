@@ -312,7 +312,9 @@ jobs:
           source /tmp/venvs/it_dev/bin/activate
           export HF_GATED_PUBLIC_REPO_AUTH_KEY=$HF_GATED_PUBLIC_REPO_AUTH_KEY
           export HF_TOKEN=$HF_TOKEN
-          bash ./tests/special_tests.sh --mark_type=standalone
+          # --allow-failures: run every test and fail the step at the end, so one failure cannot hide the result of
+          # every test after it. The script still exits non-zero when anything failed.
+          bash ./tests/special_tests.sh --mark_type=standalone --allow-failures
         displayName: 'Testing: standalone gpu'
         env:
           HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
@@ -320,7 +322,7 @@ jobs:
 
       - bash: |
           source /tmp/venvs/it_dev/bin/activate
-          bash ./tests/special_tests.sh --mark_type=profile_ci
+          bash ./tests/special_tests.sh --mark_type=profile_ci --allow-failures
         displayName: 'Testing: CI Profiling'
 
       - bash: |
