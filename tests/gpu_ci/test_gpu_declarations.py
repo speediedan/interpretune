@@ -92,8 +92,8 @@ def test_an_empty_special_phase_passes_when_declared():
 
 
 def test_the_special_phases_collect_the_example_tests():
-    """Standalone tests under src/it_examples/tests were never collected by the special-test harness."""
-    env = {**os.environ, "IT_RUN_STANDALONE_TESTS": "1", "CUDA_VISIBLE_DEVICES": ""}
+    """Special-tier tests under src/it_examples/tests were never collected by the special-test harness."""
+    env = {**os.environ, "IT_RUN_OPTIONAL_TESTS": "1", "CUDA_VISIBLE_DEVICES": ""}
     proc = subprocess.run(
         [
             sys.executable,
