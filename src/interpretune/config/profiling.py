@@ -23,6 +23,17 @@ class ProfilerCfg(ITSerializableCfg):
     """Which profiler runs on a module, and with what settings.
 
     Exactly one may be active.
+
+    Example (module config YAML)::
+
+        profiler_cfg:
+          which: pytorch
+          pytorch_profiler_cfg:
+            activities: [cpu]
+            record_shapes: true
+
+    The core CLI also accepts ``--profiler_cfg.which pytorch`` and friends (typed group); the
+    Lightning CLI uses Lightning's native ``--trainer.profiler`` instead of duplicating it.
     """
 
     which: Literal["none", "pytorch", "memprofiler"] = "none"
