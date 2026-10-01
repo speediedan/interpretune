@@ -203,6 +203,23 @@ class TestLocalPublishBridge:
         with pytest.raises(KeyError, match="interpretune.hub.pull"):
             resolve_component_config("someorg/absent", "rte.x.core", cache_dir=tmp_path / "empty")
 
+    def test_a_declared_config_missing_from_the_cache_names_its_fetch(self, tmp_path):
+        """A cached component can lack the one configuration asked for: a key-less pull fetches no configurations.
+
+        That is the state the CPU quickstart's default path produced, where loading then failed with a bare
+        FileNotFoundError on an internal cache path.
+        """
+        from interpretune.hub.components import ComponentFileNotCachedError, local_publish, resolve_component_config
+
+        cache = tmp_path / "components"
+        rev = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
+        key = "rte_demo.gpt2.core"
+        assert resolve_component_config("speediedan/rte", key, cache_dir=cache)[0] == key  # control: cached, resolves
+        snapshot = cache / "models--speediedan--rte" / "snapshots" / rev
+        (snapshot / "configs" / f"{key}.yaml").unlink()
+        with pytest.raises(ComponentFileNotCachedError, match=rf"interpretune\.hub\.pull\('speediedan/rte', '{key}'\)"):
+            resolve_component_config("speediedan/rte", key, cache_dir=cache)
+
 
 @pytest.fixture()
 def seeded_cache(tmp_path):

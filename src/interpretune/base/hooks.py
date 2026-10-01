@@ -42,6 +42,35 @@ class BaseITHooks:
         if datamodule := kwargs.get("datamodule", None):
             self._it_state._datamodule = datamodule
         self._make_setup_dirs()  # type: ignore[attr-defined]  # provided by mixin composition
+        self._check_forward_input_names(datamodule)
+
+    def _check_forward_input_names(self, datamodule: Any = None) -> None:
+        """Refuse, by name, a tokenizer input name this module's own forward cannot take.
+
+        Only a module whose ``forward`` is this pass-through is checked: an overriding forward handles its own keys.
+        A model whose forward cannot be read reliably (see ``verifiable_forward_inputs``) is logged as unverified
+        rather than guessed at.
+        """
+        from interpretune.utils import MisconfigurationException, rank_zero_info
+        from interpretune.utils.tokenization import forward_input_mismatch, verifiable_forward_inputs
+
+        if type(self).forward is not BaseITHooks.forward:
+            return
+        try:  # under some adapters the datamodule is reachable only through a trainer that may not be attached yet
+            dm = datamodule if datamodule is not None else getattr(self, "datamodule", None)
+        except RuntimeError:
+            return
+        names = getattr(getattr(dm, "tokenizer", None), "model_input_names", None)
+        model = getattr(self, "model", None)
+        if not names or model is None:
+            return
+        if (problem := forward_input_mismatch(model, list(names))) is not None:
+            raise MisconfigurationException(f"{type(self).__name__}: {problem}")
+        if verifiable_forward_inputs(model) is None:
+            rank_zero_info(
+                f"{type(self).__name__}: cannot verify that {type(model).__name__} takes the declared primary input "
+                f"{names[0]!r}; its call path is not a plain forward, so its signature is not evidence."
+            )
 
     def configure_optimizers(self) -> OptimizerLRScheduler | None:
         """Optional because it is not mandatory in the context of core IT modules (required for some adapter

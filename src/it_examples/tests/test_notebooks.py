@@ -733,6 +733,41 @@ def test_runner_flexibility_demo_notebook(tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+@pytest.mark.hf_live
+@pytest.mark.skipif(not _published_collection_token_available, reason="IT_HF_TOKEN or HF_TOKEN required")
+def test_cpu_quickstart_default_path_on_a_fresh_cache(tmp_path: Path, monkeypatch):
+    """The quickstart's default path, as a new user runs it: no REVISION, an empty components cache, the live Hub.
+
+    The test above pins a local-publish snapshot, which writes every file the component declares, so it never exercised
+    what a fresh cache holds after the notebook's own fetches. That path failed at its first load: a key-less pull
+    fetches no configurations, and loading never downloads. Token-gated only because `speediedan/rte` is private until
+    interpretune's Hub library registration lands.
+    """
+    import nbformat
+
+    # the kernel is a subprocess, so the cache location must reach it through the environment
+    monkeypatch.setenv("IT_COMPONENTS_HUB_CACHE", str(tmp_path / "fresh_components"))
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "quickstart" / "cpu_quickstart.ipynb",
+        parameters={"MAX_EXAMPLES": 4},
+        output_dir=output_dir,
+    )
+    with open(output_notebook) as f:
+        nb = nbformat.read(f, as_version=4)
+    errors = [
+        output.get("ename", "") + ": " + output.get("evalue", "")
+        for cell in nb.cells
+        if cell.cell_type == "code"
+        for output in cell.get("outputs", [])
+        if output.output_type == "error"
+    ]
+    assert not errors, f"error outputs on the default path: {errors}"
+    assert any((tmp_path / "fresh_components").rglob("rte_demo.gpt2.core.yaml")), "the fresh cache was not the one used"
+    _cleanup_notebook_artifacts()
+
+
 def test_notebook_discovery():
     """The published notebook set and the roster below must agree in BOTH directions.
 
