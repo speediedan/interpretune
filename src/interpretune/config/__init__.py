@@ -17,6 +17,7 @@ from interpretune.config.mixins import (
     CoreGenerationConfig,
 )
 from interpretune.config.module import ITConfig, ITState
+from interpretune.config.profiling import ProfilerCfg
 
 from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg
 from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg, init_analysis_dirs, init_analysis_cfgs
@@ -117,6 +118,8 @@ __all__ = [
     # from interpretune.config.module
     "ITConfig",
     "ITState",
+    # from interpretune.config.profiling
+    "ProfilerCfg",
     # from interpretune.adapters.transformer_lens.config
     "ITLensBridgeConfig",
     "ITLensConfig",

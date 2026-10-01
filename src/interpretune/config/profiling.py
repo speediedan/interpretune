@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, TYPE_CHECKING
 
-from interpretune.config import ITSerializableCfg
+from interpretune.config.shared import ITSerializableCfg
 from interpretune.utils import MisconfigurationException
 
 if TYPE_CHECKING:
