@@ -203,9 +203,23 @@ The same section is also a reminder to check which claims rest on measurement. A
 this material asserted that unfolded vectors were far weaker on gemma-2-2b. No such measurement
 existed: only the folded variant had been run on that model, and the sweep above found the opposite.
 
-## Not yet measured
+## Measured across backends
 
-The TransformerLens row of the seam is asserted by construction rather than measured against a real
-TransformerLens model, and the interaction between weight processing and folding is documented as a
-constraint rather than quantified. Both are tracked with the cross-backend validation work rather
-than here, because both need the two backends running against the same lens artifacts.
+The TransformerLens row of the seam is measured against real models, not only asserted by
+construction. On both demo models (gemma-2-2b and gemma-3-1b-it), the regression tests build the lens
+directions through `resolve_unembed_and_norm_scale` on a TransformerLens bridge loaded without weight
+processing and on the HF model under nnsight, then require:
+
+- the two effective final-norm scales to agree within a relative difference of 0.01 (measured at most
+  0.00092);
+- the same patch to flip the answer gap on both backends;
+- the two backends' patch displacements to agree within 0.02 on gemma-2-2b and 0.10 on gemma-3-1b-it
+  (measured 0.0017 and 0.0465).
+
+The interaction between weight processing and folding is quantified too. On gpt2 the same pair's
+intervention delta disagrees between the backends by a 0.948 relative gap when TransformerLens
+processes its weights, against no measurable gap with processing off. The weight-processing note in
+`interpretune_intervention_apis.md` gives the rule that follows from it.
+`tests/core/test_jlens_patch_validation.py` pins the agreement bounds above and the unprocessed gpt2
+agreement. The processed-weights gap is a measurement rather than an assertion, since no supported
+path patches a pair into processed weights.
