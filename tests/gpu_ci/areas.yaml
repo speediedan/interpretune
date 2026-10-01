@@ -105,6 +105,8 @@ ignore:
   - src/it_examples/notebooks/publish/shared_analysis/**
   - src/it_examples/notebooks/publish/example_op_collections/**
   - src/it_examples/notebooks/publish/interp_engine_example/**
+  # the runner-flexibility demo is a CPU notebook, tested on the hosted matrix
+  - src/it_examples/notebooks/publish/runners/**
   # benchmarks run in no pipeline phase; the warm manifest is read only by the hosted matrix
   - tests/benchmarks/**
   - tests/hf_warm_manifest.yaml
