@@ -313,3 +313,28 @@ def test_profiler_cfg_merges_into_module_cfg():
     assert one_door["registered_cfg"]["module_cfg"]["profiler_cfg"]["which"] == "pytorch"
     legacy = ITSessionMixin()._merge_parsed_session_overrides(config, {})
     assert legacy["module_cfg"]["profiler_cfg"]["which"] == "pytorch"
+
+
+@RunIf(lightning=True)
+def test_lightning_cli_accepts_trainer_profiler(clean_cli_env, capsys):
+    """The Lightning side reuses native --trainer.profiler instead of duplicating it (#11).
+
+    Pins that our LightningITCLI passes the profiler argument through: a rejected key exits 2,
+    and the printed config carries it.
+    """
+    from interpretune.base import l_cli_main
+
+    config_path = LIGHTNING_CLI_CONFIGS[0]
+    with pytest.raises(SystemExit) as exc, patch("sys.argv", [RUN_FN]):
+        l_cli_main(
+            run_mode=False,
+            args=[
+                "--config",
+                str(config_path),
+                "--trainer.profiler",
+                "lightning.pytorch.profilers.PyTorchProfiler",
+                "--print_config",
+            ],
+        )
+    assert exc.value.code == 0
+    assert "profiler" in capsys.readouterr().out
