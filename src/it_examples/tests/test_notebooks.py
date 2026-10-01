@@ -668,7 +668,11 @@ def test_cpu_quickstart_notebook(tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+# The train-split arrow read fails on Windows runners (OSError 22 on mmap) while test-split
+# paths pass there; the demo needs the train split for its fit leg, so it skips Windows.
+@RunIf(skip_windows=True)
 def test_runner_flexibility_demo_notebook(tmp_path: Path):
+    """Runner-flexibility demo (#55): three drivers, one workflow, CPU-only."""
     """Runner-flexibility demo (#55): three drivers, one workflow, CPU-only.
 
     No GPU marks, no token gates. The revision pins the local-publish snapshot so the test validates the in-tree config
