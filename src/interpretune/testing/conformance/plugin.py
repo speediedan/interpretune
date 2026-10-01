@@ -33,6 +33,40 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.conformance)
 
 
+def _target_class_ends(item, nextitem) -> bool:
+    """Whether ``item`` is the last case of a conformance target class in this run."""
+    from .cases import ModelBackendConformance
+
+    cls = getattr(item, "cls", None)
+    if cls is None or not issubclass(cls, ModelBackendConformance):
+        return False
+    return nextitem is None or getattr(nextitem, "cls", None) is not cls
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    """Free a target's models once its class ends.
+
+    A target's class-scoped session is reachable after teardown only through reference cycles (the session, its
+    module and runner configuration, and bound methods between them), so it stays allocated until a full collection
+    happens to run: measured at about 6 GiB of device memory still held when the next test file started. That
+    inflates every memory reading after the class, and can push a small test off a small device.
+
+    The collection runs after the whole protocol, not at teardown: pytest drops the class-scoped fixture values at
+    teardown, but the last case's ``funcargs`` still reference them until ``runtestprotocol`` returns, and a
+    collection run any earlier frees nothing (measured: identical 6.16 GiB either way).
+    """
+    yield
+    if _target_class_ends(item, nextitem):
+        import gc
+
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """Classify each conformance case's outcome for the report."""

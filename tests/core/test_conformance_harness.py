@@ -582,3 +582,38 @@ class TestPayloadRefs:
             suite=SimpleNamespace(run=fake_run), collection_ops={"concept_direction": real}
         )
         assert received["intervention_tensor"] is sentinel
+
+
+class TestTargetTeardownFreesTheTarget:
+    """A target's session is freed when its class ends, not whenever a full collection next happens to run."""
+
+    @staticmethod
+    def _item(cls):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(cls=cls)
+
+    def test_the_last_case_of_a_target_class_ends_it(self):
+        from interpretune.testing.conformance.cases import ModelBackendConformance
+        from interpretune.testing.conformance.plugin import _target_class_ends
+
+        class Target(ModelBackendConformance):
+            pass
+
+        class Other(ModelBackendConformance):
+            pass
+
+        case = self._item(Target)
+        assert _target_class_ends(case, None)
+        assert _target_class_ends(case, self._item(Other))
+        assert _target_class_ends(case, self._item(None))
+        assert not _target_class_ends(case, self._item(Target))
+
+    def test_ordinary_tests_are_left_alone(self):
+        from interpretune.testing.conformance.plugin import _target_class_ends
+
+        class Plain:
+            pass
+
+        assert not _target_class_ends(self._item(Plain), None)
+        assert not _target_class_ends(self._item(None), None)
