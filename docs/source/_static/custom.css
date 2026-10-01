@@ -8,14 +8,19 @@ section#interpretune > h1 {
   white-space: nowrap;
 }
 
-/* Notebook pages: let wide code cells use the room the viewport has. The theme caps the whole page at 88rem and the
-   article at 60em, so on a wide screen a 120-column code cell scrolled inside a 784px article while hundreds of pixels
-   sat unused beside the page. Measured on the steering demos at 1920px: 10 of 11 input cells scrolled before, none
-   after. The article keeps a cap (70rem, enough for 120 columns) so prose lines stay readable on very wide screens,
-   and pages without notebook cells are untouched. */
-body:has(.cell) .bd-page-width {
+/* Notebook pages and pages with tables: let wide content use the room the viewport has. The theme caps the whole page
+   at 88rem and the article at 60em, so on a wide screen a 120-column code cell, or a six-column table, scrolled inside
+   a 784px article while hundreds of pixels sat unused beside the page. Measured on the steering demos at 1920px: 10 of
+   11 input cells scrolled before, none after; on the J-lens alignment page, 2 of 3 tables scrolled before, none after.
+   The article keeps a cap (70rem, enough for 120 columns) so prose lines stay readable on very wide screens, and pages
+   with neither are untouched.
+
+   This cannot help below roughly 1770px on a page whose widest table needs 1000px: the two sidebars take about 630px
+   whatever the caps say, and typeset math in a cell cannot wrap. Narrower screens keep the theme's scroll wrapper,
+   which is the intended fallback rather than a defect. */
+body:has(.cell, article table) .bd-page-width {
   max-width: none;
 }
-body:has(.cell) .bd-main .bd-content .bd-article-container {
+body:has(.cell, article table) .bd-main .bd-content .bd-article-container {
   max-width: 70rem;
 }
