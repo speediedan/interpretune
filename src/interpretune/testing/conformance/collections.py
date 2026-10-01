@@ -19,6 +19,7 @@ from interpretune.analysis.backends import ModelBackendCapability
 from interpretune.analysis.ops.base import AnalysisOp
 
 from .inputs import ConformanceInputs, ConformanceTarget
+from .payloads import resolve_payload_refs
 from .oracles import expect_refusal
 from .session import build_conformance_session
 
@@ -157,7 +158,13 @@ class OpCollectionConformance:
                 f"no op in {self.collection!r} declares a `conformance.run_inputs` sample: {sorted(collection_ops)}"
             )
         for name, sample in sampled.items():
-            run_inputs = {**sample["run_inputs"], **self.run_input_overrides.get(name, {})}
+            inputs = self.inputs or ConformanceInputs()
+            run_inputs = resolve_payload_refs(
+                {**sample["run_inputs"], **self.run_input_overrides.get(name, {})},
+                inputs.payload_fixtures,
+                suite,
+                source=f"{getattr(type(self), 'collection', '<collection>')}:{name}",
+            )
             store = suite.run(AnalysisCfg(target_op=name, run_inputs=run_inputs))
             # An intermediate-only column is consumed inside the op's composition and never persisted, by definition.
             expected = {

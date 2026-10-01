@@ -510,3 +510,75 @@ class TestGenerationsStayPerRun:
             f"the conformance runner config carries {leaked}; a key from the target and suite inputs alone "
             "cannot separate cases that differ only in run_inputs"
         )
+
+
+class TestPayloadRefs:
+    """`{fixture: <name>}` sample values resolve to tensors built for the session under test (#450)."""
+
+    def test_a_fixture_ref_resolves_through_the_factory(self):
+        from interpretune.testing.conformance.payloads import resolve_payload_refs
+
+        seen = {}
+        resolved = resolve_payload_refs(
+            {"intervention_tensor": {"fixture": "probe_dir"}, "scale": 1.0},
+            {"probe_dir": lambda session: seen.setdefault("built", object())},
+            object(),
+        )
+        assert resolved["intervention_tensor"] is seen["built"]
+        assert resolved["scale"] == 1.0
+
+    def test_plain_mappings_pass_through_untouched(self):
+        """Only exactly-`{fixture: <name>}` is a reference; every other mapping stays a mapping."""
+        from interpretune.testing.conformance.payloads import resolve_payload_refs
+
+        run_inputs = {"nested": {"a": 1}, "lst": [1], "s": "x"}
+        assert resolve_payload_refs(run_inputs, {}, object()) == run_inputs
+
+    def test_an_unknown_fixture_is_refused_naming_the_known(self):
+        from interpretune.testing.conformance.payloads import resolve_payload_refs
+
+        with pytest.raises(ValueError, match=r"unknown fixture 'nope'.*known: \['yes'\]"):
+            resolve_payload_refs({"t": {"fixture": "nope"}}, {"yes": lambda s: 1}, object())
+
+    def test_an_almost_ref_is_refused_rather_than_run_as_a_plain_dict(self):
+        """A `fixture` key beside siblings reads as a half-understood reference, not data."""
+        from interpretune.testing.conformance.payloads import resolve_payload_refs
+
+        with pytest.raises(ValueError, match="exactly \\{'fixture': <name>\\}"):
+            resolve_payload_refs({"t": {"fixture": "x", "other": 1}}, {"x": lambda s: 1}, object())
+
+    def test_a_declared_sample_with_a_ref_runs_resolved_end_to_end(self):
+        """The wiring: a staged op's sample carrying a ref reaches `suite.run` with the tensor."""
+        from types import SimpleNamespace
+
+        from interpretune.analysis.ops.base import ColCfg, OpSchema
+        from interpretune.testing.conformance.collections import OpCollectionConformance
+        from interpretune.testing.conformance.inputs import ConformanceInputs
+
+        sentinel = object()
+        received = {}
+
+        def fake_run(cfg):
+            received.update(cfg.run_inputs)
+            return SimpleNamespace(dataset=SimpleNamespace(column_names=["out"]))
+
+        op_def = TestCollectionSelection._def("wired_op")
+        import dataclasses
+
+        op_def = dataclasses.replace(
+            op_def,
+            conformance={"run_inputs": {"intervention_tensor": {"fixture": "probe_dir"}}},
+            output_schema=OpSchema({"out": ColCfg(datasets_dtype="float32")}),
+        )
+
+        probe = OpCollectionConformance()
+        probe.inputs = ConformanceInputs(payload_fixtures={"probe_dir": lambda session: sentinel})
+        probe.collection = "wired"
+        # A real op name: AnalysisCfg resolves target_op against the dispatcher at construction,
+        # and the wiring under test is the ref resolution, not the op. The collection defs stay
+        # staged fakes carrying the declared sample.
+        real = dataclasses.replace(op_def, name="concept_direction")
+        probe.test_each_op_runs_on_its_declared_sample(
+            suite=SimpleNamespace(run=fake_run), collection_ops={"concept_direction": real}
+        )
+        assert received["intervention_tensor"] is sentinel

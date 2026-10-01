@@ -229,6 +229,15 @@ class TestMyOpsFromThisTree(OpCollectionConformance):
     run_input_overrides = {"my_op": {"fixture_path": str(FIXTURE)}}
 ```
 
+An intervention payload (a tensor built for the model under test) cannot be written into YAML, so a
+sample names it instead of containing it: `intervention_tensor: {fixture: pooled_direction}`. At run
+time the suite replaces the mapping with what the named factory builds for the session, from
+`ConformanceInputs.payload_fixtures` (empty by default; a reference to an unregistered name is
+refused naming the known ones). The name is shared across models while the tensor is built per
+target, which is what keeps one declaration measuring the same thing everywhere. Only top-level
+values are examined, and only exactly-`{fixture: <name>}` is a reference: any other mapping passes
+through untouched, and a `fixture` key beside siblings is refused rather than half-understood.
+
 ## Adapter example notebooks
 
 An adapter repository ships a notebook per declared capability group under its own examples tree, a dev copy and
