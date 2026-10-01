@@ -208,3 +208,50 @@ class TestClassContract:
         from interpretune.base.components.cli import l_cli_main
 
         assert l_cli_main.__module__ == "interpretune.base.components.cli"
+
+
+class TestSteppableProtocolsAreSuperCallable:
+    """Protocol step methods are empty and callable via super() (#16).
+
+    BaseITModule methods delegate to super() so a user composing BaseITModule under another parent
+    reaches a working default rather than an error. These pin that contract directly against the
+    protocols: each step method must exist, take arbitrary args, and return without raising.
+    (Explicit subclasses rather than generated ones: zero-arg super() needs the compiler-provided
+    __class__ cell, which type() cannot supply.)
+    """
+
+    def test_training_step_super_callable(self):
+        from interpretune.protocol import TrainSteppable
+
+        class M(TrainSteppable):
+            def training_step(self, *args, **kwargs):
+                return super().training_step(*args, **kwargs)
+
+        M().training_step()
+
+    def test_validation_step_super_callable(self):
+        from interpretune.protocol import ValidationSteppable
+
+        class M(ValidationSteppable):
+            def validation_step(self, *args, **kwargs):
+                return super().validation_step(*args, **kwargs)
+
+        M().validation_step()
+
+    def test_test_step_super_callable(self):
+        from interpretune.protocol import TestSteppable
+
+        class M(TestSteppable):
+            def test_step(self, *args, **kwargs):
+                return super().test_step(*args, **kwargs)
+
+        M().test_step()
+
+    def test_predict_step_super_callable(self):
+        from interpretune.protocol import PredictSteppable
+
+        class M(PredictSteppable):
+            def predict_step(self, *args, **kwargs):
+                return super().predict_step(*args, **kwargs)
+
+        M().predict_step()
