@@ -516,15 +516,15 @@ ARCH_MAPPING_CASES = [
     pytest.param(
         "get_it_session__l_tl_bridge_llama3__setup",
         LLAMA3_EXPECTATIONS,
-        # unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
-        marks=RunIf(bf16_cuda=True, min_gpu_mem_gb=12.0, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
+        # measured up to 10.0 GiB in its own process (24 GiB card), across both tests that use this case
+        marks=RunIf(bf16_cuda=True, min_gpu_mem_gb=11.5, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
         id="llama3",
     ),
     pytest.param(
         "get_it_session__l_tl_bridge_gemma2__setup",
         GEMMA2_EXPECTATIONS,
-        # unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
-        marks=RunIf(bf16_cuda=True, min_gpu_mem_gb=12.0, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
+        # measured 5.6 GiB in its own process (24 GiB card), across both tests that use this case
+        marks=RunIf(bf16_cuda=True, min_gpu_mem_gb=6.5, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
         id="gemma2",
     ),
 ]

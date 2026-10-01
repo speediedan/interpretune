@@ -999,8 +999,8 @@ def _verify_wrapper_feature_interventions(
     return summaries
 
 
-# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
-@RUNIF(bf16_cuda=True, min_gpu_mem_gb=12.0, standalone=True)
+# reached 18.4 GiB in its own process before failing in a drifted dev environment: a lower bound
+@RUNIF(bf16_cuda=True, min_gpu_mem_gb=21.5, standalone=True)
 def test_analysis_backend_parity_semantic_intervention_nnsight(
     cleanup_cuda,
     ct_nnsight_session_factory,
@@ -1043,8 +1043,8 @@ def test_analysis_backend_parity_semantic_intervention_nnsight(
     assert op_baseline.post_gap > op_baseline.pre_gap
 
 
-# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
-@RUNIF(min_cuda_gpus=1, min_gpu_mem_gb=12.0, optional=True)
+# measured 14.3 GiB in its own process (24 GiB card)
+@RUNIF(min_cuda_gpus=1, min_gpu_mem_gb=17.0, optional=True)
 def test_analysis_backend_parity_gemma3_it_reference_intervention_graph(
     cleanup_cuda,
     gemma3_instruction_intervention_case,
@@ -1072,8 +1072,8 @@ def test_analysis_backend_parity_gemma3_it_reference_intervention_graph(
             )
 
 
-# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
-@RUNIF(min_cuda_gpus=1, min_gpu_mem_gb=12.0, optional=True)
+# measured 14.5 GiB in its own process (24 GiB card)
+@RUNIF(min_cuda_gpus=1, min_gpu_mem_gb=17.0, optional=True)
 def test_analysis_backend_parity_gemma3_it_direct_session_intervention_graph(
     cleanup_cuda,
     ct_nnsight_gemma3_it_session_factory,
@@ -1103,8 +1103,8 @@ def test_analysis_backend_parity_gemma3_it_direct_session_intervention_graph(
                 )
 
 
-# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
-@RUNIF(min_cuda_gpus=1, min_gpu_mem_gb=12.0, optional=True)
+# measured 10.4 GiB in its own process (24 GiB card)
+@RUNIF(min_cuda_gpus=1, min_gpu_mem_gb=12.5, optional=True)
 def test_analysis_backend_parity_gemma3_it_op_intervention_graph(
     cleanup_cuda,
     ct_nnsight_gemma3_it_session_factory,
@@ -1187,8 +1187,8 @@ def test_analysis_backend_parity_gemma3_it_op_intervention_graph(
                 )
 
 
-# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
-@RUNIF(min_cuda_gpus=1, min_gpu_mem_gb=12.0, optional=True)
+# measured 10.4 GiB in its own process (24 GiB card)
+@RUNIF(min_cuda_gpus=1, min_gpu_mem_gb=12.5, optional=True)
 def test_analysis_backend_parity_gemma3_it_signed_feature_selection_intervention_graph(
     cleanup_cuda,
     ct_nnsight_gemma3_it_session_factory,

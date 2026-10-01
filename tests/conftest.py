@@ -1432,10 +1432,16 @@ def _gpu_phase_active() -> bool:
     )
 
 
-def pytest_collection_modifyitems(items):
+def pytest_collection_finish(session):
+    # After every collection-modifying hook, `-k`/`-m` deselection included, so the report lists what the run would
+    # actually execute. Writing it from pytest_collection_modifyitems listed items `-k` was about to drop, and the
+    # calibration driver, which narrows with `-k`, measured every GPU test instead. Callers wanting every tier
+    # (calibrate.py does) leave the phase flags unset, which leaves the phase filter a no-op.
     if report := os.getenv("IT_GPU_DECLARATION_REPORT"):
-        # before any phase filter, so the report covers every tier
-        _write_gpu_declaration_report(items, report)
+        _write_gpu_declaration_report(session.items, report)
+
+
+def pytest_collection_modifyitems(items):
     # select special tests, all special tests run standalone
     # non-specific standalone tests and profiling_ci tests run in CI by default
     # all other special tests do not run in CI unless explicitly selected
