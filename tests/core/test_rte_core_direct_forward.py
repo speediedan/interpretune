@@ -22,9 +22,12 @@ from tests.rte_component import rte_entrypoint_src
 RTE_DIR = Path(__file__).parents[2] / "src" / "it_examples" / "examples" / "rte"
 
 
-def _core_session(adapters: tuple) -> it.ITSession:
+def _core_session(adapters: tuple, dataset_dir: Path) -> it.ITSession:
     rev = local_publish(RTE_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
     dm_cfg, m_cfg, dm_cls, m_cls = it.hub.load("speediedan/rte", "rte_demo.gpt2.core", revision=rev)
+    # A per-test dataset directory: `prepare_data` rewrites the saved dataset, and on Windows a dataset another
+    # session still has memory-mapped cannot be overwritten (OSError 22 on the arrow file).
+    dm_cfg.dataset_path = dataset_dir
     return it.ITSession(
         it.ITSessionConfig(
             adapter_ctx=adapters, datamodule_cfg=dm_cfg, module_cfg=m_cfg, datamodule_cls=dm_cls, module_cls=m_cls
@@ -32,9 +35,9 @@ def _core_session(adapters: tuple) -> it.ITSession:
     )
 
 
-def test_core_module_direct_forward_accepts_its_own_batches():
+def test_core_module_direct_forward_accepts_its_own_batches(tmp_path):
     """The batches the datamodule yields must be ones the module's forward accepts."""
-    session = _core_session((it.Adapter.core,))
+    session = _core_session((it.Adapter.core,), tmp_path / "rte_dataset")
     it.it_init(session.module, session.datamodule)
     batch = next(iter(session.datamodule.test_dataloader()))
     inputs = {k: v for k, v in batch.items() if k != "labels"}
@@ -48,7 +51,7 @@ def test_lightning_trainer_predict_runs_on_the_core_module(tmp_path):
     pytest.importorskip("lightning")
     from lightning.pytorch import Trainer
 
-    session = _core_session((it.Adapter.lightning,))
+    session = _core_session((it.Adapter.lightning,), tmp_path / "rte_dataset")
     trainer = Trainer(
         default_root_dir=tmp_path,
         accelerator="cpu",
