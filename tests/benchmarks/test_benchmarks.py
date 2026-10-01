@@ -73,7 +73,8 @@ def _parse_accuracy(output: str) -> float | None:
     return parse_accuracy(output)
 
 
-@RunIf(benchmark=True, min_cuda_gpus=1)
+# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+@RunIf(benchmark=True, min_cuda_gpus=1, min_gpu_mem_gb=20.0)
 @pytest.mark.parametrize(
     ("experiment_name", "benchmark_id", "benchmark_entry"),
     _get_benchmark_params(),

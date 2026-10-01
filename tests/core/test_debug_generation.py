@@ -142,7 +142,10 @@ class TestClassDebugGen:
                 },
                 True,
                 (2, True),
-                marks=RunIf(lightning=True, bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
+                # from a fixture benchmark of these models; recalibrate
+                marks=RunIf(
+                    lightning=True, bf16_cuda=True, min_gpu_mem_gb=4.5, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"
+                ),
             ),
             pytest.param(
                 "get_it_session__l_llama3_debug__setup",
@@ -154,7 +157,10 @@ class TestClassDebugGen:
                 },
                 True,
                 (2, True),
-                marks=RunIf(lightning=True, bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"),
+                # from a fixture benchmark of these models; recalibrate
+                marks=RunIf(
+                    lightning=True, bf16_cuda=True, min_gpu_mem_gb=4.5, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"
+                ),
             ),
             pytest.param(
                 "get_it_session__l_gemma3_debug__setup",
@@ -164,7 +170,11 @@ class TestClassDebugGen:
                 False,
                 (2, False),
                 marks=RunIf(
-                    optional=True, lightning=True, bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"
+                    optional=True,
+                    lightning=True,
+                    bf16_cuda=True,
+                    min_gpu_mem_gb=4.5,
+                    requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY",
                 ),
             ),
             pytest.param(
@@ -175,7 +185,11 @@ class TestClassDebugGen:
                 False,
                 (2, False),
                 marks=RunIf(
-                    optional=True, lightning=True, bf16_cuda=True, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY"
+                    optional=True,
+                    lightning=True,
+                    bf16_cuda=True,
+                    min_gpu_mem_gb=4.5,
+                    requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY",
                 ),
             ),
         ],

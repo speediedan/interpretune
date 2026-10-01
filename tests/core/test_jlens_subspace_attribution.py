@@ -76,7 +76,8 @@ class TestSubspaceAttributionIdentity:
 
 
 class TestRealPairSubspaceAttribution:
-    @RunIf(standalone=True)
+    # unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+    @RunIf(standalone=True, min_cuda_gpus=1, min_gpu_mem_gb=12.0)
     def test_pair_dictionary_explains_its_own_patch_displacement(self) -> None:
         """Level-3: a patch displacement lives in its pair's span, so the remainder must be small.
 

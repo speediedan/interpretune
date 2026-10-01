@@ -283,7 +283,7 @@ class TestClassSAELens:
         with pytest.raises(MisconfigurationException, match="At least one `SAELens"):
             _ = SAELensConfig(**test_sl_cfg)
 
-    @RunIf(min_cuda_gpus=1)
+    @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=0.5)
     def test_sl_tl_device_sync_warnings(self):
         test_sl_cfg = deepcopy(TestClassSAELens.test_sl_cust)
         with pytest.warns(UserWarning, match=r"This SAEConfig's device type \('cpu'\) does not match the"):

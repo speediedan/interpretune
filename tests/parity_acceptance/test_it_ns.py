@@ -75,12 +75,14 @@ PARITY_NS_CONFIGS = (
         ),
         marks="lightning",
     ),
-    NSParityTest(alias="test_cuda_32", cfg=NSParityCfg(phase="test", **req_det_cuda), marks="cuda"),
-    NSParityTest(alias="test_cuda_32_l", cfg=NSParityCfg(phase="test", **req_det_cuda, **w_l_ns), marks="cuda_l"),
+    NSParityTest(alias="test_cuda_32", cfg=NSParityCfg(phase="test", **req_det_cuda), marks="cuda", gpu_mem_gb=1.5),
+    NSParityTest(
+        alias="test_cuda_32_l", cfg=NSParityCfg(phase="test", **req_det_cuda, **w_l_ns), marks="cuda_l", gpu_mem_gb=2.0
+    ),
     NSParityTest(alias="train_cpu_32", cfg=NSParityCfg()),
     NSParityTest(alias="train_cpu_32_l", cfg=NSParityCfg(**w_l_ns), marks="lightning"),
-    NSParityTest(alias="train_cuda_32", cfg=NSParityCfg(**req_det_cuda), marks="cuda"),
-    NSParityTest(alias="train_cuda_32_l", cfg=NSParityCfg(**req_det_cuda, **w_l_ns), marks="cuda_l"),
+    NSParityTest(alias="train_cuda_32", cfg=NSParityCfg(**req_det_cuda), marks="cuda", gpu_mem_gb=4.0),
+    NSParityTest(alias="train_cuda_32_l", cfg=NSParityCfg(**req_det_cuda, **w_l_ns), marks="cuda_l", gpu_mem_gb=4.0),
 )
 
 EXPECTED_PARITY_NS = {cfg.alias: cfg.expected for cfg in PARITY_NS_CONFIGS}
@@ -135,16 +137,23 @@ NS_PROFILING_CONFIGS = (
         function_marks={"skip": "NNsight+Lightning profiling: ~2x memory vs core - needs investigation"},
     ),
     NSProfilingTest(
-        alias="test_ns_profiling.test_cuda_32", cfg=NSProfileCfg(**cuda, **test_bs1_mem), marks="cuda_prof"
+        alias="test_ns_profiling.test_cuda_32",
+        cfg=NSProfileCfg(**cuda, **test_bs1_mem),
+        marks="cuda_prof",
+        gpu_mem_gb=1.0,
     ),
     NSProfilingTest(
         alias="test_ns_profiling.test_cuda_32_l",
         cfg=NSProfileCfg(**cuda, **w_l_ns, **test_bs1_mem),
         marks="cuda_l_prof",
+        gpu_mem_gb=1.0,
         function_marks={"skip": "NNsight+Lightning profiling: ~2x memory vs core - needs investigation"},
     ),
     NSProfilingTest(
-        alias="test_ns_profiling.train_cuda_32", cfg=NSProfileCfg(**cuda, **bs1_warm_mem), marks="cuda_profci"
+        alias="test_ns_profiling.train_cuda_32",
+        cfg=NSProfileCfg(**cuda, **bs1_warm_mem),
+        marks="cuda_profci",
+        gpu_mem_gb=3.5,
     ),
 )
 

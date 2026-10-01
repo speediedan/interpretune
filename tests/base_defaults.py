@@ -40,6 +40,8 @@ class BaseAugTest:
     expected: Dict | None = None
     result_gen: Callable | None = None
     function_marks: dict[str, Any] = field(default_factory=dict)  # marks applied at test function level
+    # GiB of device memory this case needs (`RunIf(min_gpu_mem_gb=...)`): per case, since the cases of one table differ
+    gpu_mem_gb: float | None = None
 
     def __post_init__(self):
         if self.expected is None and self.result_gen is not None:
@@ -47,6 +49,8 @@ class BaseAugTest:
             self.expected = self.result_gen(self.alias)
         elif isinstance(self.cfg, Dict):
             self.cfg = self.cfg[self.alias]
+        if self.gpu_mem_gb is not None:
+            self.function_marks = {**self.function_marks, "min_gpu_mem_gb": self.gpu_mem_gb}
         if self.marks or self.function_marks:
             self.marks = self._get_marks(self.marks, self.function_marks)
 

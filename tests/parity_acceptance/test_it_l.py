@@ -58,15 +58,17 @@ class ParityTest(BaseAugTest):
 PARITY_BASIC_CONFIGS = (
     ParityTest(alias="train_cpu_32", cfg=CoreCfg(**req_det)),
     ParityTest(alias="train_cpu_32_l", cfg=CoreCfg(**req_det_l), marks="lightning"),
-    ParityTest(alias="train_cuda_32", cfg=CoreCfg(**req_det_cuda), marks="cuda"),
-    ParityTest(alias="train_cuda_32_l", cfg=CoreCfg(**req_det_cuda_l), marks="cuda_l"),
-    ParityTest(alias="train_cuda_bf16", cfg=CoreCfg(**req_det_cuda_bf16), marks="bf16_cuda"),
-    ParityTest(alias="train_cuda_bf16_l", cfg=CoreCfg(**req_det_cuda_bf16_l), marks="bf16_cuda_l"),
+    ParityTest(alias="train_cuda_32", cfg=CoreCfg(**req_det_cuda), marks="cuda", gpu_mem_gb=1.0),
+    ParityTest(alias="train_cuda_32_l", cfg=CoreCfg(**req_det_cuda_l), marks="cuda_l", gpu_mem_gb=1.0),
+    ParityTest(alias="train_cuda_bf16", cfg=CoreCfg(**req_det_cuda_bf16), marks="bf16_cuda", gpu_mem_gb=1.0),
+    ParityTest(alias="train_cuda_bf16_l", cfg=CoreCfg(**req_det_cuda_bf16_l), marks="bf16_cuda_l", gpu_mem_gb=1.0),
     ParityTest(alias="test_cpu_32", cfg=CoreCfg(phase="test")),
     ParityTest(alias="test_cpu_32_l", cfg=CoreCfg(phase="test", **w_lit), marks="lightning"),
     ParityTest(alias="predict_cpu_32_l", cfg=CoreCfg(phase="predict", **w_lit), marks="lightning"),
-    ParityTest(alias="test_cuda_32", cfg=CoreCfg(phase="test", model_src_key="gpt2", **cuda), marks="cuda"),
-    ParityTest(alias="test_cuda_bf16", cfg=CoreCfg(phase="test", **cuda_bf16), marks="bf16_cuda"),
+    ParityTest(
+        alias="test_cuda_32", cfg=CoreCfg(phase="test", model_src_key="gpt2", **cuda), marks="cuda", gpu_mem_gb=1.5
+    ),
+    ParityTest(alias="test_cuda_bf16", cfg=CoreCfg(phase="test", **cuda_bf16), marks="bf16_cuda", gpu_mem_gb=1.5),
     ParityTest(alias="train_cpu_bf16", cfg=CoreCfg(**bf16), marks="skip_win_optional"),
 )
 
@@ -105,32 +107,51 @@ L_PROFILING_CONFIGS = (
         cfg=ProfParityCfg(**w_lit, **test_bs1_mem_nosavedt),
         marks="lightning_prof",
     ),
-    ProfilingTest(alias="test_l_profiling.test_cuda_32", cfg=ProfParityCfg(**cuda, **test_bs1_mem), marks="cuda_prof"),
+    ProfilingTest(
+        alias="test_l_profiling.test_cuda_32",
+        cfg=ProfParityCfg(**cuda, **test_bs1_mem),
+        marks="cuda_prof",
+        gpu_mem_gb=1.0,
+    ),
     ProfilingTest(
         alias="test_l_profiling.test_cuda_32_l",
         cfg=ProfParityCfg(**cuda, **w_lit, **test_bs1_mem),
         marks="cuda_l_profci",
+        gpu_mem_gb=1.0,
     ),
     ProfilingTest(
-        alias="test_l_profiling.test_cuda_bf16", cfg=ProfParityCfg(**cuda_bf16, **test_bs1_mem), marks="bf16_cuda_prof"
+        alias="test_l_profiling.test_cuda_bf16",
+        cfg=ProfParityCfg(**cuda_bf16, **test_bs1_mem),
+        marks="bf16_cuda_prof",
+        gpu_mem_gb=1.0,
     ),
     ProfilingTest(alias="test_l_profiling.train_cpu_32", cfg=ProfParityCfg(**bs1_nowarm_hk_mem), marks="optional"),
     ProfilingTest(
         alias="test_l_profiling.train_cpu_32_act", cfg=ProfParityCfg(**act_ckpt, **bs1_nowarm_mem), marks="prof"
     ),
-    ProfilingTest(alias="test_l_profiling.train_cuda_32", cfg=ProfParityCfg(**cuda, **bs1_warm_mem), marks="cuda_prof"),
     ProfilingTest(
-        alias="test_l_profiling.train_cuda_32_act", cfg=ProfParityCfg(**cuda_act, **bs1_warm_mem), marks="cuda_profci"
+        alias="test_l_profiling.train_cuda_32",
+        cfg=ProfParityCfg(**cuda, **bs1_warm_mem),
+        marks="cuda_prof",
+        gpu_mem_gb=3.5,
+    ),
+    ProfilingTest(
+        alias="test_l_profiling.train_cuda_32_act",
+        cfg=ProfParityCfg(**cuda_act, **bs1_warm_mem),
+        marks="cuda_profci",
+        gpu_mem_gb=3.5,
     ),
     ProfilingTest(
         alias="test_l_profiling.train_cuda_bf16",
         cfg=ProfParityCfg(**cuda_bf16, **bs1_warm_mem),
         marks="bf16_cuda_profci",
+        gpu_mem_gb=2.0,
     ),
     ProfilingTest(
         alias="test_l_profiling.train_cuda_bf16_l",
         cfg=ProfParityCfg(**cuda_bf16_l, **bs1_warm_mem),
         marks="bf16_cuda_l_prof",
+        gpu_mem_gb=2.0,
     ),
 )
 

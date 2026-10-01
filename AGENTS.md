@@ -314,6 +314,11 @@ the live case: its cases are inherited methods, so the class is the only place a
 `item.own_markers`, which sees only marks on the function itself, and class-level standalone marks were silently
 excluded from standalone runs for as long as that lasted.
 
+- **A GPU test is a last resort, and it declares its needs.** Write a CPU test unless what the test checks
+  depends on a device, or it cannot run on CPU within the hosted runners' limits. A GPU test declares
+  `RunIf(min_cuda_gpus=N, min_gpu_mem_gb=X)`, with `X` measured by `tests/gpu_ci/calibrate.py` rather than
+  estimated, and a guard fails any GPU-marked test without it. The standard and the measuring workflow are in
+  `tests/README.md` ("GPU Tests: When to Write One, and What It Must Declare").
 - For memory-intensive tests that previously used standalone as a workaround, prefer
   `@pytest.mark.usefixtures("cleanup_memory")` at the method level — this triggers `gc.collect()` after
   each test without sacrificing cross-platform CI signal.

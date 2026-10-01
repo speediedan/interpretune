@@ -48,7 +48,7 @@ PARITY_SL_CONFIGS = (
     SLParityTest(
         alias="train_cpu_32_l", cfg=SLParityCfg(model_src_key="gpt2", **cust_no_sae_grad, **w_l_sl), marks="lightning"
     ),
-    SLParityTest(alias="train_cuda_32", cfg=SLParityCfg(**req_det_cuda), marks="cuda"),
+    SLParityTest(alias="train_cuda_32", cfg=SLParityCfg(**req_det_cuda), marks="cuda", gpu_mem_gb=1.5),
 )
 
 EXPECTED_PARITY_SL = {cfg.alias: cfg.expected for cfg in PARITY_SL_CONFIGS}

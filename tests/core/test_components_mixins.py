@@ -103,7 +103,7 @@ class TestClassMixins:
             cust_config, _ = hf_from_pretrained_mixin._hf_gen_cust_config()
             _ = hf_from_pretrained_mixin.hf_configured_model_init(cust_config)
 
-    @RunIf(min_cuda_gpus=1)
+    @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=1.5)
     def test_hf_from_pretrained_peft_init(self, get_it_session__core_gpt2_peft__initonly):
         fixture = get_it_session__core_gpt2_peft__initonly
         it_m = fixture.it_session.module
@@ -112,7 +112,7 @@ class TestClassMixins:
         assert getattr(it_m.model.transformer.h[0].attn.c_proj, "lora_A", None) is not None
         assert it_m.model.base_model.model.is_gradient_checkpointing
 
-    @RunIf(min_cuda_gpus=1)
+    @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=1.5)
     @pytest.mark.parametrize(
         "phase, genclassif",
         [pytest.param("train", True), pytest.param("test", True), pytest.param("test", False)],
@@ -131,7 +131,7 @@ class TestClassMixins:
         unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
         assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
 
-    @RunIf(min_cuda_gpus=1)
+    @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=1.5)
     def test_peft_seq_test(self, recwarn, get_it_session__core_gpt2_peft_seq__initonly):
         fixture = get_it_session__core_gpt2_peft_seq__initonly
         it_session, test_cfg = fixture.it_session, fixture.test_cfg()

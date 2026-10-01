@@ -199,7 +199,7 @@ ATTRIBUTION_ANALYSIS_PARAMS = [
 ]
 
 
-@RunIf(bf16_cuda=True)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0)  # out of memory on an 8 GiB card (7.2 GiB seen in the kernel)
 @pytest.mark.parametrize("params", ATTRIBUTION_ANALYSIS_PARAMS)
 def test_attribution_analysis_notebook(params: dict[str, Any], tmp_path: Path):
     """Test attribution analysis notebook with different parameterizations."""
@@ -301,7 +301,7 @@ CIRCUIT_TRACER_PARAMS = [
 ]
 
 
-@RunIf(bf16_cuda=True)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=7.5)  # passes on an 8 GiB card; usage not resolved by the sampler
 @pytest.mark.parametrize("params", CIRCUIT_TRACER_PARAMS)
 def test_circuit_tracer_notebooks(params: dict[str, Any], tmp_path: Path):
     """Test circuit tracer notebooks with different parameterizations."""
@@ -373,14 +373,15 @@ def _run_ct_analysis_backend_notebook(params: dict[str, Any], tmp_path: Path) ->
     _cleanup_notebook_artifacts()
 
 
-@RunIf(bf16_cuda=True)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0)  # out of memory on an 8 GiB card (5.5 GiB seen in the kernel)
 @pytest.mark.parametrize("params", CT_ANALYSIS_BACKEND_PARAMS)
 def test_ct_analysis_backend_notebook(params: dict[str, Any], tmp_path: Path):
     """Test CT analysis backend demo notebook (public dashboard mode)."""
     _run_ct_analysis_backend_notebook(params, tmp_path)
 
 
-@RunIf(bf16_cuda=True, optional=True)
+# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0, optional=True)
 @pytest.mark.parametrize("params", CT_ANALYSIS_BACKEND_LOCAL_PARAMS)
 def test_ct_analysis_backend_notebook_local(params: dict[str, Any], tmp_path: Path):
     """Test CT analysis backend demo notebook against a local Neuronpedia dev webapp."""
@@ -469,7 +470,7 @@ def _run_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path, no
     _cleanup_notebook_artifacts()
 
 
-@RunIf(bf16_cuda=True)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0)  # out of memory on an 8 GiB card (5.5 GiB seen in the kernel)
 @pytest.mark.parametrize("params", CT_CONCEPT_STEERING_PARAMS)
 def test_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path):
     """Test the concept-direction steering demo notebook (feature-mediated + direct-hook paths).
@@ -480,7 +481,8 @@ def test_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path):
     _run_ct_concept_steering_notebook(params, tmp_path, "ct_concept_steering_demo.ipynb")
 
 
-@RunIf(bf16_cuda=True, optional=True)
+# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0, optional=True)
 @pytest.mark.parametrize("params", CT_CONCEPT_STEERING_LOCAL_PARAMS)
 def test_ct_concept_steering_notebook_local(params: dict[str, Any], tmp_path: Path):
     """Test the local-Neuronpedia steering notebook against a local webapp + DB.
@@ -511,7 +513,7 @@ JSPACE_WORKSPACE_PARAMS = [
 ]
 
 
-@RunIf(bf16_cuda=True)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=5.5)
 @pytest.mark.parametrize("params, expected_order", JSPACE_WORKSPACE_PARAMS)
 def test_jspace_workspace_notebook(params: dict[str, Any], expected_order: str, tmp_path: Path):
     """Execute the workspace readout notebook and check its computed verdict matches the case."""
@@ -545,7 +547,7 @@ _neuronpedia_key_available = bool(
 )
 
 
-@RunIf(bf16_cuda=True)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0)  # unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
 @pytest.mark.skipif(
     not _neuronpedia_key_available,
     reason="NEURONPEDIA_API_KEY (or DEV_NEURONPEDIA_API_KEY with USE_LOCALHOST=true) required",
@@ -589,7 +591,8 @@ SAE_LENS_PARAMS = [
 ]
 
 
-@RunIf(bf16_cuda=True, standalone=True)
+# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0, standalone=True)
 @pytest.mark.parametrize("params", SAE_LENS_PARAMS)
 def test_sae_lens_notebooks(params: dict[str, Any], tmp_path: Path):
     """Test SAE Lens adapter notebooks with different backend parameterizations."""

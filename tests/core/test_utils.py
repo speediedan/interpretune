@@ -52,7 +52,7 @@ from interpretune.utils.exceptions import (
 
 
 class TestClassUtils:
-    @RunIf(min_cuda_gpus=1)
+    @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=0.5)
     @pytest.mark.parametrize(
         "w_expected",
         ["Unable to patch `get_cud.*", None],
@@ -162,13 +162,13 @@ class TestClassUtils:
         with patch("interpretune.utils.import_utils.Version", side_effect=raised):
             assert compare_version("torch", operator.ge, "2.0.0", use_base_version=True)
 
-    @RunIf(min_cuda_gpus=1)
+    @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=0.5)
     def test_to_device(self):
         mod = torch.nn.Linear(4, 8)
         mod = to_device("cuda", mod)
         assert mod.bias.device.type == "cuda"
 
-    @RunIf(min_cuda_gpus=1)
+    @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=0.5)
     def test_move_data_to_device(self):
         batch = torch.ones([2, 3])
         batch = move_data_to_device(batch, "cuda")

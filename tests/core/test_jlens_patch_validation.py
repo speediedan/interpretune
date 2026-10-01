@@ -541,7 +541,8 @@ class TestGemmaPairLevel3:
     the standalone GPU phase runs online with the tokens gated weights need, so no Hub-manifest entries are required.
     """
 
-    @RunIf(standalone=True)
+    # unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+    @RunIf(standalone=True, min_cuda_gpus=1, min_gpu_mem_gb=12.0)
     def test_gemma2_2b_pair_flips_and_backends_agree(self):
         case = _gemma_pair_case("google/gemma-2-2b", "gemma-2-2b", 24)
         tl = _tl_gap_for_pair("google/gemma-2-2b", case)
@@ -552,7 +553,8 @@ class TestGemmaPairLevel3:
         assert rel_gap < 0.02, f"backends disagree on the real pair: rel gap {rel_gap:.4f}"
         assert tl["scale_gap"] < 0.01, f"TL-vs-HF scale conventions disagree: {tl['scale_gap']:.6f}"
 
-    @RunIf(standalone=True)
+    # unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+    @RunIf(standalone=True, min_cuda_gpus=1, min_gpu_mem_gb=12.0)
     def test_gemma3_1b_it_pair_flips_and_backends_agree(self):
         case = _gemma_pair_case("google/gemma-3-1b-it", "gemma-3-1b-it", 21)
         tl = _tl_gap_for_pair("google/gemma-3-1b-it", case)

@@ -57,12 +57,14 @@ PARITY_TL_CONFIGS = (
         ),
         marks="lightning",
     ),
-    TLParityTest(alias="test_cuda_32", cfg=TLParityCfg(phase="test", **req_det_cuda), marks="cuda"),
-    TLParityTest(alias="test_cuda_32_l", cfg=TLParityCfg(phase="test", **req_det_cuda, **w_l_tl), marks="cuda_l"),
+    TLParityTest(alias="test_cuda_32", cfg=TLParityCfg(phase="test", **req_det_cuda), marks="cuda", gpu_mem_gb=0.5),
+    TLParityTest(
+        alias="test_cuda_32_l", cfg=TLParityCfg(phase="test", **req_det_cuda, **w_l_tl), marks="cuda_l", gpu_mem_gb=0.5
+    ),
     TLParityTest(alias="train_cpu_32", cfg=TLParityCfg()),
     TLParityTest(alias="train_cpu_32_l", cfg=TLParityCfg(**w_l_tl), marks="lightning"),
-    TLParityTest(alias="train_cuda_32", cfg=TLParityCfg(**req_det_cuda), marks="cuda"),
-    TLParityTest(alias="train_cuda_32_l", cfg=TLParityCfg(**req_det_cuda, **w_l_tl), marks="cuda_l"),
+    TLParityTest(alias="train_cuda_32", cfg=TLParityCfg(**req_det_cuda), marks="cuda", gpu_mem_gb=1.0),
+    TLParityTest(alias="train_cuda_32_l", cfg=TLParityCfg(**req_det_cuda, **w_l_tl), marks="cuda_l", gpu_mem_gb=1.0),
 )
 
 EXPECTED_PARITY_TL = {cfg.alias: cfg.expected for cfg in PARITY_TL_CONFIGS}
@@ -97,16 +99,25 @@ TL_PROFILING_CONFIGS = (
     ProfilingTest(
         alias="test_tl_profiling.test_cpu_32_l", cfg=TLProfileCfg(**w_l_tl, **test_bs1_mem_nosavedt), marks="l_optional"
     ),
-    ProfilingTest(alias="test_tl_profiling.test_cuda_32", cfg=TLProfileCfg(**cuda, **test_bs1_mem), marks="cuda_prof"),
+    ProfilingTest(
+        alias="test_tl_profiling.test_cuda_32",
+        cfg=TLProfileCfg(**cuda, **test_bs1_mem),
+        marks="cuda_prof",
+        gpu_mem_gb=1.5,
+    ),
     ProfilingTest(
         alias="test_tl_profiling.test_cuda_32_l",
         cfg=TLProfileCfg(**cuda, **w_l_tl, **test_bs1_mem),
         marks="cuda_l_prof",
+        gpu_mem_gb=1.5,
     ),
     # See NOTE [TransformerLens Profiling Parity Differences], temporarily disabled
     # ProfilingTest(alias="test_tl_profiling.train_cpu_32", cfg=TLProfileCfg(**bs1_nowarm_hk_mem), marks="optional"),
     ProfilingTest(
-        alias="test_tl_profiling.train_cuda_32", cfg=TLProfileCfg(**cuda, **bs1_warm_mem), marks="cuda_profci"
+        alias="test_tl_profiling.train_cuda_32",
+        cfg=TLProfileCfg(**cuda, **bs1_warm_mem),
+        marks="cuda_profci",
+        gpu_mem_gb=4.0,
     ),
     # See NOTE [TransformerLens Profiling Parity Differences], temporarily disabled
     # ProfilingTest(alias="test_tl_profiling.train_cuda_32_l",
