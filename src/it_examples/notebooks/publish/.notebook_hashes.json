@@ -30,7 +30,7 @@
   "notebooks/dev/example_op_collections/op_collection_example.ipynb": "7249d103fd6f2fcb9b9d7f7bb890e45f495bbdca69b8eaf6ceb2aa82babdd383",
   "notebooks/dev/interp_engine_example/interp_engine_hub_adapter.ipynb": "a7a5528635d09599012192fac1cedb2429d43370db1465400b106b8240f7d4bb",
   "notebooks/dev/neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb": "7adde3c22b264b4c822ebfc5d4ba1d214809a9d260c635c527c17f4527d327a6",
-  "notebooks/dev/quickstart/cpu_quickstart.ipynb": "9c3d00a27e67cb7553186743ff9a0cd6bb205fd380b23c119a235745e757e1ee",
+  "notebooks/dev/quickstart/cpu_quickstart.ipynb": "6259c60f5598aceeebcdf3da319a375e0b74aae3cf45355cf31850e3549b0345",
   "notebooks/dev/saelens_adapter_example/emphasized_yaml.png": "586a308c0d875b32900f41d65b95321798c8f36a39123d2dd1245949e35914ab",
   "notebooks/dev/saelens_adapter_example/fts_explicit_accuracy.png": "29b3ac2535678dabb0204241a9fa5918ac1f4a2728a27933ccb8d20040737322",
   "notebooks/dev/saelens_adapter_example/fts_explicit_loss_anim.gif": "835fcb4f8f0d27f796c70e0a5225cf8c15d56e8b8fbe0d084f61e983a1298a1d",

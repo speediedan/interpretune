@@ -364,8 +364,21 @@ class ClassificationMixin:
             assert isinstance(logits, torch.Tensor), f"Expected logits to be a torch.Tensor but got {type(logits)}"
         return torch.squeeze(logits[:, -1, :], dim=1), label_ids, labels
 
-    def collect_answers(self, logits: torch.Tensor | tuple, labels: torch.Tensor, mode: str = "log") -> Dict | None:
-        """Compute metrics from logits and labels, logging them or returning them per ``mode``."""
+    def collect_answers(
+        self, logits: torch.Tensor | tuple | Any, labels: torch.Tensor, mode: str = "log"
+    ) -> Dict | None:
+        """Compute metrics from logits and labels, logging them or returning them per ``mode``.
+
+        ``logits`` may also be a model output object carrying a ``logits`` field (what an HF model's forward returns,
+        where a TransformerLens bridge returns the tensor itself), as ``logits_and_labels`` already accepts.
+        """
+        if not isinstance(logits, (torch.Tensor, tuple)):
+            if not isinstance(inner := getattr(logits, "logits", None), torch.Tensor):
+                raise TypeError(
+                    f"collect_answers expects logits (a tensor, a tuple of tensors, or a model output with a `logits` "
+                    f"tensor), got {type(logits).__name__}"
+                )
+            logits = inner
         logits = self.standardize_logits(logits)  # type: ignore[arg-type]  # standardize_logits handles tuple case
         per_example_answers, _ = torch.max(logits, dim=-2)
         preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
