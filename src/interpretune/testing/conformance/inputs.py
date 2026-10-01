@@ -202,6 +202,14 @@ class ConformanceInputs:
     supplied_extras: dict[str, Any] = field(default_factory=dict)
     """Every ``module_cfg_extras`` entry the last ``session_cfg`` call set, so a coherence case can check that each
     reached the composed config as a declared field with the same object, rather than as a stray attribute."""
+    payload_fixtures: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
+    """Named intervention payloads a ``conformance.run_inputs`` sample may reference as ``{fixture: <name>}``.
+
+    Each factory receives the conformance session and builds the tensor for the target under test, so one
+    declaration measures the same thing on every model. Empty by default: a reference to an unregistered
+    name is refused by name (see :mod:`interpretune.testing.conformance.payloads`), which is what stops a
+    sample from silently running on a wrong or missing tensor.
+    """
 
     def latent_models_for_model(self) -> list[LatentModelSpec]:
         """The latent specs that fit ``model_id``."""
