@@ -46,20 +46,6 @@ coverage:
         threshold: 5% # allow this much decrease on patch
     changes: false
 
-# A pull request gate runs only the GPU tests its change selects and uploads them under `gpu-selected`, so a partial
-# run never reads as a drop in `gpu`. `gpu` and `cpu` carry forward from their last full upload, which keeps the
-# branch total anchored on the last full GPU run (nightly, or a gate that ran the full set).
-flag_management:
-  default_rules:
-    carryforward: false
-  individual_flags:
-    - name: gpu
-      carryforward: true
-    - name: cpu
-      carryforward: true
-    - name: gpu-selected
-      carryforward: false
-
 # https://docs.codecov.com/docs/github-checks#disabling-github-checks-patch-annotations
 github_checks:
     annotations: false

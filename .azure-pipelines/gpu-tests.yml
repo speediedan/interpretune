@@ -457,7 +457,7 @@ jobs:
           shasum -a 256 -c codecov.SHA256SUM
           chmod +x codecov
           # A selected run covers only part of the GPU set, so it uploads under its own flag: under `gpu` it would read
-          # as a coverage drop. The `gpu` flag carries forward from the last full run (.codecov.yml).
+          # as a coverage drop.
           flags=(-F gpu -F pytest); name=GPU-coverage
           if [ "$IT_GPU_SELECTION_MODE" = selected ]; then flags=(-F gpu-selected); name=GPU-selected-coverage; fi
           ./codecov upload-process --slug 'speediedan/interpretune' -t $CODECOV_TOK --commit-sha $(Build.SourceVersion) --git-service 'github' -n "$name" "${flags[@]}" --env 'linux,azure' -f 'coverage.xml'
