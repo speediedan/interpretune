@@ -1424,6 +1424,35 @@ def _gpu_selection_prefixes() -> list[str] | None:
     return None if lines == ["full"] else lines
 
 
+def _gpu_mem_class() -> tuple[str, float] | None:
+    """The memory class a GPU phase is narrowed to, as ``(class, small_max_gb)``, or None when it is not narrowed.
+
+    Two-stage device placement runs each GPU phase twice: ``IT_GPU_MEM_CLASS=small`` keeps the single-device tests
+    declaring at most ``IT_GPU_SMALL_MAX_GB``, for the smallest device that fits them, and ``large`` keeps the rest
+    (larger declarations and multi-device tests). The two classes partition the phase, so together they run it whole.
+    A class without its threshold, or an unknown class, is refused: guessing either would silently drop tests.
+    """
+    cls = os.getenv("IT_GPU_MEM_CLASS")
+    if not cls:
+        return None
+    if cls not in ("small", "large"):
+        raise pytest.UsageError(f"IT_GPU_MEM_CLASS={cls!r} is not a memory class; expected 'small' or 'large'")
+    raw = os.getenv("IT_GPU_SMALL_MAX_GB")
+    try:
+        small_max = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise pytest.UsageError(
+            f"IT_GPU_MEM_CLASS={cls!r} needs IT_GPU_SMALL_MAX_GB, the largest declaration (GB) the small class takes; "
+            f"got {raw!r}"
+        ) from None
+    return cls, small_max
+
+
+def gpu_mem_class_of(item, small_max_gb: float) -> str:
+    """``small`` when ``item`` needs one device and declares at most ``small_max_gb``, else ``large``."""
+    return "small" if declared_gpu_count(item) <= 1 and declared_gpu_mem_gb(item) <= small_max_gb else "large"
+
+
 def _gpu_phase_active() -> bool:
     return (
         os.getenv("IT_RUN_CUDA_TESTS", "0") == "1"
@@ -1466,6 +1495,10 @@ def pytest_collection_modifyitems(items):
     # outside the GPU phases, so the CPU suite is never narrowed.
     if _gpu_phase_active() and (prefixes := _gpu_selection_prefixes()) is not None:
         items[:] = [item for item in items if item.nodeid.startswith(tuple(prefixes))]
+    # Two-stage device placement: one memory class per pass, so each pass can lease the smallest device that fits it.
+    if _gpu_phase_active() and (mem_class := _gpu_mem_class()) is not None:
+        cls, small_max = mem_class
+        items[:] = [item for item in items if gpu_mem_class_of(item, small_max) == cls]
     # The hosted matrix runs the suite with the Hub client offline against a warmed cache (see
     # docs/ci_hub_cache.md); a test that must reach the live Hub declares it and runs in the online pass.
     if _hub_offline():
@@ -1541,6 +1574,11 @@ def declared_gpu_mem_gb(item) -> float:
     )
 
 
+def declared_gpu_count(item) -> int:
+    """The largest ``RunIf(min_cuda_gpus=...)`` declared on ``item`` at any level, or 1."""
+    return max([int(m.kwargs.get("min_cuda_gpus") or 1) for m in item.iter_markers() if m.name == "skipif"] or [1])
+
+
 def _check_gpu_memory(item) -> None:
     """Skip (or, with ``IT_GPU_STRICT=1``, fail) a test whose visible devices are smaller than it declares.
 
@@ -1551,7 +1589,7 @@ def _check_gpu_memory(item) -> None:
     need = declared_gpu_mem_gb(item)
     if not need or not torch.cuda.is_available():
         return
-    n = max([int(m.kwargs.get("min_cuda_gpus") or 1) for m in item.iter_markers() if m.name == "skipif"] or [1])
+    n = declared_gpu_count(item)
     for idx in range(min(n, torch.cuda.device_count())):
         props = torch.cuda.get_device_properties(idx)
         have = props.total_memory / 2**30
