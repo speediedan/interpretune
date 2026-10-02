@@ -346,6 +346,28 @@ class LocalSnapshotWarning(UserWarning):
     shadowed."""
 
 
+class ComponentFileNotCachedError(FileNotFoundError):
+    """A file the cached manifest declares is not in the cached snapshot.
+
+    Loading is cache-only, and the fetches are deliberately partial: a key-less ``pull`` materializes the manifest and
+    the payloads its non-configuration kinds read whole, while a module configuration or an experiment is fetched only
+    by key. A snapshot can therefore be complete for one caller and missing exactly the file another needs. Reading the
+    missing path raised a bare ``FileNotFoundError`` on an internal cache path, which names neither what was missing
+    nor the fetch that supplies it; this error names both.
+    """
+
+
+def _cached_declared_file(snapshot: Path, rel: str, *, repo_id: str, what: str, fetch: str) -> Path:
+    """The cached copy of a manifest-declared file, or a refusal naming the fetch that supplies it."""
+    path = snapshot / rel
+    if not path.is_file():
+        raise ComponentFileNotCachedError(
+            f"{repo_id}: the cached manifest (revision {describe_revision(snapshot.name)}) declares {what} at {rel!r}, "
+            f"but that file is not in the cache. Loading never downloads; fetch it first: {fetch}"
+        )
+    return path
+
+
 class LocalSnapshotShadowsHubError(LookupError):
     """``require_hub=True`` and the cached ``refs/main`` is a local-publish snapshot."""
 
@@ -508,7 +530,13 @@ def resolve_component_config(
     configs = (manifest.get("module") or {}).get("configs") or {}
     if key not in configs:
         raise KeyError(f"{repo_id} (cached) declares no configuration {key!r}. Available: {sorted(configs)}")
-    cfg_path = snapshot / configs[key]
+    cfg_path = _cached_declared_file(
+        snapshot,
+        configs[key],
+        repo_id=repo_id,
+        what=f"configuration {key!r}",
+        fetch=f"interpretune.hub.pull({repo_id!r}, {key!r})",
+    )
     body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     return check_config_key_parity(cfg_path, body, expected_key=key), body
 
@@ -533,7 +561,13 @@ def resolve_experiment_config(
     entries = manifest.get("experiments") or {}
     if key not in entries:
         raise KeyError(f"{repo_id} (cached) declares no experiment {key!r}. Available: {sorted(entries)}")
-    cfg_path = snapshot / entries[key]["config"]
+    cfg_path = _cached_declared_file(
+        snapshot,
+        entries[key]["config"],
+        repo_id=repo_id,
+        what=f"experiment {key!r}",
+        fetch=f"interpretune.hub.pull_experiment({repo_id!r}, {key!r})",
+    )
     body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     return check_experiment_key_parity(cfg_path, body, expected_key=key), body, snapshot, manifest
 
@@ -553,7 +587,14 @@ def resolve_datamodule_config(
     entries = manifest.get("datamodules") or {}
     if name not in entries:
         raise KeyError(f"{repo_id} (cached) declares no datamodule {name!r}. Available: {sorted(entries)}")
-    body = yaml.safe_load((snapshot / entries[name]["config"]).read_text(encoding="utf-8"))
+    cfg_path = _cached_declared_file(
+        snapshot,
+        entries[name]["config"],
+        repo_id=repo_id,
+        what=f"datamodule {name!r}",
+        fetch=f"interpretune.hub.pull({repo_id!r})",
+    )
+    body = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     if not isinstance(body, dict) or "datamodule_cfg" not in body:
         raise ComponentManifestError(
             f"{repo_id}#{name}: standalone datamodule payload must carry a `datamodule_cfg` mapping."
