@@ -35,6 +35,37 @@ def _core_session(adapters: tuple, dataset_dir: Path) -> it.ITSession:
     )
 
 
+def test_a_batch_keyed_for_another_forward_is_refused_by_name_at_the_forward(tmp_path):
+    """The mistake the core config shipped with: the TransformerLens bridge's ``input`` key on an HF-backed module.
+
+    Analysis paths resolve either name, so setup and every analysis test must still accept it; the direct forward a
+    Trainer loop runs must refuse it by name, instead of failing with HF's "You have to specify either input_ids or
+    inputs_embeds".
+    """
+    from interpretune.utils import MisconfigurationException
+
+    rev = local_publish(RTE_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    dm_cfg, m_cfg, dm_cls, m_cls = it.hub.load("speediedan/rte", "rte_demo.gpt2.core", revision=rev)
+    dm_cfg.dataset_path = tmp_path / "rte_dataset"
+    dm_cfg.tokenizer_kwargs["model_input_names"] = ["input", "attention_mask"]
+    dm_cfg.signature_columns = ["input", "attention_mask", "labels"]
+    session = it.ITSession(
+        it.ITSessionConfig(
+            adapter_ctx=(it.Adapter.core,),
+            datamodule_cfg=dm_cfg,
+            module_cfg=m_cfg,
+            datamodule_cls=dm_cls,
+            module_cls=m_cls,
+        )
+    )
+    it.it_init(session.module, session.datamodule)
+    batch = next(iter(session.datamodule.test_dataloader()))
+    assert "input" in batch and "input_ids" not in batch, sorted(batch)
+    inputs = {k: v for k, v in batch.items() if k != "labels"}
+    with pytest.raises(MisconfigurationException, match=r"supplies its input as \['input'\].*takes \['input_ids'"):
+        session.module(**inputs)
+
+
 def test_core_module_direct_forward_accepts_its_own_batches(tmp_path):
     """The batches the datamodule yields must be ones the module's forward accepts."""
     session = _core_session((it.Adapter.core,), tmp_path / "rte_dataset")

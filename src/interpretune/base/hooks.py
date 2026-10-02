@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 import torch
 
-from interpretune.utils import instantiate_class
+from interpretune.utils import MisconfigurationException, instantiate_class
 from interpretune.protocol import OptimizerLRScheduler, STEP_OUTPUT
 
 if TYPE_CHECKING:
@@ -82,5 +82,14 @@ class BaseITHooks:
             self.on_session_end()
 
     def forward(self, *args, **kwargs) -> STEP_OUTPUT:
-        """Forward to the wrapped model, merging in any configured custom forward kwargs."""
+        """Forward to the wrapped model, merging in any configured custom forward kwargs.
+
+        A batch keyed by a primary input the model's forward cannot take is refused here, by name. Analysis paths
+        resolve input keys through aliases, so such a config passes them all and would otherwise fail only here, in
+        the first Trainer loop, with the model's own unrelated message.
+        """
+        from interpretune.utils.tokenization import forward_call_mismatch
+
+        if not args and (problem := forward_call_mismatch(self.model, kwargs)) is not None:
+            raise MisconfigurationException(f"{type(self).__name__}: {problem}")
         return self.model(*args, **kwargs, **self.it_cfg.cust_fwd_kwargs)
