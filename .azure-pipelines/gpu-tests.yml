@@ -74,9 +74,45 @@ pr:
   # run, ran" are different claims and only the first is visible. Before merging on a green rollup,
   # confirm the Azure check is PRESENT, not merely non-failing.
 
+# SCHEDULED FULL RUNS. Pull request gates run only the GPU tests their change selects
+# (tests/gpu_ci/plan_gpu_run.py), so a regression a selection misses, and the combined tree of independently gated
+# merges, surface here: nightly with the full GPU phases, weekly with the extended tiers as well. `always: false`
+# runs a schedule only when main changed since its last successful run, and `batch: true` keeps runs from piling up.
+# Scheduled runs still pass the self-hosted pool's approval check. They take the same host leases as a gate, but wait
+# up to two hours and then CANCEL rather than fail, so a long local job costs one night's run, not a red build.
+# The planner recognises the weekly run by its display name: keep the two in step.
+schedules:
+  - cron: "0 10 * * 1-6"
+    displayName: "nightly full GPU run"
+    branches:
+      include:
+        - main
+    always: false
+    batch: true
+  - cron: "0 10 * * 0"
+    displayName: "weekly extended GPU run"
+    branches:
+      include:
+        - main
+    always: false
+    batch: true
+
 parameters:
   - name: reset_hf_cache
     displayName: Reset HF Cache
+    type: boolean
+    default: false
+  # `auto` selects per change on pull request gates and runs the full set on every other build; `full` forces the
+  # full set. A pull request can also force it with the `ci:gpu-full` label.
+  - name: mode
+    displayName: GPU test selection
+    type: string
+    default: auto
+    values:
+      - auto
+      - full
+  - name: extended
+    displayName: Also run the extended GPU tiers (optional tests, full profiling)
     type: boolean
     default: false
 
@@ -87,9 +123,13 @@ jobs:
         PyTorch_latest:
           image: speediedan/interpretune:py3.13-pt2.13.0-azpl-init
           scope: ""
-    # The job can wait up to 40 minutes for its host leases before the GPU phases, on top of a run of about 35
-    # minutes (install plus the three GPU phases). Kept at 120 until a few builds on this layout measure the run.
-    timeoutInMinutes: 120
+    # A gate can wait up to 40 minutes for each host lease before the GPU phases, on top of a run of about 35
+    # minutes (install plus the three GPU phases). A scheduled run waits up to two hours for the leases, and the
+    # weekly and release runs add the extended tiers, so those builds get more room.
+    ${{ if or(eq(variables['Build.Reason'], 'Schedule'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'), startsWith(variables['Build.SourceBranch'], 'refs/tags/'), eq(parameters.extended, true)) }}:
+      timeoutInMinutes: 300
+    ${{ else }}:
+      timeoutInMinutes: 120
     cancelTimeoutInMinutes: 2
 
     pool:
@@ -152,6 +192,11 @@ jobs:
     # exactly two tests the hosted Linux job did not, both skipped there only for want of a warmed tokenizer
     # (now in tests/hf_warm_manifest.yaml), while it cost about half of every build's test time.
     steps:
+      # A pull request build checks out the merge commit; the GPU run planner diffs it against its first parent (the
+      # target branch), which needs both parents fetched.
+      - checkout: self
+        fetchDepth: 2
+
       - bash: |
           echo "=== identity ==="
           id || true
@@ -262,6 +307,15 @@ jobs:
           python requirements/utils/collect_env_details.py
         displayName: 'Env details and package versions'
 
+      # Decide what this run executes and export it to the steps below (see tests/gpu_ci/plan_gpu_run.py): the full
+      # GPU set, only the tests a pull request's change selects, or none of them; whether the extended tiers run; and
+      # the lease-wait policy. Anything the planner cannot establish runs the full set, named in this step's log.
+      - bash: |
+          set -e
+          source /tmp/venvs/it_dev/bin/activate
+          python -m tests.gpu_ci.plan_gpu_run --mode "${{ parameters.mode }}" --extended "${{ parameters.extended }}"
+        displayName: 'Plan the GPU run'
+
       - bash: |
           set -e
           source /tmp/venvs/it_dev/bin/activate
@@ -286,19 +340,58 @@ jobs:
           # Fail CLOSED: a bash step's result is its last command's exit code, so a timed-out `gpu` acquire
           # followed by a succeeding `cpu-heavy` acquire used to read as success, and the GPU phases then ran
           # unleased beside whoever held the lease (all CUDA out-of-memory, with nothing in the timeline saying
-          # the lease was missed). `set -e` stops the step at the first failed acquire instead. The
-          # `condition: always()` cleanup below releases whatever is held, so the failure path leaves no lease.
-          set -e
-          ci_gpu_lease_acquire /gpu_leases /tmp/azp_gpu_lease.pid 2400 "azure-it-$(Build.BuildId)" gpu
-          ci_gpu_lease_acquire /gpu_leases /tmp/azp_cpu_heavy_lease.pid 2400 "azure-it-$(Build.BuildId)" cpu-heavy
+          # the lease was missed). Each acquire's status is checked before the next. The `condition: always()`
+          # cleanup below releases whatever is held, so the failure path leaves no lease.
+          #
+          # A gate waits up to IT_GPU_LEASE_WAIT seconds for EACH lease and fails on a timeout. A scheduled run
+          # shares one IT_GPU_LEASE_WAIT deadline across both and, on a timeout, cancels itself: the next scheduled
+          # run is a fresh attempt, so a long local job should cost one night's run, not a red build.
+          deadline=$(( $(date +%s) + IT_GPU_LEASE_WAIT ))
+          wait_for() {  # <pidfile> <lease>
+            local wait=$IT_GPU_LEASE_WAIT
+            if [ "$IT_GPU_LEASE_ON_TIMEOUT" = cancel ]; then
+              wait=$(( deadline - $(date +%s) ))
+              [ "$wait" -gt 60 ] || wait=60
+            fi
+            ci_gpu_lease_acquire /gpu_leases "$1" "$wait" "azure-it-$(Build.BuildId)" "$2"
+          }
+          wait_for /tmp/azp_gpu_lease.pid gpu
+          rc=$?
+          if [ "$rc" -eq 0 ]; then
+            wait_for /tmp/azp_cpu_heavy_lease.pid cpu-heavy
+            rc=$?
+          fi
+          [ "$rc" -eq 0 ] && exit 0
+          if [ "$rc" -eq 75 ] && [ "$IT_GPU_LEASE_ON_TIMEOUT" = cancel ]; then
+            echo "##vso[task.logissue type=warning]The host leases stayed busy for ${IT_GPU_LEASE_WAIT}s (holder above); cancelling this scheduled run rather than failing it."
+            curl -sS -f -X PATCH -H "Authorization: Bearer ${SYSTEM_ACCESSTOKEN}" -H "Content-Type: application/json" \
+              -d '{"status": "cancelling"}' \
+              "$(System.CollectionUri)$(System.TeamProject)/_apis/build/builds/$(Build.BuildId)?api-version=7.1" >/dev/null \
+              && sleep 300
+            echo "ERROR: the cancel request failed or did not take effect; failing closed instead."
+            exit 1
+          fi
+          exit "$rc"
         displayName: 'Acquire host GPU lease'
+        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+        env:
+          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 
       - bash: |
           source /tmp/venvs/it_dev/bin/activate
           export IT_RUN_CUDA_TESTS=1
           # Run regular CUDA-gated tests separately to reduce peak memory pressure while preserving GPU coverage.
           python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v --durations=50 --reruns 2 --reruns-delay 5
+          rc=$?
+          # A selected run may select no cuda-marked test (pytest exit 5). Only then is an empty phase a pass: on a full
+          # run an empty phase means the collector broke.
+          if [ "$rc" -eq 5 ] && [ "$IT_GPU_SELECTION_MODE" = selected ]; then
+            echo "No cuda-marked test is selected by this change."
+            exit 0
+          fi
+          exit "$rc"
         displayName: 'Testing: standard gpu cuda-marked'
+        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
         env:
           # gated-model tests (llama3/gemma) and the notebook/example tests run in this phase and
           # read these secrets; without the mapping they fail with a KeyError on the secret's name
@@ -313,17 +406,42 @@ jobs:
           export HF_GATED_PUBLIC_REPO_AUTH_KEY=$HF_GATED_PUBLIC_REPO_AUTH_KEY
           export HF_TOKEN=$HF_TOKEN
           # --allow-failures: run every test and fail the step at the end, so one failure cannot hide the result of
-          # every test after it. The script still exits non-zero when anything failed.
-          bash ./tests/special_tests.sh --mark_type=standalone --allow-failures
+          # every test after it. The script still exits non-zero when anything failed. --allow-empty only on a
+          # selected run, which may select no standalone test; on a full run an empty phase means the collector broke.
+          empty=(); [ "$IT_GPU_SELECTION_MODE" = selected ] && empty=(--allow-empty)
+          bash ./tests/special_tests.sh --mark_type=standalone --allow-failures "${empty[@]}"
         displayName: 'Testing: standalone gpu'
+        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
         env:
           HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
           HF_TOKEN: $(HF_MCP_TOKEN_RW)  # private jlens collection until #261; see cuda-marked phase note
 
       - bash: |
           source /tmp/venvs/it_dev/bin/activate
-          bash ./tests/special_tests.sh --mark_type=profile_ci --allow-failures
+          empty=(); [ "$IT_GPU_SELECTION_MODE" = selected ] && empty=(--allow-empty)
+          bash ./tests/special_tests.sh --mark_type=profile_ci --allow-failures "${empty[@]}"
         displayName: 'Testing: CI Profiling'
+        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+
+      # The extended tiers no gate runs: the full profiling tier and the optional GPU tests (the SAELens notebooks
+      # among them). Weekly, on release and tag builds, and on a manual run with `extended`.
+      - bash: |
+          source /tmp/venvs/it_dev/bin/activate
+          mkdir -p /__w/_temp/kernel_cache
+          bash ./tests/special_tests.sh --mark_type=profile --allow-failures
+        displayName: 'Testing: extended profiling'
+        condition: and(succeeded(), eq(variables['IT_GPU_EXTENDED'], '1'))
+        env:
+          PYTORCH_KERNEL_CACHE_PATH: "/__w/_temp/kernel_cache"
+
+      - bash: |
+          source /tmp/venvs/it_dev/bin/activate
+          bash ./tests/special_tests.sh --mark_type=optional --allow-failures
+        displayName: 'Testing: extended optional'
+        condition: and(succeeded(), eq(variables['IT_GPU_EXTENDED'], '1'))
+        env:
+          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+          HF_TOKEN: $(HF_MCP_TOKEN_RW)
 
       - bash: |
           source /tmp/venvs/it_dev/bin/activate
@@ -338,8 +456,13 @@ jobs:
           gpg --no-default-keyring --keyring trustedkeys.gpg --verify codecov.SHA256SUM.sig codecov.SHA256SUM
           shasum -a 256 -c codecov.SHA256SUM
           chmod +x codecov
-          ./codecov upload-process --slug 'speediedan/interpretune' -t $CODECOV_TOK --commit-sha $(Build.SourceVersion) --git-service 'github' -n "GPU-coverage" -F gpu -F pytest --env 'linux,azure' -f 'coverage.xml'
+          # A selected run covers only part of the GPU set, so it uploads under its own flag: under `gpu` it would read
+          # as a coverage drop. The `gpu` flag carries forward from the last full run (.codecov.yml).
+          flags=(-F gpu -F pytest); name=GPU-coverage
+          if [ "$IT_GPU_SELECTION_MODE" = selected ]; then flags=(-F gpu-selected); name=GPU-selected-coverage; fi
+          ./codecov upload-process --slug 'speediedan/interpretune' -t $CODECOV_TOK --commit-sha $(Build.SourceVersion) --git-service 'github' -n "$name" "${flags[@]}" --env 'linux,azure' -f 'coverage.xml'
         displayName: 'Upload Coverage to Codecov'
+        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
         env:
           CODECOV_TOK: $(CODECOV_TOKEN)
       # - bash: |
@@ -349,16 +472,6 @@ jobs:
       #   # condition: notIn(variables['scope'], '2.0.1')
       #   displayName: 'Testing: Examples'
 
-
-      # - bash: |
-      #     . /tmp/venvs/it_dev/bin/activate
-      #     mkdir -p /__w/_temp/kernel_cache
-      #     bash ./tests/special_tests.sh --mark_type=profile
-      #     bash ./tests/special_tests.sh --mark_type=optional
-      #   # condition: notIn(variables['scope'], '2.0.1')
-      #   env:
-      #     PYTORCH_KERNEL_CACHE_PATH: "/__w/_temp/kernel_cache"
-      #   displayName: 'Testing: Extended profile and optional tests'
 
       - bash: |
           # since we use rootless docker and userns-remapping, we need to ensure all files/directories in previous

@@ -715,6 +715,11 @@ Serialization details matter here:
   The CPU suite is NOT run there: the GitHub-hosted matrix runs it on every pull request the GPU pipeline
   triggers on. A test that passes only in the self-hosted environment (a gated artifact, say) needs its input
   warmed in `tests/hf_warm_manifest.yaml`, not a CPU phase on the serial GPU agent.
+
+  **A pull request gate runs only the GPU tests its change selects** (`tests/gpu_ci/areas.yaml`); the full set
+  runs on a `run_all` path, with the `ci:gpu-full` label, or with `mode=full`. A nightly scheduled run covers main
+  in full, and a weekly one adds the extended tiers. A GPU test that only a scheduled run caught is a selector
+  miss, so fix the area map. `tests/README.md` has the table.
 - **Hub access in hosted CI:** each matrix job warms the Hugging Face cache from `tests/hf_warm_manifest.yaml`
   and runs the suite with `HF_HUB_OFFLINE=1`; tests that must reach the live Hub are marked `hf_live` and run in
   a separate online pass. A new Hub artifact goes in the manifest. See `docs/ci_hub_cache.md`.

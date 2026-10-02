@@ -173,9 +173,9 @@ def write_selection_file(sel: Selection, spec: dict, path: Path) -> None:
     path.write_text("full\n" if prefixes is None else "".join(f"{p}\n" for p in prefixes))
 
 
-def changed_files(base: str, head: str = "HEAD") -> list[str]:
+def changed_files(base: str, head: str = "HEAD", cwd: Path | None = None) -> list[str]:
     out = subprocess.run(
-        ["git", "diff", "--name-only", f"{base}...{head}"], check=True, capture_output=True, text=True
+        ["git", "diff", "--name-only", f"{base}...{head}"], cwd=cwd, check=True, capture_output=True, text=True
     ).stdout
     return [line for line in out.splitlines() if line]
 
