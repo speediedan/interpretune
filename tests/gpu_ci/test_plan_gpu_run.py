@@ -135,7 +135,8 @@ def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
-def test_the_change_set_is_read_from_the_merge_commit(tmp_path):
+def _pr_merge_repo(tmp_path: Path, check_before_merge: bool = False) -> Path:
+    """A repository whose HEAD merges a pull request branch into a target branch that moved after it branched."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
@@ -144,8 +145,9 @@ def test_the_change_set_is_read_from_the_merge_commit(tmp_path):
     (repo / "a.txt").write_text("a")
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "base")
-    with pytest.raises(RuntimeError, match="not a merge commit"):
-        merge_commit_changes(repo)
+    if check_before_merge:
+        with pytest.raises(RuntimeError, match="not a merge commit"):
+            merge_commit_changes(repo)
     _git(repo, "checkout", "-q", "-b", "pr")
     (repo / "b.txt").write_text("b")
     _git(repo, "add", ".")
@@ -155,4 +157,30 @@ def test_the_change_set_is_read_from_the_merge_commit(tmp_path):
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "main moved")
     _git(repo, "merge", "-q", "--no-ff", "-m", "merge", "pr")
+    return repo
+
+
+def test_the_change_set_is_read_from_the_merge_commit(tmp_path):
+    assert merge_commit_changes(_pr_merge_repo(tmp_path, check_before_merge=True)) == ["b.txt"]
+
+
+def test_a_git_failure_reports_gits_own_message(tmp_path):
+    """Only a quiet miss means "not a merge commit"; any other failure surfaces git's message, not a guess."""
+    with pytest.raises(RuntimeError, match=r"git could not read the checkout \(exit \d+\): .*not a git repository"):
+        merge_commit_changes(tmp_path)
+
+
+def test_a_checkout_owned_by_another_user_is_read_once_trusted(tmp_path, monkeypatch):
+    """What the pipeline's container meets: the agent checks out on the host, so git sees another uid's repository.
+
+    ``GIT_TEST_ASSUME_DIFFERENT_OWNER`` reproduces that refusal without a second uid, and the command-line-scope
+    ``safe.directory`` the pipeline step sets must lift it.
+    """
+    repo = _pr_merge_repo(tmp_path)
+    monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+    with pytest.raises(RuntimeError, match="dubious ownership"):
+        merge_commit_changes(repo)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "safe.directory")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", repo.as_posix())
     assert merge_commit_changes(repo) == ["b.txt"]
