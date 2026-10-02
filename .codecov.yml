@@ -26,6 +26,17 @@ codecov:
   # https://docs.codecov.io/docs/codecov-yaml#section-expired-reports
   max_report_age: off
 
+# Flags arrive from separate CI systems on different cadences (GPU coverage only
+# from the Azure pipeline), so carry each forward: without this the branch badge
+# and totals silently degrade to CPU-only on any HEAD lacking a given upload.
+flags:
+  gpu:
+    carryforward: true
+  cpu:
+    carryforward: true
+  pytest:
+    carryforward: true
+
 coverage:
   precision: 0  # 2 = xx.xx%, 0 = xx%
   round: nearest # how coverage is rounded: down/up/nearest

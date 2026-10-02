@@ -507,6 +507,46 @@ class TransformerLensAdapter(TLensAttributeMixin):
 class ITLensModule(TransformerLensAdapter, CoreHelperAttributes, BaseITLensModule):
     """The TransformerLens module composition."""
 
+    def it_generate(self, batch: BatchEncoding | torch.Tensor, **kwargs) -> Any:
+        """Generate from a batch, refusing tensor batches the bridge loop cannot start from.
+
+        The bridge generation loop samples each step from the last sequence position, so a
+        batch whose rows end in padding starts short rows from post-pad logits: they emit
+        end-of-text at once and freeze, and only the unpadded (longest) row responds. Batched
+        string lists are safe (the bridge left-pads those itself); right-padded tensors are
+        not, so they are refused by name instead of generating plausible-looking silence.
+        """
+        if isinstance(batch, torch.Tensor):
+            tokenizer = getattr(getattr(self, "datamodule", None), "tokenizer", None)
+            _reject_trailing_pad_tensor_batch(
+                batch,
+                pad_token_id=getattr(tokenizer, "pad_token_id", None),
+                padding_side=getattr(tokenizer, "padding_side", None),
+            )
+        return super().it_generate(batch, **kwargs)
+
+
+def _reject_trailing_pad_tensor_batch(
+    input_ids: torch.Tensor, *, pad_token_id: int | None, padding_side: str | None
+) -> None:
+    """Refuse a tensor batch whose rows end in padding instead of generating from it.
+
+    A trailing pad id means the bridge loop's first step reads post-pad logits for that row,
+    which predicts more pad/end-of-text and freezes the row before it responds. Left-pad the
+    batch (``padding_side="left"``) or pass strings so the bridge pads the batch itself.
+    Batches with no trailing pads, and callers with no pad id to check against, pass through.
+    """
+    if pad_token_id is None or input_ids.dim() == 0:
+        return
+    if bool((input_ids[..., -1] == pad_token_id).any()):
+        raise ValueError(
+            "it_generate received a tensor batch with trailing pad token id "
+            f"{pad_token_id} (tokenizer padding_side={padding_side!r}); the TransformerBridge "
+            "generation loop samples from the last sequence position, so padded rows start "
+            "from post-pad logits, emit end-of-text immediately, and never respond. Left-pad "
+            'the batch (padding_side="left") or pass a list of strings instead.'
+        )
+
 
 if _FTS_AVAILABLE:
     from finetuning_scheduler.strategy_adapters.base import StrategyAdapter

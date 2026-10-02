@@ -443,6 +443,36 @@ class TestClassTransformerLens:
             BaseITLensModule._apply_bridge_hook_flags(bridge, TransformerBridgeConfig(**small, use_attn_result=True))
 
 
+class TestTrailingPadTensorRefusal:
+    """The bridge loop starts from the last position, so trailing-pad tensors must be refused.
+
+    Measured on gpt2/CPU (#123): a right-padded row's first step reads post-pad logits, emits end-of-text at once, and
+    freezes — only the unpadded (longest) row responds. These pin the refusal without instantiating a model.
+    """
+
+    def test_right_padded_batch_raises_by_name(self):
+        """A row ending in pads names the pad id and the accepted alternatives."""
+        from interpretune.adapters.transformer_lens.adapter import _reject_trailing_pad_tensor_batch
+
+        batch = torch.tensor([[10, 11, 12], [20, 50256, 50256]])
+        with pytest.raises(ValueError, match="trailing pad token id 50256"):
+            _reject_trailing_pad_tensor_batch(batch, pad_token_id=50256, padding_side="right")
+
+    def test_clean_and_left_padded_batches_pass(self):
+        """Batches whose last position is real reach the loop untouched."""
+        from interpretune.adapters.transformer_lens.adapter import _reject_trailing_pad_tensor_batch
+
+        _reject_trailing_pad_tensor_batch(
+            torch.tensor([[50256, 50256, 20, 21], [10, 11, 12, 13]]),
+            pad_token_id=50256,
+            padding_side="left",
+        )
+        _reject_trailing_pad_tensor_batch(
+            torch.tensor([[10, 11, 12], [20, 21, 22]]), pad_token_id=50256, padding_side="right"
+        )
+        _reject_trailing_pad_tensor_batch(torch.tensor([[10, 50256]]), pad_token_id=None, padding_side="right")
+
+
 class TestBasicTransformerBridgeAdapter:
     """Basic tests for TransformerBridgeStrategyAdapter without model fixtures.
 
