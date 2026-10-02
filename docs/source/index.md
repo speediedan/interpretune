@@ -78,7 +78,8 @@ uv pip install -e ".[examples,lightning]" --group git-deps --group test
 
 See {doc}`the examples gallery <examples>` for which notebooks need `git-deps`, a GPU, or gated
 model access. New here? Start with the {doc}`CPU quickstart <examples>` — no GPU, token, or gated
-weights.
+weights — and the {doc}`adapter-selection guide <usage/adapter_selection_guide>` for which
+adapter combination fits your task.
 
 ### Basic usage
 
@@ -151,6 +152,7 @@ usage/analysis_injection_usage
 :maxdepth: 1
 :hidden:
 
+usage/adapter_selection_guide
 usage/adapter_development_guide
 usage/adapter_conformance_contract
 usage/framework_level_adapters
