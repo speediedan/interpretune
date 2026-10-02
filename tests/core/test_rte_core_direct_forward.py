@@ -35,11 +35,12 @@ def _core_session(adapters: tuple, dataset_dir: Path) -> it.ITSession:
     )
 
 
-def test_a_config_declaring_a_key_its_forward_cannot_take_is_refused_at_setup(tmp_path):
+def test_a_batch_keyed_for_another_forward_is_refused_by_name_at_the_forward(tmp_path):
     """The mistake the core config shipped with: the TransformerLens bridge's ``input`` key on an HF-backed module.
 
-    Analysis paths resolve either name, so it passed every analysis test; it must now fail at setup, by name, instead
-    of as HF's "You have to specify either input_ids or inputs_embeds" in the first Trainer loop.
+    Analysis paths resolve either name, so setup and every analysis test must still accept it; the direct forward a
+    Trainer loop runs must refuse it by name, instead of failing with HF's "You have to specify either input_ids or
+    inputs_embeds".
     """
     from interpretune.utils import MisconfigurationException
 
@@ -57,8 +58,12 @@ def test_a_config_declaring_a_key_its_forward_cannot_take_is_refused_at_setup(tm
             module_cls=m_cls,
         )
     )
-    with pytest.raises(MisconfigurationException, match=r"declares 'input'.*takes \['input_ids'"):
-        it.it_init(session.module, session.datamodule)
+    it.it_init(session.module, session.datamodule)
+    batch = next(iter(session.datamodule.test_dataloader()))
+    assert "input" in batch and "input_ids" not in batch, sorted(batch)
+    inputs = {k: v for k, v in batch.items() if k != "labels"}
+    with pytest.raises(MisconfigurationException, match=r"supplies its input as \['input'\].*takes \['input_ids'"):
+        session.module(**inputs)
 
 
 def test_core_module_direct_forward_accepts_its_own_batches(tmp_path):

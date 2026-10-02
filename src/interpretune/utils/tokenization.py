@@ -1,3 +1,9 @@
+from __future__ import annotations
+
+import functools
+import inspect
+from typing import Any, Mapping
+
 from transformers.tokenization_utils_base import BatchEncoding
 
 
@@ -19,11 +25,25 @@ def sanitize_input_name(model_input_names: list[str], features: BatchEncoding) -
     return features
 
 
-# Names a model forward commonly takes its token input under; used only to keep the refusal message short.
-_INPUT_LIKE = ("input_ids", "input", "inputs_embeds", "tokens")
+# Names a model forward takes its token input under. A keyword call whose input-like keys include none the forward names
+# cannot supply the model's primary input.
+_INPUT_LIKE = frozenset({"input_ids", "input", "inputs_embeds", "tokens"})
 
 
-def verifiable_forward_inputs(model: object) -> set[str] | None:
+@functools.lru_cache(maxsize=None)
+def _named_forward_params(cls: type) -> frozenset[str] | None:
+    forward = getattr(cls, "forward", None)
+    if forward is None:
+        return None
+    try:
+        params = inspect.signature(forward).parameters
+    except (TypeError, ValueError):
+        return None
+    kinds = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    return frozenset(name for name, p in params.items() if p.kind in kinds and name != "self") or None
+
+
+def verifiable_forward_inputs(model: object) -> frozenset[str] | None:
     """The named input parameters of ``model``'s forward, or None when they cannot be read reliably.
 
     Only forwards whose call semantics are known are read: a HuggingFace ``PreTrainedModel`` (directly or under a PEFT
@@ -32,40 +52,31 @@ def verifiable_forward_inputs(model: object) -> set[str] | None:
     (nnsight, circuit-tracer's replacement models) may expose the wrapped model's ``forward`` while accepting other
     keys, so its signature is not evidence and None is returned rather than a guess.
     """
-    import inspect
-
     from transformers import PreTrainedModel
 
     known = isinstance(model, PreTrainedModel)
     known = known or isinstance(getattr(model, "base_model", None), PreTrainedModel)  # a PEFT wrapper
     known = known or type(model).__module__.startswith("transformer_lens.")
-    if not known:
-        return None
-    forward = getattr(type(model), "forward", None)
-    if forward is None:
-        return None
-    try:
-        params = inspect.signature(forward).parameters
-    except (TypeError, ValueError):
-        return None
-    kinds = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
-    return {name for name, p in params.items() if p.kind in kinds and name != "self"} or None
+    return _named_forward_params(type(model)) if known else None
 
 
-def forward_input_mismatch(model: object, model_input_names: list[str]) -> str | None:
-    """Why ``model`` cannot take batches keyed by ``model_input_names``; None when it can or cannot be checked.
+def forward_call_mismatch(model: object, kwargs: Mapping[str, Any]) -> str | None:
+    """Why a keyword-only forward call on ``model`` cannot supply its primary input; None when it can or cannot be
+    told.
 
-    The analysis ops resolve a batch's input key through aliases, so a mismatch passes every analysis path and fails
-    only on a direct forward, which is what every Trainer loop runs: a config can ship broken for training with all of
-    its analysis tests green.
+    The analysis ops resolve a batch's input key through aliases, so a config whose tokenizer names the wrong key passes
+    every analysis path and fails only on a direct forward, which is what every Trainer loop runs, with the model's own
+    message about a missing input.
     """
-    accepted = verifiable_forward_inputs(model)
-    if accepted is None or not model_input_names or model_input_names[0] in accepted:
+    given = sorted(k for k in kwargs if k in _INPUT_LIKE)
+    if not given:
         return None
-    takes = sorted(n for n in accepted if n in _INPUT_LIKE) or sorted(accepted)[:4]
+    accepted = verifiable_forward_inputs(model)
+    if accepted is None or any(k in accepted for k in given):
+        return None
+    takes = sorted(_INPUT_LIKE & accepted) or sorted(accepted)[:4]
     return (
-        f"the tokenizer declares {model_input_names[0]!r} as the primary model input "
-        f"(tokenizer_kwargs.model_input_names={list(model_input_names)}), but {type(model).__name__}.forward takes "
-        f"{takes}; a direct forward (any Trainer loop) would fail. Declare the name this model's forward takes, e.g. "
-        f"model_input_names: [{takes[0]!r}, 'attention_mask']."
+        f"the batch supplies its input as {given}, but {type(model).__name__}.forward takes {takes}. A batch's input "
+        f"key comes from the tokenizer's model_input_names, so declare the name this forward takes, e.g. "
+        f"tokenizer_kwargs.model_input_names: [{takes[0]!r}, 'attention_mask']."
     )
