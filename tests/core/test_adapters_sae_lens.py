@@ -283,6 +283,43 @@ class TestClassSAELens:
         with pytest.raises(MisconfigurationException, match="At least one `SAELens"):
             _ = SAELensConfig(**test_sl_cfg)
 
+    def test_use_error_term_defaults_off(self):
+        """Both SAE config constructors carry the flag, defaulting to current behavior."""
+        assert SAELensFromPretrainedConfig(release="r", sae_id="s").use_error_term is False
+        cust = SAELensCustomConfig(cfg=deepcopy(TestClassSAELens.test_sae_cust_config))
+        assert cust.use_error_term is False
+
+    def test_use_error_term_reaches_pretrained_handle(self):
+        """The pretrained loader takes no such flag, so wiring applies it after loading."""
+        from types import SimpleNamespace
+
+        from interpretune.adapters.sae_lens.adapter import BaseSAELensModule
+
+        cfg = SAELensFromPretrainedConfig(release="r", sae_id="s", use_error_term=True)
+        stub = SimpleNamespace(it_cfg=SimpleNamespace(sae_cfgs=[cfg]), saes=[])
+        handle = SimpleNamespace()
+        with patch(
+            "interpretune.adapters.sae_lens.adapter.SAE.from_pretrained_with_cfg_and_sparsity",
+            return_value=(handle, {}, {}),
+        ) as loader:
+            BaseSAELensModule.instantiate_saes(stub)
+        assert "use_error_term" not in loader.call_args.kwargs
+        assert handle.use_error_term is True
+        assert len(stub.saes) == 1
+
+    def test_use_error_term_reaches_custom_constructor(self):
+        """The custom path constructs StandardSAE directly, which takes the flag itself."""
+        from types import SimpleNamespace
+
+        from interpretune.adapters.sae_lens.adapter import BaseSAELensModule
+
+        cfg = SAELensCustomConfig(cfg=deepcopy(TestClassSAELens.test_sae_cust_config), use_error_term=True)
+        stub = SimpleNamespace(it_cfg=SimpleNamespace(sae_cfgs=[cfg]), saes=[])
+        # The constructor routes through sae_lens' deprecated direct setter; expect exactly that.
+        with pytest.warns(DeprecationWarning, match="use_error_term"):
+            BaseSAELensModule.instantiate_saes(stub)
+        assert stub.saes[0].handle.use_error_term is True
+
     @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=0.5)
     def test_sl_tl_device_sync_warnings(self):
         test_sl_cfg = deepcopy(TestClassSAELens.test_sl_cust)

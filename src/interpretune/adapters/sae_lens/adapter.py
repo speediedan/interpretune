@@ -112,12 +112,18 @@ class BaseSAELensModule(BaseITModule):
             assert isinstance(sae_cfg, (SAELensFromPretrainedConfig, SAELensCustomConfig))
             original_cfg, sparsity = None, None
             if isinstance(sae_cfg, SAELensFromPretrainedConfig):
-                # Filter None values so sae_lens defaults (e.g. dtype="float32") take effect
+                # Filter None values so sae_lens defaults (e.g. dtype="float32") take effect; drop
+                # use_error_term too (the loader takes no such flag) and apply it after loading.
                 sae_kwargs = {k: v for k, v in sae_cfg.__dict__.items() if v is not None}
+                use_error_term = sae_kwargs.pop("use_error_term", False)
                 handle, original_cfg, sparsity = SAE.from_pretrained_with_cfg_and_sparsity(**sae_kwargs)
+                if use_error_term:
+                    # The sanctioned setter (the bridge has no add_sae kwarg to take this instead);
+                    # warns upstream-deprecated, but only on explicit opt-in, never by default.
+                    handle.use_error_term = True
             else:
                 # TODO: enable configuration of SAE subclass to use
-                handle = StandardSAE(cfg=sae_cfg.cfg)  # type: ignore[arg-type]
+                handle = StandardSAE(cfg=sae_cfg.cfg, use_error_term=sae_cfg.use_error_term)  # type: ignore[arg-type]
                 original_cfg = original_cfg or {}
                 sparsity = sparsity or {}
             self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))  # type: ignore[arg-type]
