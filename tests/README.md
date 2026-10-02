@@ -472,5 +472,19 @@ The selection narrows only the GPU phases, and is inert when `IT_GPU_SELECTION_F
 `tests/gpu_ci/test_gpu_selection.py` fails on a tracked file no rule classifies, and on a GPU test no area lists.
 **When you add a module, classify it in `areas.yaml`.**
 
+**In the GPU pipeline**, `tests/gpu_ci/plan_gpu_run.py` decides what each build runs:
+
+| build | GPU tests | lease wait |
+| --- | --- | --- |
+| pull request gate | the change's selection; the phases are skipped when it selects none | 40 min per lease, then fail |
+| PR labelled `ci:gpu-full`, or queued with `mode=full` | the full set | as above |
+| nightly, on main when it changed (10:00 UTC, Monday to Saturday) | the full set | 2 h in all, then cancel |
+| weekly extended (10:00 UTC Sunday), release and tag builds, or `extended` | full, plus the full profiling tier and the optional GPU tests | as nightly, for a scheduled run |
+
+Whatever the planner cannot establish, such as the change set or the pull request's labels, runs the full set and is
+named in the `Plan the GPU run` step's log. A selected run uploads coverage under the `gpu-selected` flag, so a
+partial run never reads as a `gpu` coverage drop. To force the full set on a pull request, add the `ci:gpu-full`
+label before the gate is released; a label added later applies from the next build.
+
 Class-level `RunIf` marks select every test the class collects: `_marked` in `tests/conftest.py` reads
 `item.iter_markers()`, so a mark on the class is seen by every phase.
