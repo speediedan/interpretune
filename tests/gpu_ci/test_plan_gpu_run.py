@@ -174,9 +174,14 @@ def test_a_checkout_owned_by_another_user_is_read_once_trusted(tmp_path, monkeyp
     """What the pipeline's container meets: the agent checks out on the host, so git sees another uid's repository.
 
     ``GIT_TEST_ASSUME_DIFFERENT_OWNER`` reproduces that refusal without a second uid, and the command-line-scope
-    ``safe.directory`` the pipeline step sets must lift it.
+    ``safe.directory`` the pipeline step sets must lift it. Global and system configuration are shut out, since a
+    runner that already trusts every directory (``safe.directory = *``) would never refuse.
     """
     repo = _pr_merge_repo(tmp_path)
+    empty_global = tmp_path / "empty.gitconfig"
+    empty_global.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_global))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
     with pytest.raises(RuntimeError, match="dubious ownership"):
         merge_commit_changes(repo)
