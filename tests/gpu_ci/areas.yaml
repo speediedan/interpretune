@@ -127,6 +127,7 @@ areas:
       - src/interpretune/base/**
       - src/interpretune/config/runner.py
       - src/interpretune/config/extensions.py
+      - src/interpretune/config/profiling.py
       - src/interpretune/runners/core.py
       - src/interpretune/extensions/__init__.py
       - src/interpretune/extensions/memprofiler.py

@@ -13,6 +13,7 @@ from interpretune.config import (
     HFFromPretrainedConfig,
     GenerativeClassificationConfig,
 )
+from interpretune.config.profiling import ProfilerCfg
 from interpretune.utils import rank_zero_info
 from interpretune.utils.repr_helpers import (
     summarize_obj,
@@ -115,6 +116,10 @@ class ITConfig(
     Composed from the grouped configs above rather than declaring every field flat, so an adapter can
     extend one group without widening the whole surface.
     """
+
+    # Unified profiler selection (interpretune#11): exactly one backend active; default off.
+    # Wired from the CLI (--profiler_cfg) and config files; activation happens in the runners.
+    profiler_cfg: ProfilerCfg = field(default_factory=ProfilerCfg)
 
     # """Dataclass to encapsulate the ITModule internal state."""
     # See NOTE [Interpretune Dataclass-Oriented Configuration]

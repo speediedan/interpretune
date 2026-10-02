@@ -286,3 +286,55 @@ def test_it_session_cfg_component_classes_merge_when_set():
     mapping = ITSessionMixin()._merge_parsed_session_overrides(config, {})
     assert mapping["module_cls"].__name__ == "TestITModule"
     assert "datamodule_cls" not in mapping
+
+
+def test_profiler_cfg_group_declared():
+    """The profiler selection surface is on the parser (#11)."""
+    parser = _session_mixin_parser()
+    dests = {action.dest for action in parser._actions}
+    assert "profiler_cfg" in dests
+
+
+def test_profiler_cfg_defaults_merge_as_noops():
+    """An unset profiler section must not create module config out of nothing."""
+    parser = _session_mixin_parser()
+    config = parser.parse_args([])
+    assert ITSessionMixin()._merge_parsed_session_overrides(config, {}) == {}
+    mapping = {"registered_cfg": {"module_cfg": {"a": 1}}}
+    out = ITSessionMixin()._merge_parsed_session_overrides(config, mapping)
+    assert out["registered_cfg"]["module_cfg"] == {"a": 1}
+
+
+def test_profiler_cfg_merges_into_module_cfg():
+    """Explicit profiler selection lands in the module config, both dialects."""
+    parser = _session_mixin_parser()
+    config = parser.parse_args(["--profiler_cfg.which", "pytorch"])
+    one_door = ITSessionMixin()._merge_parsed_session_overrides(config, {"registered_cfg": {"module_cfg": {}}})
+    assert one_door["registered_cfg"]["module_cfg"]["profiler_cfg"]["which"] == "pytorch"
+    legacy = ITSessionMixin()._merge_parsed_session_overrides(config, {})
+    assert legacy["module_cfg"]["profiler_cfg"]["which"] == "pytorch"
+
+
+@RunIf(lightning=True)
+def test_lightning_cli_accepts_trainer_profiler(clean_cli_env, capsys):
+    """The Lightning side reuses native --trainer.profiler instead of duplicating it (#11).
+
+    Pins that our LightningITCLI passes the profiler argument through: a rejected key exits 2,
+    and the printed config carries it.
+    """
+    from interpretune.base import l_cli_main
+
+    config_path = LIGHTNING_CLI_CONFIGS[0]
+    with pytest.raises(SystemExit) as exc, patch("sys.argv", [RUN_FN]):
+        l_cli_main(
+            run_mode=False,
+            args=[
+                "--config",
+                str(config_path),
+                "--trainer.profiler",
+                "lightning.pytorch.profilers.PyTorchProfiler",
+                "--print_config",
+            ],
+        )
+    assert exc.value.code == 0
+    assert "profiler" in capsys.readouterr().out
