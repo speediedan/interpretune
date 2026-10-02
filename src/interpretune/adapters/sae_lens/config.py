@@ -41,6 +41,11 @@ class SAELensFromPretrainedConfig(ITSerializableCfg):
     sae_id: str
     device: str | None = None
     dtype: str | None = None
+    # Whether the instantiated SAE adds its reconstruction error into the output (on-init
+    # stateful SAEs train through it; analysis-time splices read it at forward time). The
+    # sae_lens loader takes no such flag, so instantiate_saes applies it to the handle after
+    # loading; off by default so default construction stays warning-free.
+    use_error_term: bool = False
 
     def __post_init__(self) -> None:
         if self.device is None:  # align with TL default device resolution
@@ -52,6 +57,9 @@ class SAELensCustomConfig(ITSerializableCfg):
     """Construct an SAE from an explicit config rather than loading pretrained weights."""
 
     cfg: SAEConfig | dict[str, Any]
+    # Carried into the StandardSAE constructor (which accepts it directly, unlike the
+    # pretrained loader); see SAELensFromPretrainedConfig for what the flag does downstream.
+    use_error_term: bool = False
 
     # TODO: may add additional custom behavior handling attributes here
     def __post_init__(self) -> None:
