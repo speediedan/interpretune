@@ -149,6 +149,7 @@ class CompositionRegistry(dict):
             f"The composition key `{composition_key}` was not found in the registry."
             f" Available valid compositions: {available_keys}"
         )
+        err_msg += _unmet_backend_notes(composition_key)
         raise KeyError(err_msg)
 
     def remove(self, composition_key: tuple[Adapter | str]) -> None:
@@ -171,6 +172,47 @@ class CompositionRegistry(dict):
 #: second load of the same repo is idempotent while two repos claiming one name is an error rather than
 #: a silent last-writer-wins.
 _DYNAMIC_ADAPTERS: dict[str, str] = {}
+
+
+def _unmet_backend_notes(composition_key: tuple[Adapter | str]) -> str:
+    """Name missed-key adapters whose backends are absent here, so a miss says which kind it is.
+
+    A composition miss has two causes — "this combination does not exist" and "this combination
+    exists but its backend is not installed here" — and the base message cannot tell them apart.
+    Each adapter declares its requirements import-safely (``__it_requires__`` on the module the
+    entry point names), so a miss re-checks those declarations and appends the reason for every
+    adapter that is genuinely unavailable. Adapters with no declaration, or whose requirements
+    are satisfied, add nothing: their miss really is a nonexistent combination. Imports are
+    deferred to this miss-only path so the registry pays nothing on hits.
+    """
+    try:
+        from importlib import import_module
+        from importlib.metadata import entry_points
+
+        from interpretune.adapters._light_register import ADAPTER_ENTRYPOINT_GROUP
+        from interpretune.utils.requirements import requirement_status
+
+        declared = {ep.name: ep.value for ep in entry_points(group=ADAPTER_ENTRYPOINT_GROUP)}
+    except Exception:
+        return ""
+    notes = []
+    for adapter in composition_key:
+        name = adapter.value if isinstance(adapter, Adapter) else str(adapter)
+        mod_path = declared.get(name)
+        if mod_path is None:
+            continue
+        try:
+            requires = getattr(import_module(mod_path), "__it_requires__", None)
+        except Exception:
+            continue
+        if not requires:
+            continue
+        unmet = requirement_status(requires, source=mod_path)
+        if unmet:
+            notes.append(f"{name}: {unmet[0].message}")
+    if not notes:
+        return ""
+    return " Unavailable in this environment:\n  - " + "\n  - ".join(notes)
 
 
 class DynamicAdapterError(ValueError):

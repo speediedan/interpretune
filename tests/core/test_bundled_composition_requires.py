@@ -134,6 +134,37 @@ class TestUnavailableAdaptersAreReported:
         assert not [w for w in caught if issubclass(w.category, UnavailableCompositionWarning)]
 
 
+class TestCompositionMissNamesAbsentBackends:
+    """A registry miss must say WHICH kind it is: nonexistent combination vs absent backend.
+
+    Registration reports unavailable adapters once at import, but the miss itself — the moment the
+    user is actually stuck — said only "not found", sending users with a missing extra to diff the
+    available-compositions list by hand.
+    """
+
+    def test_miss_names_the_missing_extra(self, monkeypatch):
+        """The miss points at the unmet requirement, with the install direction."""
+        from interpretune.protocol import Adapter
+
+        import interpretune.adapters.circuit_tracer as ctpkg
+
+        if not discover_adapter_entrypoints():
+            pytest.skip("installed interpretune metadata predates the entry-point group; reinstall to exercise")
+        monkeypatch.setattr(ctpkg, "__it_requires__", {"pip": ["a-package-nobody-has"]}, raising=False)
+        with pytest.raises(KeyError, match="a-package-nobody-has"):
+            CompositionRegistry().get((Adapter.core, Adapter.circuit_tracer))
+
+    def test_miss_without_unmet_backends_carries_no_availability_note(self):
+        """Negative control: a genuinely nonexistent combination must not claim absence.
+
+        Without this, an always-on note would pass the test above while telling a user with a full
+        environment that their (misspelled or nonexistent) combination is merely uninstalled.
+        """
+        with pytest.raises(KeyError) as caught:
+            CompositionRegistry().get(("core", "no-such-adapter-xyz"))
+        assert "Unavailable in this environment" not in str(caught.value)
+
+
 class TestCircuitTracerIsIndependentOfSAELens:
     """Only the circuit-tracer composition that attaches sae_lens latent models may need sae_lens.
 
