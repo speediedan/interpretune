@@ -124,9 +124,10 @@ def test_an_unknown_mode_is_refused(spec):
 
 def test_the_exported_variables(spec):
     plan = _plan(spec)
-    lines = azure_variables(plan, Path("/agent/tmp/sel.txt"))
+    sel_file = Path("/agent/tmp/sel.txt")
+    lines = azure_variables(plan, sel_file)
     assert "##vso[task.setvariable variable=IT_GPU_SELECTION_MODE]selected" in lines
-    assert "##vso[task.setvariable variable=IT_GPU_SELECTION_FILE]/agent/tmp/sel.txt" in lines
+    assert f"##vso[task.setvariable variable=IT_GPU_SELECTION_FILE]{sel_file}" in lines
     assert "##vso[task.setvariable variable=IT_GPU_LEASE_ON_TIMEOUT]fail" in lines
 
 
