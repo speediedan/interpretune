@@ -8,7 +8,7 @@ from typing import Any
 
 
 import interpretune as it
-from tests.analysis_resource_utils import log_resource_snapshot
+from interpretune.utils.resource_mgmt import log_resource_snapshot
 from tests.configuration import get_deepcopied_session
 from tests.orchestration import save_reload_results_dataset
 from interpretune.config import AnalysisCfg
