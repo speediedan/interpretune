@@ -7,20 +7,22 @@ from dataclasses import dataclass
 import pytest
 import torch
 
+from interpretune.utils.resource_mgmt import (
+    analysis_resource_debug_enabled,
+    log_resource_delta,
+)
 from tests.analysis_resource_utils import (
     ANALYSIS_LOW_RAM_GB,
     AnalysisFixtureSpec,
     AnalysisExtractionMixin,
     ExtractedAnalysisStore,
     ExtractedFixturePayload,
-    analysis_resource_debug_enabled,
     analysis_fixture_scope,
     build_analysis_fixture_payload_extractor,
     clear_nnsight_test_state,
     conditional_clean_cpu,
     extract_analysis_store_fields,
     extract_result_dataset_metadata,
-    log_resource_delta,
     serial_test_cleanup,
 )
 from tests.runif import get_runner_ram_gb
@@ -85,7 +87,7 @@ class TestResourceDebugHelpers:
     def test_log_resource_delta_emits_current_values_and_deltas(self, monkeypatch, capsys):
         monkeypatch.setenv("IT_RESOURCE_DEBUG", "1")
         monkeypatch.setattr(
-            "tests.analysis_resource_utils.get_resource_snapshot",
+            "interpretune.utils.resource_mgmt.get_resource_snapshot",
             lambda include_cuda=True: {
                 "rss_gb": 2.0,
                 "vms_gb": 3.0,

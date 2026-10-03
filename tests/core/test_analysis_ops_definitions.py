@@ -15,7 +15,7 @@ from interpretune.analysis.optools import (
 )
 from interpretune.analysis.ops.bundled.sae.sae_ops import ablate_sae_latent
 from interpretune.analysis.ops.base import AnalysisBatch
-from tests.analysis_resource_utils import log_resource_snapshot
+from interpretune.utils.resource_mgmt import log_resource_snapshot
 from tests.utils import _unwrap_one
 from tests.base_defaults import BaseAugTest, pytest_factory, OpTestConfig
 from tests.orchestration import run_op_with_config

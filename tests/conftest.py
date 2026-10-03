@@ -54,14 +54,16 @@ from tests.parity_acceptance.test_it_cli import TEST_CONFIGS_CLI_PARITY
 from tests.base_defaults import BaseCfg
 from tests.parity_acceptance.test_it_l import CoreCfg
 from tests.parity_acceptance.test_it_tl import TLParityCfg
-from tests.analysis_resource_utils import (
-    AnalysisExtractionMixin,
-    analysis_fixture_scope,
+from interpretune.utils.resource_mgmt import (
     analysis_resource_debug_enabled,
-    clear_nnsight_test_state,
     get_resource_snapshot,
     log_resource_delta,
     log_resource_snapshot,
+)
+from tests.analysis_resource_utils import (
+    AnalysisExtractionMixin,
+    analysis_fixture_scope,
+    clear_nnsight_test_state,
 )
 from tests.utils import (
     kwargs_from_cfg_obj,
