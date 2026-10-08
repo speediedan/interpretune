@@ -8,10 +8,12 @@ naming the missing entry.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent.parent
-GUIDE = REPO_ROOT / "docs" / "source" / "usage" / "adapter_selection_guide.md"
+DOCS_SOURCE = REPO_ROOT / "docs" / "source"
+GUIDE = DOCS_SOURCE / "usage" / "adapter_selection_guide.md"
 
 
 def _registered_module_combinations() -> set[str]:
@@ -26,17 +28,40 @@ def _registered_module_combinations() -> set[str]:
     return combos
 
 
+def _documented_module_combinations(text: str) -> set[str]:
+    """The combination bullets under the guide's ``Registered module combinations`` heading."""
+    section = text.split("## Registered module combinations", 1)[1].split("\n## ", 1)[0]
+    return set(re.findall(r"^- `(\([^`]*\))`$", section, flags=re.MULTILINE))
+
+
 class TestAdapterGuideListsEveryCombination:
-    def test_every_registered_combination_is_documented(self):
-        """Each registry combination appears verbatim in the guide."""
-        text = GUIDE.read_text(encoding="utf-8")
-        missing = [c for c in sorted(_registered_module_combinations()) if c not in text]
-        assert not missing, (
+    def test_documented_combinations_match_the_registry(self):
+        """The guide lists exactly the registered combinations: none missing, none stale."""
+        documented = _documented_module_combinations(GUIDE.read_text(encoding="utf-8"))
+        registered = _registered_module_combinations()
+        assert documented, "no combination bullets found under 'Registered module combinations'"
+        assert not registered - documented, (
             "registered module combinations missing from docs/source/usage/adapter_selection_guide.md:\n  "
-            + "\n  ".join(missing)
+            + "\n  ".join(sorted(registered - documented))
+        )
+        assert not documented - registered, (
+            "combinations documented in docs/source/usage/adapter_selection_guide.md but not registered:\n  "
+            + "\n  ".join(sorted(documented - registered))
         )
 
-    def test_guide_names_the_backend_matrix_rather_than_duplicating_it(self):
-        """The compatibility matrix lives in one place; the guide links, not copies."""
+    def test_doc_references_resolve(self):
+        """Every ``{doc}`` target names an existing page.
+
+        Sphinx resolves a relative target against the page's own directory and only warns on a miss, so a
+        target written from the docs root (``usage/...`` inside ``usage/``) renders as unlinked text in a build
+        that still passes.
+        """
         text = GUIDE.read_text(encoding="utf-8")
-        assert "circuit_tracer_backend_support" in text
+        targets = re.findall(r"\{doc\}`[^`<]*<([^>]+)>`", text)
+        assert any("circuit_tracer_backend_support" in t for t in targets), "the backend matrix is not linked"
+        unresolved = []
+        for target in targets:
+            base = DOCS_SOURCE if target.startswith("/") else GUIDE.parent
+            if not (base / f"{target.lstrip('/')}.md").exists():
+                unresolved.append(target)
+        assert not unresolved, f"unresolved {{doc}} targets in the adapter-selection guide: {unresolved}"
