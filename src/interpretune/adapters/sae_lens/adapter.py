@@ -118,8 +118,10 @@ class BaseSAELensModule(BaseITModule):
                 use_error_term = sae_kwargs.pop("use_error_term", False)
                 handle, original_cfg, sparsity = SAE.from_pretrained_with_cfg_and_sparsity(**sae_kwargs)
                 if use_error_term:
-                    # The sanctioned setter (the bridge has no add_sae kwarg to take this instead);
-                    # warns upstream-deprecated, but only on explicit opt-in, never by default.
+                    # Set on the handle rather than passed to `add_sae(..., use_error_term=...)`: only the
+                    # on-init splice goes through add_sae, while the per-forward `model.saes()` default and
+                    # the NNsight splice read the SAE's own attribute. sae_lens warns this setter is
+                    # deprecated, but only on explicit opt-in, never by default.
                     handle.use_error_term = True
             else:
                 # TODO: enable configuration of SAE subclass to use

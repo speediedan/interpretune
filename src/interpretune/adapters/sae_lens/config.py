@@ -114,7 +114,6 @@ class SAELensConfig(ITConfig, TLConfigInitMixin):
     # when the optimizer is built and never receive gradients. Leaving this False is correct for analysis
     # and inference; set it True to TRAIN SAE parameters.
     add_saes_on_init: bool = False  # TODO: may push this down to SAE config level instead of setting for all saes
-    # use_error_term: bool = False  # TODO: add support for use_error_term with on_init stateful SAEs
 
     @property
     def normalized_sae_cfg_refs(self) -> list[str]:
