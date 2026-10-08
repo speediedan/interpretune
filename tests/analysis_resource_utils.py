@@ -30,11 +30,9 @@ import torch
 
 from interpretune.testing.conformance.extraction import ExtractedAnalysisStore  # (promoted; re-exported)
 
-# Resource snapshot/debug helpers live in the main package (moved for #210); re-exported here
-# so existing test-side imports keep working, but new code should import from the package.
-from interpretune.utils.resource_mgmt import (
-    cleanup_python_cuda,
-)
+# The resource snapshot/debug helpers live in interpretune.utils.resource_mgmt; import them from there.
+# They are deliberately not re-exported here (no compatibility shims while pre-MVP).
+from interpretune.utils.resource_mgmt import cleanup_python_cuda
 
 from tests.runif import get_runner_ram_gb
 
