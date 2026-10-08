@@ -8,6 +8,8 @@ the trust mode by the hub trust-posture suite.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 from huggingface_hub.errors import GatedRepoError, HfHubHTTPError, RepositoryNotFoundError
@@ -100,3 +102,19 @@ class TestModelIdRecovery:
     def test_unknown_shape_falls_back(self):
         assert model_id_from_pretrained_kwargs({}) == "the configured model"
         assert model_id_from_pretrained_kwargs(None) == "the configured model"
+
+
+class TestTroubleshootingPageStaysInSync:
+    """The troubleshooting page must name exactly the modes with pinned messages."""
+
+    PAGE = Path(__file__).parent.parent.parent / "docs" / "source" / "usage" / "when_things_go_wrong.md"
+
+    def test_covered_modes_listed_and_uncovered_named(self):
+        text = self.PAGE.read_text(encoding="utf-8")
+        for mode in (
+            "Unknown adapter combination",
+            "Gated-model download failures",
+            "Remote-code trust gate",
+        ):
+            assert mode in text, f"troubleshooting page dropped mode: {mode}"
+        assert "CUDA-absent" in text and "cache-root" in text

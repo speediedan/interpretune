@@ -130,6 +130,7 @@ usage/analysis_runner_usage
 usage/analysis_store_serialization
 usage/cache_behavior
 usage/hub_trust_posture
+usage/when_things_go_wrong
 usage/generation_precedence
 usage/jlens_usage
 ```
