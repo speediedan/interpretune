@@ -1,19 +1,22 @@
 """Actionable messages for Hugging Face model-load auth failures (first-run UX).
 
-Downloading gated weights fails in three ways a first-time user cannot tell apart from the raw
-Hub error: no token configured, a token the Hub rejects, and a gated repository whose license the
-account has not accepted. ``huggingface_hub`` collapses all three into ``OSError`` /
-``HfHubHTTPError`` chains whose status codes a user must know to decode, so model init interprets
-them here, at the load site, where the model id and the configured credential are still in hand.
+Downloading gated weights fails in ways a first-time user cannot tell apart from the raw error: no token
+configured, a token the Hub rejects, a gated repository whose license the account has not accepted, and a
+repository the request cannot see at all. transformers wraps each in a generic ``OSError`` whose text names
+none of them reliably, but it chains the typed ``huggingface_hub`` error (``GatedRepoError``,
+``RepositoryNotFoundError``, ``HfHubHTTPError``) as the cause, with the HTTP response attached. Model init
+interprets that typed error here, at the load site, where the model id and the configured credential are
+still in hand.
 
-Pure by construction: the interpreter takes the exception plus the two facts it needs and returns
-an exception (or ``None`` for anything it does not recognize, letting the original propagate), so
-every case is assertable on CPU with synthetic errors and no network.
+Classification reads exception TYPES and status codes, never message text: a load can fail for many reasons
+whose messages happen to contain "401", "not found" or "no such" (a state-dict shape, a missing cache file),
+and an unrecognized failure must keep today's behavior rather than gain a wrong explanation. Pure by
+construction: every case is assertable on CPU with synthetic typed errors and no network.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterator
 
 from interpretune.utils.exceptions import MisconfigurationException
 
@@ -29,47 +32,67 @@ def model_id_from_pretrained_kwargs(pretrained_kwargs: dict[str, Any] | None) ->
     return "the configured model"
 
 
+def _exception_chain(error: BaseException) -> Iterator[BaseException]:
+    """The error and everything it was raised from or during, outermost first, each once."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
 def interpret_hf_model_load_error(
     error: BaseException, *, model_id: str, access_token: str | None, auth_env_key: str | None
 ) -> MisconfigurationException | None:
     """Map a model-download failure to an actionable error, or ``None`` when unrecognized.
 
-    The three gated-model cases decode by status: 401 with no token means nothing was offered;
-    401 with a token means the token itself was refused; 403 means the repository gate (license
-    acceptance) stopped an otherwise authenticated request; 404 means the id resolves to nothing
-    the request can see -- nonexistent, or private to another account. Anything else propagates
-    untouched: an unknown failure keeps today's behavior rather than gaining a wrong explanation.
+    Only a typed ``huggingface_hub`` HTTP error in the exception chain is interpreted. A gated repository
+    answers 401 to an unauthenticated or refused request and 403 to an authenticated account that has not
+    accepted its license; a repository the request cannot see at all (nonexistent, or private to another
+    account) raises ``RepositoryNotFoundError`` whatever the status. Anything else propagates untouched.
     """
-    text = f"{type(error).__name__}: {error}"
-    lowered = text.lower()
-    has_401 = "401" in lowered or "unauthorized" in lowered or "unauthenticated" in lowered
-    has_403 = "403" in lowered or "forbidden" in lowered
-    gated_hint = "gated" in lowered or "license" in lowered or "access to" in lowered
-    credential = f" ${auth_env_key}" if auth_env_key else " a token"
+    from huggingface_hub.errors import GatedRepoError, HfHubHTTPError, RepositoryNotFoundError
 
-    if has_401 and access_token is None:
+    hub_error = next((e for e in _exception_chain(error) if isinstance(e, HfHubHTTPError)), None)
+    if hub_error is None:
+        return None
+    status = getattr(getattr(hub_error, "response", None), "status_code", None)
+    credential = f" ${auth_env_key}" if auth_env_key else " a token"
+    original = f"Original error: {type(error).__name__}: {error}"
+
+    # GatedRepoError subclasses RepositoryNotFoundError, so test it first; a bare 401/403 HTTP error from a
+    # non-repository endpoint reads the same way as the gated case.
+    refused_by_auth = isinstance(hub_error, GatedRepoError) or (
+        status in (401, 403) and not isinstance(hub_error, RepositoryNotFoundError)
+    )
+    if refused_by_auth:
+        if status == 401 and access_token is None:
+            return MisconfigurationException(
+                f"Could not download {model_id}: the Hub refused the request as unauthenticated and no token "
+                f"was configured. Set{credential}, or run `huggingface-cli login` so the cached credential "
+                f"applies. {original}"
+            )
+        if status == 401:
+            return MisconfigurationException(
+                f"Could not download {model_id}: the Hub refused the configured token. Check that it is still "
+                f"valid and carries access to this repository (regenerate at huggingface.co/settings/tokens if "
+                f"in doubt). {original}"
+            )
         return MisconfigurationException(
-            f"Could not download {model_id}: the Hub refused the request as unauthenticated and no "
-            f"token was configured. Set{credential}, or run `huggingface-cli login` so the cached "
-            f"credential applies. Original error: {text}"
+            f"Could not download {model_id}: the repository gate stopped the request. Accept the model "
+            f"license at huggingface.co/{model_id} with the account owning the token, then retry. {original}"
         )
-    if has_401:
-        return MisconfigurationException(
-            f"Could not download {model_id}: the Hub refused the configured token. Check that it is "
-            f"still valid and carries access to this repository (regenerate at "
-            f"huggingface.co/settings/tokens if in doubt). Original error: {text}"
+    if isinstance(hub_error, RepositoryNotFoundError):
+        token_hint = (
+            f" No token was configured, so a private repository cannot be seen: set{credential} or run "
+            "`huggingface-cli login`."
+            if access_token is None
+            else " If the id is correct, request access or switch to a token that has it."
         )
-    if has_403 or gated_hint:
         return MisconfigurationException(
-            f"Could not download {model_id}: the repository gate stopped the request. Accept the "
-            f"model license at huggingface.co/{model_id} with the account owning the token, then "
-            f"retry. Original error: {text}"
-        )
-    if "404" in lowered or "not found" in lowered or "no such" in lowered:
-        return MisconfigurationException(
-            f"Could not download {model_id}: the Hub reports it does not exist. If the id is "
-            f"correct, it is private to another account (the Hub answers 404 rather than 403 for "
-            f"repositories a token cannot see) -- request access or switch to a token that has it. "
-            f"Original error: {text}"
+            f"Could not download {model_id}: no repository with that id is visible to this request. It does "
+            f"not exist, or it is private to an account the request is not authenticated as.{token_hint} "
+            f"{original}"
         )
     return None
