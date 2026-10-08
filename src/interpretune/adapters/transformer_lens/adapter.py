@@ -439,6 +439,25 @@ class BaseITLensModule(BaseITModule):
         # Call superclass to serialize HF PretrainedConfig (hf_preconversion_config)
         super()._capture_hyperparameters()
 
+    def it_generate(self, batch: BatchEncoding | torch.Tensor, **kwargs) -> Any:
+        """Generate from a batch, refusing tensor batches the bridge loop cannot start from.
+
+        Defined here rather than on one composition because every TransformerLens-backed module (core,
+        Lightning, and the SAE Lens and circuit-tracer TL backends) runs the same bridge generation loop. That
+        loop samples each step from the last sequence position, so a row ending in padding continues from
+        post-pad logits: its continuation is conditioned on the padding (or ends at once when end-of-text is
+        predicted), never on the prompt. Batched string lists are safe (the bridge left-pads those itself);
+        right-padded tensors are not, so they are refused by name instead of generating plausible output.
+        """
+        if isinstance(batch, torch.Tensor):
+            tokenizer = getattr(getattr(self, "datamodule", None), "tokenizer", None)
+            _reject_trailing_pad_tensor_batch(
+                batch,
+                pad_token_id=getattr(tokenizer, "pad_token_id", None),
+                padding_side=getattr(tokenizer, "padding_side", None),
+            )
+        return super().it_generate(batch, **kwargs)
+
     def set_input_require_grads(self) -> None:
         """Not supported for TL modules; logs and returns rather than raising."""
         # not currently supported by ITLensModule
@@ -507,32 +526,14 @@ class TransformerLensAdapter(TLensAttributeMixin):
 class ITLensModule(TransformerLensAdapter, CoreHelperAttributes, BaseITLensModule):
     """The TransformerLens module composition."""
 
-    def it_generate(self, batch: BatchEncoding | torch.Tensor, **kwargs) -> Any:
-        """Generate from a batch, refusing tensor batches the bridge loop cannot start from.
-
-        The bridge generation loop samples each step from the last sequence position, so a
-        batch whose rows end in padding starts short rows from post-pad logits: they emit
-        end-of-text at once and freeze, and only the unpadded (longest) row responds. Batched
-        string lists are safe (the bridge left-pads those itself); right-padded tensors are
-        not, so they are refused by name instead of generating plausible-looking silence.
-        """
-        if isinstance(batch, torch.Tensor):
-            tokenizer = getattr(getattr(self, "datamodule", None), "tokenizer", None)
-            _reject_trailing_pad_tensor_batch(
-                batch,
-                pad_token_id=getattr(tokenizer, "pad_token_id", None),
-                padding_side=getattr(tokenizer, "padding_side", None),
-            )
-        return super().it_generate(batch, **kwargs)
-
 
 def _reject_trailing_pad_tensor_batch(
     input_ids: torch.Tensor, *, pad_token_id: int | None, padding_side: str | None
 ) -> None:
     """Refuse a tensor batch whose rows end in padding instead of generating from it.
 
-    A trailing pad id means the bridge loop's first step reads post-pad logits for that row,
-    which predicts more pad/end-of-text and freezes the row before it responds. Left-pad the
+    A trailing pad id means the bridge loop's first step reads post-pad logits for that row, so its
+    continuation is conditioned on padding rather than on the prompt. Left-pad the
     batch (``padding_side="left"``) or pass strings so the bridge pads the batch itself.
     Batches with no trailing pads, and callers with no pad id to check against, pass through.
     """
@@ -542,8 +543,8 @@ def _reject_trailing_pad_tensor_batch(
         raise ValueError(
             "it_generate received a tensor batch with trailing pad token id "
             f"{pad_token_id} (tokenizer padding_side={padding_side!r}); the TransformerBridge "
-            "generation loop samples from the last sequence position, so padded rows start "
-            "from post-pad logits, emit end-of-text immediately, and never respond. Left-pad "
+            "generation loop samples from the last sequence position, so padded rows continue "
+            "from post-pad logits rather than from their prompts. Left-pad "
             'the batch (padding_side="left") or pass a list of strings instead.'
         )
 

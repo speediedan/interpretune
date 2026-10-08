@@ -472,6 +472,41 @@ class TestTrailingPadTensorRefusal:
         )
         _reject_trailing_pad_tensor_batch(torch.tensor([[10, 50256]]), pad_token_id=None, padding_side="right")
 
+    def test_every_tl_composition_inherits_the_refusal(self):
+        """Every TL-backed module composition resolves ``it_generate`` to the guarded override.
+
+        All of them run the same bridge generation loop, so a composition that bypassed the override (one
+        registered without ``BaseITLensModule``, or with a class ahead of it that redefines ``it_generate``)
+        would generate from trailing pads silently. C3 is resolved by hand because some registered tuples
+        carry bases whose metaclasses only reconcile inside the real composed class.
+        """
+        import interpretune as it
+        from interpretune.adapters.transformer_lens.adapter import BaseITLensModule
+
+        def c3(bases):
+            seqs = [list(b.__mro__) for b in bases] + [list(bases)]
+            out = []
+            while any(seqs):
+                seqs = [seq for seq in seqs if seq]
+                head = next(seq[0] for seq in seqs if not any(seq[0] in other[1:] for other in seqs))
+                out.append(head)
+                for seq in seqs:
+                    if seq[0] is head:
+                        seq.pop(0)
+            return out
+
+        tl_keys = [
+            key
+            for key in it.ADAPTER_REGISTRY.registry
+            if key[0] == "module" and any(getattr(a, "value", a) == "transformer_lens" for a in key[1:])
+        ]
+        assert tl_keys, "no TransformerLens module compositions registered"
+        owners = {
+            key: next(c for c in c3(it.ADAPTER_REGISTRY.registry[key][key]) if "it_generate" in c.__dict__)
+            for key in tl_keys
+        }
+        assert {key: owner for key, owner in owners.items() if owner is not BaseITLensModule} == {}
+
 
 class TestBasicTransformerBridgeAdapter:
     """Basic tests for TransformerBridgeStrategyAdapter without model fixtures.
