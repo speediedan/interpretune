@@ -235,6 +235,23 @@ class BaseITLensModule(BaseITModule):
                 config=cust_config,
                 token=access_token,
             )
+        except Exception as load_error:
+            # A gated-weight failure reaches here as a raw Hub error chain (401/403/404 soup);
+            # interpret the three first-run cases by name, and let anything else propagate as before.
+            from interpretune.utils.hf_auth_errors import (
+                interpret_hf_model_load_error,
+                model_id_from_pretrained_kwargs,
+            )
+
+            interpreted = interpret_hf_model_load_error(
+                load_error,
+                model_id=model_id_from_pretrained_kwargs(self.it_cfg.hf_from_pretrained_cfg.pretrained_kwargs),
+                access_token=access_token,
+                auth_env_key=self.it_cfg.os_env_model_auth_key,
+            )
+            if interpreted is not None:
+                raise interpreted from load_error
+            raise
         finally:
             if restore_async_load_env:
                 del os.environ["HF_DEACTIVATE_ASYNC_LOAD"]
