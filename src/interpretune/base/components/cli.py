@@ -1,5 +1,6 @@
 from __future__ import annotations
 import warnings
+import dataclasses
 import os
 import sys
 import numpy as np
@@ -197,12 +198,7 @@ class ITSessionMixin:
 
         profiler_cfg = self._get(config, "profiler_cfg")
         if profiler_cfg is not None:
-            default_profiler = ProfilerCfg()
-            if dict(profiler_cfg.as_dict()) != {
-                "which": default_profiler.which,
-                "pytorch_profiler_cfg": default_profiler.pytorch_profiler_cfg,
-                "memprofiler_cfg": default_profiler.memprofiler_cfg,
-            }:
+            if dict(profiler_cfg.as_dict()) != dataclasses.asdict(ProfilerCfg()):
                 module_cfg = self._profiler_module_cfg_slot(session_mapping)
                 module_cfg["profiler_cfg"] = profiler_cfg.as_dict()
         return session_mapping

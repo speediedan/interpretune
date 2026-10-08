@@ -27,12 +27,12 @@ class ProfilerCfg(ITSerializableCfg):
     Example (module config YAML)::
 
         profiler_cfg:
-          which: pytorch
-          pytorch_profiler_cfg:
-            activities: [cpu]
-            record_shapes: true
+          which: memprofiler
 
-    The core CLI also accepts ``--profiler_cfg.which pytorch`` and friends (typed group); the
+    The memprofiler selection needs ``it_cfg.memprofiler_cfg`` enabled (the extension field
+    the runtime reads); the nested ``memprofiler_cfg`` section is refused as a duplicate
+    source. The ``pytorch`` selection is refused until a runner reads it. The core CLI also
+    accepts ``--profiler_cfg.which memprofiler`` and friends (typed group); the
     Lightning CLI uses Lightning's native ``--trainer.profiler`` instead of duplicating it.
     """
 
@@ -52,7 +52,6 @@ class ProfilerCfg(ITSerializableCfg):
                 f"(which={self.which!r}, pytorch_profiler_cfg keys={sorted(self.pytorch_profiler_cfg)}). "
                 "Configure exactly one."
             )
-        if self.which == "memprofiler" and not mem_active:
-            raise MisconfigurationException(
-                "ProfilerCfg which='memprofiler' needs a memprofiler_cfg section (or pick 'none')."
-            )
+        # NOTE: which="memprofiler" without a nested section passes here; whether the selection
+        # activates anything is decided at ITConfig level, where the runtime-read extension field
+        # is visible (a bare selection with the extension disabled is refused there).

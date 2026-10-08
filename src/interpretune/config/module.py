@@ -14,7 +14,7 @@ from interpretune.config import (
     GenerativeClassificationConfig,
 )
 from interpretune.config.profiling import ProfilerCfg
-from interpretune.utils import rank_zero_info
+from interpretune.utils import rank_zero_info, MisconfigurationException
 from interpretune.utils.repr_helpers import (
     summarize_obj,
     state_to_dict,
@@ -118,7 +118,9 @@ class ITConfig(
     """
 
     # Unified profiler selection (interpretune#11): exactly one backend active; default off.
-    # Wired from the CLI (--profiler_cfg) and config files; activation happens in the runners.
+    # Wired from the CLI (--profiler_cfg) and config files. The memprofiler selection activates
+    # through it_cfg.memprofiler_cfg (the extension field); the PyTorch selection is refused
+    # until a runner reads it. See _check_profiler_selection.
     profiler_cfg: ProfilerCfg = field(default_factory=ProfilerCfg)
 
     # """Dataclass to encapsulate the ITModule internal state."""
@@ -135,6 +137,39 @@ class ITConfig(
             if self._dtype and self.hf_from_pretrained_cfg.bitsandbytesconfig:
                 rank_zero_info(f"Specified dtype `{self._dtype}` being overridden by quantization config.")
                 self._dtype = None
+        self._check_profiler_selection()
+
+    def _check_profiler_selection(self) -> None:
+        """Refuse profiler selections no runtime reads, over the runtime-read configuration.
+
+        No runner consumes the PyTorch profiler selection, so requesting it would profile
+        nothing; the MemProfiler extension reads ``it_cfg.memprofiler_cfg``, so the nested
+        ``profiler_cfg.memprofiler_cfg`` section (which nothing reads) and a memprofiler
+        selection without the extension field enabled are refused too. Each names the accepted
+        form instead of running a silent no-op.
+        """
+        profiler = self.profiler_cfg
+        if profiler.which == "pytorch" or bool(profiler.pytorch_profiler_cfg):
+            raise MisconfigurationException(
+                "profiler_cfg requests the PyTorch profiler, which no runner reads yet: accepting "
+                "it would profile nothing. Tracked under #11; use the MemProfiler selection "
+                "(it_cfg.memprofiler_cfg) or Lightning's native --trainer.profiler meanwhile."
+            )
+        ext_mem = getattr(self, "memprofiler_cfg", None)
+        ext_active = ext_mem is not None and bool(getattr(ext_mem, "enabled", False))
+        nested = profiler.memprofiler_cfg
+        nested_active = nested is not None and bool(getattr(nested, "enabled", True))
+        if nested_active:
+            raise MisconfigurationException(
+                "profiler_cfg.memprofiler_cfg duplicates it_cfg.memprofiler_cfg, which is what the "
+                "MemProfiler extension reads; the nested section activates nothing. Set the "
+                "extension field and leave the nested section unset."
+            )
+        if profiler.which == "memprofiler" and not ext_active:
+            raise MisconfigurationException(
+                "profiler_cfg which='memprofiler' needs it_cfg.memprofiler_cfg enabled: the "
+                "extension field carries the settings the runtime reads."
+            )
 
 
 @dataclass
