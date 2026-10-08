@@ -313,7 +313,11 @@ jobs:
       - bash: |
           set -e
           source /tmp/venvs/it_dev/bin/activate
-          python -m tests.gpu_ci.plan_gpu_run --mode "${{ parameters.mode }}" --extended "${{ parameters.extended }}"
+          # The agent checks the repository out on the host, so inside this rootless container the checkout belongs to
+          # another uid and git refuses it as "dubious ownership". Trust it for this command only: GIT_CONFIG_* is
+          # command-line scope, which git honours for safe.directory, and nothing global changes.
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$(pwd)" \
+            python -m tests.gpu_ci.plan_gpu_run --mode "${{ parameters.mode }}" --extended "${{ parameters.extended }}"
         displayName: 'Plan the GPU run'
 
       - bash: |

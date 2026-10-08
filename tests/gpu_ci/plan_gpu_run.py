@@ -101,12 +101,19 @@ def merge_commit_changes(cwd: Path | None = None) -> list[str]:
     """Paths a pull request's merge commit changes relative to its target branch (``HEAD^1``).
 
     Refuses when ``HEAD`` is not a merge commit: the pipeline validates the merge ref, and diffing anything else against
-    its first parent would describe one commit, not the pull request.
+    its first parent would describe one commit, not the pull request. Any other git failure is reported with git's own
+    message, since a guessed cause sends the reader after the wrong fix (in a container, git refusing a checkout it does
+    not own reads exactly like a missing parent unless its message is shown).
     """
     probe = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD^2"], cwd=cwd, capture_output=True, text=True)
-    if probe.returncode != 0:
+    if probe.returncode == 1 and not probe.stderr.strip():
         raise RuntimeError("HEAD is not a merge commit (is the checkout fetchDepth at least 2?)")
-    return changed_files("HEAD^1", cwd=cwd)
+    if probe.returncode != 0:
+        raise RuntimeError(f"git could not read the checkout (exit {probe.returncode}): {probe.stderr.strip()}")
+    try:
+        return changed_files("HEAD^1", cwd=cwd)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"git diff failed (exit {e.returncode}): {(e.stderr or '').strip()}") from e
 
 
 def github_labels(repo: str, number: str, timeout: float = 20.0) -> list[str]:
