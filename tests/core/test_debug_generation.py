@@ -283,6 +283,24 @@ class TestClassDebugGen:
         assert len(answers) == expected[0]
         assert pad_included == expected[1]
 
+    def test_debug_session_right_padded_batch_refused(self, get_it_session__tl_gpt2_debug__setup):
+        """A right-padded batch reaches the TL generate refusal through the module, not just the helper.
+
+        The fixture left-pads; the TL config default is right padding, which is the case the refusal exists for.
+        """
+        module = get_it_session__tl_gpt2_debug__setup.it_session.module
+        tokenizer = module.datamodule.tokenizer
+        orig_padding_side = tokenizer.padding_side
+        tokenizer.padding_side = "right"
+        try:
+            with pytest.raises(ValueError, match="trailing pad token id 50256"):
+                module.debug_lm.debug_generate_batch(
+                    module.debug_lm.debug_sequences(["Hello, I'm a large language model and", "Hi"]),
+                    gen_kwargs_override={"max_new_tokens": 2},
+                )
+        finally:
+            tokenizer.padding_side = orig_padding_side
+
     @pytest.mark.parametrize(
         "gen_kwargs, expected",
         [
