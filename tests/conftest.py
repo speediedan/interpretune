@@ -1451,7 +1451,13 @@ def _gpu_mem_class() -> tuple[str, float] | None:
 
 
 def gpu_mem_class_of(item, small_max_gb: float) -> str:
-    """``small`` when ``item`` needs one device and declares at most ``small_max_gb``, else ``large``."""
+    """``small`` when ``item`` needs one device and declares at most ``small_max_gb``, else ``large``.
+
+    A ``bf16_cuda`` test is ``large`` whatever it declares: the small device may lack bf16 (the CI host's 2070 SUPER
+    does), and there the test would be skipped rather than run, a coverage loss nothing reports.
+    """
+    if _marked(item, lambda kw: kw.get("bf16_cuda")):
+        return "large"
     return "small" if declared_gpu_count(item) <= 1 and declared_gpu_mem_gb(item) <= small_max_gb else "large"
 
 

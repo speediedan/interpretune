@@ -146,6 +146,11 @@ jobs:
         # serialize against local multi-GPU runs (this host is shared with finetuning-scheduler) WITHOUT
         # any change to the agent installation. Fails open if absent.
         - /tmp/di_leases:/gpu_leases
+        # The host's lease tool, read-only, so this job queues and is placed by the same rules as every local
+        # caller. An operator installs it (and re-installs it after it changes); the lease step falls back to a
+        # plain whole-server lock when it is absent. Docker creates a missing bind-mount source as a DIRECTORY,
+        # which the fallback detects; remove that directory before installing the tool there.
+        - /opt/az_pipeline_agent/gpu_lease.sh:/gpu_lease_tool:ro
       options: --gpus all --shm-size=512m
       env:
         HF_HOME: /opt/interpretune/hf_cache
@@ -332,69 +337,27 @@ jobs:
         env:
           HF_TOKEN: $(HF_MCP_TOKEN_RW)
 
-      # Serialize the GPU phases against local work on this shared host (finetuning-scheduler uses it too).
-      # The agent runs one Azure job at a time, so this guards only against interactive/agent sessions. Two
-      # leases, taken in the host tool's fixed order (gpu, then cpu-heavy) so a local caller taking both in that
-      # order cannot deadlock against this job: `gpu` for the devices, and `cpu-heavy` for HOST MEMORY, since a
-      # full local suite beside this job's suite once OOM-killed both sides. Nothing before this step needs
-      # either: install and cache warming are light. Waiting here for tens of minutes behind a local GPU job is
-      # the lease working, not a hung build.
-      - bash: |
-          source scripts/gpu_lease_wrap.sh
-          # Fail CLOSED: a bash step's result is its last command's exit code, so a timed-out `gpu` acquire
-          # followed by a succeeding `cpu-heavy` acquire used to read as success, and the GPU phases then ran
-          # unleased beside whoever held the lease (all CUDA out-of-memory, with nothing in the timeline saying
-          # the lease was missed). Each acquire's status is checked before the next. The `condition: always()`
-          # cleanup below releases whatever is held, so the failure path leaves no lease.
-          #
-          # A gate waits up to IT_GPU_LEASE_WAIT seconds for EACH lease and fails on a timeout. A scheduled run
-          # shares one IT_GPU_LEASE_WAIT deadline across both and, on a timeout, cancels itself: the next scheduled
-          # run is a fresh attempt, so a long local job should cost one night's run, not a red build.
-          deadline=$(( $(date +%s) + IT_GPU_LEASE_WAIT ))
-          wait_for() {  # <pidfile> <lease>
-            local wait=$IT_GPU_LEASE_WAIT
-            if [ "$IT_GPU_LEASE_ON_TIMEOUT" = cancel ]; then
-              wait=$(( deadline - $(date +%s) ))
-              [ "$wait" -gt 60 ] || wait=60
-            fi
-            ci_gpu_lease_acquire /gpu_leases "$1" "$wait" "azure-it-$(Build.BuildId)" "$2"
-          }
-          wait_for /tmp/azp_gpu_lease.pid gpu
-          rc=$?
-          if [ "$rc" -eq 0 ]; then
-            wait_for /tmp/azp_cpu_heavy_lease.pid cpu-heavy
-            rc=$?
-          fi
-          [ "$rc" -eq 0 ] && exit 0
-          if [ "$rc" -eq 75 ] && [ "$IT_GPU_LEASE_ON_TIMEOUT" = cancel ]; then
-            echo "##vso[task.logissue type=warning]The host leases stayed busy for ${IT_GPU_LEASE_WAIT}s (holder above); cancelling this scheduled run rather than failing it."
-            curl -sS -f -X PATCH -H "Authorization: Bearer ${SYSTEM_ACCESSTOKEN}" -H "Content-Type: application/json" \
-              -d '{"status": "cancelling"}' \
-              "$(System.CollectionUri)$(System.TeamProject)/_apis/build/builds/$(Build.BuildId)?api-version=7.1" >/dev/null \
-              && sleep 300
-            echo "ERROR: the cancel request failed or did not take effect; failing closed instead."
-            exit 1
-          fi
-          exit "$rc"
-        displayName: 'Acquire host GPU lease'
+      # Serialize the GPU phases against local work on this shared host (finetuning-scheduler uses it too), and place
+      # them on the smallest device that fits. The agent runs one Azure job at a time, so the leases guard only against
+      # interactive/agent sessions. Each stage takes `gpu` (the whole server, or one device under it) and then
+      # `cpu-heavy` for HOST MEMORY, in the host tool's fixed order, since a full local suite beside this job's suite
+      # once OOM-killed both sides. Nothing before this needs either: install and cache warming are light. Waiting here
+      # for tens of minutes behind a local GPU job is the lease working, not a hung build.
+      #
+      # TWO STAGES (.azure-pipelines/scripts/gpu_stage_lease.sh):
+      #   small  one device sized to the smallest card (best fit), for the single-device tests declaring no more than
+      #          that and not needing bf16, so they can run on the small card while someone holds the large one;
+      #   large  the whole server, for everything else and the extended tiers.
+      # The memory classes partition each phase (tests/conftest.py), so the two stages together run it whole. Without
+      # the host lease tool mounted, the job takes its old whole-server lease and runs one stage.
+      - bash: bash .azure-pipelines/scripts/gpu_stage_lease.sh acquire small
+        displayName: 'Acquire host GPU lease: small-device stage'
         condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
         env:
           SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 
-      - bash: |
-          source /tmp/venvs/it_dev/bin/activate
-          export IT_RUN_CUDA_TESTS=1
-          # Run regular CUDA-gated tests separately to reduce peak memory pressure while preserving GPU coverage.
-          python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v --durations=50 --reruns 2 --reruns-delay 5
-          rc=$?
-          # A selected run may select no cuda-marked test (pytest exit 5). Only then is an empty phase a pass: on a full
-          # run an empty phase means the collector broke.
-          if [ "$rc" -eq 5 ] && [ "$IT_GPU_SELECTION_MODE" = selected ]; then
-            echo "No cuda-marked test is selected by this change."
-            exit 0
-          fi
-          exit "$rc"
-        displayName: 'Testing: standard gpu cuda-marked'
+      - bash: bash .azure-pipelines/scripts/gpu_phase.sh cuda small
+        displayName: 'Testing: standard gpu cuda-marked (small)'
         condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
         env:
           # gated-model tests (llama3/gemma) and the notebook/example tests run in this phase and
@@ -405,26 +368,50 @@ jobs:
           # Revert to a read-scoped token at the #261 public flip.
           HF_TOKEN: $(HF_MCP_TOKEN_RW)
 
-      - bash: |
-          source /tmp/venvs/it_dev/bin/activate
-          export HF_GATED_PUBLIC_REPO_AUTH_KEY=$HF_GATED_PUBLIC_REPO_AUTH_KEY
-          export HF_TOKEN=$HF_TOKEN
-          # --allow-failures: run every test and fail the step at the end, so one failure cannot hide the result of
-          # every test after it. The script still exits non-zero when anything failed. --allow-empty only on a
-          # selected run, which may select no standalone test; on a full run an empty phase means the collector broke.
-          empty=(); [ "$IT_GPU_SELECTION_MODE" = selected ] && empty=(--allow-empty)
-          bash ./tests/special_tests.sh --mark_type=standalone --allow-failures "${empty[@]}"
-        displayName: 'Testing: standalone gpu'
+      # --allow-failures in the special phases: run every test and fail the step at the end, so one failure cannot
+      # hide the result of every test after it.
+      - bash: bash .azure-pipelines/scripts/gpu_phase.sh standalone small
+        displayName: 'Testing: standalone gpu (small)'
         condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
         env:
           HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
           HF_TOKEN: $(HF_MCP_TOKEN_RW)  # private jlens collection until #261; see cuda-marked phase note
 
-      - bash: |
-          source /tmp/venvs/it_dev/bin/activate
-          empty=(); [ "$IT_GPU_SELECTION_MODE" = selected ] && empty=(--allow-empty)
-          bash ./tests/special_tests.sh --mark_type=profile_ci --allow-failures "${empty[@]}"
-        displayName: 'Testing: CI Profiling'
+      - bash: bash .azure-pipelines/scripts/gpu_phase.sh profile_ci small
+        displayName: 'Testing: CI Profiling (small)'
+        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+
+      - bash: bash .azure-pipelines/scripts/gpu_stage_lease.sh release small
+        displayName: 'Release host GPU lease: small-device stage'
+        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+
+      - bash: bash .azure-pipelines/scripts/gpu_stage_lease.sh acquire large
+        displayName: 'Acquire host GPU lease: whole-server stage'
+        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+        env:
+          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+      - bash: bash .azure-pipelines/scripts/gpu_phase.sh cuda large
+        displayName: 'Testing: standard gpu cuda-marked (large)'
+        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+        env:
+          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+          HF_TOKEN: $(HF_MCP_TOKEN_RW)
+
+      - bash: bash .azure-pipelines/scripts/gpu_phase.sh standalone large
+        displayName: 'Testing: standalone gpu (large)'
+        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+        env:
+          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+          HF_TOKEN: $(HF_MCP_TOKEN_RW)
+
+      - bash: bash .azure-pipelines/scripts/gpu_phase.sh profile_ci large
+        displayName: 'Testing: CI Profiling (large)'
+        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+
+      # Each class may be empty on its own; a FULL run whose phase came out empty in both means the collector broke.
+      - bash: bash .azure-pipelines/scripts/check_gpu_phases.sh
+        displayName: 'Check: no GPU phase ran empty on a full run'
         condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
 
       # The extended tiers no gate runs: the full profiling tier and the optional GPU tests (the SAELens notebooks
@@ -495,11 +482,8 @@ jobs:
           # Ensure directories have SGID and group write
           sudo find /opt/interpretune/hf_cache/datasets -type d -exec chmod g+ws {} \; 2>/dev/null || true
 
-          # Release both host leases. Belt-and-braces: if this job dies or its container is torn
-          # down, every process inside dies too and the kernel frees the leases automatically.
-          source scripts/gpu_lease_wrap.sh 2>/dev/null && {
-            ci_gpu_lease_release /gpu_leases /tmp/azp_gpu_lease.pid gpu
-            ci_gpu_lease_release /gpu_leases /tmp/azp_cpu_heavy_lease.pid cpu-heavy; } || true
+          # Release every host lease this job may hold, from either stage or the one-stage fallback.
+          bash .azure-pipelines/scripts/gpu_stage_lease.sh release all || true
           echo 'Agent workspace and HF cache cleanup completed'
         condition: always()
         displayName: 'Cleaning up agent workspace'
