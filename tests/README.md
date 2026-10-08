@@ -486,5 +486,22 @@ named in the `Plan the GPU run` step's log. A selected run uploads coverage unde
 partial run never reads as a `gpu` coverage drop. To force the full set on a pull request, add the `ci:gpu-full`
 label before the gate is released; a label added later applies from the next build.
 
+**Device placement.** Each GPU phase runs in two stages, and each stage takes its own lease through the host's lease
+tool:
+
+| stage | lease | tests |
+| --- | --- | --- |
+| small | one device sized to the smallest card, best fit | single-device tests declaring no more than that card's memory, none marked `bf16_cuda` |
+| large | the whole server | everything else: larger declarations, multi-device and `bf16_cuda` tests, then the extended tiers |
+
+- The two memory classes (`IT_GPU_MEM_CLASS`, `tests/conftest.py`) partition every phase, so together the stages run it
+  whole.
+- `bf16_cuda` tests always go to the large stage, because the small card may lack bf16, and there they would be skipped
+  rather than run.
+- Strict mode (`IT_GPU_STRICT=1`) is on in both stages, so a test placed on a device smaller than it declares fails
+  rather than skips.
+- Either class may be empty on its own. A full run fails only when a phase ran nothing in both classes.
+- Without the lease tool mounted, the job takes one whole-server lease and runs each phase once.
+
 Class-level `RunIf` marks select every test the class collects: `_marked` in `tests/conftest.py` reads
 `item.iter_markers()`, so a mark on the class is seen by every phase.
