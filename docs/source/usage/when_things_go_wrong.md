@@ -2,7 +2,7 @@
 
 First-run failures in interpretune refuse by name: each mode below fails with a message that says
 what happened and what to do next, and each is pinned by a test asserting message content, not
-just the exception type. If you meet a bare traceback instead, that is a bug — file it with the
+just the exception type. If you meet a bare traceback instead, that is a bug: file it with the
 message and what you ran.
 
 Covers: adapter composition misses, gated-model auth, remote-code trust, unreachable hub
@@ -22,26 +22,28 @@ Unavailable in this environment:
     which is not installed. Install it with: uv pip install 'circuit-tracer'
 ```
 
-A miss with no availability note is a genuinely nonexistent combination — check spelling against
-the {doc}`adapter-selection guide <usage/adapter_selection_guide>`.
+A miss with no availability note is a genuinely nonexistent combination: check spelling against
+the {doc}`adapter-selection guide <adapter_selection_guide>`.
 
 ## Gated-model download failures
 
-Downloading gated weights fails in three ways the raw Hub error collapses into one. Model init
-decodes them:
+A failed model download reaches you as a generic `OSError` from transformers. Model init reads the
+typed Hugging Face Hub error chained underneath it, and its HTTP status, and turns each case into
+its own instruction:
 
 - **No token offered (401, nothing configured):** set the credential the config names
   (`$HF_TOKEN` or your `os_env_model_auth_key`), or run `huggingface-cli login`.
-- **Token refused (401, token configured):** the token itself is bad — regenerate it and check
+- **Token refused (401, token configured):** the token itself is bad; regenerate it and check
   repository access.
-- **Repository gate (403, or license mentioned):** accept the model license at
-  `huggingface.co/<model-id>` with the token's account, then retry.
-- **Not found (404):** the id resolves to nothing visible — nonexistent, or private to another
-  account (the Hub answers 404 rather than 403 for those). Pinned by
-  `HubUnreachableError`, which carries both readings.
+- **Repository gate (403):** accept the model license at `huggingface.co/<model-id>` with the
+  token's account, then retry.
+- **Repository not visible:** "no repository with that id is visible to this request". It does not
+  exist, or it is private to an account the request is not authenticated as; with no token
+  configured, the message also says how to set one.
 
-Anything else propagates as the original error: an unknown failure keeps today's behavior
-rather than gaining a wrong explanation.
+A failure without a typed Hub error underneath (a state-dict shape mismatch, a missing cache file)
+propagates as the original error, however Hub-like its text reads: an unknown failure keeps
+today's behavior rather than gaining a wrong explanation.
 
 ## Remote-code trust gate
 
@@ -55,4 +57,18 @@ inside this process ... Interpretune does not execute hub-resident code unless y
 
 Inspect first (`interpretune.hub.pull` caches without executing), then opt in for the session
 with `IT_TRUST_REMOTE_CODE=1`, pinning a revision. See
-{doc}`hub trust posture <usage/hub_trust_posture>`.
+{doc}`hub trust posture <hub_trust_posture>`.
+
+## Unreachable hub component
+
+Pulling a hub component whose repository answers 404 raises `HubUnreachableError`, whose message
+carries both readings, because the Hub answers 404 rather than 403 for a private repository a
+token cannot see:
+
+```text
+The Hub returned 404 for '<repo>': the repo is absent, OR it is private and not visible to the
+token in use. ...
+```
+
+Check the token's repository scope before treating the component as absent; a cached snapshot is
+not evidence that the repository still exists on the Hub.
