@@ -1,7 +1,9 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Any, TYPE_CHECKING
+from typing import Any, Iterator, TYPE_CHECKING
 import logging
+from contextlib import contextmanager
 from functools import partialmethod
+from pathlib import Path
 import torch
 
 from interpretune.config import SessionRunnerCfg
@@ -13,6 +15,22 @@ if TYPE_CHECKING:
 
 
 log = logging.getLogger(__name__)
+
+
+@contextmanager
+def profiling(module: ITModule) -> Iterator[torch.profiler.profile | None]:
+    """Run the enclosed batch loop under the PyTorch profiler when ``it_cfg.profiler_cfg`` selects it.
+
+    Yields the active profiler, which the loop steps once per batch, or ``None`` when profiling is off. Traces go to
+    ``pytorch_profiler_cfg.trace_dir``, defaulting to ``<core_log_dir>/pytorch_profiler``.
+    """
+    profiler_cfg = module.it_cfg.profiler_cfg
+    if profiler_cfg.which != "pytorch":
+        yield None
+        return
+    default_trace_dir = Path(module.core_log_dir) / "pytorch_profiler"  # type: ignore[attr-defined]  # mixin attr
+    with torch.profiler.profile(**profiler_cfg.torch_profiler_kwargs(default_trace_dir)) as prof:
+        yield prof
 
 
 def core_train_loop(
@@ -32,24 +50,29 @@ def core_train_loop(
     assert module.optimizers, "Module has no optimizers configured"
     optim = module.optimizers[0]
     train_ctx = {"module": module, "optimizer": optim}
-    for epoch_idx in range(max_epochs):
-        assert module.model is not None, "Model must be initialized before training"
-        module.model.train()
-        module.current_epoch = epoch_idx
-        _call_itmodule_hook(module, hook_name="on_train_epoch_start", hook_msg="Running train epoch start hooks")
-        for batch_idx, batch in enumerate(train_dataloader):
-            if batch_idx >= limit_train_batches >= 0:
-                break
-            run_step(step_fn="training_step", batch=batch, batch_idx=batch_idx, **train_ctx)
-        if val_dataloader is not None:
-            module.model.eval()
-            for batch_idx, batch in enumerate(val_dataloader):
-                with torch.inference_mode():
-                    if batch_idx >= limit_val_batches >= 0:
-                        break
-                    run_step(step_fn="validation_step", batch=batch, batch_idx=batch_idx, **train_ctx)
-        module.model.train()
-        _call_itmodule_hook(module, hook_name="on_train_epoch_end", hook_msg="Running train epoch end hooks")
+    with profiling(module) as prof:
+        for epoch_idx in range(max_epochs):
+            assert module.model is not None, "Model must be initialized before training"
+            module.model.train()
+            module.current_epoch = epoch_idx
+            _call_itmodule_hook(module, hook_name="on_train_epoch_start", hook_msg="Running train epoch start hooks")
+            for batch_idx, batch in enumerate(train_dataloader):
+                if batch_idx >= limit_train_batches >= 0:
+                    break
+                run_step(step_fn="training_step", batch=batch, batch_idx=batch_idx, **train_ctx)
+                if prof is not None:
+                    prof.step()
+            if val_dataloader is not None:
+                module.model.eval()
+                for batch_idx, batch in enumerate(val_dataloader):
+                    with torch.inference_mode():
+                        if batch_idx >= limit_val_batches >= 0:
+                            break
+                        run_step(step_fn="validation_step", batch=batch, batch_idx=batch_idx, **train_ctx)
+                    if prof is not None:
+                        prof.step()
+            module.model.train()
+            _call_itmodule_hook(module, hook_name="on_train_epoch_end", hook_msg="Running train epoch end hooks")
 
 
 def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batches: int, *args, **kwargs):
@@ -65,11 +88,14 @@ def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batche
     module._it_state._current_epoch = 0
     assert module.model is not None, "Model must be initialized before testing"
     module.model.eval()
-    for batch_idx, batch in enumerate(dataloader):
-        with torch.inference_mode():
-            if batch_idx >= limit_test_batches >= 0:
-                break
-            run_step(step_fn="test_step", module=module, batch=batch, batch_idx=batch_idx, **test_ctx)
+    with profiling(module) as prof:
+        for batch_idx, batch in enumerate(dataloader):
+            with torch.inference_mode():
+                if batch_idx >= limit_test_batches >= 0:
+                    break
+                run_step(step_fn="test_step", module=module, batch=batch, batch_idx=batch_idx, **test_ctx)
+            if prof is not None:
+                prof.step()
     # Print accumulated metrics from log/log_dict calls (core framework epoch-end reporting)
     if hasattr(module, "_logged_metrics") and module._logged_metrics:
         epoch_metrics = {k: sum(v) / len(v) for k, v in module._logged_metrics.items()}

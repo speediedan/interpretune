@@ -1,5 +1,6 @@
 from __future__ import annotations
 import warnings
+import dataclasses
 import os
 import sys
 import numpy as np
@@ -91,6 +92,16 @@ class ITSessionMixin:
         parser.add_argument("--shared_config", type=dict, default={}, help="Shared configuration block.")
         parser.add_argument("--registered_cfg", type=dict, default={}, help="Registered session components.")
         parser.add_argument("--adapter_ctx", type=list, default=[], help="Adapter composition context.")
+        # Unified profiler selection (#11): typed group for the profiler_cfg section. Only the
+        # explicitly-set subset merges (see _merge_parsed_session_overrides); defaults are inert.
+        from interpretune.config.profiling import ProfilerCfg
+
+        parser.add_class_arguments(
+            ProfilerCfg,
+            "profiler_cfg",
+            instantiate=False,
+            sub_configs=True,
+        )
         # Composable typed surface for the session-config fields with no file-side ambiguity (#15):
         # adapter_ctx and the explicit component classes. The config SUBTREES
         # (datamodule_cfg/module_cfg/shared_cfg) and runtime objects (datamodule/module) stay
@@ -181,7 +192,28 @@ class ITSessionMixin:
                 if getattr(it_session_cfg, cls_key, None):
                     typed[cls_key] = getattr(it_session_cfg, cls_key)
             session_mapping = self._deep_merge(session_mapping, typed) if typed else session_mapping
+        # Profiler selection (#11) merges into the module config under both dialects: the typed
+        # group wins over files, and only an explicitly-set (non-default) section merges.
+        from interpretune.config.profiling import ProfilerCfg
+
+        profiler_cfg = self._get(config, "profiler_cfg")
+        if profiler_cfg is not None:
+            if dict(profiler_cfg.as_dict()) != dataclasses.asdict(ProfilerCfg()):
+                module_cfg = self._profiler_module_cfg_slot(session_mapping)
+                module_cfg["profiler_cfg"] = profiler_cfg.as_dict()
         return session_mapping
+
+    @staticmethod
+    def _profiler_module_cfg_slot(session_mapping: dict[str, Any]) -> dict[str, Any]:
+        """The mutable module-config mapping for profiler settings, in either body dialect."""
+        registered = session_mapping.setdefault("registered_cfg", {})
+        if isinstance(registered, dict) and "module_cfg" in registered:
+            slot = registered["module_cfg"]
+            if isinstance(slot, dict):
+                return slot
+            registered["module_cfg"] = slot = {}
+            return slot
+        return session_mapping.setdefault("module_cfg", {})
 
     def build_it_session(self, session_mapping: dict[str, Any]) -> ITSession:
         """Construct the ITSession from a session mapping via the unified loader."""

@@ -13,7 +13,8 @@ from interpretune.config import (
     HFFromPretrainedConfig,
     GenerativeClassificationConfig,
 )
-from interpretune.utils import rank_zero_info
+from interpretune.config.profiling import ProfilerCfg
+from interpretune.utils import rank_zero_info, MisconfigurationException
 from interpretune.utils.repr_helpers import (
     summarize_obj,
     state_to_dict,
@@ -116,6 +117,10 @@ class ITConfig(
     extend one group without widening the whole surface.
     """
 
+    # PyTorch profiler selection for the core runners (interpretune#11); default off. MemProfiler keeps its own
+    # extension field, and _check_profiler_selection refuses enabling both.
+    profiler_cfg: ProfilerCfg = field(default_factory=ProfilerCfg)
+
     # """Dataclass to encapsulate the ITModule internal state."""
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
     # dynamic fields added via ExtensionConf contingent on supported extension availability
@@ -130,6 +135,21 @@ class ITConfig(
             if self._dtype and self.hf_from_pretrained_cfg.bitsandbytesconfig:
                 rank_zero_info(f"Specified dtype `{self._dtype}` being overridden by quantization config.")
                 self._dtype = None
+        self._check_profiler_selection()
+
+    def _check_profiler_selection(self) -> None:
+        """Refuse two profilers observing one module: the PyTorch profiler and an enabled MemProfiler.
+
+        Both instrument the same forward and backward passes, so running them together perturbs each other's
+        measurements; exactly one may be active.
+        """
+        # memprofiler_cfg is attached by ExtensionConf only when the bundled MemProfiler extension is available.
+        mem_cfg = getattr(self, "memprofiler_cfg", None)
+        if self.profiler_cfg.which == "pytorch" and mem_cfg is not None and getattr(mem_cfg, "enabled", False):
+            raise MisconfigurationException(
+                "profiler_cfg selects the PyTorch profiler while it_cfg.memprofiler_cfg is enabled: two profilers "
+                "would observe the same module. Enable exactly one."
+            )
 
 
 @dataclass

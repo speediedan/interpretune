@@ -235,6 +235,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "entailment_mapping": [
         "Yes",
         "No"
@@ -490,6 +495,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "backend": "transformerlens",
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensBridgeConfig",
@@ -772,6 +782,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "backend": "transformerlens",
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig",
@@ -1059,6 +1074,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "backend": "transformerlens",
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig",
@@ -1325,6 +1345,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "entailment_mapping": [
         "Yes",
         "No"
@@ -1564,6 +1589,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "entailment_mapping": [
         "Yes",
         "No"
@@ -1848,6 +1878,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "entailment_mapping": [
         "Yes",
         "No"
@@ -2066,6 +2101,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "entailment_mapping": [
         "Yes",
         "No"
@@ -2322,6 +2362,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "entailment_mapping": [
         "Yes",
         "No"
@@ -2577,6 +2622,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "nnsight_cfg": {
         "__class__": "interpretune.adapters.nnsight.config.NNsightConfig",
         "model_name": "google/gemma-3-1b-it",
@@ -2810,6 +2860,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "nnsight_cfg": {
         "__class__": "interpretune.adapters.nnsight.config.NNsightConfig",
         "model_name": "google/gemma-3-1b-it",
@@ -3057,6 +3112,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "entailment_mapping": [
         "Yes",
         "No"
@@ -3326,6 +3386,11 @@
         "padding_side": "left"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "entailment_mapping": [
         "Yes",
         "No"
@@ -3618,6 +3683,11 @@
         "padding_side": "right"
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedConfig",
         "move_to_device": true,
@@ -3897,6 +3967,11 @@
         "use_fast": true
       },
       "defer_model_init": false,
+      "profiler_cfg": {
+        "__class__": "interpretune.config.profiling.ProfilerCfg",
+        "which": "none",
+        "pytorch_profiler_cfg": {}
+      },
       "entailment_mapping": [
         "Yes",
         "No"
