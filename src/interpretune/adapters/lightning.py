@@ -1,5 +1,5 @@
 from interpretune.base import ITDataModule, BaseITModule
-from interpretune.utils import _LIGHTNING_AVAILABLE
+from interpretune.utils import _LIGHTNING_AVAILABLE, MisconfigurationException
 from interpretune.protocol import Adapter
 from interpretune.adapters import CompositionRegistry
 
@@ -39,6 +39,20 @@ if _LIGHTNING_AVAILABLE:
             },
             gen_prepares_inputs_sigs=("_prepare_model_inputs",),
         )
+
+        def setup(self, *args, **kwargs) -> None:
+            """Refuse the core-runner profiler selection, which a Lightning Trainer never reads, then set up.
+
+            The Trainer runs its own loops, so ``it_cfg.profiler_cfg`` would profile nothing here; Lightning's native
+            ``--trainer.profiler`` is the supported route.
+            """
+            if self.it_cfg.profiler_cfg.which != "none":  # type: ignore[attr-defined]  # provided by BaseITModule
+                raise MisconfigurationException(
+                    f"it_cfg.profiler_cfg.which={self.it_cfg.profiler_cfg.which!r} selects a core-runner profiler, "  # type: ignore[attr-defined]
+                    "which a Lightning Trainer never runs. Configure Lightning's profiler instead "
+                    "(--trainer.profiler, or Trainer(profiler=...)) and leave profiler_cfg at its default."
+                )
+            return super().setup(*args, **kwargs)  # type: ignore[misc]  # cooperative MRO call
 
         def on_train_start(self) -> None:
             """Force the model into training mode before training starts, then defer to Lightning.

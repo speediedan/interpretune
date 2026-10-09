@@ -238,8 +238,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "entailment_mapping": [
         "Yes",
@@ -499,8 +498,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "backend": "transformerlens",
       "tl_cfg": {
@@ -787,8 +785,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "backend": "transformerlens",
       "tl_cfg": {
@@ -1080,8 +1077,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "backend": "transformerlens",
       "tl_cfg": {
@@ -1352,8 +1348,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "entailment_mapping": [
         "Yes",
@@ -1597,8 +1592,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "entailment_mapping": [
         "Yes",
@@ -1887,8 +1881,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "entailment_mapping": [
         "Yes",
@@ -2111,8 +2104,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "entailment_mapping": [
         "Yes",
@@ -2373,8 +2365,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "entailment_mapping": [
         "Yes",
@@ -2634,8 +2625,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "nnsight_cfg": {
         "__class__": "interpretune.adapters.nnsight.config.NNsightConfig",
@@ -2873,8 +2863,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "nnsight_cfg": {
         "__class__": "interpretune.adapters.nnsight.config.NNsightConfig",
@@ -3126,8 +3115,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "entailment_mapping": [
         "Yes",
@@ -3401,8 +3389,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "entailment_mapping": [
         "Yes",
@@ -3699,8 +3686,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedConfig",
@@ -3984,8 +3970,7 @@
       "profiler_cfg": {
         "__class__": "interpretune.config.profiling.ProfilerCfg",
         "which": "none",
-        "pytorch_profiler_cfg": {},
-        "memprofiler_cfg": null
+        "pytorch_profiler_cfg": {}
       },
       "entailment_mapping": [
         "Yes",

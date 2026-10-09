@@ -1,57 +1,91 @@
-"""Unified profiler selection for modules (interpretune#11, slice 1: config + invariant).
+"""Profiler selection for modules run by interpretune's core runners (interpretune#11).
 
-Two profiler backends exist (the PyTorch profiler and the bundled MemProfiler extension) with no unified selection
-surface today. This config names which one runs and carries its settings; the exactly-one-active invariant is enforced
-here, at construction, rather than discovered as two profilers fighting over the same module at runtime.
+The core runners (session train/test and analysis) wrap their batch loops in ``torch.profiler.profile`` when
+``profiler_cfg.which == "pytorch"``, stepping the profiler once per batch. The bundled MemProfiler extension keeps its
+own configuration (``it_cfg.memprofiler_cfg``); ``ITConfig`` refuses enabling both, so exactly one profiler observes a
+module. Lightning compositions use Lightning's native ``--trainer.profiler`` and refuse this selection by name.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, TYPE_CHECKING
+from pathlib import Path
+from typing import Any, Literal
 
 from interpretune.config.shared import ITSerializableCfg
 from interpretune.utils import MisconfigurationException
 
-if TYPE_CHECKING:
-    # Kept import-light: the extension pulls torch/psutil at module level.
-    from interpretune.extensions.memprofiler import MemProfilerCfg
+#: ``torch.profiler.profile`` options accepted from configuration. Each is serializable, so a profiler selection
+#: round-trips through YAML and the CLI; ``trace_dir`` replaces the non-serializable ``on_trace_ready`` callable.
+PYTORCH_PROFILER_KEYS = frozenset(
+    {
+        "activities",
+        "schedule",
+        "record_shapes",
+        "profile_memory",
+        "with_stack",
+        "with_flops",
+        "with_modules",
+        "trace_dir",
+    }
+)
+_ACTIVITIES = ("cpu", "cuda", "xpu", "mtia")
 
 
 @dataclass(kw_only=True)
 class ProfilerCfg(ITSerializableCfg):
-    """Which profiler runs on a module, and with what settings.
-
-    Exactly one may be active.
+    """Whether the core runners profile a module with the PyTorch profiler, and with what settings.
 
     Example (module config YAML)::
 
         profiler_cfg:
-          which: memprofiler
+          which: pytorch
+          pytorch_profiler_cfg:
+            activities: [cpu, cuda]
+            schedule: {wait: 1, warmup: 1, active: 3}
+            record_shapes: true
 
-    The memprofiler selection needs ``it_cfg.memprofiler_cfg`` enabled (the extension field
-    the runtime reads); the nested ``memprofiler_cfg`` section is refused as a duplicate
-    source. The ``pytorch`` selection is refused until a runner reads it. The core CLI also
-    accepts ``--profiler_cfg.which memprofiler`` and friends (typed group); the
-    Lightning CLI uses Lightning's native ``--trainer.profiler`` instead of duplicating it.
+    ``schedule`` takes the keyword arguments of ``torch.profiler.schedule``. Traces are written with
+    ``torch.profiler.tensorboard_trace_handler`` to ``trace_dir``, defaulting to ``<core_log_dir>/pytorch_profiler``.
+    The core CLI accepts the same settings as ``--profiler_cfg.which pytorch`` and friends.
     """
 
-    which: Literal["none", "pytorch", "memprofiler"] = "none"
-    # Passthrough kwargs for the extended PyTorch profiler (activities, schedule, trace handler...).
+    which: Literal["none", "pytorch"] = "none"
+    # Options for torch.profiler.profile, restricted to PYTORCH_PROFILER_KEYS.
     pytorch_profiler_cfg: dict[str, Any] = field(default_factory=dict)
-    # MemProfiler section; None means unconfigured. An `enabled: False` section also counts as off.
-    memprofiler_cfg: MemProfilerCfg | None = None
 
     def __post_init__(self) -> None:
-        mem_active = self.memprofiler_cfg is not None and bool(getattr(self.memprofiler_cfg, "enabled", True))
-        torch_active = self.which == "pytorch" or bool(self.pytorch_profiler_cfg)
-        if mem_active and torch_active:
+        if self.pytorch_profiler_cfg and self.which != "pytorch":
             raise MisconfigurationException(
-                "ProfilerCfg refuses two active profilers: memprofiler section is configured "
-                f"({self.memprofiler_cfg!r}) and the PyTorch profiler is also requested "
-                f"(which={self.which!r}, pytorch_profiler_cfg keys={sorted(self.pytorch_profiler_cfg)}). "
-                "Configure exactly one."
+                f"profiler_cfg.pytorch_profiler_cfg is set but which={self.which!r}: the settings would configure a "
+                "profiler that never runs. Set which='pytorch' or drop the settings."
             )
-        # NOTE: which="memprofiler" without a nested section passes here; whether the selection
-        # activates anything is decided at ITConfig level, where the runtime-read extension field
-        # is visible (a bare selection with the extension disabled is refused there).
+        unknown = sorted(set(self.pytorch_profiler_cfg) - PYTORCH_PROFILER_KEYS)
+        if unknown:
+            raise MisconfigurationException(
+                f"profiler_cfg.pytorch_profiler_cfg has unsupported keys {unknown}; accepted: "
+                f"{sorted(PYTORCH_PROFILER_KEYS)}."
+            )
+        bad_activities = sorted(set(self.pytorch_profiler_cfg.get("activities", ())) - set(_ACTIVITIES))
+        if bad_activities:
+            raise MisconfigurationException(
+                f"profiler_cfg.pytorch_profiler_cfg.activities has unknown entries {bad_activities}; accepted: "
+                f"{list(_ACTIVITIES)}."
+            )
+
+    def torch_profiler_kwargs(self, default_trace_dir: str | Path) -> dict[str, Any]:
+        """Keyword arguments for ``torch.profiler.profile`` built from these settings.
+
+        Args:
+            default_trace_dir: Where traces are written when ``trace_dir`` is not configured.
+        """
+        import torch.profiler as tp
+
+        opts = dict(self.pytorch_profiler_cfg)
+        kwargs: dict[str, Any] = {k: v for k, v in opts.items() if k not in ("activities", "schedule", "trace_dir")}
+        if "activities" in opts:
+            kwargs["activities"] = [getattr(tp.ProfilerActivity, a.upper()) for a in opts["activities"]]
+        if "schedule" in opts:
+            kwargs["schedule"] = tp.schedule(**opts["schedule"])
+        kwargs["on_trace_ready"] = tp.tensorboard_trace_handler(str(opts.get("trace_dir", default_trace_dir)))
+        return kwargs

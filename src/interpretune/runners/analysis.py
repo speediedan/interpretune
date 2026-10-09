@@ -14,7 +14,7 @@ from datasets.fingerprint import generate_random_fingerprint
 from interpretune.analysis import schema_to_features
 from interpretune.analysis.execution import activated_analysis_cfg
 from interpretune.base import _call_itmodule_hook, ITDataModule
-from interpretune.runners import SessionRunner, run_step
+from interpretune.runners.core import SessionRunner, profiling, run_step
 from interpretune.protocol import AllPhases, AnalysisStoreProtocol
 from interpretune.config import AnalysisRunnerCfg, AnalysisCfg, init_analysis_cfgs
 from interpretune.utils.exceptions import handle_exception_with_debug_dump
@@ -52,20 +52,23 @@ def analysis_store_generator(
         )
     dataloader = datamodule.test_dataloader()  # type: ignore[attr-defined]  # ITDataModule provides test_dataloader
     test_ctx = {"module": module, "as_generator": True}
-    for epoch_idx in range(max_epochs):
-        module.current_epoch = epoch_idx
-        for batch_idx, batch in tqdm(enumerate(dataloader)):
-            if batch_idx >= limit_analysis_batches >= 0:
-                break
-            # TODO: move previous inference_mode toggle to IT dispatch logic
-            yield from run_step(step_fn=step_fn, batch=batch, batch_idx=batch_idx, **test_ctx)
-        _call_itmodule_hook(module, hook_name="on_analysis_epoch_end", hook_msg="Running analysis epoch end hooks")
-        # Declared op state (`op_state` trait) is reset here only for ops that ask for it; by default
-        # it accumulates across epochs. `batch_idx` restarts at 0 above, so the previous
-        # `batch_idx == 0` reset heuristic silently discarded every epoch but the last.
-        epoch_cfg = getattr(module, "analysis_cfg", None)
-        if epoch_cfg is not None and hasattr(epoch_cfg, "reset_op_state"):
-            epoch_cfg.reset_op_state(epoch_boundary=True)
+    with profiling(module) as prof:
+        for epoch_idx in range(max_epochs):
+            module.current_epoch = epoch_idx
+            for batch_idx, batch in tqdm(enumerate(dataloader)):
+                if batch_idx >= limit_analysis_batches >= 0:
+                    break
+                # TODO: move previous inference_mode toggle to IT dispatch logic
+                yield from run_step(step_fn=step_fn, batch=batch, batch_idx=batch_idx, **test_ctx)
+                if prof is not None:
+                    prof.step()
+            _call_itmodule_hook(module, hook_name="on_analysis_epoch_end", hook_msg="Running analysis epoch end hooks")
+            # Declared op state (`op_state` trait) is reset here only for ops that ask for it; by default
+            # it accumulates across epochs. `batch_idx` restarts at 0 above, so the previous
+            # `batch_idx == 0` reset heuristic silently discarded every epoch but the last.
+            epoch_cfg = getattr(module, "analysis_cfg", None)
+            if epoch_cfg is not None and hasattr(epoch_cfg, "reset_op_state"):
+                epoch_cfg.reset_op_state(epoch_boundary=True)
 
 
 def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: AnalysisCfg | None = None, **kwargs) -> dict:

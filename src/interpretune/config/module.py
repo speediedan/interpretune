@@ -117,10 +117,8 @@ class ITConfig(
     extend one group without widening the whole surface.
     """
 
-    # Unified profiler selection (interpretune#11): exactly one backend active; default off.
-    # Wired from the CLI (--profiler_cfg) and config files. The memprofiler selection activates
-    # through it_cfg.memprofiler_cfg (the extension field); the PyTorch selection is refused
-    # until a runner reads it. See _check_profiler_selection.
+    # PyTorch profiler selection for the core runners (interpretune#11); default off. MemProfiler keeps its own
+    # extension field, and _check_profiler_selection refuses enabling both.
     profiler_cfg: ProfilerCfg = field(default_factory=ProfilerCfg)
 
     # """Dataclass to encapsulate the ITModule internal state."""
@@ -140,35 +138,17 @@ class ITConfig(
         self._check_profiler_selection()
 
     def _check_profiler_selection(self) -> None:
-        """Refuse profiler selections no runtime reads, over the runtime-read configuration.
+        """Refuse two profilers observing one module: the PyTorch profiler and an enabled MemProfiler.
 
-        No runner consumes the PyTorch profiler selection, so requesting it would profile
-        nothing; the MemProfiler extension reads ``it_cfg.memprofiler_cfg``, so the nested
-        ``profiler_cfg.memprofiler_cfg`` section (which nothing reads) and a memprofiler
-        selection without the extension field enabled are refused too. Each names the accepted
-        form instead of running a silent no-op.
+        Both instrument the same forward and backward passes, so running them together perturbs each other's
+        measurements; exactly one may be active.
         """
-        profiler = self.profiler_cfg
-        if profiler.which == "pytorch" or bool(profiler.pytorch_profiler_cfg):
+        # memprofiler_cfg is attached by ExtensionConf only when the bundled MemProfiler extension is available.
+        mem_cfg = getattr(self, "memprofiler_cfg", None)
+        if self.profiler_cfg.which == "pytorch" and mem_cfg is not None and getattr(mem_cfg, "enabled", False):
             raise MisconfigurationException(
-                "profiler_cfg requests the PyTorch profiler, which no runner reads yet: accepting "
-                "it would profile nothing. Tracked under #11; use the MemProfiler selection "
-                "(it_cfg.memprofiler_cfg) or Lightning's native --trainer.profiler meanwhile."
-            )
-        ext_mem = getattr(self, "memprofiler_cfg", None)
-        ext_active = ext_mem is not None and bool(getattr(ext_mem, "enabled", False))
-        nested = profiler.memprofiler_cfg
-        nested_active = nested is not None and bool(getattr(nested, "enabled", True))
-        if nested_active:
-            raise MisconfigurationException(
-                "profiler_cfg.memprofiler_cfg duplicates it_cfg.memprofiler_cfg, which is what the "
-                "MemProfiler extension reads; the nested section activates nothing. Set the "
-                "extension field and leave the nested section unset."
-            )
-        if profiler.which == "memprofiler" and not ext_active:
-            raise MisconfigurationException(
-                "profiler_cfg which='memprofiler' needs it_cfg.memprofiler_cfg enabled: the "
-                "extension field carries the settings the runtime reads."
+                "profiler_cfg selects the PyTorch profiler while it_cfg.memprofiler_cfg is enabled: two profilers "
+                "would observe the same module. Enable exactly one."
             )
 
 
