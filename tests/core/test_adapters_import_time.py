@@ -98,6 +98,39 @@ def test_core_entry_points_do_not_pull_adapter_frameworks(entry):
     assert not imported, f"importing {entry} pulled in adapter frameworks: {imported}"
 
 
+def test_import_config_does_not_pull_analysis_or_run_discovery():
+    """Constructing a config must not pay for the analysis package or scan the hub cache.
+
+    `config/analysis.py` and `config/runner.py` resolve lazily from `config/__init__`, and the
+    neuronpedia cache default resolves without the analysis package, so a bare config import
+    loads neither `interpretune.analysis` nor its dispatcher (whose import runs hub op
+    discovery, printing a trust refusal for cached untrusted collections). Subprocess-only, so
+    the runner's own imports cannot mask a violation; the positive control proves the probe
+    can see the dispatcher when it is genuinely imported.
+    """
+    probe = (
+        "import sys, json, warnings; warnings.filterwarnings('ignore');"
+        "import interpretune.config;"
+        "print(json.dumps({"
+        "'analysis': 'interpretune.analysis' in sys.modules,"
+        "'dispatcher': 'interpretune.analysis.ops.dispatcher' in sys.modules}))"
+    )
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr[-2000:]
+    seen = json.loads(result.stdout.strip().splitlines()[-1])
+    assert not seen["analysis"] and not seen["dispatcher"], (
+        f"importing interpretune.config pulled the analysis package: {seen}"
+    )
+    control = (
+        "import sys, json, warnings; warnings.filterwarnings('ignore');"
+        "import interpretune.analysis.ops.dispatcher;"
+        "print(json.dumps('interpretune.analysis.ops.dispatcher' in sys.modules))"
+    )
+    ctrl = subprocess.run([sys.executable, "-c", control], capture_output=True, text=True, timeout=120)
+    assert ctrl.returncode == 0, ctrl.stderr[-2000:]
+    assert json.loads(ctrl.stdout.strip().splitlines()[-1]) is True
+
+
 def test_it_hub_resolves_in_fresh_process():
     """`it.hub` must resolve in a process that never imported interpretune.hub another way.
 
