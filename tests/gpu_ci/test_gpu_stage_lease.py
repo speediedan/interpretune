@@ -69,18 +69,17 @@ def _vars(proc: subprocess.CompletedProcess) -> dict[str, str]:
 def test_the_small_stage_asks_for_one_device_sized_to_the_smallest_card(tmp_path):
     proc, calls = _run(tmp_path, "acquire", "small")
     assert proc.returncode == 0, proc.stderr
-    # cpu-heavy is waited for first, so the device is not held idle behind a long CPU-only suite
-    assert len(calls) == 2 and calls[0].startswith("--wait-only --lease cpu-heavy"), calls
-    assert "--hold" in calls[1], calls
-    assert "--gpus 1 --min-vram 8 --cpu-heavy" in calls[1] and "--project azure-it-42" in calls[1], calls
+    # one hold through the shared CI function; the tool itself waits for cpu-heavy before taking the device
+    assert len(calls) == 1 and calls[0].startswith("--hold"), calls
+    assert "--gpus 1 --min-vram 8 --cpu-heavy" in calls[0] and "--project azure-it-42" in calls[0], calls
     assert _vars(proc) == {"IT_GPU_TWO_STAGE": "1", "IT_GPU_DEVICE": "GPU-small", "IT_GPU_SMALL_MAX_GB": "8"}
 
 
 def test_the_large_stage_asks_for_the_whole_server(tmp_path):
     proc, calls = _run(tmp_path, "acquire", "large", IT_GPU_TWO_STAGE="1")
     assert proc.returncode == 0, proc.stderr
-    assert len(calls) == 2 and calls[0].startswith("--wait-only --lease cpu-heavy"), calls
-    assert "--gpus all --cpu-heavy" in calls[1], calls
+    assert len(calls) == 1 and calls[0].startswith("--hold"), calls
+    assert "--gpus all --cpu-heavy" in calls[0], calls
     assert _vars(proc) == {"IT_GPU_DEVICE": "all"}
 
 

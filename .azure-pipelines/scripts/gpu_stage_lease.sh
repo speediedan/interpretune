@@ -10,10 +10,12 @@
 # large  the whole server, plus cpu-heavy. Everything else runs here: larger declarations, multi-device and bf16
 #        tests, and the extended tiers.
 #
-# The lease is taken through the host's own lease tool, mounted read-only at /gpu_lease_tool, so this job queues in
-# the same fair order as every local caller and is placed by the same best-fit rule. The tool is host infrastructure
-# behind a seam: when it is absent the job falls back to the plain whole-server flock it always took (one stage, no
-# placement), and the second stage is a no-op. The lease directory being absent means the host does not use leases.
+# Each stage holds its lease through ci_host_lease_hold (scripts/gpu_lease_wrap.sh, shared with the other
+# repositories on this agent), which uses the host's lease tool, mounted read-only at /gpu_lease_tool, so this job
+# queues in the same fair order as every local caller, is placed by the same best-fit rule, and waits for cpu-heavy
+# before taking a GPU. The tool is host infrastructure behind a seam: when it is absent the job falls back to the
+# plain whole-server locks (one stage, no placement), and the second stage is a no-op. The lease directory being
+# absent means the host does not use leases.
 #
 # Wait policy, from the GPU run planner: IT_GPU_LEASE_WAIT seconds, and on a timeout either fail
 # (IT_GPU_LEASE_ON_TIMEOUT=fail, a pull request gate) or cancel the build (cancel, a scheduled run). A scheduled run
@@ -70,27 +72,14 @@ small_max_gb() {
     fi | sort -n | head -1 | awk '{printf "%d", $1 / 1024}'
 }
 
-# Wait for cpu-heavy to be free BEFORE taking the gpu key. The tool takes gpu first and only then waits on cpu-heavy
-# (the fixed order that keeps two callers from deadlocking), so without this a long local CPU-only suite holding
-# cpu-heavy would leave this job holding a GPU it cannot use. Racy by nature: another caller can take cpu-heavy
-# between this wait and the hold, which only costs that wait again; the fixed order still rules out deadlock.
-prewait_cpu_heavy() {
-    GPU_LEASE_DIR="$DIR" "$TOOL" --wait-only --lease cpu-heavy --timeout "$(wait_secs)" --project "$LABEL"
-    local rc=$?
+# Hold the lease for one stage; the request is the lease tool's own options. A timeout follows the wait policy.
+hold() {
+    local stage=$1 rc
+    shift
+    ci_host_lease_hold "$DIR" "$TOOL" "$(PIDFILE "$stage")" "$(wait_secs)" "$LABEL" "$@"
+    rc=$?
     (( rc == 75 )) && on_timeout
     (( rc == 0 )) || exit "$rc"
-}
-
-acquire_fallback() {
-    # The plain whole-server lease this job took before per-device placement: gpu, then cpu-heavy.
-    local rc
-    ci_gpu_lease_acquire "$DIR" /tmp/azp_gpu_lease.pid "$(wait_secs)" "$LABEL" gpu; rc=$?
-    if (( rc == 0 )); then
-        ci_gpu_lease_acquire "$DIR" /tmp/azp_cpu_heavy_lease.pid "$(wait_secs)" "$LABEL" cpu-heavy; rc=$?
-    fi
-    (( rc == 0 )) && return 0
-    (( rc == 75 )) && on_timeout
-    exit "$rc"
 }
 
 case "$ACTION/$STAGE" in
@@ -100,18 +89,13 @@ case "$ACTION/$STAGE" in
             setvar IT_GPU_TWO_STAGE 0; setvar IT_GPU_DEVICE all; exit 0
         fi
         if ! tool_usable; then
-            echo "##vso[task.logissue type=warning]The host lease tool is not mounted at ${TOOL}; running one whole-server stage without device placement."
-            acquire_fallback
+            # without the tool a device cannot be placed, so the run is one whole-server stage
+            hold small --gpus all --cpu-heavy
             setvar IT_GPU_TWO_STAGE 0; setvar IT_GPU_DEVICE all; exit 0
         fi
         small=$(small_max_gb)
         [[ "$small" =~ ^[0-9]+$ && "$small" -gt 0 ]] || { echo "ERROR: cannot read the devices' memory from nvidia-smi." >&2; exit 1; }
-        prewait_cpu_heavy
-        GPU_LEASE_DIR="$DIR" "$TOOL" --hold --pidfile "$(PIDFILE small)" --gpus 1 --min-vram "$small" --cpu-heavy \
-            --timeout "$(wait_secs)" --project "$LABEL"
-        rc=$?
-        (( rc == 75 )) && on_timeout
-        (( rc == 0 )) || exit "$rc"
+        hold small --gpus 1 --min-vram "$small" --cpu-heavy
         device=$(cat "$(PIDFILE small).device")
         echo "gpu_stage_lease: small stage holds ${device} (classes declaring up to ${small} GiB, no bf16)."
         setvar IT_GPU_TWO_STAGE 1; setvar IT_GPU_DEVICE "$device"; setvar IT_GPU_SMALL_MAX_GB "$small"
@@ -120,28 +104,17 @@ case "$ACTION/$STAGE" in
         if [[ "${IT_GPU_TWO_STAGE:-0}" != 1 ]]; then
             echo "gpu_stage_lease: one-stage run; the first stage's lease already covers this."; exit 0
         fi
-        prewait_cpu_heavy
-        GPU_LEASE_DIR="$DIR" "$TOOL" --hold --pidfile "$(PIDFILE large)" --gpus all --cpu-heavy \
-            --timeout "$(wait_secs)" --project "$LABEL"
-        rc=$?
-        (( rc == 75 )) && on_timeout
-        (( rc == 0 )) || exit "$rc"
+        hold large --gpus all --cpu-heavy
         echo "gpu_stage_lease: large stage holds the whole server."
         setvar IT_GPU_DEVICE all
         ;;
     release/small|release/large)
-        if [[ -f "$(PIDFILE "$STAGE")" ]] && tool_usable; then
-            GPU_LEASE_DIR="$DIR" "$TOOL" --release --pidfile "$(PIDFILE "$STAGE")"
-        fi
+        ci_host_lease_release "$DIR" "$TOOL" "$(PIDFILE "$STAGE")"
         ;;
     release/all)
         # Belt-and-braces for the always() cleanup: if this job dies or its container is torn down, every process
         # inside dies too and the kernel frees the leases anyway.
-        for s in small large; do
-            [[ -f "$(PIDFILE "$s")" ]] && tool_usable && GPU_LEASE_DIR="$DIR" "$TOOL" --release --pidfile "$(PIDFILE "$s")"
-        done
-        ci_gpu_lease_release "$DIR" /tmp/azp_gpu_lease.pid gpu
-        ci_gpu_lease_release "$DIR" /tmp/azp_cpu_heavy_lease.pid cpu-heavy
+        for s in small large; do ci_host_lease_release "$DIR" "$TOOL" "$(PIDFILE "$s")"; done
         ;;
     *)
         echo "usage: gpu_stage_lease.sh acquire small|large | release small|large|all" >&2; exit 2 ;;
