@@ -543,7 +543,7 @@ class HFFromPretrainedMixin:
         from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 
         self.model = prepare_model_for_kbit_training(self.model)  # mixin provides model
-        self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))  # type: ignore[attr-defined]  # mixin provides model
+        self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))  # mixin provides model
 
 
 class BaseITMixins(
