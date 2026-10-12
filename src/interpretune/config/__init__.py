@@ -19,8 +19,26 @@ from interpretune.config.mixins import (
 from interpretune.config.module import ITConfig, ITState
 from interpretune.config.profiling import ProfilerCfg
 
-from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg
-from interpretune.config.runner import SessionRunnerCfg, AnalysisRunnerCfg, init_analysis_dirs, init_analysis_cfgs
+# Analysis-adjacent config submodules stay unimported until used: importing them pulls the whole
+# analysis package (dispatcher + hub op discovery) as a side effect, which no config construction
+# needs. They resolve through _CONFIG_SUBMODULE_EXPORTS below, the same lazy shape as the adapter
+# configs above.
+_CONFIG_SUBMODULE_EXPORTS = {
+    "AnalysisCfg": "interpretune.config.analysis",
+    "AnalysisArtifactCfg": "interpretune.config.analysis",
+    "SessionRunnerCfg": "interpretune.config.runner",
+    "AnalysisRunnerCfg": "interpretune.config.runner",
+    "init_analysis_dirs": "interpretune.config.runner",
+    "init_analysis_cfgs": "interpretune.config.runner",
+}
+
+if TYPE_CHECKING:
+    from interpretune.config.analysis import AnalysisArtifactCfg as AnalysisArtifactCfg
+    from interpretune.config.analysis import AnalysisCfg as AnalysisCfg
+    from interpretune.config.runner import AnalysisRunnerCfg as AnalysisRunnerCfg
+    from interpretune.config.runner import SessionRunnerCfg as SessionRunnerCfg
+    from interpretune.config.runner import init_analysis_cfgs as init_analysis_cfgs
+    from interpretune.config.runner import init_analysis_dirs as init_analysis_dirs
 
 # Each adapter's config lives with its adapter (`interpretune.adapters.<name>.config`), and every adapter,
 # bundled or hub-delivered, reaches auto-composition only by registering its config class with the
@@ -81,7 +99,12 @@ def __getattr__(name: str):
     """Resolve an adapter's config class from its adapter package on first use."""
     adapter = _ADAPTER_CONFIG_EXPORTS.get(name)
     if adapter is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        submodule = _CONFIG_SUBMODULE_EXPORTS.get(name)
+        if submodule is None:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        import importlib
+
+        return getattr(importlib.import_module(submodule), name)
     import importlib
 
     try:

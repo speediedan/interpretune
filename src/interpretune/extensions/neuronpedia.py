@@ -21,7 +21,17 @@ from interpretune.utils import (
     RemoveAdditionalPropertiesValidator,
 )
 
-from interpretune.analysis import IT_ANALYSIS_CACHE
+
+def _default_np_cache_root() -> str:
+    """The default Neuronpedia cache root, resolved without importing the analysis package.
+
+    Lives behind a function (rather than reading the hub cache roots) so the on-disk default stays exactly
+    ``$IT_ANALYSIS_CACHE/neuronpedia``: the hub and analysis caches honor different overrides, so naming the hub root
+    here would silently move existing caches.
+    """
+    from interpretune.analysis import IT_ANALYSIS_CACHE
+
+    return os.path.join(IT_ANALYSIS_CACHE, "neuronpedia")
 
 
 logger = logging.getLogger(__name__)
@@ -71,7 +81,6 @@ if _NEURONPEDIA_AVAILABLE:
         transformation, validation, and upload capabilities.
         """
 
-        IT_NP_CACHE = os.getenv("IT_NP_CACHE", os.path.join(IT_ANALYSIS_CACHE, "neuronpedia"))
         NP_RAW_REPO_URL_BASE = "https://raw.githubusercontent.com/hijohnnylin/neuronpedia/"
         NP_GRAPH_SCHEMA_PATH = "apps/webapp/app/api/graph/graph-schema.json"
         NP_RELEASES_URL = "https://github.com/hijohnnylin/neuronpedia/releases/latest"
@@ -116,7 +125,7 @@ if _NEURONPEDIA_AVAILABLE:
                 raise RuntimeError("Neuronpedia package is not available.")
 
             schema_path = Path(schema_path)
-            cache_dir = Path(self.IT_NP_CACHE)
+            cache_dir = Path(os.getenv("IT_NP_CACHE", _default_np_cache_root()))
             cache_dir.mkdir(parents=True, exist_ok=True)
             cached_schema_path = cache_dir / "graph-schema.json"
             cached_tag_path = cache_dir / "graph-schema.tag"
