@@ -29,8 +29,9 @@ STAGE=${2:?small, large or all}
 DIR=${GPU_STAGE_LEASE_DIR:-/gpu_leases}       # overridable for tests; the pipeline mounts these two paths
 TOOL=${GPU_STAGE_LEASE_TOOL:-/gpu_lease_tool}
 LABEL="azure-it-${BUILD_BUILDID:-local}"
-PIDFILE() { echo "/tmp/azp_gpu_${1}.pid"; }
-DEADLINE_FILE=/tmp/azp_gpu_lease_deadline
+PIDDIR=${GPU_STAGE_LEASE_PIDDIR:-/tmp}         # overridable for tests, so they never write the host's /tmp
+PIDFILE() { echo "${PIDDIR}/azp_gpu_${1}.pid"; }
+DEADLINE_FILE=${PIDDIR}/azp_gpu_lease_deadline
 setvar() { echo "##vso[task.setvariable variable=$1]$2"; }
 
 # shellcheck source=/dev/null
@@ -89,8 +90,10 @@ case "$ACTION/$STAGE" in
             setvar IT_GPU_TWO_STAGE 0; setvar IT_GPU_DEVICE all; exit 0
         fi
         if ! tool_usable; then
-            # without the tool a device cannot be placed, so the run is one whole-server stage
-            hold small --gpus all --cpu-heavy
+            # Without the tool a device cannot be placed, so the run is one whole-server stage. It is held under the
+            # large stage's pidfile: the pipeline's "release small" step must leave it held for the later phases, and
+            # "release all" frees it at the end.
+            hold large --gpus all --cpu-heavy
             setvar IT_GPU_TWO_STAGE 0; setvar IT_GPU_DEVICE all; exit 0
         fi
         small=$(small_max_gb)

@@ -50,6 +50,7 @@ def _run(tmp_path: Path, *args: str, tool_rc: int = 0, with_tool: bool = True, w
         **os.environ,
         "GPU_STAGE_LEASE_DIR": str(leases),
         "GPU_STAGE_LEASE_TOOL": str(tool),
+        "GPU_STAGE_LEASE_PIDDIR": str(tmp_path),
         "GPU_LEASE_DEVICES": DEVICES,
         "BUILD_BUILDID": "42",
         "IT_GPU_LEASE_WAIT": "30",
@@ -89,6 +90,9 @@ def test_without_the_tool_the_job_falls_back_to_one_whole_server_stage(tmp_path)
     assert "not mounted" in proc.stdout and not calls
     assert _vars(proc) == {"IT_GPU_TWO_STAGE": "0", "IT_GPU_DEVICE": "all"}
     # the plain whole-server locks were taken, in order, through the job's existing flock helper
+    assert (tmp_path / "leases" / "gpu.holder").exists() and (tmp_path / "leases" / "cpu-heavy.holder").exists()
+    # the pipeline's own step order: "release small" must leave the one whole-server stage held for the later phases
+    _run(tmp_path, "release", "small", with_tool=False)
     assert (tmp_path / "leases" / "gpu.holder").exists() and (tmp_path / "leases" / "cpu-heavy.holder").exists()
     proc, _ = _run(tmp_path, "acquire", "large", with_tool=False, IT_GPU_TWO_STAGE="0")
     assert proc.returncode == 0 and "one-stage run" in proc.stdout
