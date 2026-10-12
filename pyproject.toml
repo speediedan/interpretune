@@ -432,6 +432,9 @@ include = [
 ]
 exclude = []
 
+# Stale suppressions fail loudly so the count cannot creep back (#176 step 1).
+reportUnnecessaryTypeIgnoreComment = "error"
+
 # Custom directives removed for stricter type checking
 
 [tool.coverage.run]

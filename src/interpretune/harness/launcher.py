@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 from interpretune.harness.experiments import ExperimentsConfig, default_config_dir, default_output_dir
 from interpretune.harness.config import load_experiment_config

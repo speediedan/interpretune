@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-import yaml  # pyright: ignore[reportMissingTypeStubs]
+import yaml
 from datasets import Dataset, IterableDataset
 from sae_lens.config import PretokenizeRunnerConfig
 from transformers import PreTrainedTokenizerBase

@@ -85,7 +85,7 @@ def model_gradient_impl(
 
     # ---- Recompute metrics from returned real logits -------------------------
     answer_logits = torch.squeeze(
-        raw_logits[torch.arange(get_batch_input(batch).size(0)), answer_indices],  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+        raw_logits[torch.arange(get_batch_input(batch).size(0)), answer_indices],  # BatchEncoding tensor has size
         dim=1,
     )
     # Stage the indexed logits for the declared required op, invoked via the public op surface
@@ -132,7 +132,7 @@ def gradient_attribution_impl(
     # Wrap raw dicts into a backend-specific activation cache; already-wrapped caches pass through
     model_backend = require_model_backend(module)
     batch_cache_dict = model_backend.wrap_activation_cache(cache_source, module.model)
-    batch_sz = get_batch_input(batch).size(0)  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+    batch_sz = get_batch_input(batch).size(0)  # BatchEncoding tensor has size
 
     # Get alive latents using GetAliveLatentsOp  # TODO: clean this up so no temp batch is required
     # Create a temporary analysis batch with the cache for GetAliveLatentsOp
@@ -222,7 +222,7 @@ def ablation_attribution_impl(
     )
     assert isinstance(analysis_batch.answer_logits, dict), "Expected answer_logits to be a dictionary"
     for act_name, logits in analysis_batch.answer_logits.items():
-        attribution_values[act_name] = torch.zeros(get_batch_input(batch).size(0), module.sae_handles[0].cfg.d_sae)  # type: ignore[attr-defined]
+        attribution_values[act_name] = torch.zeros(get_batch_input(batch).size(0), module.sae_handles[0].cfg.d_sae)
         for latent_idx in analysis_batch.alive_latents[act_name]:
             # The declared required op, invoked via the public op surface (see NOTE [Op-Driven Transitive
             # Dependency Atomicity]) on a SCRATCH batch: the op writes its outputs back onto the batch it

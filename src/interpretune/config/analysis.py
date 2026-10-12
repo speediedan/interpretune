@@ -66,7 +66,7 @@ def _extend_names_for_bridge(module, names_list: list[str]) -> tuple[list[str], 
     if hasattr(model, "hook_aliases"):
         alias_to_canonical.update(model.hook_aliases)  # type: ignore[arg-type]  # TL hook_aliases is Dict[str, str | List[str]]
     if hasattr(model, "_collect_hook_aliases_from_registry"):
-        alias_to_canonical.update(model._collect_hook_aliases_from_registry())  # type: ignore[arg-type]
+        alias_to_canonical.update(model._collect_hook_aliases_from_registry())
 
     if not alias_to_canonical:
         return names_list, {}
@@ -160,7 +160,7 @@ class AnalysisCfg(ITSerializableCfg):
     # (prevents _generated_ prefix accumulation when this cfg is shared via class-level defaults)
     _original_step_fn: str | None = field(default=None, init=False, repr=False, compare=False)
     auto_prune_batch_encoding: bool = True  # Automatically prune encoded batches to only include relevant keys
-    _applied_to: WeakKeyDictionary = field(  # type: ignore[type-arg]
+    _applied_to: WeakKeyDictionary = field(
         default_factory=WeakKeyDictionary,
         init=False,
         repr=False,

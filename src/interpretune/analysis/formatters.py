@@ -147,7 +147,7 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
         return self._tensorize(data_struct, current_field)
 
     # TODO: validate that we don't want to allow torch.Tensor | Sequence return type
-    def format_column(self, pa_table: "pa.Table") -> torch.Tensor:  # type: ignore[override]
+    def format_column(self, pa_table: "pa.Table") -> torch.Tensor:
         """Format a column with enhanced tensorization."""
         column = self.numpy_arrow_extractor().extract_column(pa_table)
         column = self.python_features_decoder.decode_column(column, pa_table.column_names[0])  # type: ignore[arg-type]

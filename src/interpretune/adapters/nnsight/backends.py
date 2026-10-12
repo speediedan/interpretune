@@ -362,7 +362,7 @@ def _iter_requested_hook_names(
     num_layers = _infer_num_layers(model)
 
     for base_name in resolver.supported_hooks:
-        if "{layer}" in resolver._mapping.hook_mappings[base_name].envoy_path:  # type: ignore[attr-defined]
+        if "{layer}" in resolver._mapping.hook_mappings[base_name].envoy_path:
             candidates = [f"blocks.{layer}.{base_name}" for layer in range(num_layers)]
         else:
             candidates = [base_name]
@@ -390,7 +390,7 @@ def _iter_available_hook_names(
     num_layers = _infer_num_layers(model)
 
     for base_name in resolver.supported_hooks:
-        if "{layer}" in resolver._mapping.hook_mappings[base_name].envoy_path:  # type: ignore[attr-defined]
+        if "{layer}" in resolver._mapping.hook_mappings[base_name].envoy_path:
             candidates = [f"blocks.{layer}.{base_name}" for layer in range(num_layers)]
         else:
             candidates = [base_name]
@@ -640,7 +640,7 @@ class NNsightModelBackend:
         stage_interventions = interventions or {}
         act_input = _read_envoy_activation(envoy, resolved)
         if last_pos is not None:
-            for spec in stage_interventions.get("hook_sae_input", ()):  # type: ignore[arg-type]
+            for spec in stage_interventions.get("hook_sae_input", ()):
                 act_input = apply_intervention(act_input, spec, last_pos=last_pos)
 
         # NNsight reads post-merge activations (3D: [batch, seq, n_heads*d_head])
@@ -678,18 +678,18 @@ class NNsightModelBackend:
                 feature_acts = hook_fn(feature_acts, dummy)
 
             if last_pos is not None:
-                for spec in stage_interventions.get("hook_sae_acts_post", ()):  # type: ignore[arg-type]
+                for spec in stage_interventions.get("hook_sae_acts_post", ()):
                     feature_acts = apply_intervention(feature_acts, spec, last_pos=last_pos)
 
             sae_out = sae.decode(feature_acts)
             sae_error = act_input - sae_out
             if last_pos is not None:
-                for spec in stage_interventions.get("hook_sae_error", ()):  # type: ignore[arg-type]
+                for spec in stage_interventions.get("hook_sae_error", ()):
                     sae_error = apply_intervention(sae_error, spec, last_pos=last_pos)
 
             sae_output = sae_out + sae_error if getattr(sae, "use_error_term", False) else sae_out
             if last_pos is not None:
-                for spec in stage_interventions.get("hook_sae_output", ()):  # type: ignore[arg-type]
+                for spec in stage_interventions.get("hook_sae_output", ()):
                     sae_output = apply_intervention(sae_output, spec, last_pos=last_pos)
 
             _write_envoy_activation(envoy, resolved, sae_output)
@@ -713,9 +713,9 @@ class NNsightModelBackend:
         Falls back to returning ``model`` directly if it is already a plain ``nn.Module``.
         """
         if hasattr(model, "_model"):
-            return model._model  # type: ignore[return-value]
+            return model._model
         if hasattr(model, "_module"):
-            return model._module  # type: ignore[return-value]
+            return model._module
         return model
 
     @staticmethod
