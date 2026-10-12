@@ -179,7 +179,7 @@ def display_full_frame(frame: Any) -> None:
     if getattr(frame, "attrs", {}).get("html_columns"):
         display_html_frame(frame)
         return
-    import pandas as pd  # type: ignore[import-untyped]
+    import pandas as pd
 
     with pd.option_context(
         "display.max_columns",

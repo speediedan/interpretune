@@ -152,7 +152,7 @@ def model_ablation_impl(
         clear_contexts=True,
     )
 
-    batch_indices = torch.arange(get_batch_input(batch).size(0))  # type: ignore[attr-defined]
+    batch_indices = torch.arange(get_batch_input(batch).size(0))
     for (name, latent_idx), answer_logits in zip(index_map, all_logits, strict=True):
         per_latent_logits[name][latent_idx] = answer_logits[batch_indices, answer_indices, :]
 
@@ -199,7 +199,7 @@ def latent_correct_acts_impl(
         logit_diffs = logit_diffs.unsqueeze(0)
 
     correct_activations = {}
-    names_filter = module.analysis_cfg.names_filter  # type: ignore[attr-defined]
+    names_filter = module.analysis_cfg.names_filter
     assert cache is not None, "cache should not be None after validation"
     for name, acts in cache.items():
         if not names_filter(name):

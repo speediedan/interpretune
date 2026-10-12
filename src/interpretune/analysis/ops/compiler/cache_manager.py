@@ -196,7 +196,7 @@ class OpDefinitionsCacheManager:
             rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Traceback: {traceback.format_exc()}")
 
         rank_zero_debug(f"[ANALYSIS_HUB_CACHE] Returning {len(hub_yaml_files)} YAML files")
-        return hub_yaml_files  # type: ignore[return-value]
+        return hub_yaml_files
 
     def discover_hub_yaml_files(self) -> list[Path]:
         """Discover op-definition YAMLs from the latest cached revision of each hub op collection.

@@ -69,7 +69,7 @@ def _ensure_bridge_processed_weight_device_patch() -> None:
                 setattr(self, attr, fn(val))
         return out
 
-    GeneralizedComponent._apply = _apply_with_processed_weights  # type: ignore[method-assign]
+    GeneralizedComponent._apply = _apply_with_processed_weights
     _BRIDGE_PROCESSED_WEIGHT_PATCH_APPLIED = True
 
 
@@ -126,7 +126,7 @@ class TLensAttributeMixin:
     @property
     def output_device(self) -> torch.device | None:
         """Device model outputs land on -- for TL, the same device as inputs."""
-        return self.get_tl_device()  # type: ignore[attr-defined]  # provided by mixing class
+        return self.get_tl_device()  # provided by mixing class
 
     @property
     def input_device(self) -> torch.device | None:
@@ -287,7 +287,7 @@ class BaseITLensModule(BaseITModule):
         self._resolve_vocab_sentinels(cfg, self.it_cfg.tokenizer)
         # TransformerLens 4.0 attaches `boot_native` when `transformer_lens` imports its native source module, so it
         # exists at runtime but not on the class pyright reads.
-        bridge = TransformerBridge.boot_native(  # pyright: ignore[reportAttributeAccessIssue]
+        bridge = TransformerBridge.boot_native(
             cfg,
             tokenizer=self.it_cfg.tokenizer,
             device=getattr(cfg, "device", None) if getattr(tl_cfg, "move_to_device", True) else None,
@@ -500,28 +500,28 @@ class TransformerLensAdapter(TLensAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="datamodule",
-            adapter_combination=(Adapter.core, Adapter.transformer_lens),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.transformer_lens),
             composition_classes=(ITDataModule,),
             description="TransformerLens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),
             composition_classes=(ITDataModule, LightningDataModule),
             description="TransformerLens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="module",
-            adapter_combination=(Adapter.core, Adapter.transformer_lens),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.transformer_lens),
             composition_classes=(ITLensModule,),
             description="TransformerLens adapter that can be composed with core and l...",
         )
         adapter_ctx_registry.register(
             Adapter.transformer_lens,
             component_key="module",
-            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens),
             composition_classes=(
                 TLensAttributeMixin,
                 BaseITLensModule,

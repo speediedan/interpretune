@@ -131,7 +131,7 @@ def weighted_mean(states: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
 
 
 def boolean_logits_to_avg_logit_diff(
-    logits: Float[torch.Tensor, "batch seq 2"],  # type: ignore
+    logits: Float[torch.Tensor, "batch seq 2"],
     target_indices: torch.Tensor,
     reduction: Literal["mean", "sum"] | None = None,
 ) -> torch.Tensor:

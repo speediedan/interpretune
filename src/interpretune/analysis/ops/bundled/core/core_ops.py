@@ -45,9 +45,9 @@ def get_answer_indices_impl(
         answer_indices = module.analysis_cfg.input_store.answer_indices[batch_idx]
     else:
         # Otherwise compute it
-        tokens = get_batch_input(batch).detach().cpu()  # type: ignore[attr-defined]  # BatchEncoding tensor has detach/cpu
+        tokens = get_batch_input(batch).detach().cpu()  # BatchEncoding tensor has detach/cpu
         if module.datamodule.tokenizer.padding_side == "left":
-            answer_indices = torch.full((tokens.size(0),), -1)  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+            answer_indices = torch.full((tokens.size(0),), -1)  # BatchEncoding tensor has size
         else:
             nonpadding_mask = tokens != module.datamodule.tokenizer.pad_token_id
             # This could be more robust, test with various datasets and padding strategies
@@ -138,7 +138,7 @@ def logit_diffs_impl(
     logits, indices = analysis_batch.answer_logits, analysis_batch.answer_indices
     assert logits is not None and indices is not None, "answer_logits and answer_indices must not be None"
     assert isinstance(logits, torch.Tensor) and isinstance(indices, torch.Tensor), "logits and indices must be tensors"
-    indexed_logits = logits[torch.arange(get_batch_input(batch).size(0)), indices]  # type: ignore[attr-defined]  # BatchEncoding tensor has size
+    indexed_logits = logits[torch.arange(get_batch_input(batch).size(0)), indices]  # BatchEncoding tensor has size
     answer_logits = torch.squeeze(indexed_logits, dim=1)
     # Stage the indexed logits for the declared required op, invoked via the public op surface
     # (see NOTE [Op-Driven Transitive Dependency Atomicity])

@@ -53,7 +53,7 @@ class ExtractedAnalysisStore:
                 for batch in values:
                     latent_tensors = [tensor for tensor in batch[latent_model].values()]
                     batch_tensors.append(torch.stack(latent_tensors) if latent_tensors else None)
-                result[latent_model] = batch_tensors  # type: ignore[assignment]
+                result[latent_model] = batch_tensors
             else:
                 result[latent_model] = [  # type: ignore[assignment]
                     None if isinstance(batch[latent_model], list) and not batch[latent_model] else batch[latent_model]

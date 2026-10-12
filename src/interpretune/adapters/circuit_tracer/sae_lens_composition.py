@@ -49,7 +49,7 @@ class CircuitTracerNNsightSAELensModule(
     def auto_model_init(self) -> None:
         """Init the replacement model, then load the attached latent models."""
         super().auto_model_init()  # the circuit-tracer NNsight init wins by MRO
-        self.instantiate_saes()  # type: ignore[attr-defined]  # from BaseSAELensModule
+        self.instantiate_saes()  # from BaseSAELensModule
 
 
 def register_sae_lens_compositions(adapter_ctx_registry: CompositionRegistry) -> None:
@@ -58,21 +58,21 @@ def register_sae_lens_compositions(adapter_ctx_registry: CompositionRegistry) ->
     adapter_ctx_registry.register(
         Adapter.circuit_tracer,
         component_key="datamodule",
-        adapter_combination=combination,  # type: ignore[arg-type]
+        adapter_combination=combination,
         composition_classes=(ITDataModule,),
         description="Circuit Tracer adapter with NNsight backend and SAE latent models...",
     )
     adapter_ctx_registry.register(
         Adapter.circuit_tracer,
         component_key="module",
-        adapter_combination=combination,  # type: ignore[arg-type]
+        adapter_combination=combination,
         composition_classes=(CircuitTracerNNsightSAELensModule,),
         description="Circuit Tracer adapter with NNsight backend and SAE latent models...",
     )
     adapter_ctx_registry.register(
         Adapter.circuit_tracer,
         component_key="module_cfg",
-        adapter_combination=combination,  # type: ignore[arg-type]
+        adapter_combination=combination,
         composition_classes=(CircuitTracerConfig, SAELensConfig),
         description="Circuit Tracer configuration with NNsight backend and SAE latent models...",
     )

@@ -34,7 +34,7 @@ def _iter_hook_aliases(model: Any) -> dict[str, list[str]]:
             alias_to_canonical.setdefault(alias, []).extend(str(value) for value in values)
 
     if hasattr(model, "_collect_hook_aliases_from_registry"):
-        for alias, canonical in model._collect_hook_aliases_from_registry().items():  # type: ignore[attr-defined]
+        for alias, canonical in model._collect_hook_aliases_from_registry().items():
             alias_to_canonical.setdefault(alias, []).append(str(canonical))
     return alias_to_canonical
 
