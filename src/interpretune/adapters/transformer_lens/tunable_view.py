@@ -97,17 +97,26 @@ class TransformerBridgeView:
     (``roles``, the checkpoint members and ``promote``). The default checkpoint members round-trip through
     ``TransformerBridge.state_dict()`` and ``load_state_dict()`` from transformer-lens 4.0.
 
+    The root is the module that holds the bridge (the interpretune module, whose ``model`` is the bridge), so physical
+    names are that module's names (``model.blocks.0._original_component.attn.q._original_component.weight``) and
+    modules registered beside the bridge stay reachable. A bridge may also be its own root.
+
     Args:
-        bridge: The bridge (the view's root).
+        root: The view's root: the interpretune module, or the bridge itself.
+        bridge: The bridge, when it is not ``root.model`` (or ``root``).
         implicit_norm_thaw: Thaw a block's norms with any of its parameters, and the final norm with the embeddings.
     """
 
-    def __init__(self, bridge: nn.Module, implicit_norm_thaw: bool = True) -> None:
+    def __init__(self, root: nn.Module, bridge: nn.Module | None = None, implicit_norm_thaw: bool = True) -> None:
         from transformer_lens.model_bridge.generalized_components import NormalizationBridge
 
-        self.root = bridge
+        if bridge is None:
+            model = root._modules.get("model")
+            bridge = model if model is not None and hasattr(model, "tl_named_parameters") else root
+        self.root = root
+        self.bridge = bridge
         self.implicit_norm_thaw = implicit_norm_thaw
-        named = list(bridge.named_parameters())
+        named = list(root.named_parameters())
         name_of = {id(p): n for n, p in named}
         self._table: dict[str, tuple[str, ...]] = {}
         self._tl_tensors: dict[str, Tensor] = {}
