@@ -72,6 +72,13 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 - NNsight parity acceptance tests with expected results and profiling baselines
 - Example module registry entries for NNsight adapter combinations
 
+#### Core Training Loop
+- LR schedulers step on the core path at their configured `interval` (`step` or `epoch`) and `frequency`; `ReduceLROnPlateau` steps with its `monitor` metric and is refused, naming the metric, when that metric was not logged (#761)
+- `SessionRunnerCfg.validate_with_grad` validates with gradients enabled (for objectives using `torch.autograd.grad`) instead of under `torch.inference_mode()` (#761)
+- Per-epoch training and validation metrics: `log()`/`log_dict()` values are averaged, printed and reset at each training epoch end, and passed to callbacks (#761)
+- A minimal callback list (`SessionRunnerCfg.callbacks`, `CoreCallback`, `CoreLoopContext`) with step, validation-end and epoch boundaries; a callback stops training by setting `ctx.should_stop` (#761)
+- `checkpoint_state` / `load_checkpoint_state`: module, optimizer, lr scheduler, RNG and loop state, plus optional `on_save_checkpoint` / `on_load_checkpoint` module hooks and callback state (#761)
+
 ### Changed
 - `CompositionRegistry` updated to handle NNsight adapter combinations and dual-backend circuit-tracer
 - `BaseITModule.auto_model_init` refactored to support both HuggingFace and NNsight model initialization paths
@@ -84,6 +91,9 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 - SAE-Lens adapter expanded from TL-only to dual-backend with hook resolution (455+ lines added)
 
 ### Fixed
+- The core training loop honors `SessionRunnerCfg.max_steps` (counting optimizer steps), which it previously accepted and ignored (#761)
+- The core training loop's `on_train_epoch_start` / `on_train_epoch_end` hooks are optional, as its batch hooks are; a module without them raised `AttributeError` (#761)
+- The core training loop reads the optimizer from the module at every step rather than once, so a replaced optimizer is used (#761)
 - Circuit-tracer `isinstance` assertions replaced with class-name checks to avoid false failures from pytest `importlib` import mode causing module double-loading
 - Coverage collection fix for NNsight's `sys.settrace()` disabling behavior
 - HuggingFace transformers v5 compatibility with configurable test reruns (`--reruns 2 --reruns-delay 5`)

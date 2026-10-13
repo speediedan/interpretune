@@ -53,9 +53,36 @@ This is configured via `_it_cls_metadata` on each adapter.
 
 ### Loop Functions
 
-- **`core_train_loop`** — Iterates epochs: sets `model.train()`, fires `on_train_epoch_start`, runs training batches via `run_step`, optionally runs validation batches under `torch.inference_mode()`, fires `on_train_epoch_end`.
+- **`core_train_loop`**: Iterates epochs: sets `model.train()`, fires `on_train_epoch_start` (optional), runs training batches via `run_step` (stepping step-interval lr schedulers after each optimizer step), optionally runs validation batches under `torch.inference_mode()` (or with gradients, see below), averages and prints the epoch's logged metrics, fires `on_train_epoch_end` (optional), then steps epoch-interval lr schedulers. It returns its `CoreLoopContext`.
 - **`core_test_loop`** — Sets `model.eval()`, runs test batches under `torch.inference_mode()`, prints accumulated metrics at epoch end, fires `on_test_epoch_end` (optional).
 - **`core_analysis_loop`** — Generates an HF `Dataset` from `run_step(..., as_generator=True)`, saves to the analysis output store.
+
+### Core Training Loop Controls
+
+`SessionRunnerCfg` fields that `core_train_loop` honors, beyond the batch limits and `max_epochs`:
+
+- **`max_steps`**: An optimizer-step budget (`-1` for none), whichever of it and `max_epochs` is reached first. The epoch in which the budget is spent still validates and runs its epoch-end hooks. Optimizer steps are counted on the loop context (`ctx.optimizer_step`), because `module.global_step` counts every step `run_step` dispatches, validation and test steps included.
+- **`validate_with_grad`**: Validate with gradients enabled rather than under `torch.inference_mode()`, for a validation objective computed with `torch.autograd.grad`. Off by default.
+- **`callbacks`**: Objects with any of `CoreCallback`'s methods (`interpretune.runners.core`): `on_train_start(ctx)`, `on_train_epoch_start(ctx)`, `on_train_step_end(ctx, outputs)`, `on_validation_end(ctx, metrics)`, `on_train_epoch_end(ctx, metrics)` and `on_train_end(ctx)`, plus `state_dict()` / `load_state_dict(state)` for checkpoints. A callback ends training by setting `ctx.should_stop`, which is how early stopping is written:
+
+```python
+class EarlyStopOnValLoss:
+    def __init__(self, patience: int = 2):
+        self.best, self.bad, self.patience = float("inf"), 0, patience
+
+    def on_validation_end(self, ctx, metrics):
+        if metrics["val_loss"] < self.best:
+            self.best, self.bad = metrics["val_loss"], 0
+        else:
+            self.bad += 1
+        ctx.should_stop = self.bad >= self.patience
+```
+
+**LR schedulers** returned by `configure_optimizers` (or built from `lr_scheduler_init`) step at their configured `interval` (`"step"` or `"epoch"`) and `frequency`. A `ReduceLROnPlateau` scheduler steps with its `monitor` metric from the epoch's logged metrics, and is refused when it names no monitor or the metric was not logged (unless its config sets `strict=False`, which skips the step with a warning).
+
+**The optimizer is read from the module at every step** (`ctx.optimizer`), never captured once, so a callback may replace it, as a phased fine-tuning schedule that reinitializes the optimizer does.
+
+**Checkpoints.** `checkpoint_state(module, ctx)` returns the module's `state_dict`, every optimizer's and lr scheduler's state, the Python, torch, CUDA and (when installed) numpy RNG states, the loop counters and each callback's `state_dict`. `load_checkpoint_state(module, checkpoint, ctx)` restores it. The module's optional `on_save_checkpoint(checkpoint)` and `on_load_checkpoint(checkpoint)` hooks may extend it. The state references live tensors, as `state_dict()` does, so save it with `torch.save`; inside a callback, `ctx.checkpoint_state()` is the shortcut.
 
 ### Hook Dispatch
 
@@ -76,7 +103,7 @@ All hooks are dispatched via `_call_itmodule_hook(module, hook_name=..., optiona
 - **`log_dict(metric_dict)`** — Delegates to `log()` for each key.
 - Extra kwargs (`prog_bar`, `sync_dist`, etc.) are accepted but ignored in core context.
 
-At test epoch end, `core_test_loop` averages each metric list, prints the results, and clears the accumulator:
+At each training epoch end (after validation) `core_train_loop`, and at test epoch end `core_test_loop`, averages each metric list, prints the results, and clears the accumulator. The training loop also passes the averages to its callbacks:
 
 ```
 Test epoch end: {'accuracy': 0.8500, 'loss': 0.3500}
@@ -96,10 +123,10 @@ For any `compatibility_attrs` key that is **not** `log` or `log_dict`, a `_dummy
 |-----------|------|-----------|
 | Loop orchestration | Manual `core_*_loop` | `Trainer.fit()` / `Trainer.test()` |
 | Logging | Accumulate-and-print | TensorBoard, W&B, CSV, etc. |
-| Callbacks | None | Early stopping, checkpointing, LR monitor |
+| Callbacks | A minimal `CoreCallback` list (step, validation-end and epoch boundaries) | Early stopping, checkpointing, LR monitor |
 | Distributed training | Not supported | DDP, FSDP, DeepSpeed |
 | Mixed precision | Manual `torch.autocast` | Precision plugins |
-| Checkpointing | Not supported | Automatic model checkpointing |
+| Checkpointing | `checkpoint_state` / `load_checkpoint_state` (module, optimizers, lr schedulers, RNG), saved by a callback | Automatic model checkpointing |
 | Progress bars | Not supported | Built-in progress tracking |
 | Profiling | Not supported | Lightning profilers |
 
@@ -143,7 +170,7 @@ and notebook usage patterns.
 
 - **Analysis runner is core-only** — `AnalysisRunner` extends `SessionRunner` and is not yet integrated with the Lightning adapter. Running analysis workflows through a Lightning `Trainer` is planned future work.
 - **No distributed support in core** — Multi-GPU/multi-node training requires the Lightning adapter.
-- **No callback system in core** — Early stopping, checkpointing, etc. require Lightning.
+- **Core callbacks are minimal**: The core loop exposes step, validation-end and epoch boundaries and checkpoint state, but ships no ready-made early-stopping or checkpointing callbacks; Lightning provides those.
 
 ## Related Documents
 
