@@ -78,11 +78,24 @@ class TestAttachment:
         module = _fresh_module(request, "get_it_session_cfg__sl_cust", add_saes_on_init=False)
         assert not as_view(getattr(module, VIEW_ATTR)).roles()
 
-    def test_nnsight_composition_is_refused_with_its_reason(self, request):
+    def test_local_nnsight_composition_registers_its_hf_module(self, request):
+        """The HF module is registered as `hf_model`, so the identity view tunes it (#774)."""
         module = request.getfixturevalue("get_it_session__ns_gpt2__setup").it_session.module
+        assert module._modules["hf_model"] is module.model._model
         view = getattr(module, VIEW_ATTR)
-        with pytest.raises(FTSConfigurationError, match="nnsight Envoy"):
-            compile_schedule({0: {"params": ["anything"]}}, view)
+        assert as_view(view).support().trainable
+        names = [n for n, _ in module.named_parameters()]
+        assert names and all(n.startswith("hf_model.") for n in names)
+
+    def test_remote_or_undispatched_nnsight_is_refused_with_its_reason(self):
+        from types import SimpleNamespace
+
+        from interpretune.adapters.nnsight.adapter import BaseNNsightModule
+
+        remote = SimpleNamespace(it_cfg=SimpleNamespace(nnsight_cfg=SimpleNamespace(remote=True)))
+        local = SimpleNamespace(it_cfg=SimpleNamespace(nnsight_cfg=SimpleNamespace(remote=False)))
+        assert "#775" in BaseNNsightModule._hf_model_unregistered_reason(remote)  # type: ignore[arg-type]
+        assert "not dispatched" in BaseNNsightModule._hf_model_unregistered_reason(local)  # type: ignore[arg-type]
 
     def test_circuit_tracer_is_refused_with_its_reason(self):
         view = BaseCircuitTracerModule.build_tunable_view(nn.Linear(2, 2))  # type: ignore[arg-type]
@@ -187,11 +200,10 @@ def test_view_conformance(request, cfg_fixture, overrides):
     assert "checkpoint_round_trip" in report.ran
 
 
-def test_refusal_conformance(request):
+def test_refusal_conformance():
     """The refusal case for a composition declaring `trainable=False`."""
-    module = request.getfixturevalue("get_it_session__ns_gpt2__setup").it_session.module
-    reason = as_view(getattr(module, VIEW_ATTR)).support().reason
-    (case,) = pytest_params(lambda: RefusingView(module, reason))
+    reason = "this composition cannot be tuned (a test reason)"
+    (case,) = pytest_params(lambda: RefusingView(nn.Linear(2, 2), reason))
     case()
 
 

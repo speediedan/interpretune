@@ -18,8 +18,8 @@ class TestBridgeSplicedSAETuning(TuningConformance):
 
 
 @pytest.mark.skipif(not package_available("nnsight"), reason="nnsight is not installed")
-class TestNNsightTuningRefused(TuningConformance):
-    """Nnsight declares `trainable=False`, so only the refusal case applies."""
+class TestNNsightTuning(TuningConformance):
+    """A local nnsight composition registers its HF module, so its identity view runs the full cases (#774)."""
 
     target = ConformanceTarget(
         composition=("core", "nnsight", "sae_lens"), forward_family="hf_native", datamodule_flavour="nnsight"

@@ -126,15 +126,35 @@ class BaseNNsightModule(BaseITModule):
     """
 
     def build_tunable_view(self) -> Any | None:
-        """A refusal for now (#758): the model is an nnsight ``Envoy``, not a module registered on this one, so its
-        parameters are not this module's."""
-        from interpretune.tuning.views import RefusingView
+        """The identity view over this module once the nnsight model's HF module is registered on it as
+        ``hf_model`` (#774); otherwise a refusal naming why it is not (remote execution, or weights not yet
+        dispatched)."""
+        from interpretune.tuning.views import RefusingView, identity_view
 
-        return RefusingView(
-            self,
-            "nnsight compositions hold the model in an nnsight Envoy, which is not registered on the interpretune"
-            " module; tuning them through finetuning-scheduler is not supported yet.",
+        if "hf_model" in self._modules:
+            return identity_view(self, roles=self._tunable_roles())
+        return RefusingView(self, self._hf_model_unregistered_reason())
+
+    def _hf_model_unregistered_reason(self) -> str:
+        cfg = self.it_cfg.nnsight_cfg
+        if cfg is not None and cfg.remote:
+            return "nnsight compositions executing remotely (NDIF) have no local weights to tune; see interpretune#775."
+        return (
+            "the nnsight model's weights are not dispatched (or there is no local HF module), so they are not"
+            " registered on the interpretune module; dispatch the model to tune it."
         )
+
+    def _register_hf_model(self) -> None:
+        """Register the nnsight model's HF module on this module as ``hf_model``, so its parameters are this
+        module's (for the optimizer, checkpoints and finetuning-scheduler views), unless execution is remote or the
+        weights are not dispatched (still on the meta device)."""
+        cfg = self.it_cfg.nnsight_cfg
+        hf_model = getattr(self.model, "_model", None)
+        if (cfg is not None and cfg.remote) or not isinstance(hf_model, torch.nn.Module):
+            return
+        if not getattr(self.model, "dispatched", True):
+            return
+        self._modules["hf_model"] = hf_model
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -232,6 +252,7 @@ class BaseNNsightModule(BaseITModule):
 
         # Apply generation config to the underlying HF model (equivalent to _hf_post_init_cfg for NNsight)
         self._apply_generation_config()
+        self._register_hf_model()
 
         rank_zero_info("NNsight LanguageModel initialized successfully")
 
