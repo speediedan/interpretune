@@ -108,26 +108,39 @@ class TransformerBridgeView:
     """
 
     def __init__(self, root: nn.Module, bridge: nn.Module | None = None, implicit_norm_thaw: bool = True) -> None:
-        from transformer_lens.model_bridge.generalized_components import NormalizationBridge
-
         if bridge is None:
             model = root._modules.get("model")
             bridge = model if model is not None and hasattr(model, "tl_named_parameters") else root
         self.root = root
         self.bridge = bridge
         self.implicit_norm_thaw = implicit_norm_thaw
+        self._built = False
+
+    @property
+    def untraced(self) -> list[str]:
+        """TransformerLens names with no parameter behind them, left out of the logical names."""
+        self._build()
+        return self._untraced
+
+    def _build(self) -> None:
+        """Build the mapping on first use, so a session that never tunes never traces the bridge's tensors."""
+        if self._built:
+            return
+        from transformer_lens.model_bridge.generalized_components import NormalizationBridge
+
+        root, bridge = self.root, self.bridge
         named = list(root.named_parameters())
         name_of = {id(p): n for n, p in named}
         self._table: dict[str, tuple[str, ...]] = {}
         self._tl_tensors: dict[str, Tensor] = {}
-        self.untraced: list[str] = []
+        self._untraced: list[str] = []
         traced = {
             n: (t, [name_of[id(leaf)] for leaf in leaves if id(leaf) in name_of])
             for n, (t, leaves) in _traced_by_autograd(bridge).items()
         }
         for tl_name, (tl_tensor, physical) in traced.items():
             if not physical:
-                self.untraced.append(tl_name)
+                self._untraced.append(tl_name)
                 continue
             self._table[tl_name] = tuple(physical)
             self._tl_tensors[tl_name] = tl_tensor
@@ -174,6 +187,7 @@ class TransformerBridgeView:
             if logical.startswith(("embed.", "pos_embed.", "unembed."))
             for p in ps
         }
+        self._built = True
 
     def support(self) -> TunableSupport:
         """Trainable, in TransformerLens names that are reshaped views of the physical tensors."""
@@ -181,6 +195,7 @@ class TransformerBridgeView:
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Each TransformerLens name mapped to the parameters its tensor is computed from."""
+        self._build()
         unresolved = [n for n in logical if n not in self._table]
         if unresolved:
             raise Unresolvable(unresolved, "They are not TransformerLens names this bridge's view could trace.")
@@ -188,6 +203,7 @@ class TransformerBridgeView:
 
     def to_logical(self, physical: Sequence[str]) -> list[str]:
         """Physical names as TransformerLens names; a name no TransformerLens name reaches passes through."""
+        self._build()
         return list(dict.fromkeys(self._reverse.get(p, p) for p in physical))
 
     def logical_named_parameters(self) -> Iterator[tuple[str, Tensor]]:
@@ -196,11 +212,13 @@ class TransformerBridgeView:
         Names TransformerLens synthesizes with no parameter behind them (zero biases of a bias-free projection) are left
         out.
         """
+        self._build()
         yield from self._tl_tensors.items()
 
     def coupled(self, physical: Sequence[str]) -> list[str]:
         """The unnamed storage aliases of ``physical`` and, with ``implicit_norm_thaw``, their blocks' norms (the
         final norm for the embeddings)."""
+        self._build()
         out: list[str] = []
         for p in physical:
             out += self._aliases.get(p, [])
@@ -215,6 +233,7 @@ class TransformerBridgeView:
     def depth_groups(self) -> list[list[str]]:
         """The unembedding and final norm first (with any embedding tied to the unembedding), then each block whole
         from the last, then the remaining embeddings."""
+        self._build()
         unembed = [n for n in self._table if n.startswith(("unembed.", "ln_final."))]
         unembed_physical = {p for n in unembed for p in self._table[n]}
         embeds = [n for n in self._table if n.startswith(("embed.", "pos_embed."))]
