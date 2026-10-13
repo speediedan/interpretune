@@ -1,7 +1,9 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Any, Iterator, TYPE_CHECKING
+from typing import Any, Iterator, Mapping, Protocol, Sequence, TYPE_CHECKING, runtime_checkable
 import logging
+import random
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from functools import partialmethod
 from pathlib import Path
 import torch
@@ -9,6 +11,7 @@ import torch
 from interpretune.config import SessionRunnerCfg
 from interpretune.base import _call_itmodule_hook, it_init, it_session_end, ITDataModule
 from interpretune.protocol import Optimizable, CorePhases
+from interpretune.utils import MisconfigurationException, rank_zero_warn
 
 if TYPE_CHECKING:
     from interpretune.adapters import ITModule
@@ -33,6 +36,123 @@ def profiling(module: ITModule) -> Iterator[torch.profiler.profile | None]:
         yield prof
 
 
+@dataclass
+class CoreLoopContext:
+    """The state the core training loop shares with its callbacks.
+
+    Attributes:
+        module: The module being trained.
+        epoch: The current epoch.
+        optimizer_step: Optimizer steps taken so far in this run. ``module.global_step`` counts every step the runner
+            dispatches (validation and test steps included), so step budgets and step-interval lr schedulers count
+            this instead.
+        max_epochs: The epoch budget (``-1`` for none).
+        max_steps: The optimizer-step budget (``-1`` for none).
+        epoch_metrics: The current epoch's averaged ``log()``/``log_dict()`` values, set after validation.
+        should_stop: Set by a callback to end training after the current step (or, if set at an epoch boundary, before
+            the next epoch).
+    """
+
+    module: Any
+    epoch: int = 0
+    optimizer_step: int = 0
+    max_epochs: int = -1
+    max_steps: int = -1
+    epoch_metrics: dict[str, float] = field(default_factory=dict)
+    should_stop: bool = False
+    callbacks: Sequence[Any] = ()
+
+    @property
+    def optimizer(self) -> Optimizable | None:
+        """The module's first optimizer, read when needed rather than once, so that a callback may replace it."""
+        optimizers = self.module.optimizers
+        return optimizers[0] if optimizers else None
+
+    @property
+    def steps_exhausted(self) -> bool:
+        """Whether the optimizer-step budget is spent."""
+        return self.max_steps >= 0 and self.optimizer_step >= self.max_steps
+
+    def checkpoint_state(self) -> dict[str, Any]:
+        """This run's checkpoint state (see :func:`checkpoint_state`)."""
+        return checkpoint_state(self.module, self)
+
+    def load_checkpoint_state(self, state: Mapping[str, Any]) -> None:
+        """Restore state from :meth:`checkpoint_state` (see :func:`load_checkpoint_state`)."""
+        load_checkpoint_state(self.module, state, self)
+
+
+@runtime_checkable
+class CoreCallback(Protocol):
+    """A callback for the core training loop. Every method is optional: the loop calls only those a callback
+    defines.
+
+    - ``on_train_start(ctx)`` and ``on_train_end(ctx)``: once per run.
+    - ``on_train_epoch_start(ctx)``: before each epoch's first batch.
+    - ``on_train_step_end(ctx, outputs)``: after each optimizer step (and any step-interval lr scheduler step).
+    - ``on_validation_end(ctx, metrics)``: after each epoch's validation, with the epoch's averaged metrics.
+    - ``on_train_epoch_end(ctx, metrics)``: after the module's own ``on_train_epoch_end`` hook, before epoch-interval
+      lr schedulers step.
+    - ``state_dict()`` and ``load_state_dict(state)``: included in :func:`checkpoint_state`.
+    """
+
+
+def _callbacks(ctx: CoreLoopContext, hook: str, *args: Any) -> None:
+    for callback in ctx.callbacks:
+        fn = getattr(callback, hook, None)
+        if callable(fn):
+            fn(ctx, *args)
+
+
+def epoch_metrics(module: Any) -> dict[str, float]:
+    """Average and clear the values ``log()``/``log_dict()`` accumulated on ``module`` since the last call."""
+    logged = getattr(module, "_logged_metrics", None)
+    if not isinstance(logged, dict) or not logged:
+        return {}
+    metrics = {k: sum(v) / len(v) for k, v in logged.items() if v}
+    logged.clear()
+    return metrics
+
+
+def _print_metrics(label: str, metrics: Mapping[str, float]) -> None:
+    metrics_str = ", ".join(f"'{k}': {v:.4f}" for k, v in metrics.items())
+    print(f"\n{label}: {{{metrics_str}}}")
+
+
+def step_lr_schedulers(module: Any, interval: str, counter: int, metrics: Mapping[str, Any] | None = None) -> None:
+    """Step each of ``module``'s lr schedulers configured for ``interval`` (``"step"`` or ``"epoch"``) whose
+    ``frequency`` divides ``counter``.
+
+    A ``ReduceLROnPlateau`` scheduler is stepped with its ``monitor`` metric.
+
+    Raises:
+        MisconfigurationException: If a ``ReduceLROnPlateau`` scheduler names no ``monitor``, or its metric is missing
+            from ``metrics`` (unless its config sets ``strict=False``, which skips the step with a warning).
+    """
+    configs = getattr(module, "lr_scheduler_configs", None) or []
+    for config in configs:
+        if getattr(config, "interval", "epoch") != interval or counter % max(getattr(config, "frequency", 1), 1):
+            continue
+        scheduler = config.scheduler
+        if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            monitor = getattr(config, "monitor", None)
+            if monitor is None:
+                raise MisconfigurationException(
+                    "A `ReduceLROnPlateau` lr scheduler needs a `monitor` metric in its config (e.g. `pl_lrs_cfg`)."
+                )
+            if monitor not in (metrics or {}):
+                if getattr(config, "strict", True):
+                    raise MisconfigurationException(
+                        f"The `ReduceLROnPlateau` lr scheduler monitors '{monitor}', which was not logged this"
+                        f" {interval}. Logged: {sorted(metrics or {})}."
+                    )
+                rank_zero_warn(f"Skipping a `ReduceLROnPlateau` step: '{monitor}' was not logged this {interval}.")
+                continue
+            scheduler.step(metrics[monitor])  # type: ignore[index]  # membership checked above
+        else:
+            scheduler.step()
+
+
 def core_train_loop(
     module: ITModule,
     datamodule: ITDataModule,
@@ -40,39 +160,175 @@ def core_train_loop(
     limit_val_batches: int,
     max_epochs: int,
     *args,
+    max_steps: int = -1,
+    callbacks: Sequence[Any] = (),
+    validate_with_grad: bool = False,
     **kwargs,
-):
-    """Run the core (framework-free) training loop, with optional interleaved validation."""
+) -> CoreLoopContext:
+    """Run the core (framework-free) training loop, with optional interleaved validation.
+
+    Each epoch trains (stopping early once ``max_steps`` optimizer steps are taken or a callback sets
+    ``ctx.should_stop``), then validates, then averages and reports the epoch's ``log()``/``log_dict()`` values,
+    then runs the epoch-end hooks and steps epoch-interval lr schedulers. Step-interval lr schedulers step after each
+    optimizer step.
+
+    Args:
+        module: The module to train.
+        datamodule: Provides ``train_dataloader`` and, optionally, ``val_dataloader``.
+        limit_train_batches: Training batches per epoch (``-1`` for all).
+        limit_val_batches: Validation batches per epoch (``-1`` for all).
+        max_epochs: Epochs to run.
+        max_steps: Optimizer steps to run at most (``-1`` for no limit). The epoch in which the budget is spent still
+            validates and runs its epoch-end hooks.
+        callbacks: Objects with any of :class:`CoreCallback`'s methods.
+        validate_with_grad: Validate with gradients enabled (for objectives that call ``torch.autograd.grad``)
+            instead of under ``torch.inference_mode()``.
+
+    Returns:
+        The loop's final context.
+    """
     assert hasattr(datamodule, "train_dataloader"), "Datamodule is expected to have a train dataloader"
     train_dataloader = datamodule.train_dataloader()  # type: ignore[attr-defined]
     val_dataloader = datamodule.val_dataloader() if hasattr(datamodule, "val_dataloader") else None  # type: ignore[attr-defined]  # duck typing
-    # TODO: add optimizers property setter to corehelperattributes
     assert module.optimizers, "Module has no optimizers configured"
-    optim = module.optimizers[0]
-    train_ctx = {"module": module, "optimizer": optim}
+    ctx = CoreLoopContext(module=module, max_epochs=max_epochs, max_steps=max_steps, callbacks=tuple(callbacks))
+    val_grad_ctx = torch.enable_grad if validate_with_grad else torch.inference_mode
+    _callbacks(ctx, "on_train_start")
     with profiling(module) as prof:
         for epoch_idx in range(max_epochs):
+            if ctx.should_stop or ctx.steps_exhausted:
+                break
             assert module.model is not None, "Model must be initialized before training"
             module.model.train()
-            module.current_epoch = epoch_idx
-            _call_itmodule_hook(module, hook_name="on_train_epoch_start", hook_msg="Running train epoch start hooks")
+            module.current_epoch = ctx.epoch = epoch_idx
+            _call_itmodule_hook(
+                module, hook_name="on_train_epoch_start", hook_msg="Running train epoch start hooks", optional=True
+            )
+            _callbacks(ctx, "on_train_epoch_start")
             for batch_idx, batch in enumerate(train_dataloader):
-                if batch_idx >= limit_train_batches >= 0:
+                if batch_idx >= limit_train_batches >= 0 or ctx.should_stop or ctx.steps_exhausted:
                     break
-                run_step(step_fn="training_step", batch=batch, batch_idx=batch_idx, **train_ctx)
+                output = run_step(
+                    step_fn="training_step", module=module, batch=batch, batch_idx=batch_idx, optimizer=ctx.optimizer
+                )
+                ctx.optimizer_step += 1
+                step_lr_schedulers(module, "step", ctx.optimizer_step)
+                _callbacks(ctx, "on_train_step_end", output)
                 if prof is not None:
                     prof.step()
             if val_dataloader is not None:
                 module.model.eval()
                 for batch_idx, batch in enumerate(val_dataloader):
-                    with torch.inference_mode():
-                        if batch_idx >= limit_val_batches >= 0:
-                            break
-                        run_step(step_fn="validation_step", batch=batch, batch_idx=batch_idx, **train_ctx)
+                    if batch_idx >= limit_val_batches >= 0:
+                        break
+                    with val_grad_ctx():
+                        run_step(step_fn="validation_step", module=module, batch=batch, batch_idx=batch_idx)
                     if prof is not None:
                         prof.step()
+            ctx.epoch_metrics = epoch_metrics(module)
+            if ctx.epoch_metrics:
+                _print_metrics(f"Epoch {epoch_idx} end", ctx.epoch_metrics)
+            _callbacks(ctx, "on_validation_end", ctx.epoch_metrics)
             module.model.train()
-            _call_itmodule_hook(module, hook_name="on_train_epoch_end", hook_msg="Running train epoch end hooks")
+            _call_itmodule_hook(
+                module, hook_name="on_train_epoch_end", hook_msg="Running train epoch end hooks", optional=True
+            )
+            _callbacks(ctx, "on_train_epoch_end", ctx.epoch_metrics)
+            step_lr_schedulers(module, "epoch", epoch_idx + 1, ctx.epoch_metrics)
+    _callbacks(ctx, "on_train_end")
+    return ctx
+
+
+def _rng_state() -> dict[str, Any]:
+    state: dict[str, Any] = {"python": random.getstate(), "torch": torch.get_rng_state()}
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state_all()
+    try:
+        import numpy as np
+    except ImportError:  # numpy is optional
+        pass
+    else:
+        state["numpy"] = np.random.get_state()
+    return state
+
+
+def _set_rng_state(state: Mapping[str, Any]) -> None:
+    random.setstate(state["python"])
+    torch.set_rng_state(state["torch"])
+    if "cuda" in state and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(state["cuda"])
+    if "numpy" in state:
+        import numpy as np
+
+        np.random.set_state(state["numpy"])
+
+
+def checkpoint_state(module: Any, ctx: CoreLoopContext | None = None) -> dict[str, Any]:
+    """The state needed to resume a core-loop run: the module's ``state_dict``, every optimizer's and lr scheduler's
+    state, the RNG states (Python, torch, CUDA and, when installed, numpy), the loop counters and each callback's
+    ``state_dict``.
+
+    The module's ``on_save_checkpoint(checkpoint)`` hook, if defined, may add to the result. Like ``state_dict()``,
+    the result references live tensors: serialize it (``torch.save``) or deep-copy it to keep it.
+    """
+    checkpoint: dict[str, Any] = {
+        "module": module.state_dict(),
+        "optimizers": [opt.state_dict() for opt in (module.optimizers or [])],
+        "lr_schedulers": [cfg.scheduler.state_dict() for cfg in (getattr(module, "lr_scheduler_configs", None) or [])],
+        "rng": _rng_state(),
+        "loop": {"epoch": module.current_epoch, "global_step": module.global_step},
+    }
+    if ctx is not None:
+        checkpoint["loop"]["optimizer_step"] = ctx.optimizer_step
+        checkpoint["callbacks"] = {
+            f"{i}:{type(cb).__name__}": cb.state_dict()
+            for i, cb in enumerate(ctx.callbacks)
+            if hasattr(cb, "state_dict")
+        }
+    _call_itmodule_hook(
+        module,
+        hook_name="on_save_checkpoint",
+        hook_msg="Running save checkpoint hook",
+        optional=True,
+        checkpoint=checkpoint,
+    )
+    return checkpoint
+
+
+def load_checkpoint_state(module: Any, checkpoint: Mapping[str, Any], ctx: CoreLoopContext | None = None) -> None:
+    """Restore what :func:`checkpoint_state` saved. The module's ``on_load_checkpoint(checkpoint)`` hook, if
+    defined, runs first.
+
+    Raises:
+        MisconfigurationException: If the checkpoint's optimizer or lr scheduler count differs from the module's.
+    """
+    _call_itmodule_hook(
+        module,
+        hook_name="on_load_checkpoint",
+        hook_msg="Running load checkpoint hook",
+        optional=True,
+        checkpoint=checkpoint,
+    )
+    module.load_state_dict(checkpoint["module"])
+    optimizers = module.optimizers or []
+    schedulers = [cfg.scheduler for cfg in (getattr(module, "lr_scheduler_configs", None) or [])]
+    for kind, have, saved in (
+        ("optimizers", optimizers, checkpoint["optimizers"]),
+        ("lr schedulers", schedulers, checkpoint["lr_schedulers"]),
+    ):
+        if len(have) != len(saved):
+            raise MisconfigurationException(f"The checkpoint holds {len(saved)} {kind} but the module has {len(have)}.")
+        for obj, state in zip(have, saved):
+            obj.load_state_dict(state)
+    _set_rng_state(checkpoint["rng"])
+    module.current_epoch = checkpoint["loop"]["epoch"]
+    module.global_step = checkpoint["loop"]["global_step"]
+    if ctx is not None:
+        ctx.optimizer_step = checkpoint["loop"].get("optimizer_step", 0)
+        for i, cb in enumerate(ctx.callbacks):
+            key = f"{i}:{type(cb).__name__}"
+            if hasattr(cb, "load_state_dict") and key in checkpoint.get("callbacks", {}):
+                cb.load_state_dict(checkpoint["callbacks"][key])
 
 
 def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batches: int, *args, **kwargs):
@@ -97,11 +353,8 @@ def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batche
             if prof is not None:
                 prof.step()
     # Print accumulated metrics from log/log_dict calls (core framework epoch-end reporting)
-    if hasattr(module, "_logged_metrics") and module._logged_metrics:
-        epoch_metrics = {k: sum(v) / len(v) for k, v in module._logged_metrics.items()}
-        metrics_str = ", ".join(f"'{k}': {v:.4f}" for k, v in epoch_metrics.items())
-        print(f"\nTest epoch end: {{{metrics_str}}}")
-        module._logged_metrics.clear()
+    if metrics := epoch_metrics(module):
+        _print_metrics("Test epoch end", metrics)
     _call_itmodule_hook(module, hook_name="on_test_epoch_end", hook_msg="Running test epoch end hooks", optional=True)
 
 

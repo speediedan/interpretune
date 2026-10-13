@@ -1,5 +1,5 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import TYPE_CHECKING, Iterable
+from typing import Any, TYPE_CHECKING, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -180,6 +180,11 @@ class SessionRunnerCfg:
     limit_test_batches: int = -1
     max_steps: int = -1
     max_epochs: int = -1
+    # objects with any of `interpretune.runners.core.CoreCallback`'s methods, called by the core training loop
+    callbacks: Sequence[Any] = ()
+    # validate with gradients enabled (e.g. for an objective computed with `torch.autograd.grad`) rather than under
+    # `torch.inference_mode()`
+    validate_with_grad: bool = False
 
     def __post_init__(self):
         if self.it_session is not None:
