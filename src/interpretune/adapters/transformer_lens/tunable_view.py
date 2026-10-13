@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping, Sequence
+from typing import Any
 
 import torch
 from torch import nn, Tensor
@@ -53,7 +54,8 @@ def autograd_leaves(t: Tensor) -> list[Tensor]:
     if t.grad_fn is None:
         return [t] if t.requires_grad else []
     leaves: dict[int, Tensor] = {}
-    stack, seen = [t.grad_fn], set()
+    stack: list[Any] = [t.grad_fn]
+    seen: set[int] = set()
     while stack:
         fn = stack.pop()
         if fn is None or id(fn) in seen:
