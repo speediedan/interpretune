@@ -22,7 +22,8 @@ scheme, with which role kinds, or why not.
 | core / HF (the default) | finetuning-scheduler's identity view | PEFT adapter tensors as `adapter:<name>` |
 | TransformerLens | `TransformerBridgeView`, in TransformerLens names | as below |
 | sae_lens with `add_saes_on_init=True` | the backend's view | the spliced SAEs as `latent:sae` |
-| nnsight | refused, with the reason | |
+| nnsight, local and dispatched | finetuning-scheduler's identity view over the HF module, registered as `hf_model` | PEFT adapter tensors as `adapter:<name>` |
+| nnsight, remote (NDIF) or not yet dispatched | refused, with the reason | |
 | circuit-tracer | refused, with the reason | |
 | a composition declaring nothing | refused: never assumed trainable | |
 
