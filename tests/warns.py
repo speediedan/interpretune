@@ -105,6 +105,10 @@ FTS_CTX_WARNS = [
     # finetuning-scheduler 2.15 announces that Lightning will move to an extra. It warns once per process, on the first
     # `FinetuningScheduler` construction, so it lands in whichever FTS test runs first.
     "Lightning will become an optional dependency",
+    # finetuning-scheduler 2.15 deprecates overriding StrategyAdapter's parameter-naming methods, which
+    # `TransformerBridgeStrategyAdapter` does. Two notices open this way, once per adapter class: the deprecation, and
+    # (when the module also carries an `fts_tunable_view`) that the attached view is not used.
+    "overrides StrategyAdapter's parameter-naming methods",
 ]
 
 EXAMPLE_WARNS = EXPECTED_WARNS + HF_EXPECTED_WARNS + TL_EXPECTED_WARNS
