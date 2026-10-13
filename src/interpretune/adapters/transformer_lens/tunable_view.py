@@ -13,8 +13,12 @@
 
 Prototype (interpretune#758): the view the protocol freeze is checked against. Logical names are the bridge's
 ``tl_named_parameters()`` names (``blocks.9.attn.W_Q``); physical names are the bridge's own ``named_parameters()``.
-Each TransformerLens name maps to the one physical parameter its tensor is a view of, found by tracing the bridge's
-components and matching by identity (not by ``data_ptr``, which a fused projection shares with its first split).
+Each TransformerLens name maps to the parameters its tensor is computed from, found by walking the tensor's autograd
+graph, so the mapping follows whatever TransformerLens emits rather than a table kept here. A name with no parameter
+behind it is left out, except where TransformerLens substitutes a placeholder for a component that exists (grouped-query
+key and value weights it cannot reshape): ``mapping="auto"`` then falls back to tracing the component by name, and lists
+the name in ``fallbacks``. Parameters are matched by identity, never by ``data_ptr``, which a fused projection shares
+with its first split.
 
 Two kinds of tensor are thawed implicitly (``coupled``):
 
@@ -40,6 +44,7 @@ import re
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
+import torch
 from torch import nn, Tensor
 
 from finetuning_scheduler.core.views import TunableSupport, Unresolvable
@@ -114,6 +119,46 @@ def underlying_tensor(bridge: Any, tl_name: str) -> Tensor | None:
     return None
 
 
+def autograd_leaves(t: Tensor) -> list[Tensor]:
+    """The leaf tensors ``t`` was computed from, found by walking its autograd graph (``t`` itself when it is a
+    leaf that requires grad).
+
+    A tensor with no graph, such as a synthesized zero bias, has none.
+    """
+    if t.grad_fn is None:
+        return [t] if t.requires_grad else []
+    leaves: dict[int, Tensor] = {}
+    stack, seen = [t.grad_fn], set()
+    while stack:
+        fn = stack.pop()
+        if fn is None or id(fn) in seen:
+            continue
+        seen.add(id(fn))
+        variable = getattr(fn, "variable", None)  # an AccumulateGrad node holds its leaf
+        if variable is not None:
+            leaves.setdefault(id(variable), variable)
+        stack.extend(next_fn for next_fn, _ in fn.next_functions)
+    return list(leaves.values())
+
+
+def _traced_by_autograd(bridge: nn.Module) -> dict[str, tuple[Tensor, list[Tensor]]]:
+    """Each TransformerLens name with its tensor (detached) and the parameters it is computed from.
+
+    Every parameter is made to require grad while the TransformerLens tensors are built, so that each one records how
+    it was derived; ``requires_grad`` is restored afterwards.
+    """
+    params = list(bridge.parameters())
+    saved = [p.requires_grad for p in params]
+    try:
+        for p in params:
+            p.requires_grad_(True)
+        with torch.enable_grad():
+            return {n: (t.detach(), autograd_leaves(t)) for n, t in bridge.tl_named_parameters()}  # type: ignore[attr-defined]
+    finally:
+        for p, flag in zip(params, saved):
+            p.requires_grad_(flag)
+
+
 def _storage_key(t: Tensor) -> tuple[str, int] | None:
     if hasattr(t, "to_local") or t.device.type == "meta" or t.numel() == 0:
         return None
@@ -131,7 +176,7 @@ class TransformerBridgeView:
         implicit_norm_thaw: Thaw a block's norms with any of its parameters, and the final norm with the embeddings.
     """
 
-    def __init__(self, bridge: nn.Module, implicit_norm_thaw: bool = True) -> None:
+    def __init__(self, bridge: nn.Module, implicit_norm_thaw: bool = True, mapping: str = "auto") -> None:
         from transformer_lens.model_bridge.generalized_components import NormalizationBridge
 
         self.root = bridge
@@ -141,13 +186,33 @@ class TransformerBridgeView:
         self._table: dict[str, tuple[str, ...]] = {}
         self._tl_tensors: dict[str, Tensor] = {}
         self.untraced: list[str] = []
-        for tl_name, tl_tensor in bridge.tl_named_parameters():  # type: ignore[attr-defined]
-            under = underlying_tensor(bridge, tl_name)
-            physical = name_of.get(id(under)) if under is not None else None
-            if physical is None:
+        self.fallbacks: list[str] = []
+        if mapping not in ("auto", "autograd", "table"):
+            raise ValueError(f"`mapping` must be 'auto', 'autograd' or 'table', got {mapping!r}.")
+
+        def _from_table(n: str) -> list[str]:
+            under = underlying_tensor(bridge, n)
+            return [name_of[id(under)]] if under is not None and id(under) in name_of else []
+
+        if mapping == "table":
+            traced = {n: (t, _from_table(n)) for n, t in bridge.tl_named_parameters()}  # type: ignore[attr-defined]
+        else:
+            traced = {
+                n: (t, [name_of[id(leaf)] for leaf in leaves if id(leaf) in name_of])
+                for n, (t, leaves) in _traced_by_autograd(bridge).items()
+            }
+            if mapping == "auto":
+                # a name TransformerLens synthesizes rather than derives (e.g. a zero placeholder for grouped-query
+                # key and value weights it cannot reshape) still means the component the table names
+                for n, (t, physical) in traced.items():
+                    if not physical and (found := _from_table(n)):
+                        traced[n] = (t, found)
+                        self.fallbacks.append(n)
+        for tl_name, (tl_tensor, physical) in traced.items():
+            if not physical:
                 self.untraced.append(tl_name)
                 continue
-            self._table[tl_name] = (physical,)
+            self._table[tl_name] = tuple(physical)
             self._tl_tensors[tl_name] = tl_tensor
         self._reverse: dict[str, str] = {}
         for logical, physical in self._table.items():
