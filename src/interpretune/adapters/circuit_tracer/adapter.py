@@ -104,6 +104,20 @@ class BaseCircuitTracerModule(BaseITModule):
     For NNsight backend, this can currently be used directly without TransformerLens composition.
     """
 
+    def build_tunable_view(self) -> Any | None:
+        """A refusal for now (#758): circuit-tracer freezes the whole replacement model at construction and loads
+        lazy transcoder weights as plain tensors, which no optimizer can track.
+
+        Promoting transcoders to trainable latents is #709's work.
+        """
+        from interpretune.tuning.views import RefusingView
+
+        return RefusingView(
+            self,
+            "circuit-tracer replacement models are frozen at construction and may hold lazily loaded transcoder weights"
+            " that are not parameters; tuning them through finetuning-scheduler is not supported yet.",
+        )
+
     def __init__(self, *args, **kwargs):
         # Initialize attributes that may be required in base init methods
         self.attribution_graphs: list[InstantiatedGraph] = []

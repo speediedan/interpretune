@@ -105,9 +105,22 @@ class TransformerBridgeView:
         root: The view's root: the interpretune module, or the bridge itself.
         bridge: The bridge, when it is not ``root.model`` (or ``root``).
         implicit_norm_thaw: Thaw a block's norms with any of its parameters, and the final norm with the embeddings.
+        roles: Roles for ``root``'s parameters and buffers, by physical name (anything unlisted is ``base``), e.g.
+            ``latent:sae`` for SAEs spliced into the bridge.
     """
 
-    def __init__(self, root: nn.Module, bridge: nn.Module | None = None, implicit_norm_thaw: bool = True) -> None:
+    def __init__(
+        self,
+        root: nn.Module,
+        bridge: nn.Module | None = None,
+        implicit_norm_thaw: bool = True,
+        roles: Mapping[str, str] | None = None,
+    ) -> None:
+        from finetuning_scheduler.core.roles import validate_roles
+
+        self._roles = validate_roles(
+            roles or {}, (n for n, _ in root.named_parameters()), (n for n, _ in root.named_buffers())
+        )
         if bridge is None:
             model = root._modules.get("model")
             bridge = model if model is not None and hasattr(model, "tl_named_parameters") else root
@@ -191,7 +204,15 @@ class TransformerBridgeView:
 
     def support(self) -> TunableSupport:
         """Trainable, in TransformerLens names that are reshaped views of the physical tensors."""
-        return TunableSupport(trainable=True, naming_scheme="tl", logical_names_are_views=True)
+        from finetuning_scheduler.core.roles import declared_kinds
+
+        return TunableSupport(
+            trainable=True, naming_scheme="tl", logical_names_are_views=True, declared_roles=declared_kinds(self._roles)
+        )
+
+    def roles(self) -> Mapping[str, str]:
+        """The roles given at construction (anything unlisted is ``base``)."""
+        return dict(self._roles)
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Each TransformerLens name mapped to the parameters its tensor is computed from."""

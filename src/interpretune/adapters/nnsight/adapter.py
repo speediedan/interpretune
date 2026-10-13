@@ -11,7 +11,7 @@ NNsight wraps HuggingFace models directly without weight conversion, providing:
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 from copy import deepcopy
 import os
 
@@ -124,6 +124,17 @@ class BaseNNsightModule(BaseITModule):
     Provides NNsight model initialization and configuration handling. NNsight wraps HuggingFace models directly without
     weight conversion.
     """
+
+    def build_tunable_view(self) -> Any | None:
+        """A refusal for now (#758): the model is an nnsight ``Envoy``, not a module registered on this one, so its
+        parameters are not this module's."""
+        from interpretune.tuning.views import RefusingView
+
+        return RefusingView(
+            self,
+            "nnsight compositions hold the model in an nnsight Envoy, which is not registered on the interpretune"
+            " module; tuning them through finetuning-scheduler is not supported yet.",
+        )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

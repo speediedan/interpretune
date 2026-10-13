@@ -4,6 +4,7 @@ import torch
 
 from interpretune.config import ITConfig
 from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
+from interpretune.tuning.views import attach_tunable_view
 
 
 class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):  # type: ignore[misc]
@@ -49,6 +50,9 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
             self.post_auto_model_init()  # allow modification of a configuration-driven model
         else:
             self.model_init()  # load a custom model
+        # attach the composition's finetuning-scheduler view once the model exists (never replacing one attached in
+        # `post_auto_model_init`); a no-op when the installed finetuning-scheduler predates views
+        attach_tunable_view(self)
         self._capture_hyperparameters()
         self.load_metric()
 
@@ -60,6 +64,26 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
 
     def post_auto_model_init(self) -> None:
         """Optionally modify init of an existing configuration-driven model."""
+
+    def build_tunable_view(self) -> Any | None:
+        """This composition's finetuning-scheduler ``TunableView``, whose ``support()`` declares how it can be
+        tuned (#758, #759); ``None`` declares nothing, and the composition is then refused rather than assumed
+        trainable.
+
+        By default, finetuning-scheduler's identity view over this module, with PEFT adapter tensors as
+        ``adapter:<name>`` and the roles :meth:`_tunable_roles` adds. Backends whose parameters are not identity-named,
+        or cannot be tuned, override it.
+        """
+        from interpretune.tuning.views import identity_view
+
+        return identity_view(self, roles=self._tunable_roles())
+
+    def _tunable_roles(self) -> dict[str, str]:
+        """Roles for this module's parameters and buffers, by name.
+
+        Cooperative: mixins add theirs to ``super()``'s.
+        """
+        return {}
 
     def model_init(self) -> None:
         """Optionally load a custom model ."""
