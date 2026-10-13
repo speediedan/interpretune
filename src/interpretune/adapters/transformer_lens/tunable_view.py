@@ -15,10 +15,8 @@ Prototype (interpretune#758): the view the protocol freeze is checked against. L
 ``tl_named_parameters()`` names (``blocks.9.attn.W_Q``); physical names are the bridge's own ``named_parameters()``.
 Each TransformerLens name maps to the parameters its tensor is computed from, found by walking the tensor's autograd
 graph, so the mapping follows whatever TransformerLens emits rather than a table kept here. A name with no parameter
-behind it is left out, except where TransformerLens substitutes a placeholder for a component that exists (grouped-query
-key and value weights it cannot reshape): ``mapping="auto"`` then falls back to tracing the component by name, and lists
-the name in ``fallbacks``. Parameters are matched by identity, never by ``data_ptr``, which a fused projection shares
-with its first split.
+behind it (a zero bias TransformerLens synthesizes for a bias-free projection) is left out. Parameters are matched by
+identity, never by ``data_ptr``, which a fused projection shares with its first split.
 
 Two kinds of tensor are thawed implicitly (``coupled``):
 
@@ -31,18 +29,12 @@ Two kinds of tensor are thawed implicitly (``coupled``):
 
 ``depth_groups`` keeps tensors that share storage in one group: the unembedding with an embedding tied to it, and
 each block whole (its query, key and value splits may share one fused tensor).
-
-Checkpoints use the module tree's own keys, saved without state-dict hooks. Neither of the bridge's own paths
-round-trips: ``TransformerBridge.state_dict()`` returns TransformerLens-format keys that its ``load_state_dict()`` does
-not map back (it drops them without error when the key counts differ), and ``JointQKVAttentionBridge``'s state-dict hook
-removes the fused ``qkv`` keys that a strict ``torch.nn.Module.load_state_dict()`` then requires.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any
 
 import torch
 from torch import nn, Tensor
@@ -50,73 +42,6 @@ from torch import nn, Tensor
 from finetuning_scheduler.core.views import TunableSupport, Unresolvable
 
 _BLOCK = re.compile(r"^blocks\.(\d+)\.")
-_ATTN = {
-    "W_Q": ("q", "weight"),
-    "W_K": ("k", "weight"),
-    "W_V": ("v", "weight"),
-    "W_O": ("o", "weight"),
-    "b_Q": ("q", "bias"),
-    "b_K": ("k", "bias"),
-    "b_V": ("v", "bias"),
-    "b_O": ("o", "bias"),
-}
-_MLP = {
-    "W_in": ("weight", ("in", "input")),
-    "b_in": ("bias", ("in", "input")),
-    "W_out": ("weight", ("out",)),
-    "b_out": ("bias", ("out",)),
-    "W_gate": ("weight", ("gate",)),
-    "b_gate": ("bias", ("gate",)),
-}
-
-
-def _first_attr(obj: Any, names: Sequence[str]) -> Any:
-    for name in names:
-        found = getattr(obj, name, None)
-        if found is not None:
-            return found
-    return None
-
-
-def _norm_tensor(ln: Any, param_name: str) -> Tensor | None:
-    if param_name in ("w", "weight"):
-        return getattr(ln, "weight", None)
-    if param_name in ("b", "bias"):
-        return getattr(ln, "bias", None)
-    return None
-
-
-def underlying_tensor(bridge: Any, tl_name: str) -> Tensor | None:
-    """The component parameter a TransformerLens name is a view of, or ``None`` when it cannot be traced."""
-    parts = tl_name.split(".")
-    try:
-        if parts[0] == "blocks":
-            block = bridge.blocks[int(parts[1])]
-            component, param_name = parts[2], parts[3]
-            if component == "attn" and param_name in _ATTN:
-                comp_name, attr = _ATTN[param_name]
-                comp = getattr(block.attn, comp_name, None)
-                return getattr(comp, attr, None) if comp is not None else None
-            if component == "mlp" and param_name in _MLP:
-                attr, names = _MLP[param_name]
-                comp = _first_attr(block.mlp, names)
-                return getattr(comp, attr, None) if comp is not None else None
-            if component in ("ln1", "ln2"):
-                ln = getattr(block, component, None)
-                return _norm_tensor(ln, param_name) if ln is not None else None
-        elif parts[0] == "embed":
-            return getattr(bridge.embed, "weight", None)
-        elif parts[0] == "pos_embed":
-            pos_embed = getattr(bridge, "pos_embed", None)
-            return getattr(pos_embed, "weight", None) if pos_embed is not None else None
-        elif parts[0] == "unembed":
-            return getattr(bridge.unembed, {"W_U": "weight", "b_U": "bias"}.get(parts[1], ""), None)
-        elif parts[0] == "ln_final":
-            ln_final = getattr(bridge, "ln_final", None)
-            return _norm_tensor(ln_final, parts[1]) if ln_final is not None else None
-    except (AttributeError, IndexError, KeyError, ValueError):
-        return None
-    return None
 
 
 def autograd_leaves(t: Tensor) -> list[Tensor]:
@@ -169,14 +94,15 @@ class TransformerBridgeView:
     """A ``TunableView`` over a ``TransformerBridge`` in TransformerLens names.
 
     It does not inherit from a finetuning-scheduler class: finetuning-scheduler supplies the optional members it lacks
-    (``roles``, the checkpoint members and ``promote``).
+    (``roles``, the checkpoint members and ``promote``). The default checkpoint members round-trip through
+    ``TransformerBridge.state_dict()`` and ``load_state_dict()`` from transformer-lens 4.0.
 
     Args:
         bridge: The bridge (the view's root).
         implicit_norm_thaw: Thaw a block's norms with any of its parameters, and the final norm with the embeddings.
     """
 
-    def __init__(self, bridge: nn.Module, implicit_norm_thaw: bool = True, mapping: str = "auto") -> None:
+    def __init__(self, bridge: nn.Module, implicit_norm_thaw: bool = True) -> None:
         from transformer_lens.model_bridge.generalized_components import NormalizationBridge
 
         self.root = bridge
@@ -186,28 +112,10 @@ class TransformerBridgeView:
         self._table: dict[str, tuple[str, ...]] = {}
         self._tl_tensors: dict[str, Tensor] = {}
         self.untraced: list[str] = []
-        self.fallbacks: list[str] = []
-        if mapping not in ("auto", "autograd", "table"):
-            raise ValueError(f"`mapping` must be 'auto', 'autograd' or 'table', got {mapping!r}.")
-
-        def _from_table(n: str) -> list[str]:
-            under = underlying_tensor(bridge, n)
-            return [name_of[id(under)]] if under is not None and id(under) in name_of else []
-
-        if mapping == "table":
-            traced = {n: (t, _from_table(n)) for n, t in bridge.tl_named_parameters()}  # type: ignore[attr-defined]
-        else:
-            traced = {
-                n: (t, [name_of[id(leaf)] for leaf in leaves if id(leaf) in name_of])
-                for n, (t, leaves) in _traced_by_autograd(bridge).items()
-            }
-            if mapping == "auto":
-                # a name TransformerLens synthesizes rather than derives (e.g. a zero placeholder for grouped-query
-                # key and value weights it cannot reshape) still means the component the table names
-                for n, (t, physical) in traced.items():
-                    if not physical and (found := _from_table(n)):
-                        traced[n] = (t, found)
-                        self.fallbacks.append(n)
+        traced = {
+            n: (t, [name_of[id(leaf)] for leaf in leaves if id(leaf) in name_of])
+            for n, (t, leaves) in _traced_by_autograd(bridge).items()
+        }
         for tl_name, (tl_tensor, physical) in traced.items():
             if not physical:
                 self.untraced.append(tl_name)
@@ -263,7 +171,7 @@ class TransformerBridgeView:
         return TunableSupport(trainable=True, naming_scheme="tl", logical_names_are_views=True)
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
-        """Each TransformerLens name mapped to the one physical parameter it is a view of."""
+        """Each TransformerLens name mapped to the parameters its tensor is computed from."""
         unresolved = [n for n in logical if n not in self._table]
         if unresolved:
             raise Unresolvable(unresolved, "They are not TransformerLens names this bridge's view could trace.")
@@ -295,22 +203,10 @@ class TransformerBridgeView:
                 out += self._final_norm
         return list(dict.fromkeys(out))
 
-    def checkpoint_state_dict(self) -> dict[str, Any]:
-        """Every module's own state under its module-tree key, with no state-dict hooks applied, so that a strict
-        ``torch.nn.Module.load_state_dict()`` accepts it."""
-        state: dict[str, Any] = {}
-        for prefix, module in self.root.named_modules(remove_duplicate=False):
-            module._save_to_state_dict(state, f"{prefix}." if prefix else "", False)
-        return state
-
-    def load_checkpoint_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True) -> None:
-        """Load state from :meth:`checkpoint_state_dict` through ``torch.nn.Module.load_state_dict()``."""
-        nn.Module.load_state_dict(self.root, state_dict, strict=strict)
-
     def depth_groups(self) -> list[list[str]]:
-        """The unembedding first (with any embedding tied to it), then each block whole from the last, then the
-        remaining embeddings."""
-        unembed = [n for n in self._table if n.startswith("unembed.")]
+        """The unembedding and final norm first (with any embedding tied to the unembedding), then each block whole
+        from the last, then the remaining embeddings."""
+        unembed = [n for n in self._table if n.startswith(("unembed.", "ln_final."))]
         unembed_physical = {p for n in unembed for p in self._table[n]}
         embeds = [n for n in self._table if n.startswith(("embed.", "pos_embed."))]
         tied = [n for n in embeds if set(self._table[n]) & unembed_physical]
