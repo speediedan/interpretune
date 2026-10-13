@@ -85,6 +85,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 - A minimal callback list (`SessionRunnerCfg.callbacks`, `CoreCallback`, `CoreLoopContext`) with step, validation-end and epoch boundaries; a callback stops training by setting `ctx.should_stop` (#761)
 - `checkpoint_state` / `load_checkpoint_state`: module, optimizer, lr scheduler, RNG and loop state, plus optional `on_save_checkpoint` / `on_load_checkpoint` module hooks and callback state (#761)
 
+#### Tuning through finetuning-scheduler views
+- Each module composition declares a finetuning-scheduler `TunableView` (`build_tunable_view()`, with cooperative `_tunable_roles()`), attached as `fts_tunable_view` after model init: the identity view with PEFT `adapter:<name>` roles by default, `TransformerBridgeView` in TransformerLens names for TransformerLens compositions, `latent:sae` for spliced SAEs, and refusals with reasons for nnsight, circuit-tracer and undeclared compositions (#758, #759)
+- `interpretune.testing.conformance.TuningConformance` runs finetuning-scheduler's view conformance cases against a composition, selected by its declared support (#760)
+
 ### Changed
 - `CompositionRegistry` updated to handle NNsight adapter combinations and dual-backend circuit-tracer
 - `BaseITModule.auto_model_init` refactored to support both HuggingFace and NNsight model initialization paths
@@ -101,6 +105,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 - The core training loop honors `SessionRunnerCfg.max_steps` (counting optimizer steps), which it previously accepted and ignored (#761)
 - The core training loop's `on_train_epoch_start` / `on_train_epoch_end` hooks are optional, as its batch hooks are; a module without them raised `AttributeError` (#761)
 - The core training loop reads the optimizer from the module at every step rather than once, so a replaced optimizer is used (#761)
+- SAEs spliced with `add_saes_on_init=True` are registered on the module (`spliced_saes`), so the default optimizer, checkpoints and views reach their parameters; on the TransformerBridge path they were never stepped (#772)
 - Circuit-tracer `isinstance` assertions replaced with class-name checks to avoid false failures from pytest `importlib` import mode causing module double-loading
 - Coverage collection fix for NNsight's `sys.settrace()` disabling behavior
 - HuggingFace transformers v5 compatibility with configurable test reruns (`--reruns 2 --reruns-delay 5`)
