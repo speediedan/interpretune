@@ -78,6 +78,8 @@ def _jlens_readout_targets(analysis_batch: AnalysisBatch, kwargs: dict) -> tuple
     metadata = {
         "attribution_target_source": source,
         "jlens_layer": analysis_batch.get("jlens_layer"),
+        "jlens_kind": analysis_batch.get("jlens_kind"),
+        "jlens_readout_mask": analysis_batch.get("jlens_readout_mask"),
         "jlens_target_token_ids": selected.tolist(),
     }
     return selected, metadata

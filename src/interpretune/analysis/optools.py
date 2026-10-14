@@ -426,14 +426,22 @@ def resolve_unembed_and_norm_scale(module: Any) -> UnembedNormInfo:
 
 
 DEFAULT_JLENS_REPO = "neuronpedia/jacobian-lens"
-# Every published artifact lives at `{np_model_id}/jlens/{fitting-corpus}/{stem}.pt`. The corpus segment is
+# Every published artifact lives at `{np_model_id}/{kind_dir}/{fitting-corpus}/{stem}.pt`. The corpus segment is
 # NOT constant (one model was fit on pile-10k rather than wikitext) and the stem is NOT the directory name
 # (it tracks the HF model name, so `gpt2-small/` holds `gpt2_...` and `gemma-4-e2b/` holds `gemma-4-E2B_...`).
 # Measured over the default repo, the obvious `{dir}/jlens/Salesforce-wikitext/{dir}_jacobian_lens.pt` shape
 # matches 13 of 40 artifacts, so this resolver discovers rather than formats.
-_JLENS_KIND_DIR = "jlens"
-_JLENS_STEM_SUFFIX = "_jacobian_lens"
+#
+# Lens kinds, keyed by the name a caller passes as `jlens_kind`, each mapping to its directory segment and
+# artifact-stem suffix. A J-lens and a J++ lens share one file format (a `J` layer mapping read through the final
+# norm and the unembedding) and differ only in how the maps were fitted, which the tensors cannot reveal, so the
+# kind comes from the request or the layout and is checked against the sidecar rather than inferred from weights.
+JLENS_KINDS: dict[str, tuple[str, str]] = {"jlens": ("jlens", "_jacobian_lens"), "jpp": ("jpp", "_jpp_lens")}
+DEFAULT_JLENS_KIND = "jlens"
 _JLENS_SIDECAR = "config.yaml"
+# The kind each sidecar ``fit.method`` value declares. Published J-lens sidecars carry no method at all and J++
+# sidecars carry ``jpp``, so an absent method reads as a J-lens and any other value is refused by name.
+_SIDECAR_FIT_METHOD_KINDS: dict[str | None, str] = {None: "jlens", "jpp": "jpp"}
 
 
 class JLensArtifact(NamedTuple):
@@ -447,12 +455,18 @@ class JLensArtifact(NamedTuple):
         repo_id: Repository the artifact came from.
         path: Repo-relative path of the artifact actually loaded, so a caller can quote what it used.
         hf_model_name: The HF model the lens was fit against, read from the sidecar rather than inferred.
-        provenance: The sidecar's ``fit`` and ``results`` blocks when present. ``results.prompts_fitted``
-            is the count actually used (fitting stops on a convergence delta, so it is usually well below
-            the configured ``n_prompts``), and ``results.final_identity_distance`` says how far the lens
-            ended up from the identity, the degenerate case where a J-lens reduces to a logit lens. A weak
-            probe against a barely-converged lens is a different finding from a weak probe against a
-            well-separated one, which a caller can only tell if these travel with the artifact.
+        provenance: The sidecar's ``fit``, ``results``, ``dataset``, ``lens`` and ``extra_metadata`` blocks when
+            present, plus ``kind``, ``kind_source`` and ``artifact`` (the repository, path and requested revision
+            loaded), so an op that emits only this mapping still names its lens. ``results.prompts_fitted`` is the
+            count actually used (fitting stops on a convergence delta, so it is usually well below the configured
+            ``n_prompts``), and ``results.final_identity_distance`` says how far the lens ended up from the
+            identity, the degenerate case where a J-lens reduces to a logit lens. A weak probe against a
+            barely-converged lens is a different finding from a weak probe against a well-separated one, which a
+            caller can only tell if these travel with the artifact. J++ sidecars carry no ``results`` block; their
+            ``lens`` block records the capture point and the storage cast.
+        kind: The lens kind, a key of :data:`JLENS_KINDS`. A J++ map carries an arbitrary per-layer scale and is
+            fitted to readout recall on labelled items, so a result read through one is not interchangeable with a
+            J-lens result, and every consumer can report which produced it.
     """
 
     j_by_layer: dict[int, torch.Tensor]
@@ -462,21 +476,30 @@ class JLensArtifact(NamedTuple):
     path: str
     hf_model_name: str | None
     provenance: dict[str, Any]
+    kind: str
 
 
-def _jlens_repo_artifacts(repo_id: str, revision: str | None, token: str | None) -> dict[str, list[str]]:
-    """``{np_model_id: [artifact paths]}`` for a lens repository, discovered from its file listing."""
+def _require_jlens_kind(kind: object) -> str:
+    """``kind`` when it names a lens kind, otherwise a refusal naming the kinds that exist."""
+    if not isinstance(kind, str) or kind not in JLENS_KINDS:
+        raise ValueError(f"jlens_kind {kind!r} is not a lens kind: expected one of {sorted(JLENS_KINDS)}")
+    return kind
+
+
+def _jlens_repo_artifacts(repo_id: str, revision: str | None, token: str | None, kind: str) -> dict[str, list[str]]:
+    """``{np_model_id: [artifact paths]}`` of one lens kind, discovered from the repository's file listing."""
     from huggingface_hub import HfApi
 
+    kind_dir = JLENS_KINDS[kind][0]
     grouped: dict[str, list[str]] = {}
     for name in HfApi().list_repo_files(repo_id, revision=revision, token=token):
         parts = name.split("/")
-        if len(parts) == 4 and parts[1] == _JLENS_KIND_DIR and name.endswith(".pt"):
+        if len(parts) == 4 and parts[1] == kind_dir and name.endswith(".pt"):
             grouped.setdefault(parts[0], []).append(name)
     return {k: sorted(v) for k, v in grouped.items()}
 
 
-def _select_jlens_artifact(candidates: list[str], model_dir: str) -> str:
+def _select_jlens_artifact(candidates: list[str], model_dir: str, kind: str) -> str:
     """Pick one artifact from a model directory, or refuse naming the alternatives.
 
     Prefers the unsuffixed stem, accepts a lone candidate whatever its suffix, and raises when several
@@ -485,7 +508,7 @@ def _select_jlens_artifact(candidates: list[str], model_dir: str) -> str:
     suffixed artifact, so "require the unsuffixed name" is wrong there. Picking by sort order would
     silently prefer whichever name sorts first, which is not a property anyone chose.
     """
-    plain = [c for c in candidates if c.rsplit("/", 1)[-1].endswith(f"{_JLENS_STEM_SUFFIX}.pt")]
+    plain = [c for c in candidates if c.rsplit("/", 1)[-1].endswith(f"{JLENS_KINDS[kind][1]}.pt")]
     if len(plain) == 1:
         return plain[0]
     if len(candidates) == 1:
@@ -555,6 +578,7 @@ def resolve_jlens(
     path: str | None = None,
     revision: str | None = None,
     token: str | None = None,
+    kind: str | None = None,
 ) -> JLensArtifact:
     """Resolve a pre-fitted Jacobian lens for ``module``, verifying the match rather than assuming it.
 
@@ -574,23 +598,43 @@ def resolve_jlens(
     because refusing would make one model unreachable for no safety gain, but it is not silent either:
     the returned artifact's ``hf_model_name`` is ``None`` exactly when nothing corroborated the match, so
     a caller that cares can tell a verified resolution from a merely plausible one.
+
+    ``kind`` selects the lens kind, a key of :data:`JLENS_KINDS` (discovery defaults to
+    :data:`DEFAULT_JLENS_KIND`). With an explicit ``path`` and no ``kind``, the artifact's own declarations
+    decide: the sidecar's ``fit.method``, the checkpoint's ``provenance.method``, then the path's kind directory,
+    refused when none says. However the kind was chosen, an artifact that declares a different one is refused,
+    because a J++ map read as a J-lens (or the reverse) produces plausible readouts and wrong provenance.
     """
     if path is None:
-        artifacts = _jlens_repo_artifacts(repo_id, revision, token)
-        if not artifacts:
-            raise ValueError(f"{repo_id!r} publishes no `*/{_JLENS_KIND_DIR}/*/*.pt` lens artifacts")
-        if model_id is not None:
-            if model_id not in artifacts:
-                raise ValueError(f"{repo_id!r} has no lens directory {model_id!r}; it publishes {sorted(artifacts)}")
-            path = _select_jlens_artifact(artifacts[model_id], model_id)
-        else:
-            path = _discover_jlens_path(module, repo_id, artifacts, revision, token)
+        kind_source: str | None = "default" if kind is None else "requested"
+        kind = _require_jlens_kind(DEFAULT_JLENS_KIND if kind is None else kind)
+        path = _locate_jlens_path(module, repo_id, model_id, revision, token, kind)
+    elif kind is not None:
+        kind, kind_source = _require_jlens_kind(kind), "requested"
+    else:
+        kind_source = None  # an explicit path with no request: the artifact's own declarations decide
     sidecar = _read_jlens_sidecar(repo_id, path, revision, token)
-    return _load_jlens_artifact(repo_id, path, revision, token, sidecar)
+    return _load_jlens_artifact(repo_id, path, revision, token, sidecar, kind, kind_source)
+
+
+def _locate_jlens_path(
+    module: Any, repo_id: str, model_id: str | None, revision: str | None, token: str | None, kind: str
+) -> str:
+    """The artifact path of one kind, from ``model_id`` when given and by discovery otherwise."""
+    artifacts = _jlens_repo_artifacts(repo_id, revision, token, kind)
+    if not artifacts:
+        raise ValueError(f"{repo_id!r} publishes no `*/{JLENS_KINDS[kind][0]}/*/*.pt` lens artifacts")
+    if model_id is None:
+        return _discover_jlens_path(module, repo_id, artifacts, revision, token, kind)
+    if model_id not in artifacts:
+        raise ValueError(
+            f"{repo_id!r} has no {kind!r} lens directory {model_id!r}; its {kind!r} lenses cover {sorted(artifacts)}"
+        )
+    return _select_jlens_artifact(artifacts[model_id], model_id, kind)
 
 
 def _discover_jlens_path(
-    module: Any, repo_id: str, artifacts: dict[str, list[str]], revision: str | None, token: str | None
+    module: Any, repo_id: str, artifacts: dict[str, list[str]], revision: str | None, token: str | None, kind: str
 ) -> str:
     """Propose a directory from the model name, then confirm it against the sidecar before loading."""
     model_name = _resolve_model_name_for_lens(module)
@@ -603,23 +647,100 @@ def _discover_jlens_path(
     for model_dir, candidates in sorted(artifacts.items()):
         for candidate in candidates:
             stem = candidate.rsplit("/", 1)[-1].lower()
-            if stem.startswith(f"{basename}{_JLENS_STEM_SUFFIX}"):
+            if stem.startswith(f"{basename}{JLENS_KINDS[kind][1]}"):
                 sidecar = _read_jlens_sidecar(repo_id, candidate, revision, token)
                 if _model_names_agree(sidecar.get("hf_model_name"), model_name):
-                    return _select_jlens_artifact(candidates, model_dir)
+                    return _select_jlens_artifact(candidates, model_dir, kind)
     for model_dir, candidates in sorted(artifacts.items()):
         chosen = candidates[0]
         sidecar = _read_jlens_sidecar(repo_id, chosen, revision, token)
         if sidecar.get("hf_model_name") and _model_names_agree(sidecar["hf_model_name"], model_name):
-            return _select_jlens_artifact(candidates, model_dir)
+            return _select_jlens_artifact(candidates, model_dir, kind)
     raise ValueError(
-        f"{repo_id!r} publishes no lens whose `hf_model_name` is {model_name!r}; it covers "
-        f"{sorted(artifacts)}. Pass `model_id=` or `path=` to select one explicitly."
+        f"{repo_id!r} publishes no {kind!r} lens whose `hf_model_name` is {model_name!r}; its {kind!r} lenses "
+        f"cover {sorted(artifacts)}. Pass `model_id=` or `path=` to select one explicitly."
     )
 
 
+def _kind_for_fit_method(repo_id: str, path: str, method: object, where: str) -> str:
+    """The lens kind a declared fit ``method`` names, refusing a method this seam does not read."""
+    if not (method is None or isinstance(method, str)) or method not in _SIDECAR_FIT_METHOD_KINDS:
+        known = sorted(m for m in _SIDECAR_FIT_METHOD_KINDS if m is not None)
+        raise ValueError(
+            f"{repo_id}:{path} declares fit method {method!r} in its {where}, which is not a lens kind this seam "
+            f"reads: known methods are {known}, and an absent method is a J-lens"
+        )
+    return _SIDECAR_FIT_METHOD_KINDS[method]
+
+
+def _declared_jlens_kinds(repo_id: str, path: str, sidecar: dict, ckpt: dict) -> dict[str, str]:
+    """Every kind the artifact declares about itself, by source, in the order they are trusted.
+
+    The sidecar's ``fit.method``, then the checkpoint's own ``provenance.method`` (which J++ conversions write and
+    J-lens fits omit), then the kind directory of a path in the published four-part layout.
+    """
+    declared: dict[str, str] = {}
+    if sidecar:
+        fit = sidecar.get("fit")
+        declared["sidecar"] = _kind_for_fit_method(
+            repo_id, path, fit.get("method") if isinstance(fit, dict) else None, "sidecar"
+        )
+    ckpt_provenance = ckpt.get("provenance")
+    if isinstance(ckpt_provenance, dict):
+        declared["checkpoint"] = _kind_for_fit_method(
+            repo_id, path, ckpt_provenance.get("method"), "checkpoint provenance"
+        )
+    parts = path.split("/")
+    path_kind = next((k for k, (d, _) in JLENS_KINDS.items() if len(parts) == 4 and parts[1] == d), None)
+    if path_kind is not None:
+        declared["path"] = path_kind
+    return declared
+
+
+def _settle_jlens_kind(
+    repo_id: str, path: str, declared: dict[str, str], kind: str | None, kind_source: str | None
+) -> tuple[str, str]:
+    """The artifact's kind and where it came from, refusing any declaration that contradicts it."""
+    if kind is None:
+        if not declared:
+            raise ValueError(
+                f"cannot tell which lens kind {repo_id}:{path} is: no sidecar or checkpoint provenance declares a "
+                f"fit method, and its path is not under a kind directory. Pass jlens_kind (one of "
+                f"{sorted(JLENS_KINDS)})."
+            )
+        kind_source, kind = next(iter(declared.items()))
+    for source, declared_kind in declared.items():
+        if declared_kind != kind:
+            raise ValueError(
+                f"{repo_id}:{path} is a {declared_kind!r} lens according to its {source}, but the resolved kind is "
+                f"{kind!r}. Pass jlens_kind={declared_kind!r} to read it."
+            )
+    assert kind_source is not None
+    return kind, kind_source
+
+
+def _refuse_author_format(repo_id: str, path: str, ckpt: dict) -> None:
+    """Refuse a J++ checkpoint in its fitting library's native layout, naming the conversion it needs."""
+    parameters = ckpt.get("parameters")
+    if "J" not in ckpt and isinstance(parameters, dict) and "jacobians" in parameters:
+        raise ValueError(
+            f"{repo_id}:{path} is a J++ checkpoint in its fitting library's native layout (`parameters.jacobians`), "
+            "which this seam does not read. Convert it to the published lens layout first: a `J` layer mapping with "
+            "`source_layers` and `d_model`, beside a `config.yaml` sidecar whose `fit.method` is `jpp`."
+        )
+
+
+_SIDECAR_PROVENANCE_BLOCKS = ("fit", "results", "dataset", "lens", "extra_metadata")
+
+
 def _load_jlens_artifact(
-    repo_id: str, path: str, revision: str | None, token: str | None, sidecar: dict
+    repo_id: str,
+    path: str,
+    revision: str | None,
+    token: str | None,
+    sidecar: dict,
+    kind: str | None,
+    kind_source: str | None,
 ) -> JLensArtifact:
     """Load a resolved artifact, memory-mapped so a single layer does not materialize the whole lens."""
     from huggingface_hub import hf_hub_download
@@ -629,14 +750,23 @@ def _load_jlens_artifact(
         ckpt = torch.load(local, map_location="cpu", weights_only=True, mmap=True)
     except (RuntimeError, ValueError):  # not a zipfile-serialized checkpoint; mmap is unavailable
         ckpt = torch.load(local, map_location="cpu", weights_only=True)
+    _refuse_author_format(repo_id, path, ckpt)
     j_by_layer = {int(k): v for k, v in (ckpt.get("J") or {}).items()}
     if not j_by_layer:
         raise ValueError(f"{repo_id}:{path} carries no `J` layer mapping, so it is not a usable lens")
+    kind, kind_source = _settle_jlens_kind(
+        repo_id, path, _declared_jlens_kinds(repo_id, path, sidecar, ckpt), kind, kind_source
+    )
     source_layers = sorted(int(x) for x in (ckpt.get("source_layers") or j_by_layer))
     d_model = int(ckpt.get("d_model") or next(iter(j_by_layer.values())).shape[0])
-    provenance = {k: sidecar[k] for k in ("fit", "results", "dataset") if k in sidecar}
+    provenance: dict[str, Any] = {k: sidecar[k] for k in _SIDECAR_PROVENANCE_BLOCKS if k in sidecar}
+    provenance.update(
+        kind=kind, kind_source=kind_source, artifact={"repo_id": repo_id, "path": path, "revision": revision}
+    )
     if "n_prompts" in ckpt:
         provenance.setdefault("checkpoint", {})["n_prompts"] = int(ckpt["n_prompts"])
+    if isinstance(ckpt.get("provenance"), dict):
+        provenance.setdefault("checkpoint", {})["provenance"] = ckpt["provenance"]
     return JLensArtifact(
         j_by_layer=j_by_layer,
         source_layers=source_layers,
@@ -645,6 +775,7 @@ def _load_jlens_artifact(
         path=path,
         hf_model_name=sidecar.get("hf_model_name"),
         provenance=provenance,
+        kind=kind,
     )
 
 
@@ -674,6 +805,9 @@ def resolve_jlens_layer(
     One construction for every op that reads a lens, so the layer rule cannot drift between them: an
     explicit ``jlens_layer`` wins, otherwise ``jlens_layer_percentile`` selects into the fitted set,
     and a layer outside the fitted set is refused rather than interpolated.
+
+    Every lens input, ``jlens_kind`` included, is read from the call's kwargs and then from the analysis batch, so
+    an op collection that calls this with empty kwargs still honours a kind set on the batch.
     """
     artifact = resolve_jlens(
         module,
@@ -681,6 +815,7 @@ def resolve_jlens_layer(
         model_id=kwargs.get("jlens_model_id") or analysis_batch.get("jlens_model_id"),
         path=kwargs.get("jlens_lens_path") or analysis_batch.get("jlens_lens_path"),
         revision=kwargs.get("jlens_revision", analysis_batch.get("jlens_revision")),
+        kind=kwargs.get("jlens_kind") or analysis_batch.get("jlens_kind"),
     )
     layer = kwargs.get("jlens_layer", analysis_batch.get("jlens_layer"))
     if layer is None:
@@ -951,6 +1086,8 @@ __all__ = [
     "jlens_layer_for_percentile",
     "JLensArtifact",
     "DEFAULT_JLENS_REPO",
+    "DEFAULT_JLENS_KIND",
+    "JLENS_KINDS",
     "fold_norm_into_unembed_rows",
     "jlens_basis_name",
     "jlens_direction_rows",

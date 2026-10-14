@@ -189,6 +189,7 @@ def concept_direction(
         jlens_model_id (string)
         jlens_repo_id (string)
         jlens_revision (string)
+        jlens_kind (string)
 
     Output Schema:
         concept_direction (float32)
@@ -200,6 +201,8 @@ def concept_direction(
         concept_direction_mode (string)
         concept_basis (string) (required)
         jlens_layer (int64)
+        jlens_kind (string)
+        jlens_provenance (object)
     """
     ...
 
@@ -474,12 +477,15 @@ def jlens_concept_probe(
         jlens_repo_id (string)
         jlens_model_id (string)
         jlens_lens_path (string)
+        jlens_kind (string)
+        jlens_revision (string)
 
     Output Schema:
         jlens_concept_cosine (float32)
         jlens_concept_token_ids (int64)
         jlens_layer (int64)
         jlens_positions (int64)
+        jlens_kind (string)
         jlens_provenance (object)
         jlens_basis (string)
     """
@@ -501,6 +507,9 @@ def jlens_read(module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batc
         jlens_repo_id (string)
         jlens_model_id (string)
         jlens_lens_path (string)
+        jlens_kind (string)
+        jlens_revision (string)
+        jlens_readout_mask (string)
 
     Output Schema:
         jlens_top_token_ids (int64)
@@ -509,6 +518,8 @@ def jlens_read(module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batc
         jlens_layer (int64)
         jlens_positions (int64)
         jlens_include_rms_scale (bool)
+        jlens_readout_mask (string)
+        jlens_kind (string)
         jlens_provenance (object)
     """
     ...
@@ -531,6 +542,8 @@ def jlens_sparse_inventory(
         jlens_repo_id (string)
         jlens_model_id (string)
         jlens_lens_path (string)
+        jlens_kind (string)
+        jlens_revision (string)
 
     Output Schema:
         jlens_inventory_token_ids (object)
@@ -538,6 +551,7 @@ def jlens_sparse_inventory(
         jlens_inventory_residual_ratio (float32)
         jlens_layer (int64)
         jlens_positions (int64)
+        jlens_kind (string)
         jlens_provenance (object)
         jlens_basis (string)
     """

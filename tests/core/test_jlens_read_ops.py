@@ -97,6 +97,7 @@ def synthetic_lens(monkeypatch):
             path="synthetic/jlens/c/synthetic_jacobian_lens.pt",
             hf_model_name="org/synthetic",
             provenance={"results": {"prompts_fitted": 277}},
+            kind="jlens",
         )
 
     monkeypatch.setattr(optools, "resolve_jlens", _resolve)
@@ -204,6 +205,143 @@ class TestJLensRead:
     def test_fit_provenance_travels_with_the_result(self, synthetic_lens):
         out = jlens_ops.jlens_read_impl(_module(), _batch(torch.randn(1, 2, D)), None, 0)
         assert out["jlens_provenance"]["results"]["prompts_fitted"] == 277
+
+
+class _MixedTok:
+    """Decodes some ids as non-semantic strings, the cases the J++ readout filter exists to drop."""
+
+    NON_SEMANTIC = {0: ",", 1: " ", 2: "", 3: "!?", 5: "\n\n", 9: "  ."}
+    SEMANTIC = {4: "<eos>", 6: "7", 7: " é", 8: "日"}  # special, digit, accented letter, non-Latin letter
+
+    def decode(self, ids):
+        i = ids[0]
+        return self.NON_SEMANTIC.get(i, self.SEMANTIC.get(i, f" w{i}"))
+
+
+@pytest.fixture
+def synthetic_jpp_lens(monkeypatch):
+    """A J++ lens with a fixed random map, whose per-layer scale the returned holder sets."""
+    torch.manual_seed(1)
+    base = torch.randn(D, D) / D**0.5
+    holder = {"scale": 1.0}
+
+    def _resolve(module, **kwargs):
+        return JLensArtifact(
+            j_by_layer={ell: base * holder["scale"] for ell in LAYERS},
+            source_layers=list(LAYERS),
+            d_model=D,
+            repo_id="synthetic",
+            path="synthetic/jpp/c/synthetic_jpp_lens.pt",
+            hf_model_name="org/synthetic",
+            provenance={"kind": "jpp"},
+            kind="jpp",
+        )
+
+    monkeypatch.setattr(optools, "resolve_jlens", _resolve)
+    return holder
+
+
+def _mixed_module():
+    module = _module()
+    module.model.tokenizer = _MixedTok()
+    return module
+
+
+class TestReadoutDefaultsByLensKind:
+    def test_a_jlens_lens_keeps_the_full_vocabulary_and_raw_scores(self, synthetic_lens):
+        """Positive control: J-lens defaults are what they always were, so stored J-lens results reproduce."""
+        out = jlens_ops.jlens_read_impl(_mixed_module(), _batch(torch.randn(1, 2, D)), None, 0, jlens_top_k=VOCAB)
+        assert (out["jlens_kind"], out["jlens_readout_mask"], out["jlens_include_rms_scale"]) == (
+            "jlens",
+            "none",
+            False,
+        )
+        assert set(out["jlens_top_token_ids"].flatten().tolist()) == set(range(VOCAB))
+
+    def test_a_jpp_lens_defaults_to_the_semantic_mask_and_rms_scores(self, synthetic_jpp_lens):
+        out = jlens_ops.jlens_read_impl(_mixed_module(), _batch(torch.randn(1, 2, D)), None, 0, jlens_top_k=3)
+        assert (out["jlens_kind"], out["jlens_readout_mask"], out["jlens_include_rms_scale"]) == (
+            "jpp",
+            "semantic",
+            True,
+        )
+
+    def test_the_semantic_mask_ranks_only_tokens_with_a_letter_or_digit(self, synthetic_jpp_lens):
+        n_kept = VOCAB - len(_MixedTok.NON_SEMANTIC)
+        out = jlens_ops.jlens_read_impl(_mixed_module(), _batch(torch.randn(3, 2, D)), None, 0, jlens_top_k=n_kept)
+        ranked = set(out["jlens_top_token_ids"].flatten().tolist())
+        assert ranked == set(range(VOCAB)) - set(_MixedTok.NON_SEMANTIC)
+        assert torch.isfinite(out["jlens_top_token_scores"]).all()
+
+    def test_a_masked_token_that_would_top_the_readout_is_dropped(self, synthetic_jpp_lens):
+        """Control: with the mask off the punctuation token wins, so the masked read is evidence of the mask."""
+        module = _mixed_module()
+        acts = torch.randn(1, 1, D)
+        # make "," (id 0) the readout's best token by aligning its unembedding row with the lens output
+        j = optools.resolve_jlens(module).j_by_layer[4]
+        module.model.lm_head.weight[0] = (acts[0, -1] @ j.T) * 10
+        unmasked = jlens_ops.jlens_read_impl(module, _batch(acts), None, 0, jlens_top_k=1, jlens_readout_mask="none")
+        masked = jlens_ops.jlens_read_impl(module, _batch(acts), None, 0, jlens_top_k=1)
+        assert unmasked["jlens_top_token_ids"].item() == 0
+        assert masked["jlens_top_token_ids"].item() != 0
+
+    def test_ids_past_the_tokenizer_decode_empty_and_are_dropped(self):
+        """The unembedding can be wider than the vocabulary; its padding rows must never rank."""
+
+        class _Short:
+            def decode(self, ids):
+                return f"w{ids[0]}" if ids[0] < 5 else ""
+
+        keep = jlens_ops.semantic_token_mask(_Short(), 8)
+        assert keep.tolist() == [True] * 5 + [False] * 3
+
+    def test_a_jlens_lens_can_opt_into_the_mask(self, synthetic_lens):
+        out = jlens_ops.jlens_read_impl(
+            _mixed_module(), _batch(torch.randn(1, 2, D)), None, 0, jlens_top_k=VOCAB, jlens_readout_mask="semantic"
+        )
+        top = out["jlens_top_token_ids"][0, 0]
+        finite = torch.isfinite(out["jlens_top_token_scores"][0, 0])
+        assert set(top[finite].tolist()).isdisjoint(_MixedTok.NON_SEMANTIC)
+
+    def test_every_read_op_reports_its_lens_kind(self, synthetic_jpp_lens):
+        module, acts = _mixed_module(), torch.randn(1, 2, D)
+        probe = jlens_ops.jlens_concept_probe_impl(module, _batch(acts), None, 0, jlens_concept_token_ids=[4, 6])
+        inventory = jlens_ops.jlens_sparse_inventory_impl(module, _batch(acts), None, 0, jlens_inventory_k=2)
+        assert probe["jlens_kind"] == inventory["jlens_kind"] == "jpp"
+
+    def test_an_unknown_mask_is_refused_by_name(self, synthetic_jpp_lens):
+        with pytest.raises(ValueError, match="'letters' is not a readout mask"):
+            jlens_ops.jlens_read_impl(
+                _mixed_module(), _batch(torch.randn(1, 2, D)), None, 0, jlens_readout_mask="letters"
+            )
+
+
+class TestJppScaleInvariance:
+    """A J++ map's per-layer scale is arbitrary, so its default readout must not depend on it."""
+
+    @staticmethod
+    def _scores(module, acts, holder, scale, **kwargs):
+        holder["scale"] = scale
+        return jlens_ops.jlens_read_impl(module, _batch(acts), None, 0, jlens_top_k=VOCAB, **kwargs)
+
+    def test_rms_normalized_readouts_do_not_move_when_the_map_is_rescaled(self, synthetic_jpp_lens):
+        module, acts = _mixed_module(), torch.randn(2, 3, D)
+        reference = self._scores(module, acts, synthetic_jpp_lens, 1.0)
+        for scale in (0.23, 2.4):
+            rescaled = self._scores(module, acts, synthetic_jpp_lens, scale)
+            torch.testing.assert_close(rescaled["jlens_top_token_ids"], reference["jlens_top_token_ids"])
+            torch.testing.assert_close(rescaled["jlens_top_token_scores"], reference["jlens_top_token_scores"])
+
+    def test_raw_scores_do_move_and_asking_for_them_warns_by_name(self, synthetic_jpp_lens):
+        """Control: without the RMS divisor the scores track the scale, which is why the default exists."""
+        module, acts = _mixed_module(), torch.randn(2, 3, D)
+        with pytest.warns(UserWarning, match=r"raw J\+\+ readout scores carry the map's arbitrary per-layer scale"):
+            reference = self._scores(module, acts, synthetic_jpp_lens, 1.0, jlens_include_rms_scale=False)
+            rescaled = self._scores(module, acts, synthetic_jpp_lens, 2.4, jlens_include_rms_scale=False)
+        finite = torch.isfinite(reference["jlens_top_token_scores"])
+        assert not torch.allclose(
+            rescaled["jlens_top_token_scores"][finite], reference["jlens_top_token_scores"][finite]
+        )
 
 
 class TestConceptProbe:
@@ -375,6 +513,7 @@ class TestCrossBackendReadoutAgreement:
                 path="synthetic",
                 hf_model_name="openai-community/gpt2",
                 provenance={},
+                kind="jlens",
             )
             batch = AnalysisBatch(cache={"blocks.6.hook_out": activations})
             original = optools.resolve_jlens
@@ -421,7 +560,8 @@ class TestRealLensSmoke:
         # The published gpt2 lens lives under `gpt2-small/` with a stem of `gpt2_...`, so resolving it
         # at all is the discovery path working against the real repository rather than a recording.
         assert artifact.hf_model_name == "openai-community/gpt2"
-        assert artifact.path.startswith("gpt2-small/")
+        assert artifact.path.startswith("gpt2-small/jlens/")
+        assert (artifact.kind, artifact.provenance["kind"]) == ("jlens", "jlens")
         assert artifact.d_model == model.config.n_embd
         assert artifact.provenance.get("results", {}).get("prompts_fitted", 0) > 0
 

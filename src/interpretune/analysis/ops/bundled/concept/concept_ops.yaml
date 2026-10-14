@@ -6,7 +6,7 @@
 # source checkout). Hub collections are the ones that can be out of step, so they declare windows.
 collection:
   name: concept
-  version: 0.1.0
+  version: 0.2.0
 
 extract_concept_latent_state:
   description: Extract per-example latent rows from the configured cache key
@@ -249,6 +249,11 @@ concept_direction:
       datasets_dtype: string
       required: false
       non_tensor: true
+    jlens_kind:
+      # Which lens kind builds a `jlens_*` basis direction (`jlens` or `jpp`); see jlens_read.
+      datasets_dtype: string
+      required: false
+      non_tensor: true
   output_schema:
     concept_direction:
       datasets_dtype: float32
@@ -291,6 +296,17 @@ concept_direction:
       sequence_type: false
     jlens_layer:
       datasets_dtype: int64
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_kind:
+      # Which lens kind built a `jlens_*` basis direction; absent for the other bases.
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_provenance:
+      datasets_dtype: object
       required: false
       non_tensor: true
       sequence_type: false

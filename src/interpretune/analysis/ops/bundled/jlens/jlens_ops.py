@@ -18,6 +18,8 @@ Self-contained modulo the sanctioned op-authoring surfaces (:mod:`interpretune.a
 
 from __future__ import annotations
 
+import warnings
+import weakref
 from typing import Any
 
 import torch
@@ -35,6 +37,13 @@ from interpretune.analysis.optools import (
 )
 
 DEFAULT_LAYER_PERCENTILE = 0.85
+
+JLENS_READOUT_MASKS: tuple[str, ...] = ("none", "semantic")
+# What a readout defaults to per lens kind. The J++ reference readout ranks only tokens whose decoded string has a
+# letter or digit, and divides by the final norm's RMS, which its arbitrary per-layer map scale makes necessary for any
+# magnitude comparison. J-lens defaults stay as they were, so stored J-lens results reproduce exactly.
+_KIND_READOUT_DEFAULTS: dict[str, tuple[str, bool]] = {"jlens": ("none", False), "jpp": ("semantic", True)}
+_SEMANTIC_MASKS: weakref.WeakKeyDictionary[Any, dict[int, torch.Tensor]] = weakref.WeakKeyDictionary()
 
 
 def _resolve_lens_layer(module: Any, analysis_batch: AnalysisBatch, kwargs: dict) -> tuple[torch.Tensor, int, Any]:
@@ -134,14 +143,69 @@ def _selected_positions(analysis_batch: AnalysisBatch, kwargs: dict, n_positions
     return positions % n_positions
 
 
+def semantic_token_mask(tokenizer: Any, vocab_size: int) -> torch.Tensor:
+    """``True`` for every id in ``range(vocab_size)`` whose decoded string contains a letter or digit.
+
+    The J++ readout filter, matched to its reference definition: an id is dropped when ``str.isalnum`` holds for no
+    character of its decode, which removes whitespace, punctuation and symbol tokens, and keeps special tokens (they
+    decode word-like). ``vocab_size`` is the unembedding width rather than the tokenizer length: ids past the
+    tokenizer, the unembedding's padding rows, decode to an empty string and are dropped. Cached per tokenizer,
+    since a large vocabulary takes seconds to decode.
+    """
+    try:
+        cached = _SEMANTIC_MASKS.setdefault(tokenizer, {})
+    except TypeError:  # a tokenizer that cannot be weakly referenced is simply not cached
+        cached = {}
+    if vocab_size not in cached:
+        if hasattr(tokenizer, "batch_decode"):
+            decoded = tokenizer.batch_decode([[i] for i in range(vocab_size)])
+        else:
+            decoded = [tokenizer.decode([i]) for i in range(vocab_size)]
+        cached[vocab_size] = torch.tensor([any(ch.isalnum() for ch in text) for text in decoded], dtype=torch.bool)
+    return cached[vocab_size]
+
+
+def _readout_mask_choice(analysis_batch: AnalysisBatch, kwargs: dict, kind: str) -> str:
+    """The readout mask to apply: the caller's, refused when unknown, else the lens kind's default."""
+    mask = kwargs.get("jlens_readout_mask", analysis_batch.get("jlens_readout_mask"))
+    if mask is None:
+        return _KIND_READOUT_DEFAULTS[kind][0]
+    if mask not in JLENS_READOUT_MASKS:
+        raise ValueError(
+            f"jlens_readout_mask {mask!r} is not a readout mask: expected one of {list(JLENS_READOUT_MASKS)}"
+        )
+    return mask
+
+
+def _include_rms_scale_choice(analysis_batch: AnalysisBatch, kwargs: dict, kind: str) -> bool:
+    """Whether to divide by the final norm's RMS: the caller's choice, else the lens kind's default."""
+    raw = kwargs.get("jlens_include_rms_scale", analysis_batch.get("jlens_include_rms_scale"))
+    if raw is None:
+        return _KIND_READOUT_DEFAULTS[kind][1]
+    include_rms_scale = bool(raw)
+    if kind == "jpp" and not include_rms_scale:
+        warnings.warn(
+            "jlens_include_rms_scale=False with a J++ lens: raw J++ readout scores carry the map's arbitrary per-layer "
+            "scale, so they are not comparable across layers or lenses. Rankings within one position are unaffected.",
+            stacklevel=3,
+        )
+    return include_rms_scale
+
+
 def jlens_read_impl(
     module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
 ) -> AnalysisBatch:
-    """Rank vocabulary tokens by the J-lens readout at the selected layer and positions."""
+    """Rank vocabulary tokens by the J-lens readout at the selected layer and positions.
+
+    The readout mask and the RMS divisor default by lens kind: a J++ lens ranks only tokens with a letter or digit
+    and divides by the final norm's RMS, as its reference readout does, while a J-lens keeps the full vocabulary and
+    raw scores. The settings applied are returned beside the readout.
+    """
     j, layer, artifact = _resolve_lens_layer(module, analysis_batch, kwargs)
     info = resolve_unembed_and_norm_scale(module)
     cache_key = kwargs.get("jlens_cache_key", analysis_batch.get("jlens_cache_key")) or default_jlens_cache_key(layer)
-    include_rms_scale = bool(kwargs.get("jlens_include_rms_scale", analysis_batch.get("jlens_include_rms_scale")))
+    include_rms_scale = _include_rms_scale_choice(analysis_batch, kwargs, artifact.kind)
+    readout_mask = _readout_mask_choice(analysis_batch, kwargs, artifact.kind)
     top_k = int(kwargs.get("jlens_top_k", analysis_batch.get("jlens_top_k") or 10))
 
     device = _readout_device(info)
@@ -149,10 +213,13 @@ def jlens_read_impl(
     positions = _selected_positions(analysis_batch, kwargs, activations.shape[1])
     selected = activations[:, positions, :].to(device)
     logits = jlens_readout_logits(selected, j.to(device), info, include_rms_scale)
+    tokenizer = resolve_tokenizer(module)
+    if readout_mask == "semantic":
+        keep = semantic_token_mask(tokenizer, logits.shape[-1]).to(logits.device)
+        logits = logits.masked_fill(~keep, -torch.inf)
     scores, ids = torch.topk(logits, k=min(top_k, logits.shape[-1]), dim=-1)
     scores, ids = scores.detach().cpu(), ids.detach().cpu()
 
-    tokenizer = resolve_tokenizer(module)
     strings = [[[tokenizer.decode([int(i)]) for i in row] for row in example] for example in ids]
     analysis_batch.update(
         jlens_top_token_ids=ids,
@@ -161,6 +228,8 @@ def jlens_read_impl(
         jlens_layer=layer,
         jlens_positions=positions,
         jlens_include_rms_scale=include_rms_scale,
+        jlens_readout_mask=readout_mask,
+        jlens_kind=artifact.kind,
         jlens_provenance=artifact.provenance,
     )
     return analysis_batch
@@ -197,6 +266,7 @@ def jlens_concept_probe_impl(
         jlens_concept_token_ids=torch.as_tensor(token_ids, dtype=torch.long).reshape(-1),
         jlens_layer=layer,
         jlens_positions=positions,
+        jlens_kind=artifact.kind,
         jlens_provenance=artifact.provenance,
         jlens_basis=jlens_basis_name(apply_norm),
     )
@@ -300,6 +370,7 @@ def jlens_sparse_inventory_impl(
         jlens_inventory_residual_ratio=torch.tensor(residual_out),
         jlens_layer=layer,
         jlens_positions=positions,
+        jlens_kind=artifact.kind,
         jlens_provenance=artifact.provenance,
         jlens_basis=jlens_basis_name(apply_norm),
     )

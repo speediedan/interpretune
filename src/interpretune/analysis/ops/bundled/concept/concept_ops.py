@@ -822,8 +822,11 @@ def _concept_direction_jlens(module: Any, analysis_batch: AnalysisBatch, kwargs:
     group), but over per-token J-lens direction rows in the basis ``basis`` names rather than over
     input-embedding rows. Reads through the shared read-path seam (``resolve_jlens_layer``,
     ``jlens_direction_rows``), so there is one lens construction in the tree rather than two.
+
+    The lens kind and provenance are returned with the direction: a J-lens and a J++ map build directions under the
+    same basis name, and two directions differing only in lens would otherwise be indistinguishable afterwards.
     """
-    j, layer, _artifact = resolve_jlens_layer(module, analysis_batch, kwargs)
+    j, layer, artifact = resolve_jlens_layer(module, analysis_batch, kwargs)
     info = resolve_unembed_and_norm_scale(module)
     apply_norm = basis == "jlens_folded"
     tokenizer = resolve_tokenizer(module)
@@ -884,6 +887,8 @@ def _concept_direction_jlens(module: Any, analysis_batch: AnalysisBatch, kwargs:
         concept_direction_mode=direction_mode,
         concept_basis=basis,
         jlens_layer=layer,
+        jlens_kind=artifact.kind,
+        jlens_provenance=artifact.provenance,
     )
     return analysis_batch
 

@@ -97,6 +97,7 @@ def seam_lens(monkeypatch):
                 path="synthetic/jlens/c/synthetic_jacobian_lens.pt",
                 hf_model_name="org/synthetic",
                 provenance={},
+                kind="jlens",
             ),
         )
 
@@ -214,6 +215,8 @@ class TestBasesAreRecorded:
             )
             assert out.concept_basis == basis
             assert out.jlens_layer == 4
+            # the lens that built the direction travels with it, so a J++ direction cannot pass for a J-lens one
+            assert out.jlens_kind == "jlens" and out.jlens_provenance == {}
 
 
 class TestSyntheticGuard:

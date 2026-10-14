@@ -5,7 +5,7 @@
 # between tags, so every bundled op would be skipped in a source checkout).
 collection:
   name: jlens
-  version: 0.1.0
+  version: 0.2.0
 
 # These ops declare NO `required_capabilities`, and the absence is deliberate rather than an
 # oversight. They read a populated activation cache and the model's unembed, both ordinary parts of
@@ -69,6 +69,25 @@ jlens_read:
       required: false
       non_tensor: true
       sequence_type: false
+    jlens_kind:
+      # Which lens kind to resolve (`jlens` or `jpp`); unset resolves a J-lens by discovery, and an explicit
+      # `jlens_lens_path` takes the kind its sidecar, checkpoint or directory declares.
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_revision:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_readout_mask:
+      # `none` ranks the full vocabulary; `semantic` ranks only tokens whose decode has a letter or digit.
+      # Unset takes the lens kind's default: `semantic` for J++, `none` for a J-lens.
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
   output_schema:
     jlens_top_token_ids:
       datasets_dtype: int64
@@ -92,6 +111,17 @@ jlens_read:
       sequence_type: false
     jlens_include_rms_scale:
       datasets_dtype: bool
+      non_tensor: true
+      sequence_type: false
+    jlens_readout_mask:
+      datasets_dtype: string
+      non_tensor: true
+      sequence_type: false
+    jlens_kind:
+      # The kind of lens that produced this result. A J++ map has an arbitrary per-layer scale and is fitted to
+      # readout recall, so results differing only in lens kind are not comparable, and without this field they are
+      # indistinguishable after the fact.
+      datasets_dtype: string
       non_tensor: true
       sequence_type: false
     jlens_provenance:
@@ -154,6 +184,18 @@ jlens_concept_probe:
       required: false
       non_tensor: true
       sequence_type: false
+    jlens_kind:
+      # Which lens kind to resolve (`jlens` or `jpp`); unset resolves a J-lens by discovery, and an explicit
+      # `jlens_lens_path` takes the kind its sidecar, checkpoint or directory declares.
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_revision:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
   output_schema:
     jlens_concept_cosine:
       datasets_dtype: float32
@@ -170,6 +212,13 @@ jlens_concept_probe:
     jlens_positions:
       datasets_dtype: int64
       array_shape: [null]
+      sequence_type: false
+    jlens_kind:
+      # The kind of lens that produced this result. A J++ map has an arbitrary per-layer scale and is fitted to
+      # readout recall, so results differing only in lens kind are not comparable, and without this field they are
+      # indistinguishable after the fact.
+      datasets_dtype: string
+      non_tensor: true
       sequence_type: false
     jlens_provenance:
       datasets_dtype: object
@@ -236,6 +285,18 @@ jlens_sparse_inventory:
       required: false
       non_tensor: true
       sequence_type: false
+    jlens_kind:
+      # Which lens kind to resolve (`jlens` or `jpp`); unset resolves a J-lens by discovery, and an explicit
+      # `jlens_lens_path` takes the kind its sidecar, checkpoint or directory declares.
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    jlens_revision:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
   output_schema:
     jlens_inventory_token_ids:
       datasets_dtype: object
@@ -256,6 +317,13 @@ jlens_sparse_inventory:
     jlens_positions:
       datasets_dtype: int64
       array_shape: [null]
+      sequence_type: false
+    jlens_kind:
+      # The kind of lens that produced this result. A J++ map has an arbitrary per-layer scale and is fitted to
+      # readout recall, so results differing only in lens kind are not comparable, and without this field they are
+      # indistinguishable after the fact.
+      datasets_dtype: string
+      non_tensor: true
       sequence_type: false
     jlens_provenance:
       datasets_dtype: object
