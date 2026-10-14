@@ -175,7 +175,8 @@ class TestPulledOpParity:
 
     def test_declared_collection_identity_survives_the_trip(self, pulled_dispatcher):
         op_def = pulled_dispatcher._op_definitions[f"{NAMESPACE}.concept_direction"]
-        assert (op_def.collection_name, op_def.collection_version) == ("concept_direction_ops", "0.1.0")
+        declared = yaml.safe_load((CONCEPT_FAMILY / "concept_ops.yaml").read_text())["collection"]["version"]
+        assert (op_def.collection_name, op_def.collection_version) == ("concept_direction_ops", declared)
 
     def test_op_state_survives_the_trip(self, pulled_dispatcher):
         """``concept_direction`` is the op that declares cross-batch state, so this is not vacuous."""

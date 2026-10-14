@@ -391,7 +391,7 @@ class TestJlensReadoutSelectedTargets:
     def test_the_top_k_readout_tokens_become_logit_targets(self, shape: str) -> None:
         top = self.TOP if shape == "per_sample" else self.TOP.unsqueeze(0)
         captured, result = self._run(
-            {"jlens_top_token_ids": top, "jlens_layer": 12},
+            {"jlens_top_token_ids": top, "jlens_layer": 12, "jlens_kind": "jpp", "jlens_readout_mask": "semantic"},
             attribution_target_source="jlens_readout",
             jlens_attribution_top_k=3,
         )
@@ -399,6 +399,8 @@ class TestJlensReadoutSelectedTargets:
         meta = json.loads(result.graph_metadata)
         assert meta["attribution_target_source"] == "jlens_readout"
         assert meta["jlens_layer"] == 12 and meta["jlens_target_token_ids"] == [3, 1, 2]
+        # the graph records which lens and which readout mask selected its targets
+        assert (meta["jlens_kind"], meta["jlens_readout_mask"]) == ("jpp", "semantic")
 
     def test_without_a_readout_the_source_is_refused_by_name(self) -> None:
         with pytest.raises(ValueError, match=r"needs jlens_top_token_ids.*run jlens_read"):
