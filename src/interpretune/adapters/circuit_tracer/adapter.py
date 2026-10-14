@@ -147,6 +147,10 @@ class BaseCircuitTracerModule(BaseITModule):
                 rank_zero_info("Using NNsight remote execution")
                 if cfg.ndif_api_key:
                     pretrained_kwargs["api_key"] = cfg.ndif_api_key
+            if cfg.device_map is not None:
+                pretrained_kwargs["device_map"] = cfg.device_map
+                if cfg.max_memory is not None:
+                    pretrained_kwargs["max_memory"] = cfg.max_memory
 
         # Use ReplacementModel.from_pretrained factory
         # Factory returns backend-specific implementation based on backend parameter
