@@ -2,20 +2,27 @@
 
 Copies a repository's dev notebooks to its publish directory, strips ``remove-cell`` tagged cells, rewrites
 dev-path imports, and prepends a Colab badge and an install cell, tracking content hashes so only changed files
-republish. It exists once, here, parameterized from the consuming repository's ``[tool.interpretune.notebooks]``
-table, so an adapter repository publishes its example notebooks with the same engine interpretune uses for its
-own and copies nothing. ``scripts/publish_notebooks.py`` in this repository is a shim over :func:`main`.
+republish. It is repository-neutral and imports only the standard library, so another repository can vendor this
+file unmodified (beside ``notebook_docs.py``, the docs-artifact renderer, which loads it as a sibling) and run it
+from its own ``scripts/`` directory without installing interpretune. ``scripts/publish_notebooks.py`` in this
+repository is a shim over :func:`main`.
 
-The table (every key optional; the defaults are interpretune's own layout)::
+Everything repository-specific comes from the ``[tool.notebook-publishing]`` table of the consuming repository's
+``pyproject.toml``; the engine holds no repository paths. ``[tool.interpretune.notebooks]``, the table's earlier
+name, is still read, and a pyproject carrying both is refused rather than merged::
 
-    [tool.interpretune.notebooks]
-    dev_dir = "src/it_examples/notebooks/dev"          # relative to the pyproject directory
-    publish_dir = "src/it_examples/notebooks/publish"
-    colab_repo = "speediedan/interpretune"              # GitHub org/repo the badge opens
-    colab_branch = "main"
-    install_cell = ["# %pip install my-adapter[examples]"]   # lines; omit for the default commented-out cell
-    [tool.interpretune.notebooks.import_rewrites]       # substring rewrites applied to code cells
-    "it_examples.notebooks.dev." = "it_examples.notebooks.publish."
+    [tool.notebook-publishing]
+    dev_dir = "examples/dev"                  # required; relative to the pyproject directory
+    publish_dir = "examples/publish"          # required
+    colab_repo = "org/repo"                   # required; the GitHub org/repo the badge opens
+    install_cell = ["# %pip install my-package[examples]"]   # required; lines of the prepended install cell
+    colab_branch = "main"                     # optional
+    hash_key_base = ""                        # optional; the directory stored hash keys are relative to
+    [tool.notebook-publishing.import_rewrites]   # optional substring rewrites applied to code cells
+    "examples.dev." = "examples.publish."
+
+The ``docs_*`` keys of the same table configure the docs-artifact renderer (see ``notebook_docs.py``). A key
+neither tool reads is refused by name, so a misspelled key fails instead of silently falling back to a default.
 """
 
 from __future__ import annotations
@@ -30,21 +37,64 @@ from pathlib import Path
 from typing import Any
 
 HASH_FILE = ".notebook_hashes.json"
-TABLE = ("tool", "interpretune", "notebooks")
+TABLE = ("tool", "notebook-publishing")
+LEGACY_TABLE = ("tool", "interpretune", "notebooks")
 EXCLUDED_PARTS = ("__pycache__",)
 EXCLUDED_SUFFIXES = (".pyc",)
-DEFAULT_INSTALL_CELL = [
-    "# Uncomment to run installation steps if you do not have a development\n",
-    "# editable install and want to run this notebook in a fresh environment.\n",
-    "# %pip install uv\n",
-    "# %uv pip install --upgrade pip setuptools wheel && \\\n",
-    "# %uv pip install 'git+https://github.com/speediedan/interpretune.git@main[examples]'\n",
-    "# %uv pip install --group git-deps\n",
-    "#\n",
-    "# NOTE: This cell is intentionally commented out. We will uncomment these\n",
-    "# install commands once we no longer need to preserve editable installs\n",
-    "# for active developer venvs.\n",
-]
+
+PUBLISHER_REQUIRED_KEYS = ("dev_dir", "publish_dir", "colab_repo", "install_cell")
+PUBLISHER_OPTIONAL_KEYS = ("colab_branch", "hash_key_base", "import_rewrites")
+# The renderer's keys share the table and are listed here, in the module both tools load, so that either tool
+# can refuse a key that NEITHER reads.
+DOCS_KEYS = ("docs_artifact_dir", "docs_hooks", "docs_parameters", "docs_render_command")
+KNOWN_KEYS = frozenset(PUBLISHER_REQUIRED_KEYS + PUBLISHER_OPTIONAL_KEYS + DOCS_KEYS)
+
+
+class NotebookConfigError(ValueError):
+    """The repository's notebook table is missing, ambiguous, or names a key no tool here reads."""
+
+
+def _table_name(path: tuple[str, ...]) -> str:
+    return "[" + ".".join(path) + "]"
+
+
+def _lookup(data: Any, path: tuple[str, ...]) -> dict[str, Any] | None:
+    for key in path:
+        if not isinstance(data, dict) or key not in data:
+            return None
+        data = data[key]
+    return dict(data) if isinstance(data, dict) else None
+
+
+def load_table(root: Path) -> dict[str, Any]:
+    """The notebook table from ``root/pyproject.toml``, with every key checked against the ones the tools read.
+
+    Raises :class:`NotebookConfigError` naming what was met: no pyproject, no table, both the current and the legacy
+    table (which would win is a guess, so neither does), or a key no tool reads.
+    """
+    pyproject = root / "pyproject.toml"
+    if not pyproject.is_file():
+        raise NotebookConfigError(f"no pyproject.toml at {root}; the notebook tools read {_table_name(TABLE)} there")
+    data = _load_toml(pyproject)
+    current, legacy = _lookup(data, TABLE), _lookup(data, LEGACY_TABLE)
+    if current is not None and legacy is not None:
+        raise NotebookConfigError(
+            f"{pyproject} carries both {_table_name(TABLE)} and the legacy {_table_name(LEGACY_TABLE)}; keep one"
+        )
+    table = current if current is not None else legacy
+    if table is None:
+        raise NotebookConfigError(f"{pyproject} has no {_table_name(TABLE)} table")
+    unknown = sorted(set(table) - KNOWN_KEYS)
+    if unknown:
+        raise NotebookConfigError(f"{pyproject}: unknown notebook-table key(s) {unknown}; known: {sorted(KNOWN_KEYS)}")
+    return table
+
+
+def require_keys(table: dict[str, Any], keys: tuple[str, ...], purpose: str) -> None:
+    """Refuse, by name, a table missing any of ``keys``; ``purpose`` names the tool that needs them."""
+    missing = [k for k in keys if k not in table]
+    if missing:
+        raise NotebookConfigError(f"{_table_name(TABLE)} is missing {missing}, required by {purpose}")
 
 
 @dataclass(frozen=True)
@@ -54,43 +104,31 @@ class PublisherConfig:
     root: Path
     dev_dir: Path
     publish_dir: Path
-    colab_repo: str = "speediedan/interpretune"
+    colab_repo: str
+    install_cell: tuple[str, ...]
     colab_branch: str = "main"
-    install_cell: tuple[str, ...] = tuple(DEFAULT_INSTALL_CELL)
-    import_rewrites: dict[str, str] = field(default_factory=lambda: _default_rewrites())
+    hash_key_base: Path | None = None
+    import_rewrites: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_pyproject(cls, root: Path) -> PublisherConfig:
-        """Read ``[tool.interpretune.notebooks]`` from ``root/pyproject.toml``; every key falls back to a
-        default."""
-        table: dict[str, Any] = {}
-        pyproject = root / "pyproject.toml"
-        if pyproject.is_file():
-            data = _load_toml(pyproject)
-            for key in TABLE:
-                data = data.get(key) or {}
-            table = dict(data)
-        install = table.get("install_cell")
+        """Read the notebook table from ``root/pyproject.toml``, refusing a missing required key by name."""
+        table = load_table(root)
+        require_keys(table, PUBLISHER_REQUIRED_KEYS, "the notebook publisher")
         return cls(
             root=root,
-            dev_dir=root / table.get("dev_dir", "src/it_examples/notebooks/dev"),
-            publish_dir=root / table.get("publish_dir", "src/it_examples/notebooks/publish"),
-            colab_repo=str(table.get("colab_repo", cls.colab_repo)),
-            colab_branch=str(table.get("colab_branch", cls.colab_branch)),
-            install_cell=tuple(_as_lines(install)) if install is not None else tuple(DEFAULT_INSTALL_CELL),
-            import_rewrites=dict(table["import_rewrites"]) if "import_rewrites" in table else _default_rewrites(),
+            dev_dir=root / table["dev_dir"],
+            publish_dir=root / table["publish_dir"],
+            colab_repo=str(table["colab_repo"]),
+            install_cell=tuple(_as_lines(table["install_cell"])),
+            colab_branch=str(table.get("colab_branch", "main")),
+            hash_key_base=root / str(table.get("hash_key_base", "")),
+            import_rewrites=dict(table.get("import_rewrites", {})),
         )
 
     def hash_key(self, dev_path: Path) -> str:
-        """The stable key a file is tracked under: its path relative to the repository root, POSIX form."""
-        return dev_path.relative_to(self.root).as_posix().removeprefix("src/it_examples/")
-
-
-def _default_rewrites() -> dict[str, str]:
-    return {
-        "it_examples.notebooks.dev.": "it_examples.notebooks.publish.",
-        '"notebooks" / "dev"': '"notebooks" / "publish"',
-    }
+        """The stable key a file is tracked under: its path relative to ``hash_key_base`` (default: the root)."""
+        return dev_path.relative_to(self.hash_key_base or self.root).as_posix()
 
 
 def _as_lines(value: Any) -> list[str]:
@@ -201,7 +239,12 @@ def strip_remove_cell_tags(notebook: dict[str, Any]) -> dict[str, Any]:
 
 
 def rewrite_imports(notebook: dict[str, Any], rewrites: dict[str, str]) -> dict[str, Any]:
-    """Apply the configured substring rewrites to every code cell, preserving the list-of-lines form."""
+    """Apply the configured substring rewrites to every code cell, preserving the list-of-lines form.
+
+    Every code cell is rewritten into the canonical form (the last line carries no newline), whether or not a
+    rewrite matched, so republishing an unchanged notebook reproduces its published copy byte for byte. Cell
+    metadata is untouched, so a tagged cell such as papermill's ``parameters`` cell keeps its tag and its code.
+    """
     for cell in notebook.get("cells", []):
         if cell.get("cell_type") != "code":
             continue
@@ -311,14 +354,18 @@ def main(argv: list[str] | None = None, *, root: Path | None = None) -> int:
     """``interpretune-publish-notebooks [--root DIR] [--dry-run] [--check-only] [--force]``."""
     parser = argparse.ArgumentParser(
         prog="interpretune-publish-notebooks",
-        description="Publish a repository's dev notebooks to its publish directory ([tool.interpretune.notebooks]).",
+        description="Publish a repository's dev notebooks to its publish directory ([tool.notebook-publishing]).",
     )
     parser.add_argument("--root", type=Path, default=None, help="repository root (default: nearest pyproject.toml)")
     parser.add_argument("--dry-run", action="store_true", help="show what would be done without writing")
     parser.add_argument("--check-only", action="store_true", help="exit 1 when any notebook needs publishing")
     parser.add_argument("--force", action="store_true", help="republish every file, ignoring stored hashes")
     args = parser.parse_args(argv)
-    cfg = PublisherConfig.from_pyproject(find_root(args.root or root))
+    try:
+        cfg = PublisherConfig.from_pyproject(find_root(args.root or root))
+    except NotebookConfigError as exc:
+        print(f"ERROR: {exc}")
+        return 1
     return publish(cfg, dry_run=args.dry_run, check_only=args.check_only, force=args.force)
 
 

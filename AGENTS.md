@@ -871,7 +871,14 @@ notes) follow this documentation cadence:
 
 **⚠️ CRITICAL: Notebook tests run against PUBLISHED notebooks, not dev notebooks.** If you edit any dev notebook, you **MUST** run `python scripts/publish_notebooks.py --force` before testing or committing. The pre-commit hook only triggers when `.ipynb` files in `dev/` are staged — if the dev notebook was changed in a prior commit or by another tool, the published copy will be stale and notebook tests will fail.
 
-Dev notebooks live in `src/it_examples/notebooks/dev/` and are auto-published to `src/it_examples/notebooks/publish/` via `scripts/publish_notebooks.py`, a shim over the console script `interpretune-publish-notebooks` (engine: `src/interpretune/utils/notebook_publishing.py`, parameterized from `[tool.interpretune.notebooks]` in `pyproject.toml`; adapter repositories use the same engine for their own example notebooks).
+Dev notebooks live in `src/it_examples/notebooks/dev/` and are auto-published to `src/it_examples/notebooks/publish/` via `scripts/publish_notebooks.py`, a shim over the console script `interpretune-publish-notebooks` (engine: `src/interpretune/utils/notebook_publishing.py`, parameterized from `[tool.notebook-publishing]` in `pyproject.toml`; adapter repositories use the same engine for their own example notebooks).
+
+The publisher and the docs-artifact renderer (`src/interpretune/utils/notebook_docs.py`, shim
+`scripts/render_notebook_docs_artifacts.py`) are **repository-neutral**: other repositories vendor them unmodified
+(finetuning-scheduler does, with a check that they match this copy), so nothing interpretune-specific goes in
+either file. Interpretune's own renderer checks (the op-surface stamp and its output-drift checks) live in the
+hooks file `scripts/notebook_docs_hooks.py`, named by `docs_hooks` in the table; a new repository-specific check
+belongs there, and a missing engine capability is added to the engine generically.
 
 - **Pre-commit hook** (`publish-notebooks`): Triggered on changes to `^src/it_examples/notebooks/dev/.*\.ipynb$`. Automatically strips `remove-cell` tagged cells, adds Colab badges + install cells, fixes import paths, and tracks hashes in `.notebook_hashes.json`.
 - **CLI flags:** `--dry-run` (preview), `--check-only` (CI validation), `--force` (republish all). Launch.json has debug configs for each mode.

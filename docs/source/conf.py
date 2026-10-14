@@ -128,17 +128,20 @@ _NOTEBOOK_STAGE_DIR = Path(__file__).parent / "notebooks"
 
 
 def _load_notebook_docs_helpers():
-    """Reuse the cell-exclusion rules from scripts/render_notebook_docs_artifacts.py.
+    """Reuse the cell-exclusion rules from the docs-artifact renderer (src/interpretune/utils/notebook_docs.py).
 
-    Imported rather than duplicated so DOCS_EXCLUDED_CELL_IDS has exactly one definition. That module's only non-stdlib
-    import (papermill) is deferred into its execute() path, so importing it here is cheap and safe.
+    Imported rather than duplicated so DOCS_EXCLUDED_CELL_IDS has exactly one definition. It is loaded from its file
+    rather than through the package, which would import torch; its only non-stdlib import (papermill) is deferred into
+    its execute() path, so loading it here is cheap and safe.
     """
     import importlib.util
+    import sys
 
     spec = importlib.util.spec_from_file_location(
-        "_it_notebook_docs", _REPO_ROOT / "scripts" / "render_notebook_docs_artifacts.py"
+        "_it_notebook_docs", _REPO_ROOT / "src" / "interpretune" / "utils" / "notebook_docs.py"
     )
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses resolve `from __future__` annotations through sys.modules
     spec.loader.exec_module(module)
     return module
 

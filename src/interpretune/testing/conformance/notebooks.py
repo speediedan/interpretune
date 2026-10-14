@@ -2,7 +2,7 @@
 are, and they can be read by a consumer who has the published package and nothing else.
 
 Subclass ``NotebookFormConformance`` and set ``root`` (the directory holding the ``pyproject.toml`` whose
-``[tool.interpretune.notebooks]`` table describes the layout). Nothing here executes a notebook; the adapter
+``[tool.notebook-publishing]`` table describes the layout). Nothing here executes a notebook; the adapter
 repository's own CI does that. These cases are the ones that hold without a kernel: sync, shape, and imports.
 """
 
