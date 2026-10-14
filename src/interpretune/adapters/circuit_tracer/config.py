@@ -150,6 +150,16 @@ class CircuitTracerConfig(ITSerializableCfg):
     Only applicable when backend='nnsight' and nnsight_remote=True.
     """
     ndif_api_key: str | None = None
+    """Split the model's layers across devices: ``"sequential"`` (capped by ``max_memory``) or an explicit map from
+    module names to devices. NNsight backend only.
+
+    The transcoders and every attribution tensor stay on the first CUDA device; activations cross to it at each hook.
+    Every module must land on an accelerator: circuit-tracer refuses a placement that offloads any module to ``cpu`` or
+    ``disk``, and ``"auto"`` (balanced) produces one on GPUs of unequal size.
+    """
+    device_map: str | dict[str, int | str] | None = None
+    """Per-device memory caps for a string ``device_map``, for example ``{0: "11GiB", 1: "6GiB"}``."""
+    max_memory: dict[int | str, str] | None = None
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -180,6 +190,16 @@ class CircuitTracerConfig(ITSerializableCfg):
 
         if self.intervention_value_source == "constant" and self.intervention_value is None:
             raise ValueError("intervention_value must be set when intervention_value_source='constant'")
+
+        # Refused rather than ignored: a caller who asked for a split and silently got a single-device load would
+        # meet an out-of-memory error with no hint that the setting never applied.
+        if (self.device_map is not None or self.max_memory is not None) and self.backend != "nnsight":
+            raise ValueError(
+                "device_map and max_memory split the model across devices, which only the 'nnsight' backend "
+                f"supports; got backend {self.backend!r}"
+            )
+        if self.max_memory is not None and self.device_map is None:
+            raise ValueError("max_memory caps the devices of a string device_map; set device_map (e.g. 'sequential')")
 
         # Warn if NNsight-specific settings are configured but backend is not NNsight
         if self.backend != "nnsight":

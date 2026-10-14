@@ -99,6 +99,41 @@ class TestCircuitTracerConfig:
         with pytest.raises(ValueError, match=r"Use backend='nnsight' instead"):
             BaseCircuitTracerModule._load_replacement_model(stub)  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize(
+        "split", [{"device_map": "sequential", "max_memory": {0: "11GiB", 1: "6GiB"}}, {}], ids=["split", "default"]
+    )
+    def test_split_options_reach_the_load(self, monkeypatch, split):
+        """The split options reach circuit-tracer's load only when set; the default load is unchanged."""
+        from types import SimpleNamespace
+
+        from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule, ReplacementModel
+
+        seen = {}
+
+        class _Reached(Exception):
+            pass
+
+        def _capture(*args, **kwargs):
+            seen.update(kwargs)
+            raise _Reached
+
+        monkeypatch.setattr(ReplacementModel, "from_pretrained", _capture)
+        stub = SimpleNamespace(
+            circuit_tracer_cfg=CircuitTracerConfig(backend="nnsight", **split),
+            it_cfg=SimpleNamespace(model_name_or_path="google/gemma-3-4b-it"),
+        )
+        with pytest.raises(_Reached):
+            BaseCircuitTracerModule._load_replacement_model(stub)  # type: ignore[arg-type]
+        assert {k: seen[k] for k in ("device_map", "max_memory") if k in seen} == split
+
+    def test_split_options_are_refused_for_a_non_nnsight_backend(self, third_party_backend):
+        with pytest.raises(ValueError, match="only the 'nnsight' backend supports"):
+            CircuitTracerConfig(backend=third_party_backend, device_map="sequential")
+
+    def test_max_memory_without_a_device_map_is_refused(self):
+        with pytest.raises(ValueError, match="max_memory caps the devices of a string device_map"):
+            CircuitTracerConfig(backend="nnsight", max_memory={0: "11GiB"})
+
     def test_backend_validation_nnsight(self):
         """Verify 'nnsight' backend is valid."""
         cfg = CircuitTracerConfig(backend="nnsight")

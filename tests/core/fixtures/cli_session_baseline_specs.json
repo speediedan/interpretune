@@ -1635,7 +1635,9 @@
         "intervention_return_activations": false,
         "intervention_freeze_norms": false,
         "nnsight_remote": false,
-        "ndif_api_key": null
+        "ndif_api_key": null,
+        "device_map": null,
+        "max_memory": null
       }
     }
   },
@@ -2147,7 +2149,9 @@
         "intervention_return_activations": false,
         "intervention_freeze_norms": false,
         "nnsight_remote": false,
-        "ndif_api_key": null
+        "ndif_api_key": null,
+        "device_map": null,
+        "max_memory": null
       }
     }
   },
@@ -2408,7 +2412,9 @@
         "intervention_return_activations": false,
         "intervention_freeze_norms": false,
         "nnsight_remote": false,
-        "ndif_api_key": null
+        "ndif_api_key": null,
+        "device_map": null,
+        "max_memory": null
       }
     }
   },
@@ -3158,7 +3164,9 @@
         "intervention_return_activations": false,
         "intervention_freeze_norms": false,
         "nnsight_remote": false,
-        "ndif_api_key": null
+        "ndif_api_key": null,
+        "device_map": null,
+        "max_memory": null
       }
     }
   },
@@ -3432,7 +3440,9 @@
         "intervention_return_activations": false,
         "intervention_freeze_norms": false,
         "nnsight_remote": false,
-        "ndif_api_key": null
+        "ndif_api_key": null,
+        "device_map": null,
+        "max_memory": null
       }
     }
   },
