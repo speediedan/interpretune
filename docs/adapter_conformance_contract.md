@@ -245,17 +245,19 @@ a published copy, and publishes them with the engine interpretune uses for its o
 `interpretune-publish-notebooks`, parameterized from the repository's `pyproject.toml`:
 
 ```toml
-[tool.interpretune.notebooks]
+[tool.notebook-publishing]
 dev_dir = "examples/dev"
 publish_dir = "examples/publish"
 colab_repo = "org/my-adapter"
-colab_branch = "main"
-install_cell = ["%pip install my-adapter[examples]"]   # optional; the default cell is commented out
-[tool.interpretune.notebooks.import_rewrites]          # optional substring rewrites for code cells
+install_cell = ["# %pip install my-adapter[examples]"]
+colab_branch = "main"                                  # optional
+[tool.notebook-publishing.import_rewrites]             # optional substring rewrites for code cells
 "examples.dev." = "examples.publish."
 ```
 
-Nothing is copied from interpretune. `NotebookFormConformance` holds the published copies to their static form
+The first four keys are required, and a key the tools do not read is refused by name. The table's earlier name,
+`[tool.interpretune.notebooks]`, is still read; a pyproject carrying both is refused. Nothing is copied from
+interpretune. `NotebookFormConformance` holds the published copies to their static form
 without a kernel: in sync with dev (the stored hashes match), every dev notebook published, badge and install cell
 first, no `remove-cell` survivors, every import resolvable in the environment the adapter's CI runs in, and no
 direct import of the adapter's pip form where the hub form is the subject (`forbidden_imports`, spelled as the

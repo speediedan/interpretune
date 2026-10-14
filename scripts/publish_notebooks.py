@@ -1,8 +1,8 @@
 """Shim over the notebook publishing engine, kept so the pre-commit hook and existing habits keep working.
 
 The engine is ``interpretune.utils.notebook_publishing`` and ships as the console script
-``interpretune-publish-notebooks``, parameterized from ``[tool.interpretune.notebooks]`` in ``pyproject.toml``, so an
-adapter repository publishes its own example notebooks with the same engine and copies nothing.
+``interpretune-publish-notebooks``, parameterized from ``[tool.notebook-publishing]`` in ``pyproject.toml``, so
+another repository publishes its own example notebooks with the same engine.
 
 The module is loaded from its file rather than imported through the package: the pre-commit and docs jobs run
 this without interpretune's dependencies installed, and ``import interpretune`` would pull in torch. The engine

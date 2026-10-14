@@ -7,7 +7,7 @@ home directory. Each of those is fine until an experiment lives somewhere else, 
 shared infrastructure stops being shareable, which is the thing it exists to be.
 
 Parameterized from the consuming repository's ``[tool.interpretune.experiments]``, exactly as the
-notebook publisher is parameterized from ``[tool.interpretune.notebooks]``, so an out-of-tree experiment
+notebook publisher is parameterized from ``[tool.notebook-publishing]``, so an out-of-tree experiment
 consumes the rails rather than a copy of them::
 
     [tool.interpretune.experiments]
