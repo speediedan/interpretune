@@ -1,0 +1,933 @@
+# AGENTS.md - Interpretune (full text)
+
+> This is the FULL, canonical text of the repository's agent instructions. `CLAUDE.md` imports it, so Claude Code
+> reads all of it. `AGENTS.md` at the repository root is the COMPACT form of the same text, generated from this file
+> by `scripts/gen_agents_compact.py` for agent harnesses that cap how much instruction text they load (Muse Code
+> reads 64 KiB across all of its instruction files; opencode and Codex read `AGENTS.md`). Edit THIS file, then run
+> the generator; if you changed a section that has a stand-in in `.agents/reference/agents_compact_sections.md`,
+> re-read and update that stand-in too (the generator refuses a stand-in whose section has changed).
+
+## Project Overview
+
+Interpretune is a flexible framework for collaborative AI world model analysis and tuning. **Pre-MVP stage** — features and APIs are subject to change.
+
+**Stack:** Python 3.10+ (CI on 3.13), PyTorch 2.7.1+, transformer_lens >= 4, < 5, sae_lens, datasets, jsonargparse
+
+## Tooling Reliability
+
+- Pylance-backed tooling can hang or time out on longer operations. If a Pylance request stalls, switch to direct file inspection, search, or terminal-based validation rather than waiting on the language server indefinitely.
+
+- **A green local suite is NOT evidence the pinned dependency set is green.** The dev envs install
+  several packages editable/from-source, so they can silently run AHEAD of the pins in
+  `pyproject.toml` — and the version string is identical either way, so a version table will not
+  reveal it. This has already shipped a real defect: `it_latest` carried a circuit-tracer checkout
+  two commits ahead of the pin, which masked a wrong-answer bug in the feature-intervention path for
+  as long as it was only ever validated there (the benchmark registry was even recording provenance
+  for a dependency set no clean checkout could reproduce). For anything that gates a release or an
+  upstream PR, validate in an env built FROM the pins, and check `pip show <pkg> | grep -i location`
+  (or `direct_url.json`) rather than trusting the version number.
+
+- **Search upstream before building a guard around an apparent upstream bug.** When a dependency
+  misbehaves, check that project's issue tracker and releases FIRST: if it is already reported and
+  fixed, the correct response is a version floor, not defensive code plus tests we then own forever.
+  Search the issues (including closed ones), find the fixing PR, and read which release carries it —
+  a floor on the direct dependency usually will not do it, since the fix may live in a transitive
+  package whose floor only a NEWER release of the direct one raises. Worked example: a bucket
+  re-sync left stale trailing bytes in files that shrank, silently corrupting Parquet footers. We
+  wrote a size-verification guard and six tests. It was already `huggingface_hub#3995`, fixed in
+  `hf-xet` 1.4.3 — reachable only by flooring `huggingface_hub[hf_xet] >= 1.9.0`, the first release
+  whose own extra requires it. The guard and its tests were removed. Reproduce against the fixed
+  version before deleting a guard, and keep the guard only if the bug survives the upgrade.
+
+## Verification: a check is evidence only if the fact can make it fail
+
+Two principles, learned from a run of defects that all had the same shape. Every one of them was a check
+that returned a plausible positive for a reason unrelated to the fact it was supposed to measure.
+
+### 1. Bind the check to what only the fact can produce
+
+Ask, before trusting any check: **if the thing I am verifying had not happened, would this still pass?**
+When the answer is yes, the check is not evidence. The tells, each measured here at least once:
+
+- **The check matches an echo of itself.** A greppable marker matched the runner's echo of the step source,
+  placeholders unexpanded, on a run where the step never executed. Match the thing only the real run
+  produces (the resolved 40-character sha), never the label chosen to make it greppable.
+- **The predicate names the queue, not the subject.** A watcher waiting for "zero builds in flight" never
+  fired, because unrelated work kept the count up after the watched build had finished, and its timeout
+  read as "never happened". Watch the build id, the PID, the file: the one thing whose state is the fact.
+- **The check covers part of the space and reports the whole.** A sync helper compared one file of five and
+  said "in sync"; a `head -N` truncated a sorted check list and a check that was present read as missing.
+  Enumerate the space, then compare the count you selected against the count that exists.
+- **The check was disabled by configuration and reports success.** A pre-commit `exclude:` emptied the file
+  list of the guard written for those files, which then reported "(no files to check) Skipped" forever.
+  A negative assertion needs a positive control: prove the check can fail on a planted defect.
+- **The query answers a narrower question than the one asked.** A listing of *pending* approvals concluded
+  a released gate had never needed one; a listing of *completed* builds hid the gated one. State the
+  command's contract before reading its answer as yours.
+- **The instrument was silently disabled mid-run.** A request-log capture that worked on one test file
+  recorded nothing across a full-suite session; the cause was never isolated, and the remedy was measured
+  rather than reasoned: an instrument that owns its handler and re-arms its loggers before every test
+  recorded the whole run. An instrument that must survive a whole run is built that way from the start.
+- **The answer is a cold cache that the query itself warms.** A pull request's mergeability read `UNKNOWN`
+  and was cited as neglect; the second query returned `CLEAN`. Read a state that is computed on demand
+  twice before drawing a conclusion from its first value.
+- **A filename is evidence of neither impact nor safety.** A file list under-reports reach, since a module
+  can be reached without appearing in any diff, and over-reports risk, since a project file in a drift can
+  look disqualifying when the whole delta is one marker. Both cost one diff to avoid: read the change, not
+  the path.
+
+Two of these are worth telling apart, because the remedies differ. A check that **cannot fail** (the echo,
+the emptied guard) is broken and needs replacing. A check that is **correct but narrower than the question**
+(the pending-approvals query, the completed-builds listing, a gated pipeline rendered as "skipping" when its
+trigger declined a prose-only diff by design) is fine as it stands; the defect is reading its answer as the
+answer to a broader question. For the first, replace the instrument. For the second, state the command's
+contract before reading its output, and name the phase or scope you actually checked rather than the whole.
+
+What to do instead: name the fact, find the artifact only the fact produces, and check that artifact. Print
+the identifiers in full. When a check for an *absence* passes, ask whether it ran at all.
+
+Two reach mistakes from the same week, both about letting a green gate ride across drift on `main`:
+
+- **Reach is the module graph, not a grep over import statements.** Importing one submodule imports its
+  package's whole closure; a `sys.modules` diff around the import is the instrument, and the ride-licensing
+  claim after it is behavioural (the changed names are referenced nowhere in the rider's package or tests).
+- **Reach says whether drift can harm you, not whether it repairs something your gate depends on.** A gate
+  cut before a repair landed reproduces the defect `main` no longer has. When `main` went red and was fixed
+  inside your drift window, rebase regardless of reach; the two questions are independent.
+- **A ride has three strengths, and only the weakest needs a ruling.** No path: the rider's tests import
+  nothing from the drifted package. Reached but not exercised: the drift's modules are in the module graph
+  and the changed names are referenced nowhere in the rider. Exercised: the drift's own tests run through
+  the code the rider changes. The first two ride on the argument; the third is the case the reach test
+  exists to flag, and a local run of the intersection measures the one combination you found and none you
+  did not. Ride it only when a red `main` is cheap to repair; with the maintainer unreachable, re-gate, and
+  keep the measurement in the PR body as the record that the intersection was checked before the gate.
+
+### 2. Refuse by name; never accept and guess
+
+When an input is outside what the code understands, refuse it with a message naming what was met and what
+would be accepted. Do not fall through to a default, a family prefix, a cached copy, or the nearest match.
+The asymmetry that makes this general: **the cost of a refusal is always visible, and the cost of a guess
+never is.** A refusal costs one message and one fix. A guess produces plausible output that is wrong, and
+nothing downstream can tell.
+
+Measured instances: a document version the reader did not know loaded as the version it did know; a
+model-family prefix test applied one family's normalization to three architectures that do not use it, and
+every direction built on them was quietly wrong; a warm cache let a test pass without ever exercising the
+network path it existed to test. Each fix was the same: an explicit check that refuses, by name, what it
+cannot vouch for.
+
+The reflex to resist is softening a check so it passes. If an assertion has to be weakened to go green, the
+thing it asserted is not true, and the weakened form carries a false premise forward.
+
+## Build & Dev Environment
+
+### Three install flows, and only three (read this before creating any venv)
+
+| Flow | Command | Who it is for | Honors the uv overrides? |
+| --- | --- | --- | --- |
+| **User / README** | `uv venv` then `uv pip install -e ".[examples,lightning]" --group git-deps --group test` | anyone following `README.md` | **yes** (uv reads `[tool.uv]`) |
+| **Dev / CI** | `scripts/build_it_env.sh` | this repo's dev envs, CI, and **pins-only validation** (no `--from-source` directives) | **yes** |
+| **Bare pip** | `pip install .` | **nobody. Not supported.** | **NO** |
+
+**`pip install .` is not a supported way to install interpretune, and it fails in a way that looks
+like an application bug.** The `transformer-lens==4.0.0` / `nnsight==0.7.0` pins live in
+`[tool.uv] override-dependencies`, a **uv** mechanism that pip ignores. They exist precisely to force
+TransformerLens 4.0 over sae-dashboard's `^2.2.0` cap, so pip happily resolves a TL 2.x release
+(**2.16.1** when this was measured), and every
+failure downstream of that (a `sae_dashboard` import error, `BertForPreTraining` from a sae_lens /
+transformers mismatch) is a symptom of the wrong resolution rather than a defect worth filing. One
+session lost time filing exactly those before the version table explained them. If you catch yourself
+reaching for `pip install`, you want `uv pip install` or `build_it_env.sh`.
+
+**"Validate in an env built FROM the pins" means `build_it_env.sh` with NO `--from-source`
+directives.** That is the only flow that gets both the uv overrides and the `git-deps` group without
+any editable checkout sneaking ahead of them.
+
+**NEVER `pip install` into a dev venv, not even for a one-off repair.** The dev envs (`it_latest`,
+`it_release`, the scratch envs) are uv-built, and a `pip` install into one is not a harmless shortcut:
+
+- **pip ignores `[tool.uv] override-dependencies`**, so it can quietly resolve a dependency the
+  overrides exist to prevent, and the version string will not show it.
+- **It can leave TWO `.dist-info` directories for the same package** (one uv, one pip), so two owners
+  disagree about what is on disk while the import system uses whichever files landed last. Observed in
+  `it_pins_check` on 2026-08-18, where a `pip install torchvision==0.28.0+cu130` repair layered a
+  second dist-info over the uv-installed one; the stale `+cu130` label then misdirected the diagnosis
+  onto `--torch-backend` for a day. `it_latest` was censused on 2026-08-19 and has no duplicates.
+- **It defeats the audit you would use to catch any of the above.** `INSTALLER` is the only cheap
+  signal that a package did not come from the resolver that governs this project, and it is per-package
+  metadata nobody reads unless prompted.
+
+Audit any dev venv before trusting it for something that gates a release, an upstream PR, or a
+benchmark artifact. Expect `uv` throughout:
+
+```bash
+SP=$VIRTUAL_ENV/lib/python3.13/site-packages
+for f in "$SP"/*.dist-info/INSTALLER; do
+  [ "$(cat "$f")" = "pip" ] && echo "pip-installed: $(basename "$(dirname "$f")")"
+done
+```
+
+**Remediate by rebuilding, not by patching.** `uv pip install --reinstall-package <pkg>` fixes the one
+package but not the resolution that produced it; `build_it_env.sh` is the supported repair. If a
+one-off really is needed, it is `uv pip install`, never `pip install`.
+
+**Prove which code you actually ran, with `__file__` and not a version string.** A version can match
+while the file comes from somewhere else entirely; see the isolation trap in `CLAUDE.local.md`.
+
+```bash
+python -c "import interpretune, torch, transformer_lens as tl; print(interpretune.__file__, torch.__file__, tl.__file__)"
+```
+
+Uses `uv` for dependency management. For Venvs, use `/mnt/cache/$USER/.venvs/` (preferred for hardlink perf), fall back to `~/.venvs/` if that path isn't available.
+
+Place the venv on the same filesystem as the UV cache when possible. `--venv-dir=/mnt/cache/$USER/.venvs` is the preferred build-script pattern because it avoids UV hardlink warnings and matches the standalone-process wrappers used in this repo.
+
+### Common Environment Variables
+
+```bash
+export IT_VENV_BASE=/mnt/cache/${USER}/.venvs
+export IT_TARGET_VENV=it_latest
+export IT_REPO_DIR=${HOME}/repos/interpretune
+```
+
+These are used by dev scripts and can be set in your shell profile. `IT_VENV_BASE` controls where venvs are created/found, `IT_TARGET_VENV` names the active venv, and `IT_REPO_DIR` points to the working tree.
+
+```bash
+# Build dev environment
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=${IT_TARGET_VENV}
+
+# Activate
+source ${IT_VENV_BASE:-~/.venvs}/${IT_TARGET_VENV}/bin/activate
+
+# With custom venv location (recommended)
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --venv-dir=/mnt/cache/$USER/.venvs
+
+# CPU-only (CI)
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest --torch-backend=cpu
+
+# NOTE: --torch-backend selects a WHEEL VARIANT, not just an index, and the whole torch ecosystem
+# must share it. torchvision ships a separate wheel per backend while `requirements/ci/overrides.txt`
+# pins only its VERSION, so a torchvision resolved from the default index is CUDA-linked on Linux and
+# its `_C.so` cannot load against a `--torch-backend=cpu` torch. Nothing fails at install time; it
+# surfaces later, only once something touches a torchvision C++ op, as
+# `RuntimeError: operator torchvision::nms does not exist`. `build_it_env.sh` therefore installs the
+# paired torchvision pin alongside torch under the same backend. If you ever install a torch-ecosystem
+# package by hand into one of these envs, pass the same --torch-backend and verify with
+# `ldd .../torchvision/_C.so | grep cuda` (expect no matches in a CPU env).
+
+# From-source packages
+./scripts/build_it_env.sh --repo_home=${PWD} --target_env_name=it_latest \
+  --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1"
+```
+
+### From-Source Builds (multi-repo integrated env)
+
+The integrated dev env (`it_latest`) can build salient upstream deps **editable from source** via repeated
+`--from-source="pkg:path:extras:ENVVAR=...:FLAGS=..."` directives.
+
+**Only add a directive for a repo you are actually developing.** A from-source directive is a
+*developer choice*, not part of the supported build, and it takes that package OUT of the governance the
+pins provide. Reconcile this list against `pyproject.toml`'s `git-deps` block before trusting it:
+
+| Package | Current governance | From-source still appropriate? |
+| --- | --- | --- |
+| `sae-dashboard` | git-deps pin (SD#74 still open) | yes, while the fork surface is required |
+| `circuit-tracer` | git-deps pin | yes, no release carries the attribution-target surface |
+| `sae-lens` | **temporary git-deps pin: the head of decoderesearch/SAELens#739** | only for SAELens upstream work |
+| `transformer-lens`, `nnsight` | release pins in `[tool.uv] override-dependencies` | only for upstream work |
+
+**sae-lens is git-pinned again, temporarily, and only to decoderesearch/SAELens#739.** No sae-lens
+release imports under transformer-lens 4.0, so the pin carries that PR's head until a release does; the
+retirement condition lives beside the pin in `pyproject.toml`. While it stands, a registry entry recording
+the #739 fork and sha for sae_lens is CORRECT. **The old fork pin (`speediedan/SAELens@86f90b3d`) must never
+come back**: it carries 20 duplicate YAML keys in `pretrained_saes.yaml` from a bad rebase, silently
+binding 10 `-pt-` transcoder entries to the WRONG weights.
+
+Canonical rebuild for someone developing SAEDashboard and circuit-tracer alongside interpretune:
+
+```bash
+./scripts/build_it_env.sh --repo-home=${IT_REPO_DIR} --target-env-name=it_latest --venv-dir=${IT_VENV_BASE} \
+  --from-source="sae_dashboard:${HOME}/repos/SAEDashboard:dev:UV_EXCLUDE=${IT_REPO_DIR}/requirements/ci/excludes.txt:UV_OVERRIDE=${IT_REPO_DIR}/requirements/ci/overrides.txt" \
+  --from-source="circuit_tracer:${HOME}/repos/circuit-tracer:dev:UV_EXCLUDE=${IT_REPO_DIR}/requirements/ci/excludes.txt:UV_OVERRIDE=${IT_REPO_DIR}/requirements/ci/overrides.txt" \
+  --from-source="transformer-lens:${HOME}/repos/TransformerLens" \
+  --from-source="nnsight:${HOME}/repos/nnsight:all:UV_OVERRIDE=${IT_REPO_DIR}/requirements/ci/overrides.txt"
+```
+
+Rules of thumb:
+
+- `UV_EXCLUDE` (excludes file) is **required** on the sae_dashboard and circuit-tracer directives: their own
+  transformer-lens caps (`^2.2.0`, `>=2.16.0`) would otherwise pull the v2 line over the v3 install.
+  Excluding leaves the already-installed transformer-lens untouched, so exactly one directive controls it
+  even when interpretune, circuit-tracer and transformer-lens are all from source.
+- **If** you are deliberately doing SAELens upstream work and add a `sae_lens` directive back (see the
+  warning above before you do), note SAELens is Poetry-legacy (not PEP 621), so uv needs an exported
+  requirements file passed via `FLAGS=-r`. The vendored copy lives at
+  `requirements/ci/sl_uv_requirements.txt`; regenerate it whenever SAELens `pyproject.toml`/lock changes
+  (`poetry export --all-groups --all-extras` → post-process).
+- nnsight should be installed first among the from-source set (its vllm-era pins occasionally need the
+  override file).
+- **After every rebuild**: recreate circuit-tracer's untracked `temp_hf_override.txt` (stash/restore or
+  per the circuit-tracer admin notes), then validate with `python requirements/utils/collect_env_details.py`
+  (also feeds `salient_pkg_versions` provenance used by the benchmark registry).
+
+### Git Dependency Caching & Pins
+
+When a from-source package brings in git-pinned dependencies, UV caches those resolved commits and later editable installs should respect them. Interpretune relies on the `override-dependencies` configuration in `pyproject.toml` so editable installs can coexist with those pinned git requirements instead of fighting them.
+
+Where pins live and how to refresh them:
+
+- `pyproject.toml` `[tool.uv] override-dependencies` — the `transformer-lens==4.0.0` / `nnsight==0.7.0`
+  release pins (plus `jaxtyping>=0.3`, which TL 4.0 needs over sae-dashboard's `^0.2.28`), which force
+  TransformerLens 4.0 over downstream v2 caps; keep them in sync with
+  `requirements/ci/overrides.txt` (and `requirements/ci/excludes.txt` still keeps those caps from
+  re-resolving TL during `--from-source` installs).
+- `pyproject.toml` `[dependency-groups] git-deps` — the remaining git SHA pins (circuit-tracer, sae-lens,
+  sae-dashboard, finetuning-scheduler). These are excluded from the universal lock, so every bump needs
+  hand validation (dashboard parity gates + core suite in a scratch env) before folding it into `it_latest`.
+- `requirements/ci/requirements.txt` — the CI lock; regenerate with `./requirements/utils/lock_ci_requirements.sh`.
+- Any rebuild that changes benchmark-relevant deps (torch, transformer_lens, nnsight, sae_lens,
+  sae_dashboard) must end with the dashboard parity gates green and a fresh benchmark wave from clean
+  committed heads (see the Neuronpedia Dashboard Pipeline section below).
+
+## Testing
+
+```bash
+# Basic test run (mirrors ci_test-full.yml)
+cd /home/runner/work/interpretune/interpretune && python -m pytest tests src/it_examples/tests -v
+
+# With coverage
+python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v
+python -m coverage report
+
+# Standalone tests (use inline env vars, NOT export, to avoid marker conflicts)
+IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_adapters_transformer_lens.py::TestGemma2ParameterMapping -v
+unset IT_RUN_STANDALONE_TESTS
+
+# Standalone test harness
+./tests/special_tests.sh --mark_type=standalone
+./tests/special_tests.sh --mark_type=standalone --filter_pattern='ParameterMapping'
+
+# Profiling tests
+IT_RUN_PROFILING_TESTS=1 python -m pytest tests/parity_acceptance/test_it_l.py::test_l_profiling -v
+unset IT_RUN_PROFILING_TESTS
+```
+
+**Phase marks (`standalone`, `min_cuda_gpus`, `bf16_cuda`, `profiling`, ...) may sit on a test method or on its class.**
+`pytest_collection_modifyitems` in `tests/conftest.py` reads `item.iter_markers()`, so a class-level
+`@RunIf(...)` selects every test the class collects, including inherited ones (a conformance target class is
+the live case: its cases are inherited methods, so the class is the only place a mark can go). It once read
+`item.own_markers`, which sees only marks on the function itself, and class-level standalone marks were silently
+excluded from standalone runs for as long as that lasted.
+
+- **A GPU test is a last resort, and it declares its needs.** Write a CPU test unless what the test checks
+  depends on a device, or it cannot run on CPU within the hosted runners' limits. A GPU test declares
+  `RunIf(min_cuda_gpus=N, min_gpu_mem_gb=X)`, with `X` measured by `tests/gpu_ci/calibrate.py` rather than
+  estimated, and a guard fails any GPU-marked test without it. The standard and the measuring workflow are in
+  `tests/README.md` ("GPU Tests: When to Write One, and What It Must Declare").
+- For memory-intensive tests that previously used standalone as a workaround, prefer
+  `@pytest.mark.usefixtures("cleanup_memory")` at the method level — this triggers `gc.collect()` after
+  each test without sacrificing cross-platform CI signal.
+
+Test reruns (`--reruns 2 --reruns-delay 5`) are used in CI for transient httpx/HF timeouts.
+
+**⚠️ CRITICAL: Running Tests in Background to Avoid Truncation/OOM Kills**
+
+The basic test suite runs ~30 minutes; the full suite with `gen_it_coverage.sh` ~50 minutes. **Always run tests in the background with `nohup`/`disown`** — foreground terminal sessions and piped output (`tee`) will be killed by terminal lifecycle management or OOM before completion. Set prudent timeouts and check progress periodically.
+
+```bash
+# RECOMMENDED: Run basic test suite in the background (avoids truncation/OOM kills)
+cd ${IT_REPO_DIR} && \
+source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
+nohup python -m pytest tests src/it_examples/tests -v > /tmp/it_test_results.txt 2>&1 &
+disown
+echo "Test PID: $!"
+
+# Monitor progress (check periodically)
+tail -20 /tmp/it_test_results.txt
+grep -c "PASSED\|FAILED\|ERROR" /tmp/it_test_results.txt
+# Check if process is still running
+ps -p <PID> -o pid,etime,rss,cmd
+
+# IMPORTANT: Kill the process before starting another test run to avoid conflicts
+kill <PID>  # or: pkill -f "pytest.*tests"
+```
+
+**Full coverage run (background via harness):**
+
+```bash
+# Generate coverage with no rebuild (recommended for quick iteration)
+# Outputs full logs to /tmp dir with timestamp for later inspection
+${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
+  ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
+  --repo-home=${IT_REPO_DIR} \
+  --target-env-name=${IT_TARGET_VENV} \
+  --venv-dir=${IT_VENV_BASE} \
+  --no-rebuild-base
+
+# Preferred for debugging: use --allow-failures to continue past failures and --no-reruns to expedite debugging
+${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
+  ${IT_REPO_DIR}/scripts/gen_it_coverage.sh \
+  --repo-home=${IT_REPO_DIR} \
+  --target-env-name=${IT_TARGET_VENV} \
+  --venv-dir=${IT_VENV_BASE} \
+  --no-rebuild-base \
+  --allow-failures \
+  --no-reruns
+
+# Monitor coverage progress
+tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
+```
+
+**Watching a background run: use `scripts/watch_run.sh`.** It prints exactly one terminal line and exits,
+so a watch cannot report nothing: `GREEN`, `RED`, `DEAD` (the subject went away without a verdict),
+`TIMEOUT` (the deadline passed first; the subject is not known to be done) or `QUERY-FAILED` (the probe
+itself broke; the state is unknown). Subjects: `--pid PID --log FILE` (a pytest log classifies), `-- CMD`
+(a child's exit status classifies; a signal is `DEAD`), `--azure-build ID`, `--pr-checks N`, and
+`--find PATTERN [--uid me]`, which resolves a PID once while excluding the watcher's own process chain and,
+with `--uid`, the CI container's subuid. The three rules below are why it has that shape; they kept being
+violated by people who had read them because the wrong form was the shorter one to type.
+
+**Watcher rules for background runs (added after two missed completions, 2026-07-22):**
+
+1. **Never `pgrep -f` a pattern your own watcher command contains** — the watcher matches
+   itself and waits forever (a watcher polling `pgrep -f "gen_it_coverage.sh"` IS a process
+   whose command line contains `gen_it_coverage.sh`). Use the bracket trick
+   (`pgrep -f "[g]en_it_coverage.sh"`) or, better, watch the concrete PID.
+2. **Prefer PID-based watches over output-grep watches.** `manage_standalone_processes.sh`
+   prints the wrapper PID at launch — capture it and wait with
+   `until ! kill -0 <PID> 2>/dev/null; do sleep 60; done`. Output-grep watchers silently hang
+   when the terminal line's wording changes (a `grep -qE "COVERAGE RUN COMPLETE|..."` watcher
+   missed a run that ended with `Exiting with status code 1`). One caveat the bare form hides: a
+   process that has exited but not been reaped (a child whose parent never waited) is a zombie, and
+   `kill -0` still succeeds on it, so that loop never ends. `watch_run.sh` reads the process state
+   instead; if you write the loop by hand, check `ps -o stat=` for `Z` as well.
+3. **Cover every terminal state.** A run can end green, end red, or die — the watch condition
+   must fire for all three (PID-exit does this for free); then read the log tail to classify.
+
+Note: coverage collection takes ~50 minutes (longer with `--run-all-and-examples`).
+
+**Pre-PR-wave gate**: before opening a coordinated multi-repo PR wave (Scalable Dashboards Phase 7 and
+similar), a full `gen_it_coverage.sh` pass is mandatory, not optional. Run it in
+`--run-all-and-examples` mode (adds optional profiling, optional-other, and example tests to the phase
+split); use `--allow-failures` + `--resource-debug` for diagnosing passes, but the final gate run must be
+free of real failures. It must run *after* refreshing the
+registered benchmarks (`tests/benchmarks/` — see Commit & PR Requirements below and
+`tests/benchmarks/README.md`; this is distinct from the neuronpedia dashboard benchmark suite under
+`scripts/run_dashboard_benchmark_suite.py`), so `IT_RUN_BENCHMARK_TESTS=1` runs inside the coverage pass
+validate against current `expected_accuracy`/`salient_pkg_versions`, not stale targets from a prior
+dependency state. After the local gate is green, all REMOTE checks must also pass: the GitHub Actions
+matrix (`ci_test-full`, `type-check`) and the self-hosted Azure GPU pipeline
+(`.azure-pipelines/gpu-tests.yml`) — trigger via a ready-for-review PR targeting `main` (releases the
+Azure PR trigger; approve the gated run per `.claude/skills/az-pipelines-ops/SKILL.md`) or a manual
+pipeline run.
+
+If the coverage harness reports a conflicting pytest process, check whether it is still active before
+starting a second run. Old hung collectors (VS Code leaves these behind; check their rootdir, they may
+belong to a sibling repo) are usually safe to kill **by exact PID** from the listing; recently started
+runs should usually be allowed to finish. Do not reach for `pkill -f "pytest..."` here — a command line
+containing the pattern matches itself, and the same shell may be hosting the run you meant to keep.
+
+`manage_standalone_processes.sh` exempts its own PID **and its whole ancestor chain** from that
+`pgrep -f` check, so a launcher whose command line spells out a configured pattern (`gen_it_coverage.sh`,
+`special_tests.sh`, `python -m pytest`, ...) no longer self-matches. A reported conflict is therefore a
+genuine other run — including an Azure CI container's suite, which is visible on the host and *should*
+block a local run per the serial-execution rule in `CLAUDE.local.md`.
+
+The local coverage harness runs four phases: the three the Azure GPU pipeline runs, plus the CPU-only phase
+that in CI runs on the GitHub-hosted matrix instead:
+- `Testing: standard` runs CPU-only with `CUDA_VISIBLE_DEVICES=''` (locally only; see the CI/CD section)
+- `Testing: standard gpu cuda-marked` reruns only regular CUDA / bf16-marked tests with `IT_RUN_CUDA_TESTS=1`
+- `Testing: standalone gpu` and `Testing: CI Profiling` remain separate special-test phases
+
+When debugging fixture or CUDA memory growth locally, add `--resource-debug` to `gen_it_coverage.sh` or
+`special_tests.sh`. That exports the canonical `IT_RESOURCE_DEBUG=1`
+flags used by `tests/conftest.py`, `tests/analysis_resource_utils.py`, and the coverage harness summary
+parser for per-test / per-fixture / per-GPU logging.
+
+If semantic concept-direction intervention parity drifts unexpectedly, use the normal gate in
+`tests/core/test_analysis_backend_parity.py`. The manual upstream sanity-check workflow that used to
+live under `tests/upstream_parity/` (`extract_upstream_ct_semantic_reference.py` +
+`UPSTREAM_CT_PARITY_DEBUG.md`) was archived to private notes 2026-07-07, superseded by that automated
+suite. Consult the archived notes if a manual three-way upstream/native/op replay is ever needed.
+
+## Serializing GPU work on a shared host
+
+A multi-GPU host is often shared by more consumers than it looks: several interactive/agent sessions in
+this repo, sessions in a sibling project (`finetuning-scheduler` shares this project's host and self-hosted CI
+agent), and the self-hosted Azure Pipelines agent, which can dispatch a GPU job as soon as one is approved.
+Two GPU suites at once contend **silently** — OOM, flaky timing, or mutual slowdown rather than an obvious
+error — so it is easily misdiagnosed as a real test failure.
+
+`scripts/gpu_lease_wrap.sh` provides an **opt-in** `flock`-based lease. It is a **complete no-op unless
+`GPU_LEASE_CMD` points at a lease implementation**, so contributors and hosted CI are unaffected and nothing
+here is required to work on this project.
+
+```bash
+export GPU_LEASE_CMD=/path/to/gpu_lease.sh        # opt in for this shell
+./tests/special_tests.sh --mark_type=standalone   # now serialized
+```
+
+`tests/special_tests.sh` and ``scripts/gen_it_coverage.sh`` self re-exec under the lease, so one acquisition covers a
+whole suite. The Azure GPU pipeline participates too, by bind-mounting the lease directory into the job
+container (`flock` works on the inode, so container and host processes interlock). A CI-held lease is
+identifiable by its holder metadata: project tag `azure-it-<buildId>` plus a `[container]` marker. Never
+force-reset a lease showing that attribution; cancel the pipeline run instead.
+
+There are two lease keys, because the host is contended for two resources: `gpu`, and `cpu-heavy`, which
+serializes HOST MEMORY (a full suite peaks far above what two of them fit in at once, GPU or not). The CI
+job holds only `cpu-heavy` through its install and its CPU-only phase, which is more than half of every
+build, and takes `gpu` (then `cpu-heavy` again, in the host tool's fixed order) only when its GPU phases
+begin; the `Acquire host GPU lease` task's position in a build's timeline, at about the minute the CPU phase
+ends, is the evidence that split is in effect. Locally the two self-wrapping scripts default to both keys
+(`GPU_LEASE_ARGS=--cpu-heavy`), so a full suite or coverage run stays serialized with every CI phase, while
+GPU-only work wrapped with the plain lease (`$GPU_LEASE_CMD -- <cmd>`: a notebook, a benchmark leg, one test
+file on a GPU) may overlap the CI job's CPU phase.
+
+The `gpu-lease` skill under `.claude/skills/` is a VENDORED copy of the repo-neutral master in
+[speediedan/skills](https://github.com/speediedan/skills) (plugin `common-infra-skills`); the vendored copy
+is canonical for this repo so a bare clone works with nothing installed. Do not edit it here: change the
+master and re-sync (`sync-shared-skills.sh push --repo interpretune`, in the maintainer's admin tooling).
+
+Two things worth knowing up front:
+
+- **Waiting is normal, not a failure.** A run may sit at `'gpu' lease is held; waiting...` for as long as
+  whatever holds it (a CI job is ~37 min). Let it queue — do not disable the lease or kill the holder.
+- **Notebooks and other interactive GPU work are not lease-aware**, by design: a Jupyter kernel lives for
+  hours, so holding the lease for its lifetime would starve CI. Check `--status` before starting one, and
+  for a long session reserve deliberately with `--hold` / `--release`. The lease warns whoever acquires it
+  next that unleased processes are on the GPUs.
+
+**For planning, notebook guidance, and recovery from stuck or stale leases, use the `gpu-lease` skill.**
+It also carries the one hard rule: **never force-reset a lease held by a CI job** — cancel the pipeline run
+instead.
+
+## Neuronpedia Dashboard Pipeline & Benchmarks
+
+The repo carries the production pipeline and benchmark tooling for the Scalable Dashboards workstream:
+
+- **Pipeline**: `src/interpretune/utils/neuronpedia_dashboard_pipeline.py` (+ `neuronpedia_db_utils.py`);
+  docs in `docs/neuronpedia_dashboard_pipeline.md` (multi-GPU workers, batch-level resume markers,
+  `--runner-overlap-batch-packaging`, `--overlap-local-db-import`, `--layer-list`).
+- **Profiling/benchmarks**: `scripts/profile_neuronpedia_dashboard_generation.py` (per-leg presets),
+  `scripts/run_dashboard_benchmark_suite.py` (3-way/scaling/full waves + reviewer packaging; usage in
+  `scripts/dashboard_benchmark_suite_usage.md` — batch-shape sweeps via its `--config`/`--mode scaling`).
+  Tests: `tests/core/test_neuronpedia_dashboard_pipeline.py`,
+  `tests/core/test_dashboard_benchmark_artifacts.py`.
+- **Env vars**: always set the large-cache locations for pipeline/benchmark runs —
+  `IT_NP_CACHE=/mnt/cache_extended/$USER/.cache/huggingface/interpretune/neuronpedia`,
+  `HF_HOME`/`HF_DATASETS_CACHE`/`HF_HUB_CACHE` under `/mnt/cache_extended/$USER/.cache/huggingface`.
+- **Reproducibility policy**: commit all four repos (interpretune, SAEDashboard, SAELens, neuronpedia)
+  before regenerating a packaged 3-way benchmark wave; add a benchmark-regeneration note to those commit
+  messages; the package manifest records the `SD-*/SL-*/NP-*/IT-*` lineage and refuses dirty trees.
+- **GPU run hygiene**: run waves/legs via `nohup ... & disown` with PID-based waiters; before a wave, kill
+  stale GPU holders by exact PID from `nvidia-smi --query-compute-apps` (pytest HF-teardown hangs are the
+  usual culprits; never `pkill -f pytest` from a command line that itself matches the pattern).
+
+## Linting & Code Quality
+
+Ruff is used via pre-commit (not installed standalone):
+
+```bash
+pre-commit run ruff-check --all-files
+pre-commit run ruff-format --all-files
+pre-commit run --all-files
+```
+
+**Note:** `tests/*_parity/` directories are currently excluded from pre-commit (imported research code).
+
+## Code Style
+
+- **Line length:** 120 chars
+- **Type hints:** `from __future__ import annotations` (modern syntax)
+- **Docstrings:** docformatter-compatible (wrap summaries at 115, descriptions at 120)
+- **Ruff rules:** E, W, F enabled; E731, F722 ignored (jaxtyping compat)
+- **McCabe complexity:** max 10
+
+### Issue references in code comments: sparse, and never in place of the reason
+
+**Cite an issue number in a comment only when the comment is ABOUT that issue** — a workaround for a known
+upstream bug, a guard that exists until a tracked fix lands, a deliberate deviation someone will otherwise
+"clean up". Those readers need the ticket, because the comment's whole subject is a thing tracked elsewhere.
+
+**Everywhere else, write the reason instead.** A reviewer two years out gets nothing from
+`This is where #441 lives:` — they must leave the file, find a possibly-closed issue, and reconstruct
+whatever context the author had. One sentence of rationale in the comment costs the same to write and
+survives the issue being closed, renamed, or migrated. Prefer:
+
+```python
+# WRONG -- outsources the reason to a ticket
+# This is where #441 lives: interp-engine steers every prompt position.
+
+# RIGHT -- the reason travels with the code
+# Backends differ in which position scopes they can express, and a caller who asked for one and silently
+# received the other gets plausible activations and no error -- so the scope is part of the contract.
+```
+
+**An issue number is a pointer; the comment should be the thing pointed at.** The same reasoning as the
+ephemeral-CI-reference rule above: identify the circumstances, not the log entry.
+
+**The cheap check is whether the issue is still open.** Measured across `src/` on the first sweep: **12 of
+16 referenced issues were closed or merged.** A closed issue cited in shipped code is a dead end that looks
+like a pointer — the reader follows it, finds a resolved ticket, and learns nothing about why the code is
+as it is. So:
+
+```bash
+# every issue number cited in a comment, with its state
+grep -rhoP '#\d{2,4}\b' src/ --include='*.py' | sort -u | tr -d '#' \
+  | xargs -I{} gh issue view {} --json number,state --jq '"#\(.number) \(.state)"'
+```
+
+**Open → keep** (the comment is about live work). **Closed → inline the reason and drop the number.**
+
+**Not every long comment is a bad one.** Length should track how non-obvious the reasoning is. A note that
+exists to stop a settled decision being re-litigated earns its space and should say so; a paragraph
+restating the code does not. Trimming by line count alone destroys the first kind along with the second.
+
+Related: comments in this codebase have drifted long. A comment that restates the code, or narrates a
+decision at paragraph length where a sentence would do, costs every future reader. Length should track how
+non-obvious the reasoning is, not how much was known when it was written.
+
+## Mathematical notation
+
+Write mathematics as LaTeX on every surface a reader sees: `docs/`, this file, docstrings, notebook
+markdown cells, and issue and PR bodies. `$\ell$`, `$W_{enc}$`, `$\lVert h \rVert$`, not `l`, `W_enc`,
+`||h||`. ASCII transliteration is ambiguous in ways the notation is not, and the ambiguity is silent: a
+reader cannot tell a subscript from a variable name, or an index from a norm, and nothing flags it.
+
+**Load the `cross-platform-latex` skill before writing or editing any of it.** Its rules are not
+stylistic. Each resolves a specific disagreement between GitHub's renderer and a Sphinx + MyST docs
+build, and the failure mode is the dangerous one: a formula that is correct in one place and quietly
+wrong in the other, rather than one that visibly fails. The four that catch people most often:
+
+- **`\lt` and `\gt`, never bare `<` and `>`.** GitHub encodes a raw `<` inside math twice, so the math
+  engine receives the literal string `&lt;` rather than the operator. MyST passes it through untouched,
+  so the docs build looks right while the README does not.
+- **No backslash before ASCII punctuation** (`\,` `\;` `\%` `\&`). GitHub reads these as CommonMark
+  escapes and drops the backslash, which does not merely lose a space: it changes the formula.
+  `\bar J_\ell\, h` arrives as `\bar J_\ell, h` and renders a stray comma, and `\%` becomes a bare `%`
+  that starts a LaTeX comment and swallows the rest of the line.
+- **`$$` on its own lines, and exactly two backslashes for a line break.** Four is the most common
+  advice on the subject, and it is a real fix for a parser that cannot render math at all; once the
+  target is configured, four is wrong everywhere.
+- **Do not press an opening `$` against a word character.** `layer-$\ell$` renders as plain text on
+  GitHub and as math in the docs build. A *trailing* hyphen is fine, which is what makes this easy to
+  miss: `$\gamma$-marked` works and `permuted-$\gamma$` does not.
+
+This repo's docs are already configured for it: `dollarmath` is enabled, and `myst_dmath_allow_space`
+and `myst_dmath_allow_digits` are off, which stops a spaced prose pair like `$HOME and $PATH` from
+being read as an equation. That reduces the blast radius rather than closing it, and the distinction
+matters when you are writing: an *adjacent* pair such as `$TMPDIR/$SLURM_JOB_ID` still matches, so on
+a line carrying shell variables put every `$` inside a code span. Wrapping only some is worse than
+wrapping none, because the prose `$` then opens a span that closes inside the backticks.
+
+Do not take any of that from this paragraph. The skill ships an audit, and both it and the content
+check are cheap:
+
+```bash
+python .claude/skills/cross-platform-latex/scripts/check_math.py --config-audit .
+python .claude/skills/cross-platform-latex/scripts/check_math.py <files you touched>
+```
+
+The skill is vendored from a shared master and is not editable here; corrections go upstream.
+
+## Architecture
+
+### Source Layout
+
+```
+src/interpretune/           # Main package (version from src/interpretune/__about__.py)
+├── adapters/               # Framework integrations (TL, SAE, Lightning, CircuitTracer, NNsight)
+├── analysis/               # Analysis tools with ops system and dispatcher
+├── base/components/cli.py  # CLI entry point
+├── config/                 # Dataclass-based configuration system
+├── extensions/             # MemProfiler, DebugGeneration, NeuronpediaIntegration
+├── runners/                # SessionRunner, AnalysisRunner
+├── utils/                  # Helpers, exceptions, repr utilities
+├── protocol.py             # Type protocols (ITModuleProtocol, ITDataModuleProtocol)
+├── registry.py             # ModuleRegistry, RegisteredCfg
+└── session.py              # ITSession
+src/it_examples/            # Example experiments, configs, notebooks
+tests/                      # 744 test functions
+├── core/                   # Core tests
+├── benchmarks/             # End-to-end experiment benchmarks (see tests/benchmarks/README.md)
+├── *_parity/               # Research parity tests
+└── examples/               # Example-based tests
+```
+
+### Key Patterns
+
+- **Lazy imports:** Heavy deps (transformer_lens, lightning, neuronpedia) loaded lazily via `_light_register.py` and PEP 562 `__getattr__`. Import-time optimization is critical.
+- **Protocol-based:** ITModuleProtocol, ITDataModuleProtocol, AnalysisOpProtocol
+- **Composition:** `CompositionRegistry` manages adapter combinations (core, lightning, transformer_lens, sae_lens, circuit_tracer, nnsight)
+- **Backend-agnostic analysis ops:** Keep backend-specific imports out of the bundled op definitions (`src/interpretune/analysis/ops/bundled/<family>/<family>_ops.py`). If an op needs backend-specific behavior, extend the `AnalysisBackend` seam rather than importing backend code directly into the op definition.
+- **Framework agnosticism:** Module definitions (e.g. `RTEBoolqSteps`) should NOT contain framework-specific hooks or accumulation logic. Use `ClassificationMixin` for prediction accumulation and metric reporting. Hook dispatch via `_call_itmodule_hook(..., optional=True)` handles missing hooks gracefully.
+- **Framework-agnostic logging:** `CoreHelperAttributes` provides real `log()` / `log_dict()` methods that accumulate metrics in `_logged_metrics`. The core runner prints averaged metrics at test epoch end. Lightning modules use `LightningModule.log()` / `log_dict()` instead. User code calls `self.log()` / `self.log_dict()` regardless of context.
+- **ClassificationMixin.setup():** Cooperatively calls `super().setup()` then initializes `classification_mapping` if configured. `collect_answers()` computes metrics and calls `self.log_dict()` — no custom accumulation logic needed.
+- **Generation config:** Use `HFGenerationConfig` (applies params to `model.generation_config`) for HF-backed models. Use `CoreGenerationConfig` (passes params as `generate_kwargs`) only for TL-native models. The NNsight adapter applies `HFGenerationConfig.model_config` to the underlying HF model via `_apply_generation_config()`.
+- **User-facing op calls:** In notebooks, examples, and one-off experiment scripts, prefer `import interpretune as it` plus direct top-level op wrappers such as `it.concept_direction(...)` or `it.compute_attribution_graph(...)`. Ensure `interpretune.analysis` has been imported once so those wrappers are registered. Avoid `DISPATCHER.get_op(...)` outside dispatcher-internals work.
+- **Class metadata:** Core classes use `_it_cls_metadata` (ITClassMetadata frozen dataclass)
+- **Repr helpers:** `state_to_dict()`, `state_to_summary()`, `state_repr()` via `_obj_summ_map`
+- **Type stubs:** `.pyi` files auto-generated by `scripts/generate_op_stubs.py` — must stay in sync
+
+### TransformerLens
+
+- **`TransformerBridge` is the only model path.** It wraps HF models without weight conversion, which is more
+  memory efficient than the weight-converting `HookedTransformer` that TransformerLens removed in 4.0.
+- **There is no `use_bridge` flag.** It selected between the two, and with one path left it was retired rather
+  than left as a field with a single reachable value. Passing it fails by name.
+- **HookedTransformer-equivalent numerics** come from `enable_compatibility_mode()` on `ITLensBridgeConfig`
+  (LayerNorm folding, `center_writing_weights`, `center_unembed`). Omit it for raw HF weights, which is what
+  `ITLensFromPretrainedNoProcessingConfig` expresses.
+- **Config-only initialization** goes through `TransformerBridge.boot_native`, so `ITLensCustomConfig` is no
+  longer special-cased. `boot_native` does NOT infer TL's `-1` vocab sentinels from the tokenizer the way
+  `HookedTransformer.__init__` did, so the adapter resolves `d_vocab` / `d_vocab_out` before calling it.
+
+### Config Hierarchy
+
+- `ITLensConfig` (top-level) → `ITLensSharedConfig` (base with IT settings)
+- `ITLensFromPretrainedConfig` (from_pretrained path) | `ITLensCustomConfig` (config-based, via `boot_native`)
+- TL side: `TransformerLensConfig` → `TransformerBridgeConfig`
+- `_capture_hyperparameters()` serializes: hf_preconversion_config, tl_model_cfg, it_tl_cfg
+
+Serialization details matter here:
+
+- `hf_preconversion_config` is the original HF `PretrainedConfig`
+- `tl_model_cfg` is the actual TL config from `self.model.cfg`
+- `it_tl_cfg` is the Interpretune-specific TL config from `self.it_cfg.tl_cfg`
+
+`ITLensCustomConfig` is no longer special-cased: `TransformerBridge.boot_native` builds a bridge from a config alone, so the premise that config-based initialization required `HookedTransformer` (the bridge needing an HF model instance) no longer holds. See `docs/tl_config_hierarchy_overview.md` when working on this area.
+
+## CI/CD
+
+- **GitHub Actions** (`ci_test-full.yml`): Ubuntu 22.04, Windows 2022, macOS 14, Python 3.13, 90-min timeout
+- **Azure GPU pipeline** (`.azure-pipelines/gpu-tests.yml`): Self-hosted, requires admin approval, only for ready-for-review PRs. Use CPU CI as long as possible before requesting GPU runs.
+- **A queued GPU build can sit in `notStarted` until its approval is granted, and that is normal.**
+  Check the build's approval state before touching runner configuration: an ungranted gate looks
+  identical to a dispatch problem from the outside, and the reflex it invites (inspecting the agent,
+  restarting things) is the wrong one.
+- The approval gate can be driven from the shell rather than the web UI, which is preferable during
+  active debugging. The maintainer's tooling, credentials and host-specific recovery procedures are
+  machine-specific and live in a local, uncommitted instructions file rather than here.
+- **Agent-stack recovery** (for example the pipeline dying at "Initialize containers" with
+  `stat -c %g /var/run/docker.sock` errors after a host reboot) is an operator task on the self-hosted
+  runner, not something to attempt from a contributor checkout.
+- The build-level queue shown by `az pipelines build show` may still display `Azure Pipelines` even when the YAML job uses the self-hosted `Default` pool. Treat approval state and actual worker dispatch as the source of truth before editing the pool stanza.
+- The GPU pipeline runs only GPU work, phase-split to reduce peak memory while preserving CUDA coverage:
+  1. `Testing: standard gpu cuda-marked` runs regular CUDA-gated tests under `IT_RUN_CUDA_TESTS=1`
+  2. `Testing: standalone gpu` runs standalone GPU tests
+  3. `Testing: CI Profiling` runs `profile_ci` GPU tests
+
+  The CPU suite is NOT run there: the GitHub-hosted matrix runs it on every pull request the GPU pipeline
+  triggers on. A test that passes only in the self-hosted environment (a gated artifact, say) needs its input
+  warmed in `tests/hf_warm_manifest.yaml`, not a CPU phase on the serial GPU agent.
+
+  **A pull request gate runs only the GPU tests its change selects** (`tests/gpu_ci/areas.yaml`); the full set
+  runs on a `run_all` path, with the `ci:gpu-full` label, or with `mode=full`. A nightly scheduled run covers main
+  in full, and a weekly one adds the extended tiers. A GPU test that only a scheduled run caught is a selector
+  miss, so fix the area map. `tests/README.md` has the table.
+- **Hub access in hosted CI:** each matrix job warms the Hugging Face cache from `tests/hf_warm_manifest.yaml`
+  and runs the suite with `HF_HUB_OFFLINE=1`; tests that must reach the live Hub are marked `hf_live` and run in
+  a separate online pass. A new Hub artifact goes in the manifest. See `docs/ci_hub_cache.md`.
+- **Coverage target:** 90% on commits, 50% on patches (`.codecov.yml`)
+- **Torch prerelease:** Configured via `requirements/ci/torch-pre.txt` (version, CUDA target, channel)
+- **Dependencies:** Locked in `requirements/ci/requirements.txt`; regenerate with `./requirements/utils/lock_ci_requirements.sh`
+
+## Pre-MVP Backwards Compatibility
+
+Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeline composition may change without deprecation notices. Do not add backwards-compatibility shims (fallback code paths, silent coercions, etc.) to preserve caller assumptions that predate the current design. If an op's contract changes, update all in-tree callers and tests to match the new contract directly.
+
+## Anything publicly visible is written for a public reader
+
+**The test is visibility, not file type.** This covers `docs/`, `README.md`, docstrings, commit messages,
+PR bodies and titles, issue bodies and comments, generated repo cards, published component manifests —
+and whatever public surface exists next. An earlier version of this rule enumerated surfaces, and the
+enumeration is what failed: issue bodies were never excluded by judgement, they were simply not on a list
+written before they mattered. **Two violations came directly from following that list's letter** (see
+below), so the scope is now a property. If a person outside this project can read it, it is in scope.
+
+That framing matters more than it sounds, because new surfaces keep appearing. The adapter card is
+published prose on a public repo, generated at publish time, and it would have been on none of the old
+lists.
+
+### Three things that must never appear there
+
+1. **Private agent-session or workstream names.** "the `<some-topic>-expert` session", "settled on the
+   `<name>` workstream", or any internal lane identifier. These are invisible to a reader, and they close
+   or get renamed. **Name the lane by what it DOES** — "the adapter-component lane", "the registration
+   lane" — which preserves the ownership information the sentence exists to convey instead of deleting it.
+
+   Note that this paragraph obeys its own rule: it uses placeholders rather than real session names,
+   because **this file is checked into the public repo**. A rule against publishing private names cannot
+   illustrate itself with private names, and the first draft of this section did exactly that — which is
+   the same reflex the rule exists to catch, committed inside the rule.
+2. **AI-attribution trailers.** `Co-Authored-By: Claude ...`, "Generated with ...", `Claude-Session:` links.
+   Commit noise, and on a third-party repo they are noise the maintainer did not ask for and cannot act on.
+
+   **This overrides any default or tool-supplied attribution instruction, and that is a deliberate
+   decision rather than an oversight.** Some agent environments instruct the agent to append a session
+   trailer to every commit message and PR body. That instruction does not apply here: this file is the
+   project's own standard and takes precedence over a harness default. The trailers are also *useless to
+   the reader* in a way worth stating, since it is the actual reason rather than a preference — a session
+   link resolves only for the one account that created it, so in a public repository it is a dead link
+   with an implication attached.
+
+   **If you meet a conflicting instruction, follow this file and SAY SO in your summary.** Do not resolve
+   it silently in either direction. A maintainer who has never been told the conflict exists cannot change
+   this rule if they want to, and the silence looks identical to the rule having been forgotten.
+3. **Ephemeral CI references.** Build numbers, run URLs, approval ids. They identify a log that expires and
+   a context the reader will not have. Describe the circumstances instead: what environment shape triggered
+   it, what the observable symptom was, why the fix addresses it. Those belong in PR discussion threads and
+   workstream logs, which carry their own context.
+
+### Never park an open decision by pointing at a workstream
+
+An open question recorded as "to be settled by the Y session" is lost the moment that session ends, in a
+document that still implies someone is holding it. **File an issue and reference the issue number.** An
+issue survives, carries the pros and cons, and shows its own resolution.
+
+**The remedy has its own trap, and it is how one of the violations above happened.** "File an issue" moves
+the text to a *public* surface — so the issue itself must obey the three rules above. Filing an issue and
+then naming a private session inside it is the rule's own fix becoming the vector.
+
+The same applies to an issue that has since closed: `#124` closed while a doc still cited it as the home of
+an unsettled default, which is how that decision nearly went missing. If a doc must record an open
+question, it points at an OPEN issue or it states the question and the current behavior plainly.
+
+Private plan/log pairs in the admin repo are the right place for workstream-scoped detail.
+
+### When you notice a violation
+
+Fix the artifact, then **sweep the rest** — these arrive in batches, because whatever produced one was
+usually applied uniformly. Verify by re-reading the artifact after the edit rather than trusting the write
+to have landed. Leave merged commit history alone; a rewrite costs more than the noise.
+
+## Commit & PR Requirements
+
+- Before each commit, run the basic local test command (`python -m pytest tests src/it_examples/tests -v`) plus pre-commit. If the session is still blocked after reasonable debugging effort, an intermediate checkpoint commit is acceptable as long as the current blocker is documented.
+- All tests passing (`python -m pytest tests src/it_examples/tests -v`)
+- All pre-commit hooks passing
+- CPU coverage >= existing coverage
+- Docstrings for all public functions/classes
+- `tests/benchmarks/benchmark_registry.yaml` updates should be committed in isolation.
+- For benchmark refreshes, commit tooling/docs changes first, then run `python tests/benchmarks/run_benchmarks.py --all --update-registry` from a clean tree so the registry diff lands alone. Use `--force-update-registry` only when you intentionally need to bypass the clean-tree check.
+- `salient_pkg_versions` should retain best-effort git provenance for salient dependencies: editable installs should include live checkout metadata (`fork`, `branch`, `sha`), while git-backed non-editable installs should derive the source fork and pinned commit from `direct_url.json`.
+- If benchmark tooling, the environment collector, or benchmark docs change, commit that work first. Only then run `python tests/benchmarks/run_benchmarks.py --all --update-registry` from a clean tree and commit the resulting registry-only diff.
+- Unit tests for new functionality
+- **All non-skipped CI workflows must be green before merging to `main`** — that means the FULL surface,
+  not just the locally-run pytest phases: the hosted GitHub workflows (Test full across all three OSes,
+  Stale Stubs and Type Checks — BOTH halves: pyright AND `generate_op_stubs.py` freshness — PyPI dry-run,
+  regen-ci-req report, benchmark-registry isolation) AND every phase of the gated Azure GPU pipeline
+  (**standard gpu cuda-marked**, standalone, profile_ci). Lesson from the circuit-tracer merge
+  of 2026-07-20: a branch was greened locally on three phases but the cuda-marked phase (whose tests hide
+  among the locally-skipped set) plus the hosted stubs/pyright/fixture-scope surfaces were never
+  exercised, so `main` went red on merge. Run the cuda-marked phase locally via
+  `IT_RUN_CUDA_TESTS=1 python -m pytest tests -v` (inline env var; these tests SKIP silently without it —
+  they hide inside the "skipped" count) with `HF_GATED_PUBLIC_REPO_AUTH_KEY`/`HF_TOKEN` available, and
+  check stub freshness with `python scripts/generate_op_stubs.py` + a clean `git diff` before any merge.
+- **A PR that does not close its issue must say so ON THE ISSUE, not only in the PR body.** When a PR
+  delivers part of an issue's scope, comment on the **issue** recording what landed and what remains,
+  and keep the checklist there current. A PR body is the right place for reviewer-facing rationale,
+  but it is the wrong place for the surviving scope: once merged, that text sits behind a link nobody
+  follows, and an issue reading as though nothing has happened is indistinguishable from one where
+  the remaining work is invisible. Users and future sessions read the issue.
+  Include: what the PR landed, anything the work **obviated** (with why), and the remaining items as a
+  checklist. State plainly when an item is blocked and what unblocks it, rather than dropping it.
+
+- **No ephemeral CI references (build numbers, run URLs, approval ids) in comments or commit
+  messages meant for future readers.** A pipeline build number identifies a log that expires and a
+  context the reader will not have; "fix build 849" tells them nothing once the log is gone. Outline
+  the circumstances generally instead: what environment shape triggered the defect, what the
+  observable symptom was, and why the fix addresses it. Ephemeral ids belong in PR discussion
+  threads and workstream logs, which carry their own context, not in the tree.
+
+- **No AI-attribution trailers, private session names, or ephemeral CI references** in commit messages
+  or PR bodies — see *Anything publicly visible is written for a public reader* above, which states the
+  rule over every public surface rather than a list of them. When rebasing the long-lived multi-repo
+  workstream branches ahead of opening PRs, strip these from prior commits as part of the rebase; a
+  full-history sweep outside those rebases is not required.
+
+## Multi-Session Workstream Cadence (plan + completion log)
+
+Long-running multi-session workstreams (e.g. the Phase 7 PR-packaging plan in the maintainer's private
+notes) follow this documentation cadence:
+
+- The working plan's status section stays LEAN: a short current-status paragraph, a compact per-session
+  index table (session / focus / landed SHAs / CI builds), and the proposed next-session order.
+- Every session appends full detail to the companion completion log: a Part 1 detailed slice entry plus
+  a Part 2 end-of-session status snapshot (ending with the pushed multi-repo heads).
+- During a session it is fine to write a dated addendum into the plan's status section, but addenda are
+  periodically CONSOLIDATED into the index (after verifying the log carries all their detail); superseded
+  next-session orders are dropped rather than accumulated — Part 2 snapshots preserve that history.
+
+## Worktrees & Parallel Environments
+
+- A long-lived `~/repos/it-release` worktree with a matching `it_release` venv (see
+  `scripts/build_it_env.sh`, `scripts/gen_it_coverage.sh`) exists for future releases and doubles as a
+  ready second worktree/env pair for parallel deep debugging. Prefer reusing it when it meets
+  requirements (avoids setup cost and detached-worktree proliferation); create a fresh detached worktree
+  when isolation from its state matters.
+- Overlay-venv recipe for evaluating another branch against an existing heavy env: `python -m venv` a new
+  env, `pip install -e <worktree> --no-deps` into it, then bridge the base env with an executable `.pth`
+  (`import site; site.addsitedir('<base site-packages>')` — a plain-directory `.pth` will NOT propagate
+  the base env's editable installs). Put the overlay venv's `bin` on `PATH` for tests that spawn console
+  scripts (e.g. `test_it_cli.py`).
+
+## Notebook Publishing
+
+**⚠️ CRITICAL: Notebook tests run against PUBLISHED notebooks, not dev notebooks.** If you edit any dev notebook, you **MUST** run `python scripts/publish_notebooks.py --force` before testing or committing. The pre-commit hook only triggers when `.ipynb` files in `dev/` are staged — if the dev notebook was changed in a prior commit or by another tool, the published copy will be stale and notebook tests will fail.
+
+Dev notebooks live in `src/it_examples/notebooks/dev/` and are auto-published to `src/it_examples/notebooks/publish/` via `scripts/publish_notebooks.py`, a shim over the console script `interpretune-publish-notebooks` (engine: `src/interpretune/utils/notebook_publishing.py`, parameterized from `[tool.notebook-publishing]` in `pyproject.toml`; adapter repositories use the same engine for their own example notebooks).
+
+The publisher and the docs-artifact renderer (`src/interpretune/utils/notebook_docs.py`, shim
+`scripts/render_notebook_docs_artifacts.py`) are **repository-neutral**: other repositories vendor them unmodified
+(finetuning-scheduler does, with a check that they match this copy), so nothing interpretune-specific goes in
+either file. Interpretune's own renderer checks (the op-surface stamp and its output-drift checks) live in the
+hooks file `scripts/notebook_docs_hooks.py`, named by `docs_hooks` in the table; a new repository-specific check
+belongs there, and a missing engine capability is added to the engine generically.
+
+- **Pre-commit hook** (`publish-notebooks`): Triggered on changes to `^src/it_examples/notebooks/dev/.*\.ipynb$`. Automatically strips `remove-cell` tagged cells, adds Colab badges + install cells, fixes import paths, and tracks hashes in `.notebook_hashes.json`.
+- **CLI flags:** `--dry-run` (preview), `--check-only` (CI validation), `--force` (republish all). Launch.json has debug configs for each mode.
+- **Workflow:** Edit dev notebooks only → commit → pre-commit publishes automatically. Never edit publish notebooks directly.
+- **Verification:** After any notebook changes, run `python scripts/publish_notebooks.py --check-only` to verify published notebooks are in sync.
+- **Rendered artifacts are part of the change.** A PR that adds or edits a notebook also re-renders its docs
+  artifact (`docs/notebook_artifacts/<lane>/<name>.ipynb`, produced by
+  `python scripts/render_notebook_docs_artifacts.py --notebook <name>` on a host with the full environment; some
+  notebooks need a GPU, gated weights, Hub tokens or the local Neuronpedia stack) and commits it, so the PR's
+  docs preview (`https://interpretune--<PR>.org.readthedocs.build/en/<PR>/notebooks/<lane>/<name>.html`) shows
+  real outputs. Reviewers read that page, not the code-only fallback, before a merge is proposed.
+  `--check-stale` fails by name on a stale artifact AND on a published notebook with no artifact at all: the
+  fallback renders code-only with no error anywhere, which is the state this rule exists to prevent. A new
+  notebook also gets its row in `docs/source/examples.md` in the same PR.
+
+## Elevated-Access Blockers
+
+When work is blocked by a command that requires elevated access or interactive local auth (sudo, an
+interactive login, a gpg/pinentry prompt, a locked credential store), do not just work around it silently:
+include in the response summary a concrete proposed solution that would let Claude execute that command (or a
+scripted group of commands) autonomously in the future. The established pattern is a narrowly-scoped
+root-owned wrapper script, authorized by a sudoers `NOPASSWD` directive naming that exact script and no
+other, paired with a matching `permissions.allow` entry in the local Claude settings. The point is that
+the wrapper bounds what elevated access can do, rather than granting a general capability. Propose that
+pattern (or a better-fitting design) so it can be implemented and validated in a subsequent session.
+Concrete wrapper paths and sudoers lines are machine-specific and belong in a local, uncommitted
+instructions file rather than in this published one.
+
+## Important Caveats
+
+- **Git dependencies** (circuit_tracer, sae_lens, sae_dashboard) are pinned to specific commits in `pyproject.toml`'s `git-deps` group; transformer_lens and nnsight are release pins carried by `[tool.uv] override-dependencies` + `requirements/ci/overrides.txt`, and finetuning_scheduler is a plain release floor (`>= 2.13.0`) in the `lightning` extra
+- **Type checking:** Enabled for every module under `src/`, the relocated research and notebook trees included; there is no exclusion list, so a module that cannot be typed is fixed or removed rather than exempted. All `tests/` files are excluded
+- **Full test suite requires ML dependencies** — tests will fail without proper env setup
+- **Import guards:** `tests/core/test_adapters_import_time.py` prevents accidental eager imports
+- **No test-environment bandaids in application code:** When test failures stem from environment issues (e.g., `isinstance()` failures due to importlib double-loading modules), fix the problem in the test infrastructure or use an app-level registry pattern (like `CT_BACKEND_REGISTRY` in `circuit_tracer.py`) — never degrade application code with workarounds for test-specific problems
+
+## Detailed Instruction Skills
+
+The following skills under `.claude/skills/` provide in-depth guidance for specific development tasks. Claude Code loads them on demand via each skill's description; consult them when working in the relevant areas. (Thin pointer files remain in `.github/instructions/` so GitHub Copilot's `applyTo` globs still route to the same single-sourced content.)
+
+| Skill | Applies to | When to use |
+|------|-----------|-------------|
+| `analysis-injection` | `src/it_examples/**` | Modifying runtime hook injection for upstream package analysis (config YAML, analysis points, patcher logic) |
+| `developing-adapters` | `src/interpretune/adapters/**` | Creating or modifying adapters: protocol enum, config, MRO composition order, registration checklist |
+| `fixture-usage` | `tests/**` | Writing or debugging test fixtures: fixture types/phases, MODULE_EXAMPLE_REGISTRY dependency, parameterization patterns |
+| `registering-example-modules` | `src/it_examples/examples/*/it_component.yaml`, `tests/test_module_registry.yaml` | Adding adapter combinations to the central registry: registry key patterns, config structure, verification steps |
+| `updating-expected-results` | `tests/parity_acceptance/**` | Updating expected test baselines: state logging, memory footprint YAML, profiling update script |

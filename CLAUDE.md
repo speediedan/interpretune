@@ -1,3 +1,3 @@
 # CLAUDE.md
 
-@./AGENTS.md
+@./.agents/reference/AGENTS.full.md
