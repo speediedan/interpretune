@@ -203,7 +203,7 @@ class BaseCircuitTracerModule(BaseITModule):
         if get_model_backend(self) is None:
             factory = CT_MODEL_BACKEND_FACTORIES.get(backend)
             if factory is not None:
-                self._model_backend = factory(self)  # type: ignore[attr-defined]
+                self._model_backend = factory(self)
             else:
                 # A registered backend with no factory is legitimate: its adapter attaches its own.
                 rank_zero_info(
@@ -333,7 +333,7 @@ class CircuitTracerTLModuleMixin(TLensAttributeMixin):
         This method handles TransformerLens-specific conversion logic by pruning config values that circuit_tracer
         forces in from_pretrained.
         """
-        tokenizer_handle, hf_preconversion_config = self._prepare_hf_to_tl_conversion()  # type: ignore[attr-defined]
+        tokenizer_handle, hf_preconversion_config = self._prepare_hf_to_tl_conversion()
 
         # TransformerLens-specific: prune config values that CT forces in from_pretrained
         # TODO: we currently prune model_name, dtype and the below values from tl_cfg as CT currently forces these
@@ -341,7 +341,7 @@ class CircuitTracerTLModuleMixin(TLensAttributeMixin):
         #           fold_ln=False,
         #           center_writing_weights=False,
         #           center_unembed=False,
-        pruned_tl_cfg = self._prune_tl_cfg_dict(  # type: ignore[attr-defined]  # from BaseITLensModule
+        pruned_tl_cfg = self._prune_tl_cfg_dict(  # from BaseITLensModule
             normalize_device=True,
             prune_list=[
                 "hf_model",
@@ -353,12 +353,12 @@ class CircuitTracerTLModuleMixin(TLensAttributeMixin):
                 "center_unembed",
             ],
         )
-        loaded_model_kwargs = {"hf_model": self.model, "tokenizer": tokenizer_handle, **pruned_tl_cfg}  # type: ignore[attr-defined]
+        loaded_model_kwargs = {"hf_model": self.model, "tokenizer": tokenizer_handle, **pruned_tl_cfg}
 
-        self._load_replacement_model(pretrained_kwargs=loaded_model_kwargs)  # type: ignore[attr-defined]
+        self._load_replacement_model(pretrained_kwargs=loaded_model_kwargs)
         # Preserve original HF config for reference (dynamic attribute on backend model)
-        assert self.model is not None, "Replacement model must be loaded"  # type: ignore[attr-defined]
-        self.model.config = hf_preconversion_config  # type: ignore[union-attr]
+        assert self.model is not None, "Replacement model must be loaded"
+        self.model.config = hf_preconversion_config
 
 
 class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
@@ -385,14 +385,14 @@ class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
         # Build NNsight kwargs from circuit_tracer_cfg settings
         nnsight_kwargs: dict[str, Any] = {}
 
-        circuit_tracer_cfg = self.circuit_tracer_cfg  # type: ignore[attr-defined]
+        circuit_tracer_cfg = self.circuit_tracer_cfg
         if circuit_tracer_cfg and circuit_tracer_cfg.nnsight_remote:
             nnsight_kwargs["remote"] = True
             if circuit_tracer_cfg.ndif_api_key:
                 nnsight_kwargs["api_key"] = circuit_tracer_cfg.ndif_api_key
 
         # If nnsight_cfg is available, merge its kwargs (takes precedence)
-        nnsight_cfg = self.nnsight_cfg  # type: ignore[attr-defined]
+        nnsight_cfg = self.nnsight_cfg
         if nnsight_cfg:
             nnsight_kwargs.update(nnsight_cfg.get_nnsight_kwargs())
             if "device" not in nnsight_kwargs and "device_map" in nnsight_kwargs:
@@ -407,10 +407,10 @@ class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
                     nnsight_kwargs["device"] = str(device_entry)
 
         # Load the NNsight replacement model
-        self._load_replacement_model(pretrained_kwargs=nnsight_kwargs)  # type: ignore[attr-defined]
+        self._load_replacement_model(pretrained_kwargs=nnsight_kwargs)
 
         # Apply generation config to the underlying HF model (NNSightReplacementModel extends LanguageModel)
-        self._apply_generation_config()  # type: ignore[attr-defined]  # provided by BaseNNsightModule
+        self._apply_generation_config()  # provided by BaseNNsightModule
 
         # The replacement model is now set as self.model
         rank_zero_info("NNsight ReplacementModel initialized for Circuit Tracer")
@@ -423,9 +423,9 @@ class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
         """
         # Call BaseCircuitTracerModule's capture (which adds circuit_tracer_cfg)
         # Then skip to BaseITModule's capture, bypassing BaseNNsightModule which requires nnsight_cfg
-        self._it_state._init_hparams.update({"circuit_tracer_cfg": deepcopy(self.circuit_tracer_cfg)})  # type: ignore[attr-defined]
+        self._it_state._init_hparams.update({"circuit_tracer_cfg": deepcopy(self.circuit_tracer_cfg)})
         # Skip BaseNNsightModule._capture_hyperparameters and call BaseITModule's version
-        BaseITModule._capture_hyperparameters(self)  # type: ignore[arg-type]
+        BaseITModule._capture_hyperparameters(self)
 
 
 class CircuitTracerAdapter(CircuitTracerAttributeMixin):
@@ -446,21 +446,21 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="datamodule",
-            adapter_combination=(Adapter.core, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.circuit_tracer),
             composition_classes=(ITDataModule,),
             description="Circuit Tracer adapter (backend-agnostic) that can be composed with core...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module",
-            adapter_combination=(Adapter.core, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.circuit_tracer),
             composition_classes=(CircuitTracerModule,),
             description="Circuit Tracer adapter (backend-agnostic) that can be composed with core...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module_cfg",
-            adapter_combination=(Adapter.core, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.circuit_tracer),
             composition_classes=(CircuitTracerConfig,),
             description="Circuit Tracer configuration that can be composed with core...",
         )
@@ -471,21 +471,21 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="datamodule",
-            adapter_combination=(Adapter.core, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.transformer_lens, Adapter.circuit_tracer),
             composition_classes=(ITDataModule,),
             description="Circuit Tracer adapter with TransformerLens backend...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module",
-            adapter_combination=(Adapter.core, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.transformer_lens, Adapter.circuit_tracer),
             composition_classes=(CircuitTracerTLModule,),
             description="Circuit Tracer adapter with TransformerLens backend...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module_cfg",
-            adapter_combination=(Adapter.core, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.transformer_lens, Adapter.circuit_tracer),
             composition_classes=(CircuitTracerConfig,),
             description="Circuit Tracer configuration with TransformerLens backend...",
         )
@@ -496,14 +496,14 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),
             composition_classes=(ITDataModule, LightningDataModule),
             description="Circuit Tracer adapter (backend-agnostic) that can be composed with lightning...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module",
-            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),
             composition_classes=(
                 CircuitTracerAttributeMixin,
                 BaseCircuitTracerModule,
@@ -516,7 +516,7 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module_cfg",
-            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.circuit_tracer),
             composition_classes=(CircuitTracerConfig,),
             description="Circuit Tracer configuration that can be composed with lightning...",
         )
@@ -527,14 +527,14 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer),
             composition_classes=(ITDataModule, LightningDataModule),
             description="Circuit Tracer adapter with TransformerLens backend and Lightning...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module",
-            adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer),
             composition_classes=(
                 CircuitTracerTLModuleMixin,
                 CircuitTracerAttributeMixin,
@@ -549,7 +549,7 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module_cfg",
-            adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.transformer_lens, Adapter.circuit_tracer),
             composition_classes=(CircuitTracerConfig,),
             description="Circuit Tracer configuration with TransformerLens backend and Lightning...",
         )
@@ -560,21 +560,21 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="datamodule",
-            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer),
             composition_classes=(ITDataModule,),
             description="Circuit Tracer adapter with NNsight backend...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module",
-            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer),
             composition_classes=(CircuitTracerNNsightModule,),
             description="Circuit Tracer adapter with NNsight backend...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module_cfg",
-            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.nnsight, Adapter.circuit_tracer),
             composition_classes=(CircuitTracerConfig,),
             description="Circuit Tracer configuration with NNsight backend...",
         )
@@ -585,14 +585,14 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.nnsight, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.nnsight, Adapter.circuit_tracer),
             composition_classes=(ITDataModule, LightningDataModule),
             description="Circuit Tracer adapter with NNsight backend and Lightning...",
         )
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module",
-            adapter_combination=(Adapter.lightning, Adapter.nnsight, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.nnsight, Adapter.circuit_tracer),
             composition_classes=(
                 CircuitTracerNNsightModuleMixin,
                 CircuitTracerAttributeMixin,
@@ -607,7 +607,7 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.circuit_tracer,
             component_key="module_cfg",
-            adapter_combination=(Adapter.lightning, Adapter.nnsight, Adapter.circuit_tracer),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.nnsight, Adapter.circuit_tracer),
             composition_classes=(CircuitTracerConfig,),
             description="Circuit Tracer configuration with NNsight backend and Lightning...",
         )

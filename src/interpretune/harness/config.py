@@ -9,7 +9,7 @@ from pathlib import Path
 from interpretune.harness.experiments import is_package_resource_extends, resolve_extends_path
 from typing import Any, Mapping
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 
 CONFIG_EXTENDS_KEY = "EXTENDS"

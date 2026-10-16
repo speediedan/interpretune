@@ -258,7 +258,7 @@ class ITCLI(ITSessionMixin):
 
         """
         self.seed_everything_default = seed_everything_default
-        self.parser_kwargs = parser_kwargs or {}  # type: ignore[var-annotated]  # github.com/python/mypy/issues/6463
+        self.parser_kwargs = parser_kwargs or {}  # github.com/python/mypy/issues/6463
         self.module_class = module_class
         self.datamodule_class = datamodule_class
         if runner_class is None:

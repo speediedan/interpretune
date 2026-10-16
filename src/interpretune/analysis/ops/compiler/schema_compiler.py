@@ -397,7 +397,7 @@ def compile_op_schema(
     op_definitions: dict[str, dict[str, Any]],
     _processing: set[str] | None = None,
     _memo: dict[str, dict[str, Any]] | None = None,
-) -> dict[str, Any]:  # type: ignore[assignment]
+) -> dict[str, Any]:
     """Compile operation schema by merging schemas from required operations.
 
     Args:

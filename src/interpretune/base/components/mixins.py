@@ -190,7 +190,7 @@ class AnalysisStepMixin:
         # TODO: consider adding further upstream configuration validation that warns the user if the provided dataset
         # and step logic are incompatible
         # TODO: handle regular dicts in addition to BatchEncoding?
-        sig_keys = set(self.model_sig_keys(target_method))  # type: ignore[attr-defined]  # mixin provides model_sig_keys
+        sig_keys = set(self.model_sig_keys(target_method))  # mixin provides model_sig_keys
         pruned_batch = {bk: batch[bk] for bk in list(batch.data) if bk in sig_keys}
 
         # Interpretune dataloaders often expose token IDs as ``input`` while HuggingFace-style
@@ -403,17 +403,19 @@ class HFFromPretrainedMixin:
     @property
     def hf_cfg(self) -> HFFromPretrainedConfig | None:
         """The HuggingFace ``from_pretrained`` configuration, or None when the model is not HF-backed."""
-        return self.it_cfg.hf_from_pretrained_cfg  # type: ignore[attr-defined]  # mixin provides it_cfg
+        return self.it_cfg.hf_from_pretrained_cfg  # mixin provides it_cfg
 
     def hf_pretrained_model_init(self) -> None:
         """Initialize the model from HF pretrained weights, applying quantization and token configuration."""
         access_token = (
-            _resolve_env_auth_token(self.it_cfg.os_env_model_auth_key)  # type: ignore[attr-defined]  # mixin provides it_cfg
+            _resolve_env_auth_token(self.it_cfg.os_env_model_auth_key)  # mixin provides it_cfg
         )
         quantization_config = self._hf_configure_quantization()
         self._update_hf_pretrained_cfg(quantization_config)
         cust_config, _ = self._hf_gen_cust_config(access_token)
-        self.model = self.hf_configured_model_init(cust_config, access_token)  # type: ignore[attr-defined]  # mixin provides model and hf_configured_model_init
+        self.model = self.hf_configured_model_init(
+            cust_config, access_token
+        )  # mixin provides model and hf_configured_model_init
         self._hf_cust_token_cfg()
         self._hf_maybe_resize_token_embeddings()
         self._hf_post_init_cfg()
@@ -435,7 +437,7 @@ class HFFromPretrainedMixin:
 
     def _update_hf_pretrained_cfg(self, quantization_config: dict[str, Any] | None = None) -> None:
         additional_from_pretrained_kwargs = {
-            "pretrained_model_name_or_path": self.it_cfg.model_name_or_path,  # type: ignore[attr-defined]  # mixin provides it_cfg
+            "pretrained_model_name_or_path": self.it_cfg.model_name_or_path,  # mixin provides it_cfg
             "quantization_config": quantization_config,
             "dtype": self.dtype,  # type: ignore[attr-defined]  # mixin provides dtype
         }
@@ -445,20 +447,20 @@ class HFFromPretrainedMixin:
     def _hf_gen_cust_config(self, access_token: str | None = None) -> tuple[PretrainedConfig, dict]:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _hf_gen_cust_config"
         if self.hf_cfg.model_head:
-            self.it_cfg.model_class = _import_class(self.hf_cfg.model_head)  # type: ignore[attr-defined]  # mixin provides it_cfg
+            self.it_cfg.model_class = _import_class(self.hf_cfg.model_head)  # mixin provides it_cfg
             cust_config = AutoConfig.from_pretrained(**self.hf_cfg.pretrained_kwargs, token=access_token)
         elif self.hf_cfg.dynamic_module_cfg:
             config_class = get_class_from_dynamic_module(
                 self.hf_cfg.dynamic_module_cfg["config_class"],
-                self.it_cfg.model_name_or_path,  # type: ignore[attr-defined]  # mixin provides it_cfg
+                self.it_cfg.model_name_or_path,  # mixin provides it_cfg
             )
-            self.it_cfg.model_class = get_class_from_dynamic_module(  # type: ignore[attr-defined]  # mixin provides it_cfg
+            self.it_cfg.model_class = get_class_from_dynamic_module(  # mixin provides it_cfg
                 self.hf_cfg.dynamic_module_cfg["model_class"],
-                self.it_cfg.model_name_or_path,  # type: ignore[attr-defined]  # mixin provides it_cfg
+                self.it_cfg.model_name_or_path,  # mixin provides it_cfg
             )
-            cust_config = config_class.from_pretrained(self.it_cfg.model_name_or_path)  # type: ignore[attr-defined]  # mixin provides it_cfg
+            cust_config = config_class.from_pretrained(self.it_cfg.model_name_or_path)  # mixin provides it_cfg
         else:
-            if self.it_cfg.defer_model_init:  # type: ignore[attr-defined]  # mixin provides it_cfg
+            if self.it_cfg.defer_model_init:  # mixin provides it_cfg
                 rank_zero_warn(
                     "`defer_model_init` not currently supported without `model_head` or "
                     "`dynamic_module_cfg`. Proceeding with model init."
@@ -470,40 +472,40 @@ class HFFromPretrainedMixin:
         if self.hf_cfg.pretrained_kwargs.pop("return_unused_kwargs", False):
             cust_config, unused_kwargs = cust_config  # type: ignore[misc]  # HF API can return tuple when return_unused_kwargs=True
         assert isinstance(cust_config, PretrainedConfig), "Config should be PretrainedConfig instance"
-        cust_config.update(
-            self.it_cfg.model_cfg
-        )  # apply pre-init model config overrides  # type: ignore[attr-defined]  # mixin provides it_cfg
+        cust_config.update(self.it_cfg.model_cfg)  # apply pre-init model config overrides    # mixin provides it_cfg
         return cust_config, unused_kwargs
 
     def hf_configured_model_init(
         self, cust_config: PretrainedConfig, access_token: str | None = None
     ) -> torch.nn.Module:
         """Instantiate the HF model from a customized config, applying the configured label count."""
-        cust_config.num_labels = self.it_cfg.num_labels  # type: ignore[attr-defined]  # mixin provides it_cfg
+        cust_config.num_labels = self.it_cfg.num_labels  # mixin provides it_cfg
         assert self.hf_cfg is not None, "hf_cfg should be set when calling hf_configured_model_init"
         head_configured = self.hf_cfg.model_head or self.hf_cfg.dynamic_module_cfg
         # TODO: parameterize the default model head when one not provided in pretrained config
-        if not self.it_cfg.defer_model_init:  # type: ignore[attr-defined]  # mixin provides it_cfg
+        if not self.it_cfg.defer_model_init:  # mixin provides it_cfg
             if not head_configured:
-                self.it_cfg.model_class = _import_class(self.it_cfg.hf_from_pretrained_cfg.default_head)  # type: ignore[attr-defined]  # mixin provides it_cfg
-            model = self.it_cfg.model_class.from_pretrained(  # type: ignore[attr-defined]  # mixin provides it_cfg
+                self.it_cfg.model_class = _import_class(
+                    self.it_cfg.hf_from_pretrained_cfg.default_head
+                )  # mixin provides it_cfg
+            model = self.it_cfg.model_class.from_pretrained(  # mixin provides it_cfg
                 **self.hf_cfg.pretrained_kwargs, config=cust_config, token=access_token
             )
         else:  # defer model materialization (e.g., to `configure_model` hook)
             with torch.device("meta"):
-                model = self.it_cfg.model_class(config=cust_config)  # type: ignore[attr-defined]  # mixin provides it_cfg
+                model = self.it_cfg.model_class(config=cust_config)  # mixin provides it_cfg
         return model
 
     def _hf_cust_token_cfg(self) -> None:
-        if self.it_cfg.tokenizer_id_overrides:  # type: ignore[attr-defined]  # mixin provides it_cfg
-            for k, v in self.it_cfg.tokenizer_id_overrides.items():  # type: ignore[attr-defined]  # mixin provides it_cfg
-                setattr(self.model.config, k, v)  # type: ignore[attr-defined]  # mixin provides model
+        if self.it_cfg.tokenizer_id_overrides:  # mixin provides it_cfg
+            for k, v in self.it_cfg.tokenizer_id_overrides.items():  # mixin provides it_cfg
+                setattr(self.model.config, k, v)  # mixin provides model
 
     def _hf_maybe_resize_token_embeddings(self) -> None:
-        if not self.it_cfg.tokenizer_id_overrides:  # type: ignore[attr-defined]  # mixin provides it_cfg
+        if not self.it_cfg.tokenizer_id_overrides:  # mixin provides it_cfg
             return
         vocab_size = getattr(self.model.base_model, "vocab_size", None) or self.model.config.vocab_size  # type: ignore[attr-defined]  # mixin provides model
-        max_override_id = max(self.it_cfg.tokenizer_id_overrides.values())  # type: ignore[attr-defined]  # mixin provides it_cfg
+        max_override_id = max(self.it_cfg.tokenizer_id_overrides.values())  # mixin provides it_cfg
         if max_override_id >= vocab_size:
             new_num_tokens = max_override_id + 1
             self.model.base_model.resize_token_embeddings(new_num_tokens)  # type: ignore[attr-defined]  # mixin provides model
@@ -519,9 +521,9 @@ class HFFromPretrainedMixin:
         # NOTE: transformers v5 no longer supports setting generation parameters on model.config;
         #       generation parameters must ONLY be set on model.generation_config
         if self.generation_cfg and isinstance(self.generation_cfg, HFGenerationConfig):  # type: ignore[attr-defined]  # mixin provides generation_cfg
-            if getattr(self.model, "generation_config", None):  # type: ignore[attr-defined]  # mixin provides model
+            if getattr(self.model, "generation_config", None):  # mixin provides model
                 for k, v in self.generation_cfg.model_config.items():  # type: ignore[attr-defined]  # mixin provides generation_cfg
-                    setattr(self.model.generation_config, k, v)  # type: ignore[attr-defined]  # mixin provides model
+                    setattr(self.model.generation_config, k, v)  # mixin provides model
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _hf_post_init_cfg"
         self.model.config.use_cache = self.hf_cfg.use_model_cache  # type: ignore[attr-defined]  # mixin provides model
         self._configure_gradient_checkpointing()
@@ -540,8 +542,8 @@ class HFFromPretrainedMixin:
             self.model.gradient_checkpointing_enable()  # type: ignore[attr-defined]  # mixin provides model
         from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 
-        self.model = prepare_model_for_kbit_training(self.model)  # type: ignore[attr-defined]  # mixin provides model
-        self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))  # type: ignore[attr-defined]  # mixin provides model
+        self.model = prepare_model_for_kbit_training(self.model)  # mixin provides model
+        self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))  # mixin provides model
 
 
 class BaseITMixins(

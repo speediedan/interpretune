@@ -31,7 +31,7 @@ def profiling(module: ITModule) -> Iterator[torch.profiler.profile | None]:
     if profiler_cfg.which != "pytorch":
         yield None
         return
-    default_trace_dir = Path(module.core_log_dir) / "pytorch_profiler"  # type: ignore[attr-defined]  # mixin attr
+    default_trace_dir = Path(module.core_log_dir) / "pytorch_profiler"  # mixin attr
     with torch.profiler.profile(**profiler_cfg.torch_profiler_kwargs(default_trace_dir)) as prof:
         yield prof
 

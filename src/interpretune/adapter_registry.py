@@ -60,7 +60,7 @@ class LazyCompositionRegistry:
     def __getattr__(self, name: str) -> Any:
         # Called only when attribute not found on the wrapper itself.
         self._ensure_initialized()
-        return getattr(self._registry, name)  # type: ignore[arg-type]
+        return getattr(self._registry, name)
 
     def __repr__(self) -> str:  # pragma: no cover - convenience
         # we use self._registry here to avoid triggering initialization with repr

@@ -30,7 +30,7 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 import certifi
-import yaml  # type: ignore[import-untyped]
+import yaml
 from sae_dashboard.neuronpedia.neuronpedia_runner_config import (
     DEFAULT_PARQUET_ROW_GROUP_SIZE as SD_DEFAULT_PARQUET_ROW_GROUP_SIZE,
 )
@@ -1240,7 +1240,7 @@ def _ensure_shared_prompt_tokens_file(
     if config.prompts_pretokenized_dataset_path is None:
         return None
 
-    from datasets import Dataset, load_from_disk  # type: ignore[import-untyped]
+    from datasets import Dataset, load_from_disk
     import torch
 
     dataset = load_from_disk(str(config.prompts_pretokenized_dataset_path))

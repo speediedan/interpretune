@@ -105,7 +105,7 @@ def get_analysis_cache_dir(module, explicit_cache_dir: str | Path | None = None)
     # If both toggles are enabled, choose permanent cache beneath IT_ANALYSIS_CACHE
     if is_analysisstore_caching_enabled() and (_hf_is_caching_enabled is None or _hf_is_caching_enabled()):
         try:
-            dataset = module.datamodule.dataset["validation"]  # type: ignore[attr-defined]
+            dataset = module.datamodule.dataset["validation"]
             cfg_name = dataset.config_name
             fingerprint = dataset._fingerprint
         except Exception:

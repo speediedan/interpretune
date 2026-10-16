@@ -51,7 +51,7 @@ class RegisteredCfg(NamedTuple):
     datamodule_cfg: ITDataModuleConfig
     module_cfg: ITConfig
     datamodule_cls: Type[DataModuleInitable] = DEFAULT_DATAMODULE  # type: ignore[assignment]
-    module_cls: Type[ModuleSteppable] = DEFAULT_MODULE  # type: ignore[assignment]
+    module_cls: Type[ModuleSteppable] = DEFAULT_MODULE
 
 
 class RegisteredDataModuleCfg(NamedTuple):
@@ -80,7 +80,7 @@ class RegKeyQueryable(Protocol):
     adapter_ctx: Tuple
 
 
-class ModuleRegistry(dict):  # type: ignore[type-arg]
+class ModuleRegistry(dict):
     """Maps ``(model_src, task, adapter_ctx)`` to the configuration registered for it."""
 
     def register(
@@ -113,7 +113,7 @@ class ModuleRegistry(dict):  # type: ignore[type-arg]
             a_combo = (a_combo,) if not isinstance(a_combo, tuple) else a_combo
             composition_key = (model_src_key, model_cfg_key, self.canonicalize_composition(a_combo))
             supported_composition[composition_key] = registered_cfg  # type: ignore[assignment]
-            self[composition_key] = supported_composition  # type: ignore[assignment]
+            self[composition_key] = supported_composition
 
     def canonicalize_composition(self, adapter_ctx: Sequence[Adapter]) -> Tuple:
         """Sort an adapter context into canonical order, so a combination has ONE key however it was written."""
