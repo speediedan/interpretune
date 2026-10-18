@@ -130,6 +130,15 @@ repos:
         # needs no file list to do its job.
         always_run: true
         pass_filenames: false
+      - id: check-agents-compact
+        name: AGENTS.md is the generated compact form of AGENTS.full.md
+        entry: python scripts/gen_agents_compact.py --check
+        language: system
+        # `.agents/skills` is excluded repo-wide above, but `.agents/reference` is not, so a change to the
+        # full text or to a stand-in reaches this hook. It reads its three files itself, so it also runs
+        # `always_run`: a commit touching only AGENTS.md (a hand edit of the generated file) must fail.
+        always_run: true
+        pass_filenames: false
 
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: 'v0.12.10'
