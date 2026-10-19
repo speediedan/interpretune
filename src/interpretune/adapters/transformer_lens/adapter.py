@@ -117,7 +117,7 @@ class TLensAttributeMixin:
         try:
             if self.tl_cfg is None:
                 return None
-            device = get_best_available_device(self.tl_cfg)
+            device = get_best_available_device(self.tl_cfg)  # pyright: ignore[reportArgumentType]  # None checked above; narrowed at runtime
         except (AttributeError, AssertionError) as ae:
             rank_zero_warn(f"Problem determining appropriate device from TransformerLens config. Received: {ae}")
             device = None
@@ -285,9 +285,7 @@ class BaseITLensModule(BaseITModule):
         tl_cfg = self.it_cfg.tl_cfg
         cfg = tl_cfg.cfg
         self._resolve_vocab_sentinels(cfg, self.it_cfg.tokenizer)
-        # TransformerLens 4.0 attaches `boot_native` when `transformer_lens` imports its native source module, so it
-        # exists at runtime but not on the class pyright reads.
-        bridge = TransformerBridge.boot_native(  # pyright: ignore[reportAttributeAccessIssue]  # attached at runtime by the native source module
+        bridge = TransformerBridge.boot_native(
             cfg,
             tokenizer=self.it_cfg.tokenizer,
             device=getattr(cfg, "device", None) if getattr(tl_cfg, "move_to_device", True) else None,
