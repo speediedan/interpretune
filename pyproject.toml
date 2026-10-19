@@ -301,6 +301,12 @@ override-dependencies = [
     # keep transitive nnsight (pulled in by sae-lens) at the validated release
     # (0.7.0 validated: nnsight slice + parity 34/0 + low-RAM mock, both versions)
     "nnsight==0.7.0",
+    # lift the pinned sae-dashboard's torch ceiling (`>=2.7.1,<2.14`) back to interpretune's own floor. The
+    # ceiling is a release-time cap, not a measured incompatibility: without this an install that is not
+    # handed requirements/ci/overrides.txt (hosted CI, the gated image, the README flow) silently replaced
+    # an installed torch 2.15 with 2.13 to satisfy it. An override replaces every torch requirement, so
+    # this keeps interpretune's floor and adds no ceiling and no pin of its own.
+    "torch>=2.7.1",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.
