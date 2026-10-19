@@ -73,12 +73,13 @@ the honest outcome and the signal to extend a pattern with the measured text.
 (`project_embeddings`, PCA) and latent ablation (`ablate_sae_latent`), then repeats both on
 one CUDA device and split across two CUDA devices, asserting equality with the reference,
 declared-device placement, and parameter/optimizer movement for a stepped decoder. CPU
-tests: 20 passed with the 4 CUDA tests skipped (GPUs hidden) on 2026-10-19. The CUDA tests
-await the maintainer's authorization for this validation under the GPU lease (recorded as a
-first-person ask by the preparing session); they have been *collected* (they are 4 of the
-107 cuda-phase node ids above), not executed. The same file is the ROCm build-day target
-unchanged: it names no NVIDIA-only surface. This is latent acceptance, distinct from J-space
-fine-tuning.
+tests: 20 passed with the 4 CUDA tests skipped (GPUs hidden) on 2026-10-19. NVIDIA
+validation, run the same day under the host GPU lease after the maintainer's first-person
+grant: the cuda phase selected 4 tests from this file and **4 passed** (0.73 s of test time;
+Python 3.13.11, torch 2.13.0+cu130, RTX 4090 + RTX 2070 SUPER, lease verified free before
+acquisition). Collected beside passed: file collection 8, cuda-phase selected 4, passed 4.
+That is an NVIDIA result only. The same file is the ROCm build-day target unchanged: it
+names no NVIDIA-only surface. This is latent acceptance, distinct from J-space fine-tuning.
 
 ## Findings recorded while preparing
 
