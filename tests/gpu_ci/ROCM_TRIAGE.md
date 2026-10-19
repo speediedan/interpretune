@@ -101,7 +101,10 @@ Python 3.13.11, torch 2.13.0+cu130, transformers 5.16.1, sae_lens 6.50.0, RTX 40
 `cuda:0` + RTX 2070 SUPER as `cuda:1`). Measured split against single-GPU maximum absolute
 differences, recorded as junit properties by the tests themselves: SAE latents `3.1e-4`,
 ablated logits `9.2e-5`, SAE gradients `1.1e-6`; the ablation's own effect on the logits is
-`1.13`. That is an NVIDIA result only; ROCm runs this file at hardware time.
+`1.13`. Repeated the same day on the torch 2.15.0 release candidate (test channel, `+cu130`;
+transformers 5.20.2, sae_lens 6.51.1), again under the lease: collected 8, selected 6,
+**6 passed**, with the same measured differences to the last bit. That is an NVIDIA result
+only; ROCm runs this file at hardware time.
 
 ## Findings recorded while preparing
 
