@@ -12,21 +12,28 @@
 #
 # ROCm twin of dockers/base-cuda (#703). Same OS, Python, venv path and permissions contract, so dockers/it-az-base
 # builds on it unchanged with CUST_BASE=rocm<version>-. The torch wheel is PyTorch's own ROCm build of the exact
-# PYTORCH_VERSION, from download.pytorch.org/whl/rocm<major.minor>, never AMD's rocm/pytorch image (whose torch and
-# Python versions are its own) and never a default-index torch, which would silently be a CUDA build.
+# PYTORCH_VERSION, from download.pytorch.org/whl/[<channel>/]rocm<version>, never AMD's rocm/pytorch image (whose
+# torch and Python versions are its own) and never a default-index torch, which would silently be a CUDA build.
 #
 # DRAFT: no image built from this file has run on AMD hardware. Choosing the ROCm version that build B's cards need,
 # recording the image digest and proving gfx code objects plus two-device visibility are hardware-time steps.
 
-# torch 2.13.0 publishes rocm7.1 and rocm7.2 wheels for cp313 (read from download.pytorch.org, 2026-10-19).
-ARG ROCM_VERSION=7.2
+# The 2.15.0 release candidate publishes rocm7.14 and rocm10.0 wheels for cp313 on the test channel (read from
+# download.pytorch.org/whl/test, 2026-10-19). ROCM_VERSION names the wheel index; ROCM_BASE_TAG names the matching
+# rocm/dev image, which for these ROCm lines is published only as a "-full" tag (7.14.0-full, 10.0.0-full). Which line
+# build B needs depends on its cards, so the choice is a hardware-time one; 7.14 continues the 7.x line.
+ARG ROCM_VERSION=7.14
+ARG ROCM_BASE_TAG=7.14.0-full
 ARG OS_VER=ubuntu-22.04
 
-FROM rocm/dev-${OS_VER}:${ROCM_VERSION}
+FROM rocm/dev-${OS_VER}:${ROCM_BASE_TAG}
 
 ARG ROCM_VERSION
 ARG PYTHON_VERSION=3.13
-ARG PYTORCH_VERSION=2.13.0
+ARG PYTORCH_VERSION=2.15.0
+# "" for a released torch; "test" for a release candidate, whose wheels are published only on that index (the same
+# argument dockers/base-cuda takes).
+ARG TORCH_CHANNEL=""
 ARG MKL_THREADING_LAYER=GNU
 # gfx targets for source-built extensions only (the torch wheel ships its own code objects). Empty means the
 # toolchain default; set it to build B's targets once the cards are known.
@@ -42,8 +49,11 @@ ENV \
     MKL_THREADING_LAYER=${MKL_THREADING_LAYER} \
     MAKEFLAGS="-j2" \
     UV_NO_CACHE=1
+# gnupg explicitly: add-apt-repository needs gpg-agent to import the PPA key, and the "-full" rocm/dev images ship gpg
+# without it (7.2 included it; 7.14.0-full does not, measured 2026-10-19).
 RUN apt-get update -qq --fix-missing && \
     apt-get install -y --no-install-recommends \
+        gnupg \
         build-essential \
         pkg-config \
         cmake \
@@ -79,7 +89,7 @@ RUN \
     uv venv /tmp/venvs/it_dev --python python${PYTHON_VERSION} && \
     . /tmp/venvs/it_dev/bin/activate && \
     uv pip install "torch==${PYTORCH_VERSION}+rocm${ROCM_VERSION}" \
-        --index-url "https://download.pytorch.org/whl/rocm${ROCM_VERSION}" && \
+        --index-url "https://download.pytorch.org/whl/${TORCH_CHANNEL:+${TORCH_CHANNEL}/}rocm${ROCM_VERSION}" && \
     rm -rf requirements/
 
 ENV VIRTUAL_ENV=/tmp/venvs/it_dev
