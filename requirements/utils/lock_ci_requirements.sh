@@ -237,8 +237,24 @@ generate_lockfile() {
         # Determine channel from global variable
         local channel="${TORCH_PRE_CHANNEL:-nightly}"  # Default to nightly if not set
 
-        local torch_override_file=$(mktemp)
-        echo "torch==${TORCH_PRE_VERSION}" > "${torch_override_file}"
+        # A fixed repo-relative path, not mktemp: uv records the --override argument verbatim in the lockfile
+        # header, so a random temp path would make every regeneration differ and the drift check report drift
+        # on every run (the same failure #229 fixed for --output-file). We are inside REPO_ROOT here.
+        local torch_override_file="requirements/ci/.torch_pre_override.txt"
+        # A prerelease can publish wheels for fewer Pythons than its metadata admits: torch 2.15.0 declares
+        # Requires-Python >=3.10 but ships no cp310 wheel, so an unconditional override makes the universal
+        # lock's 3.10 split unsatisfiable. Scope the override to the oldest CPython the index actually
+        # serves for this version; older Pythons resolve torch as they would without the prerelease.
+        local oldest_cp
+        oldest_cp=$(curl -fsS "https://download.pytorch.org/whl/${channel}/cpu/torch/" \
+            | grep -oE "torch-${TORCH_PRE_VERSION//./\\.}(\+cpu)?-cp3[0-9]+-" | grep -oE 'cp3[0-9]+' \
+            | sed 's/^cp3//' | sort -n | head -1)
+        if [[ -z "${oldest_cp}" ]]; then
+            echo "⚠ ERROR: no torch ${TORCH_PRE_VERSION} wheels found on the ${channel}/cpu index" >&2
+            exit 1
+        fi
+        echo "torch==${TORCH_PRE_VERSION} ; python_full_version >= '3.${oldest_cp}'" > "${torch_override_file}"
+        echo "  torch ${TORCH_PRE_VERSION} wheels start at Python 3.${oldest_cp}; override scoped accordingly"
 
         compile_cmd+=(
             --prerelease=if-necessary-or-explicit

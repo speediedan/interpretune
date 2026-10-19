@@ -16,3 +16,10 @@
 # 2.10.0.dev20260121
 # cu128
 # nightly
+#
+# Active: the torch 2.15 release candidate. Test-channel RC wheels carry the final version string
+# (2.15.0, no rc suffix), so the installed build is identified by torch.version.git_version, not by
+# its version. Clear these lines once 2.15.0 is on PyPI.
+2.15.0
+cu130
+test

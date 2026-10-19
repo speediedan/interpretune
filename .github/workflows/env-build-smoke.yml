@@ -79,7 +79,10 @@ jobs:
             echo "ERROR: could not derive torch pin from requirements/ci/torch-override.txt" >&2
             exit 1
           fi
-          printf '%s\ncpu\nstable\n' "${TORCH_PIN}" > requirements/ci/torch-pre.txt
+          # Keep the configured prerelease channel when torch-pre.txt is active: a release-candidate pin
+          # is not on the stable index, so rewriting it to "stable" would ask for a wheel that does not exist.
+          TORCH_CHANNEL="$(grep -vE '^(#|$)' requirements/ci/torch-pre.txt 2>/dev/null | sed -n 3p)"
+          printf '%s\ncpu\n%s\n' "${TORCH_PIN}" "${TORCH_CHANNEL:-stable}" > requirements/ci/torch-pre.txt
           echo "Configured CPU torch pin:"
           cat requirements/ci/torch-pre.txt
 

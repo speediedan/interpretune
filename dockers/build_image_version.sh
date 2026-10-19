@@ -10,7 +10,8 @@ build_version(){
 	echo "Building base image name: ${base_name}" >> $docker_build_log
 	docker image build -t ${base_name} -f dockers/base-cuda/Dockerfile --build-arg CUDA_VERSION=${iv_ref['cuda']} \
 	  --build-arg PYTHON_VERSION=${iv_ref['python']} --build-arg PYTORCH_VERSION=${iv_ref['pytorch']} \
-	  --build-arg CUST_BUILD=${iv_ref['cust_build']} --no-cache . >> $docker_build_log
+	  --build-arg CUST_BUILD=${iv_ref['cust_build']} --build-arg TORCH_CHANNEL=${iv_ref['channel']:-} \
+	  --no-cache . >> $docker_build_log
 	docker tag ${base_name} ${registry_name}:${base_name} >> $docker_build_log
 	# build associated azpl-init image
 	echo "Building azpl-init image name: ${azpl_name}" >> $docker_build_log
