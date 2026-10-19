@@ -40,7 +40,9 @@ runs:
               1) TORCH_PRE_CUDA="$line" ;;
               2) TORCH_PRE_CHANNEL="$line" ;;
             esac
-            ((i++))
+            # not ((i++)): its status is the pre-increment value, so the first pass (i=0) returns 1 and the
+            # runner's `bash -e` ends the step. That stayed latent while torch-pre.txt had no active lines.
+            i=$((i + 1))
           done < <(grep -v '^#' "${TORCH_PRE_FILE}" | grep -v '^$')
           if [[ -n "${TORCH_PRE_VERSION}" && -n "${TORCH_PRE_CHANNEL}" ]]; then
             echo "use_prerelease=true" >> $GITHUB_OUTPUT
