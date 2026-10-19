@@ -1001,6 +1001,10 @@ def _verify_wrapper_feature_interventions(
 
 # reached 18.4 GiB in its own process before failing in a drifted dev environment: a lower bound
 @RUNIF(bf16_cuda=True, min_gpu_mem_gb=21.5, standalone=True)
+# Two code paths compared at 1e-6 must not also be compared across nondeterministic kernels: from torch 2.15 the
+# default kernels make the post-intervention logits vary by about 1e-5 from run to run, while under deterministic
+# algorithms the native and analysis-op paths agree exactly, as they did by default on torch 2.13.
+@pytest.mark.usefixtures("make_deterministic")
 def test_analysis_backend_parity_semantic_intervention_nnsight(
     cleanup_cuda,
     ct_nnsight_session_factory,
