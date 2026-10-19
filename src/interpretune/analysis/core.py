@@ -46,7 +46,7 @@ class LatentAnalysisDict(dict):
 
     def __setitem__(self, key: str, value: torch.Tensor | Sequence[torch.Tensor] | None) -> None:
         if value is None:
-            super().__setitem__(key, None)  # type: ignore[arg-type]  # LatentAnalysisDict allows None values for empty SAE data
+            super().__setitem__(key, None)  # LatentAnalysisDict allows None values for empty SAE data
             return
         # Handle namedtuple-like torch.return_types.<op> objects
         if not isinstance(value, (torch.Tensor, list)):
@@ -608,9 +608,9 @@ class AnalysisStore:
         re-deriving it from `hasattr` chains at each site.
         """
         try:
-            if len(data) == 0:  # type: ignore[arg-type]  # guarded by the except below
+            if len(data) == 0:  # guarded by the except below
                 return None
-            return data[0]  # type: ignore[index]  # guarded by the except below
+            return data[0]  # guarded by the except below
         except TypeError:  # unsized/non-indexable, i.e. an IterableColumn
             return next(iter(data), None)
 
@@ -663,9 +663,9 @@ class AnalysisStore:
                     return torch.stack([t for t in data])  # type: ignore[return-value]  # stacked tensor is valid return for tensor sequences
                 first = self._first_element(data)
                 if first is not None and getattr(first, "dim", lambda: 0)() > 1:
-                    return [t for t in data]  # type: ignore[return-value]  # list of tensors is valid return
+                    return [t for t in data]  # list of tensors is valid return
                 # Split 1D tensors into scalar tensors
-                return [torch.tensor(x) for x in data]  # type: ignore[return-value]  # list of tensors is valid return
+                return [torch.tensor(x) for x in data]  # list of tensors is valid return
             return data  # type: ignore[return-value]  # raw data return is valid
         elif isinstance(key, list) and all(isinstance(k, str) for k in key):
             # Multiple column access
@@ -723,7 +723,7 @@ class AnalysisStore:
                 self.dataset is not None
                 and hasattr(self.dataset, "column_names")
                 and name in getattr(self.dataset, "column_names", [])
-            ):  # type: ignore[attr-defined]  # datasets have column_names
+            ):  # datasets have column_names
                 return self[name]
             # Return None if column isn't available yet
             return None
@@ -775,7 +775,7 @@ class AnalysisStore:
                 for batch in values:
                     latent_tensors = [t for t in batch[sae].values()]
                     batch_tensors.append(torch.stack(latent_tensors) if latent_tensors else None)
-                result[sae] = batch_tensors  # type: ignore[assignment]  # LatentAnalysisDict accepts list of tensor batches
+                result[sae] = batch_tensors  # LatentAnalysisDict accepts list of tensor batches
             else:
                 # Handle both non-nested and non-stacked nested cases
                 result[sae] = [  # type: ignore[assignment]  # LatentAnalysisDict handles mixed tensor/None lists
@@ -857,7 +857,7 @@ class AnalysisStore:
                 operation=lambda x, mask: x[mask], mask=correct_mask
             )
         else:
-            per_example_latent_effects = attribution_values  # type: ignore[assignment]  # attribution_values is LatentAnalysisDict
+            per_example_latent_effects = attribution_values  # attribution_values is LatentAnalysisDict
 
         total_effect = per_example_latent_effects.apply_op_by_latent_model(operation=torch.sum, dim=0)
         # TODO: make mean effect normalized by num samples active?

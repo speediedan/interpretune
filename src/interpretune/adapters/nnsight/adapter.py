@@ -306,14 +306,14 @@ class NNsightAdapter(NNsightAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.nnsight,
             component_key="datamodule",
-            adapter_combination=(Adapter.core, Adapter.nnsight),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.nnsight),
             composition_classes=(ITDataModule,),
             description="NNsight adapter that can be composed with core for basic NNsight model support.",
         )
         adapter_ctx_registry.register(
             Adapter.nnsight,
             component_key="module",
-            adapter_combination=(Adapter.core, Adapter.nnsight),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.core, Adapter.nnsight),
             composition_classes=(NNsightModule,),
             description="NNsight adapter that can be composed with core for basic NNsight model support.",
         )
@@ -324,14 +324,14 @@ class NNsightAdapter(NNsightAttributeMixin):
         adapter_ctx_registry.register(
             Adapter.nnsight,
             component_key="datamodule",
-            adapter_combination=(Adapter.lightning, Adapter.nnsight),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.nnsight),
             composition_classes=(ITDataModule, LightningDataModule),
             description="NNsight adapter that can be composed with Lightning for NNsight model support.",
         )
         adapter_ctx_registry.register(
             Adapter.nnsight,
             component_key="module",
-            adapter_combination=(Adapter.lightning, Adapter.nnsight),  # type: ignore[arg-type]
+            adapter_combination=(Adapter.lightning, Adapter.nnsight),
             composition_classes=(
                 NNsightAttributeMixin,
                 BaseNNsightModule,

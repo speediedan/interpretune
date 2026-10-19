@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Iterator, Literal, Mapping, cast
 
 import torch
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 TESTS_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = TESTS_DIR.parent

@@ -84,7 +84,7 @@ def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: AnalysisCfg | None
     """
     if analysis_cfg is not None:
         # Set module's analysis_cfg
-        module.analysis_cfg = analysis_cfg  # type: ignore[assignment]  # protocol compatibility
+        module.analysis_cfg = analysis_cfg  # protocol compatibility
 
         # Extract and pop any AnalysisCfg.apply-specific kwargs
         init_analysis_cfg_params = signature(init_analysis_cfgs).parameters
@@ -93,8 +93,8 @@ def maybe_init_analysis_cfg(module: "ITModule", analysis_cfg: AnalysisCfg | None
         }
 
         # Only initialize if not already applied to this module
-        if not module.analysis_cfg.applied_to(module):  # type: ignore[attr-defined]  # protocol provides applied_to
-            init_analysis_cfgs(module, module.analysis_cfg, **init_analysis_cfg_kwargs)  # type: ignore[arg-type]  # protocol compatibility
+        if not module.analysis_cfg.applied_to(module):  # protocol provides applied_to
+            init_analysis_cfgs(module, module.analysis_cfg, **init_analysis_cfg_kwargs)  # protocol compatibility
 
     return kwargs
 
@@ -113,7 +113,7 @@ def dataset_features_and_format(module: "ITModule", kwargs: dict) -> tuple[dict,
     """
     # Generate appropriate features based on module configuration and current op context
     # Handle different schema sources based on configuration
-    explicit_schema = getattr(module.analysis_cfg, "output_schema", None)  # type: ignore[attr-defined]  # protocol provides output_schema
+    explicit_schema = getattr(module.analysis_cfg, "output_schema", None)  # protocol provides output_schema
     if explicit_schema is not None:
         # Use explicitly provided output schema when op is None
         features = schema_to_features(module=module, schema=explicit_schema)
@@ -123,9 +123,9 @@ def dataset_features_and_format(module: "ITModule", kwargs: dict) -> tuple[dict,
 
         if isinstance(schema_source, AnalysisOpLike):
             schema_source = schema_source.output_schema
-    elif hasattr(module.analysis_cfg, "op") and module.analysis_cfg.op is not None:  # type: ignore[attr-defined]  # protocol provides op
-        features = schema_to_features(module=module, op=module.analysis_cfg.op)  # type: ignore[attr-defined,arg-type]  # protocol compatibility
-        schema_source = module.analysis_cfg.op.output_schema  # type: ignore[attr-defined]  # protocol provides op
+    elif hasattr(module.analysis_cfg, "op") and module.analysis_cfg.op is not None:  # protocol provides op
+        features = schema_to_features(module=module, op=module.analysis_cfg.op)  # protocol compatibility
+        schema_source = module.analysis_cfg.op.output_schema  # protocol provides op
     else:
         # For manual analysis steps without any schema, use a default empty features dict
         features = {}
@@ -214,13 +214,15 @@ def generate_analysis_dataset(
             analysis_store_generator,
             features=features,
             cache_dir=str(
-                generator_cache_dir if generator_cache_dir is not None else module.analysis_cfg.output_store.cache_dir  # type: ignore[attr-defined]  # protocol provides output_store
+                generator_cache_dir
+                if generator_cache_dir is not None
+                else module.analysis_cfg.output_store.cache_dir  # protocol provides output_store
             ),
             gen_kwargs=gen_kwargs,
             split=split,  # type: ignore[arg-type]  # str acceptable for NamedSplit at runtime
             fingerprint=resolved_fingerprint,
         ).with_format("interpretune", **it_format_kwargs)
-        return dataset  # type: ignore[return-value]  # datasets compatibility
+        return dataset  # datasets compatibility
     except Exception as e:
         # improve visibility of errors since they can otherwise be obscured by the dataset generator
         context_data = (
@@ -552,16 +554,16 @@ def core_analysis_loop(
         # Generate the dataset
         dataset = generate_analysis_dataset(module, features, it_format_kwargs, gen_kwargs, **kwargs)
 
-        save_dir = Path(module.analysis_cfg.output_store.save_dir)  # type: ignore[attr-defined]  # protocol provides output_store
+        save_dir = Path(module.analysis_cfg.output_store.save_dir)  # protocol provides output_store
         dataset.save_to_disk(save_dir)
         # Assign dataset to analysis store
-        module.analysis_cfg.output_store.dataset = dataset  # type: ignore[attr-defined]  # protocol provides output_store
+        module.analysis_cfg.output_store.dataset = dataset  # protocol provides output_store
 
         # Run analysis end hooks
         _call_itmodule_hook(module, hook_name="on_analysis_end", hook_msg="Running analysis end hooks")
     finally:
         torch.set_grad_enabled(grad_enabled_before)
-    return module.analysis_cfg.output_store  # type: ignore[attr-defined]  # protocol provides output_store
+    return module.analysis_cfg.output_store  # protocol provides output_store
 
 
 class AnalysisRunner(SessionRunner):

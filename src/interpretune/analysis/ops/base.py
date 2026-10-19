@@ -46,7 +46,7 @@ def get_batch_input(batch: BatchEncoding) -> torch.Tensor:
     Supports both TransformerLens convention (``batch["input"]``) and HuggingFace/NNsight convention
     (``batch["input_ids"]``).
     """
-    return batch[resolve_batch_input_key(batch, "input")]  # type: ignore[return-value]  # BatchEncoding __getitem__ is untyped
+    return batch[resolve_batch_input_key(batch, "input")]  # BatchEncoding __getitem__ is untyped
 
 
 def capability_value(capability: Any) -> str:
@@ -243,7 +243,7 @@ class AnalysisBatch(AttrDict):
             raise ValueError(message or f"AnalysisBatch is missing required value '{key}'")
         return value
 
-    def get(self, key, default=None, *, scopes: tuple[str, ...] | None = None, resolve: bool = True):  # type: ignore[override]
+    def get(self, key, default=None, *, scopes: tuple[str, ...] | None = None, resolve: bool = True):
         """Return a direct batch value or, when bound, resolve via scoped inputs."""
         direct_value = super().get(key, _ANALYSIS_MISSING)
         if direct_value is not _ANALYSIS_MISSING:
@@ -1062,8 +1062,8 @@ class CompositeAnalysisOp(AnalysisOp):
         super().__init__(
             name=self.name,
             description=description,
-            output_schema=output_schema,  # type: ignore[arg-type]
-            input_schema=input_schema,  # type: ignore[arg-type]
+            output_schema=output_schema,
+            input_schema=input_schema,
             aliases=aliases,
             *args,
             **kwargs,
