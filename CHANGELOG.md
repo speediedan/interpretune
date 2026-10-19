@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 
 - In-tree latent projection/ablation device-placement acceptance tests: a single-device CPU reference compared against single- and split-device CUDA placements, asserting placement and parameter/optimizer movement (`tests/gpu_ci/test_latent_device_placement.py`) ([#795](https://github.com/speediedan/interpretune/issues/795))
 
+- The latent device-placement tests split a real model: gpt2 under an explicit dict `device_map` across two devices with `gpt2-small-res-jb` SAEs spliced in, compared against the same run on one GPU, with a split positive control, exact single-device comparisons, device assertions on the outputs of cross-device operations, and an Adam step whose state is checked against its parameters' devices; phase collection manifests now record any collection narrowing (`extra_args`) and uncommitted or untracked files under the collection roots (`git_dirty`, `git_dirty_paths`) ([#795](https://github.com/speediedan/interpretune/issues/795), [#794](https://github.com/speediedan/interpretune/issues/794))
+
 #### NNsight Adapter
 - **New NNsight adapter** (`interpretune.adapters.nnsight`) enabling model interpretability via the NNsight deferred-execution tracing framework
 - `NNsightConfig` and `NNsightAttributeMixin` for NNsight-specific configuration and model setup

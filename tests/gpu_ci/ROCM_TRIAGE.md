@@ -47,7 +47,7 @@ When AMD hardware is present, in a ROCm torch environment under the host GPU lea
 export GPU_LEASE_CMD=<path to gpu_lease.sh>
 $GPU_LEASE_CMD -- env IT_RUN_CUDA_TESTS=1 python -m pytest tests src/it_examples/tests -v 2>&1 | tee rocm-cuda-phase.log
 bash ./tests/special_tests.sh --mark_type=standalone --allow-failures
-IT_RUN_CUDA_TESTS=1 python -m pytest tests/gpu_ci/test_latent_device_placement.py -v   # issue 795
+$GPU_LEASE_CMD -- env IT_RUN_CUDA_TESTS=1 python -m pytest tests/gpu_ci/test_latent_device_placement.py -v -rA --junitxml=g6.xml   # issue 795
 python tests/gpu_ci/phase_manifest.py --classify-file rocm-cuda-phase.log
 ```
 
@@ -69,17 +69,39 @@ the honest outcome and the signal to extend a pattern with the measured text.
 
 ## Issue 795 placement tests
 
-`test_latent_device_placement.py` holds a single-device CPU reference for latent projection
-(`project_embeddings`, PCA) and latent ablation (`ablate_sae_latent`), then repeats both on
-one CUDA device and split across two CUDA devices, asserting equality with the reference,
-declared-device placement, and parameter/optimizer movement for a stepped decoder. CPU
-tests: 20 passed with the 4 CUDA tests skipped (GPUs hidden) on 2026-10-19. NVIDIA
-validation, run the same day under the host GPU lease after the maintainer's first-person
-grant: the cuda phase selected 4 tests from this file and **4 passed** (0.73 s of test time;
-Python 3.13.11, torch 2.13.0+cu130, RTX 4090 + RTX 2070 SUPER, lease verified free before
-acquisition). Collected beside passed: file collection 8, cuda-phase selected 4, passed 4.
-That is an NVIDIA result only. The same file is the ROCm build-day target unchanged: it
-names no NVIDIA-only surface. This is latent acceptance, distinct from J-space fine-tuning.
+`test_latent_device_placement.py` now meets the G-6 contract with a real model split across
+two devices. Its first version did not: a contract review of `a2e432e6` found that none of its
+four CUDA tests built a model or performed a cross-device operation, that its device
+assertions compared a tensor with itself, and that its optimizer check iterated an empty
+SGD state. Its NVIDIA **4 of 4** (2026-10-19, under the lease) is therefore recorded as
+*placement smoke*, not G-6 acceptance, and ROCm runs the revised file.
+
+The revised file:
+
+- keeps the seeded single-device CPU reference for `ablate_sae_latent` and
+  `project_embeddings`, and compares single-device CUDA inputs with it **exactly** (both ops
+  compute identical float32 values);
+- loads gpt2 with an explicit dict `device_map` (blocks 0 to 5 and the tied
+  embedding/unembedding on `cuda:0`, blocks 6 to 11 and the final norm on `cuda:1`), asserts
+  the parameter devices are exactly `{cuda:0, cuda:1}` as a positive control, and compares
+  with the same model on `cuda:0` alone;
+- splices `gpt2-small-res-jb` SAEs into block 9 (`cuda:1`) for SAE latents, their projection
+  and an `ablate_sae_latent` hook (a latent active in every prompt, with a positive control
+  that the ablation moves the logits), and into block 1 (`cuda:0`) for an Adam step whose
+  gradient crosses back from `cuda:1`;
+- asserts devices only on outputs of cross-device operations and on module parameters after
+  a pass, and asserts Adam state is non-empty and sits with its parameters.
+
+Tolerance for split against single-GPU is `1e-3` absolute and relative, in float32 with TF32
+disabled: the second half runs on a different card and kernel set, which reorders float32
+rounding but cannot produce the order-of-magnitude differences a placement defect does.
+NVIDIA validation of the revised file, 2026-10-19, under the host GPU lease after the
+maintainer's first-person go: file collection 8, cuda-phase selected 6, **6 passed** (7.1 s;
+Python 3.13.11, torch 2.13.0+cu130, transformers 5.16.1, sae_lens 6.50.0, RTX 4090 as
+`cuda:0` + RTX 2070 SUPER as `cuda:1`). Measured split against single-GPU maximum absolute
+differences, recorded as junit properties by the tests themselves: SAE latents `3.1e-4`,
+ablated logits `9.2e-5`, SAE gradients `1.1e-6`; the ablation's own effect on the logits is
+`1.13`. That is an NVIDIA result only; ROCm runs this file at hardware time.
 
 ## Findings recorded while preparing
 

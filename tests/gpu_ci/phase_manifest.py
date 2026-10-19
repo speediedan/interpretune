@@ -102,6 +102,9 @@ def collect_phase(phase: str, extra: list[str] | None = None) -> dict:
         "phase": phase,
         "selector_env": dict(PHASES[phase]),
         "collect_dirs": list(COLLECT_DIRS),
+        # A narrowing (``-k`` and the like) changes what a phase selects; recorded so a narrowed manifest can never
+        # pass for a full one.
+        "extra_args": list(extra or []),
         "collected": len(nodeids),
         "executed": 0,
         "nodeids": nodeids,
@@ -109,11 +112,31 @@ def collect_phase(phase: str, extra: list[str] | None = None) -> dict:
     }
 
 
+def git_dirty_paths(root: Path = ROOT) -> list[str] | None:
+    """Paths under the collection roots that differ from ``HEAD``, untracked files included; ``None`` without git.
+
+    ``git_sha`` alone names ``HEAD`` even when the tree it was collected from is not ``HEAD``: an uncommitted or
+    untracked test file changes the collection while the sha stays the same.
+    """
+    proc = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all", "--", *COLLECT_DIRS],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    return sorted(line[3:] for line in proc.stdout.splitlines() if line.strip())
+
+
 def env_pins() -> dict:
     """The pins a reader needs to reproduce a collection: source, interpreter, salient packages."""
     pins: dict = {"python": sys.version.split()[0], "platform": platform.platform()}
     proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True)
     pins["git_sha"] = proc.stdout.strip() if proc.returncode == 0 else "unknown"
+    dirty = git_dirty_paths()
+    pins["git_dirty"] = None if dirty is None else bool(dirty)
+    pins["git_dirty_paths"] = dirty
     try:
         import torch
 

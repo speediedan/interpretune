@@ -8,9 +8,19 @@ and ROCm execution itself stays explicitly pending.
 
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
-from tests.gpu_ci.phase_manifest import PHASES, classify_failure, collect_phase, env_pins, parse_nodeids
+from tests.gpu_ci.phase_manifest import (
+    COLLECT_DIRS,
+    PHASES,
+    classify_failure,
+    collect_phase,
+    env_pins,
+    git_dirty_paths,
+    parse_nodeids,
+)
 
 
 def test_parse_nodeids_reads_collect_only_output():
@@ -55,6 +65,29 @@ def test_env_pins_name_the_source_and_torch():
     pins = env_pins()
     assert pins["git_sha"] and pins["git_sha"] != "unknown"
     assert "torch" in pins and "python" in pins
+    assert pins["git_dirty"] == bool(pins["git_dirty_paths"])
+
+
+def test_git_dirty_paths_sees_modified_and_untracked_collection_files(tmp_path):
+    def git(*args):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init", "-q")
+    for d in COLLECT_DIRS:
+        (tmp_path / d).mkdir(parents=True)
+        (tmp_path / d / "test_kept.py").write_text("def test_kept():\n    pass\n")
+    (tmp_path / "README.md").write_text("outside the collection roots\n")
+    git("add", ".")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init")
+    assert git_dirty_paths(tmp_path) == []
+    (tmp_path / "tests" / "test_kept.py").write_text("def test_kept():\n    assert True\n")
+    (tmp_path / "tests" / "test_new.py").write_text("def test_new():\n    pass\n")
+    (tmp_path / "README.md").write_text("changed, but no collection root\n")
+    assert git_dirty_paths(tmp_path) == ["tests/test_kept.py", "tests/test_new.py"]
+
+
+def test_git_dirty_paths_is_none_outside_git(tmp_path):
+    assert git_dirty_paths(tmp_path) is None
 
 
 def test_collect_phase_narrows_and_reports_collected_beside_phase():
@@ -62,6 +95,7 @@ def test_collect_phase_narrows_and_reports_collected_beside_phase():
     assert entry["phase"] == "cuda"
     assert entry["collected"] == len(entry["nodeids"]) == 1
     assert entry["executed"] == 0
+    assert entry["extra_args"] == ["-k", "test_the_probe_reads_back_a_known_allocation"]
     assert "test_the_probe_reads_back_a_known_allocation" in entry["nodeids"][0]
 
 
