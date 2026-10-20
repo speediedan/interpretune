@@ -18,3 +18,7 @@ transformer-lens
 # up much later as `libcudart.so.NN: cannot open shared object file` when transformers' guarded
 # `if is_torchaudio_available(): import torchaudio` finds the broken install and tries to load it.
 torchaudio
+# torchvision: the same transitive path (sae-dashboard -> decode-clt) and the same reason: imported nowhere,
+# and on the torch 2.15 release candidate no paired torchvision release exists. Resolving one would also be
+# free to move torch to whatever release that torchvision pairs with.
+torchvision

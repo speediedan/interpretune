@@ -121,7 +121,7 @@ jobs:
     strategy:
       matrix:
         PyTorch_latest:
-          image: speediedan/interpretune:py3.13-pt2.13.0-azpl-init
+          image: speediedan/interpretune:py3.13-pt2.15.0-azpl-init
           scope: ""
     # A gate can wait up to 40 minutes for each host lease before the GPU phases, on top of a run of about 35
     # minutes (install plus the three GPU phases). A scheduled run waits up to two hours for the leases, and the
@@ -305,6 +305,19 @@ jobs:
             fi
           done
           echo "✓ All critical packages verified"
+
+          # The image carries torch and the steps above resolve against it. A resolve that moved torch
+          # (or an image built from a different pin) would test a torch nobody asked for while the run
+          # reads as a run of the pin, so refuse by name. overrides.txt is the source of truth for the pin.
+          python - <<'PY'
+          import re, sys
+          import torch
+          pin = re.search(r"^torch==(\S+)", open("requirements/ci/overrides.txt").read(), re.M).group(1)
+          installed = torch.__version__.split("+")[0]
+          print(f"torch {torch.__version__} (git {torch.version.git_version}); pinned {pin}")
+          if installed != pin:
+              sys.exit(f"overrides.txt pins torch {pin}, but {torch.__version__} is installed")
+          PY
         displayName: 'Install dependencies'
 
       - bash: |

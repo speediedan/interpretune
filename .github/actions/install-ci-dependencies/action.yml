@@ -40,7 +40,9 @@ runs:
               1) TORCH_PRE_CUDA="$line" ;;
               2) TORCH_PRE_CHANNEL="$line" ;;
             esac
-            ((i++))
+            # not ((i++)): its status is the pre-increment value, so the first pass (i=0) returns 1 and the
+            # runner's `bash -e` ends the step. That stayed latent while torch-pre.txt had no active lines.
+            i=$((i + 1))
           done < <(grep -v '^#' "${TORCH_PRE_FILE}" | grep -v '^$')
           if [[ -n "${TORCH_PRE_VERSION}" && -n "${TORCH_PRE_CHANNEL}" ]]; then
             echo "use_prerelease=true" >> $GITHUB_OUTPUT
@@ -62,10 +64,16 @@ runs:
       run: |
         TORCH_VERSION="${{ steps.torch_pre.outputs.version }}"
         TORCH_CHANNEL="${{ steps.torch_pre.outputs.channel }}"
-        # CI uses CPU-only torch for GitHub Actions runners
+        # CI uses CPU-only torch for GitHub Actions runners. The CPU index labels its Linux and Windows
+        # wheels `+cpu` but publishes the macOS arm64 wheel with no local label, so `==<v>+cpu` cannot
+        # match there; macOS asks for the bare version from the same index.
         INDEX_URL="https://download.pytorch.org/whl/${TORCH_CHANNEL}/cpu"
-        echo "Installing torch prerelease: ${TORCH_VERSION}+cpu from ${TORCH_CHANNEL} channel..."
-        uv pip install --prerelease=if-necessary-or-explicit "torch==${TORCH_VERSION}+cpu" --index-url "${INDEX_URL}"
+        TORCH_SPEC="torch==${TORCH_VERSION}+cpu"
+        if [[ "${RUNNER_OS}" == "macOS" ]]; then
+          TORCH_SPEC="torch==${TORCH_VERSION}"
+        fi
+        echo "Installing torch prerelease: ${TORCH_SPEC} from ${TORCH_CHANNEL} channel..."
+        uv pip install --prerelease=if-necessary-or-explicit "${TORCH_SPEC}" --index-url "${INDEX_URL}"
 
     - name: Install stable torch (if not using prerelease)
       if: steps.torch_pre.outputs.use_prerelease != 'true'
@@ -102,6 +110,24 @@ runs:
         # torch-tb-profiler that depend on torch but aren't on PyTorch's special index.
         echo "Installing locked CI requirements from ${{ inputs.requirements_file }}..."
         uv pip install -r "requirements/ci/${{ inputs.requirements_file }}" ${TORCH_BACKEND_FLAG}
+
+    # The project install resolves torch's requirement again. It should find the prerelease already
+    # satisfying it, but nothing at that step fails if a dependency pulls torch to a release it pairs
+    # with instead, and the run would then test a torch nobody asked for while reading as a prerelease run.
+    - name: Verify the configured torch prerelease survived the project install
+      if: steps.torch_pre.outputs.use_prerelease == 'true'
+      shell: bash
+      run: |
+        python - "${{ steps.torch_pre.outputs.version }}" <<'PY'
+        import sys
+        import torch
+        expected = sys.argv[1]
+        installed = torch.__version__.split("+")[0]
+        print(f"torch {torch.__version__} (git {torch.version.git_version}) from {torch.__file__}")
+        if installed != expected:
+            sys.exit(f"torch-pre.txt configures torch {expected}, but {torch.__version__} is installed: "
+                     "a dependency resolve replaced the prerelease")
+        PY
 
     - name: Show package list
       if: inputs.show_pip_list == 'true'

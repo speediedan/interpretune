@@ -42,7 +42,7 @@ jobs:
       name: default
 
     container:
-      image: speediedan/interpretune:py3.13-pt2.13.0-azpl-init
+      image: speediedan/interpretune:py3.13-pt2.15.0-azpl-init
       mapDockerSocket: false
       volumes:
         - /var/run/user/998/docker.sock:/var/run/docker.sock

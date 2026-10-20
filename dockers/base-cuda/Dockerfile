@@ -17,8 +17,9 @@ ARG OS_VER=ubuntu22.04
 FROM nvidia/cuda:${CUDA_VERSION}-devel-${OS_VER}
 
 ARG PYTHON_VERSION=3.13
-ARG PYTORCH_VERSION=2.13.0
+ARG PYTORCH_VERSION=2.15.0
 ARG CUST_BUILD=0
+ARG TORCH_CHANNEL=""
 ARG MKL_THREADING_LAYER=GNU
 
 SHELL ["/bin/bash", "-c"]
@@ -80,11 +81,13 @@ RUN \
         uv pip install "torch==${PYTORCH_VERSION}" --no-cache \
         --find-links="https://download.pytorch.org/whl/cu${CUDA_VERSION_MM//'.'/''}/torch_stable.html" \
         --find-links="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}/torch" \
-        --find-links="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}/pytorch-triton"; \
+        --find-links="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}/pytorch-triton" \
+        --find-links="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}/triton"; \
     else \
         # or target a specific cuda build, by specifying a particular index url w/...
-        # ... default channel
-        uv pip install "torch==${PYTORCH_VERSION}" --index-url https://download.pytorch.org/whl/cu130; \
+        # ... default channel, or the channel named by TORCH_CHANNEL ("test" for a release candidate,
+        # whose wheels and their paired triton are published only on that index)
+        uv pip install "torch==${PYTORCH_VERSION}" --index-url "https://download.pytorch.org/whl/${TORCH_CHANNEL:+${TORCH_CHANNEL}/}cu130"; \
         # ... pytorch nightly dev version
         # uv pip install --pre torch==2.9.0.dev20250811 --index-url https://download.pytorch.org/whl/nightly/cu130; \
         # ... test channel

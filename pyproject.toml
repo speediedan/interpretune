@@ -301,6 +301,12 @@ override-dependencies = [
     # keep transitive nnsight (pulled in by sae-lens) at the validated release
     # (0.7.0 validated: nnsight slice + parity 34/0 + low-RAM mock, both versions)
     "nnsight==0.7.0",
+    # lift the pinned sae-dashboard's torch ceiling (`>=2.7.1,<2.14`) back to interpretune's own floor. The
+    # ceiling is a release-time cap, not a measured incompatibility: without this an install that is not
+    # handed requirements/ci/overrides.txt (hosted CI, the gated image, the README flow) silently replaced
+    # an installed torch 2.15 with 2.13 to satisfy it. An override replaces every torch requirement, so
+    # this keeps interpretune's floor and adds no ceiling and no pin of its own.
+    "torch>=2.7.1",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.
@@ -309,7 +315,11 @@ override-dependencies = [
 # is paired with the pinned torch (latest is 2.11.0 against torch 2.13), so letting it resolve drags a
 # second, mismatched CUDA runtime stack into the env and breaks `import torch`
 # (libtorch_cuda.so: undefined symbol: ncclCommResume).
-exclude-dependencies = ["torchaudio"]
+# torchvision: the same path (`decode-clt` declares it; neither decode-clt, sae_dashboard nor interpretune
+# imports it), and while torch is on the 2.15 release candidate no torchvision release pairs with it, so a
+# resolved torchvision would be an extension built for another libtorch (`operator torchvision::nms does not
+# exist` at import). Worse, resolving it can pull torch itself back to the release torchvision pairs with.
+exclude-dependencies = ["torchaudio", "torchvision"]
 
 # [tool.uv.pip]
 # mechanism to override metadata in dev version of (e.g., transformer_lens will be 0.0.0 via git url or source install)
