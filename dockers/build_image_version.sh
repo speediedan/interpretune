@@ -21,6 +21,27 @@ build_version(){
 	docker tag ${azpl_name} ${registry_name}:${azpl_name} >> $docker_build_log
 }
 
+# ROCm twin of build_version (draft, #703): the base from dockers/base-rocm, then the same azpl-init layer on top of it.
+# iv_ref carries ["rocm"] (the wheel index) and ["rocm_base_tag"] (the rocm/dev image tag) in place of ["cuda"], and
+# ["channel"] as build_version does. No caller uses it yet: AMD images are built once build B's cards are known, and
+# their tags carry the backend (base-rocm<ver>-..., ...-rocm<ver>-azpl-init) so they can never shadow a CUDA tag.
+build_rocm_version(){
+	local -n iv_ref="$1"
+	base_name=$2
+	azpl_name=$3
+	echo "Building ROCm base image name: ${base_name}" >> $docker_build_log
+	docker image build -t ${base_name} -f dockers/base-rocm/Dockerfile --build-arg ROCM_VERSION=${iv_ref['rocm']} \
+	  --build-arg ROCM_BASE_TAG=${iv_ref['rocm_base_tag']} \
+	  --build-arg PYTHON_VERSION=${iv_ref['python']} --build-arg PYTORCH_VERSION=${iv_ref['pytorch']} \
+	  --build-arg TORCH_CHANNEL=${iv_ref['channel']:-} --no-cache . >> $docker_build_log
+	docker tag ${base_name} ${registry_name}:${base_name} >> $docker_build_log
+	echo "Building ROCm azpl-init image name: ${azpl_name}" >> $docker_build_log
+	docker image build -t ${azpl_name} -f dockers/it-az-base/Dockerfile \
+	  --build-arg PYTHON_VERSION=${iv_ref["python"]} --build-arg CUST_BASE=rocm${iv_ref["rocm"]}- \
+	  --build-arg PYTORCH_VERSION=${iv_ref["pytorch"]} --no-cache . >> $docker_build_log
+	docker tag ${azpl_name} ${registry_name}:${azpl_name} >> $docker_build_log
+}
+
 maybe_deactivate(){
     if [ -n "$VIRTUAL_ENV" ]; then
         deactivate
