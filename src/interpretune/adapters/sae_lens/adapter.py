@@ -1,10 +1,11 @@
 from __future__ import annotations
 from typing import Any, cast, TYPE_CHECKING
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from functools import reduce
 from copy import deepcopy
 
+import torch
 from IPython.display import IFrame, display
 from sae_lens.loading.pretrained_saes_directory import get_pretrained_saes_directory
 from sae_lens.saes.sae import SAE, SAEConfig
@@ -134,6 +135,62 @@ class BaseSAELensModule(BaseITModule):
             # pre-composed config), in which case there is no splice setting and splicing stays off.
             if getattr(self.it_cfg, "add_saes_on_init", False) and hasattr(self.model, "add_sae"):
                 self.model.add_sae(added_sae.handle)  # type: ignore[operator]
+                self._register_attached_sae(added_sae.handle)
+
+    @staticmethod
+    def attached_sae_key(hook_name: str) -> str:
+        """The ``attached_saes`` key for an SAE spliced at ``hook_name`` (module names cannot contain ``.``)."""
+        return hook_name.replace(".", "__")
+
+    def _register_attached_sae(self, handle: SAE) -> None:
+        """Register a spliced SAE as a submodule of this module.
+
+        ``SAETransformerBridge.add_sae`` keeps the SAE outside the module tree (its wrapper holds it in
+        ``__dict__``, so hook names carry no ``.sae.`` segment), and the bridge's ``parameters()`` delegate to the
+        wrapped HF model. Registering the SAE here makes its parameters reachable from this module: they are built
+        into the default optimizer (``optimizer_parameters``), saved in its ``state_dict`` and visible to anything
+        that walks the module tree. The SAE object is the one spliced into the forward pass, not a copy.
+
+        The key comes from where the bridge actually spliced the SAE (``acts_to_saes``), not from its config:
+        ``add_sae`` skips, with a warning, an SAE whose hook it cannot find, and a skipped SAE is not registered.
+        """
+        acts_to_saes: dict[str, SAE] = getattr(self.model, "acts_to_saes", {})
+        hook_name = next((name for name, sae in acts_to_saes.items() if sae is handle), None)
+        if hook_name is None:
+            return
+        attached = self._attached_saes()
+        if attached is None:
+            attached = self.attached_saes = torch.nn.ModuleDict()
+        attached[self.attached_sae_key(hook_name)] = handle
+
+    def _attached_saes(self) -> torch.nn.ModuleDict | None:
+        attached = self._modules.get("attached_saes")
+        return attached if isinstance(attached, torch.nn.ModuleDict) else None
+
+    def attached_sae_parameter(self, name: str) -> torch.nn.Parameter:
+        """Resolve ``"<hook_name>.<parameter>"`` (for example ``blocks.0.hook_resid_pre.W_enc``) on an attached
+        SAE.
+
+        Raises:
+            AttributeError: no SAE is attached at that hook, or it has no such parameter.
+        """
+        hook_name, _, param_name = name.rpartition(".")
+        attached = self._attached_saes()
+        key = self.attached_sae_key(hook_name)
+        if attached is None or key not in attached:
+            raise AttributeError(f"No SAE is attached at hook {hook_name!r} (add_saes_on_init attaches them)")
+        return attached[key].get_parameter(param_name)
+
+    def optimizer_parameters(self) -> Iterator[torch.nn.Parameter]:
+        """The model's parameters, then those of every attached SAE (each parameter once)."""
+        seen: set[int] = set()
+        attached = self._attached_saes()
+        sources = [super().optimizer_parameters()] + ([attached.parameters()] if attached is not None else [])
+        for params in sources:
+            for param in params:
+                if id(param) not in seen:
+                    seen.add(id(param))
+                    yield param
 
     def _capture_hyperparameters(self) -> None:
         self._it_state._init_hparams = {"sae_cfgs": deepcopy(self.it_cfg.sae_cfgs)}
