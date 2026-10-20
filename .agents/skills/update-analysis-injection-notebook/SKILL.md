@@ -5,7 +5,7 @@ license: Apache-2.0
 metadata:
   author: speediedan
   version: '1.0'
-compatibility: Requires bash, git, Python 3.10+, uv, and access to the Interpretune repository. GPU required for notebook test execution (standalone tests).
+compatibility: Requires bash, git, Python 3.11+, uv, and access to the Interpretune repository. GPU required for notebook test execution (standalone tests).
 ---
 
 # Update Analysis Injection Notebook Skill

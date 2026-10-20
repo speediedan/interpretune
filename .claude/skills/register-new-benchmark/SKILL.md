@@ -5,7 +5,7 @@ license: Apache-2.0
 metadata:
   author: speediedan
   version: '1.0'
-compatibility: Requires bash, Python 3.10+, uv, GPU (CUDA), and access to the Interpretune repository with an activated development venv.
+compatibility: Requires bash, Python 3.11+, uv, GPU (CUDA), and access to the Interpretune repository with an activated development venv.
 ---
 
 # Register New Benchmark Skill

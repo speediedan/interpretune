@@ -85,7 +85,7 @@ get_torch_pre_config() {
 # included in universal lock files. It will be installed separately via UV_OVERRIDE.
 #
 # Note on Python version compatibility:
-# - Lock files are generated for Python 3.10+ (our minimum supported version)
+# - Lock files are generated for Python 3.11+ (our minimum supported version)
 #
 # All dependencies in pyproject.toml have explicit minimum versions (>=x.y.z),
 # which ensures uv can properly resolve oldest compatible versions with
@@ -290,9 +290,9 @@ generate_lockfile() {
 }
 
 # Generate both lock files
-# - Latest: Python 3.10 (minimum supported) to ensure proper version markers for
+# - Latest: Python 3.11 (minimum supported) to ensure proper version markers for
 #   packages like contourpy that have Python version requirements
-# - Oldest: Python 3.10 (minimum supported), lowest resolution
+# - Oldest: Python 3.11 (minimum supported), lowest resolution
 #
 # When torch prerelease (nightly or test) is configured:
 # - requirements.txt excludes torch (installed separately with appropriate backend)
@@ -308,14 +308,14 @@ fi
 # Generate torch override file for manual installation
 generate_torch_override
 
-generate_lockfile "highest" "${CI_DIR}/requirements.txt" "3.10" "${USE_PRERELEASE}"
+generate_lockfile "highest" "${CI_DIR}/requirements.txt" "3.11" "${USE_PRERELEASE}"
 
 # Try to generate oldest requirements, but don't fail if it doesn't work
 # (some packages may not resolve properly with lowest-direct due to missing
 # explicit minimum versions in pyproject.toml)
 echo ""
 echo "Attempting to generate requirements-oldest.txt (may fail for some packages)..."
-if generate_lockfile "lowest-direct" "${CI_DIR}/requirements-oldest.txt" "3.10" "false" 2>&1; then
+if generate_lockfile "lowest-direct" "${CI_DIR}/requirements-oldest.txt" "3.11" "false" 2>&1; then
     echo "✓ Generated ${CI_DIR}/requirements-oldest.txt"
 else
     echo "⚠ Failed to generate requirements-oldest.txt (oldest version resolution failed)"

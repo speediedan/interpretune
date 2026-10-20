@@ -5,7 +5,7 @@ license: Apache-2.0
 metadata:
   author: speediedan
   version: '1.0'
-compatibility: Requires bash, git, gh CLI, Python 3.10+, and access to the Interpretune repository.
+compatibility: Requires bash, git, gh CLI, Python 3.11+, and access to the Interpretune repository.
 ---
 
 # Debug Remote CI Failures Skill

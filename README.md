@@ -9,7 +9,7 @@
 [![CI](https://github.com/speediedan/interpretune/actions/workflows/ci_test-full.yml/badge.svg)](https://github.com/speediedan/interpretune/actions/workflows/ci_test-full.yml)
 [![Docs](https://readthedocs.org/projects/interpretune/badge/?version=latest)](https://interpretune.org/en/latest/)
 [![codecov](https://codecov.io/gh/speediedan/interpretune/branch/main/graph/badge.svg)](https://codecov.io/gh/speediedan/interpretune)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://github.com/speediedan/interpretune/blob/main/pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://github.com/speediedan/interpretune/blob/main/pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](./LICENSE)
 
 </div>

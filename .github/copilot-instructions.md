@@ -5,7 +5,7 @@
 **Interpretune** is a flexible, powerful framework for collaborative AI world model analysis and tuning. This project is in **pre-MVP** stage - features and APIs are subject to change.
 
 **Key Technologies:**
-- Python 3.10+ (CI tests on 3.13)
+- Python 3.11+ (CI tests on 3.13)
 - PyTorch 2.7.1+ with transformers ecosystem
 - Core deps: transformer_lens >= 3.0.0 (TransformerBridge support), sae_lens, datasets, jsonargparse
 - Optional: PyTorch Lightning, W&B, circuit-tracer, neuronpedia

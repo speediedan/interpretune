@@ -1876,7 +1876,7 @@ class TestCacheFormatVersionCoversCompilerChanges:
 
     # Raw byte hashes, deliberately. An AST-based digest would ignore comments and formatting, which is
     # more precise and was the first design -- but it is NOT stable across interpreters, and this project
-    # supports 3.10+ while CI runs 3.13. Measured on the real files: `ast.dump` yielded three distinct
+    # supports 3.11+ while CI runs 3.13. Measured on the real files: `ast.dump` yielded three distinct
     # values across 3.10/3.11/3.12/3.13, and `ast.unparse` skewed between 3.10 and 3.11+. Either would
     # fire on a machine difference with nothing in the diff to point at, which is worse than firing on a
     # comment: a comment-triggered failure is at least explicable by looking at what you just changed.

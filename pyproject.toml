@@ -13,7 +13,7 @@ dynamic = ["version"]
 authors = [{name = "Daniel Dale", email = "danny.dale@gmail.com"}]
 license = "Apache-2.0"
 license-files = ["LICENSE*"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = ["llm", "reasoning", "interpretability", "fine-tuning", "finetuning"]
 classifiers = [
             "Environment :: Console",
@@ -25,7 +25,6 @@ classifiers = [
             "Topic :: Scientific/Engineering :: Information Analysis",
             "Operating System :: OS Independent",
             "Programming Language :: Python :: 3",
-            "Programming Language :: Python :: 3.10",
             "Programming Language :: Python :: 3.11",
             "Programming Language :: Python :: 3.12",
             "Programming Language :: Python :: 3.13",
@@ -33,7 +32,6 @@ classifiers = [
 description = "A package to support LLM reasoning and interpretability experiments at a level of abstraction that is both powerfully flexible and convenient"
 readme = "README.md"
 dependencies = [
-    "tomli >= 2.0; python_version < '3.11'",  # [tool.notebook-publishing] on 3.10, where tomllib is absent
     "torch >=2.7.1",
     "transformers>=4.57.1",
     "tabulate >= 0.9.0",
@@ -159,8 +157,6 @@ examples = [
     # through circuit-tracer's own extra, which made its presence depend on which extra a build asked
     # for -- a rebuild silently dropped it and four parity assertions went to skipped. Installs the
     # engine only; the hub adapter composing it into a session is pulled with `it.hub.pull`.
-    # The marker is required, not cosmetic: interp-engine supports >=3.11 while this project supports
-    # >=3.10, so an unmarked requirement makes the universal lock unsatisfiable.
     # The pin is `~=` at the minor (floats patches only) rather than a floor: upstream minors have
     # carried surface changes (1.11.0 named the steering methods once as `SteerMethod`), so each
     # minor is validated deliberately via #600's successors instead of arriving silently.
@@ -168,7 +164,7 @@ examples = [
     # mask-derived position ids (decoderesearch/interp-engine#28, released in 1.12.0): the
     # notebook end-to-end executes the current component, so the env must satisfy its floor.
     # Validated as a #600 successor: adapter gate 1466 green on 1.12.0 (167 passed, 19 skipped).
-    "interp-engine ~=1.12.0; python_version >= '3.11'",
+    "interp-engine ~=1.12.0",
     # we comment these out when installing from git urls to avoid dep conflicts
     # note packages that have need to have git url deps override transitive dependencies (e.g. needing to override
     # sae-lens' transformer-lens dependency with a git url dep) need to be moved to git-deps as well
