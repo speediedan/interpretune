@@ -275,6 +275,52 @@ class TestClassSAELens:
             assert len(test_mod.model.acts_to_saes) == 0
         assert len(test_mod.sae_handles) == len(test_mod.saes) == expected_num_saes
 
+    @pytest.mark.parametrize(
+        "session_cfg_fixture, add_saes_on_init",
+        [
+            pytest.param("get_it_session_cfg__sl_cust", True, id="tlcust_add"),
+            pytest.param("get_it_session_cfg__sl_br_gpt2", True, id="bridge_add"),
+            pytest.param("get_it_session_cfg__sl_br_gpt2", False, id="bridge_noadd"),
+        ],
+    )
+    def test_spliced_sae_parameters_reach_the_optimizer(self, request, session_cfg_fixture, add_saes_on_init):
+        """#772: SAEs spliced at init are stepped, saved and resolvable; unspliced ones are not registered."""
+        sess_cfg = deepcopy(request.getfixturevalue(session_cfg_fixture))
+        if session_cfg_fixture == "get_it_session_cfg__sl_cust":  # the gpt2 bridge keeps its pretrained gpt2 SAE
+            sess_cfg.module_cfg.sae_cfgs = [TestClassSAELens.test_sl_cust_config]
+        sess_cfg.module_cfg.add_saes_on_init = add_saes_on_init
+        test_mod = ITSession(sess_cfg).module
+        handle = test_mod.sae_handles[-1]
+        hook_name = handle.cfg.metadata.hook_name
+        # The mechanism the issue describes: the bridge keeps the SAE outside its own module tree.
+        assert not any(p is handle.W_enc for p in test_mod.model.parameters())
+        model_param_ids = {id(p) for p in test_mod.model.parameters()}
+        opt_params = list(test_mod.optimizer_parameters())
+        assert len(opt_params) == len({id(p) for p in opt_params}), "a parameter would be stepped twice"
+        assert model_param_ids <= {id(p) for p in opt_params}
+        if not add_saes_on_init:
+            assert "attached_saes" not in test_mod._modules
+            assert {id(p) for p in opt_params} == model_param_ids
+            with pytest.raises(AttributeError, match="No SAE is attached"):
+                test_mod.attached_sae_parameter(f"{hook_name}.W_enc")
+            return
+        sae_params = list(handle.parameters())
+        assert sae_params and all(any(p is q for q in opt_params) for p in sae_params)
+        key = test_mod.attached_sae_key(hook_name)
+        assert test_mod.attached_saes[key] is handle, "the registered SAE must be the spliced one, not a copy"
+        assert f"attached_saes.{key}.W_enc" in test_mod.state_dict()
+        assert test_mod.attached_sae_parameter(f"{hook_name}.W_enc") is handle.W_enc
+        with pytest.raises(AttributeError):
+            test_mod.attached_sae_parameter(f"{hook_name}.not_a_parameter")
+        # One optimizer step over `optimizer_parameters` moves the spliced SAE.
+        before = handle.W_enc.detach().clone()
+        optimizer = torch.optim.SGD(test_mod.optimizer_parameters(), lr=1.0)
+        device = next(test_mod.model.parameters()).device
+        test_mod.model(torch.tensor([[1, 2, 3, 4]], device=device)).float().sum().backward()
+        assert handle.W_enc.grad is not None
+        optimizer.step()
+        assert not torch.equal(handle.W_enc.detach(), before), "the spliced SAE was not stepped"
+
     def test_sl_basic_cfg(self):
         test_sl_cfg = deepcopy(TestClassSAELens.test_sl_cust)
         it_cfg = SAELensConfig(**test_sl_cfg)
