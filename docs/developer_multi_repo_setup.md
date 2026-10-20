@@ -10,7 +10,7 @@ on top of interpretune's locked CI requirements. The builder is `scripts/build_i
 - **git** (with `git-lfs` available; the builder runs `git lfs install`)
 - **uv** — a recent release (the environment is routinely built with uv >= 0.10; `UV_EXCLUDE`/`UV_OVERRIDE`
   support is required)
-- **Python 3.13** (default; any `>= 3.10` interpreter can be selected with `--python-version`). uv-managed
+- **Python 3.13** (default; any `>= 3.11` interpreter can be selected with `--python-version`). uv-managed
   interpreters work out of the box.
 - **bash >= 4.3** to run the builder itself
   - *Linux*: any modern distro bash qualifies.

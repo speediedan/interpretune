@@ -11,7 +11,7 @@
 
 Interpretune is a flexible framework for collaborative AI world model analysis and tuning. **Pre-MVP stage** — features and APIs are subject to change.
 
-**Stack:** Python 3.10+ (CI on 3.13), PyTorch 2.7.1+, transformer_lens >= 4, < 5, sae_lens, datasets, jsonargparse
+**Stack:** Python 3.11+ (CI on 3.13), PyTorch 2.7.1+, transformer_lens >= 4, < 5, sae_lens, datasets, jsonargparse
 
 ## Tooling Reliability
 

@@ -137,10 +137,8 @@ def _as_lines(value: Any) -> list[str]:
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
-    try:
-        import tomllib  # Python 3.11+
-    except ModuleNotFoundError:  # pragma: no cover - 3.10 only
-        import tomli as tomllib  # type: ignore[no-redef]
+    import tomllib
+
     with open(path, "rb") as fh:
         return tomllib.load(fh)
 
