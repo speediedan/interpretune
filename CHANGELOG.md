@@ -88,6 +88,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 #### Tuning through finetuning-scheduler views
 - Each module composition declares a finetuning-scheduler `TunableView` (`build_tunable_view()`, with cooperative `_tunable_roles()`), attached as `fts_tunable_view` after model init: the identity view with PEFT `adapter:<name>` roles by default, `TransformerBridgeView` in TransformerLens names for TransformerLens compositions, `latent:sae` for spliced SAEs, and refusals with reasons for nnsight, circuit-tracer and undeclared compositions (#758, #759)
 - `interpretune.testing.conformance.TuningConformance` runs finetuning-scheduler's view conformance cases against a composition, selected by its declared support (#760)
+- The default optimizer (`optimizer_parameters()`) covers the parameters an attached, trainable view selects: every view is rooted at the interpretune module, so trainable modules registered beside `module.model` (interventions, spliced SAEs) are optimized with no adapter extending the hook. Compositions without a view, or with a refusing one, keep the model's own parameters (#761)
 
 ### Changed
 - `CompositionRegistry` updated to handle NNsight adapter combinations and dual-backend circuit-tracer

@@ -5,6 +5,7 @@ import torch
 
 from interpretune.utils import MisconfigurationException, instantiate_class
 from interpretune.protocol import OptimizerLRScheduler, STEP_OUTPUT
+from interpretune.tuning.views import VIEW_ATTR
 
 if TYPE_CHECKING:
     from interpretune.config import ITConfig, ITState
@@ -47,10 +48,17 @@ class BaseITHooks:
     def optimizer_parameters(self) -> Iterator[torch.nn.Parameter]:
         """The parameters the default optimizer is built over.
 
-        The model's own parameters here. An adapter that attaches trainable modules outside ``self.model`` (the SAEs
-        ``add_saes_on_init`` splices into a ``TransformerBridge``, whose ``parameters()`` delegate to the wrapped HF
-        model only) extends this cooperatively, so those modules are stepped rather than silently left out.
+        When a trainable finetuning-scheduler view is attached (``fts_tunable_view``, #758), the parameters it selects:
+        those of its root, which for every interpretune view is this module, so trainable modules registered beside
+        ``self.model`` (interventions, spliced SAEs) are stepped with no adapter extending this (#761). Otherwise (no
+        view, or one refusing the composition) the model's own parameters. An adapter that attaches trainable modules
+        outside ``self.model`` (the SAEs ``add_saes_on_init`` splices into a ``TransformerBridge``, whose
+        ``parameters()`` delegate to the wrapped HF model only) still extends this cooperatively, so those modules are
+        stepped with or without a view.
         """
+        view = getattr(self, VIEW_ATTR, None)
+        if view is not None and view.support().trainable:
+            return view.root.parameters()
         return self.model.parameters()
 
     def configure_optimizers(self) -> OptimizerLRScheduler | None:

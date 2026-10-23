@@ -18,6 +18,7 @@ from finetuning_scheduler.testing import pytest_params, TunableViewConformance  
 from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule  # noqa: E402
 from interpretune.session import ITSession  # noqa: E402
 from interpretune.tuning import views as tuning_views  # noqa: E402
+from tests.core import test_adapters_sae_lens as sl_tests  # noqa: E402
 from interpretune.tuning.views import (  # noqa: E402
     VIEW_ATTR,
     RefusingView,
@@ -25,6 +26,10 @@ from interpretune.tuning.views import (  # noqa: E402
     identity_view,
     peft_adapter_roles,
 )
+
+
+# an SAE at a hook the bridge splices (the fixture's default is skipped by `add_sae`, so nothing would register)
+_SPLICEABLE_SAES = [sl_tests.TestClassSAELens.test_sl_cust_config]
 
 
 def _fresh_module(request, cfg_fixture: str, **overrides):
@@ -60,7 +65,7 @@ class TestAttachment:
         assert as_view(view).support().naming_scheme == "tl"
 
     def test_spliced_saes_take_the_latent_role(self, request):
-        module = _fresh_module(request, "get_it_session_cfg__sl_cust", add_saes_on_init=True)
+        module = _fresh_module(request, "get_it_session_cfg__sl_cust", add_saes_on_init=True, sae_cfgs=_SPLICEABLE_SAES)
         roles = as_view(getattr(module, VIEW_ATTR)).roles()
         sae_names = {f"attached_saes.{n}" for n, _ in module.attached_saes.named_parameters()}
         assert sae_names and {n for n, r in roles.items() if r == "latent:sae"} == sae_names
@@ -109,6 +114,35 @@ class TestAttachRules:
         assert attach_tunable_view(module) is None and getattr(module, VIEW_ATTR, None) is None
 
 
+class TestDefaultOptimizer:
+    """The default optimizer covers what a trainable view selects, so modules beside the model train (#761)."""
+
+    @staticmethod
+    def _ids(params):
+        return {id(p) for p in params}
+
+    def test_modules_registered_beside_the_model_are_optimized(self, request):
+        module = _fresh_module(request, "get_it_session_cfg__core_cust")
+        module.intervention = nn.Linear(2, 2)
+        covered = self._ids(module.optimizer_parameters())
+        assert self._ids(module.model.parameters()) <= covered
+        assert self._ids(module.intervention.parameters()) <= covered
+        if module.it_cfg.optimizer_init:
+            [optimizer], _ = module.configure_optimizers()
+            assert self._ids(module.intervention.parameters()) <= self._ids(
+                p for g in optimizer.param_groups for p in g["params"]
+            )
+        # control: without the view, only the model's own parameters are covered
+        object.__setattr__(module, VIEW_ATTR, None)
+        assert self._ids(module.optimizer_parameters()) == self._ids(module.model.parameters())
+
+    def test_a_refused_composition_keeps_the_models_parameters(self, request):
+        module = _fresh_module(request, "get_it_session_cfg__core_cust")
+        module.intervention = nn.Linear(2, 2)
+        object.__setattr__(module, VIEW_ATTR, RefusingView(module, "refused for this test"))
+        assert self._ids(module.optimizer_parameters()) == self._ids(module.model.parameters())
+
+
 def test_peft_adapter_tensors_take_the_adapter_role():
     peft = pytest.importorskip("peft")
 
@@ -140,7 +174,9 @@ def test_peft_adapter_tensors_take_the_adapter_role():
     [
         pytest.param("get_it_session_cfg__core_cust", {}, id="core"),
         pytest.param("get_it_session_cfg__tl_cust", {}, id="tl"),
-        pytest.param("get_it_session_cfg__sl_cust", {"add_saes_on_init": True}, id="sl_spliced"),
+        pytest.param(
+            "get_it_session_cfg__sl_cust", {"add_saes_on_init": True, "sae_cfgs": _SPLICEABLE_SAES}, id="sl_spliced"
+        ),
     ],
 )
 def test_view_conformance(request, cfg_fixture, overrides):
