@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Any, TYPE_CHECKING
+from collections.abc import Iterator
 import torch
 
 from interpretune.utils import MisconfigurationException, instantiate_class
@@ -43,13 +44,22 @@ class BaseITHooks:
             self._it_state._datamodule = datamodule
         self._make_setup_dirs()  # type: ignore[attr-defined]  # provided by mixin composition
 
+    def optimizer_parameters(self) -> Iterator[torch.nn.Parameter]:
+        """The parameters the default optimizer is built over.
+
+        The model's own parameters here. An adapter that attaches trainable modules outside ``self.model`` (the SAEs
+        ``add_saes_on_init`` splices into a ``TransformerBridge``, whose ``parameters()`` delegate to the wrapped HF
+        model only) extends this cooperatively, so those modules are stepped rather than silently left out.
+        """
+        return self.model.parameters()
+
     def configure_optimizers(self) -> OptimizerLRScheduler | None:
         """Optional because it is not mandatory in the context of core IT modules (required for some adapter
         modules)."""
         self.set_input_require_grads()  # type: ignore[attr-defined]  # provided by mixin composition
         optimizer, scheduler = None, None
         if self.it_cfg.optimizer_init:  # in case this hook is manually invoked by the user
-            optimizer = instantiate_class(args=self.model.parameters(), init=self.it_cfg.optimizer_init)
+            optimizer = instantiate_class(args=self.optimizer_parameters(), init=self.it_cfg.optimizer_init)
         if self.it_cfg.lr_scheduler_init:
             scheduler = {
                 "scheduler": instantiate_class(args=optimizer, init=self.it_cfg.lr_scheduler_init),

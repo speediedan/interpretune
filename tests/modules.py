@@ -565,12 +565,17 @@ class BaseTestModule(StateLogInspectMixin):
         # maybe apply a given `req_grad_mask` (for non-FTS context testing)
         # usually should be used for a small subset of parameters so we don't iterate through ``named_parameters`` but
         # use `get_parameter`` call instead
+        # A name the model does not hold may name a parameter of an SAE spliced at init (`attached_saes`, #772). A
+        # name neither resolves is a broken test configuration, so it fails here rather than leaving the mask a
+        # silent no-op (which once let a parity case "freeze" SAE parameters that were never in the optimizer).
         for n, val in self.req_grad_mask.items():
             try:
                 p = self.model.get_parameter(n)
-                p.requires_grad_(val)
             except AttributeError:
-                rank_zero_only(f"Test `req_grad_mask` parameter {n} was not found in the test model")
+                if not hasattr(self, "attached_sae_parameter"):
+                    raise
+                p = self.attached_sae_parameter(n)
+            p.requires_grad_(val)
         return super().configure_optimizers()
 
     def _on_test_or_train_batch_start(self, batch: Any, batch_idx: int, *args, **kwargs):
