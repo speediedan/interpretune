@@ -62,7 +62,7 @@ class TestAttachment:
     def test_spliced_saes_take_the_latent_role(self, request):
         module = _fresh_module(request, "get_it_session_cfg__sl_cust", add_saes_on_init=True)
         roles = as_view(getattr(module, VIEW_ATTR)).roles()
-        sae_names = {f"spliced_saes.{n}" for n, _ in module.spliced_saes.named_parameters()}
+        sae_names = {f"attached_saes.{n}" for n, _ in module.attached_saes.named_parameters()}
         assert sae_names and {n for n, r in roles.items() if r == "latent:sae"} == sae_names
         assert "latent" in as_view(getattr(module, VIEW_ATTR)).support().declared_roles
         # a schedule can select them by role

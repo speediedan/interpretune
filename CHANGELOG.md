@@ -105,7 +105,6 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 - The core training loop honors `SessionRunnerCfg.max_steps` (counting optimizer steps), which it previously accepted and ignored (#761)
 - The core training loop's `on_train_epoch_start` / `on_train_epoch_end` hooks are optional, as its batch hooks are; a module without them raised `AttributeError` (#761)
 - The core training loop reads the optimizer from the module at every step rather than once, so a replaced optimizer is used (#761)
-- SAEs spliced with `add_saes_on_init=True` are registered on the module (`spliced_saes`), so the default optimizer, checkpoints and views reach their parameters; on the TransformerBridge path they were never stepped (#772)
 - Circuit-tracer `isinstance` assertions replaced with class-name checks to avoid false failures from pytest `importlib` import mode causing module double-loading
 - Coverage collection fix for NNsight's `sys.settrace()` disabling behavior
 - HuggingFace transformers v5 compatibility with configurable test reruns (`--reruns 2 --reruns-delay 5`)
