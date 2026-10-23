@@ -124,6 +124,9 @@ lightning = [
 # install presented as 16 setup errors plus the vacuity guard, not as a missing dependency. `examples` declares
 # `scikit-learn` too, for the same downloaded-metric reason; neither entry is reconciled by deleting the other.
 conformance = [
+    # finetuning-scheduler joins at >=2.15.0 once published (#760): its view cases (`finetuning_scheduler.testing`)
+    # need nothing beyond torch and pytest, and `TuningConformance` skips them while it is absent. A git URL here
+    # would block this package's own upload.
     "pytest",
     "evaluate",
     "scikit-learn",
