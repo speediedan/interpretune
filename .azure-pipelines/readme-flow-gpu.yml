@@ -40,6 +40,12 @@ jobs:
     # inherits the gate automatically, with nothing to configure.
     pool:
       name: default
+      # Interim, until build B (AMD) is admitted to the any-vendor class: this job's image and
+      # device options are CUDA-only, so it demands an NVIDIA agent. GPU_VENDOR comes from each
+      # agent's .env (a system capability), so the agent must carry it before this lands, or the
+      # job matches no agent (dual-vendor CI contract, interpretune #703).
+      demands:
+        - GPU_VENDOR -equals nvidia
 
     container:
       image: speediedan/interpretune:py3.13-pt2.15.0-azpl-init
