@@ -86,6 +86,10 @@ class TestAttachment:
         assert as_view(view).support().trainable
         names = [n for n, _ in module.named_parameters()]
         assert names and all(n.startswith("hf_model.") for n in names)
+        # the view and `module.model.parameters()` reach the same tensors: the default optimizer lists each once
+        opt_params = list(module.optimizer_parameters())
+        assert len(opt_params) == len({id(p) for p in opt_params})
+        assert {id(p) for p in opt_params} == {id(p) for p in module.model._model.parameters()}
 
     def test_remote_or_undispatched_nnsight_is_refused_with_its_reason(self):
         from types import SimpleNamespace
