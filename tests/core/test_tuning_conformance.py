@@ -24,3 +24,7 @@ class TestNNsightTuning(TuningConformance):
     target = ConformanceTarget(
         composition=("core", "nnsight", "sae_lens"), forward_family="hf_native", datamodule_flavour="nnsight"
     )
+
+    def test_view_is_trainable(self, probe):
+        """A refusing view would pass the cases above with only the refusal case run, so require the real view."""
+        assert probe.support().trainable, probe.support().reason

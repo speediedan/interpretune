@@ -160,6 +160,15 @@ class BaseNNsightModule(BaseITModule):
         super().__init__(*args, **kwargs)
         self.loss_fn = None
 
+    def post_auto_model_init(self) -> None:
+        """Register the HF module once any nnsight init path has built the model (#774).
+
+        Here rather than in one init path: compositions override ``auto_model_init`` with their own (sae_lens over
+        nnsight does), and this hook runs after every one of them, before the finetuning-scheduler view is attached.
+        """
+        super().post_auto_model_init()
+        self._register_hf_model()
+
     def auto_model_init(self) -> None:
         """Initialize model using NNsight LanguageModel.
 
@@ -252,7 +261,6 @@ class BaseNNsightModule(BaseITModule):
 
         # Apply generation config to the underlying HF model (equivalent to _hf_post_init_cfg for NNsight)
         self._apply_generation_config()
-        self._register_hf_model()
 
         rank_zero_info("NNsight LanguageModel initialized successfully")
 
