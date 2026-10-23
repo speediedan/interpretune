@@ -225,6 +225,10 @@ git-deps = [
     # generation. The row-group default is what makes an artifact streamable (readers prune per row
     # group), so corpora generated before this pin need regenerating to benefit.
     "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@f428a579132aa68061304c51492f79fb6d47dbda",
+    # finetuning-scheduler by git SHA until 2.15.0 is published (#758): see its `override-dependencies` entry,
+    # which carries the same URL and replaces the lock file's release pin at install. Kept here too so an
+    # install still gets it once a relock drops it from the lock (`--no-emit-package`).
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@daf565688ba57a049823b564872c5a1dbb05f0aa",
 ]
 
 dev = [
@@ -303,6 +307,13 @@ override-dependencies = [
     # an installed torch 2.15 with 2.13 to satisfy it. An override replaces every torch requirement, so
     # this keeps interpretune's floor and adds no ceiling and no pin of its own.
     "torch>=2.7.1",
+    # finetuning-scheduler by git SHA until 2.15.0 is on PyPI: the TunableView protocol, its role vocabulary and
+    # the view conformance cases (`finetuning_scheduler.core.views`, `.core.roles`, `.testing`) are in no release
+    # yet (#758). Here, not in requirements/ci/overrides.txt, because hosted CI and the gated install read only
+    # this. The lock script leaves it out of the universal lock (`--no-emit-package`), whose 2.13.0 pin is
+    # replaced by this at install. RETIRE it, and raise the `lightning` extra's floor to 2.15.0, once 2.15.0
+    # is published.
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@daf565688ba57a049823b564872c5a1dbb05f0aa",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.
