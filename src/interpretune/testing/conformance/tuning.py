@@ -17,6 +17,7 @@ When the installed finetuning-scheduler predates views, every case skips with th
 
 from __future__ import annotations
 
+import gc
 from collections.abc import Callable
 from copy import deepcopy
 from typing import Any, ClassVar
@@ -67,6 +68,10 @@ class TuningConformance:
         session_cfg = cls.target.build_session_cfg(inputs)
 
         def factory() -> Any:
+            # Cases build a fresh session per call (the thaw case one per logical name), and a finished session is
+            # held by reference cycles until a collection. Without this, an nnsight gpt2 target peaked at 25 GB in
+            # one case, which a Windows runner's paging file cannot back; collecting first keeps about two sessions.
+            gc.collect()
             return tunable_view_of(ITSession(deepcopy(session_cfg)).module)
 
         yield factory
