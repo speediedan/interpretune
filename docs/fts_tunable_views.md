@@ -72,10 +72,19 @@ the lr schedulers from its `lr_scheduler_init`, unless `controller_kwargs` passe
 installed as the module's own, so the loop steps the phase's optimizer and nothing is stepped twice. Further
 `FTSController` arguments go in `controller_kwargs`: transition policies, a checkpoint policy, `max_depth`. Phase hooks,
 gates and RNG forking are finetuning-scheduler's, unchanged. The core loop keeps its own `max_epochs`, and the callback
-warns when the schedule's final phase asks for more.
+warns when the schedule's final phase asks for more. A `controller_factory` builds the controller instead, for anything
+`controller_kwargs` cannot express; its controller must be rooted at the module it is given, and one rooted elsewhere is
+refused once it is set up.
 
-A run is resumed through the controller (`callback.controller.save` and `load`), not yet through the core loop's
-`checkpoint_state`.
+- **Metrics.** Transition and checkpoint policies, and epoch-interval lr schedulers, receive the epoch's metrics: the
+  core loop's `log()` averages, in which a training and a validation value logged under one name are averaged together.
+  Log them under distinct names when a policy monitors one.
+- **Metric-stepped lr schedulers** (`ReduceLROnPlateau`) use the epoch interval: step-interval schedulers are stepped
+  without metrics. Only `interval`, `frequency` and `monitor` are taken from `pl_lrs_cfg`, so a missing monitored metric
+  fails in finetuning-scheduler rather than being skipped as the core loop's `strict=False` would.
+- **Resume** through the controller (`callback.controller.save` and `load`). The core loop's `checkpoint_state` holds
+  none of the controller's state, so loading one into the callback is refused rather than resuming half a run; routing
+  resume through it is [interpretune#809](https://github.com/speediedan/interpretune/issues/809).
 
 ## Conformance
 

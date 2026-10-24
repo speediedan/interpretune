@@ -20,7 +20,15 @@ Lightning compositions keep using the ``FinetuningScheduler`` callback.
 
 The controller builds the optimizer (over phase 0's parameters, growing it at each phase) and the lr schedulers, so the
 callback installs them as the module's: the loop reads the module's optimizer at every step, and the module's own lr
-schedulers are dropped so that nothing is stepped twice.
+schedulers are dropped so that nothing is stepped twice. Step-interval lr schedulers are stepped without metrics, so a
+metric-stepped scheduler (``ReduceLROnPlateau``) must use the epoch interval, where it receives the epoch's metrics.
+Those are the core loop's ``log()`` averages, in which a training and a validation value logged under one name are
+averaged together: a transition or checkpoint policy monitoring that name sees the blend.
+
+Resume a run through the controller (``controller.save`` and ``controller.load``): the core loop's
+``checkpoint_state`` captures the module and the controller's optimizer but none of the controller's own state (its
+phase, pending decision, gate records and RNG forks), so loading such a checkpoint into a callback is refused rather
+than resuming half a run.
 """
 
 from __future__ import annotations
@@ -46,7 +54,7 @@ class FTSCoreCallback:
             ``optimizer_init``; without ``lr_scheduler``, the module's ``lr_scheduler_init`` (stepped as its
             ``pl_lrs_cfg`` says), when it has one.
         controller_factory: Builds the controller from the module instead, for anything ``controller_kwargs`` cannot
-            express. It must be rooted at the module it is given.
+            express. Its controller must be rooted at the module it is given, which is checked once it is set up.
 
     Attributes:
         controller: The controller, once training has started.
@@ -101,6 +109,19 @@ class FTSCoreCallback:
         else:
             ctx.module.optimizers, ctx.module.lr_scheduler_configs = optimizers, lr_scheduler_configs
 
+    def state_dict(self) -> dict[str, Any]:
+        """A marker only: the controller's state is saved with ``controller.save``, not by the core loop's
+        ``checkpoint_state``."""
+        return {"resume_through_controller": True}
+
+    def load_state_dict(self, state_dict: Mapping[str, Any]) -> None:
+        """Refuse a core-loop checkpoint, which lacks the controller's state."""
+        raise MisconfigurationException(
+            "FTSCoreCallback cannot resume from the core loop's `checkpoint_state`, which holds none of the"
+            " controller's state (phase, pending decision, gate records, RNG forks); resume through the controller"
+            " (`controller.save` and `controller.load`) instead."
+        )
+
     def _sync_stop(self, ctx: Any) -> None:
         assert self.controller is not None
         if self.controller.should_stop:
@@ -110,6 +131,12 @@ class FTSCoreCallback:
         """Build and set up the controller, then install its optimizer."""
         self.controller = controller = self.build_controller(ctx.module)
         controller.setup()
+        if controller.view.root is not ctx.module:
+            raise MisconfigurationException(
+                f"FTSCoreCallback's controller is rooted at a {type(controller.view.root).__name__}, not at the"
+                f" session's module ({type(ctx.module).__name__}), so the loop would step another module's parameters:"
+                " build the controller over the module the factory is given."
+            )
         self._install(ctx)
         final = controller.schedule[max(controller.schedule)]
         final_epochs = final.get("max_transition_epoch", -1)
@@ -128,7 +155,8 @@ class FTSCoreCallback:
         self._sync_stop(ctx)
 
     def on_train_step_end(self, ctx: Any, outputs: Any) -> None:
-        """Step the controller's step-interval lr schedulers and evaluate step-granular transitions."""
+        """Step the controller's step-interval lr schedulers (without metrics) and evaluate step-granular
+        transitions."""
         assert self.controller is not None
         self.controller.step_lr_schedulers("step")
         self.controller.step_end()
