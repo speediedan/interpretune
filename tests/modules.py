@@ -1,3 +1,4 @@
+import hashlib
 import os
 import shutil
 from pathlib import Path
@@ -19,6 +20,7 @@ from transformers.utils import ModelOutput
 
 from interpretune.protocol import ITModuleProtocol, STEP_OUTPUT
 from interpretune.config import ITDataModuleConfig, ITConfig
+from interpretune.config.datamodule import hf_datasets_cache_root
 from interpretune.utils import rank_zero_only, rank_zero_debug
 from interpretune import MemProfilerHooks
 from tests.rte_component import RTEBoolqDataModule, RTEBoolqModuleMixin, RTEBoolqSteps, RTE_ENTRYPOINT_MODULE
@@ -50,6 +52,27 @@ class BaseTestDataModule:
         ):
             super().__init__(itdm_cfg=itdm_cfg)
         self.force_prepare_data = force_prepare_data
+        self._key_default_dataset_path_by_tokenizer()
+
+    def _key_default_dataset_path_by_tokenizer(self) -> None:
+        """Give the cached test subset one directory per tokenizer, not one per task.
+
+        ``pytest_rte_hf`` is shared by the gpt2, gemma2, gemma3 and llama3 compositions (``pytest_rte_tl`` by gpt2 and
+        gemma2), and :meth:`prepare_data` reuses an existing subset rather than rebuilding it. So on a fresh datasets
+        cache, whichever tokenizer prepared the subset first won: a gpt2 session then read gemma or llama token ids,
+        beyond its own vocabulary, and its first embedding lookup faulted the device. That fault is sticky, so every
+        later GPU test in the process failed too (#794: the out-of-range gather in ``test_peft`` on both vendors, which
+        a used cache hid). A ``dataset_path`` a config sets explicitly is left alone.
+        """
+        task_dir = self.itdm_cfg.task_name.replace(":", "_").replace("|", "_")
+        path = Path(self.itdm_cfg.dataset_path).resolve()
+        cache_root = hf_datasets_cache_root().resolve()
+        if path.parent != cache_root or not (path.name == task_dir or path.name.startswith(f"{task_dir}__")):
+            return
+        tokenizer = self.tokenizer
+        identity = f"{type(tokenizer).__name__}|{getattr(tokenizer, 'name_or_path', '')}|{len(tokenizer)}"
+        key = hashlib.sha256(identity.encode()).hexdigest()[:12]
+        self.itdm_cfg.dataset_path = cache_root / f"{task_dir}__{key}"
 
     # dataset fingerprinting is not enabled by default
     def sample_dataset_state(self) -> List:
