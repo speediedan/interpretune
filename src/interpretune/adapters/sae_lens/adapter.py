@@ -192,6 +192,14 @@ class BaseSAELensModule(BaseITModule):
                     seen.add(id(param))
                     yield param
 
+    def _tunable_roles(self) -> dict[str, str]:
+        """Spliced SAEs' parameters take the ``latent:sae`` role (#758)."""
+        roles = super()._tunable_roles()  # cooperative, provided by BaseITModule
+        attached = self._attached_saes()
+        if attached is not None:
+            roles.update({f"attached_saes.{n}": "latent:sae" for n, _ in attached.named_parameters()})
+        return roles
+
     def _capture_hyperparameters(self) -> None:
         self._it_state._init_hparams = {"sae_cfgs": deepcopy(self.it_cfg.sae_cfgs)}
         super()._capture_hyperparameters()

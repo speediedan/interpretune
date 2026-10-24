@@ -85,6 +85,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 - A minimal callback list (`SessionRunnerCfg.callbacks`, `CoreCallback`, `CoreLoopContext`) with step, validation-end and epoch boundaries; a callback stops training by setting `ctx.should_stop` (#761)
 - `checkpoint_state` / `load_checkpoint_state`: module, optimizer, lr scheduler, RNG and loop state, plus optional `on_save_checkpoint` / `on_load_checkpoint` module hooks and callback state (#761)
 
+#### Tuning through finetuning-scheduler views
+- Each module composition declares a finetuning-scheduler `TunableView` (`build_tunable_view()`, with cooperative `_tunable_roles()`), attached as `fts_tunable_view` after model init: the identity view with PEFT `adapter:<name>` roles by default, `TransformerBridgeView` in TransformerLens names for TransformerLens compositions, `latent:sae` for spliced SAEs, and refusals with reasons for nnsight, circuit-tracer and undeclared compositions (#758, #759)
+- `interpretune.testing.conformance.TuningConformance` runs finetuning-scheduler's view conformance cases against a composition, selected by its declared support (#760)
+- The default optimizer (`optimizer_parameters()`) covers the parameters an attached, trainable view selects: every view is rooted at the interpretune module, so trainable modules registered beside `module.model` (interventions, spliced SAEs) are optimized with no adapter extending the hook. Compositions without a view, or with a refusing one, keep the model's own parameters (#761)
+- Local, dispatched nnsight compositions register their HF module on the module as `hf_model`, so the optimizer, checkpoints and the identity view reach its parameters; remote (NDIF) and undispatched compositions are refused with their reasons (#774)
+
 ### Changed
 - `CompositionRegistry` updated to handle NNsight adapter combinations and dual-backend circuit-tracer
 - `BaseITModule.auto_model_init` refactored to support both HuggingFace and NNsight model initialization paths

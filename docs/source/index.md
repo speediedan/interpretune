@@ -157,6 +157,7 @@ usage/adapter_selection_guide
 usage/adapter_development_guide
 usage/adapter_conformance_contract
 usage/framework_level_adapters
+usage/fts_tunable_views
 usage/circuit_tracer_backend_support
 ```
 
