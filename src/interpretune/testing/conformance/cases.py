@@ -950,8 +950,12 @@ class ModelBackendConformance:
             ids, mask = suite.batch_inputs(i)
             ref = hf.steered_many(ids, [(point, add_fn(STEER_SCALE + half), "last_token")], attention_mask=mask)
             _assert_close_padded(first, ref["logits"][0, -1, :], what=f"batch {i}: summed-add logits")
-            assert torch.allclose(first, second, rtol=0, atol=CONVERGENCE_ATOL), (
-                f"batch {i}: two adds in opposite orders disagreed"
+            # the measured difference in the message, as `_assert_close_padded` reports it, so a platform failure
+            # reports a number (this is `torch.allclose(first, second, rtol=0, atol=CONVERGENCE_ATOL)`)
+            diff = (first.to(torch.float32) - second.to(torch.float32)).abs().max().item()
+            assert diff <= CONVERGENCE_ATOL, (
+                f"batch {i}: two adds in opposite orders disagreed: greatest absolute difference {diff:.3e}"
+                f" (atol={CONVERGENCE_ATOL}, rtol=0)"
             )
 
     # -- LATENT_MODELS ------------------------------------------------------------------------------
