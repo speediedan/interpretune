@@ -77,6 +77,24 @@ failures in `test_phase_manifest.py`, so the triage paths are exercised before h
 exists. The patterns are deliberately narrow: a real ROCm failure that lands in `unknown` is
 the honest outcome and the signal to extend a pattern with the measured text.
 
+## Calibrations from the 2026-10-24 AMD reruns
+
+Measured on two AMD Radeon AI PRO R9700 (torch 2.15.0+rocm10.0, HIP 7.15) at `2d0d0887`, on a fresh datasets
+cache: the cuda phase collected 110, with 100 passed, 2 failed, 8 skipped, and **no device faults**. Both failures and
+the profiling failure were sorted and calibrated as follows, each scoped so NVIDIA keeps its expectation:
+
+| Failure | Bucket | Measured (three runs) | Calibration |
+| --- | --- | --- | --- |
+| `test_l_profiling[test_cuda_32_l]` | `resource-calibration` | `reserved_bytes.all.peak` 689963008 against 576716800 (+19.6%), identical in all three; the allocated stats and `npp_diff` pass | a ROCm override (`expected_mem_rocm` in `profile_memory_footprints.yaml`) for that stat only, at the default 10% tolerance: the HIP caching allocator sizes its segments differently, and the allocated bytes agree |
+| `TestCircuitTracerConformance::test_mixed_modes_apply_in_declaration_order` | `numerics-tolerance` | the commuting control (two adds in opposite orders) at 1.07e-4 to 1.47e-4 against `atol=1e-4`, 3 of 3 | `ROCM_COMMUTE_ATOL = 3e-4` on a ROCm device |
+| `TestCircuitTracerConformance::test_batched_hooks_agree_with_sequential` | `numerics-tolerance` | 2 of 3 failed identically (104,923 of 149,422,080 logits, 7.0e-4, beyond the padded tolerance; greatest 3.13e-2), 1 of 3 agreed | on a ROCm device, at most `ROCM_BATCHED_MISMATCH_FRACTION = 1.5e-3` of the logits beyond the padded tolerance and none beyond `ROCM_BATCHED_ATOL = 6e-2` |
+
+Each ROCm bound is about twice the measured spread. For the batched case, a bounded fraction was chosen over a
+uniformly wider tolerance, which would loosen all 149 million logits sixty-fold, and over a ROCm skip, which would drop
+the check: 99.9% of the logits still meet the padded tolerance, and the case's positive control still guards against
+a vacuous pass. The profiling failure stopped at the first stat; the stat check now reports every stat that differs
+in one failure, so one run measures all four.
+
 ## Issue 795 placement tests
 
 `test_latent_device_placement.py` now meets the G-6 contract with a real model split across

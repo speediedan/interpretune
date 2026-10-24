@@ -33,6 +33,8 @@ from tests.results import (
     SAMPLE_POSITION,
     DatasetState,
     save_memory_footprint_results,
+    on_rocm,
+    ROCM_MEM_KEY,
     parity_normalize,
 )
 from tests.parity_acceptance.expected import memory_footprints
@@ -454,14 +456,25 @@ class StateLogInspectMixin:
                     fp.write(f"{' ' * 8}{k}: {v},{os.linesep}")
 
     def _validate_memory_stats(self) -> None:
+        """Compare every expected stat, then fail once naming all that differ, so one run measures them all.
+
+        Logging dev state on ROCm records into the footprint's ROCm overrides, leaving the CUDA expectation as it is.
+        """
+        mismatches = []
         for act, exp in self.expected_memstats[1].items():
             actual_val = self.memprofiler.memory_stats[self.expected_memstats[0]][act]
             if not self.state_log_dir:
                 rtol, atol = self.tolerance_map.get(act, (0, 0))
-                assert_close(actual=actual_val, expected=exp, rtol=rtol, atol=atol)
+                try:
+                    assert_close(actual=actual_val, expected=exp, rtol=rtol, atol=atol)
+                except AssertionError:
+                    mismatches.append(f"{act}: expected {exp} but got {actual_val} (rtol={rtol}, atol={atol})")
             else:
-                self.dev_expected_close[act] = self.memprofiler.memory_stats[self.expected_memstats[0]][act]
-                memory_footprints[parity_normalize(self.test_alias)]["expected_mem"][act] = actual_val
+                self.dev_expected_close[act] = actual_val
+                footprint = memory_footprints[parity_normalize(self.test_alias)]
+                key = ROCM_MEM_KEY if on_rocm() else "expected_mem"
+                footprint.setdefault(key, {})[act] = actual_val
+        assert not mismatches, f"{len(mismatches)} memory stat(s) differ: " + "; ".join(mismatches)
 
 
 class DivergeOnEpochMixin:

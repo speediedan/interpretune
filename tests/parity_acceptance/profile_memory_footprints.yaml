@@ -11,6 +11,8 @@ test_l_profiling.test_cuda_32:
       allocated_bytes.all.peak: 556507648
       npp_diff: 0
       reserved_bytes.all.peak: 576716800
+    expected_mem_rocm:
+      reserved_bytes.all.peak: 689963008
     phase: test
     src: cuda
 test_l_profiling.test_cuda_bf16:
