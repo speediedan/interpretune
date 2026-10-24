@@ -141,9 +141,15 @@ class BaseNNsightModule(BaseITModule):
             return "the model was not built through nnsight (the composition has no `nnsight_cfg`)."
         if cfg.remote:
             return "nnsight compositions executing remotely (NDIF) have no local weights to tune; see interpretune#775."
+        model = getattr(self, "model", None)
+        if model is not None and not getattr(model, "dispatched", True):
+            return (
+                "the nnsight model's weights are not dispatched (still on the meta device), so they are not registered"
+                " on the interpretune module; dispatch the model to tune it."
+            )
         return (
-            "the nnsight model's weights are not dispatched (or there is no local HF module), so they are not"
-            " registered on the interpretune module; dispatch the model to tune it."
+            "the nnsight model has no local HF module (`model._model` is not a torch module), so there is nothing"
+            " to register on the interpretune module."
         )
 
     def _register_hf_model(self) -> None:
@@ -166,13 +172,15 @@ class BaseNNsightModule(BaseITModule):
         super().__init__(*args, **kwargs)
         self.loss_fn = None
 
-    def post_auto_model_init(self) -> None:
+    def _register_tunable_modules(self) -> None:
         """Register the HF module once any nnsight init path has built the model (#774).
 
-        Here rather than in one init path: compositions override ``auto_model_init`` with their own (sae_lens over
-        nnsight does), and this hook runs after every one of them, before the finetuning-scheduler view is attached.
+        Here rather than in one init path or a template hook: compositions override ``auto_model_init`` with their own
+        (sae_lens over nnsight does), a custom ``model_init`` skips ``post_auto_model_init``, and a template-hook
+        override need not call ``super()``. This cooperative hook runs after every init path, before the
+        finetuning-scheduler view is attached.
         """
-        super().post_auto_model_init()
+        super()._register_tunable_modules()
         self._register_hf_model()
 
     def auto_model_init(self) -> None:

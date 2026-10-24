@@ -103,4 +103,4 @@ class TuningConformance:
         if not case.applies(support, probe):
             pytest.skip(f"does not apply to this view: {support}")
         report = suite.run(select=[case_name])
-        assert not report.failures, report.failures[case_name]
+        assert not report.failures, report.failures.get(case_name, report.failures)

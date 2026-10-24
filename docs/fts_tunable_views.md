@@ -19,18 +19,19 @@ scheme, with which role kinds, or why not.
 
 | Composition | View | Roles |
 | --- | --- | --- |
-| core / HF (the default) | finetuning-scheduler's identity view | PEFT adapter tensors as `adapter:<name>` |
-| TransformerLens | `TransformerBridgeView`, in TransformerLens names | as below |
+| core / HF, and any composition not overriding `build_tunable_view()` (the default) | finetuning-scheduler's identity view: trainable | PEFT adapter tensors as `adapter:<name>` |
+| TransformerLens | `TransformerBridgeView`, in TransformerLens names (refused when the bridge holds quantized or packed parameters) | as below |
 | sae_lens with `add_saes_on_init=True` | the backend's view | the spliced SAEs as `latent:sae` |
 | nnsight, local and dispatched | finetuning-scheduler's identity view over the HF module, registered as `hf_model` | PEFT adapter tensors as `adapter:<name>` |
 | nnsight, remote (NDIF) or not yet dispatched | refused, with the reason | |
 | circuit-tracer | refused, with the reason | |
-| a composition declaring nothing | refused: never assumed trainable | |
+| a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |
 
 ## Declaring a view
 
-A composition declares by overriding `build_tunable_view()`, returning a view or `None` (which declares nothing, so the
-composition is refused). Roles are added cooperatively through `_tunable_roles()`, which each mixin extends from
+The base `build_tunable_view()` is a declaration in its own right: it returns the identity view, so **a composition
+that does not override it is trainable**. A composition declares otherwise by overriding `build_tunable_view()`,
+returning its own view or `None` (which declares nothing, so the composition is refused). Roles are added cooperatively through `_tunable_roles()`, which each mixin extends from
 `super()`'s, so a backend's view and another mixin's roles compose:
 
 ```python
@@ -41,8 +42,15 @@ class MyInterventionMixin:
         return roles
 ```
 
-PEFT adapter tensors are found through PEFT's tuner-layer API rather than by name, so every PEFT tuner is covered and the
-base weight PEFT renames (`base_layer.weight`) stays `base`.
+PEFT adapter tensors are found through PEFT's tuner-layer API rather than by name, so every tuner whose layers hold their
+adapters there (LoRA and its variants, IA3 and similar) is covered and the base weight PEFT renames (`base_layer.weight`)
+stays `base`. Prompt-learning methods (prompt and prefix tuning) keep their tensors outside tuner layers; those are not
+found and stay `base`.
+
+The default optimizer (`optimizer_parameters()`) steps the attached trainable view's root parameters, less those whose
+role finetuning-scheduler never optimizes (`fitted` and `instrument`). A module the view must reach that the model owns
+is registered through the cooperative `_register_tunable_modules()`, which runs after whichever init path ran and before
+the view is attached (nnsight registers its HF module there).
 
 ## The TransformerLens view
 
@@ -58,6 +66,11 @@ TransformerLens synthesizes for a bias-free projection) is left out, and a sched
   in different phases, because their storage overlaps.
 - **Norms.** With `implicit_norm_thaw` (the default), thawing any of a block's parameters thaws the block's norms, and
   thawing an embedding thaws the final norm, as the legacy `TLNamesModelView` does.
+- **Live tensors.** `logical_named_parameters()` computes the TransformerLens tensors on each call, so they carry the
+  parameters' current values.
+- **Every traced name is scheduled.** The default schedule orders the unembedding, the blocks and the embeddings; a
+  traced name outside those (one an architecture adds outside its blocks) goes in a final group of its own rather than
+  being dropped. Norms are found anywhere in a block, including inside its attention.
 - **Copies.** `copy.deepcopy` of a bridge does not preserve the fused-projection aliasing (the splits become independent
   copies), so build a view over the bridge a session actually trains.
 

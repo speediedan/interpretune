@@ -99,7 +99,31 @@ class TestAttachment:
         remote = SimpleNamespace(it_cfg=SimpleNamespace(nnsight_cfg=SimpleNamespace(remote=True)))
         local = SimpleNamespace(it_cfg=SimpleNamespace(nnsight_cfg=SimpleNamespace(remote=False)))
         assert "#775" in BaseNNsightModule._hf_model_unregistered_reason(remote)  # type: ignore[arg-type]
-        assert "not dispatched" in BaseNNsightModule._hf_model_unregistered_reason(local)  # type: ignore[arg-type]
+        assert "no local HF module" in BaseNNsightModule._hf_model_unregistered_reason(local)  # type: ignore[arg-type]
+
+    def test_an_undispatched_nnsight_composition_is_refused(self, request):
+        """A real `dispatch=False` composition: weights stay on the meta device, so nothing is registered."""
+        cfg = deepcopy(request.getfixturevalue("get_it_session_cfg__ns_gpt2"))
+        cfg.module_cfg.nnsight_cfg.dispatch = False
+        module = ITSession(cfg).module
+        assert "hf_model" not in module._modules
+        support = as_view(getattr(module, VIEW_ATTR)).support()
+        assert not support.trainable and "not dispatched" in support.reason
+
+    def test_nnsight_registration_survives_a_template_hook_override(self, request):
+        """`post_auto_model_init` is a template hook (no `super()` required), so registration does not live
+        there."""
+        from tests.modules import TestITModule
+
+        class NoSuperHook(TestITModule):
+            def post_auto_model_init(self) -> None:
+                pass
+
+        cfg = deepcopy(request.getfixturevalue("get_it_session_cfg__ns_gpt2"))
+        cfg.module_cls = NoSuperHook
+        module = ITSession(cfg).module
+        assert module._modules["hf_model"] is module.model._model
+        assert as_view(getattr(module, VIEW_ATTR)).support().trainable
 
     def test_a_composition_without_nnsight_cfg_registers_nothing(self):
         """circuit-tracer over nnsight carries the nnsight module without an `nnsight_cfg` (its config is its own), and
@@ -120,6 +144,18 @@ class TestAttachment:
         view = BaseCircuitTracerModule.build_tunable_view(nn.Linear(2, 2))  # type: ignore[arg-type]
         support = as_view(view).support()
         assert not support.trainable and "frozen at construction" in support.reason
+
+    def test_every_circuit_tracer_composition_takes_the_refusal(self):
+        """The refusal reaches a composed circuit-tracer module only by MRO order (ahead of the TransformerLens and
+        nnsight modules, whose views are trainable), so assert it on every registered composition."""
+        from interpretune.adapter_registry import ADAPTER_REGISTRY
+        from interpretune.protocol import Adapter
+
+        keys = [k for k in ADAPTER_REGISTRY.keys() if k[0] == "module" and Adapter.circuit_tracer in k]
+        assert keys
+        for key in keys:
+            composed = type("Composed", tuple(ADAPTER_REGISTRY.get(key)), {})
+            assert composed.build_tunable_view is BaseCircuitTracerModule.build_tunable_view, key
 
 
 class TestAttachRules:
@@ -168,11 +204,65 @@ class TestDefaultOptimizer:
         object.__setattr__(module, VIEW_ATTR, None)
         assert self._ids(module.optimizer_parameters()) == self._ids(module.model.parameters())
 
+    def test_fitted_and_instrument_tensors_are_not_optimized(self, request):
+        module = _fresh_module(request, "get_it_session_cfg__core_cust")
+        module.fitted = nn.Linear(2, 2)
+        module.instrument = nn.Linear(2, 2)
+        module.intervention = nn.Linear(2, 2)
+        roles = {f"fitted.{n}": "fitted" for n, _ in module.fitted.named_parameters()}
+        roles |= {f"instrument.{n}": "instrument" for n, _ in module.instrument.named_parameters()}
+        object.__setattr__(module, VIEW_ATTR, identity_view(module, roles=roles))
+        covered = self._ids(module.optimizer_parameters())
+        assert self._ids(module.intervention.parameters()) <= covered
+        assert not covered & self._ids([*module.fitted.parameters(), *module.instrument.parameters()])
+
+    def test_an_attached_non_view_is_a_configuration_error(self, request):
+        module = _fresh_module(request, "get_it_session_cfg__core_cust")
+        object.__setattr__(module, VIEW_ATTR, object())
+        with pytest.raises(FTSConfigurationError):
+            list(module.optimizer_parameters())
+
     def test_a_refused_composition_keeps_the_models_parameters(self, request):
         module = _fresh_module(request, "get_it_session_cfg__core_cust")
         module.intervention = nn.Linear(2, 2)
         object.__setattr__(module, VIEW_ATTR, RefusingView(module, "refused for this test"))
         assert self._ids(module.optimizer_parameters()) == self._ids(module.model.parameters())
+
+
+class TestBridgeView:
+    """The TransformerLens view's storage refusal, live tensors and complete default schedule."""
+
+    def test_packed_storage_is_refused_and_does_not_break_the_trace(self, request):
+        from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
+
+        module = _fresh_module(request, "get_it_session_cfg__tl_cust")
+        holder = next(m for m in module.model.modules() if isinstance(m, nn.Linear))
+        holder.register_parameter("packed", nn.Parameter(torch.zeros(4, dtype=torch.int8), requires_grad=False))
+        view = TransformerBridgeView(module)
+        support = as_view(view).support()
+        assert not support.trainable and "packed" in support.reason
+        assert view.untraced is not None  # tracing skips the integer tensor rather than raising
+
+    def test_logical_tensors_are_live(self, request):
+        module = _fresh_module(request, "get_it_session_cfg__tl_cust")
+        view = getattr(module, VIEW_ATTR)
+        name, before = next(n_t for n_t in view.logical_named_parameters() if n_t[0].endswith("W_Q"))
+        before = before.clone()
+        (physical,) = view.to_physical([name])[name][:1]
+        with torch.no_grad():
+            module.get_parameter(physical).add_(1.0)
+        after = dict(view.logical_named_parameters())[name]
+        assert not torch.equal(before, after)
+
+    def test_an_unordered_traced_name_gets_a_final_group(self, request):
+        module = _fresh_module(request, "get_it_session_cfg__tl_cust")
+        view = getattr(module, VIEW_ATTR)
+        view._build()
+        some_physical = next(iter(view._table.values()))
+        view._table["extra.W_new"] = some_physical
+        groups = view.depth_groups()
+        assert groups[-1] == ["extra.W_new"]
+        assert {n for g in groups for n in g} == set(view._table)
 
 
 def test_peft_adapter_tensors_take_the_adapter_role():

@@ -29,20 +29,27 @@ Two kinds of tensor are thawed implicitly (``coupled``):
 
 ``depth_groups`` keeps tensors that share storage in one group: the unembedding with an embedding tied to it, and
 each block whole (its query, key and value splits may share one fused tensor).
+
+A bridge holding non-floating-point parameters (quantized or packed storage) is refused: a step through a dequantized
+TransformerLens tensor cannot reach the packed integers it was computed from.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import torch
 from torch import nn, Tensor
 
-from finetuning_scheduler.core.views import TunableSupport, Unresolvable
+if TYPE_CHECKING:
+    from finetuning_scheduler.core.views import TunableSupport
 
 _BLOCK = re.compile(r"^blocks\.(\d+)\.")
+# the TransformerLens name prefixes `depth_groups` orders; a traced name matching none is grouped last
+_UNEMBED_PREFIXES = ("unembed.", "ln_final.")
+_EMBED_PREFIXES = ("embed.", "pos_embed.")
 
 
 def autograd_leaves(t: Tensor) -> list[Tensor]:
@@ -68,22 +75,28 @@ def autograd_leaves(t: Tensor) -> list[Tensor]:
     return list(leaves.values())
 
 
-def _traced_by_autograd(bridge: nn.Module) -> dict[str, tuple[Tensor, list[Tensor]]]:
-    """Each TransformerLens name with its tensor (detached) and the parameters it is computed from.
+def _traced_by_autograd(bridge: nn.Module) -> dict[str, list[Tensor]]:
+    """Each TransformerLens name with the parameters its tensor is computed from.
 
-    Every parameter is made to require grad while the TransformerLens tensors are built, so that each one records how
-    it was derived; ``requires_grad`` is restored afterwards.
+    Every floating-point parameter is made to require grad while the TransformerLens tensors are built, so that each
+    one records how it was derived; ``requires_grad`` is restored afterwards. Integer parameters cannot require grad,
+    so they are left as they are and trace to nothing (the view refuses a bridge holding any).
     """
-    params = list(bridge.parameters())
+    params = [p for p in bridge.parameters() if p.is_floating_point() or p.is_complex()]
     saved = [p.requires_grad for p in params]
     try:
         for p in params:
             p.requires_grad_(True)
         with torch.enable_grad():
-            return {n: (t.detach(), autograd_leaves(t)) for n, t in bridge.tl_named_parameters()}  # type: ignore[attr-defined]
+            return {n: autograd_leaves(t) for n, t in bridge.tl_named_parameters()}  # type: ignore[attr-defined]
     finally:
         for p, flag in zip(params, saved):
             p.requires_grad_(flag)
+
+
+def packed_parameters(module: nn.Module) -> list[str]:
+    """``module``'s parameters whose storage is not floating point (quantized or packed weights)."""
+    return [n for n, p in module.named_parameters() if not (p.is_floating_point() or p.is_complex())]
 
 
 def _storage_key(t: Tensor) -> tuple[str, int] | None:
@@ -147,18 +160,16 @@ class TransformerBridgeView:
         named = list(root.named_parameters())
         name_of = {id(p): n for n, p in named}
         self._table: dict[str, tuple[str, ...]] = {}
-        self._tl_tensors: dict[str, Tensor] = {}
         self._untraced: list[str] = []
         traced = {
-            n: (t, [name_of[id(leaf)] for leaf in leaves if id(leaf) in name_of])
-            for n, (t, leaves) in _traced_by_autograd(bridge).items()
+            n: [name_of[id(leaf)] for leaf in leaves if id(leaf) in name_of]
+            for n, leaves in _traced_by_autograd(bridge).items()
         }
-        for tl_name, (tl_tensor, physical) in traced.items():
+        for tl_name, physical in traced.items():
             if not physical:
                 self._untraced.append(tl_name)
                 continue
             self._table[tl_name] = tuple(physical)
-            self._tl_tensors[tl_name] = tl_tensor
         self._reverse: dict[str, str] = {}
         for logical, physical in self._table.items():
             for p in physical:
@@ -178,13 +189,16 @@ class TransformerBridgeView:
                     self._aliases[n] = unreached
 
         def _norms(module: nn.Module) -> list[str]:
-            return [
-                name_of[id(p)]
-                for c in module._modules.values()
-                if isinstance(c, NormalizationBridge)
-                for p in c.parameters()
-                if id(p) in name_of
-            ]
+            # every norm in the block, at any depth (some architectures nest norms inside attention)
+            return list(
+                dict.fromkeys(
+                    name_of[id(p)]
+                    for c in module.modules()
+                    if isinstance(c, NormalizationBridge)
+                    for p in c.parameters()
+                    if id(p) in name_of
+                )
+            )
 
         self._block_norms = {i: _norms(block) for i, block in enumerate(bridge.blocks)}  # type: ignore[attr-defined]
         final = getattr(bridge, "ln_final", None)
@@ -197,17 +211,23 @@ class TransformerBridgeView:
             p: int(m.group(1)) for logical, ps in self._table.items() if (m := _BLOCK.match(logical)) for p in ps
         }
         self._embedding_physical = {
-            p
-            for logical, ps in self._table.items()
-            if logical.startswith(("embed.", "pos_embed.", "unembed."))
-            for p in ps
+            p for logical, ps in self._table.items() if logical.startswith(_EMBED_PREFIXES + ("unembed.",)) for p in ps
         }
         self._built = True
 
     def support(self) -> TunableSupport:
-        """Trainable, in TransformerLens names that are reshaped views of the physical tensors."""
+        """Trainable, in TransformerLens names that are reshaped views of the physical tensors; refused, naming the
+        tensors, when the bridge holds quantized or packed (non-floating-point) parameters."""
         from finetuning_scheduler.core.roles import declared_kinds
+        from finetuning_scheduler.core.views import TunableSupport
 
+        if packed := packed_parameters(self.bridge):
+            shown = ", ".join(packed[:3]) + (f" and {len(packed) - 3} more" if len(packed) > 3 else "")
+            return TunableSupport(
+                trainable=False,
+                reason=f"the bridge holds quantized or packed (non-floating-point) parameters ({shown}), which a"
+                " gradient step through their dequantized TransformerLens tensors cannot reach.",
+            )
         return TunableSupport(
             trainable=True, naming_scheme="tl", logical_names_are_views=True, declared_roles=declared_kinds(self._roles)
         )
@@ -218,6 +238,8 @@ class TransformerBridgeView:
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Each TransformerLens name mapped to the parameters its tensor is computed from."""
+        from finetuning_scheduler.core.views import Unresolvable
+
         self._build()
         unresolved = [n for n in logical if n not in self._table]
         if unresolved:
@@ -232,11 +254,15 @@ class TransformerBridgeView:
     def logical_named_parameters(self) -> Iterator[tuple[str, Tensor]]:
         """The traced TransformerLens names with their TransformerLens tensors, in the bridge's order.
 
-        Names TransformerLens synthesizes with no parameter behind them (zero biases of a bias-free projection) are left
-        out.
+        The tensors are computed afresh on each call (without grad), so they carry the parameters' current values rather
+        than those at the first build. Names TransformerLens synthesizes with no parameter behind them (zero biases of a
+        bias-free projection) are left out.
         """
         self._build()
-        yield from self._tl_tensors.items()
+        with torch.no_grad():
+            for name, tensor in self.bridge.tl_named_parameters():  # type: ignore[attr-defined]
+                if name in self._table:
+                    yield name, tensor
 
     def coupled(self, physical: Sequence[str]) -> list[str]:
         """The unnamed storage aliases of ``physical`` and, with ``implicit_norm_thaw``, their blocks' norms (the
@@ -255,11 +281,15 @@ class TransformerBridgeView:
 
     def depth_groups(self) -> list[list[str]]:
         """The unembedding and final norm first (with any embedding tied to the unembedding), then each block whole
-        from the last, then the remaining embeddings."""
+        from the last, then the remaining embeddings.
+
+        A traced name matching none of those (one an architecture adds outside its blocks) is placed in a final group of
+        its own rather than dropped, so the default schedule covers every traced name.
+        """
         self._build()
-        unembed = [n for n in self._table if n.startswith(("unembed.", "ln_final."))]
+        unembed = [n for n in self._table if n.startswith(_UNEMBED_PREFIXES)]
         unembed_physical = {p for n in unembed for p in self._table[n]}
-        embeds = [n for n in self._table if n.startswith(("embed.", "pos_embed."))]
+        embeds = [n for n in self._table if n.startswith(_EMBED_PREFIXES)]
         tied = [n for n in embeds if set(self._table[n]) & unembed_physical]
         blocks: dict[int, list[str]] = {}
         for n in self._table:
@@ -270,4 +300,7 @@ class TransformerBridgeView:
         rest = [n for n in embeds if n not in tied]
         if rest:
             groups.append(rest)
+        grouped = {n for g in groups for n in g}
+        if leftover := [n for n in self._table if n not in grouped]:
+            groups.append(leftover)
         return [g for g in groups if g]

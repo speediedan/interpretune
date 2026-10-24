@@ -17,8 +17,10 @@ model is initialized, where finetuning-scheduler discovers it. Every view's root
 physical names are the module's own (``model.<...>``) and modules registered beside the model (spliced SAEs,
 interventions) are reachable.
 
-A composition that declares nothing gets a view refusing it, so it is never assumed trainable. Nothing is attached when
-the installed finetuning-scheduler predates views, and an attached view is never replaced.
+``BaseITModule.build_tunable_view()`` is itself a declaration (the identity view), so a composition that does not
+override it is trainable; one whose ``build_tunable_view()`` returns ``None`` declares nothing and gets a view refusing
+it, so it is never assumed trainable. Nothing is attached when the installed finetuning-scheduler predates views, and an
+attached view is never replaced.
 """
 
 from __future__ import annotations
@@ -44,7 +46,9 @@ def peft_adapter_roles(root: nn.Module) -> dict[str, str]:
     """``adapter:<name>`` roles for every PEFT adapter tensor under ``root``, keyed by ``root``'s parameter names.
 
     Adapter tensors are found through PEFT's tuner-layer API (each layer's ``adapter_layer_names``), not by name, so
-    every PEFT tuner is covered and a base weight PEFT renames (``base_layer.weight``) stays ``base``.
+    every tuner whose layers hold their adapters in module or parameter dicts there (LoRA and its variants, IA3 and
+    similar) is covered and a base weight PEFT renames (``base_layer.weight``) stays ``base``. Prompt-learning methods
+    (prompt and prefix tuning), whose tensors live outside tuner layers, are not found and stay ``base``.
     """
     name_of = {id(p): n for n, p in root.named_parameters()}
     roles: dict[str, str] = {}
