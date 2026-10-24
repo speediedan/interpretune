@@ -101,6 +101,21 @@ class TestAttachment:
         assert "#775" in BaseNNsightModule._hf_model_unregistered_reason(remote)  # type: ignore[arg-type]
         assert "not dispatched" in BaseNNsightModule._hf_model_unregistered_reason(local)  # type: ignore[arg-type]
 
+    def test_a_composition_without_nnsight_cfg_registers_nothing(self):
+        """circuit-tracer over nnsight carries the nnsight module without an `nnsight_cfg` (its config is its own), and
+        the registration hook runs after its init too: it must neither raise nor register its model."""
+        from types import SimpleNamespace
+
+        from interpretune.adapters.nnsight.adapter import BaseNNsightModule
+
+        hf = nn.Linear(2, 2)
+        module = SimpleNamespace(
+            it_cfg=SimpleNamespace(), model=SimpleNamespace(_model=hf, dispatched=True), _modules={}
+        )
+        BaseNNsightModule._register_hf_model(module)  # type: ignore[arg-type]
+        assert "hf_model" not in module._modules
+        assert "not built through nnsight" in BaseNNsightModule._hf_model_unregistered_reason(module)  # type: ignore[arg-type]
+
     def test_circuit_tracer_is_refused_with_its_reason(self):
         view = BaseCircuitTracerModule.build_tunable_view(nn.Linear(2, 2))  # type: ignore[arg-type]
         support = as_view(view).support()

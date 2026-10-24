@@ -136,8 +136,10 @@ class BaseNNsightModule(BaseITModule):
         return RefusingView(self, self._hf_model_unregistered_reason())
 
     def _hf_model_unregistered_reason(self) -> str:
-        cfg = self.it_cfg.nnsight_cfg
-        if cfg is not None and cfg.remote:
+        cfg = getattr(self.it_cfg, "nnsight_cfg", None)
+        if cfg is None:
+            return "the model was not built through nnsight (the composition has no `nnsight_cfg`)."
+        if cfg.remote:
             return "nnsight compositions executing remotely (NDIF) have no local weights to tune; see interpretune#775."
         return (
             "the nnsight model's weights are not dispatched (or there is no local HF module), so they are not"
@@ -147,10 +149,14 @@ class BaseNNsightModule(BaseITModule):
     def _register_hf_model(self) -> None:
         """Register the nnsight model's HF module on this module as ``hf_model``, so its parameters are this
         module's (for the optimizer, checkpoints and finetuning-scheduler views), unless execution is remote or the
-        weights are not dispatched (still on the meta device)."""
-        cfg = self.it_cfg.nnsight_cfg
+        weights are not dispatched (still on the meta device), or the model was not built through nnsight at all.
+
+        A composition can carry this module without an ``nnsight_cfg`` (circuit-tracer over nnsight builds its model
+        through its own init path and config), so the config is read as ``NNsightAttributeMixin`` reads it.
+        """
+        cfg = getattr(self.it_cfg, "nnsight_cfg", None)
         hf_model = getattr(self.model, "_model", None)
-        if (cfg is not None and cfg.remote) or not isinstance(hf_model, torch.nn.Module):
+        if cfg is None or cfg.remote or not isinstance(hf_model, torch.nn.Module):
             return
         if not getattr(self.model, "dispatched", True):
             return
