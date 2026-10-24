@@ -61,6 +61,31 @@ TransformerLens synthesizes for a bias-free projection) is left out, and a sched
 - **Copies.** `copy.deepcopy` of a bridge does not preserve the fused-projection aliasing (the splits become independent
   copies), so build a view over the bridge a session actually trains.
 
+## Phased fine-tuning on the core loop
+
+Lightning compositions use finetuning-scheduler's `FinetuningScheduler` callback. On the core loop,
+`interpretune.tuning.core_loop.FTSCoreCallback` drives its `FTSController` at the loop's boundaries. It goes in
+`SessionRunnerCfg.callbacks`:
+
+```python
+from interpretune.config import SessionRunnerCfg
+from interpretune.tuning.core_loop import FTSCoreCallback
+
+schedule = {0: {"params": ["role:adapter:default"], "max_transition_epoch": 2}, 1: {"params": ["model.lm_head.weight"]}}
+runner_cfg = SessionRunnerCfg(it_session=session, max_epochs=4, callbacks=[FTSCoreCallback(schedule)])
+```
+
+The callback builds the controller over the session's module when training starts, so the schedule names parameters
+through the module's view, roles included. The controller builds the optimizer from the module's `optimizer_init` and
+the lr schedulers from its `lr_scheduler_init`, unless `controller_kwargs` passes `optimizer` or `lr_scheduler`. Each is
+installed as the module's own, so the loop steps the phase's optimizer and nothing is stepped twice. Further
+`FTSController` arguments go in `controller_kwargs`: transition policies, a checkpoint policy, `max_depth`. Phase hooks,
+gates and RNG forking are finetuning-scheduler's, unchanged. The core loop keeps its own `max_epochs`, and the callback
+warns when the schedule's final phase asks for more.
+
+A run is resumed through the controller (`callback.controller.save` and `load`), not yet through the core loop's
+`checkpoint_state`.
+
 ## Conformance
 
 finetuning-scheduler ships the view contract's cases; `interpretune.testing.conformance.TuningConformance` runs them
