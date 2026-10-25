@@ -9,5 +9,134 @@
 # A composition with no entry for the running vendor is report-only: it is measured and its artifact written, but
 # nothing is asserted. Bounds are frozen only from spread measured on BOTH vendors (`python -m
 # tests.profiling_delta.freeze`), and revised only with a recorded re-measurement.
-cuda: {}
-rocm: {}
+#
+# Frozen 2026-10-25 from one 5-repeat run per vendor: NVIDIA RTX 4090 (torch 2.15.0+cu130) and AMD (torch
+# 2.15.0+rocm10.0). Every metric showed zero repeat spread, so every tolerance is its floor. A 2070 SUPER run matched the
+# 4090 within 2.4 MiB (bf16) and to the byte elsewhere. lightning_train is not frozen: its window was lengthened after
+# these runs and awaits re-measurement on both vendors.
+cuda:
+  core_hf_fts_train:
+    end_current:
+      baseline: 515072.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -8858112.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+    slope[1]:
+      baseline: 0.0
+      tolerance: 65536.0
+    slope[2]:
+      baseline: 0.0
+      tolerance: 65536.0
+    transition[0->1]:
+      baseline: -368640.0
+      tolerance: 8388608.0
+    transition[1->2]:
+      baseline: -124928.0
+      tolerance: 8388608.0
+  core_hf_test:
+    end_current:
+      baseline: -799744.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -799232.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  core_hf_train:
+    end_current:
+      baseline: -374272.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 150016.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  core_hf_train_bf16:
+    end_current:
+      baseline: -6430208.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -6422016.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  lightning_test:
+    end_current:
+      baseline: -797696.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -797184.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+rocm:
+  core_hf_fts_train:
+    end_current:
+      baseline: 359424.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -9205248.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+    slope[1]:
+      baseline: 0.0
+      tolerance: 65536.0
+    slope[2]:
+      baseline: 0.0
+      tolerance: 65536.0
+    transition[0->1]:
+      baseline: 0.0
+      tolerance: 8388608.0
+    transition[1->2]:
+      baseline: -1009664.0
+      tolerance: 8388608.0
+  core_hf_test:
+    end_current:
+      baseline: -799744.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -799232.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  core_hf_train:
+    end_current:
+      baseline: -837120.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 195072.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  core_hf_train_bf16:
+    end_current:
+      baseline: -1396224.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -1003008.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  lightning_test:
+    end_current:
+      baseline: -797696.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -797184.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
