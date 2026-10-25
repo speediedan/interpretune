@@ -93,7 +93,7 @@ def synthetic_arm(recorder: StepRecorder, steps: int, seed: int, plant: dict[str
 ########################################################################################################################
 
 
-def _core_cfg(phase: str, steps: int, device_type: str, precision: str | None):
+def _core_cfg(phase: str, steps: int, device_type: str, precision: str | None, lightning: bool = False):
     from tests.parity_acceptance.cfg_aliases import bs_override
     from tests.base_defaults import BaseCfg
 
@@ -114,6 +114,10 @@ def _core_cfg(phase: str, steps: int, device_type: str, precision: str | None):
     )
     if precision is not None:
         kwargs["precision"] = precision
+    if lightning:
+        from interpretune.protocol import Adapter
+
+        kwargs["adapter_ctx"] = (Adapter.lightning,)
     return _DeltaCfg(**kwargs)
 
 
@@ -178,6 +182,7 @@ class _UpstreamSpec:
     activation_checkpointing: bool
     optimizer_init: dict[str, Any]
     lr_scheduler_init: dict[str, Any] | None
+    pl_lrs_cfg: dict[str, Any]
     label_token_ids: torch.Tensor | None
     generate_kwargs: dict[str, Any]
     generative: bool
@@ -224,6 +229,7 @@ def _upstream_spec(phase: str, steps: int, precision: str | None) -> _UpstreamSp
             activation_checkpointing=bool(hf_cfg.activation_checkpointing),
             optimizer_init=dict(module.it_cfg.optimizer_init),
             lr_scheduler_init=dict(module.it_cfg.lr_scheduler_init) if module.it_cfg.lr_scheduler_init else None,
+            pl_lrs_cfg=dict(getattr(module.it_cfg, "pl_lrs_cfg", None) or {}),
             label_token_ids=_label_token_ids(module.it_cfg),
             generate_kwargs=dict(gen_cfg.lm_generation_cfg.generate_kwargs) if gen_cfg.enabled else {},
             generative=bool(gen_cfg.enabled),
@@ -297,6 +303,122 @@ def core_hf_upstream_arm(
                         model(**batch)
             recorder.step_end()
     del model, spec
+
+
+########################################################################################################################
+# Lightning: interpretune's Lightning composition versus a vanilla LightningModule, under the same Trainer
+########################################################################################################################
+
+
+def _trainer(steps: int, max_epochs: int = 1):
+    from lightning.pytorch import Trainer
+
+    accelerator = "cpu" if _device().type == "cpu" else "gpu"
+    return Trainer(
+        default_root_dir=tempfile.mkdtemp(prefix="it_profdelta_l_"),
+        devices=1,
+        accelerator=accelerator,
+        max_epochs=max_epochs,
+        precision="32-true",
+        num_sanity_val_steps=0,
+        limit_train_batches=steps,
+        limit_val_batches=0,
+        limit_test_batches=steps,
+        max_steps=steps,
+        logger=False,
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+    )
+
+
+def lightning_it_arm(recorder: StepRecorder, steps: int, seed: int, phase: str) -> None:
+    from lightning.fabric.utilities.seed import seed_everything
+
+    seed_everything(seed)
+    with _tmpdir() as tmp:
+        cfg = _core_cfg(phase, steps, _device().type, None, lightning=True)
+        session = _session(cfg, tmp)
+        module = session.module
+        step_fn_name = "training_step" if phase == "train" else "test_step"
+        step_fn = getattr(module, step_fn_name)
+
+        def recorded_step(batch, *args, **kwargs):
+            recorder.note_input(batch)
+            out = step_fn(batch, *args, **kwargs)
+            if phase == "test":
+                recorder.step_end()
+            return out
+
+        setattr(module, step_fn_name, recorded_step)
+        trainer = _trainer(steps)
+        handle = register_optimizer_step_post_hook(lambda *_: recorder.step_end())
+        try:
+            (trainer.fit if phase == "train" else trainer.test)(**session)
+        finally:
+            handle.remove()
+            delattr(module, step_fn_name)
+        del trainer, session
+
+
+def _vanilla_lightning_module(spec: _UpstreamSpec, recorder: StepRecorder):
+    from lightning.pytorch import LightningModule
+
+    class VanillaHF(LightningModule):
+        """The same HF model, loss and generation as the interpretune arm, in a plain LightningModule."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.model = _upstream_model(spec, torch.device("cpu"))  # the Trainer moves it, as it moves IT's
+            self.loss_fn = nn.CrossEntropyLoss()
+            self.register_buffer("label_ids", spec.label_token_ids.clone(), persistent=False)
+
+        def training_step(self, batch, batch_idx):
+            recorder.note_input(batch)
+            labels = torch.take(self.label_ids, torch.as_tensor(batch.pop("labels"), device=self.device))
+            logits = self.model(**batch).logits
+            return self.loss_fn(torch.squeeze(logits[:, -1, :], dim=1), labels)
+
+        def test_step(self, batch, batch_idx):
+            recorder.note_input(batch)
+            batch.pop("labels")
+            if spec.generative:
+                self.model.generate(**batch, **spec.generate_kwargs)
+            else:
+                self.model(**batch)
+            recorder.step_end()
+
+        def configure_optimizers(self):
+            init = spec.optimizer_init
+            opt = _import(init["class_path"])(self.model.parameters(), **init.get("init_args", {}))
+            if not spec.lr_scheduler_init:
+                return opt
+            sched_init = spec.lr_scheduler_init
+            sched = _import(sched_init["class_path"])(opt, **sched_init.get("init_args", {}))
+            return [opt], [{"scheduler": sched, **spec.pl_lrs_cfg}]
+
+    return VanillaHF()
+
+
+def lightning_upstream_arm(recorder: StepRecorder, steps: int, seed: int, phase: str) -> None:
+    from lightning.fabric.utilities.seed import seed_everything
+    from torch.utils.data import DataLoader
+
+    spec = _upstream_spec(phase, steps, None)
+    seed_everything(seed)
+    module = _vanilla_lightning_module(spec, recorder)
+    # the batches are already collated: batch_size=None hands each one to the step unchanged
+    loader = DataLoader(spec.batches, batch_size=None)
+    trainer = _trainer(steps)
+    handle = register_optimizer_step_post_hook(lambda *_: recorder.step_end())
+    try:
+        if phase == "train":
+            trainer.fit(module, train_dataloaders=loader)
+        else:
+            trainer.test(module, dataloaders=loader)
+    finally:
+        handle.remove()
+    del trainer, module, spec
 
 
 ########################################################################################################################
@@ -480,6 +602,20 @@ COMPOSITIONS: dict[str, Composition] = {
         ),
     )
 }
+
+COMPOSITIONS["lightning_train"] = Composition(
+    name="lightning_train",
+    description="interpretune's Lightning composition versus a vanilla LightningModule on the same HF model, under "
+    "the same Trainer configuration (Lightning's own cost cancels)",
+    it_arm=partial(lightning_it_arm, phase="train"),
+    upstream_arm=partial(lightning_upstream_arm, phase="train"),
+)
+COMPOSITIONS["lightning_test"] = Composition(
+    name="lightning_test",
+    description="Lightning test (generative classification) versus a vanilla LightningModule's generate",
+    it_arm=partial(lightning_it_arm, phase="test"),
+    upstream_arm=partial(lightning_upstream_arm, phase="test"),
+)
 
 if fts_available():
     COMPOSITIONS["core_hf_fts_train"] = Composition(
