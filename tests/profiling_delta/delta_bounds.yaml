@@ -1,0 +1,13 @@
+# Frozen interpretune-minus-upstream bounds, per vendor, per composition, per gated metric:
+#
+#   <vendor>:                 # cuda (NVIDIA), rocm (AMD)
+#     <composition>:
+#       <metric>:             # peak_alloc, end_current, slope[<phase>], transition[<a>-><b>]
+#         baseline: <bytes>   # median delta when frozen
+#         tolerance: <bytes>  # max(3 x p95(repeat spread), floor); floor 8 MiB on bytes, 64 KiB/step on slopes
+#
+# A composition with no entry for the running vendor is report-only: it is measured and its artifact written, but
+# nothing is asserted. Bounds are frozen only from spread measured on BOTH vendors (`python -m
+# tests.profiling_delta.freeze`), and revised only with a recorded re-measurement.
+cuda: {}
+rocm: {}
