@@ -75,10 +75,11 @@ jobs:
           set -euo pipefail
           # One table maps the agent's vendor to its image, device options and the device node that must exist. AMD
           # runs one whole-server lease stage: its two cards are identical, so the small-device stage's placement buys
-          # nothing there.
+          # nothing there. AMD also takes 8g of shared memory: at 512m, the CLT attribution notebook's kernel crashed at
+          # the same cell in every attempt on the AMD agent, while it passed outside a container (#816).
           case "${GPU_VENDOR:-}" in
-            nvidia) image="$IMAGE_NVIDIA"; devices='--gpus all'; node=/dev/nvidiactl; one_stage=0 ;;
-            amd)    image="$IMAGE_AMD"; devices='--device=/dev/kfd --device=/dev/dri'; node=/dev/kfd; one_stage=1 ;;
+            nvidia) image="$IMAGE_NVIDIA"; devices='--gpus all --shm-size=512m'; node=/dev/nvidiactl; one_stage=0 ;;
+            amd)    image="$IMAGE_AMD"; devices='--device=/dev/kfd --device=/dev/dri --shm-size=8g'; node=/dev/kfd; one_stage=1 ;;
             *) echo "##vso[task.logissue type=error]agent GPU_VENDOR '${GPU_VENDOR:-}' is not nvidia or amd"; exit 1 ;;
           esac
           if [[ "$IT_EXPECTED_VENDOR" != any && "$IT_EXPECTED_VENDOR" != "$GPU_VENDOR" ]]; then
@@ -111,7 +112,7 @@ jobs:
           # sleep outlives the job timeout by 5 minutes, so a container leaked by an agent crash exits on its own and
           # the kernel drops its lease locks.
           # shellcheck disable=SC2086
-          docker run -d --rm --name "$(IT_CTR)" $(IT_DEVICE_OPTIONS) --shm-size=512m \
+          docker run -d --rm --name "$(IT_CTR)" $(IT_DEVICE_OPTIONS) \
             -v "$(Build.SourcesDirectory):$(Build.SourcesDirectory)" -w "$(Build.SourcesDirectory)" \
             -v "${hf_cache}:/opt/interpretune/hf_cache:rw" \
             -v /tmp/di_leases:/gpu_leases \
