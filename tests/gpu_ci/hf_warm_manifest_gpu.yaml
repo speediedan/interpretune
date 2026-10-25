@@ -6,10 +6,12 @@
 # inside a notebook kernel is the failure this file exists for (#703): on a cold or damaged cache the kernel
 # fetched the cross-layer transcoder partway and died, leaving `*.incomplete` blobs behind for the next
 # build, and papermill reported only a dead kernel. The warm step fetches with retries and fails the build early
-# instead. On a warm cache it only checks each file.
+# instead. On a warm cache it only checks each file. It runs only when the plan runs the notebook tests that load these
+# (`plan_gpu_run.py --covers`), so a run that loads none never pays a cold fetch or fails on a Hub outage for them.
 #
-# Gated repositories are not listed: the warm step runs without a Hub token. Their weights persist on the agent's
-# cache mount from the runs that first loaded them.
+# Gated repositories are not listed, although the step has the pipeline's Hub token: a gated fetch fails on the
+# token's access grants, not on the network, so it would red a gate for a reason no retry fixes. Their weights persist
+# on the agent's cache mount from the runs that first loaded them.
 cache_version: 1
 models:
   # The circuit-tracer notebooks' cross-layer transcoder (`use_baseline_transcoder_arch=False`), over gemma-2-2b:
