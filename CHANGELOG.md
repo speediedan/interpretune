@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Memory-profiling deltas (`tests/profiling_delta`): each sampled composition runs beside a matched upstream arm (plain PyTorch and Hugging Face, a vanilla `LightningModule`, or the same `FTSController` in a plain loop), one subprocess per arm, and the extended profiling tier gates on the interpretune-minus-upstream delta in peak and retained bytes, per-phase leak slope and phase-transition step. Bounds are frozen per vendor from NVIDIA and AMD measurements (`freeze.py`); planted leak and overhead controls prove the gate can fail; phased runs also assert exact structural invariants; release and tag builds run it report-only ([#823](https://github.com/speediedan/interpretune/issues/823), [#811](https://github.com/speediedan/interpretune/issues/811))
+
 - Phase-specific collection manifests and a ROCm failure-triage classifier for the CUDA-marked and standalone test phases (`tests/gpu_ci/phase_manifest.py`), with a committed measured manifest and build-day commands; ROCm execution remains pending AMD hardware ([#794](https://github.com/speediedan/interpretune/issues/794))
 
 - ROCm triage buckets measured on the first dual-vendor parity runs: `device-fault` (device-side asserts, launch failures, HSA exceptions; not ROCm evidence by itself), `resource-calibration` and `numerics-tolerance`, plus `--classify-junit`, which reads a phase's JUnit file in execution order and attributes a sticky device-context cascade to its first fault (`device-fault-cascade`). The circuit-tracer conformance commuting control now reports its measured difference ([#794](https://github.com/speediedan/interpretune/issues/794))
