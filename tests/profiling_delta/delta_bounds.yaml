@@ -13,6 +13,9 @@
 # Frozen 2026-10-25 from two 5-repeat runs per vendor, the second with these bounds enforced: NVIDIA RTX 4090 (torch
 # 2.15.0+cu130) and AMD (torch 2.15.0+rocm10.0). Every metric showed zero spread across repeats and across runs, so
 # every tolerance is its floor. Runs on a 2070 SUPER matched the 4090 within 2.4 MiB (bf16) and to the byte elsewhere.
+# tl_train and tl_test are not frozen: interpretune's TransformerLens composition holds ~81 MiB more than a native
+# TransformerBridge.boot_transformers bridge on both vendors (steady, no slope), which is attributed before a bound
+# would accept it as the baseline.
 cuda:
   core_hf_fts_train:
     end_current:
@@ -86,6 +89,16 @@ cuda:
     slope[0]:
       baseline: 0.0
       tolerance: 65536.0
+  nnsight_train:
+    end_current:
+      baseline: 512.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 512.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
 rocm:
   core_hf_fts_train:
     end_current:
@@ -155,6 +168,16 @@ rocm:
       tolerance: 8388608.0
     peak_alloc:
       baseline: -1050112.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  nnsight_train:
+    end_current:
+      baseline: 512.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 512.0
       tolerance: 8388608.0
     slope[0]:
       baseline: 0.0
