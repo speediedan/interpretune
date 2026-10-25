@@ -14,6 +14,7 @@ identity view.
 | nnsight, local and dispatched | finetuning-scheduler's identity view over the HF module, registered as `hf_model` | PEFT adapter tensors as `adapter:<name>` |
 | nnsight, remote (NDIF) or not yet dispatched | refused, with the reason | |
 | circuit-tracer | refused, with the reason | |
+| interp-engine (hub adapter) | interpretune's default identity view until the adapter declares its own; its circuit-tracer composition takes the circuit-tracer refusal | none declared yet |
 | a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |
 
 ## nnsight
@@ -22,6 +23,11 @@ A local, dispatched nnsight composition registers the nnsight model's HF module 
 (in `register_tunable_modules()`), so the optimizer, checkpoints and the identity view reach its parameters. A composition
 executing remotely (NDIF) has no local weights to tune, and one built with `dispatch=False` keeps its weights on the
 meta device; both are refused, each with its reason.
+
+The paths to fuller nnsight tuning, local and remote, are tracked in [interpretune#814](https://github.com/speediedan/interpretune/issues/814). Locally, that covers tuning applied
+through nnsight's own tracing, and the remaining local cases. Remotely, it covers work that does not need local weights:
+remote models accept persistent changes to values, and ephemeral techniques that tune within a single dispatch may need
+no client-side optimizer state at all. The detailed remote design is [interpretune#775](https://github.com/speediedan/interpretune/issues/775).
 
 ## sae_lens
 
@@ -34,6 +40,20 @@ a latent role.
 circuit-tracer compositions are refused: the replacement model is frozen at construction and may hold lazily loaded
 transcoder weights that are not parameters. The refusal holds for every circuit-tracer composition, whichever backend it
 runs over.
+
+The paths to circuit-tracer tuning are tracked in [interpretune#813](https://github.com/speediedan/interpretune/issues/813): transcoders as tunable latents, with published transcoders as
+promotable instruments ([interpretune#787](https://github.com/speediedan/interpretune/issues/787)); adapting transcoders when fine-tuning makes them drift ([interpretune#709](https://github.com/speediedan/interpretune/issues/709)); tuning the base
+model under a frozen replacement; and graph-guided fine-tuning ([interpretune#667](https://github.com/speediedan/interpretune/issues/667)).
+
+## interp-engine (hub adapter)
+
+The interp-engine hub adapter declares no view of its own yet, so its compositions receive interpretune's default
+identity view over the interpretune module. That fits only where its model is reachable there under its own names, which
+is still to be checked per composition. Its base weights are frozen by default, so roles must be declared through
+`tunable_roles()`, not inferred from `requires_grad`. Its circuit-tracer composition already takes interpretune's
+circuit-tracer refusal, because it places `BaseCircuitTracerModule` ahead of its own base; it also registers the
+replacement model twice on the module, which circuit-tracer tuning will have to resolve. Parity with the packaged adapters (views,
+conformance and examples) is tracked in [interpretune#815](https://github.com/speediedan/interpretune/issues/815).
 
 ## TransformerLens
 
