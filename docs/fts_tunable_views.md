@@ -17,8 +17,8 @@ the Lightning callback sees through `pl_module`, and modules registered beside t
 are reachable. The view's `support()` is the composition's support record: whether it can be tuned, under which naming
 scheme, with which role kinds, or why not.
 
-Which view each composition declares, and the details of the backends whose views are not finetuning-scheduler's identity
-view, are on [the adapter-specific tuning page](fts_tunable_views_adapters.md).
+Which view each composition declares is summarized [at the bottom of this page](#what-each-composition-declares), and
+each packaged adapter has its own tuning page with the details of its view.
 
 ## Declaring a view
 
@@ -69,3 +69,16 @@ class TestMyAdapterTuning(TuningConformance):
 A view declaring `trainable=True` runs every case that applies to it; a refused composition runs the refusal case; a
 run in which no case applies fails. Each case builds a fresh session, because cases change parameters and
 `requires_grad`.
+
+## What each composition declares
+
+| Composition | View | Roles |
+| --- | --- | --- |
+| [core / HF](fts_tuning_core_hf.md), and any composition not overriding `build_tunable_view()` (the default) | finetuning-scheduler's identity view: trainable | PEFT adapter tensors as `adapter:<name>` |
+| [TransformerLens](fts_tuning_transformer_lens.md) | `TransformerBridgeView`, in TransformerLens names (refused when the bridge holds quantized or packed parameters) | as on its page |
+| [sae_lens](fts_tuning_sae_lens.md) with `add_saes_on_init=True` | the backend's view | the spliced SAEs as `latent:sae` |
+| [nnsight](fts_tuning_nnsight.md), local and dispatched | finetuning-scheduler's identity view over the HF module, registered as `hf_model` | PEFT adapter tensors as `adapter:<name>` |
+| [nnsight](fts_tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; tuning paths tracked in [#814](https://github.com/speediedan/interpretune/issues/814) and [#775](https://github.com/speediedan/interpretune/issues/775) | |
+| [circuit-tracer](fts_tuning_circuit_tracer.md) | refused, with the reason; tuning paths tracked in [#813](https://github.com/speediedan/interpretune/issues/813), [#787](https://github.com/speediedan/interpretune/issues/787) and [#709](https://github.com/speediedan/interpretune/issues/709) | |
+| [interp-engine (hub adapter)](fts_tuning_interp_engine.md) | interpretune's default identity view until the adapter declares its own; its circuit-tracer composition takes the circuit-tracer refusal | none declared yet |
+| a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |

@@ -96,8 +96,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 - `interpretune.testing.conformance.TuningConformance` runs finetuning-scheduler's view conformance cases against a composition, selected by its declared support (#760)
 - The default optimizer (`optimizer_parameters()`) covers an attached, trainable view's root parameters, less `fitted` and `instrument` tensors: every view is rooted at the interpretune module, so trainable modules registered beside `module.model` (interventions, spliced SAEs) are optimized with no adapter extending the hook. Compositions without a view, or with a refusing one, keep the model's own parameters (#761)
 - Local, dispatched nnsight compositions register their HF module on the module as `hf_model` through the cooperative `register_tunable_modules()` hook (run after every init path), so the optimizer, checkpoints and the identity view reach its parameters; remote (NDIF) and undispatched compositions are refused with their reasons (#774)
+- A top-level Tuning docs section: the adapter-agnostic Tuning page, ending in a summary of what each composition declares (with the issues tracking each refused composition's tuning paths), and a tuning page per packaged adapter (core/HF, TransformerLens, sae_lens, nnsight, circuit-tracer, interp-engine) to hold its example usage (#812)
 
 ### Changed
+
+- The docs use the full window width on every page, as finetuning-scheduler's do: both sidebars are pinned at fixed widths and the article takes the rest, rather than widening only notebook and table pages up to a 70rem cap
 
 - The GPU pipelines run on either GPU agent through an any-vendor template (`.azure-pipelines/templates/gpu-job.yml`), modelled on finetuning-scheduler's: a host job that picks its digest-pinned image and device options from the agent's `GPU_VENDOR` and runs every step inside the job's container (`.azure-pipelines/scripts/ctr.sh`). `gpu-tests.yml` admits either vendor (a manual run can pin one with `vendor`); `readme-flow-gpu.yml` demands NVIDIA as a release job until `README.md` documents a ROCm install. An AMD agent takes one whole-server lease stage, since its cards are identical ([#703](https://github.com/speediedan/interpretune/issues/703))
 
