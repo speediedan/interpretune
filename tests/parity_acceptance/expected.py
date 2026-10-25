@@ -82,9 +82,7 @@ profiling_results = {
     "test_ns_profiling.test_cpu_32": MemResult(exact_results=def_results("cpu", 32, ds_cfg="test_prof")),
     "test_ns_profiling.test_cuda_32": MemResult(exact_results=def_results("cuda", 32, ds_cfg="test_prof")),
     "test_ns_profiling.train_cuda_32": MemResult(exact_results=def_results("cuda", 32, ds_cfg="train_prof")),
-    # NOTE: NNsight Lightning profiling tests (_l variants) are temporarily skipped in test_it_ns.py
-    # pending investigation of ~2x memory footprint difference compared to core variants.
-    # This suggests possible duplicate model references or other memory overhead in Lightning+NNsight.
+    # the NNsight Lightning variants (_l) share these expectations through `parity_normalize` (#810)
 }
 
 # TODO: using result dicts in this module for now but ultimately plan to save/construct TestResults from a yaml file

@@ -381,6 +381,9 @@ class MemProfiler:
         Rank zero only.
         """
         # TODO: all gather memory stats in the future if/when multiple ranks are supported
+        # the directory is created at setup only for CUDA allocator history, which is disabled when CUDA is unavailable
+        if self._cuda_snapshot_dir is None:
+            self.init_cuda_snapshots_dir()
         assert self._cuda_snapshot_dir is not None, "CUDA snapshot directory not initialized"
         filename = self._cuda_snapshot_dir / "memory_stats.pickle"
         with open(filename, "wb") as f:

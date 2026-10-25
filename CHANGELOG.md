@@ -107,6 +107,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 - SAE-Lens adapter expanded from TL-only to dual-backend with hook resolution (455+ lines added)
 
 ### Fixed
+- Memory profiling on a host without CUDA no longer fails at session end: `MemProfiler.dump_memory_stats()` creates the snapshot directory that setup creates only for CUDA allocator history, which is disabled when CUDA is unavailable ([#821](https://github.com/speediedan/interpretune/issues/821))
+- The NNsight + Lightning memory-profiling cases (`test_ns_profiling.test_cpu_32_l`, `test_cuda_32_l`), skipped since they were added for a reported ~2x footprint, run again: measured on torch 2.15 they match their core twins (CUDA allocated peak equal to the byte, CPU `rss_diff` within 2%) ([#810](https://github.com/speediedan/interpretune/issues/810))
 - SAEs spliced at init (`add_saes_on_init=True`) on the TransformerBridge path are now trained: they are registered on the module as `attached_saes`, built into the default optimizer through the new cooperative `optimizer_parameters()` hook, and saved in its `state_dict`. Before, the bridge kept them outside every module tree, so their parameters received gradients but were never stepped, and nothing reported it. The test `req_grad_mask` now resolves SAE parameter names and fails on a name it cannot resolve instead of silently ignoring it (#772)
 - The core training loop honors `SessionRunnerCfg.max_steps` (counting optimizer steps), which it previously accepted and ignored (#761)
 - The core training loop's `on_train_epoch_start` / `on_train_epoch_end` hooks are optional, as its batch hooks are; a module without them raised `AttributeError` (#761)
