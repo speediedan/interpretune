@@ -21,6 +21,9 @@
 # (IT_GPU_LEASE_ON_TIMEOUT=fail, a pull request gate) or cancel the build (cancel, a scheduled run). A scheduled run
 # shares one deadline across both stages, so a busy host costs it at most that long in all.
 #
+# IT_GPU_ONE_STAGE=1 (the any-vendor template sets it on an AMD agent, whose two cards are identical, so placing a small
+# class buys nothing there) takes the one whole-server stage even when the tool is usable.
+#
 # Exports to later steps: IT_GPU_TWO_STAGE (1 or 0), IT_GPU_DEVICE (a device UUID, or all), IT_GPU_SMALL_MAX_GB.
 set -uo pipefail
 
@@ -89,10 +92,10 @@ case "$ACTION/$STAGE" in
             echo "gpu_stage_lease: ${DIR} not mounted; this host does not use GPU leases. Proceeding unleased, one stage."
             setvar IT_GPU_TWO_STAGE 0; setvar IT_GPU_DEVICE all; exit 0
         fi
-        if ! tool_usable; then
-            # Without the tool a device cannot be placed, so the run is one whole-server stage. It is held under the
-            # large stage's pidfile: the pipeline's "release small" step must leave it held for the later phases, and
-            # "release all" frees it at the end.
+        if ! tool_usable || [[ "${IT_GPU_ONE_STAGE:-0}" == 1 ]]; then
+            # Without the tool a device cannot be placed (and a one-stage host asks for none), so the run is one
+            # whole-server stage. It is held under the large stage's pidfile: the pipeline's "release small" step must
+            # leave it held for the later phases, and "release all" frees it at the end.
             hold large --gpus all --cpu-heavy
             setvar IT_GPU_TWO_STAGE 0; setvar IT_GPU_DEVICE all; exit 0
         fi

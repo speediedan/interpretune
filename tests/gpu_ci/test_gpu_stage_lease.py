@@ -76,6 +76,18 @@ def test_the_small_stage_asks_for_one_device_sized_to_the_smallest_card(tmp_path
     assert _vars(proc) == {"IT_GPU_TWO_STAGE": "1", "IT_GPU_DEVICE": "GPU-small", "IT_GPU_SMALL_MAX_GB": "8"}
 
 
+def test_a_one_stage_host_takes_the_whole_server_even_with_the_tool(tmp_path):
+    """The any-vendor template sets IT_GPU_ONE_STAGE on an AMD agent, whose identical cards make placement moot."""
+    proc, calls = _run(tmp_path, "acquire", "small", IT_GPU_ONE_STAGE="1")
+    assert proc.returncode == 0, proc.stderr
+    assert len(calls) == 1 and "--gpus all --cpu-heavy" in calls[0], calls
+    assert _vars(proc) == {"IT_GPU_TWO_STAGE": "0", "IT_GPU_DEVICE": "all"}
+    # the later stage is then a no-op, and the lease is held under the large stage's pidfile for "release all"
+    later, later_calls = _run(tmp_path, "acquire", "large", IT_GPU_TWO_STAGE="0")
+    assert later.returncode == 0 and later_calls == calls
+    assert (tmp_path / "azp_gpu_large.pid").exists()
+
+
 def test_the_large_stage_asks_for_the_whole_server(tmp_path):
     proc, calls = _run(tmp_path, "acquire", "large", IT_GPU_TWO_STAGE="1")
     assert proc.returncode == 0, proc.stderr

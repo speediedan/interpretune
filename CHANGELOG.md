@@ -92,6 +92,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 - `checkpoint_state` / `load_checkpoint_state`: module, optimizer, lr scheduler, RNG and loop state, plus optional `on_save_checkpoint` / `on_load_checkpoint` module hooks and callback state (#761)
 
 ### Changed
+
+- The GPU pipelines run on either GPU agent through an any-vendor template (`.azure-pipelines/templates/gpu-job.yml`), modelled on finetuning-scheduler's: a host job that picks its digest-pinned image and device options from the agent's `GPU_VENDOR` and runs every step inside the job's container (`.azure-pipelines/scripts/ctr.sh`). `gpu-tests.yml` admits either vendor (a manual run can pin one with `vendor`); `readme-flow-gpu.yml` demands NVIDIA as a release job until `README.md` documents a ROCm install. An AMD agent takes one whole-server lease stage, since its cards are identical ([#703](https://github.com/speediedan/interpretune/issues/703))
+
+- The ROCm CI image (`dockers/base-rocm`) installs PyTorch's ROCm wheel on plain Ubuntu, with no ROCm base image: the wheel's `rocm-sdk` dependencies carry the HIP runtime, plus an `amdsmi` path file for device discovery and a `torch-excludes.txt` that keeps the lock's CUDA torch from replacing it. `dockers/docker_images_main.sh` builds and pushes it beside the CUDA image ([#703](https://github.com/speediedan/interpretune/issues/703))
 - `CompositionRegistry` updated to handle NNsight adapter combinations and dual-backend circuit-tracer
 - `BaseITModule.auto_model_init` refactored to support both HuggingFace and NNsight model initialization paths
 - `AnalysisRunner` now auto-detects and uses appropriate backend based on module's adapter context

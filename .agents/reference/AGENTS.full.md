@@ -700,7 +700,7 @@ Serialization details matter here:
 ## CI/CD
 
 - **GitHub Actions** (`ci_test-full.yml`): Ubuntu 22.04, Windows 2022, macOS 14, Python 3.13, 90-min timeout
-- **Azure GPU pipeline** (`.azure-pipelines/gpu-tests.yml`): Self-hosted, requires admin approval, only for ready-for-review PRs. Use CPU CI as long as possible before requesting GPU runs.
+- **Azure GPU pipeline** (`.azure-pipelines/gpu-tests.yml`): Self-hosted, requires admin approval, only for ready-for-review PRs. Use CPU CI as long as possible before requesting GPU runs. It runs on either GPU agent (NVIDIA or AMD) through the any-vendor template (`.azure-pipelines/templates/gpu-job.yml`), which picks the digest-pinned image from the agent's `GPU_VENDOR`; a manual run can pin one with the `vendor` parameter. Every step runs inside the job's container through `.azure-pipelines/scripts/ctr.sh`.
 - **A queued GPU build can sit in `notStarted` until its approval is granted, and that is normal.**
   Check the build's approval state before touching runner configuration: an ungranted gate looks
   identical to a dispatch problem from the outside, and the reflex it invites (inspecting the agent,
