@@ -125,16 +125,14 @@ class NSProfileCfg(BaseCfg):
     nnsight_cfg: NNsightConfig | None = field(default_factory=lambda: NNsightConfig(model_name="openai-community/gpt2"))
 
 
-# NOTE: Lightning variants (_l) are temporarily skipped pending investigation of ~2x memory footprint difference
-# compared to core variants. This suggests possible duplicate model references or other memory overhead.
-# See TODO in expected.py for more context.
+# The Lightning variants (_l) are measured against the core expectations, as in test_l_profiling: they match them
+# (#810), so neither the Lightning module nor the NNsight adapter holds a second copy of the model.
 NS_PROFILING_CONFIGS = (
     NSProfilingTest(alias="test_ns_profiling.test_cpu_32", cfg=NSProfileCfg(**test_bs1_mem_nosavedt), marks="optional"),
     NSProfilingTest(
         alias="test_ns_profiling.test_cpu_32_l",
         cfg=NSProfileCfg(**w_l_ns, **test_bs1_mem_nosavedt),
         marks="l_optional",
-        function_marks={"skip": "NNsight+Lightning profiling: ~2x memory vs core - needs investigation"},
     ),
     NSProfilingTest(
         alias="test_ns_profiling.test_cuda_32",
@@ -147,7 +145,6 @@ NS_PROFILING_CONFIGS = (
         cfg=NSProfileCfg(**cuda, **w_l_ns, **test_bs1_mem),
         marks="cuda_l_prof",
         gpu_mem_gb=1.0,
-        function_marks={"skip": "NNsight+Lightning profiling: ~2x memory vs core - needs investigation"},
     ),
     NSProfilingTest(
         alias="test_ns_profiling.train_cuda_32",

@@ -141,12 +141,43 @@ def azure_variables(plan: Plan, selection_file: Path | None) -> list[str]:
     return [f"##vso[task.setvariable variable={k}]{v}" for k, v in out.items()]
 
 
+def selection_covers(target: str, mode: str, selection_file: str | None) -> bool:
+    """Whether a planned run executes any test under ``target`` (a path or node-id prefix), read from the plan's
+    exported mode and selection file: a later step uses it to skip work only those tests need.
+
+    A full run covers everything and a ``none`` run nothing. A selected run covers ``target`` when a selected prefix
+    contains it or lies inside it. A selection file that cannot be read counts as covering, so a broken plan costs
+    the work rather than skipping it.
+    """
+    if mode == "none":
+        return False
+    if mode != "selected":
+        return True
+    try:
+        lines = [ln.strip() for ln in Path(selection_file or "").read_text().splitlines() if ln.strip()]
+    except OSError:
+        return True
+    return lines == ["full"] or any(target.startswith(ln) or ln.startswith(target) for ln in lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--mode", default="auto", choices=MODES)
     ap.add_argument("--extended", default="false", help="the pipeline's boolean parameter, as Azure renders it")
+    ap.add_argument(
+        "--covers",
+        metavar="TARGET",
+        help="exit 0 when the exported plan (IT_GPU_SELECTION_MODE, IT_GPU_SELECTION_FILE) runs a test under TARGET, "
+        "else 1; plans nothing",
+    )
     args = ap.parse_args(argv)
     env = os.environ
+    if args.covers:
+        covered = selection_covers(
+            args.covers, env.get("IT_GPU_SELECTION_MODE", "full"), env.get("IT_GPU_SELECTION_FILE")
+        )
+        print(f"plan {'covers' if covered else 'does not cover'} {args.covers}")
+        return 0 if covered else 1
     plan = plan_run(
         build_reason=env.get("BUILD_REASON", ""),
         source_branch=env.get("BUILD_SOURCEBRANCH", ""),

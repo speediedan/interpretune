@@ -128,7 +128,11 @@ def _assert_close_padded(got: torch.Tensor, ref: torch.Tensor, *, what: str) -> 
 #:   beyond it, the greatest 3.13e-2 absolute. The fused batch selects different GEMM kernels, and the selection is
 #:   not stable from run to run, so most elements still meet the padded tolerance and a bounded fraction may exceed
 #:   it, up to a hard cap.
+#: - ``ROCM_EDGE_ATOL``: the circuit-tracer edge-prediction case's active-feature check (``atol`` 1e-3 elsewhere). On
+#:   speedieamd, two of the first AMD CI runs (#703) put one of 3,030 active features at 1.293e-3 and 1.295e-3 off its
+#:   edge prediction, the same feature and element both times; other runs, and NVIDIA, agree within 1e-3.
 ROCM_COMMUTE_ATOL = 3e-4
+ROCM_EDGE_ATOL = 2.6e-3
 ROCM_BATCHED_MISMATCH_FRACTION = 1.5e-3
 ROCM_BATCHED_ATOL = 6e-2
 
@@ -1423,7 +1427,7 @@ class ModelBackendConformance:
                 measured_acts,
                 baseline_acts + expected[: active.shape[0]],
                 rtol=1e-5,
-                atol=1e-3,
+                atol=ROCM_EDGE_ATOL if _suite_on_rocm(suite) else 1e-3,
                 msg=lambda d, f=(layer, position, feature): f"feature {f}: active features moved off the edges\n{d}",
             )
             pre = torch.as_tensor(out.pre_intervention_logits, dtype=torch.float32).cpu().reshape(-1)
