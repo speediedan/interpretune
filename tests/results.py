@@ -118,12 +118,29 @@ class TestResult(NamedTuple):
     callback_results: Dict | None = None
 
 
+def on_rocm() -> bool:
+    """Whether torch was built for ROCm (HIP), whose ``torch.cuda`` surface these tests run on unchanged."""
+    import torch
+
+    return getattr(torch.version, "hip", None) is not None
+
+
+#: The key of a footprint's ROCm overrides: stats measured on ROCm that differ from the CUDA expectation beyond the
+#: default tolerance. Measured (#794): ``reserved_bytes.all.peak`` is about 20% higher under the HIP caching allocator
+#: (``test_l_profiling.test_cuda_32``: 689963008 against 576716800, identical over three runs) while the allocated
+#: stats agree, so the difference is the allocator's segment sizing, not the model's memory. Stats with no override
+#: keep the CUDA expectation.
+ROCM_MEM_KEY = "expected_mem_rocm"
+
+
 def mem_results(results: Dict, test_alias: str):
     """Result generation function for memory profiling tests."""
     # See NOTE [Memprofiler Key Format]
     # snap keys are rank.phase.epoch_idx.step_idx.step_ctx
     expected_results = results[test_alias]
     src, phase, expected_mem = expected_results["src"], expected_results["phase"], expected_results["expected_mem"]
+    if src == "cuda" and on_rocm():
+        expected_mem = {**expected_mem, **expected_results.get(ROCM_MEM_KEY, {})}
     step_key = f"{MemProfResult.train_keys[src]}" if phase == "train" else f"{MemProfResult.test_key}"
     # default tolerance of rtol=0.1, atol=0 for all keys unless overridden with an explicit `tolerance_map`
     tolerance_map = {"tolerance_map": {k: (0.1, 0) for k in expected_mem.keys()}}

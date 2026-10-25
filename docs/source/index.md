@@ -157,9 +157,21 @@ usage/adapter_selection_guide
 usage/adapter_development_guide
 usage/adapter_conformance_contract
 usage/framework_level_adapters
-usage/fts_tunable_views
-usage/fts_tunable_views_adapters
 usage/circuit_tracer_backend_support
+```
+
+```{toctree}
+:caption: Tuning
+:maxdepth: 1
+:hidden:
+
+usage/fts_tunable_views
+usage/fts_tuning_core_hf
+usage/fts_tuning_transformer_lens
+usage/fts_tuning_sae_lens
+usage/fts_tuning_nnsight
+usage/fts_tuning_circuit_tracer
+usage/fts_tuning_interp_engine
 ```
 
 ```{toctree}
