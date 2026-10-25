@@ -55,7 +55,7 @@ role finetuning-scheduler never optimizes (`fitted` and `instrument`).
 ## Phased fine-tuning on the core loop
 
 Lightning compositions use finetuning-scheduler's `FinetuningScheduler` callback. On the core loop,
-`interpretune.tuning.core_loop.FTSCoreCallback` drives its `FTSController` at the loop's boundaries. It goes in
+`interpretune.tuning.core_loop.FTSCoreCallback` drives its `TuningScheduler` at the loop's boundaries. It goes in
 `SessionRunnerCfg.callbacks`:
 
 ```python
@@ -66,15 +66,15 @@ schedule = {0: {"params": ["role:adapter:default"], "max_transition_epoch": 2}, 
 runner_cfg = SessionRunnerCfg(it_session=session, max_epochs=4, callbacks=[FTSCoreCallback(schedule)])
 ```
 
-The callback builds the controller over the session's module when training starts, so the schedule names parameters
-through the module's view, roles included. The controller builds the optimizer from the module's `optimizer_init` and
-the lr schedulers from its `lr_scheduler_init`, unless `controller_kwargs` passes `optimizer` or `lr_scheduler`. Each is
-installed as the module's own, so the loop steps the phase's optimizer and nothing is stepped twice. Further
-`FTSController` arguments go in `controller_kwargs`: transition policies, a checkpoint policy, `max_depth`. Phase hooks,
-gates and RNG forking are finetuning-scheduler's, unchanged. The core loop keeps its own `max_epochs`, and the callback
-warns when the schedule's final phase asks for more. A `controller_factory` builds the controller instead, for anything
-`controller_kwargs` cannot express; its controller must be rooted at the module it is given, and one rooted elsewhere is
-refused once it is set up.
+The callback builds the tuning scheduler over the session's module when training starts, so the schedule names
+parameters through the module's view, roles included. The tuning scheduler builds the optimizer from the module's
+`optimizer_init` and the lr schedulers from its `lr_scheduler_init`, unless `tuning_scheduler_kwargs` passes `optimizer`
+or `lr_scheduler`. Each is installed as the module's own, so the loop steps the phase's optimizer and nothing is stepped
+twice. Further `TuningScheduler` arguments go in `tuning_scheduler_kwargs`: transition policies, a checkpoint policy,
+`max_depth`. Phase hooks, gates and RNG forking are finetuning-scheduler's, unchanged. The core loop keeps its own
+`max_epochs`, and the callback warns when the schedule's final phase asks for more. A `tuning_scheduler_factory` builds
+the tuning scheduler instead, for anything `tuning_scheduler_kwargs` cannot express; its tuning scheduler must be rooted
+at the module it is given, and one rooted elsewhere is refused once it is set up.
 
 - **Metrics.** Transition and checkpoint policies, and epoch-interval lr schedulers, receive the epoch's metrics: the
   core loop's `log()` averages, in which a training and a validation value logged under one name are averaged together.
@@ -82,9 +82,10 @@ refused once it is set up.
 - **Metric-stepped lr schedulers** (`ReduceLROnPlateau`) use the epoch interval: step-interval schedulers are stepped
   without metrics. Only `interval`, `frequency` and `monitor` are taken from `pl_lrs_cfg`, so a missing monitored metric
   fails in finetuning-scheduler rather than being skipped as the core loop's `strict=False` would.
-- **Resume** through the controller (`callback.controller.save` and `load`). The core loop's `checkpoint_state` holds
-  none of the controller's state, so loading one into the callback is refused rather than resuming half a run; routing
-  resume through it is [interpretune#809](https://github.com/speediedan/interpretune/issues/809).
+- **Resume** through the tuning scheduler (`callback.tuning_scheduler.save` and `load`). The core loop's
+  `checkpoint_state` holds none of the tuning scheduler's state, so loading one into the callback is refused rather than
+  resuming half a run; routing resume through it is
+  [interpretune#809](https://github.com/speediedan/interpretune/issues/809).
 
 ## Conformance
 
