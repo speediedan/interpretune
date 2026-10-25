@@ -118,12 +118,19 @@ PY
             echo "##vso[task.logissue type=warning]no Codecov token in this step: coverage written, not uploaded"
             exit 0
         fi
-        curl https://keybase.io/codecovsecurity/pgp_keys.asc | gpg --no-default-keyring --keyring trustedkeys.gpg --import
-        curl -Os https://cli.codecov.io/latest/linux/codecov
-        curl -Os https://cli.codecov.io/latest/linux/codecov.SHA256SUM
-        curl -Os https://cli.codecov.io/latest/linux/codecov.SHA256SUM.sig
-        gpg --no-default-keyring --keyring trustedkeys.gpg --verify codecov.SHA256SUM.sig codecov.SHA256SUM
-        shasum -a 256 -c codecov.SHA256SUM
+        # The CLI is verified before it runs: its checksum file must carry a good signature from Codecov's signing key, by
+        # fingerprint (keybase.io, which used to serve the key, no longer does: it returns no key data), and the binary
+        # must match the checksum. As in finetuning-scheduler's GPU job.
+        codecov_key=27034E7FDB850E0BBC2C62FF806BB28AED779869
+        curl -fsS https://uploader.codecov.io/verification.gpg | gpg --no-default-keyring --keyring trustedkeys.gpg --import
+        curl -fsSO https://cli.codecov.io/latest/linux/codecov
+        curl -fsSO https://cli.codecov.io/latest/linux/codecov.SHA256SUM
+        curl -fsSO https://cli.codecov.io/latest/linux/codecov.SHA256SUM.sig
+        sig=$(gpg --no-default-keyring --keyring trustedkeys.gpg --status-fd 1 --verify codecov.SHA256SUM.sig \
+            codecov.SHA256SUM 2>/dev/null) || true
+        grep -q "^\[GNUPG:\] VALIDSIG ${codecov_key} " <<< "$sig" \
+            || { echo "##vso[task.logissue type=error]the Codecov CLI checksums are not signed by ${codecov_key}"; exit 1; }
+        sha256sum -c codecov.SHA256SUM
         chmod +x codecov
         # A selected run covers only part of the GPU set, so it uploads under its own flag: under `gpu` it would read
         # as a coverage drop. Either vendor covers the same lines, so the vendor is named only in the run name.
