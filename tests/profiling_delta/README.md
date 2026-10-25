@@ -11,6 +11,10 @@ releases and between vendors cancels, and what remains is the memory interpretun
 | `core_hf_test` | core session `test_step` (generative classification) | HF `generate` with the same kwargs |
 | `lightning_train`, `lightning_test` | Lightning composition under `Trainer` | vanilla `LightningModule`, same `Trainer` |
 | `core_hf_fts_train` | core loop with `FTSCoreCallback`, 3-phase schedule | plain loop driving the same `FTSController` |
+| `tl_train`, `tl_test` | core session with the TransformerLens adapter | native `TransformerBridge.boot_transformers` |
+| `sae_lens_train`, `sae_lens_test` | core session with the `sae_lens` adapter, SAE spliced at init | SAELens's `SAETransformerBridge` with the same SAE in `add_sae` |
+| `nnsight_train`, `nnsight_test` | core session with the `nnsight` adapter | bare nnsight `LanguageModel` |
+| `circuit_tracer_test` | core session with the `circuit_tracer` adapter attributing one prompt per step | bare circuit-tracer `ReplacementModel` on the same model and transcoders |
 | `synthetic` | small MLP, optionally with a planted leak or overhead | the same MLP: the harness's own control |
 
 ## How a pair is measured
