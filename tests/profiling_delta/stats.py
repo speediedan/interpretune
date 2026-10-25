@@ -87,6 +87,37 @@ def _alloc_current(stats: dict[str, Any]) -> int:
     return int(stats.get("allocated_bytes.all.current", 0))
 
 
+def device_tensor_inventory() -> list[dict[str, Any]]:
+    """Live accelerator tensors the garbage collector can reach, grouped by shape and dtype, largest first.
+
+    A diagnostic for a residual delta: two arms' inventories at the window's end, diffed, name the tensors one arm
+    keeps and the other does not. Tensors reachable only from C++ (autograd's saved tensors, allocator workspaces) are
+    not seen, so an inventory explains a delta only when its difference adds up to it.
+    """
+    groups: dict[tuple, list[int]] = {}
+    seen: set[int] = set()
+    for obj in gc.get_objects():
+        try:
+            if not isinstance(obj, torch.Tensor) or obj.device.type == "cpu" or obj.device.type == "meta":
+                continue
+            storage = obj.untyped_storage()
+            key_ptr = storage.data_ptr()
+        except Exception:
+            continue
+        if key_ptr in seen:
+            continue
+        seen.add(key_ptr)
+        key = (tuple(obj.shape), str(obj.dtype), obj.requires_grad)
+        entry = groups.setdefault(key, [0, 0])
+        entry[0] += 1
+        entry[1] += storage.nbytes()
+    rows = [
+        {"shape": list(k[0]), "dtype": k[1], "requires_grad": k[2], "count": v[0], "bytes": v[1]}
+        for k, v in groups.items()
+    ]
+    return sorted(rows, key=lambda r: -r["bytes"])
+
+
 @dataclass
 class StepRecorder:
     """Records ``allocated_bytes.all.current`` at the end of every step, and the peaks over the measured window.
@@ -103,6 +134,8 @@ class StepRecorder:
     phase_peaks: dict[str, dict[str, int]] = field(default_factory=dict)
     inputs: list[list[int]] = field(default_factory=list)
     structure: dict[str, dict[str, int]] = field(default_factory=dict)
+    take_inventory: bool = False
+    inventory: list[dict[str, Any]] = field(default_factory=list)
     start_current: int = 0
     available: bool = False
     _phase: str = "0"
@@ -154,6 +187,8 @@ class StepRecorder:
         if self.total is not None and idx + 1 == self.total:
             self._close_phase()
             self._closed = True
+            if self.take_inventory:
+                self.inventory = device_tensor_inventory()
 
     def _close_phase(self) -> None:
         stats = memory_stats()
@@ -176,6 +211,7 @@ class StepRecorder:
             "phase_peaks": self.phase_peaks,
             "inputs": self.inputs,
             "structure": self.structure,
+            "inventory": self.inventory,
             "steps": self.steps,
         }
 
