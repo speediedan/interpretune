@@ -131,7 +131,7 @@ parameters:
     type: object
     default:
       nvidia: "speediedan/interpretune:py3.13-pt2.15.0-azpl-init@sha256:e70fa08fe772ae6e48f892b03f64cbb8de4a1882fe369b6abb6cfa55b56cbda0"
-      amd: "speediedan/interpretune:py3.13-pt2.15.0-rocm10.0-azpl-init@sha256:AMD_DIGEST_PLACEHOLDER"
+      amd: "speediedan/interpretune:py3.13-pt2.15.0-rocm10.0-azpl-init@sha256:1bc21baf182878047f1260e5d6d45d6ea8268d89b48a18717555aa233e3bf62b"
 
 # One job, on whichever GPU agent is free (#703): the any-vendor template (.azure-pipelines/templates/gpu-job.yml)
 # picks the image and device options from the vendor the agent declares and starts the job's container; every step
