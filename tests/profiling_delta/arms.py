@@ -46,6 +46,7 @@ class Composition:
     upstream_arm: Callable[..., None]
     needs_accelerator: bool = True
     window: int | None = None  # measured steps, when the composition needs more than the default (phases)
+    warmup: int | None = None  # unmeasured steps, when allocator settling takes longer than the default
 
     def arm(self, which: str) -> Callable[..., None]:
         if which not in ARMS:
@@ -617,12 +618,18 @@ COMPOSITIONS["lightning_train"] = Composition(
     "the same Trainer configuration (Lightning's own cost cancels)",
     it_arm=partial(lightning_it_arm, phase="train"),
     upstream_arm=partial(lightning_upstream_arm, phase="train"),
+    # both arms settle over Lightning's first steps (measured: flat only from step 5), so they warm up longer
+    warmup=5,
+    window=5,
 )
 COMPOSITIONS["lightning_test"] = Composition(
     name="lightning_test",
     description="Lightning test (generative classification) versus a vanilla LightningModule's generate",
     it_arm=partial(lightning_it_arm, phase="test"),
     upstream_arm=partial(lightning_upstream_arm, phase="test"),
+    # both arms settle over Lightning's first steps (measured: flat only from step 5), so they warm up longer
+    warmup=5,
+    window=5,
 )
 
 if fts_available():

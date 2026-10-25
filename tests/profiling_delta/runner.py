@@ -48,13 +48,15 @@ def run_arm(
     composition: str,
     arm: str,
     repeats: int = DEFAULT_REPEATS,
-    warmup: int = DEFAULT_WARMUP,
+    warmup: int | None = None,
     window: int | None = None,
     plant: dict[str, int] | None = None,
+    inventory: bool = False,
 ) -> dict[str, Any]:
     """Run ``repeats`` repeats of one arm in this process and return its record."""
     comp = COMPOSITIONS[composition]
     window = window or comp.window or DEFAULT_WINDOW
+    warmup = warmup if warmup is not None else comp.warmup if comp.warmup is not None else DEFAULT_WARMUP
     if plant:
         comp = with_plant(comp, plant)
     arm_fn = comp.arm(arm)
@@ -63,7 +65,7 @@ def run_arm(
     t0 = time.perf_counter()
     for seed in range(repeats):
         release_cached()
-        recorder = StepRecorder(warmup=warmup, total=steps)
+        recorder = StepRecorder(warmup=warmup, total=steps, take_inventory=inventory and seed == 0)
         recorder.begin()
         arm_fn(recorder, steps, seed)
         record = recorder.finish()
@@ -166,12 +168,21 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--composition", required=True, choices=sorted(COMPOSITIONS))
     ap.add_argument("--arm", required=True, choices=ARMS)
     ap.add_argument("--repeats", type=int, default=DEFAULT_REPEATS)
-    ap.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
+    ap.add_argument("--warmup", type=int, default=None, help=f"default: the composition's, else {DEFAULT_WARMUP}")
+    ap.add_argument("--inventory", action="store_true", help="record live device tensors at the first repeat's end")
     ap.add_argument("--window", type=int, default=None, help=f"default: the composition's, else {DEFAULT_WINDOW}")
     ap.add_argument("--plant", help="synthetic only: comma-separated leak_bytes=N,overhead_bytes=N")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
-    record = run_arm(args.composition, args.arm, args.repeats, args.warmup, args.window, plant=_parse_plant(args.plant))
+    record = run_arm(
+        args.composition,
+        args.arm,
+        args.repeats,
+        args.warmup,
+        args.window,
+        plant=_parse_plant(args.plant),
+        inventory=args.inventory or bool(os.environ.get("IT_PROFILING_DELTA_INVENTORY")),
+    )
     args.out.write_text(json.dumps(record))
 
 
