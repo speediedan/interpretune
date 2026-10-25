@@ -98,6 +98,8 @@ PY
         # models/datasets persist across builds, pinned component revisions do not. Warm them (small, pinned,
         # idempotent) so the Testing phases never inherit another build's refs/main roulette.
         python scripts/warm_hf_cache.py --components-only
+        # GPU-only artifacts (the circuit-tracer transcoders): fetched here with retries, never lazily inside a test
+        python scripts/warm_hf_cache.py --manifest tests/gpu_ci/hf_warm_manifest_gpu.yaml
         ;;
     extended-profile)
         venv
