@@ -13,7 +13,8 @@
 
 These run in the extended profiling tier (``IT_RUN_PROFILING_TESTS=2``). A composition without a frozen bound for the
 running vendor is report-only: its artifact is written and nothing is asserted beyond the pair being well formed.
-Set ``IT_PROFILING_DELTA_DIR`` to keep the artifacts (``<composition>.pair.json``) for ``freeze``.
+``IT_PROFILING_DELTA_REPORT_ONLY`` makes every composition report-only (release and tag builds set it). Set
+``IT_PROFILING_DELTA_DIR`` to keep the artifacts (``<composition>.pair.json``) for ``freeze``.
 """
 
 import json
@@ -90,4 +91,8 @@ def test_delta_pair(tmp_path, composition):
         warnings.warn(f"{composition} on {pair.vendor}: report-only (no frozen bound); median deltas {summary}")
         return
     failures = evaluate(pair.deltas, frozen)
+    if failures and os.environ.get("IT_PROFILING_DELTA_REPORT_ONLY"):
+        # release and tag builds record profiling without gating on it (the pipeline sets this there)
+        warnings.warn(f"{composition} on {pair.vendor}, report-only: " + "; ".join(failures))
+        return
     assert not failures, f"{composition} on {pair.vendor}: " + "; ".join(failures)
