@@ -233,18 +233,28 @@ def slope(values: list[float]) -> float:
     return num / den
 
 
-def phase_slopes(steps: list[dict[str, Any]]) -> dict[str, float]:
-    """Per-phase leak slope over the measured steps, excluding each later phase's first (transition) step.
+# Steps after a phase's transition step that are still allocator settling, not steady state: measured on gpt2 under
+# FTSController, both arms move by up to ~0.8 MiB at the step after a thaw and are flat from the one after.
+PHASE_SETTLE_STEPS = 1
 
-    A phase transition legitimately steps bytes up (new parameter groups, and optimizer state at the first step after
-    a thaw), so a slope fitted across phases reads a healthy thaw as a leak. The transition step is reported by
-    ``transition_steps`` instead.
+
+def phase_slopes(steps: list[dict[str, Any]], settle: int = PHASE_SETTLE_STEPS) -> dict[str, float]:
+    """Per-phase leak slope over each phase's steady-state steps.
+
+    A later phase's transition step and the ``settle`` steps after it are excluded. A transition legitimately steps
+    bytes up (new parameter groups, and optimizer state at the first step after a thaw), so a slope fitted across
+    phases reads a healthy thaw as a leak, and the allocator takes a step to settle after it. The transition step is
+    reported by ``transition_steps`` instead.
     """
     measured = [s for s in steps if s["measured"]]
     by_phase: dict[str, list[float]] = {}
+    since_transition = None  # None until the first transition: the window's own warmup already covers phase 0
     for i, step in enumerate(measured):
-        is_transition = i > 0 and measured[i - 1]["phase"] != step["phase"]
-        if not is_transition:
+        if i > 0 and measured[i - 1]["phase"] != step["phase"]:
+            since_transition = 0
+        elif since_transition is not None:
+            since_transition += 1
+        if since_transition is None or since_transition > settle:
             by_phase.setdefault(step["phase"], []).append(step["current"])
     return {phase: slope(vals) for phase, vals in by_phase.items()}
 

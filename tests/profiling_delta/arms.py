@@ -618,18 +618,16 @@ COMPOSITIONS["lightning_train"] = Composition(
     "the same Trainer configuration (Lightning's own cost cancels)",
     it_arm=partial(lightning_it_arm, phase="train"),
     upstream_arm=partial(lightning_upstream_arm, phase="train"),
-    # both arms settle over Lightning's first steps (measured: flat only from step 5), so they warm up longer
-    warmup=5,
-    window=5,
+    # both arms settle over Lightning's first training steps (measured on gpt2: the vanilla arm is flat only from step
+    # 6), so they warm up longer; the task's 10 examples at batch size 1 bound the run
+    warmup=6,
+    window=4,
 )
 COMPOSITIONS["lightning_test"] = Composition(
     name="lightning_test",
     description="Lightning test (generative classification) versus a vanilla LightningModule's generate",
     it_arm=partial(lightning_it_arm, phase="test"),
     upstream_arm=partial(lightning_upstream_arm, phase="test"),
-    # both arms settle over Lightning's first steps (measured: flat only from step 5), so they warm up longer
-    warmup=5,
-    window=5,
 )
 
 if fts_available():

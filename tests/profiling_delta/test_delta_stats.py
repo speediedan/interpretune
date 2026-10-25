@@ -58,10 +58,12 @@ def test_slope():
 
 def test_phase_slopes_exclude_transition_step():
     # a thaw steps memory up once; per-phase slopes stay flat where an across-run fit would report a leak
-    currents = [100, 100, 100, 200, 200, 200]
-    steps = _steps(currents, ["0", "0", "0", "1", "1", "1"])
+    currents = [100, 100, 100, 200, 207, 200, 200, 200]
+    steps = _steps(currents, ["0", "0", "0", "1", "1", "1", "1", "1"])
     assert slope(currents) > 0
+    # the step after the transition is settling (+7 here) and is excluded with the transition step itself
     assert phase_slopes(steps) == {"0": 0.0, "1": 0.0}
+    assert phase_slopes(steps, settle=0)["1"] != 0.0
     assert transition_steps(steps) == {"0->1": 100}
 
 
