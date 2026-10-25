@@ -160,7 +160,7 @@ class BaseITLensModule(BaseITModule):
         """The TransformerLens-names view over this module's bridge (#758)."""
         from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
 
-        return TransformerBridgeView(self, roles=self._tunable_roles())
+        return TransformerBridgeView(self, roles=self.tunable_roles())
 
     def model_sig_keys(self, target_method: str) -> list:
         """The bridge method's parameter names, without ``labels``.

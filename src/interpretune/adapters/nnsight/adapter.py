@@ -132,7 +132,7 @@ class BaseNNsightModule(BaseITModule):
         from interpretune.tuning.views import RefusingView, identity_view
 
         if "hf_model" in self._modules:
-            return identity_view(self, roles=self._tunable_roles())
+            return identity_view(self, roles=self.tunable_roles())
         return RefusingView(self, self._hf_model_unregistered_reason())
 
     def _hf_model_unregistered_reason(self) -> str:
@@ -172,7 +172,7 @@ class BaseNNsightModule(BaseITModule):
         super().__init__(*args, **kwargs)
         self.loss_fn = None
 
-    def _register_tunable_modules(self) -> None:
+    def register_tunable_modules(self) -> None:
         """Register the HF module once any nnsight init path has built the model (#774).
 
         Here rather than in one init path or a template hook: compositions override ``auto_model_init`` with their own
@@ -180,7 +180,7 @@ class BaseNNsightModule(BaseITModule):
         override need not call ``super()``. This cooperative hook runs after every init path, before the
         finetuning-scheduler view is attached.
         """
-        super()._register_tunable_modules()
+        super().register_tunable_modules()
         self._register_hf_model()
 
     def auto_model_init(self) -> None:
