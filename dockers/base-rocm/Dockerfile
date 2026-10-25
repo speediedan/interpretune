@@ -10,47 +10,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# ROCm twin of dockers/base-cuda (#703). Same OS, Python, venv path and permissions contract, so dockers/it-az-base
+# ROCm twin of dockers/base-cuda (#703): the same OS, Python, venv path and permissions contract, so dockers/it-az-base
 # builds on it unchanged with CUST_BASE=rocm<version>-. The torch wheel is PyTorch's own ROCm build of the exact
-# PYTORCH_VERSION, from download.pytorch.org/whl/[<channel>/]rocm<version>, never AMD's rocm/pytorch image (whose
-# torch and Python versions are its own) and never a default-index torch, which would silently be a CUDA build.
+# PYTORCH_VERSION, from download.pytorch.org/whl/[<channel>/]rocm<version>, never AMD's rocm/pytorch image (whose torch
+# and Python versions are its own) and never a default-index torch, which would silently be a CUDA build.
 #
-# DRAFT: no image built from this file has run on AMD hardware. Choosing the ROCm version that build B's cards need,
-# recording the image digest and proving gfx code objects plus two-device visibility are hardware-time steps.
+# No ROCm base image, as finetuning-scheduler's ROCm image does (its #128): the ROCm torch wheels depend on the rocm-sdk
+# wheels, which carry the HIP runtime, the math libraries and amd-smi, and torch loads those rather than any /opt/rocm.
+# interpretune builds no extensions from source, so a second ROCm userspace (rocm/dev, most of the 56 GB the earlier
+# draft measured) would add nothing. The host supplies only the kernel driver and the device nodes (/dev/kfd, /dev/dri).
 
-# The 2.15.0 release candidate publishes rocm7.14 and rocm10.0 wheels for cp313 on the test channel (read from
-# download.pytorch.org/whl/test, 2026-10-19). ROCM_VERSION names the wheel index; ROCM_BASE_TAG names the matching
-# rocm/dev image, which for these ROCm lines is published only as a "-full" tag (7.14.0-full, 10.0.0-full). Which line
-# build B needs depends on its cards, so the choice is a hardware-time one; 7.14 continues the 7.x line.
-ARG ROCM_VERSION=7.14
-ARG ROCM_BASE_TAG=7.14.0-full
-ARG OS_VER=ubuntu-22.04
+ARG OS_VER=22.04
 
-FROM rocm/dev-${OS_VER}:${ROCM_BASE_TAG}
+FROM ubuntu:${OS_VER}
 
-ARG ROCM_VERSION
+# Names the wheel index (rocm10.0 for the 2.15 release candidate, read from download.pytorch.org/whl/test).
+ARG ROCM_VERSION=10.0
 ARG PYTHON_VERSION=3.13
 ARG PYTORCH_VERSION=2.15.0
 # "" for a released torch; "test" for a release candidate, whose wheels are published only on that index (the same
 # argument dockers/base-cuda takes).
 ARG TORCH_CHANNEL=""
 ARG MKL_THREADING_LAYER=GNU
-# gfx targets for source-built extensions only (the torch wheel ships its own code objects). Empty means the
-# toolchain default; set it to build B's targets once the cards are known.
-ARG PYTORCH_ROCM_ARCH=""
 
 SHELL ["/bin/bash", "-c"]
 ENV \
     DEBIAN_FRONTEND=noninteractive \
     TZ=US/Pacific \
-    PATH="$PATH:/root/.local/bin:/opt/rocm/bin" \
-    ROCM_PATH=/opt/rocm \
-    PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH} \
+    PATH="$PATH:/root/.local/bin" \
     MKL_THREADING_LAYER=${MKL_THREADING_LAYER} \
     MAKEFLAGS="-j2" \
-    UV_NO_CACHE=1
-# gnupg explicitly: add-apt-repository needs gpg-agent to import the PPA key, and the "-full" rocm/dev images ship gpg
-# without it (7.2 included it; 7.14.0-full does not, measured 2026-10-19).
+    UV_NO_CACHE=1 \
+    UV_HTTP_TIMEOUT=120
+# gnupg explicitly: add-apt-repository needs it to import the PPA key on a minimal ubuntu image. libnuma1 and libdrm2
+# are host libraries the rocm-sdk runtime loads.
 RUN apt-get update -qq --fix-missing && \
     apt-get install -y --no-install-recommends \
         gnupg \
@@ -66,6 +59,8 @@ RUN apt-get update -qq --fix-missing && \
         libopenmpi-dev \
         libpq5 \
         libpq-dev \
+        libnuma1 \
+        libdrm2 \
     && \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get install -y \
@@ -84,19 +79,34 @@ COPY ./requirements/ ./requirements/
 
 ENV PYTHONPATH=/usr/lib/python${PYTHON_VERSION}/site-packages
 
+# One layer for the whole venv, permissions included: a chmod in a later layer would copy every file of the venv again,
+# and the venv is most of the image.
+#   - rocm_amdsmi.pth: torch counts and names devices through the amdsmi Python module before HIP initializes, which is
+#     what lets ddp_fork start its workers without an initialized parent. The rocm-sdk core wheel ships that module
+#     beside its own libamd_smi but does not put it on sys.path, so the .pth does.
+#   - torch-excludes.txt keeps the image's ROCm torch from being replaced by the lock's PyPI (CUDA) wheel when the
+#     pipeline installs requirements/ci/requirements.txt (.azure-pipelines/scripts/gpu_job_container.sh install).
+#   - umask and chmod let userns-remapped rootless Docker users update the venv, as in dockers/base-cuda.
 RUN \
     umask 000 && \
     uv venv /tmp/venvs/it_dev --python python${PYTHON_VERSION} && \
     . /tmp/venvs/it_dev/bin/activate && \
-    uv pip install "torch==${PYTORCH_VERSION}+rocm${ROCM_VERSION}" \
+    uv pip install --prerelease=allow "torch==${PYTORCH_VERSION}+rocm${ROCM_VERSION}" \
         --index-url "https://download.pytorch.org/whl/${TORCH_CHANNEL:+${TORCH_CHANNEL}/}rocm${ROCM_VERSION}" && \
-    rm -rf requirements/
+    site=$(python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") && \
+    test -f "${site}/_rocm_sdk_core/share/amd_smi/amdsmi/__init__.py" && \
+    echo "${site}/_rocm_sdk_core/share/amd_smi" > "${site}/rocm_amdsmi.pth" && \
+    python -c "import amdsmi; print('amdsmi', amdsmi.__file__)" && \
+    echo "torch" > /tmp/venvs/it_dev/torch-excludes.txt && \
+    rm -rf requirements/ /root/.cache && \
+    chmod -R 777 /tmp/venvs/it_dev && \
+    chmod 644 /tmp/venvs/it_dev/torch-excludes.txt
 
 ENV VIRTUAL_ENV=/tmp/venvs/it_dev
 ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
 
 # Backend truth is torch.version.hip, not the device API (the HIP build keeps torch.cuda): a CUDA wheel slipping in
-# here fails the build rather than a test run on build B. No device is needed for this check.
+# fails the build here rather than a test run on the AMD agent. No device is needed for this check.
 RUN \
     set -x && \
     . /tmp/venvs/it_dev/bin/activate && \
@@ -105,5 +115,4 @@ RUN \
     python -c "import sys; ver = sys.version_info; assert f'{ver.major}.{ver.minor}' == '$PYTHON_VERSION', ver" && \
     python -c "import torch; v = torch.__version__; assert v.startswith('$PYTORCH_VERSION'), v; \
 assert torch.version.hip and torch.version.cuda is None, (torch.version.hip, torch.version.cuda); \
-print('torch', v, 'hip', torch.version.hip)" && \
-    chmod -R 777 /tmp/venvs/it_dev
+print('torch', v, 'hip', torch.version.hip, 'git', torch.version.git_version)"

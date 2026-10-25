@@ -49,6 +49,7 @@ $GPU_LEASE_CMD -- env IT_RUN_CUDA_TESTS=1 python -m pytest tests src/it_examples
 bash ./tests/special_tests.sh --mark_type=standalone --allow-failures
 $GPU_LEASE_CMD -- env IT_RUN_CUDA_TESTS=1 python -m pytest tests/gpu_ci/test_latent_device_placement.py -v -rA --junitxml=g6.xml   # issue 795
 python tests/gpu_ci/phase_manifest.py --classify-file rocm-cuda-phase.log
+python tests/gpu_ci/phase_manifest.py --classify-junit rocm-cuda-phase.junit.xml   # every failure, cascades attributed
 ```
 
 Report *collected beside passed, by phase name* for every run. Then sort each failure with
@@ -59,13 +60,47 @@ Report *collected beside passed, by phase name* for every run. Then sort each fa
 | `cuda-only-dependency` | an import or library ships only for CUDA | replace or gate the dependency |
 | `rocm-kernel-gap` | HIP reached the op and does not implement it (rocBLAS, MIOpen, HIP kernel) | upstream gap: record, skip narrowly |
 | `backend-gap` | a backend capability is missing (distributed backend, device type, capability probe) | backend work or a capability-gated skip |
+| `device-fault` | a kernel faulted on the device (device-side assert, illegal memory access, `hipErrorLaunchFailure` / `unspecified launch failure`, an HSA exception); not ROCm evidence by itself, since an out-of-range index faults on either vendor | find the first fault's cause, often a real bug that depends on test order or cached inputs |
+| `device-fault-cascade` | (`--classify-junit` only) a later device fault in the same process: the poisoned context re-reporting the first fault, which `first_fault` names | none of its own; fix the first fault |
 | `hip-compatible-cuda-interface` | the `torch.cuda` HIP-compatibility surface works; the failure is an NVIDIA assumption (device name, `nvidia-smi`, a CUDA version string) | make the assumption vendor-neutral; expect the test to run on ROCm |
+| `resource-calibration` | a measured resource (a memory-profiler stat) differs from the expectation recorded on another device | recalibrate per device, or widen the tolerance with the measured spread |
+| `numerics-tolerance` | device values differ from a reference beyond the test's tolerance (`torch.testing`'s mismatched elements and greatest difference) | compare the measured difference with the vendor's kernels before touching the tolerance |
 | `unknown` | no bucket matched | triage by hand; never guess |
+
+A device fault is sticky: every later GPU test in the same pytest process fails with it. Measured on
+the 2026-10-23 parity runs, one out-of-range gather became 1 fault plus 48 cascade failures on each vendor,
+so classify a phase with `--classify-junit`, which reads the JUnit file in execution order and reports
+the cascade against its first fault, rather than counting 49 faults.
 
 The classifier's contract (bucket order, `unknown` on a miss) is pinned by sanitized planted
 failures in `test_phase_manifest.py`, so the triage paths are exercised before hardware
 exists. The patterns are deliberately narrow: a real ROCm failure that lands in `unknown` is
 the honest outcome and the signal to extend a pattern with the measured text.
+
+## Calibrations from the 2026-10-24 AMD reruns
+
+Measured on two AMD Radeon AI PRO R9700 (torch 2.15.0+rocm10.0, HIP 7.15) at `2d0d0887`, on a fresh datasets
+cache: the cuda phase collected 110, with 100 passed, 2 failed, 8 skipped, and **no device faults**. Both failures and
+the profiling failure were sorted and calibrated as follows, each scoped so NVIDIA keeps its expectation:
+
+| Failure | Bucket | Measured (three runs) | Calibration |
+| --- | --- | --- | --- |
+| `test_l_profiling[test_cuda_32_l]` | `resource-calibration` | `reserved_bytes.all.peak` 689963008 against 576716800 (+19.6%), identical in all three; the allocated stats and `npp_diff` pass | a ROCm override (`expected_mem_rocm` in `profile_memory_footprints.yaml`) for that stat only, at the default 10% tolerance: the HIP caching allocator sizes its segments differently, and the allocated bytes agree |
+| `TestCircuitTracerConformance::test_mixed_modes_apply_in_declaration_order` | `numerics-tolerance` | the commuting control (two adds in opposite orders) at 1.07e-4 to 1.47e-4 against `atol=1e-4`, 3 of 3 | `ROCM_COMMUTE_ATOL = 3e-4` on a ROCm device |
+| `TestCircuitTracerConformance::test_batched_hooks_agree_with_sequential` | `numerics-tolerance` | 2 of 3 failed identically (104,923 of 149,422,080 logits, 7.0e-4, beyond the padded tolerance; greatest 3.13e-2), 1 of 3 agreed | on a ROCm device, at most `ROCM_BATCHED_MISMATCH_FRACTION = 1.5e-3` of the logits beyond the padded tolerance and none beyond `ROCM_BATCHED_ATOL = 6e-2` |
+
+**Revised after the first CI run on the AMD agent (az 1692, in the job container):** the commuting control measured
+1.373e-4 but was still checked against 1e-4, because its logits come back on the CPU and the ROCm scope read the
+tensor's device; it is now decided from the suite's device. Batched hooks measured 375,886 logits (2.52e-3) beyond the
+padded tolerance, greatest 8.54e-2, in float32. That is far beyond roundoff and varies run to run, so it is not
+widened further: on ROCm the case records a non-strict xfail with the measured numbers (interpretune#818) when the
+bound is exceeded, after its positive control has run.
+
+Each ROCm bound is about twice the measured spread. For the batched case, a bounded fraction was chosen over a
+uniformly wider tolerance, which would loosen all 149 million logits sixty-fold, and over a ROCm skip, which would drop
+the check: 99.9% of the logits still meet the padded tolerance, and the case's positive control still guards against
+a vacuous pass. The profiling failure stopped at the first stat; the stat check now reports every stat that differs
+in one failure, so one run measures all four.
 
 ## Issue 795 placement tests
 

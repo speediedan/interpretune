@@ -115,388 +115,186 @@ parameters:
     displayName: Also run the extended GPU tiers (optional tests, full profiling)
     type: boolean
     default: false
+  # A manual run may pin one vendor's agent; every triggered build runs on either (#703).
+  - name: vendor
+    displayName: GPU vendor
+    type: string
+    default: any
+    values:
+      - any
+      - nvidia
+      - amd
+  # The images each vendor's agent runs, digest-pinned (the template refuses an undigested one). Built by
+  # dockers/docker_images_main.sh: the CUDA image from dockers/base-cuda, the ROCm image from dockers/base-rocm, each
+  # under dockers/it-az-base.
+  - name: images
+    type: object
+    default:
+      nvidia: "speediedan/interpretune:py3.13-pt2.15.0-azpl-init@sha256:e70fa08fe772ae6e48f892b03f64cbb8de4a1882fe369b6abb6cfa55b56cbda0"
+      amd: "speediedan/interpretune:py3.13-pt2.15.0-rocm10.0-azpl-init@sha256:1bc21baf182878047f1260e5d6d45d6ea8268d89b48a18717555aa233e3bf62b"
 
+# One job, on whichever GPU agent is free (#703): the any-vendor template (.azure-pipelines/templates/gpu-job.yml)
+# picks the image and device options from the vendor the agent declares and starts the job's container; every step
+# below runs inside it through .azure-pipelines/scripts/ctr.sh.
+#
+# WORKSPACE REUSE -- read this if a build fails at `Checkout ... to s` in well under a minute.
+#
+# `clean: outputs` clears build outputs and KEEPS the source folder, so each build re-syncs an
+# existing checkout instead of re-cloning. That is deliberate: forcing a full re-clone on every
+# GPU build is a standing cost paid to guard against a rare event, and the rare event is cheap to
+# recover from by hand.
+#
+# The rare event: if a build is killed mid-checkout (host OOM is the way this happens here, see
+# the memory note on the lease step below), git can be left having written part of `.git`. A
+# `.git` with no `HEAD` and no `config` is not a repository, so the next build's `git clean -ffdx`
+# and `git reset --hard` both fail, and the agent's fallback of deleting the source folder can
+# fail too if the dead build left files owned by the container's uid rather than the agent's.
+#
+# Diagnosing it, in order:
+#   1. Prefer the task result over inspecting the directory: if the most recent build's Checkout
+#      task SUCCEEDED, the workspace is healthy and the problem is elsewhere.
+#   2. If you do inspect, confirm `.git/HEAD` and `.git/config` report "No such file or directory"
+#      and NOT "Permission denied" -- an access limit looks identical from outside.
+#   3. A workspace that is mid-checkout right now has the SAME signature as a corrupt one (small,
+#      those two files absent). Check that no build is in flight before concluding anything, and
+#      re-check immediately before acting rather than relying on an earlier look.
+#
+# Recovery is to delete the agent's source folder (`<agent>/_work/<n>/s`), which needs an account
+# with agent-uid access. Whether a rerun ALONE clears it is untested: the one observed occurrence
+# was cleared by hand before any rerun met it. If it recurs, rerunning once before deleting costs
+# about a minute and would settle that.
+#
+# NO CPU-ONLY PHASE HERE. The CPU suite runs on the GitHub-hosted matrix, which triggers on every pull
+# request this pipeline does (the path filters match apart from each file's own definition) and runs on
+# the merge ref as this job does. A per-test comparison on one commit found this job's CPU-only phase ran
+# exactly two tests the hosted Linux job did not, both skipped there only for want of a warmed tokenizer
+# (now in tests/hf_warm_manifest.yaml), while it cost about half of every build's test time.
 jobs:
-  - job: pytest
-    strategy:
-      matrix:
-        PyTorch_latest:
-          image: speediedan/interpretune:py3.13-pt2.15.0-azpl-init
-          scope: ""
-    # A gate can wait up to 40 minutes for each host lease before the GPU phases, on top of a run of about 35
-    # minutes (install plus the three GPU phases). A scheduled run waits up to two hours for the leases, and the
-    # weekly and release runs add the extended tiers, so those builds get more room.
-    ${{ if or(eq(variables['Build.Reason'], 'Schedule'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'), startsWith(variables['Build.SourceBranch'], 'refs/tags/'), eq(parameters.extended, true)) }}:
-      timeoutInMinutes: 300
-    ${{ else }}:
-      timeoutInMinutes: 120
-    cancelTimeoutInMinutes: 2
-
-    pool:
-      name: default
-
-    container:
-      image: $(image)
-      mapDockerSocket: false
-      volumes:
-        - /var/run/user/998/docker.sock:/var/run/docker.sock
-        - /opt/az_pipeline_agent/_work/hf_cache/$(Agent.Name):/opt/interpretune/hf_cache:rw
-        # Host GPU-lease rendezvous directory. `flock` works on the inode, so a bind-mounted lock file
-        # interlocks between this container and processes on the host -- which is what lets this job
-        # serialize against local multi-GPU runs (this host is shared with finetuning-scheduler) WITHOUT
-        # any change to the agent installation. Fails open if absent.
-        - /tmp/di_leases:/gpu_leases
-        # The host's lease tool, read-only, so this job queues and is placed by the same rules as every local
-        # caller. An operator installs it (and re-installs it after it changes); the lease step falls back to a
-        # plain whole-server lock when it is absent. Docker creates a missing bind-mount source as a DIRECTORY,
-        # which the fallback detects; remove that directory before installing the tool there.
-        - /opt/az_pipeline_agent/gpu_lease.sh:/gpu_lease_tool:ro
-      options: --gpus all --shm-size=512m
-      env:
-        HF_HOME: /opt/interpretune/hf_cache
-        HF_DATASETS_CACHE: /opt/interpretune/hf_cache/datasets
-        HF_HUB_CACHE: /opt/interpretune/hf_cache/hub
-        XDG_CACHE_HOME: /opt/interpretune/hf_cache
-        APPLY_POST_UPGRADES: "false"
-        # sysmon coverage core (coverage>=7.4, py>=3.12): immune to nnsight's sys.settrace(None)
-        # trace-teardown wipe of the default settrace-based core (see gen_it_coverage.sh)
-        COVERAGE_CORE: sysmon
-
-    # WORKSPACE REUSE -- read this if a build fails at `Checkout ... to s` in well under a minute.
-    #
-    # `clean: outputs` clears build outputs and KEEPS the source folder, so each build re-syncs an
-    # existing checkout instead of re-cloning. That is deliberate: forcing a full re-clone on every
-    # GPU build is a standing cost paid to guard against a rare event, and the rare event is cheap to
-    # recover from by hand.
-    #
-    # The rare event: if a build is killed mid-checkout (host OOM is the way this happens here, see
-    # the memory note on the lease step below), git can be left having written part of `.git`. A
-    # `.git` with no `HEAD` and no `config` is not a repository, so the next build's `git clean -ffdx`
-    # and `git reset --hard` both fail, and the agent's fallback of deleting the source folder can
-    # fail too if the dead build left files owned by the container's uid rather than the agent's.
-    #
-    # Diagnosing it, in order:
-    #   1. Prefer the task result over inspecting the directory: if the most recent build's Checkout
-    #      task SUCCEEDED, the workspace is healthy and the problem is elsewhere.
-    #   2. If you do inspect, confirm `.git/HEAD` and `.git/config` report "No such file or directory"
-    #      and NOT "Permission denied" -- an access limit looks identical from outside.
-    #   3. A workspace that is mid-checkout right now has the SAME signature as a corrupt one (small,
-    #      those two files absent). Check that no build is in flight before concluding anything, and
-    #      re-check immediately before acting rather than relying on an earlier look.
-    #
-    # Recovery is to delete the agent's source folder (`<agent>/_work/<n>/s`), which needs an account
-    # with agent-uid access. Whether a rerun ALONE clears it is untested: the one observed occurrence
-    # was cleared by hand before any rerun met it. If it recurs, rerunning once before deleting costs
-    # about a minute and would settle that.
-    workspace:
-      clean: outputs
-
-    # NO CPU-ONLY PHASE HERE. The CPU suite runs on the GitHub-hosted matrix, which triggers on every pull
-    # request this pipeline does (the path filters match apart from each file's own definition) and runs on
-    # the merge ref as this job does. A per-test comparison on one commit found this job's CPU-only phase ran
-    # exactly two tests the hosted Linux job did not, both skipped there only for want of a warmed tokenizer
-    # (now in tests/hf_warm_manifest.yaml), while it cost about half of every build's test time.
-    steps:
-      # A pull request build checks out the merge commit; the GPU run planner diffs it against its first parent (the
-      # target branch), which needs both parents fetched.
-      - checkout: self
-        fetchDepth: 2
-
-      - bash: |
-          echo "=== identity ==="
-          id || true
-          groups || true
-          echo "=== mount/dir status ==="
-          ls -ld /opt/interpretune /opt/interpretune/hf_cache 2>/dev/null || true
-          stat -c "%n -> %U:%G %a" /opt/interpretune /opt/interpretune/hf_cache 2>/dev/null || true
-          echo "=== touch test  ==="
-          if touch /opt/interpretune/hf_cache/.write_test 2>/dev/null; then
-            echo WRITE_OK
-          else
-            echo WRITE_FAIL
-            echo "ERROR: Unable to write to /opt/interpretune/hf_cache"
-            exit 1
-          fi
-
-        displayName: 'Verify runner hf_cache mount & permissions'
-
-      - bash: |
-          echo "=== Probing HF cache lock file accessibility ==="
-          LOCK_FILE=$(find /opt/interpretune/hf_cache/datasets -name "*super_glue*rte*.lock" -type f 2>/dev/null | head -1)
-          if [ -n "$LOCK_FILE" ]; then
-            echo "Found lock file: $LOCK_FILE"
-            ls -l "$LOCK_FILE"
-            echo "Testing read access..."
-            if cat "$LOCK_FILE" >/dev/null 2>&1; then
-              echo "✓ Read access OK"
-            else
-              echo "✗ Read access FAILED (exit code: $?)"
-            fi
-            echo "Testing write access..."
-            if touch "$LOCK_FILE" 2>&1; then
-              echo "✓ Write access OK"
-            else
-              echo "✗ Write access FAILED (exit code: $?)"
-              echo "LOCK FILE INACCESSIBLE - attempting to fix permissions"
-              # Try to fix permissions before falling back to cache reset
-              echo "Fixing HF cache dataset permissions..."
-              # Fix lock files to be group-writable
-              sudo find /opt/interpretune/hf_cache/datasets -type f -name "*.lock" -exec chmod 664 {} \; 2>/dev/null || true
-              # Ensure directories have SGID and group write
-              sudo find /opt/interpretune/hf_cache/datasets -type d -exec chmod g+ws {} \; 2>/dev/null || true
-              echo "Permissions fix completed"
-              # Test again after fix
-              if touch "$LOCK_FILE" 2>&1; then
-                echo "✓ Write access restored after permission fix"
-              else
-                echo "✗ Write access still failed - triggering cache reset"
-                echo "##vso[task.setvariable variable=FORCE_CACHE_RESET]1"
-              fi
-            fi
-            echo "Lock file ownership details:"
-            stat "$LOCK_FILE" || true
-            echo "Current user context:"
-            id
-          else
-            echo "No super_glue RTE lock files found in cache"
-          fi
-        displayName: 'Debug: Probe HF cache lock file permissions'
-        continueOnError: true
-
-      - bash: |
-          if [ "$FORCE_CACHE_RESET" = "1" ] || [ "${{ parameters.reset_hf_cache }}" = "True" ]; then
-            echo "Clearing HF cache due to: $([ "$FORCE_CACHE_RESET" = "1" ] && echo "inaccessible lock files" || echo "manual reset parameter")"
-            rm -rf /opt/interpretune/hf_cache/* || true
-          else
-            echo "HF cache reset not required"
-          fi
-        displayName: 'Maybe reset HF cache'
-
-      - bash: |
-          set -e  # Exit on any error
-          source /tmp/venvs/it_dev/bin/activate
-
-          echo "=== Installing interpretune in editable mode with git dependencies ==="
-          if ! uv pip install -e . --group git-deps; then
-            echo "ERROR: Failed to install interpretune in editable mode"
-            exit 1
-          fi
-          echo "✓ Interpretune installation completed"
-
-          echo "=== Installing locked CI requirements ==="
-          if ! uv pip install -r requirements/ci/requirements.txt; then
-            echo "ERROR: Failed to install locked CI requirements"
-            echo "Checking for permission issues in venv..."
-            find /tmp/venvs/it_dev -type d -name __pycache__ ! -writable 2>/dev/null | head -20
-            exit 1
-          fi
-          echo "✓ CI requirements installation completed"
-
-          echo "=== Installed packages ==="
-          uv pip list
-
-          echo "=== Verifying critical packages ==="
-          for pkg in coverage pytest torch transformers; do
-            if uv pip show "$pkg" >/dev/null 2>&1; then
-              echo "✓ $pkg is installed"
-            else
-              echo "✗ ERROR: $pkg is NOT installed"
-              exit 1
-            fi
-          done
-          echo "✓ All critical packages verified"
-
-          # The image carries torch and the steps above resolve against it. A resolve that moved torch
-          # (or an image built from a different pin) would test a torch nobody asked for while the run
-          # reads as a run of the pin, so refuse by name. overrides.txt is the source of truth for the pin.
-          python - <<'PY'
-          import re, sys
-          import torch
-          pin = re.search(r"^torch==(\S+)", open("requirements/ci/overrides.txt").read(), re.M).group(1)
-          installed = torch.__version__.split("+")[0]
-          print(f"torch {torch.__version__} (git {torch.version.git_version}); pinned {pin}")
-          if installed != pin:
-              sys.exit(f"overrides.txt pins torch {pin}, but {torch.__version__} is installed")
-          PY
-        displayName: 'Install dependencies'
-
-      - bash: |
-          source /tmp/venvs/it_dev/bin/activate
-          python requirements/utils/collect_env_details.py
-        displayName: 'Env details and package versions'
-
-      # Decide what this run executes and export it to the steps below (see tests/gpu_ci/plan_gpu_run.py): the full
-      # GPU set, only the tests a pull request's change selects, or none of them; whether the extended tiers run; and
-      # the lease-wait policy. Anything the planner cannot establish runs the full set, named in this step's log.
-      - bash: |
-          set -e
-          source /tmp/venvs/it_dev/bin/activate
-          # The agent checks the repository out on the host, so inside this rootless container the checkout belongs to
-          # another uid and git refuses it as "dubious ownership". Trust it for this command only: GIT_CONFIG_* is
-          # command-line scope, which git honours for safe.directory, and nothing global changes.
-          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$(pwd)" \
-            python -m tests.gpu_ci.plan_gpu_run --mode "${{ parameters.mode }}" --extended "${{ parameters.extended }}"
-        displayName: 'Plan the GPU run'
-
-      - bash: |
-          set -e
-          source /tmp/venvs/it_dev/bin/activate
-          # Suite resolves Hub experiment seeds offline from this mount, and nothing else
-          # populates components on it: models/datasets persist across builds, pinned
-          # component revisions do not. Warm them (small, pinned, idempotent) so the
-          # Testing phases never inherit another build's refs/main roulette.
-          python scripts/warm_hf_cache.py --components-only
-        displayName: 'Warm Hub components from manifest'
-        env:
-          HF_TOKEN: $(HF_MCP_TOKEN_RW)
-
-      # Serialize the GPU phases against local work on this shared host (finetuning-scheduler uses it too), and place
-      # them on the smallest device that fits. The agent runs one Azure job at a time, so the leases guard only against
-      # interactive/agent sessions. Each stage takes `gpu` (the whole server, or one device under it) and then
-      # `cpu-heavy` for HOST MEMORY, in the host tool's fixed order, since a full local suite beside this job's suite
-      # once OOM-killed both sides. Nothing before this needs either: install and cache warming are light. Waiting here
-      # for tens of minutes behind a local GPU job is the lease working, not a hung build.
-      #
-      # TWO STAGES (.azure-pipelines/scripts/gpu_stage_lease.sh):
-      #   small  one device sized to the smallest card (best fit), for the single-device tests declaring no more than
-      #          that and not needing bf16, so they can run on the small card while someone holds the large one;
-      #   large  the whole server, for everything else and the extended tiers.
-      # The memory classes partition each phase (tests/conftest.py), so the two stages together run it whole. Without
-      # the host lease tool mounted, the job takes its old whole-server lease and runs one stage.
-      - bash: bash .azure-pipelines/scripts/gpu_stage_lease.sh acquire small
-        displayName: 'Acquire host GPU lease: small-device stage'
-        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
-        env:
-          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
-
-      - bash: bash .azure-pipelines/scripts/gpu_phase.sh cuda small
-        displayName: 'Testing: standard gpu cuda-marked (small)'
-        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
-        env:
-          # gated-model tests (llama3/gemma) and the notebook/example tests run in this phase and
-          # read these secrets; without the mapping they fail with a KeyError on the secret's name
-          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
-          # HF_TOKEN feeds from HF_MCP_TOKEN_RW so the J-space steering section can pull the PRIVATE
-          # speediedan/jlens_steering_ops collection (#273). The gated key cannot read it (probed).
-          # Revert to a read-scoped token at the #261 public flip.
-          HF_TOKEN: $(HF_MCP_TOKEN_RW)
-
-      # --allow-failures in the special phases: run every test and fail the step at the end, so one failure cannot
-      # hide the result of every test after it.
-      - bash: bash .azure-pipelines/scripts/gpu_phase.sh standalone small
-        displayName: 'Testing: standalone gpu (small)'
-        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
-        env:
-          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
-          HF_TOKEN: $(HF_MCP_TOKEN_RW)  # private jlens collection until #261; see cuda-marked phase note
-
-      - bash: bash .azure-pipelines/scripts/gpu_phase.sh profile_ci small
-        displayName: 'Testing: CI Profiling (small)'
-        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
-
-      - bash: bash .azure-pipelines/scripts/gpu_stage_lease.sh release small
-        displayName: 'Release host GPU lease: small-device stage'
-        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
-
-      - bash: bash .azure-pipelines/scripts/gpu_stage_lease.sh acquire large
-        displayName: 'Acquire host GPU lease: whole-server stage'
-        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
-        env:
-          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
-
-      - bash: bash .azure-pipelines/scripts/gpu_phase.sh cuda large
-        displayName: 'Testing: standard gpu cuda-marked (large)'
-        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
-        env:
-          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
-          HF_TOKEN: $(HF_MCP_TOKEN_RW)
-
-      - bash: bash .azure-pipelines/scripts/gpu_phase.sh standalone large
-        displayName: 'Testing: standalone gpu (large)'
-        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
-        env:
-          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
-          HF_TOKEN: $(HF_MCP_TOKEN_RW)
-
-      - bash: bash .azure-pipelines/scripts/gpu_phase.sh profile_ci large
-        displayName: 'Testing: CI Profiling (large)'
-        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
-
-      # Each class may be empty on its own; a FULL run whose phase came out empty in both means the collector broke.
-      - bash: bash .azure-pipelines/scripts/check_gpu_phases.sh
-        displayName: 'Check: no GPU phase ran empty on a full run'
-        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
-
-      # The extended tiers no gate runs: the full profiling tier and the optional GPU tests (the SAELens notebooks
-      # among them). Weekly, on release and tag builds, and on a manual run with `extended`.
-      - bash: |
-          source /tmp/venvs/it_dev/bin/activate
-          mkdir -p /__w/_temp/kernel_cache
-          bash ./tests/special_tests.sh --mark_type=profile --allow-failures
-        displayName: 'Testing: extended profiling'
-        condition: and(succeeded(), eq(variables['IT_GPU_EXTENDED'], '1'))
-        env:
-          PYTORCH_KERNEL_CACHE_PATH: "/__w/_temp/kernel_cache"
-
-      - bash: |
-          source /tmp/venvs/it_dev/bin/activate
-          bash ./tests/special_tests.sh --mark_type=optional --allow-failures
-        displayName: 'Testing: extended optional'
-        condition: and(succeeded(), eq(variables['IT_GPU_EXTENDED'], '1'))
-        env:
-          HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
-          HF_TOKEN: $(HF_MCP_TOKEN_RW)
-
-      - bash: |
-          source /tmp/venvs/it_dev/bin/activate
-          python -m coverage report
-          python -m coverage xml
-          python -m coverage html
-
-          curl https://keybase.io/codecovsecurity/pgp_keys.asc | gpg --no-default-keyring --keyring trustedkeys.gpg --import
-          curl -Os https://cli.codecov.io/latest/linux/codecov
-          curl -Os https://cli.codecov.io/latest/linux/codecov.SHA256SUM
-          curl -Os https://cli.codecov.io/latest/linux/codecov.SHA256SUM.sig
-          gpg --no-default-keyring --keyring trustedkeys.gpg --verify codecov.SHA256SUM.sig codecov.SHA256SUM
-          shasum -a 256 -c codecov.SHA256SUM
-          chmod +x codecov
-          # A selected run covers only part of the GPU set, so it uploads under its own flag: under `gpu` it would read
-          # as a coverage drop.
-          flags=(-F gpu -F pytest); name=GPU-coverage
-          if [ "$IT_GPU_SELECTION_MODE" = selected ]; then flags=(-F gpu-selected); name=GPU-selected-coverage; fi
-          ./codecov upload-process --slug 'speediedan/interpretune' -t $CODECOV_TOK --commit-sha $(Build.SourceVersion) --git-service 'github' -n "$name" "${flags[@]}" --env 'linux,azure' -f 'coverage.xml'
-        displayName: 'Upload Coverage to Codecov'
-        condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
-        env:
-          CODECOV_TOK: $(CODECOV_TOKEN)
-      # - bash: |
-      #     set -e
-      #     . /tmp/venvs/it_dev/bin/activate
-      #     python -m coverage run --append --source src/interpretune -m pytest src/it_examples -v
-      #   # condition: notIn(variables['scope'], '2.0.1')
-      #   displayName: 'Testing: Examples'
-
-
-      - bash: |
-          # since we use rootless docker and userns-remapping, we need to ensure all files/directories in previous
-          # steps that may have been written with Azure's `az_pipeline_agent_azpcontainer` user (100997 in the host
-          # subuid range) are chmod'd or removed
-          # some directories created by the userns-remapped container uids are removed by the agent at the beginning
-          # of every run (in a step we don't control) so we proactively clean those up in this step (`.pytest_cache`
-          # is the only folder in this category currently)
-          echo "Adjusting ownership/permissions..."
-          sudo chmod -R 775 /__w/2/s || true
-          echo "Cleaning up ephemeral directories..."
-          sudo rm -rf /__w/2/s/.pytest_cache || true
-
-          echo "Fixing HF cache dataset permissions for next run..."
-          # Fix lock files to be group-writable
-          sudo find /opt/interpretune/hf_cache/datasets -type f -name "*.lock" -exec chmod 664 {} \; 2>/dev/null || true
-          # Ensure directories have SGID and group write
-          sudo find /opt/interpretune/hf_cache/datasets -type d -exec chmod g+ws {} \; 2>/dev/null || true
-
-          # Release every host lease this job may hold, from either stage or the one-stage fallback.
-          bash .azure-pipelines/scripts/gpu_stage_lease.sh release all || true
-          echo 'Agent workspace and HF cache cleanup completed'
-        condition: always()
-        displayName: 'Cleaning up agent workspace'
+  - template: templates/gpu-job.yml
+    parameters:
+      jobName: pytest
+      vendor: ${{ parameters.vendor }}
+      jobClass: ci-any-vendor
+      images: ${{ parameters.images }}
+      # A gate can wait up to 40 minutes for each host lease before the GPU phases, on top of a run of about 35
+      # minutes (install plus the three GPU phases). A scheduled run waits up to two hours for the leases, and the
+      # weekly and release runs add the extended tiers, so those builds get more room.
+      ${{ if or(eq(variables['Build.Reason'], 'Schedule'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'), startsWith(variables['Build.SourceBranch'], 'refs/tags/'), eq(parameters.extended, true)) }}:
+        timeoutInMinutes: 300
+      ${{ else }}:
+        timeoutInMinutes: 120
+      steps:
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh hf-cache-check'
+          displayName: 'Verify runner hf_cache mount & permissions'
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh hf-cache-probe'
+          displayName: 'Debug: Probe HF cache lock file permissions'
+          continueOnError: true
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh hf-cache-reset'
+          displayName: 'Maybe reset HF cache'
+          env:
+            IT_RESET_HF_CACHE: ${{ parameters.reset_hf_cache }}
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh install'
+          displayName: 'Install dependencies'
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh env'
+          displayName: 'Env details and package versions'
+        # Decide what this run executes and export it to the steps below (see tests/gpu_ci/plan_gpu_run.py): the full
+        # GPU set, only the tests a pull request's change selects, or none of them; whether the extended tiers run; and
+        # the lease-wait policy. Anything the planner cannot establish runs the full set, named in this step's log.
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh plan'
+          displayName: 'Plan the GPU run'
+          env:
+            IT_GPU_MODE: ${{ parameters.mode }}
+            IT_GPU_EXTENDED_PARAM: ${{ parameters.extended }}
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh warm'
+          displayName: 'Warm Hub components from manifest'
+          env:
+            HF_TOKEN: $(HF_MCP_TOKEN_RW)
+        # Serialize the GPU phases against local work on this shared host (finetuning-scheduler uses it too), and place
+        # them on the smallest device that fits. The agent runs one Azure job at a time, so the leases guard only against
+        # interactive/agent sessions. Each stage takes `gpu` (the whole server, or one device under it) and then
+        # `cpu-heavy` for HOST MEMORY, in the host tool's fixed order, since a full local suite beside this job's suite
+        # once OOM-killed both sides. Nothing before this needs either: install and cache warming are light. Waiting here
+        # for tens of minutes behind a local GPU job is the lease working, not a hung build.
+        #
+        # TWO STAGES (.azure-pipelines/scripts/gpu_stage_lease.sh):
+        #   small  one device sized to the smallest card (best fit), for the single-device tests declaring no more than
+        #          that and not needing bf16, so they can run on the small card while someone holds the large one;
+        #   large  the whole server, for everything else and the extended tiers.
+        # The memory classes partition each phase (tests/conftest.py), so the two stages together run it whole. Without
+        # the host lease tool mounted, or on an AMD agent (identical cards, so placement buys nothing), the job takes one
+        # whole-server lease and runs one stage.
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh acquire small'
+          displayName: 'Acquire host GPU lease: small-device stage'
+          condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+        # gated-model tests (llama3/gemma) and the notebook/example tests run in the GPU phases and read these secrets;
+        # without the mapping they fail with a KeyError on the secret's name. HF_TOKEN feeds from HF_MCP_TOKEN_RW so the
+        # J-space steering section can pull the PRIVATE speediedan/jlens_steering_ops collection (#273); the gated key
+        # cannot read it (probed). Revert to a read-scoped token at the #261 public flip.
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh cuda small'
+          displayName: 'Testing: standard gpu cuda-marked (small)'
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+          env:
+            HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+            HF_TOKEN: $(HF_MCP_TOKEN_RW)
+        # --allow-failures in the special phases: run every test and fail the step at the end, so one failure cannot
+        # hide the result of every test after it. For the same reason every phase runs whether or not an earlier one
+        # failed, as long as its stage holds its lease (IT_GPU_LEASE_HELD, IT_GPU_LARGE_HELD), as finetuning-scheduler's
+        # template does: a cuda-phase failure once hid the standalone and profiling phases on the AMD agent.
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh standalone small'
+          displayName: 'Testing: standalone gpu (small)'
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+          env:
+            HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+            HF_TOKEN: $(HF_MCP_TOKEN_RW)
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh profile_ci small'
+          displayName: 'Testing: CI Profiling (small)'
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh release small'
+          displayName: 'Release host GPU lease: small-device stage'
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh acquire large'
+          displayName: 'Acquire host GPU lease: whole-server stage'
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh cuda large'
+          displayName: 'Testing: standard gpu cuda-marked (large)'
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
+          env:
+            HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+            HF_TOKEN: $(HF_MCP_TOKEN_RW)
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh standalone large'
+          displayName: 'Testing: standalone gpu (large)'
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
+          env:
+            HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+            HF_TOKEN: $(HF_MCP_TOKEN_RW)
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh profile_ci large'
+          displayName: 'Testing: CI Profiling (large)'
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
+        # Each class may be empty on its own; a FULL run whose phase came out empty in both means the collector broke.
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/check_gpu_phases.sh'
+          displayName: 'Check: no GPU phase ran empty on a full run'
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
+        # The extended tiers no gate runs: the full profiling tier and the optional GPU tests (the SAELens notebooks
+        # among them). Weekly, on release and tag builds, and on a manual run with `extended`.
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh extended-profile'
+          displayName: 'Testing: extended profiling'
+          condition: and(succeeded(), eq(variables['IT_GPU_EXTENDED'], '1'))
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh extended-optional'
+          displayName: 'Testing: extended optional'
+          condition: and(succeeded(), eq(variables['IT_GPU_EXTENDED'], '1'))
+          env:
+            HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+            HF_TOKEN: $(HF_MCP_TOKEN_RW)
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh coverage'
+          displayName: 'Upload Coverage to Codecov'
+          condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+          env:
+            CODECOV_TOK: $(CODECOV_TOKEN)
+        # The leases are released, and the container removed, by the template's final step.
+        - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh hf-cache-fix'
+          displayName: 'Fix HF cache permissions for the next run'
+          condition: always()
