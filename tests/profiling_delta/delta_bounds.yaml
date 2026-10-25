@@ -16,6 +16,11 @@
 # tl_train and tl_test are not frozen: interpretune's TransformerLens composition holds ~81 MiB more than a native
 # TransformerBridge.boot_transformers bridge on both vendors (steady, no slope), which is attributed before a bound
 # would accept it as the baseline.
+# sae_lens_train and sae_lens_test are not frozen for the same reason (#825, measured 2026-10-25 on NVIDIA): their
+# steady +55 to +105 MiB is dominated by the #824 bridge-conversion overhead (the live-tensor inventory shows the
+# same extra split 768x768 attention matrices), so they stay report-only until #824 is attributed.
+# nnsight_test measured a zero delta and circuit_tracer_test +19 MiB peak / +0.1 MiB retained on NVIDIA the same
+# day; neither is frozen yet because no AMD measurement of them exists to freeze from.
 cuda:
   core_hf_fts_train:
     end_current:
