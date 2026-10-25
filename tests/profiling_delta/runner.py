@@ -49,11 +49,12 @@ def run_arm(
     arm: str,
     repeats: int = DEFAULT_REPEATS,
     warmup: int = DEFAULT_WARMUP,
-    window: int = DEFAULT_WINDOW,
+    window: int | None = None,
     plant: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Run ``repeats`` repeats of one arm in this process and return its record."""
     comp = COMPOSITIONS[composition]
+    window = window or comp.window or DEFAULT_WINDOW
     if plant:
         comp = with_plant(comp, plant)
     arm_fn = comp.arm(arm)
@@ -166,7 +167,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--arm", required=True, choices=ARMS)
     ap.add_argument("--repeats", type=int, default=DEFAULT_REPEATS)
     ap.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
-    ap.add_argument("--window", type=int, default=DEFAULT_WINDOW)
+    ap.add_argument("--window", type=int, default=None, help=f"default: the composition's, else {DEFAULT_WINDOW}")
     ap.add_argument("--plant", help="synthetic only: comma-separated leak_bytes=N,overhead_bytes=N")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)

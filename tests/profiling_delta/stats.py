@@ -102,6 +102,7 @@ class StepRecorder:
     steps: list[dict[str, Any]] = field(default_factory=list)
     phase_peaks: dict[str, dict[str, int]] = field(default_factory=dict)
     inputs: list[list[int]] = field(default_factory=list)
+    structure: dict[str, dict[str, int]] = field(default_factory=dict)
     start_current: int = 0
     available: bool = False
     _phase: str = "0"
@@ -135,6 +136,10 @@ class StepRecorder:
         """Record a step's input shape, so a pair can prove both arms consumed the same batches."""
         ids = batch["input_ids"] if "input_ids" in batch else next(iter(batch.values()))
         self.inputs.append(list(ids.shape))
+
+    def note_structure(self, counts: dict[str, int]) -> None:
+        """Record structural counts for the current phase; the last step of each phase is the one kept."""
+        self.structure[self._phase] = counts
 
     def step_end(self) -> None:
         if accelerator_type() is not None:
@@ -170,6 +175,7 @@ class StepRecorder:
             "end_current": self.measured_steps[-1]["current"] if self.measured_steps else 0,
             "phase_peaks": self.phase_peaks,
             "inputs": self.inputs,
+            "structure": self.structure,
             "steps": self.steps,
         }
 

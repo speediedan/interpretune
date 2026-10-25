@@ -45,6 +45,7 @@ class Composition:
     it_arm: Callable[..., None]
     upstream_arm: Callable[..., None]
     needs_accelerator: bool = True
+    window: int | None = None  # measured steps, when the composition needs more than the default (phases)
 
     def arm(self, which: str) -> Callable[..., None]:
         if which not in ARMS:
@@ -299,6 +300,152 @@ def core_hf_upstream_arm(
 
 
 ########################################################################################################################
+# Core loop, Hugging Face model, phased by finetuning-scheduler's FTSController
+########################################################################################################################
+
+# Three phases thawing from the output end of gpt2, one epoch each: two transitions, each adding parameter groups and,
+# at the first step after the thaw, their AdamW state. Patterns are anchored at the interpretune module's own names
+# (`model.<hf name>`), which the upstream arm reproduces by holding the HF model under a `model` attribute.
+FTS_SCHEDULE = {
+    0: {"params": [r"model\.transformer\.ln_f\..*"], "max_transition_epoch": 1},
+    1: {"params": [r"model\.transformer\.h\.11\..*"], "max_transition_epoch": 2},
+    2: {"params": [r"model\.transformer\.h\.10\..*"]},
+}
+FTS_PHASES = len(FTS_SCHEDULE)
+FTS_STEPS_PER_PHASE = 6
+
+
+def fts_available() -> bool:
+    try:
+        import finetuning_scheduler.core.controller  # noqa: F401
+        import interpretune.tuning.core_loop  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def structure(root: nn.Module, optimizer: torch.optim.Optimizer) -> dict[str, int]:
+    """Exact, noise-free invariants of a phased run, taken at a step end.
+
+    A frozen parameter holding a gradient, optimizer state for a frozen parameter, or a frozen parameter in a param
+    group is a leak a byte delta would first have to clear the noise floor to see; counted here it needs no threshold.
+    """
+    in_groups = {id(p) for g in optimizer.param_groups for p in g["params"]}
+    params = list(root.parameters())
+    state = [(p, st) for p, st in optimizer.state.items()]
+    return {
+        "thawed": sum(p.requires_grad for p in params),
+        "frozen_with_grad": sum((not p.requires_grad) and p.grad is not None for p in params),
+        "frozen_in_groups": sum((not p.requires_grad) and id(p) in in_groups for p in params),
+        "state_params": len(state),
+        "state_frozen": sum(not p.requires_grad for p, _ in state),
+        "state_bytes": sum(
+            t.numel() * t.element_size() for _, st in state for t in st.values() if isinstance(t, torch.Tensor)
+        ),
+    }
+
+
+def _fts_steps(steps: int) -> int:
+    if steps != FTS_PHASES * FTS_STEPS_PER_PHASE:
+        raise ValueError(f"the FTS compositions run {FTS_PHASES} x {FTS_STEPS_PER_PHASE} steps, not {steps}")
+    return FTS_STEPS_PER_PHASE
+
+
+def core_hf_fts_it_arm(recorder: StepRecorder, steps: int, seed: int) -> None:
+    from lightning.fabric.utilities.seed import seed_everything
+
+    from interpretune.config import SessionRunnerCfg
+    from interpretune.runners.core import SessionRunner
+    from interpretune.tuning.core_loop import FTSCoreCallback
+
+    per_phase = _fts_steps(steps)
+    seed_everything(seed)
+    with _tmpdir() as tmp:
+        cfg = _core_cfg("train", per_phase, _device().type, None)
+        session = _session(cfg, tmp)
+        fts = FTSCoreCallback(FTS_SCHEDULE)
+        runner = SessionRunner(
+            SessionRunnerCfg(
+                it_session=session,
+                max_epochs=FTS_PHASES,
+                limit_train_batches=per_phase,
+                limit_val_batches=0,
+                callbacks=[fts],
+            )
+        )
+        module = session.module
+        training_step = module.training_step
+
+        def recorded_step(batch, *args, **kwargs):
+            recorder.note_input(batch)
+            recorder.set_phase(fts.controller.curr_depth)
+            return training_step(batch, *args, **kwargs)
+
+        def on_step(optimizer, *_):
+            recorder.step_end()
+            recorder.note_structure(structure(module, optimizer))
+
+        module.training_step = recorded_step
+        handle = register_optimizer_step_post_hook(on_step)
+        try:
+            runner.train()
+        finally:
+            handle.remove()
+            delattr(module, "training_step")
+        del runner, session
+
+
+class _Rooted(nn.Module):
+    """Holds the HF model under ``model`` so the upstream controller sees interpretune's parameter names."""
+
+    def __init__(self, model: nn.Module) -> None:
+        super().__init__()
+        self.model = model
+
+
+def core_hf_fts_upstream_arm(recorder: StepRecorder, steps: int, seed: int) -> None:
+    from finetuning_scheduler.core.controller import FTSController
+
+    per_phase = _fts_steps(steps)
+    spec = _upstream_spec("train", per_phase, None)
+    torch.manual_seed(seed)
+    dev = _device()
+    root = _Rooted(_upstream_model(spec, dev))
+    root.train()
+    sched_init = spec.lr_scheduler_init
+    ctrl = FTSController(
+        root,
+        FTS_SCHEDULE,
+        optimizer=partial(_import(spec.optimizer_init["class_path"]), **spec.optimizer_init.get("init_args", {})),
+        lr_scheduler=partial(_import(sched_init["class_path"]), **sched_init.get("init_args", {}))
+        if sched_init
+        else None,
+    )
+    ctrl.setup()
+    label_ids = spec.label_token_ids.to(dev)
+    loss_fn = nn.CrossEntropyLoss()
+    for _ in ctrl.epochs(FTS_PHASES):
+        for batch in spec.batches:
+            # same order as the core loop: gradients are released before the step function (where the IT arm's
+            # phase boundary lands), so both arms reset their phase peaks at the same allocator state
+            ctrl.optimizer.zero_grad()
+            recorder.note_input(batch)
+            recorder.set_phase(ctrl.curr_depth)
+            batch = _to(batch, dev)
+            labels = torch.take(label_ids, torch.as_tensor(batch.pop("labels"), device=dev))
+            logits = root.model(**batch).logits
+            loss_fn(torch.squeeze(logits[:, -1, :], dim=1), labels).backward()
+            ctrl.optimizer.step()
+            recorder.step_end()
+            recorder.note_structure(structure(root, ctrl.optimizer))
+            ctrl.step_lr_schedulers("step")
+            ctrl.step_end()
+        ctrl.step_lr_schedulers("epoch", {})
+    ctrl.train_end()
+    del ctrl, root, spec
+
+
+########################################################################################################################
 # Registry
 ########################################################################################################################
 
@@ -333,6 +480,16 @@ COMPOSITIONS: dict[str, Composition] = {
         ),
     )
 }
+
+if fts_available():
+    COMPOSITIONS["core_hf_fts_train"] = Composition(
+        name="core_hf_fts_train",
+        description="core loop + FTSCoreCallback over a 3-phase schedule versus a plain loop driving the same "
+        "FTSController (controller cost cancels; per-phase slopes, transition steps and structure)",
+        it_arm=core_hf_fts_it_arm,
+        upstream_arm=core_hf_fts_upstream_arm,
+        window=FTS_PHASES * FTS_STEPS_PER_PHASE - 2,
+    )
 
 
 def with_plant(composition: Composition, plant: dict[str, int]) -> Composition:
