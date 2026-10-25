@@ -167,8 +167,10 @@ class StepRecorder:
 
     def note_input(self, batch: Any) -> None:
         """Record a step's input shape, so a pair can prove both arms consumed the same batches."""
-        ids = batch["input_ids"] if "input_ids" in batch else next(iter(batch.values()))
-        self.inputs.append(list(ids.shape))
+        key = next((k for k in ("input_ids", "input") if k in batch), None)
+        if key is None:  # the widest tensor is the token batch; labels are one value per example
+            key = max((k for k, v in batch.items() if hasattr(v, "shape")), key=lambda k: batch[k].dim())
+        self.inputs.append([key, *batch[key].shape])
 
     def note_structure(self, counts: dict[str, int]) -> None:
         """Record structural counts for the current phase; the last step of each phase is the one kept."""

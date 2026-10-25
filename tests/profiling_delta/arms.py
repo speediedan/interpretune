@@ -94,7 +94,7 @@ def synthetic_arm(recorder: StepRecorder, steps: int, seed: int, plant: dict[str
 ########################################################################################################################
 
 
-def _core_cfg(phase: str, steps: int, device_type: str, precision: str | None, lightning: bool = False):
+def _core_cfg(phase: str, steps: int, device_type: str, precision: str | None, adapter_ctx: tuple | None = None):
     from tests.parity_acceptance.cfg_aliases import bs_override
     from tests.base_defaults import BaseCfg
 
@@ -115,11 +115,15 @@ def _core_cfg(phase: str, steps: int, device_type: str, precision: str | None, l
     )
     if precision is not None:
         kwargs["precision"] = precision
-    if lightning:
-        from interpretune.protocol import Adapter
-
-        kwargs["adapter_ctx"] = (Adapter.lightning,)
+    if adapter_ctx is not None:
+        kwargs["adapter_ctx"] = adapter_ctx
     return _DeltaCfg(**kwargs)
+
+
+def _ctx(*names: str) -> tuple:
+    from interpretune.protocol import Adapter
+
+    return tuple(Adapter[name] for name in names)
 
 
 def _session(cfg, tmp_path: Path):
@@ -134,14 +138,29 @@ def _tmpdir():
         yield Path(tmp)
 
 
-def core_hf_it_arm(recorder: StepRecorder, steps: int, seed: int, phase: str, precision: str | None = None) -> None:
+def _recording_hook(recorder: StepRecorder, root: nn.Module):
+    def on_step(optimizer, *_):
+        recorder.step_end()
+        recorder.note_structure(structure(root, optimizer))
+
+    return on_step
+
+
+def core_hf_it_arm(
+    recorder: StepRecorder,
+    steps: int,
+    seed: int,
+    phase: str,
+    precision: str | None = None,
+    adapter_ctx: tuple[str, ...] | None = None,
+) -> None:
     from lightning.fabric.utilities.seed import seed_everything
 
     from tests.orchestration import init_it_runner
 
     seed_everything(seed)
     with _tmpdir() as tmp:
-        cfg = _core_cfg(phase, steps, _device().type, precision)
+        cfg = _core_cfg(phase, steps, _device().type, precision, _ctx(*adapter_ctx) if adapter_ctx else None)
         session = _session(cfg, tmp)
         runner = init_it_runner(session, cfg)
         module = session.module
@@ -159,7 +178,7 @@ def core_hf_it_arm(recorder: StepRecorder, steps: int, seed: int, phase: str, pr
         if phase == "train":
             # Every optimizer step is a step end, whoever drives the optimizer, so the IT arm needs no knowledge of
             # the loop's internals to be measured at the same points as the upstream arm.
-            handle = register_optimizer_step_post_hook(lambda *_: recorder.step_end())
+            handle = register_optimizer_step_post_hook(_recording_hook(recorder, module))
             try:
                 runner.train()
             finally:
@@ -188,6 +207,8 @@ class _UpstreamSpec:
     generate_kwargs: dict[str, Any]
     generative: bool
     batches: list[dict[str, Any]]
+    tokenizer: Any = None
+    tl_bridge: bool = False
 
 
 def _import(path: str):
@@ -203,7 +224,9 @@ def _label_token_ids(it_cfg) -> torch.Tensor | None:
     return None
 
 
-def _upstream_spec(phase: str, steps: int, precision: str | None) -> _UpstreamSpec:
+def _upstream_spec(
+    phase: str, steps: int, precision: str | None, adapter_ctx: tuple[str, ...] | None = None
+) -> _UpstreamSpec:
     """Realize interpretune's session for this composition on the CPU and read off the configuration to reproduce.
 
     The session is set up on the CPU and discarded before the arm's measured run starts, so none of its state reaches
@@ -212,7 +235,7 @@ def _upstream_spec(phase: str, steps: int, precision: str | None) -> _UpstreamSp
     from interpretune.base.call import it_init
 
     with _tmpdir() as tmp:
-        cfg = _core_cfg(phase, steps, "cpu", precision)
+        cfg = _core_cfg(phase, steps, "cpu", precision, _ctx(*adapter_ctx) if adapter_ctx else None)
         session = _session(cfg, tmp)
         it_init(**session)
         module, dm = session.module, session.datamodule
@@ -220,13 +243,16 @@ def _upstream_spec(phase: str, steps: int, precision: str | None) -> _UpstreamSp
         batches = [dict(b) for b in itertools.islice(loader, steps)]
         hf_cfg = module.it_cfg.hf_from_pretrained_cfg
         gen_cfg = module.it_cfg.generative_step_cfg
+        # a TransformerLens session holds a bridge over the HF model; the bridge keeps the HF config as `config`
+        tl_bridge = "transformer_lens" in (adapter_ctx or ())
         spec = _UpstreamSpec(
-            model_class=type(module.model),
+            model_class=_import(hf_cfg.model_head) if tl_bridge else type(module.model),
             model_name=module.it_cfg.model_name_or_path,
             config=module.model.config,
             generation_config=getattr(module.model, "generation_config", None),
-            dtype=module.model.dtype,
-            enable_input_require_grads=bool(hf_cfg.enable_input_require_grads),
+            dtype=next(module.model.parameters()).dtype,
+            # the TransformerLens module's `set_input_require_grads` is a no-op, so its arm never enables them
+            enable_input_require_grads=bool(hf_cfg.enable_input_require_grads) and not tl_bridge,
             activation_checkpointing=bool(hf_cfg.activation_checkpointing),
             optimizer_init=dict(module.it_cfg.optimizer_init),
             lr_scheduler_init=dict(module.it_cfg.lr_scheduler_init) if module.it_cfg.lr_scheduler_init else None,
@@ -235,6 +261,8 @@ def _upstream_spec(phase: str, steps: int, precision: str | None) -> _UpstreamSp
             generate_kwargs=dict(gen_cfg.lm_generation_cfg.generate_kwargs) if gen_cfg.enabled else {},
             generative=bool(gen_cfg.enabled),
             batches=batches,
+            tokenizer=dm.tokenizer,
+            tl_bridge=tl_bridge,
         )
         del session, module, dm, loader
     return spec
@@ -248,7 +276,30 @@ def _upstream_model(spec: _UpstreamSpec, dev: torch.device) -> nn.Module:
         model.gradient_checkpointing_enable()
     if spec.enable_input_require_grads:
         model.enable_input_require_grads()
+    if spec.tl_bridge:
+        model = _bridge(model, spec)
     return model.to(dev)
+
+
+def _bridge(hf_model: nn.Module, spec: _UpstreamSpec) -> nn.Module:
+    """Wrap the HF model in a ``TransformerBridge`` with TransformerLens's own factories, as interpretune does.
+
+    The same construction calls on both sides keep the bridge's own cost out of the delta: what remains is the
+    interpretune session, module and hooks around it.
+    """
+    from transformer_lens.config import TransformerBridgeConfig
+    from transformer_lens.factories.architecture_adapter_factory import ArchitectureAdapterFactory
+    from transformer_lens.model_bridge import TransformerBridge
+    from transformer_lens.model_bridge.sources.transformers import (
+        determine_architecture_from_hf_config,
+        map_default_transformer_lens_config,
+    )
+
+    bridge_cfg = TransformerBridgeConfig.from_dict(map_default_transformer_lens_config(hf_model.config).__dict__)
+    bridge_cfg.architecture = determine_architecture_from_hf_config(hf_model.config)
+    bridge_cfg.dtype = spec.dtype
+    adapter = ArchitectureAdapterFactory.select_architecture_adapter(bridge_cfg)
+    return TransformerBridge(model=hf_model, adapter=adapter, tokenizer=spec.tokenizer)
 
 
 def _to(batch: dict[str, Any], dev: torch.device) -> dict[str, Any]:
@@ -270,14 +321,20 @@ def _answer_loss(model: nn.Module, batch: dict[str, Any], label_ids: torch.Tenso
     the upstream arm then reads one logits tensor heavier than the arm it is matched to.
     """
     labels = torch.take(label_ids, torch.as_tensor(batch.pop("labels"), device=label_ids.device))
-    logits = model(**batch).logits
+    out = model(**batch)
+    logits = out if isinstance(out, torch.Tensor) else out.logits  # a TransformerLens bridge returns the tensor
     return loss_fn(torch.squeeze(logits[:, -1, :], dim=1), labels)
 
 
 def core_hf_upstream_arm(
-    recorder: StepRecorder, steps: int, seed: int, phase: str, precision: str | None = None
+    recorder: StepRecorder,
+    steps: int,
+    seed: int,
+    phase: str,
+    precision: str | None = None,
+    adapter_ctx: tuple[str, ...] | None = None,
 ) -> None:
-    spec = _upstream_spec(phase, steps, precision)
+    spec = _upstream_spec(phase, steps, precision, adapter_ctx)
     torch.manual_seed(seed)
     dev = _device()
     model = _upstream_model(spec, dev)
@@ -299,6 +356,7 @@ def core_hf_upstream_arm(
             loss.backward()
             opt.step()
             recorder.step_end()
+            recorder.note_structure(structure(model, opt))
         del opt, sched
     else:
         model.eval()
@@ -348,7 +406,7 @@ def lightning_it_arm(recorder: StepRecorder, steps: int, seed: int, phase: str, 
 
     seed_everything(seed)
     with _tmpdir() as tmp:
-        cfg = _core_cfg(phase, steps, _device().type, None, lightning=True)
+        cfg = _core_cfg(phase, steps, _device().type, None, adapter_ctx=_ctx("lightning"))
         session = _session(cfg, tmp)
         module = session.module
         step_fn_name = "training_step" if phase == "train" else "test_step"
@@ -363,7 +421,7 @@ def lightning_it_arm(recorder: StepRecorder, steps: int, seed: int, phase: str, 
 
         setattr(module, step_fn_name, recorded_step)
         trainer = _trainer(steps, epochs)
-        handle = register_optimizer_step_post_hook(lambda *_: recorder.step_end())
+        handle = register_optimizer_step_post_hook(_recording_hook(recorder, module))
         try:
             (trainer.fit if phase == "train" else trainer.test)(**session)
         finally:
@@ -421,7 +479,7 @@ def lightning_upstream_arm(recorder: StepRecorder, steps: int, seed: int, phase:
     # the batches are already collated: batch_size=None hands each one to the step unchanged
     loader = DataLoader(spec.batches, batch_size=None)
     trainer = _trainer(steps, epochs)
-    handle = register_optimizer_step_post_hook(lambda *_: recorder.step_end())
+    handle = register_optimizer_step_post_hook(_recording_hook(recorder, module))
     try:
         if phase == "train":
             trainer.fit(module, train_dataloaders=loader)
@@ -612,6 +670,19 @@ COMPOSITIONS: dict[str, Composition] = {
     )
 }
 
+COMPOSITIONS["tl_train"] = Composition(
+    name="tl_train",
+    description="core session with the TransformerLens adapter (a TransformerBridge over gpt2) versus the same bridge "
+    "built with TransformerLens's own factories in a plain torch loop",
+    it_arm=partial(core_hf_it_arm, phase="train", adapter_ctx=("core", "transformer_lens")),
+    upstream_arm=partial(core_hf_upstream_arm, phase="train", adapter_ctx=("core", "transformer_lens")),
+)
+COMPOSITIONS["tl_test"] = Composition(
+    name="tl_test",
+    description="TransformerLens test (generative classification through the bridge) versus the bare bridge",
+    it_arm=partial(core_hf_it_arm, phase="test", adapter_ctx=("core", "transformer_lens")),
+    upstream_arm=partial(core_hf_upstream_arm, phase="test", adapter_ctx=("core", "transformer_lens")),
+)
 COMPOSITIONS["lightning_train"] = Composition(
     name="lightning_train",
     description="interpretune's Lightning composition versus a vanilla LightningModule on the same HF model, under "
