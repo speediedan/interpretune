@@ -117,6 +117,10 @@ def _core_cfg(phase: str, steps: int, device_type: str, precision: str | None, a
         kwargs["precision"] = precision
     if adapter_ctx is not None:
         kwargs["adapter_ctx"] = adapter_ctx
+        if any(getattr(a, "name", a) == "nnsight" for a in adapter_ctx):
+            from interpretune.adapters.nnsight.config import NNsightConfig
+
+            kwargs["nnsight_cfg"] = NNsightConfig(model_name="openai-community/gpt2")  # as the absolute cases use
     return _DeltaCfg(**kwargs)
 
 
@@ -209,6 +213,7 @@ class _UpstreamSpec:
     batches: list[dict[str, Any]]
     tokenizer: Any = None
     tl_bridge: bool = False
+    nnsight_kwargs: dict[str, Any] | None = None
 
 
 def _import(path: str):
@@ -222,6 +227,13 @@ def _label_token_ids(it_cfg) -> torch.Tensor | None:
         if (ids := getattr(it_cfg, attr, None)) is not None:
             return ids
     return None
+
+
+def _nnsight_kwargs(it_cfg) -> dict[str, Any] | None:
+    ns_cfg = getattr(it_cfg, "nnsight_cfg", None)
+    if ns_cfg is None:
+        return None
+    return {"model_name": ns_cfg.model_name or it_cfg.model_name_or_path, **ns_cfg.get_nnsight_kwargs()}
 
 
 def _upstream_spec(
@@ -252,8 +264,8 @@ def _upstream_spec(
             generation_config=getattr(module.model, "generation_config", None),
             dtype=next(module.model.parameters()).dtype,
             # the TransformerLens module's `set_input_require_grads` is a no-op, so its arm never enables them
-            enable_input_require_grads=bool(hf_cfg.enable_input_require_grads) and not tl_bridge,
-            activation_checkpointing=bool(hf_cfg.activation_checkpointing),
+            enable_input_require_grads=bool(getattr(hf_cfg, "enable_input_require_grads", False)) and not tl_bridge,
+            activation_checkpointing=bool(getattr(hf_cfg, "activation_checkpointing", False)),
             optimizer_init=dict(module.it_cfg.optimizer_init),
             lr_scheduler_init=dict(module.it_cfg.lr_scheduler_init) if module.it_cfg.lr_scheduler_init else None,
             pl_lrs_cfg=dict(getattr(module.it_cfg, "pl_lrs_cfg", None) or {}),
@@ -263,12 +275,15 @@ def _upstream_spec(
             batches=batches,
             tokenizer=dm.tokenizer,
             tl_bridge=tl_bridge,
+            nnsight_kwargs=_nnsight_kwargs(module.it_cfg),
         )
         del session, module, dm, loader
     return spec
 
 
 def _upstream_model(spec: _UpstreamSpec, dev: torch.device) -> nn.Module:
+    if spec.nnsight_kwargs is not None:
+        return _nnsight_model(spec, dev)
     model = spec.model_class.from_pretrained(spec.model_name, config=spec.config, dtype=spec.dtype)
     if spec.generation_config is not None:
         model.generation_config = spec.generation_config
@@ -279,6 +294,26 @@ def _upstream_model(spec: _UpstreamSpec, dev: torch.device) -> nn.Module:
     if spec.tl_bridge:
         model = _bridge(model, spec)
     return model.to(dev)
+
+
+def _nnsight_model(spec: _UpstreamSpec, dev: torch.device):
+    """A bare nnsight ``LanguageModel`` with the kwargs interpretune realized, its weights on ``dev``.
+
+    The CPU session realized ``device_map="cpu"``; the arm loads where it measures instead. Loading happens before the
+    window, so where the weights land first does not reach the measured steps.
+    """
+    from nnsight import LanguageModel
+
+    kwargs = dict(spec.nnsight_kwargs)
+    name = kwargs.pop("model_name")
+    kwargs["device_map"] = dev.type
+    return LanguageModel(name, **kwargs)
+
+
+def _params_root(model) -> nn.Module:
+    """The torch module holding the parameters: nnsight wrappers keep it as ``_model``."""
+    inner = getattr(model, "_model", None)
+    return inner if isinstance(inner, nn.Module) else model
 
 
 def _bridge(hf_model: nn.Module, spec: _UpstreamSpec) -> nn.Module:
@@ -339,9 +374,10 @@ def core_hf_upstream_arm(
     dev = _device()
     model = _upstream_model(spec, dev)
     label_ids = spec.label_token_ids.to(dev) if spec.label_token_ids is not None else None
+    root = _params_root(model)
     if phase == "train":
-        model.train()
-        opt = _import(spec.optimizer_init["class_path"])(model.parameters(), **spec.optimizer_init.get("init_args", {}))
+        root.train()
+        opt = _import(spec.optimizer_init["class_path"])(root.parameters(), **spec.optimizer_init.get("init_args", {}))
         sched = None
         if spec.lr_scheduler_init:
             sched_cls = _import(spec.lr_scheduler_init["class_path"])
@@ -356,10 +392,10 @@ def core_hf_upstream_arm(
             loss.backward()
             opt.step()
             recorder.step_end()
-            recorder.note_structure(structure(model, opt))
+            recorder.note_structure(structure(root, opt))
         del opt, sched
     else:
-        model.eval()
+        root.eval()
         for batch in spec.batches:
             recorder.note_input(batch)
             with torch.inference_mode():
@@ -371,7 +407,7 @@ def core_hf_upstream_arm(
                     else:
                         model(**batch)
             recorder.step_end()
-    del model, spec
+    del model, root, spec
 
 
 ########################################################################################################################
@@ -682,6 +718,13 @@ COMPOSITIONS["tl_test"] = Composition(
     description="TransformerLens test (generative classification through the bridge) versus the bare bridge",
     it_arm=partial(core_hf_it_arm, phase="test", adapter_ctx=("core", "transformer_lens")),
     upstream_arm=partial(core_hf_upstream_arm, phase="test", adapter_ctx=("core", "transformer_lens")),
+)
+COMPOSITIONS["nnsight_train"] = Composition(
+    name="nnsight_train",
+    description="core session with the NNsight adapter (a local LanguageModel over gpt2) versus a bare LanguageModel "
+    "with the same kwargs in a plain torch loop",
+    it_arm=partial(core_hf_it_arm, phase="train", adapter_ctx=("core", "nnsight")),
+    upstream_arm=partial(core_hf_upstream_arm, phase="train", adapter_ctx=("core", "nnsight")),
 )
 COMPOSITIONS["lightning_train"] = Composition(
     name="lightning_train",
