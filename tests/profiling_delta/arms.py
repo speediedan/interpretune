@@ -254,6 +254,18 @@ def _autocast(dev: torch.device, dtype: torch.dtype):
     return torch.autocast(device_type=dev.type, enabled=False)
 
 
+def _answer_loss(model: nn.Module, batch: dict[str, Any], label_ids: torch.Tensor, loss_fn: nn.Module) -> torch.Tensor:
+    """The interpretune arm's training loss: cross entropy over the last position's answer-token logits.
+
+    A function of its own so the full-vocabulary logits die on return, as they do when interpretune's
+    ``training_step`` returns: held as a loop local they stay alive through backward and the optimizer step, and
+    the upstream arm then reads one logits tensor heavier than the arm it is matched to.
+    """
+    labels = torch.take(label_ids, torch.as_tensor(batch.pop("labels"), device=label_ids.device))
+    logits = model(**batch).logits
+    return loss_fn(torch.squeeze(logits[:, -1, :], dim=1), labels)
+
+
 def core_hf_upstream_arm(
     recorder: StepRecorder, steps: int, seed: int, phase: str, precision: str | None = None
 ) -> None:
@@ -273,11 +285,9 @@ def core_hf_upstream_arm(
         for batch in spec.batches:
             recorder.note_input(batch)
             batch = _to(batch, dev)
-            labels = torch.take(label_ids, torch.as_tensor(batch.pop("labels"), device=dev))
             opt.zero_grad()
             with _autocast(dev, spec.dtype):
-                logits = model(**batch).logits
-                loss = loss_fn(torch.squeeze(logits[:, -1, :], dim=1), labels)
+                loss = _answer_loss(model, batch, label_ids, loss_fn)
             loss.backward()
             opt.step()
             recorder.step_end()
