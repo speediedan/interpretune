@@ -12,10 +12,12 @@
 """The sampled compositions, each an interpretune arm and a matched upstream arm.
 
 An arm runs one repeat: build, run ``steps`` steps reporting each step's end to the recorder, release everything. The
-upstream arm reproduces the interpretune arm's model, data, optimizer, precision and step order with plain PyTorch and
-Hugging Face calls, so the difference between the two is the memory interpretune's orchestration adds. Configuration
-is read from interpretune's realized session config (which model class, which batches, which optimizer), never its
-behavior: the upstream arm's device memory comes only from upstream code.
+upstream arm is the wrapped package used natively, as someone without interpretune would use it (Hugging Face models in
+a torch loop, a vanilla ``LightningModule``, ``TransformerBridge.boot_transformers``, an nnsight ``trace``, the
+``FTSController`` in a plain loop), on the same model, batches, optimizer, precision and step order. The difference
+between the two is what interpretune's composition adds, its own construction and call paths included. Configuration is
+read from interpretune's realized session config (which model, which batches, which optimizer), never its behavior: the
+upstream arm's device memory comes only from upstream code.
 """
 
 import itertools
@@ -284,6 +286,11 @@ def _upstream_spec(
 def _upstream_model(spec: _UpstreamSpec, dev: torch.device) -> nn.Module:
     if spec.nnsight_kwargs is not None:
         return _nnsight_model(spec, dev)
+    if spec.tl_bridge:
+        from transformer_lens.model_bridge import TransformerBridge
+
+        # TransformerLens's own entry point, rather than interpretune's factory path, so that path is in the delta
+        return TransformerBridge.boot_transformers(spec.model_name, device=dev, dtype=spec.dtype)
     model = spec.model_class.from_pretrained(spec.model_name, config=spec.config, dtype=spec.dtype)
     if spec.generation_config is not None:
         model.generation_config = spec.generation_config
@@ -291,23 +298,23 @@ def _upstream_model(spec: _UpstreamSpec, dev: torch.device) -> nn.Module:
         model.gradient_checkpointing_enable()
     if spec.enable_input_require_grads:
         model.enable_input_require_grads()
-    if spec.tl_bridge:
-        model = _bridge(model, spec)
     return model.to(dev)
 
 
 def _nnsight_model(spec: _UpstreamSpec, dev: torch.device):
-    """A bare nnsight ``LanguageModel`` with the kwargs interpretune realized, its weights on ``dev``.
-
-    The CPU session realized ``device_map="cpu"``; the arm loads where it measures instead. Loading happens before the
-    window, so where the weights land first does not reach the measured steps.
-    """
+    """A bare nnsight ``LanguageModel`` of the same checkpoint, loaded the native way: nnsight's defaults,
+    dispatched to the measured device."""
     from nnsight import LanguageModel
 
-    kwargs = dict(spec.nnsight_kwargs)
-    name = kwargs.pop("model_name")
-    kwargs["device_map"] = dev.type
-    return LanguageModel(name, **kwargs)
+    return LanguageModel(spec.nnsight_kwargs["model_name"], device_map=dev.type, dispatch=True)
+
+
+def _nnsight_answer_loss(lm, batch: dict[str, Any], label_ids: torch.Tensor, loss_fn: nn.Module) -> torch.Tensor:
+    """The same answer loss through nnsight's native idiom: trace the batch and save the output logits."""
+    labels = torch.take(label_ids, torch.as_tensor(batch.pop("labels"), device=label_ids.device))
+    with lm.trace(batch):
+        logits = lm.output.logits.save()
+    return loss_fn(torch.squeeze(logits[:, -1, :], dim=1), labels)
 
 
 def _params_root(model) -> nn.Module:
@@ -316,25 +323,12 @@ def _params_root(model) -> nn.Module:
     return inner if isinstance(inner, nn.Module) else model
 
 
-def _bridge(hf_model: nn.Module, spec: _UpstreamSpec) -> nn.Module:
-    """Wrap the HF model in a ``TransformerBridge`` with TransformerLens's own factories, as interpretune does.
+def _accepted(fn: Callable, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """The kwargs ``fn`` names: a native bridge ``generate`` takes no Hugging Face-only flags."""
+    import inspect
 
-    The same construction calls on both sides keep the bridge's own cost out of the delta: what remains is the
-    interpretune session, module and hooks around it.
-    """
-    from transformer_lens.config import TransformerBridgeConfig
-    from transformer_lens.factories.architecture_adapter_factory import ArchitectureAdapterFactory
-    from transformer_lens.model_bridge import TransformerBridge
-    from transformer_lens.model_bridge.sources.transformers import (
-        determine_architecture_from_hf_config,
-        map_default_transformer_lens_config,
-    )
-
-    bridge_cfg = TransformerBridgeConfig.from_dict(map_default_transformer_lens_config(hf_model.config).__dict__)
-    bridge_cfg.architecture = determine_architecture_from_hf_config(hf_model.config)
-    bridge_cfg.dtype = spec.dtype
-    adapter = ArchitectureAdapterFactory.select_architecture_adapter(bridge_cfg)
-    return TransformerBridge(model=hf_model, adapter=adapter, tokenizer=spec.tokenizer)
+    names = inspect.signature(fn).parameters
+    return {k: v for k, v in kwargs.items() if k in names}
 
 
 def _to(batch: dict[str, Any], dev: torch.device) -> dict[str, Any]:
@@ -388,7 +382,8 @@ def core_hf_upstream_arm(
             batch = _to(batch, dev)
             opt.zero_grad()
             with _autocast(dev, spec.dtype):
-                loss = _answer_loss(model, batch, label_ids, loss_fn)
+                step_loss = _nnsight_answer_loss if spec.nnsight_kwargs is not None else _answer_loss
+                loss = step_loss(model, batch, label_ids, loss_fn)
             loss.backward()
             opt.step()
             recorder.step_end()
@@ -402,7 +397,9 @@ def core_hf_upstream_arm(
                 batch = _to(batch, dev)
                 batch.pop("labels")
                 with _autocast(dev, spec.dtype):
-                    if spec.generative:
+                    if spec.generative and spec.tl_bridge:
+                        model.generate(batch.pop("input"), **_accepted(model.generate, spec.generate_kwargs), **batch)
+                    elif spec.generative:
                         model.generate(**batch, **spec.generate_kwargs)
                     else:
                         model(**batch)
@@ -708,21 +705,21 @@ COMPOSITIONS: dict[str, Composition] = {
 
 COMPOSITIONS["tl_train"] = Composition(
     name="tl_train",
-    description="core session with the TransformerLens adapter (a TransformerBridge over gpt2) versus the same bridge "
-    "built with TransformerLens's own factories in a plain torch loop",
+    description="core session with the TransformerLens adapter (a TransformerBridge over gpt2) versus a native "
+    "TransformerBridge.boot_transformers bridge in a plain torch loop",
     it_arm=partial(core_hf_it_arm, phase="train", adapter_ctx=("core", "transformer_lens")),
     upstream_arm=partial(core_hf_upstream_arm, phase="train", adapter_ctx=("core", "transformer_lens")),
 )
 COMPOSITIONS["tl_test"] = Composition(
     name="tl_test",
-    description="TransformerLens test (generative classification through the bridge) versus the bare bridge",
+    description="TransformerLens test (generative classification through the bridge) versus a native bridge's generate",
     it_arm=partial(core_hf_it_arm, phase="test", adapter_ctx=("core", "transformer_lens")),
     upstream_arm=partial(core_hf_upstream_arm, phase="test", adapter_ctx=("core", "transformer_lens")),
 )
 COMPOSITIONS["nnsight_train"] = Composition(
     name="nnsight_train",
-    description="core session with the NNsight adapter (a local LanguageModel over gpt2) versus a bare LanguageModel "
-    "with the same kwargs in a plain torch loop",
+    description="core session with the NNsight adapter (a local LanguageModel over gpt2) versus a native LanguageModel "
+    "trace of the same checkpoint in a plain torch loop",
     it_arm=partial(core_hf_it_arm, phase="train", adapter_ctx=("core", "nnsight")),
     upstream_arm=partial(core_hf_upstream_arm, phase="train", adapter_ctx=("core", "nnsight")),
 )
