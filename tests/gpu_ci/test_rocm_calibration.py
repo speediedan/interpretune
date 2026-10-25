@@ -49,6 +49,18 @@ def test_cpu_tensors_never_take_the_rocm_tolerances(monkeypatch):
     assert not cases._on_rocm_device(torch.zeros(1))
 
 
+@pytest.mark.parametrize(
+    "device_type, hip, expected", [("cuda", "7.15", True), ("cpu", "7.15", False), ("cuda", None, False)]
+)
+def test_rocm_is_decided_by_the_suite_device(monkeypatch, device_type, hip, expected):
+    """The commuting control compares logits already on the CPU, so the suite's device decides, not the
+    tensor's."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(torch.version, "hip", hip, raising=False)
+    assert cases._suite_on_rocm(SimpleNamespace(inputs=SimpleNamespace(device_type=device_type))) is expected
+
+
 class TestMostlyClose:
     """The bounded-fraction comparison the batched-hooks case uses on ROCm."""
 
