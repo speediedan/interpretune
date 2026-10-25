@@ -234,48 +234,50 @@ jobs:
         # cannot read it (probed). Revert to a read-scoped token at the #261 public flip.
         - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh cuda small'
           displayName: 'Testing: standard gpu cuda-marked (small)'
-          condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
           env:
             HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
             HF_TOKEN: $(HF_MCP_TOKEN_RW)
         # --allow-failures in the special phases: run every test and fail the step at the end, so one failure cannot
-        # hide the result of every test after it.
+        # hide the result of every test after it. For the same reason every phase runs whether or not an earlier one
+        # failed, as long as its stage holds its lease (IT_GPU_LEASE_HELD, IT_GPU_LARGE_HELD), as finetuning-scheduler's
+        # template does: a cuda-phase failure once hid the standalone and profiling phases on the AMD agent.
         - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh standalone small'
           displayName: 'Testing: standalone gpu (small)'
-          condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
           env:
             HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
             HF_TOKEN: $(HF_MCP_TOKEN_RW)
         - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh profile_ci small'
           displayName: 'Testing: CI Profiling (small)'
-          condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
         - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh release small'
           displayName: 'Release host GPU lease: small-device stage'
-          condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
         - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh acquire large'
           displayName: 'Acquire host GPU lease: whole-server stage'
-          condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
         - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh cuda large'
           displayName: 'Testing: standard gpu cuda-marked (large)'
-          condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
           env:
             HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
             HF_TOKEN: $(HF_MCP_TOKEN_RW)
         - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh standalone large'
           displayName: 'Testing: standalone gpu (large)'
-          condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
           env:
             HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
             HF_TOKEN: $(HF_MCP_TOKEN_RW)
         - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh profile_ci large'
           displayName: 'Testing: CI Profiling (large)'
-          condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
         # Each class may be empty on its own; a FULL run whose phase came out empty in both means the collector broke.
         - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/check_gpu_phases.sh'
           displayName: 'Check: no GPU phase ran empty on a full run'
-          condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+          condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
         # The extended tiers no gate runs: the full profiling tier and the optional GPU tests (the SAELens notebooks
         # among them). Weekly, on release and tag builds, and on a manual run with `extended`.
         - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh extended-profile'

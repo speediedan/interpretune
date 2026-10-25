@@ -97,3 +97,13 @@ def test_amd_takes_one_whole_server_stage():
     nvidia = next(line for line in template.splitlines() if line.strip().startswith("nvidia)"))
     assert "one_stage=1" in amd and "/dev/kfd" in amd
     assert "one_stage=0" in nvidia
+
+
+def test_every_gpu_phase_runs_while_its_stage_holds_its_lease():
+    """One phase's failure must not hide the others (it once hid standalone and profiling on the AMD agent)."""
+    steps = _template_use(_load("gpu-tests.yml"))["steps"]
+    phases = [s for s in steps if s["displayName"].startswith("Testing: ") and "extended" not in s["displayName"]]
+    assert len(phases) == 6
+    for step in phases:
+        held = "IT_GPU_LARGE_HELD" if "(large)" in step["displayName"] else "IT_GPU_LEASE_HELD"
+        assert step["condition"].startswith("and(succeededOrFailed(),") and held in step["condition"], step

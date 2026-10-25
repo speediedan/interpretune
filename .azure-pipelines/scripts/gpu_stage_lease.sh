@@ -24,7 +24,9 @@
 # IT_GPU_ONE_STAGE=1 (the any-vendor template sets it on an AMD agent, whose two cards are identical, so placing a small
 # class buys nothing there) takes the one whole-server stage even when the tool is usable.
 #
-# Exports to later steps: IT_GPU_TWO_STAGE (1 or 0), IT_GPU_DEVICE (a device UUID, or all), IT_GPU_SMALL_MAX_GB.
+# Exports to later steps: IT_GPU_TWO_STAGE (1 or 0), IT_GPU_DEVICE (a device UUID, or all), IT_GPU_SMALL_MAX_GB, and
+# IT_GPU_LEASE_HELD / IT_GPU_LARGE_HELD (1 once the first / the whole-server stage holds its lease), on which the
+# pipeline runs each stage's phases whether or not an earlier phase failed, so one failure cannot hide the rest.
 set -uo pipefail
 
 ACTION=${1:?acquire or release}
@@ -90,29 +92,30 @@ case "$ACTION/$STAGE" in
     acquire/small)
         if [[ ! -d "$DIR" ]]; then
             echo "gpu_stage_lease: ${DIR} not mounted; this host does not use GPU leases. Proceeding unleased, one stage."
-            setvar IT_GPU_TWO_STAGE 0; setvar IT_GPU_DEVICE all; exit 0
+            setvar IT_GPU_LEASE_HELD 1; setvar IT_GPU_TWO_STAGE 0; setvar IT_GPU_DEVICE all; exit 0
         fi
         if ! tool_usable || [[ "${IT_GPU_ONE_STAGE:-0}" == 1 ]]; then
             # Without the tool a device cannot be placed (and a one-stage host asks for none), so the run is one
             # whole-server stage. It is held under the large stage's pidfile: the pipeline's "release small" step must
             # leave it held for the later phases, and "release all" frees it at the end.
             hold large --gpus all --cpu-heavy
-            setvar IT_GPU_TWO_STAGE 0; setvar IT_GPU_DEVICE all; exit 0
+            setvar IT_GPU_LEASE_HELD 1; setvar IT_GPU_TWO_STAGE 0; setvar IT_GPU_DEVICE all; exit 0
         fi
         small=$(small_max_gb)
         [[ "$small" =~ ^[0-9]+$ && "$small" -gt 0 ]] || { echo "ERROR: cannot read the devices' memory from nvidia-smi." >&2; exit 1; }
         hold small --gpus 1 --min-vram "$small" --cpu-heavy
         device=$(cat "$(PIDFILE small).device")
         echo "gpu_stage_lease: small stage holds ${device} (classes declaring up to ${small} GiB, no bf16)."
-        setvar IT_GPU_TWO_STAGE 1; setvar IT_GPU_DEVICE "$device"; setvar IT_GPU_SMALL_MAX_GB "$small"
+        setvar IT_GPU_LEASE_HELD 1; setvar IT_GPU_TWO_STAGE 1; setvar IT_GPU_DEVICE "$device"; setvar IT_GPU_SMALL_MAX_GB "$small"
         ;;
     acquire/large)
         if [[ "${IT_GPU_TWO_STAGE:-0}" != 1 ]]; then
-            echo "gpu_stage_lease: one-stage run; the first stage's lease already covers this."; exit 0
+            echo "gpu_stage_lease: one-stage run; the first stage's lease already covers this."
+            setvar IT_GPU_LARGE_HELD 1; exit 0
         fi
         hold large --gpus all --cpu-heavy
         echo "gpu_stage_lease: large stage holds the whole server."
-        setvar IT_GPU_DEVICE all
+        setvar IT_GPU_LARGE_HELD 1; setvar IT_GPU_DEVICE all
         ;;
     release/small|release/large)
         ci_host_lease_release "$DIR" "$TOOL" "$(PIDFILE "$STAGE")"
