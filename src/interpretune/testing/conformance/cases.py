@@ -118,6 +118,40 @@ def _assert_close_padded(got: torch.Tensor, ref: torch.Tensor, *, what: str) -> 
     )
 
 
+#: ROCm tolerances, applied only to tensors on a ROCm device, each about twice the spread measured on the first
+#: dual-vendor parity runs (#794: gemma-3-1b-it under circuit-tracer over nnsight, three runs on one host):
+#:
+#: - ``ROCM_COMMUTE_ATOL``: two adds in opposite orders, measured at 1.07e-4 to 1.47e-4 greatest absolute difference
+#:   (``CONVERGENCE_ATOL`` is 1e-4; NVIDIA agrees within it).
+#: - ``ROCM_BATCHED_MISMATCH_FRACTION`` and ``ROCM_BATCHED_ATOL``: fused (batched) hook configs against sequential ones.
+#:   One run agreed within the padded tolerance and two did not, identically: 104,923 of 149,422,080 logits (7.0e-4)
+#:   beyond it, the greatest 3.13e-2 absolute. The fused batch selects different GEMM kernels, and the selection is
+#:   not stable from run to run, so most elements still meet the padded tolerance and a bounded fraction may exceed
+#:   it, up to a hard cap.
+ROCM_COMMUTE_ATOL = 3e-4
+ROCM_BATCHED_MISMATCH_FRACTION = 1.5e-3
+ROCM_BATCHED_ATOL = 6e-2
+
+
+def _on_rocm_device(t: torch.Tensor) -> bool:
+    """Whether ``t`` is on a ROCm device (torch built for HIP, which runs through the ``cuda`` device type)."""
+    return t.device.type == "cuda" and getattr(torch.version, "hip", None) is not None
+
+
+def _assert_mostly_close(got: torch.Tensor, ref: torch.Tensor, *, what: str, max_fraction: float, cap: float) -> None:
+    """At most ``max_fraction`` of the elements beyond the padded tolerance, none beyond ``cap`` absolute, with the
+    measured numbers in the message."""
+    got = got.to(torch.float32)
+    ref = ref.to(torch.float32)
+    diff = (got - ref).abs()
+    beyond = int((diff > PADDED_ATOL + PADDED_RTOL * ref.abs()).sum())
+    fraction, greatest = beyond / diff.numel(), diff.max().item()
+    assert fraction <= max_fraction and greatest <= cap, (
+        f"{what}: {beyond} of {diff.numel()} elements ({fraction:.2e}) beyond the padded tolerance (rtol={PADDED_RTOL},"
+        f" atol={PADDED_ATOL}), allowed {max_fraction:.2e}; greatest absolute difference {greatest:.3e}, cap {cap:.1e}"
+    )
+
+
 def _real_effect(effect: torch.Tensor, attention_mask: torch.Tensor | None) -> torch.Tensor:
     """Zero the effect at pad positions: they are undefined by contract, and a padded forward may not even be
     deterministic there, so a discriminator that counted them would flag noise as movement."""
@@ -950,8 +984,13 @@ class ModelBackendConformance:
             ids, mask = suite.batch_inputs(i)
             ref = hf.steered_many(ids, [(point, add_fn(STEER_SCALE + half), "last_token")], attention_mask=mask)
             _assert_close_padded(first, ref["logits"][0, -1, :], what=f"batch {i}: summed-add logits")
-            assert torch.allclose(first, second, rtol=0, atol=CONVERGENCE_ATOL), (
-                f"batch {i}: two adds in opposite orders disagreed"
+            # the measured difference in the message, as `_assert_close_padded` reports it, so a platform failure
+            # reports a number (this is `torch.allclose(first, second, rtol=0, atol=CONVERGENCE_ATOL)`)
+            diff = (first.to(torch.float32) - second.to(torch.float32)).abs().max().item()
+            atol = ROCM_COMMUTE_ATOL if _on_rocm_device(first) else CONVERGENCE_ATOL
+            assert diff <= atol, (
+                f"batch {i}: two adds in opposite orders disagreed: greatest absolute difference {diff:.3e}"
+                f" (atol={atol}, rtol=0)"
             )
 
     # -- LATENT_MODELS ------------------------------------------------------------------------------
@@ -1094,8 +1133,19 @@ class ModelBackendConformance:
         # Measured on the macOS runner with the nnsight backend: 3 of 26,334,668 elements at 1.07e-4 absolute and
         # 1.5e-6 relative, on logits of magnitude ~100; Linux agreed exactly. The positive control below is what
         # keeps this from being satisfiable by two runs that ignored their hooks.
+        # On ROCm the fused batch's kernel selection varies from run to run, so a bounded fraction of the logits may
+        # exceed the padded tolerance (see `ROCM_BATCHED_MISMATCH_FRACTION`).
         for k, config in enumerate(configs):
             sequential = self._forward_with_hooks(suite, index, config)
+            if _on_rocm_device(sequential):
+                _assert_mostly_close(
+                    batched[k],
+                    sequential,
+                    what=f"config {k}: batched and sequential logits differ",
+                    max_fraction=ROCM_BATCHED_MISMATCH_FRACTION,
+                    cap=ROCM_BATCHED_ATOL,
+                )
+                continue
             torch.testing.assert_close(
                 batched[k],
                 sequential,

@@ -16,6 +16,7 @@ Usage (from the repository root):
     python tests/gpu_ci/phase_manifest.py --out /tmp/manifest.json
     python tests/gpu_ci/phase_manifest.py --phase cuda --phase standalone --out /tmp/manifest.json
     python tests/gpu_ci/phase_manifest.py --classify-file /tmp/a-failing-phase.log
+    python tests/gpu_ci/phase_manifest.py --classify-junit /tmp/a-failing-phase.junit.xml
 
 ROCm triage: ``classify_failure`` sorts one failure's text into the buckets the build-day run
 needs. The buckets, in the order they are checked:
@@ -32,6 +33,19 @@ needs. The buckets, in the order they are checked:
   NVIDIA-flavoured surface (a device name, a CUDA version string, ``nvidia-smi``) while the
   ``torch.cuda`` interface itself is the HIP compatibility layer and works. Fix shape: make
   the assumption vendor-neutral; the test is expected to run on ROCm.
+- ``device-fault``: a kernel faulted on the device (a device-side assert, an illegal memory access,
+  ``hipErrorLaunchFailure`` / ``unspecified launch failure``, an HSA exception). Not ROCm evidence by
+  itself: an out-of-range index faults on either vendor. The fault poisons the process's device
+  context, so every later GPU test in that process fails the same way; ``classify_run`` attributes
+  those to the first fault. Fix shape: find the first fault's cause (often a real bug that depends
+  on test order or cached inputs); the cascade needs no fix of its own.
+- ``resource-calibration``: a measured resource (a memory-profiler stat) differs from the
+  expectation recorded on another device. Fix shape: recalibrate per device, or widen the
+  tolerance with the measured spread.
+- ``numerics-tolerance``: values computed on the device differ from a reference beyond the
+  test's tolerance (``torch.testing`` reports mismatched elements and the greatest difference).
+  Fix shape: compare the measured difference with the vendor's kernels before touching the
+  tolerance; a tolerance is widened only with the measurement.
 - ``unknown``: none of the above matched. Triage by hand; do not guess a bucket.
 
 Actual ROCm execution stays pending until AMD hardware is available: every manifest records
@@ -185,6 +199,15 @@ _ROCM_KERNEL_GAP = (
     r"no kernel image[^\n]*(hip|gfx\d)",
     r"invalid device function[^\n]*gfx\d",
 )
+_DEVICE_FAULT = (
+    r"device-side assert(ion)? triggered",
+    r"cudaerrorassert",
+    r"illegal memory access",
+    r"unspecified launch failure",
+    r"hiperrorlaunchfailure",
+    r"hsa_status_error_exception",
+    r"index out of bounds[^\n]*kernel|kernel[^\n]*index out of bounds",
+)
 _BACKEND_GAP = (
     r"(backend|capability)[^\n]*(not supported|does not support|unavailable|missing)",
     r"(nccl|rccl)[^\n]*(not available|unavailable|not built|unsupported)",
@@ -200,11 +223,26 @@ _HIP_COMPATIBLE_INTERFACE = (
     r"cuda[^\n]*version[^\n]*(mismatch|expected)[^\n]*hip",
 )
 
+# A resource stat is compared with ``torch.testing``, so it reads "not close" like a numerics
+# failure; the profiler's names in the traceback are what tell them apart, hence calibration first.
+_RESOURCE_CALIBRATION = (
+    r"(memory_stats|expected_memstats|memprofiler)[\s\S]{0,4000}?not close",
+    r"not close[\s\S]{0,4000}?(memory_stats|expected_memstats|memprofiler)",
+)
+_NUMERICS_TOLERANCE = (
+    r"greatest (absolute|relative) difference",
+    r"mismatched elements: \d+ / \d+",
+    r"(tensors|scalars|tensor-likes) are not (close|equal)",
+)
+
 _BUCKETS = (
     ("cuda-only-dependency", _CUDA_ONLY_DEPENDENCY),
     ("rocm-kernel-gap", _ROCM_KERNEL_GAP),
+    ("device-fault", _DEVICE_FAULT),
     ("backend-gap", _BACKEND_GAP),
     ("hip-compatible-cuda-interface", _HIP_COMPATIBLE_INTERFACE),
+    ("resource-calibration", _RESOURCE_CALIBRATION),
+    ("numerics-tolerance", _NUMERICS_TOLERANCE),
 )
 
 
@@ -219,16 +257,66 @@ def classify_failure(text: str) -> dict:
     return {"bucket": "unknown", "evidence": ""}
 
 
+def classify_run(failures: list[tuple[str, str]]) -> dict:
+    """Classify a run's failures, given in execution order as ``(node id, text)`` pairs.
+
+    The first ``device-fault`` is the run's first fault. A later failure with a device fault of its own is the same
+    poisoned context re-reporting it, so it is classified ``device-fault-cascade`` with ``first_fault`` naming the
+    node that faulted, rather than counted as a fault of its own. Failures in any other bucket keep it, a cascade
+    included, because a numerics or dependency failure is evidence on its own.
+    """
+    first_fault = None
+    results = []
+    for nodeid, text in failures:
+        result = {"nodeid": nodeid, **classify_failure(text)}
+        if result["bucket"] == "device-fault":
+            if first_fault is None:
+                first_fault = nodeid
+            else:
+                result.update(bucket="device-fault-cascade", first_fault=first_fault)
+        results.append(result)
+    counts: dict[str, int] = {}
+    for result in results:
+        counts[result["bucket"]] = counts.get(result["bucket"], 0) + 1
+    return {"first_fault": first_fault, "counts": counts, "failures": results}
+
+
+def junit_failures(path: Path) -> list[tuple[str, str]]:
+    """``(node id, text)`` for every failed or errored test case in a pytest JUnit XML file, in file order.
+
+    pytest writes test cases in the order they ran, which is the order :func:`classify_run` needs.
+    """
+    import xml.etree.ElementTree as ET
+
+    failures = []
+    for case in ET.parse(path).iter("testcase"):
+        for kind in ("failure", "error"):
+            element = case.find(kind)
+            if element is not None:
+                nodeid = f"{case.get('classname', '')}::{case.get('name', '')}"
+                failures.append((nodeid, f"{element.get('message') or ''}\n{element.text or ''}"))
+    return failures
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--phase", action="append", choices=sorted(PHASES), help="repeatable; default: cuda, standalone")
     ap.add_argument("--out", type=Path, default=None, help="write the manifest JSON here (default: stdout summary)")
     ap.add_argument("--classify-file", type=Path, default=None, help="classify a failure log instead of collecting")
+    ap.add_argument(
+        "--classify-junit",
+        type=Path,
+        default=None,
+        help="classify every failure in a pytest JUnit XML file, attributing device-fault cascades to the first fault",
+    )
     ap.add_argument("-k", default=None, help="pytest -k expression narrowing every collection")
     args = ap.parse_args(argv)
 
     if args.classify_file is not None:
         print(json.dumps(classify_failure(args.classify_file.read_text()), indent=2))
+        return 0
+    if args.classify_junit is not None:
+        print(json.dumps(classify_run(junit_failures(args.classify_junit)), indent=2))
         return 0
 
     phases = args.phase or ["cuda", "standalone"]
