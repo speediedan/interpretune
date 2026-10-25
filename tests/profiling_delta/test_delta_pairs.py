@@ -77,6 +77,12 @@ def test_delta_pair(tmp_path, composition):
         assert all(r["peak_alloc"] > 0 for r in arm["repeats"])
     # bind the delta to matched arms: both consumed the same batches, step for step
     assert [r["inputs"] for r in pair.it["repeats"]] == [r["inputs"] for r in pair.upstream["repeats"]]
+    # phased compositions: the structural invariants are exact, so they are asserted whether or not bounds are frozen
+    for it_rep, up_rep in zip(pair.it["repeats"], pair.upstream["repeats"]):
+        for phase, counts in it_rep["structure"].items():
+            leaks = {k: counts[k] for k in ("frozen_with_grad", "frozen_in_groups", "state_frozen") if counts[k]}
+            assert not leaks, f"{composition} phase {phase}: frozen parameters hold state {leaks}"
+        assert it_rep["structure"] == up_rep["structure"], "the arms thawed or optimized different parameters"
 
     frozen = _frozen(pair.vendor, composition)
     if frozen is None:
