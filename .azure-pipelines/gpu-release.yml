@@ -1,0 +1,93 @@
+# Release validation on both GPU vendors (#703, after finetuning-scheduler's #57): a release needs one demanded, full,
+# clean run per vendor at the release candidate's revision. One leg per vendor runs through
+# .azure-pipelines/templates/gpu-job.yml under the `ci-release` class with the gate's steps
+# (templates/it-gpu-steps.yml), and a CPU job then checks both legs' phase evidence
+# (tests/gpu_ci/release_eligibility.py). Its verdict, published as `it-release-eligibility`, is the release's GPU gate;
+# the legs' own results are necessary, not sufficient.
+#
+# Queued by hand on the candidate's branch or tag, never triggered: a vendor-demanded job queued while no agent in the
+# pool matches its demands fails at once instead of waiting, and an agent takes release work only while its `ci-release`
+# capability is on. So check both agents carry it FIRST, then queue this pipeline. The project's Approval check gates
+# every run, as on every pipeline in this pool.
+trigger: none
+pr: none
+
+parameters:
+  # The images both legs run, digest-pinned: the same pins as gpu-tests.yml and readme-flow-gpu.yml
+  # (tests/gpu_ci/test_any_vendor_job.py checks that every GPU pipeline pins the same images).
+  - name: images
+    type: object
+    default:
+      nvidia: "speediedan/interpretune:py3.13-pt2.15.0-azpl-init@sha256:e70fa08fe772ae6e48f892b03f64cbb8de4a1882fe369b6abb6cfa55b56cbda0"
+      amd: "speediedan/interpretune:py3.13-pt2.15.0-rocm10.0-azpl-init@sha256:1bc21baf182878047f1260e5d6d45d6ea8268d89b48a18717555aa233e3bf62b"
+
+jobs:
+  - template: templates/gpu-job.yml
+    parameters:
+      jobName: release_nvidia
+      vendor: nvidia
+      jobClass: ci-release
+      images: ${{ parameters.images }}
+      timeoutInMinutes: 300
+      steps:
+        - template: templates/it-gpu-steps.yml
+          parameters:
+            mode: full
+            extended: false
+            jobClass: ci-release
+
+  - template: templates/gpu-job.yml
+    parameters:
+      jobName: release_amd
+      vendor: amd
+      jobClass: ci-release
+      images: ${{ parameters.images }}
+      timeoutInMinutes: 300
+      steps:
+        - template: templates/it-gpu-steps.yml
+          parameters:
+            mode: full
+            extended: false
+            jobClass: ci-release
+
+  # Vendor-neutral and CPU only. It runs on an agent already taking release work (the class demand), on that host's
+  # Python: the checker needs only the standard library. It runs whatever the legs' results, so a failed or missing leg
+  # still ends in a named INELIGIBLE reason.
+  - job: release_eligibility
+    dependsOn: [release_nvidia, release_amd]
+    condition: not(canceled())
+    timeoutInMinutes: 15
+    pool:
+      name: Default
+      demands:
+        - Agent.OS -equals Linux
+        - ci-release
+        - ci-it
+    workspace:
+      clean: all
+    variables:
+      nvidiaResult: $[ dependencies.release_nvidia.result ]
+      amdResult: $[ dependencies.release_amd.result ]
+    steps:
+      - checkout: self
+
+      # every artifact of this run, each under $(Pipeline.Workspace)/<artifact>; the checker takes each vendor's
+      # latest attempt (it-release-<vendor>-<attempt>). When no leg published anything the download may fail; the
+      # check still runs, so the run ends in a named INELIGIBLE reason rather than a download error.
+      - download: current
+        continueOnError: true
+        displayName: 'Download release evidence'
+
+      - bash: |
+          set -euo pipefail
+          python3 tests/gpu_ci/release_eligibility.py --artifacts "$(Pipeline.Workspace)" \
+            --revision "$(Build.SourceVersion)" --nvidia-result "$NVIDIA_RESULT" --amd-result "$AMD_RESULT" \
+            --output "$(Build.ArtifactStagingDirectory)/it-release-eligibility.json"
+        env:
+          NVIDIA_RESULT: $(nvidiaResult)
+          AMD_RESULT: $(amdResult)
+        displayName: 'Check both vendors'' release evidence'
+
+      - publish: $(Build.ArtifactStagingDirectory)/it-release-eligibility.json
+        artifact: it-release-eligibility
+        displayName: 'Publish release eligibility'

@@ -29,6 +29,11 @@ if [[ -n "${IT_GPU_DEVICE:-}" && "${IT_GPU_DEVICE}" != all ]]; then
     export CUDA_VISIBLE_DEVICES="$IT_GPU_DEVICE"
 fi
 export IT_GPU_STRICT=1
+# Record every pytest process the phase starts (tests/gpu_ci/phase_plugin.py) for the job's phase reports, once the
+# job has collected the phases' manifests.
+if [[ -f "/evidence/it-phases/manifests/${PHASE}.json" ]]; then
+    eval "$(python -m tests.gpu_ci.phase_report run-env --phase "$PHASE" --out-dir /evidence/it-phases)"
+fi
 echo "Phase ${PHASE}, class ${CLASS}, device ${IT_GPU_DEVICE:-all}"
 
 record() { echo "$1" > "${COUNTS}/${PHASE}.${CLASS}"; }

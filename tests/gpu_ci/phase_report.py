@@ -48,7 +48,10 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tests.gpu_ci.phase_plugin import RECORD_DIR_ENV
+if __package__:
+    from tests.gpu_ci.phase_plugin import RECORD_DIR_ENV
+else:  # run as a script beside its siblings (release_eligibility.py on a host Python without the test dependencies)
+    from phase_plugin import RECORD_DIR_ENV
 
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = "speediedan/interpretune"
