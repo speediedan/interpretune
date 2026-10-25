@@ -564,9 +564,7 @@ def core_hf_fts_upstream_arm(recorder: StepRecorder, steps: int, seed: int) -> N
             recorder.note_input(batch)
             recorder.set_phase(ctrl.curr_depth)
             batch = _to(batch, dev)
-            labels = torch.take(label_ids, torch.as_tensor(batch.pop("labels"), device=dev))
-            logits = root.model(**batch).logits
-            loss_fn(torch.squeeze(logits[:, -1, :], dim=1), labels).backward()
+            _answer_loss(root.model, batch, label_ids, loss_fn).backward()
             ctrl.optimizer.step()
             recorder.step_end()
             recorder.note_structure(structure(root, ctrl.optimizer))
