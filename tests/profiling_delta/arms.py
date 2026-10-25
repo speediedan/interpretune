@@ -321,7 +321,7 @@ def core_hf_upstream_arm(
 ########################################################################################################################
 
 
-def _trainer(steps: int, max_epochs: int = 1):
+def _trainer(steps: int, epochs: int = 1):
     from lightning.pytorch import Trainer
 
     accelerator = "cpu" if _device().type == "cpu" else "gpu"
@@ -329,10 +329,10 @@ def _trainer(steps: int, max_epochs: int = 1):
         default_root_dir=tempfile.mkdtemp(prefix="it_profdelta_l_"),
         devices=1,
         accelerator=accelerator,
-        max_epochs=max_epochs,
+        max_epochs=epochs,
         precision="32-true",
         num_sanity_val_steps=0,
-        limit_train_batches=steps,
+        limit_train_batches=-(-steps // epochs),
         limit_val_batches=0,
         limit_test_batches=steps,
         max_steps=steps,
@@ -343,7 +343,7 @@ def _trainer(steps: int, max_epochs: int = 1):
     )
 
 
-def lightning_it_arm(recorder: StepRecorder, steps: int, seed: int, phase: str) -> None:
+def lightning_it_arm(recorder: StepRecorder, steps: int, seed: int, phase: str, epochs: int = 1) -> None:
     from lightning.fabric.utilities.seed import seed_everything
 
     seed_everything(seed)
@@ -362,7 +362,7 @@ def lightning_it_arm(recorder: StepRecorder, steps: int, seed: int, phase: str) 
             return out
 
         setattr(module, step_fn_name, recorded_step)
-        trainer = _trainer(steps)
+        trainer = _trainer(steps, epochs)
         handle = register_optimizer_step_post_hook(lambda *_: recorder.step_end())
         try:
             (trainer.fit if phase == "train" else trainer.test)(**session)
@@ -411,7 +411,7 @@ def _vanilla_lightning_module(spec: _UpstreamSpec, recorder: StepRecorder):
     return VanillaHF()
 
 
-def lightning_upstream_arm(recorder: StepRecorder, steps: int, seed: int, phase: str) -> None:
+def lightning_upstream_arm(recorder: StepRecorder, steps: int, seed: int, phase: str, epochs: int = 1) -> None:
     from lightning.fabric.utilities.seed import seed_everything
     from torch.utils.data import DataLoader
 
@@ -420,7 +420,7 @@ def lightning_upstream_arm(recorder: StepRecorder, steps: int, seed: int, phase:
     module = _vanilla_lightning_module(spec, recorder)
     # the batches are already collated: batch_size=None hands each one to the step unchanged
     loader = DataLoader(spec.batches, batch_size=None)
-    trainer = _trainer(steps)
+    trainer = _trainer(steps, epochs)
     handle = register_optimizer_step_post_hook(lambda *_: recorder.step_end())
     try:
         if phase == "train":
@@ -616,12 +616,12 @@ COMPOSITIONS["lightning_train"] = Composition(
     name="lightning_train",
     description="interpretune's Lightning composition versus a vanilla LightningModule on the same HF model, under "
     "the same Trainer configuration (Lightning's own cost cancels)",
-    it_arm=partial(lightning_it_arm, phase="train"),
-    upstream_arm=partial(lightning_upstream_arm, phase="train"),
+    it_arm=partial(lightning_it_arm, phase="train", epochs=2),
+    upstream_arm=partial(lightning_upstream_arm, phase="train", epochs=2),
     # both arms settle over Lightning's first training steps (measured on gpt2: the vanilla arm is flat only from step
-    # 6), so they warm up longer; the task's 10 examples at batch size 1 bound the run
-    warmup=6,
-    window=4,
+    # 6 on CUDA and step 8 on ROCm), so they warm up longer, over two epochs of the task's 10 examples at batch size 1
+    warmup=8,
+    window=12,
 )
 COMPOSITIONS["lightning_test"] = Composition(
     name="lightning_test",
