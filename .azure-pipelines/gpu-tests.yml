@@ -283,6 +283,11 @@ jobs:
         - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh extended-profile'
           displayName: 'Testing: extended profiling'
           condition: and(succeeded(), eq(variables['IT_GPU_EXTENDED'], '1'))
+          # Profiling runs with releases but never gates them: on release and tag builds a delta beyond its frozen
+          # bound is reported (tests/profiling_delta), and the weekly run is where it fails.
+          ${{ if or(startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'), startsWith(variables['Build.SourceBranch'], 'refs/tags/')) }}:
+            env:
+              IT_PROFILING_DELTA_REPORT_ONLY: '1'
         - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh extended-optional'
           displayName: 'Testing: extended optional'
           condition: and(succeeded(), eq(variables['IT_GPU_EXTENDED'], '1'))
