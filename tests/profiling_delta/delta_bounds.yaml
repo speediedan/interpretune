@@ -10,10 +10,9 @@
 # nothing is asserted. Bounds are frozen only from spread measured on BOTH vendors (`python -m
 # tests.profiling_delta.freeze`), and revised only with a recorded re-measurement.
 #
-# Frozen 2026-10-25 from one 5-repeat run per vendor: NVIDIA RTX 4090 (torch 2.15.0+cu130) and AMD (torch
-# 2.15.0+rocm10.0). Every metric showed zero repeat spread, so every tolerance is its floor. A 2070 SUPER run matched the
-# 4090 within 2.4 MiB (bf16) and to the byte elsewhere. lightning_train is not frozen: its window was lengthened after
-# these runs and awaits re-measurement on both vendors.
+# Frozen 2026-10-25 from two 5-repeat runs per vendor, the second with these bounds enforced: NVIDIA RTX 4090 (torch
+# 2.15.0+cu130) and AMD (torch 2.15.0+rocm10.0). Every metric showed zero spread across repeats and across runs, so
+# every tolerance is its floor. Runs on a 2070 SUPER matched the 4090 within 2.4 MiB (bf16) and to the byte elsewhere.
 cuda:
   core_hf_fts_train:
     end_current:
@@ -77,6 +76,16 @@ cuda:
     slope[0]:
       baseline: 0.0
       tolerance: 65536.0
+  lightning_train:
+    end_current:
+      baseline: -2315776.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -1791488.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
 rocm:
   core_hf_fts_train:
     end_current:
@@ -136,6 +145,16 @@ rocm:
       tolerance: 8388608.0
     peak_alloc:
       baseline: -797184.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  lightning_train:
+    end_current:
+      baseline: -1737216.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -1050112.0
       tolerance: 8388608.0
     slope[0]:
       baseline: 0.0
