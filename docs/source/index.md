@@ -161,6 +161,20 @@ usage/circuit_tracer_backend_support
 ```
 
 ```{toctree}
+:caption: Tuning
+:maxdepth: 1
+:hidden:
+
+usage/fts_tunable_views
+usage/fts_tuning_core_hf
+usage/fts_tuning_transformer_lens
+usage/fts_tuning_sae_lens
+usage/fts_tuning_nnsight
+usage/fts_tuning_circuit_tracer
+usage/fts_tuning_interp_engine
+```
+
+```{toctree}
 :caption: Dashboards & Neuronpedia
 :maxdepth: 1
 :hidden:

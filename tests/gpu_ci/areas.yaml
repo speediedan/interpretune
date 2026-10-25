@@ -126,6 +126,8 @@ areas:
       - src/interpretune/adapters/nnsight/**
       - src/interpretune/adapters/sae_lens/**
       - src/interpretune/base/**
+      # every module attaches its finetuning-scheduler view at init, and the default optimizer reads it (#758, #761)
+      - src/interpretune/tuning/**
       - src/interpretune/config/runner.py
       - src/interpretune/config/extensions.py
       - src/interpretune/config/profiling.py
@@ -144,6 +146,7 @@ areas:
     # HF from_pretrained/peft mixins, debug generation, memory profiler, device utilities
     paths:
       - src/interpretune/base/**
+      - src/interpretune/tuning/**
       - src/interpretune/adapters/core.py
       - src/interpretune/adapters/lightning.py
       - src/interpretune/adapters/sae_lens/**

@@ -4,6 +4,7 @@ import torch
 
 from interpretune.config import ITConfig
 from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
+from interpretune.tuning.views import attach_tunable_view
 
 
 class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):  # type: ignore[misc]
@@ -20,10 +21,11 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
 
     Method roles: ``_before_it_cfg_init``, ``auto_model_init``, ``post_auto_model_init``,
     ``model_init`` and ``load_metric`` are template hooks (override freely; no ``super()``
-    required), while the hooks defined on ``BaseITHooks`` are cooperative (call ``super()`` to
-    retain their behavior). ``_dispatch_model_init`` defines the lifecycle and should not be
-    overridden. See ``docs/module_contract_and_limitations.md`` for the full contract and its
-    documented limitations.
+    required), while the hooks defined on ``BaseITHooks``, ``register_tunable_modules`` and
+    ``tunable_roles`` are cooperative (call ``super()`` to retain their behavior).
+    ``_dispatch_model_init`` defines the lifecycle and should not be overridden. See
+    ``docs/module_contract_and_limitations.md`` for the full contract and its documented
+    limitations.
     """
 
     def __init__(self, it_cfg: ITConfig, *args, **kwargs):
@@ -49,6 +51,11 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
             self.post_auto_model_init()  # allow modification of a configuration-driven model
         else:
             self.model_init()  # load a custom model
+        # register modules the view must reach whichever init path ran, then attach the composition's
+        # finetuning-scheduler view (never replacing one attached in `post_auto_model_init`); the attachment is a no-op
+        # when the installed finetuning-scheduler predates views
+        self.register_tunable_modules()
+        attach_tunable_view(self)
         self._capture_hyperparameters()
         self.load_metric()
 
@@ -60,6 +67,34 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
 
     def post_auto_model_init(self) -> None:
         """Optionally modify init of an existing configuration-driven model."""
+
+    def register_tunable_modules(self) -> None:
+        """Register on this module any model-owned module its view must reach, once the model exists.
+
+        Cooperative: an adapter registering a module calls ``super()``. Runs after ``post_auto_model_init`` or
+        ``model_init``, whichever ran, and before the view is attached, so overriding a template hook never loses a
+        registration.
+        """
+
+    def build_tunable_view(self) -> Any | None:
+        """This composition's finetuning-scheduler ``TunableView``, whose ``support()`` declares how it can be
+        tuned (#758, #759).
+
+        This default is itself a declaration: finetuning-scheduler's identity view over this module, with PEFT adapter
+        tensors as ``adapter:<name>`` and the roles :meth:`tunable_roles` adds, so a composition that does not
+        override it is trainable. Backends whose parameters are not identity-named, or cannot be tuned, override it;
+        returning ``None`` declares nothing, and the composition is then refused rather than assumed trainable.
+        """
+        from interpretune.tuning.views import identity_view
+
+        return identity_view(self, roles=self.tunable_roles())
+
+    def tunable_roles(self) -> dict[str, str]:
+        """Roles for this module's parameters and buffers, by name.
+
+        Cooperative: mixins add theirs to ``super()``'s.
+        """
+        return {}
 
     def model_init(self) -> None:
         """Optionally load a custom model ."""

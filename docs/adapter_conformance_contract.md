@@ -193,6 +193,13 @@ applied the one it has would fail.
 The invariants are batch-safe by construction: an intervention tensor broadcasts to every row, so "replace with the
 row's own activation" is not expressible through the op path and is deliberately not a case.
 
+## Tuning cases
+
+`TuningConformance` runs finetuning-scheduler's `TunableView` cases against the view a composition declares, with the
+same `target` as the model-backend cases. A trainable view runs every case that applies to it, a refused composition
+runs the refusal case, and a run in which no case applies fails. See
+[tuning compositions through finetuning-scheduler views](fts_tunable_views.md).
+
 ## Op collections
 
 Ops declare what they need beside `required_capabilities`: `required_intervention_modes` and
