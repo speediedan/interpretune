@@ -78,6 +78,8 @@ test_ns_profiling.test_cuda_32:
       allocated_bytes.all.peak: 580771328
       npp_diff: 0
       reserved_bytes.all.peak: 614465536
+    expected_mem_rocm:
+      reserved_bytes.all.peak: 689963008
     phase: test
     src: cuda
 test_ns_profiling.train_cuda_32:
