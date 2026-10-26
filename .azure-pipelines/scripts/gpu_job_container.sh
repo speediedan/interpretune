@@ -88,6 +88,12 @@ PY
         venv
         python requirements/utils/collect_env_details.py
         ;;
+    scheduled-coverage)
+        # a scheduled build tests its own reason to run (tests/gpu_ci/scheduled_run_disposition.py); it always exits 0
+        set -e
+        venv
+        python -m tests.gpu_ci.scheduled_run_disposition --in-job
+        ;;
     plan)
         set -e
         venv

@@ -30,6 +30,11 @@ unset IT_RUN_PROFILING_TESTS
 unset IT_RUN_STANDALONE_TESTS
 unset IT_RUN_BENCHMARK_TESTS
 unset IT_EXPERIMENTAL_PATCH_TESTS
+# Every selection variable tests/conftest.py reads, not only the ones this script sets: conftest checks
+# IT_RUN_CUDA_TESTS before the profiling levels, so one inherited from the caller's shell would silently turn
+# `--mark_type=profile_ci` into the cuda-marked selection.
+unset IT_RUN_CUDA_TESTS
+unset IT_RUN_OPTIONAL_TESTS
 
 # Default rerun settings (for transient httpx read timeouts with HF transformers v5)
 reruns_count=2
@@ -37,13 +42,6 @@ reruns_delay=5
 
 source $(dirname "$0")/test_utils.sh
 
-# Serialize this run against other GPU work on the host (no-op unless GPU_LEASE_CMD is set).
-# A full suite is HOST-MEMORY-heavy as well as GPU-heavy, so it takes both host leases (gpu, then cpu-heavy in the
-# host tool's order) and stays serialized with every phase of a CI job, whose CPU-only phase holds only cpu-heavy.
-# GPU-only work (a notebook, a benchmark leg) takes the plain lease and may overlap that phase. An explicit
-# GPU_LEASE_ARGS wins.
-GPU_LEASE_ARGS="${GPU_LEASE_ARGS:---cpu-heavy}"
-gpu_lease_reexec "$0" "$@"
 
 usage(){
 >&2 cat << EOF
@@ -67,12 +65,12 @@ Usage: $0
   #   ./special_tests.sh --mark_type=standalone
 	# run all standalone tests following a pattern using a non-default test collection directory:
 	#   ./tests/special_tests.sh --mark_type=standalone --collect_dir='src/my_examples' --filter_pattern='special_examples'
-  # default `tests/.experiments` experiments definition location with a specific patch mask:
-	#   ./tests/special_tests.sh --mark_type=exp_patch --filter_pattern='test_' --experiment_patch_mask="1 0 0"
+  # --mark_type=exp_patch is refused: no test in this repository selects on an experimental patch
 EOF
 exit 1
 }
 
+orig_args=("$@")
 args=$(getopt -o '' --long mark_type:,log_file:,filter_pattern:,experiments_list:,experiment_patch_mask:,collect_dir:,resource-debug,no-reruns,reruns:,reruns-delay:,allow-failures,allow-empty,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
@@ -101,13 +99,22 @@ do
   esac
 done
 
+# Serialize this run against other GPU work on the host (no-op unless GPU_LEASE_CMD is set). Done after argument
+# parsing, so a bad flag is reported at once rather than after waiting for the lease.
+# A full suite is HOST-MEMORY-heavy as well as GPU-heavy, so it takes both host leases (gpu, then cpu-heavy in the
+# host tool's order) and stays serialized with every phase of a CI job, whose CPU-only phase holds only cpu-heavy.
+# GPU-only work (a notebook, a benchmark leg) takes the plain lease and may overlap that phase. An explicit
+# GPU_LEASE_ARGS wins.
+GPU_LEASE_ARGS="${GPU_LEASE_ARGS:---cpu-heavy}"
+gpu_lease_reexec "$0" "${orig_args[@]}"
+
 d=`date +%Y%m%d%H%M%S`
 tmp_log_dir="/tmp"
 mark_type=${mark_type:-"standalone"}
 experiments_list=${experiments_list:-$(dirname "$0")/.experiments}
 if [ -s "${experiments_list}" ]; then
   if [ -z "${experiment_patch_mask:-}" ]; then
-    experiment_patch_mask=($(cat tests/.experiments | awk '{for(i=1;i<=NF;i++) print "0"}'))
+    experiment_patch_mask=($(awk '{for(i=1;i<=NF;i++) print "0"}' "${experiments_list}"))
   fi
 fi
 # Both test roots: special-marked tests also live under src/it_examples/tests (the example notebooks), and
@@ -162,8 +169,10 @@ define_configuration(){
       export IT_RUN_BENCHMARK_TESTS=1
       ;;
     exp_patch)
-      echo "Collecting and running only experimental patch tests supported w/ provided patch mask (${experiment_patch_mask[@]})." | tee -a $special_test_session_log
-      export IT_EXPERIMENTAL_PATCH_TESTS=1
+      # Refused rather than run: no test here selects on experimental patches (nothing reads
+      # IT_EXPERIMENTAL_PATCH_TESTS), so this mode would run the whole suite one process per test.
+      echo "--mark_type=exp_patch: this repository defines no experimental-patch tests, so there is nothing to select." | tee -a $special_test_session_log
+      exit 1
       ;;
     *)
       echo "no matching `mark_type` found, exiting..." | tee -a $special_test_session_log

@@ -201,6 +201,9 @@ show_test_results(){
   local tmp_raw_log="$2"
   if [ -f ${tmp_raw_log} ]; then
     raw_filename=$(basename "$tmp_raw_log")
+    # a fresh checkout has no ./lightning_logs, and a failed cp here aborts this EXIT trap under `set -e`
+    # before any results are reported
+    mkdir -p ./lightning_logs
     cp "$tmp_raw_log" "./lightning_logs/$raw_filename"
     echo -n "##vso[task.uploadfile]"
     echo "${PWD}/lightning_logs/$raw_filename"
@@ -209,7 +212,8 @@ show_test_results(){
       printf "Potential errors detected. Uploading ${tmp_raw_log} and grepping exception/error lines below: \n" | tee -a $test_log
       echo `printf "%0.s-" {1..120} && printf "\n"` | tee -a $test_log
       printf ": \n" | tee -a $test_log
-      grep --ignore-case --extended-regexp 'error|exception' ${tmp_raw_log} | tee -a $test_log
+      # a log can match `failed` above and neither word here; under `set -eo pipefail` that must not end this EXIT trap
+      grep --ignore-case --extended-regexp 'error|exception' ${tmp_raw_log} | tee -a $test_log || true
       printf "\n" | tee -a $test_log
       show_final_summary "$test_log"
     else
