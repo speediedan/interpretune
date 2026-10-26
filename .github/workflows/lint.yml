@@ -48,3 +48,17 @@ jobs:
       # needs the package, this job needs an install step -- it will fail loudly rather than skip.
       - name: Run pre-commit
         run: pre-commit run --all-files --show-diff-on-failure --color=always
+
+  # The GPU lease shim is kept byte-identical with finetuning-scheduler's copy. Online by construction (it reads that
+  # copy from GitHub), so it is its own job rather than a pre-commit hook; a failure names the drift and its diff.
+  lease-wrap-sync:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: gpu_lease_wrap.sh matches finetuning-scheduler's copy
+        run: python scripts/check_gpu_lease_wrap_sync.py
