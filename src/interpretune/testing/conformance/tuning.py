@@ -80,7 +80,7 @@ class TuningConformance:
     @pytest.fixture(scope="class")
     def probe(self, make_view: Callable[[], Any]) -> Any:
         """One bound view, for case selection."""
-        from finetuning_scheduler.core.views import as_view
+        from finetuning_scheduler.tunable_view import as_view
 
         return as_view(make_view())
 

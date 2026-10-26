@@ -13,7 +13,7 @@
 boundaries (#762).
 
 :class:`FTSCoreCallback` is a core-loop callback (``SessionRunnerCfg.callbacks``). It builds the tuning scheduler over
-the session's module once training starts, so the tuning scheduler's view is the module's attached ``fts_tunable_view``
+the session's module once training starts, so the tuning scheduler's view is the module's attached ``tunable_view``
 (#758, #759) and its physical names are the module's own. The callback places the tuning scheduler's calls; phase hooks,
 payloads, transition policies and gates (veto included), RNG forking and checkpoint policies stay
 finetuning-scheduler's. Lightning compositions keep using the ``FinetuningScheduler`` callback.

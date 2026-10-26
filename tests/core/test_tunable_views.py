@@ -8,12 +8,13 @@ import pytest
 import torch
 from torch import nn
 
-pytest.importorskip("finetuning_scheduler.core.views", reason="finetuning-scheduler predates TunableView support")
+pytest.importorskip("finetuning_scheduler.tunable_view", reason="finetuning-scheduler predates the tunable view")
 
 from finetuning_scheduler.core.compile import compile_schedule  # noqa: E402
 from finetuning_scheduler.core.exceptions import FTSConfigurationError  # noqa: E402
-from finetuning_scheduler.core.views import as_view  # noqa: E402
+from finetuning_scheduler.tunable_view import as_view  # noqa: E402
 from finetuning_scheduler.testing import pytest_params, TunableViewConformance  # noqa: E402
+from finetuning_scheduler.tunable_view import TunableViewError, VIEW_ATTR as FTS_VIEW_ATTR  # noqa: E402
 
 from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule  # noqa: E402
 from interpretune.session import ITSession  # noqa: E402
@@ -170,6 +171,9 @@ class TestAttachRules:
         with pytest.raises(FTSConfigurationError, match="declares no tuning support"):
             compile_schedule({0: {"params": ["weight"]}}, view)
 
+    def test_the_view_is_attached_where_finetuning_scheduler_looks(self):
+        assert VIEW_ATTR == FTS_VIEW_ATTR
+
     def test_an_attached_view_is_never_replaced(self):
         module = nn.Linear(2, 2)
         sentinel = identity_view(module)
@@ -216,10 +220,10 @@ class TestDefaultOptimizer:
         assert self._ids(module.intervention.parameters()) <= covered
         assert not covered & self._ids([*module.fitted.parameters(), *module.instrument.parameters()])
 
-    def test_an_attached_non_view_is_a_configuration_error(self, request):
+    def test_an_attached_non_view_breaks_the_protocol(self, request):
         module = _fresh_module(request, "get_it_session_cfg__core_cust")
         object.__setattr__(module, VIEW_ATTR, object())
-        with pytest.raises(FTSConfigurationError):
+        with pytest.raises(TunableViewError):
             list(module.optimizer_parameters())
 
     def test_a_refused_composition_keeps_the_models_parameters(self, request):

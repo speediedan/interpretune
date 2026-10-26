@@ -48,21 +48,21 @@ class BaseITHooks:
     def optimizer_parameters(self) -> Iterator[torch.nn.Parameter]:
         """The parameters the default optimizer is built over.
 
-        When a trainable finetuning-scheduler view is attached (``fts_tunable_view``, #758), its root's parameters, less
+        When a trainable finetuning-scheduler view is attached (``tunable_view``, #758), its root's parameters, less
         those whose role finetuning-scheduler never optimizes (``fitted``, ``instrument``). The root of every
         interpretune view is this module, so trainable modules registered beside ``self.model`` (interventions, spliced
         SAEs) are stepped with no adapter extending this (#761). The view is bound through finetuning-scheduler, so an
-        attached object that is not a view is reported as a configuration error naming what it lacks. Otherwise (no
-        view, or one refusing the composition) the model's own parameters. An adapter that attaches trainable modules
-        outside ``self.model`` (the SAEs ``add_saes_on_init`` splices into a ``TransformerBridge``, whose
-        ``parameters()`` delegate to the wrapped HF model only) still extends this cooperatively, so those modules are
-        stepped with or without a view.
+        attached object that is not a view raises finetuning-scheduler's ``TunableViewError`` naming what it lacks.
+        Otherwise (no view, or one refusing the composition) the model's own parameters. An adapter that attaches
+        trainable modules outside ``self.model`` (the SAEs ``add_saes_on_init`` splices into a ``TransformerBridge``,
+        whose ``parameters()`` delegate to the wrapped HF model only) still extends this cooperatively, so those modules
+        are stepped with or without a view.
         """
         view = getattr(self, VIEW_ATTR, None)
         if view is None:
             return self.model.parameters()
-        from finetuning_scheduler.core.roles import FROZEN_ROLE_KINDS, role_kind
-        from finetuning_scheduler.core.views import as_view
+        from finetuning_scheduler.tunable_view import as_view
+        from finetuning_scheduler.tunable_view.roles import FROZEN_ROLE_KINDS, role_kind
 
         bound = as_view(view)
         if not bound.support().trainable:

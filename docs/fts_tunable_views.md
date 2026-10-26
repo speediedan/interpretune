@@ -8,7 +8,7 @@ Nothing here requires finetuning-scheduler: when the installed version predates 
 ## What is attached, and when
 
 After model initialization (`BaseITModule._dispatch_model_init`, after `post_auto_model_init` or `model_init`), every
-interpretune module carries its view as `fts_tunable_view`. finetuning-scheduler discovers it there unless a `view=` is
+interpretune module carries its view as `tunable_view`. finetuning-scheduler discovers it there unless a `view=` is
 passed explicitly. An already-attached view is never replaced, so a hub adapter may attach its own in
 `post_auto_model_init`.
 
