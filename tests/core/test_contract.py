@@ -90,6 +90,31 @@ class TestClassContract:
         unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warns)
         assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
 
+    def test_a_plain_subclass_of_a_composition_is_ordinary(self, get_it_session_cfg__core_cust):
+        """FSDP2's ``fully_shard`` subclasses a module's class with no build context (#820): that, and a plain
+        ``class Sub(Composed)``, build ordinary subclasses; a partial or missing build context is still refused."""
+        sess_cfg = deepcopy(get_it_session_cfg__core_cust)
+        m_cls = ITMeta(
+            "InterpretunableModule", (), {}, component="m", input=sess_cfg.module_cls, ctx=sess_cfg.adapter_ctx
+        )
+
+        class FSDPModuleStandIn:
+            pass
+
+        wrapped = type(f"FSDP{m_cls.__name__}", (FSDPModuleStandIn, m_cls), {})
+        assert wrapped.__mro__[1:3] == (FSDPModuleStandIn, m_cls) and type(wrapped) is ITMeta
+        assert wrapped._composed_classes is m_cls._composed_classes
+        assert wrapped._orig_module_name == m_cls._orig_module_name
+
+        class Sub(m_cls):
+            pass
+
+        assert Sub.__mro__[1] is m_cls
+        with pytest.raises(ValueError, match="input must be provided"):
+            ITMeta("Partial", (m_cls,), {}, component="m")
+        with pytest.raises(ValueError, match="component must be provided"):
+            ITMeta("Unbased", (FSDPModuleStandIn,), {})
+
     @pytest.mark.parametrize(
         "dm_precomposed, m_precomposed",
         [pytest.param(True, True), pytest.param(True, False), pytest.param(False, True)],

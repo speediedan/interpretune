@@ -161,6 +161,20 @@ usage/circuit_tracer_backend_support
 ```
 
 ```{toctree}
+:caption: Tuning
+:maxdepth: 1
+:hidden:
+
+Overview <usage/fts_tunable_views>
+core and HF <usage/fts_tuning_core_hf>
+TransformerLens <usage/fts_tuning_transformer_lens>
+sae_lens <usage/fts_tuning_sae_lens>
+nnsight <usage/fts_tuning_nnsight>
+circuit-tracer <usage/fts_tuning_circuit_tracer>
+interp-engine (hub adapter) <usage/fts_tuning_interp_engine>
+```
+
+```{toctree}
 :caption: Dashboards & Neuronpedia
 :maxdepth: 1
 :hidden:
