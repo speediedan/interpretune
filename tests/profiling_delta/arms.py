@@ -434,12 +434,19 @@ def _trainer(steps: int, epochs: int = 1):
     )
 
 
-def lightning_it_arm(recorder: StepRecorder, steps: int, seed: int, phase: str, epochs: int = 1) -> None:
+def lightning_it_arm(
+    recorder: StepRecorder,
+    steps: int,
+    seed: int,
+    phase: str,
+    epochs: int = 1,
+    adapter_ctx: tuple[str, ...] = ("lightning",),
+) -> None:
     from lightning.fabric.utilities.seed import seed_everything
 
     seed_everything(seed)
     with _tmpdir() as tmp:
-        cfg = _core_cfg(phase, steps, _device().type, None, adapter_ctx=_ctx("lightning"))
+        cfg = _core_cfg(phase, steps, _device().type, None, adapter_ctx=_ctx(*adapter_ctx))
         session = _session(cfg, tmp)
         module = session.module
         step_fn_name = "training_step" if phase == "train" else "test_step"
@@ -471,12 +478,17 @@ def _vanilla_lightning_module(spec: _UpstreamSpec, recorder: StepRecorder):
 
         def __init__(self) -> None:
             super().__init__()
-            self.model = _upstream_model(spec, torch.device("cpu"))  # the Trainer moves it, as it moves IT's
+            # the Trainer moves the model, as it moves interpretune's; an nnsight arm registers the LanguageModel's
+            # torch module so the Trainer moves and optimizes it, and steps through the LanguageModel's own trace
+            self.lm = _upstream_model(spec, torch.device("cpu")) if spec.nnsight_kwargs is not None else None
+            self.model = _params_root(self.lm) if self.lm is not None else _upstream_model(spec, torch.device("cpu"))
             self.loss_fn = nn.CrossEntropyLoss()
             self.register_buffer("label_ids", spec.label_token_ids.clone(), persistent=False)
 
         def training_step(self, batch, batch_idx):
             recorder.note_input(batch)
+            if self.lm is not None:
+                return _nnsight_answer_loss(self.lm, batch, self.label_ids, self.loss_fn)
             labels = torch.take(self.label_ids, torch.as_tensor(batch.pop("labels"), device=self.device))
             logits = self.model(**batch).logits
             return self.loss_fn(torch.squeeze(logits[:, -1, :], dim=1), labels)
@@ -502,11 +514,20 @@ def _vanilla_lightning_module(spec: _UpstreamSpec, recorder: StepRecorder):
     return VanillaHF()
 
 
-def lightning_upstream_arm(recorder: StepRecorder, steps: int, seed: int, phase: str, epochs: int = 1) -> None:
+def lightning_upstream_arm(
+    recorder: StepRecorder,
+    steps: int,
+    seed: int,
+    phase: str,
+    epochs: int = 1,
+    adapter_ctx: tuple[str, ...] | None = None,
+) -> None:
     from lightning.fabric.utilities.seed import seed_everything
     from torch.utils.data import DataLoader
 
-    spec = _upstream_spec(phase, steps, None)
+    # the spec is read from the core-loop twin of the composition: same model, data and optimizer configuration
+    core_ctx = tuple("core" if a == "lightning" else a for a in adapter_ctx) if adapter_ctx else None
+    spec = _upstream_spec(phase, steps, None, core_ctx)
     seed_everything(seed)
     module = _vanilla_lightning_module(spec, recorder)
     # the batches are already collated: batch_size=None hands each one to the step unchanged
@@ -731,6 +752,15 @@ COMPOSITIONS["lightning_train"] = Composition(
     upstream_arm=partial(lightning_upstream_arm, phase="train", epochs=2),
     # both arms settle over Lightning's first training steps (measured on gpt2: the vanilla arm is flat only from step
     # 6 on CUDA and step 8 on ROCm), so they warm up longer, over two epochs of the task's 10 examples at batch size 1
+    warmup=8,
+    window=12,
+)
+COMPOSITIONS["nnsight_lightning_train"] = Composition(
+    name="nnsight_lightning_train",
+    description="interpretune's Lightning + NNsight composition versus a vanilla LightningModule stepping a native "
+    "LanguageModel trace, under the same Trainer (the NNsight + Lightning footprint once skipped as ~2x)",
+    it_arm=partial(lightning_it_arm, phase="train", epochs=2, adapter_ctx=("lightning", "nnsight")),
+    upstream_arm=partial(lightning_upstream_arm, phase="train", epochs=2, adapter_ctx=("lightning", "nnsight")),
     warmup=8,
     window=12,
 )
