@@ -142,6 +142,12 @@ areas:
     tests:
       - tests/parity_acceptance/
       - tests/core/test_components_cli.py
+  profiling_delta:
+    # the interpretune-minus-upstream memory delta harness: a change to its frozen bounds selects its pairs (#823)
+    paths:
+      - tests/profiling_delta/**
+    tests:
+      - tests/profiling_delta/
   base_ext:
     # HF from_pretrained/peft mixins, debug generation, memory profiler, device utilities
     paths:
