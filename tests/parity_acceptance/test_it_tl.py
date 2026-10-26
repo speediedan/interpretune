@@ -144,7 +144,8 @@ def test_tl_profiling(recwarn, tmp_path, test_alias, test_cfg):
 
 
 @pytest.mark.parametrize(
-    "device_cfg", [pytest.param({}, id="cpu"), pytest.param(cuda, id="cuda", marks=RunIf(min_cuda_gpus=1))]
+    "device_cfg",
+    [pytest.param({}, id="cpu"), pytest.param(cuda, id="cuda", marks=RunIf(min_cuda_gpus=1, min_gpu_mem_gb=1.0))],
 )
 def test_tl_bridge_keeps_qkv_views(tmp_path, device_cfg):
     """On its target device the bridge keeps each layer's split q/k/v parameters as views of the fused qkv one.
