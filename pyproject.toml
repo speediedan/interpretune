@@ -232,7 +232,7 @@ git-deps = [
     # which carries the same URL and replaces the lock file's release pin at install. Kept here too so an
     # install still gets it once a relock drops it from the lock (`--no-emit-package`). The SHA is the head of
     # finetuning-scheduler#131 (FTSController renamed TuningScheduler, no aliases) until it lands; then main's.
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@50950b93de5ed280d61d2ffd15d331c7b8a19ff3",
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@d30b6d0f20998b3e5e0e56c79c383155f93e1abe",
 ]
 
 dev = [
@@ -317,7 +317,7 @@ override-dependencies = [
     # this. The lock script leaves it out of the universal lock (`--no-emit-package`), whose 2.13.0 pin is
     # replaced by this at install. RETIRE it, and raise the `lightning` extra's floor to 2.15.0, once 2.15.0
     # is published.
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@50950b93de5ed280d61d2ffd15d331c7b8a19ff3",
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@d30b6d0f20998b3e5e0e56c79c383155f93e1abe",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.

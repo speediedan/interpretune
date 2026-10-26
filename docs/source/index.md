@@ -165,13 +165,13 @@ usage/circuit_tracer_backend_support
 :maxdepth: 1
 :hidden:
 
-usage/fts_tunable_views
-usage/fts_tuning_core_hf
-usage/fts_tuning_transformer_lens
-usage/fts_tuning_sae_lens
-usage/fts_tuning_nnsight
-usage/fts_tuning_circuit_tracer
-usage/fts_tuning_interp_engine
+Overview <usage/fts_tunable_views>
+core and HF <usage/fts_tuning_core_hf>
+TransformerLens <usage/fts_tuning_transformer_lens>
+sae_lens <usage/fts_tuning_sae_lens>
+nnsight <usage/fts_tuning_nnsight>
+circuit-tracer <usage/fts_tuning_circuit_tracer>
+interp-engine (hub adapter) <usage/fts_tuning_interp_engine>
 ```
 
 ```{toctree}
