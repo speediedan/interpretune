@@ -14,7 +14,7 @@
 An arm runs one repeat: build, run ``steps`` steps reporting each step's end to the recorder, release everything. The
 upstream arm is the wrapped package used natively, as someone without interpretune would use it (Hugging Face models in
 a torch loop, a vanilla ``LightningModule``, ``TransformerBridge.boot_transformers``, an nnsight ``trace``, the
-``FTSController`` in a plain loop), on the same model, batches, optimizer, precision and step order. The difference
+``TuningScheduler`` in a plain loop), on the same model, batches, optimizer, precision and step order. The difference
 between the two is what interpretune's composition adds, its own construction and call paths included. Configuration is
 read from interpretune's realized session config (which model, which batches, which optimizer), never its behavior: the
 upstream arm's device memory comes only from upstream code.
@@ -524,7 +524,7 @@ def lightning_upstream_arm(recorder: StepRecorder, steps: int, seed: int, phase:
 
 
 ########################################################################################################################
-# Core loop, Hugging Face model, phased by finetuning-scheduler's FTSController
+# Core loop, Hugging Face model, phased by finetuning-scheduler's TuningScheduler
 ########################################################################################################################
 
 # Three phases thawing from the output end of gpt2, one epoch each: two transitions, each adding parameter groups and,
@@ -541,7 +541,7 @@ FTS_STEPS_PER_PHASE = 6
 
 def fts_available() -> bool:
     try:
-        import finetuning_scheduler.core.controller  # noqa: F401
+        import finetuning_scheduler.core.tuning_scheduler  # noqa: F401
         import interpretune.tuning.core_loop  # noqa: F401
     except ImportError:
         return False
@@ -602,7 +602,7 @@ def core_hf_fts_it_arm(recorder: StepRecorder, steps: int, seed: int) -> None:
 
         def recorded_step(batch, *args, **kwargs):
             recorder.note_input(batch)
-            recorder.set_phase(fts.controller.curr_depth)
+            recorder.set_phase(fts.tuning_scheduler.curr_depth)
             return training_step(batch, *args, **kwargs)
 
         def on_step(optimizer, *_):
@@ -620,7 +620,7 @@ def core_hf_fts_it_arm(recorder: StepRecorder, steps: int, seed: int) -> None:
 
 
 class _Rooted(nn.Module):
-    """Holds the HF model under ``model`` so the upstream controller sees interpretune's parameter names."""
+    """Holds the HF model under ``model`` so the upstream tuning scheduler sees interpretune's parameter names."""
 
     def __init__(self, model: nn.Module) -> None:
         super().__init__()
@@ -628,7 +628,7 @@ class _Rooted(nn.Module):
 
 
 def core_hf_fts_upstream_arm(recorder: StepRecorder, steps: int, seed: int) -> None:
-    from finetuning_scheduler.core.controller import FTSController
+    from finetuning_scheduler.core.tuning_scheduler import TuningScheduler
 
     per_phase = _fts_steps(steps)
     spec = _upstream_spec("train", per_phase, None)
@@ -637,7 +637,7 @@ def core_hf_fts_upstream_arm(recorder: StepRecorder, steps: int, seed: int) -> N
     root = _Rooted(_upstream_model(spec, dev))
     root.train()
     sched_init = spec.lr_scheduler_init
-    ctrl = FTSController(
+    ctrl = TuningScheduler(
         root,
         FTS_SCHEDULE,
         optimizer=partial(_import(spec.optimizer_init["class_path"]), **spec.optimizer_init.get("init_args", {})),
@@ -745,7 +745,7 @@ if fts_available():
     COMPOSITIONS["core_hf_fts_train"] = Composition(
         name="core_hf_fts_train",
         description="core loop + FTSCoreCallback over a 3-phase schedule versus a plain loop driving the same "
-        "FTSController (controller cost cancels; per-phase slopes, transition steps and structure)",
+        "TuningScheduler (its own cost cancels; per-phase slopes, transition steps and structure)",
         it_arm=core_hf_fts_it_arm,
         upstream_arm=core_hf_fts_upstream_arm,
         window=FTS_PHASES * FTS_STEPS_PER_PHASE - 2,

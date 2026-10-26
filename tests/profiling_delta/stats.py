@@ -236,7 +236,7 @@ def slope(values: list[float]) -> float:
 
 
 # Steps after a phase's transition step that are still allocator settling, not steady state: measured on gpt2 under
-# FTSController, both arms move by up to ~0.8 MiB at the step after a thaw and are flat from the one after.
+# TuningScheduler, both arms move by up to ~0.8 MiB at the step after a thaw and are flat from the one after.
 PHASE_SETTLE_STEPS = 1
 
 
