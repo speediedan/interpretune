@@ -13,6 +13,8 @@
 #   - the agent's HF cache at /opt/interpretune/hf_cache;
 #   - the host lease directory at /gpu_leases and the host's lease tool at /gpu_lease_tool (read-only);
 #   - the agent's own Docker socket at /var/run/docker.sock (each agent's rootless daemon has its own uid).
+#   - the job's artifact staging directory's `evidence` at /evidence: the phase manifests, records and reports
+#     (tests/gpu_ci/phase_report.py), published as the job's phase evidence.
 # The container runs as the image's user, which rootless Docker maps to the agent's uid, so nothing a step writes is
 # left owned by a uid the agent cannot remove.
 parameters:
@@ -103,7 +105,7 @@ jobs:
           set -euo pipefail
           docker pull "$(IT_IMAGE)"
           hf_cache="/opt/az_pipeline_agent/_work/hf_cache/$(Agent.Name)"
-          mkdir -p "$hf_cache"
+          mkdir -p "$hf_cache" "$(Build.ArtifactStagingDirectory)/evidence"
           # An AMD host names the devices its lease tool cannot discover, and the devices ROCr may use.
           extra=()
           [[ -r /tmp/di_leases/devices.inventory ]] && extra+=(-e "GPU_LEASE_DEVICES=$(cat /tmp/di_leases/devices.inventory)")
@@ -117,6 +119,7 @@ jobs:
             -v /tmp/di_leases:/gpu_leases \
             -v /opt/az_pipeline_agent/gpu_lease.sh:/gpu_lease_tool:ro \
             -v "$(IT_DOCKER_SOCK):/var/run/docker.sock" \
+            -v "$(Build.ArtifactStagingDirectory)/evidence:/evidence" \
             -e HF_HOME=/opt/interpretune/hf_cache -e HF_DATASETS_CACHE=/opt/interpretune/hf_cache/datasets \
             -e HF_HUB_CACHE=/opt/interpretune/hf_cache/hub -e XDG_CACHE_HOME=/opt/interpretune/hf_cache \
             -e APPLY_POST_UPGRADES=false -e COVERAGE_CORE=sysmon \
@@ -140,6 +143,19 @@ jobs:
 
       - ${{ each step in parameters.steps }}:
           - ${{ step }}
+
+      # Release evidence is published only by vendor-demanded release legs, under the vendor named by the demand. Every
+      # other class publishes under the vendor the agent actually reported.
+      - ${{ if eq(parameters.jobClass, 'ci-release') }}:
+          - publish: $(Build.ArtifactStagingDirectory)/evidence
+            artifact: it-release-${{ parameters.vendor }}-$(System.JobAttempt)
+            condition: and(always(), eq(variables['IT_PHASES_COLLECTED'], 'true'))
+            displayName: 'Publish release phase evidence'
+      - ${{ if ne(parameters.jobClass, 'ci-release') }}:
+          - publish: $(Build.ArtifactStagingDirectory)/evidence
+            artifact: it-${{ parameters.jobName }}-$(IT_GPU_VENDOR)-$(System.JobAttempt)
+            condition: and(always(), eq(variables['IT_PHASES_COLLECTED'], 'true'))
+            displayName: 'Publish phase evidence'
 
       - bash: |
           # Release every host lease this job may hold, then remove the container (which frees them anyway).
