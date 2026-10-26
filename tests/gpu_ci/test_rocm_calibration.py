@@ -41,7 +41,10 @@ def test_a_footprint_without_overrides_is_unchanged_on_rocm(monkeypatch):
 
 def test_the_measured_rocm_override_is_recorded():
     footprints = results.load_memory_footprint_results()
-    assert footprints["test_l_profiling.test_cuda_32"][results.ROCM_MEM_KEY] == {"reserved_bytes.all.peak": 689963008}
+    assert footprints["test_l_profiling.test_cuda_32"][results.ROCM_MEM_KEY] == {
+        "allocated_bytes.all.peak": 600824320,
+        "reserved_bytes.all.peak": 689963008,
+    }
 
 
 def test_cpu_tensors_never_take_the_rocm_tolerances(monkeypatch):

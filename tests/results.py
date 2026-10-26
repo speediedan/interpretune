@@ -128,8 +128,9 @@ def on_rocm() -> bool:
 #: The key of a footprint's ROCm overrides: stats measured on ROCm that differ from the CUDA expectation beyond the
 #: default tolerance. Measured (#794): ``reserved_bytes.all.peak`` is about 20% higher under the HIP caching allocator
 #: (``test_l_profiling.test_cuda_32``: 689963008 against 576716800, identical over three runs) while the allocated
-#: stats agree, so the difference is the allocator's segment sizing, not the model's memory. Stats with no override
-#: keep the CUDA expectation.
+#: stats agree, so the difference is the allocator's segment sizing, not the model's memory. Re-measured on torch 2.15
+#: (#819), the allocated peak of the HF test cases is also higher on ROCm (+10% fp32, +19% bf16) while the allocated
+#: stats at the end of the test agree to the byte. Stats with no override keep the CUDA expectation.
 ROCM_MEM_KEY = "expected_mem_rocm"
 
 

@@ -263,6 +263,7 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
             map_default_transformer_lens_config,
         )
 
+        from interpretune.adapters.transformer_lens.adapter import _place_hf_model_before_wrap
         from interpretune.adapters.transformer_lens.config import ITLensBridgeConfig
 
         tokenizer_handle = self.datamodule.tokenizer if self.datamodule else self.it_cfg.tokenizer
@@ -299,8 +300,9 @@ class SAELensTLModuleMixin(TLensAttributeMixin):
                             f"TransformerBridgeConfig, ignoring."
                         )
 
-        # Create adapter and TransformerBridge
+        # Create adapter and TransformerBridge, on the HF model's target device (see `_place_hf_model_before_wrap`)
         adapter = ArchitectureAdapterFactory.select_architecture_adapter(bridge_config)
+        _place_hf_model_before_wrap(hf_model, pruned_cfg)
         self.model = TransformerBridge(model=hf_model, adapter=adapter, tokenizer=tokenizer_handle)
 
         # Swap class to SAETransformerBridge (same pattern as SAETransformerBridge.boot_transformers())
