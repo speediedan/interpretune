@@ -26,7 +26,7 @@ from interpretune.utils import MisconfigurationException
 class TinyModule(nn.Module):
     """The surface the core loop uses, over a one-layer model."""
 
-    def __init__(self, lr: float = 1.0, epoch_hooks: bool = True) -> None:
+    def __init__(self, lr: float = 1.0, epoch_hooks: bool = True, batch_end_hook: bool = True) -> None:
         super().__init__()
         torch.manual_seed(0)
         self.model = nn.Linear(2, 1)
@@ -41,6 +41,8 @@ class TinyModule(nn.Module):
         if epoch_hooks:
             self.on_train_epoch_start = lambda: self.calls.append("epoch_start")
             self.on_train_epoch_end = lambda: self.calls.append("epoch_end")
+        if batch_end_hook:
+            self.on_train_batch_end = lambda outputs, batch, batch_idx: None
 
     def log(self, name, value, *args, **kwargs):
         value = value.detach().item() if isinstance(value, torch.Tensor) else value
@@ -57,9 +59,6 @@ class TinyModule(nn.Module):
     def validation_step(self, batch, batch_idx):
         self.val_grad_modes.append((torch.is_grad_enabled(), torch.is_inference_mode_enabled()))
         self.log("val_loss", float(self.current_epoch + batch_idx))
-
-    def on_train_batch_end(self, outputs, batch, batch_idx):
-        pass
 
 
 def _datamodule(n_train: int = 2, n_val: int = 2):
@@ -196,6 +195,14 @@ class TestCallbacksAndHooks:
 
     def test_epoch_hooks_are_optional(self):
         _train(TinyModule(epoch_hooks=False), max_epochs=2)
+
+    def test_batch_end_hook_is_optional(self):
+        """A module without ``on_train_batch_end`` trains, as one without the other hooks does (#817)."""
+        module = TinyModule(batch_end_hook=False)
+        assert not hasattr(module, "on_train_batch_end")
+        before = module.model.weight.detach().clone()
+        ctx = _train(module, max_epochs=1)
+        assert ctx.optimizer_step == 2 and not torch.equal(module.model.weight, before)
 
     def test_optimizer_is_read_every_step(self):
         module = TinyModule()
