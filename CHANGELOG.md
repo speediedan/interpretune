@@ -105,6 +105,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- `SessionRunnerCfg.callbacks` instantiates an entry given as configuration (`class_path` and `init_args`), so a core-loop FTS run builds `FTSCoreCallback` from its parsed configuration alone: the configuration dumps and reloads unchanged and reproduces the tuning scheduler's `config_hash`. `schedule` and plain-data `tuning_scheduler_kwargs` are configuration-expressible; object-valued arguments (`tuning_scheduler_factory`, optimizer factories, policies, gates) stay Python-only ([#809](https://github.com/speediedan/interpretune/issues/809))
+
 - TransformerLens compositions tune through their `TransformerBridgeView` under either loop: `TransformerBridgeStrategyAdapter`, its `TLNamesModelView`, the `ModelView` base (`interpretune.adapters.model_view`) and the `finetuning_scheduler.strategy_adapters` entry point (`transformerbridge`) are removed, with no shim. Drop `custom_strategy_adapters` and `strategy_adapter_cfg` from a `FinetuningScheduler` configuration: TransformerLens names resolve through the attached view, and a composition that names the module's own parameters overrides `build_tunable_view()` to return the identity view. The callback reports thawed parameters as physical tensors, so a TransformerLens-names schedule now counts the fused QKV weights its q/k/v splits are views of ([#763](https://github.com/speediedan/interpretune/issues/763))
 
 - finetuning-scheduler moves from the `lightning` extra to a new `tune` extra (with `peft` and `bitsandbytes`, which the core HF path's LoRA and quantized loading import), and the `lightning` extra names `lightning` and includes `tune` ([#764](https://github.com/speediedan/interpretune/issues/764))
