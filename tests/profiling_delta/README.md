@@ -10,7 +10,7 @@ releases and between vendors cancels, and what remains is the memory interpretun
 | `core_hf_train`, `core_hf_train_bf16` | core session `training_step` on gpt2 (RTE) | plain torch loop on the same HF model |
 | `core_hf_test` | core session `test_step` (generative classification) | HF `generate` with the same kwargs |
 | `lightning_train`, `lightning_test` | Lightning composition under `Trainer` | vanilla `LightningModule`, same `Trainer` |
-| `core_hf_fts_train` | core loop with `FTSCoreCallback`, 3-phase schedule | plain loop driving the same `FTSController` |
+| `core_hf_fts_train` | core loop with `FTSCoreCallback`, 3-phase schedule | plain loop driving the same `TuningScheduler` |
 | `synthetic` | small MLP, optionally with a planted leak or overhead | the same MLP: the harness's own control |
 
 ## How a pair is measured
