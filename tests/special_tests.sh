@@ -42,13 +42,6 @@ reruns_delay=5
 
 source $(dirname "$0")/test_utils.sh
 
-# Serialize this run against other GPU work on the host (no-op unless GPU_LEASE_CMD is set).
-# A full suite is HOST-MEMORY-heavy as well as GPU-heavy, so it takes both host leases (gpu, then cpu-heavy in the
-# host tool's order) and stays serialized with every phase of a CI job, whose CPU-only phase holds only cpu-heavy.
-# GPU-only work (a notebook, a benchmark leg) takes the plain lease and may overlap that phase. An explicit
-# GPU_LEASE_ARGS wins.
-GPU_LEASE_ARGS="${GPU_LEASE_ARGS:---cpu-heavy}"
-gpu_lease_reexec "$0" "$@"
 
 usage(){
 >&2 cat << EOF
@@ -77,6 +70,7 @@ EOF
 exit 1
 }
 
+orig_args=("$@")
 args=$(getopt -o '' --long mark_type:,log_file:,filter_pattern:,experiments_list:,experiment_patch_mask:,collect_dir:,resource-debug,no-reruns,reruns:,reruns-delay:,allow-failures,allow-empty,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
@@ -105,13 +99,22 @@ do
   esac
 done
 
+# Serialize this run against other GPU work on the host (no-op unless GPU_LEASE_CMD is set). Done after argument
+# parsing, so a bad flag is reported at once rather than after waiting for the lease.
+# A full suite is HOST-MEMORY-heavy as well as GPU-heavy, so it takes both host leases (gpu, then cpu-heavy in the
+# host tool's order) and stays serialized with every phase of a CI job, whose CPU-only phase holds only cpu-heavy.
+# GPU-only work (a notebook, a benchmark leg) takes the plain lease and may overlap that phase. An explicit
+# GPU_LEASE_ARGS wins.
+GPU_LEASE_ARGS="${GPU_LEASE_ARGS:---cpu-heavy}"
+gpu_lease_reexec "$0" "${orig_args[@]}"
+
 d=`date +%Y%m%d%H%M%S`
 tmp_log_dir="/tmp"
 mark_type=${mark_type:-"standalone"}
 experiments_list=${experiments_list:-$(dirname "$0")/.experiments}
 if [ -s "${experiments_list}" ]; then
   if [ -z "${experiment_patch_mask:-}" ]; then
-    experiment_patch_mask=($(cat tests/.experiments | awk '{for(i=1;i<=NF;i++) print "0"}'))
+    experiment_patch_mask=($(awk '{for(i=1;i<=NF;i++) print "0"}' "${experiments_list}"))
   fi
 fi
 # Both test roots: special-marked tests also live under src/it_examples/tests (the example notebooks), and
