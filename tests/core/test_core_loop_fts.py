@@ -1,4 +1,4 @@
-"""Finetuning-scheduler's ``FTSController`` driven from the core training loop through :class:`FTSCoreCallback`
+"""Finetuning-scheduler's ``TuningScheduler`` driven from the core training loop through :class:`FTSCoreCallback`
 (#762)."""
 
 from __future__ import annotations
@@ -8,7 +8,9 @@ from functools import partial
 import pytest
 import torch
 
-pytest.importorskip("finetuning_scheduler.core.controller", reason="finetuning-scheduler predates FTSController")
+pytest.importorskip(
+    "finetuning_scheduler.core.tuning_scheduler", reason="finetuning-scheduler predates TuningScheduler"
+)
 
 from tests.configuration import get_deepcopied_session  # noqa: E402
 from tests.core import test_core_loop_training as core_loop  # noqa: E402
@@ -36,10 +38,10 @@ def _sgd(lr: float = 0.1):
     return partial(torch.optim.SGD, lr=lr)
 
 
-def test_phases_thaw_in_order_and_the_loop_steps_the_controllers_optimizer():
+def test_phases_thaw_in_order_and_the_loop_steps_the_tuning_schedulers_optimizer():
     module = core_loop.TinyModule()
     initial = {n: p.detach().clone() for n, p in module.named_parameters()}
-    fts = FTSCoreCallback(TWO_PHASES, controller_kwargs={"optimizer": _sgd()})
+    fts = FTSCoreCallback(TWO_PHASES, tuning_scheduler_kwargs={"optimizer": _sgd()})
     snaps = Snapshots()
     core_loop._train(module, max_epochs=2, callbacks=[fts, snaps])
 
@@ -49,11 +51,13 @@ def test_phases_thaw_in_order_and_the_loop_steps_the_controllers_optimizer():
     assert not torch.equal(first["model.bias"], initial["model.bias"])
     # phase 1 (epoch 1) thaws the weight
     assert not torch.equal(second["model.weight"], first["model.weight"])
-    assert fts.controller.curr_depth == 1
-    # the loop stepped the controller's optimizer, not the module's original one
-    assert all(opt is fts.controller.optimizer for opt in snaps.optimizers)
-    assert module.optimizers == [fts.controller.optimizer] and module.lr_scheduler_configs == []
-    assert fts.controller.global_step == 4  # two batches per epoch, counted by the controller's own step hook
+    assert fts.tuning_scheduler.curr_depth == 1
+    # the loop stepped the tuning scheduler's optimizer, not the module's original one
+    assert all(opt is fts.tuning_scheduler.optimizer for opt in snaps.optimizers)
+    assert module.optimizers == [fts.tuning_scheduler.optimizer] and module.lr_scheduler_configs == []
+    assert (
+        fts.tuning_scheduler.global_step == 4
+    )  # two batches per epoch, counted by the tuning scheduler's own step hook
 
 
 def test_the_optimizer_defaults_to_the_modules_optimizer_init():
@@ -61,7 +65,7 @@ def test_the_optimizer_defaults_to_the_modules_optimizer_init():
     module.it_cfg.optimizer_init = {"class_path": "torch.optim.SGD", "init_args": {"lr": 0.05}}
     fts = FTSCoreCallback(TWO_PHASES)
     core_loop._train(module, max_epochs=1, callbacks=[fts])
-    optimizer = fts.controller.optimizer
+    optimizer = fts.tuning_scheduler.optimizer
     assert isinstance(optimizer, torch.optim.SGD) and optimizer.param_groups[0]["lr"] == 0.05
 
 
@@ -78,7 +82,7 @@ def test_a_schedule_longer_than_the_loop_budget_is_reported(recwarn):
         1: {"params": ["model.weight"], "max_transition_epoch": 5},
     }
     core_loop._train(
-        module, max_epochs=2, callbacks=[FTSCoreCallback(schedule, controller_kwargs={"optimizer": _sgd()})]
+        module, max_epochs=2, callbacks=[FTSCoreCallback(schedule, tuning_scheduler_kwargs={"optimizer": _sgd()})]
     )
     assert any("beyond the core loop's `max_epochs` 2" in str(w.message) for w in recwarn.list)
 
@@ -97,30 +101,30 @@ class Ends:
         self.ended = True
 
 
-def test_a_controller_stop_ends_the_loop():
+def test_a_tuning_scheduler_stop_ends_the_loop():
     """A transition policy stopping after epoch 0 ends a real loop: one epoch, then `train_end`."""
     from finetuning_scheduler.core.transitions import CallableTransition, Decision
 
     stop_after_first = CallableTransition(lambda c: (Decision.STOP, "test stop") if c.epoch >= 1 else Decision.CONTINUE)
     schedule = {0: {"params": ["model.bias"]}, 1: {"params": ["model.weight"]}}
-    fts = FTSCoreCallback(schedule, controller_kwargs={"optimizer": _sgd(), "transition": stop_after_first})
+    fts = FTSCoreCallback(schedule, tuning_scheduler_kwargs={"optimizer": _sgd(), "transition": stop_after_first})
     ends = Ends()
     core_loop._train(core_loop.TinyModule(), max_epochs=3, callbacks=[fts, ends])
     assert ends.epochs == [0] and ends.ended
-    assert fts.controller.should_stop and fts.controller.stop_reason == "test stop"
+    assert fts.tuning_scheduler.should_stop and fts.tuning_scheduler.stop_reason == "test stop"
 
 
-def test_a_controller_rooted_elsewhere_is_refused():
-    from finetuning_scheduler.core.controller import FTSController
+def test_a_tuning_scheduler_rooted_elsewhere_is_refused():
+    from finetuning_scheduler.core.tuning_scheduler import TuningScheduler
 
     other = core_loop.TinyModule()
-    fts = FTSCoreCallback(controller_factory=lambda module: FTSController(other, TWO_PHASES, optimizer=_sgd()))
+    fts = FTSCoreCallback(tuning_scheduler_factory=lambda module: TuningScheduler(other, TWO_PHASES, optimizer=_sgd()))
     with pytest.raises(MisconfigurationException, match="not at the session's module"):
         core_loop._train(core_loop.TinyModule(), max_epochs=1, callbacks=[fts])
 
 
 def test_a_core_loop_checkpoint_is_refused_on_resume():
-    """`checkpoint_state` holds none of the controller's state, so loading it into the callback refuses."""
+    """`checkpoint_state` holds none of the tuning scheduler's state, so loading it into the callback refuses."""
     from interpretune.runners.core import checkpoint_state, load_checkpoint_state
 
     saved = {}
@@ -130,15 +134,15 @@ def test_a_core_loop_checkpoint_is_refused_on_resume():
             saved["ckpt"], saved["ctx"] = checkpoint_state(ctx.module, ctx), ctx
 
     module = core_loop.TinyModule()
-    fts = FTSCoreCallback(TWO_PHASES, controller_kwargs={"optimizer": _sgd()})
+    fts = FTSCoreCallback(TWO_PHASES, tuning_scheduler_kwargs={"optimizer": _sgd()})
     core_loop._train(module, max_epochs=1, callbacks=[fts, Save()])
-    assert saved["ckpt"]["callbacks"]["0:FTSCoreCallback"] == {"resume_through_controller": True}
-    with pytest.raises(MisconfigurationException, match="resume through the controller"):
+    assert saved["ckpt"]["callbacks"]["0:FTSCoreCallback"] == {"resume_through_tuning_scheduler": True}
+    with pytest.raises(MisconfigurationException, match="resume through the tuning scheduler"):
         load_checkpoint_state(module, saved["ckpt"], saved["ctx"])
 
 
 def test_an_epoch_interval_lr_scheduler_steps_once_per_epoch():
-    """The module's own lr scheduler configs are dropped, so the controller's scheduler steps exactly once an
+    """The module's own lr scheduler configs are dropped, so the tuning scheduler's scheduler steps exactly once an
     epoch."""
     module = core_loop.TinyModule()
     module.it_cfg.optimizer_init = {"class_path": "torch.optim.SGD", "init_args": {"lr": 0.1}}
@@ -147,18 +151,18 @@ def test_an_epoch_interval_lr_scheduler_steps_once_per_epoch():
     schedule = {0: {"params": ["model.bias", "model.weight"]}}
     fts = FTSCoreCallback(schedule)
     core_loop._train(module, max_epochs=3, callbacks=[fts])
-    assert fts.controller.lr_scheduler.last_epoch == 3
-    assert fts.controller.optimizer.param_groups[0]["lr"] == pytest.approx(0.1 * 0.1**3)
+    assert fts.tuning_scheduler.lr_scheduler.last_epoch == 3
+    assert fts.tuning_scheduler.optimizer.param_groups[0]["lr"] == pytest.approx(0.1 * 0.1**3)
 
 
 def test_a_factory_excludes_the_schedule_and_kwargs():
     with pytest.raises(MisconfigurationException, match="not both"):
-        FTSCoreCallback(TWO_PHASES, controller_factory=lambda module: None)
+        FTSCoreCallback(TWO_PHASES, tuning_scheduler_factory=lambda module: None)
 
 
 def test_a_core_session_trains_phase_by_phase(get_it_session__core_cust__initonly):
-    """Through a real session and `SessionRunner`: the controller is rooted at the module, names come from its
-    view, and its optimizer replaces the one the session configured."""
+    """Through a real session and `SessionRunner`: the tuning scheduler is rooted at the module, names come from
+    its view, and its optimizer replaces the one the session configured."""
     session = get_deepcopied_session(get_it_session__core_cust__initonly.it_session)
     module = session.module
     *_, earlier, last = [n for n, p in module.named_parameters() if p.requires_grad]
@@ -170,8 +174,8 @@ def test_a_core_session_trains_phase_by_phase(get_it_session__core_cust__initonl
         it_session=session, max_epochs=2, limit_train_batches=1, limit_val_batches=1, callbacks=[fts, snaps]
     )
     SessionRunner(run_cfg=run_cfg).train()
-    assert fts.controller.view.root is module
+    assert fts.tuning_scheduler.view.root is module
     assert torch.equal(snaps.params[0][earlier], initial[earlier])
     assert not torch.equal(snaps.params[0][last], initial[last])
     assert not torch.equal(snaps.params[1][earlier], snaps.params[0][earlier])
-    assert fts.controller.curr_depth == 1 and module.optimizers == [fts.controller.optimizer]
+    assert fts.tuning_scheduler.curr_depth == 1 and module.optimizers == [fts.tuning_scheduler.optimizer]
