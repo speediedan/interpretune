@@ -202,6 +202,9 @@ generate_lockfile() {
         --universal
         --python-version "${python_version}"
         --no-emit-package torch
+        # finetuning-scheduler is installed by git SHA (pyproject `git-deps` and `override-dependencies`) until
+        # 2.15.0 is published, and a git URL cannot go in the universal lock
+        --no-emit-package finetuning-scheduler
     )
 
     if [[ "${UPGRADE_PINS}" == "true" ]]; then

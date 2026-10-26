@@ -26,12 +26,13 @@ from interpretune.testing.conformance.gates import Gate, SelectionReport, confor
 from interpretune.testing.conformance.inputs import ConformanceInputs, ConformanceTarget
 
 if TYPE_CHECKING:
-    # The five names below resolve lazily at runtime (their modules import pytest); the checker sees them here.
+    # The six names below resolve lazily at runtime (their modules import pytest); the checker sees them here.
     from interpretune.testing.conformance.cases import ModelBackendConformance as ModelBackendConformance
     from interpretune.testing.conformance.collections import OpCollectionConformance as OpCollectionConformance
     from interpretune.testing.conformance.collections import stage_local_collection as stage_local_collection
     from interpretune.testing.conformance.notebooks import NotebookFormConformance as NotebookFormConformance
     from interpretune.testing.conformance.reference import HFReference as HFReference
+    from interpretune.testing.conformance.tuning import TuningConformance as TuningConformance
 
 __all__ = [
     "ConformanceInputs",
@@ -44,11 +45,16 @@ __all__ = [
     "stage_local_collection",
     "NotebookFormConformance",
     "HFReference",
+    "TuningConformance",
 ]
 
 
 def __getattr__(name: str):
     # The case class imports pytest; resolve it on first use so the package stays import-safe without it.
+    if name == "TuningConformance":
+        from interpretune.testing.conformance.tuning import TuningConformance
+
+        return TuningConformance
     if name == "ModelBackendConformance":
         from interpretune.testing.conformance.cases import ModelBackendConformance
 

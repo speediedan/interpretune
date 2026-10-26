@@ -55,6 +55,7 @@ mechanism produces `ITDataModuleProtocol` from the loader protocols.
      adapters override this to construct their own model types
    - `post_auto_model_init()` — if `auto_model_init` produced a model, adjust it here
    - `model_init()` — if it did **not**, load a custom model here
+   - `register_tunable_modules()` then the finetuning-scheduler view's attachment, after whichever init path ran
    - `_capture_hyperparameters()` then `load_metric()`
 
 Methods by contract role:
@@ -63,7 +64,7 @@ Methods by contract role:
 | --- | --- | --- |
 | **Required by protocol** | at least one `*_step` | define it yourself or inherit it from a mixin/adapter; there is no default |
 | **Template hooks** (override freely, defaults are no-ops or config-driven) | `_before_it_cfg_init`, `auto_model_init`, `post_auto_model_init`, `model_init`, `load_metric` | no `super()` call needed unless you want the default behavior too |
-| **Cooperative hooks** (override, but call `super()`) | `setup`, `configure_optimizers`, `on_session_end`, `on_train_end`, `on_test_end`, `on_predict_end` | the base implementations do real work (datamodule wiring, optimizer instantiation from `it_cfg`, memprofiler dump, session-completion state); skipping `super()` silently drops it |
+| **Cooperative hooks** (override, but call `super()`) | `setup`, `configure_optimizers`, `on_session_end`, `on_train_end`, `on_test_end`, `on_predict_end`, `register_tunable_modules`, `tunable_roles` | the base implementations do real work (datamodule wiring, optimizer instantiation from `it_cfg`, memprofiler dump, session-completion state, registering model-owned modules and roles for the finetuning-scheduler view); skipping `super()` silently drops it |
 | **Internal** (do not override) | `_dispatch_model_init`, `_capture_hyperparameters`, `_make_init_dirs`, `_connect_extensions` | these define the lifecycle other components rely on |
 
 `forward()` delegates to `self.model(*args, **kwargs, **it_cfg.cust_fwd_kwargs)`; override it only
