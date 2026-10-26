@@ -1,0 +1,25 @@
+# Hub artifacts only the self-hosted GPU job needs, warmed by its `warm` step (.azure-pipelines/scripts/
+# gpu_job_container.sh) into the agent's persistent cache mount. Kept out of tests/hf_warm_manifest.yaml, which the
+# hosted matrix warms and keys its actions cache on: these are gigabytes the hosted matrix never loads.
+#
+# An artifact belongs here when a GPU test would otherwise download it lazily inside the test. A lazy download
+# inside a notebook kernel is the failure this file exists for (#703): on a cold or damaged cache the kernel
+# fetched the cross-layer transcoder partway and died, leaving `*.incomplete` blobs behind for the next
+# build, and papermill reported only a dead kernel. The warm step fetches with retries and fails the build early
+# instead. On a warm cache it only checks each file. It runs only when the plan runs the notebook tests that load these
+# (`plan_gpu_run.py --covers`), so a run that loads none never pays a cold fetch or fails on a Hub outage for them.
+#
+# Gated repositories are not listed, although the step has the pipeline's Hub token: a gated fetch fails on the
+# token's access grants, not on the network, so it would red a gate for a reason no retry fixes. Their weights persist
+# on the agent's cache mount from the runs that first loaded them.
+cache_version: 1
+models:
+  # The circuit-tracer notebooks' cross-layer transcoder (`use_baseline_transcoder_arch=False`), over gemma-2-2b:
+  # the encoder and decoder weights circuit-tracer loads (about 26.5 GiB). `features/` (about 4.3 GiB of feature
+  # data for dashboards) is never loaded by the tests.
+  - repo_id: mntss/clt-gemma-2-2b-426k
+    allow_patterns: ["config.yaml", "W_enc_*.safetensors", "W_dec_*.safetensors"]
+  # circuit-tracer's "gemma" transcoder set: the single-layer transcoders the same notebooks load otherwise (about
+  # 7.3 GiB), again without `features/`.
+  - repo_id: mwhanna/gemma-scope-transcoders
+    allow_patterns: ["config.yaml", "layer_*.safetensors"]

@@ -15,6 +15,7 @@ from tests.gpu_ci.plan_gpu_run import (
     azure_variables,
     merge_commit_changes,
     plan_run,
+    selection_covers,
 )
 from tests.gpu_ci.select_gpu_tests import load_areas
 
@@ -189,3 +190,41 @@ def test_a_checkout_owned_by_another_user_is_read_once_trusted(tmp_path, monkeyp
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "safe.directory")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", repo.as_posix())
     assert merge_commit_changes(repo) == ["b.txt"]
+
+
+NOTEBOOKS = "src/it_examples/tests/test_notebooks.py"
+
+
+@pytest.mark.parametrize(
+    ("mode", "lines", "covered"),
+    [
+        ("full", None, True),
+        ("none", None, False),
+        ("selected", "full\n", True),
+        ("selected", "src/it_examples/tests/\n", True),
+        ("selected", f"{NOTEBOOKS}::test_attribution_analysis_notebook\n", True),
+        ("selected", "tests/core/\ntests/parity_acceptance/\n", False),
+    ],
+)
+def test_selection_covers_a_target(tmp_path, mode, lines, covered):
+    sel = None
+    if lines is not None:
+        sel = tmp_path / "it_gpu_selection.txt"
+        sel.write_text(lines)
+    assert selection_covers(NOTEBOOKS, mode, str(sel) if sel else None) is covered
+
+
+def test_an_unreadable_selection_file_covers(tmp_path):
+    """A broken plan costs the work rather than skipping it."""
+    assert selection_covers(NOTEBOOKS, "selected", str(tmp_path / "missing.txt"))
+
+
+def test_covers_cli_exit_codes(tmp_path, monkeypatch):
+    from tests.gpu_ci.plan_gpu_run import main
+
+    sel = tmp_path / "it_gpu_selection.txt"
+    sel.write_text("tests/core/\n")
+    monkeypatch.setenv("IT_GPU_SELECTION_MODE", "selected")
+    monkeypatch.setenv("IT_GPU_SELECTION_FILE", str(sel))
+    assert main(["--covers", NOTEBOOKS]) == 1
+    assert main(["--covers", "tests/core/test_backend_conformance.py"]) == 0
