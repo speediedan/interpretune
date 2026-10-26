@@ -32,6 +32,12 @@ from tests.runif import RunIf
 
 BOUNDS_FILE = Path(__file__).with_name("delta_bounds.yaml")
 PAIRED = sorted(name for name in COMPOSITIONS if name != "synthetic")
+# device total each pair needs, in GiB: the larger arm's measured reserved peak (NVIDIA and AMD, 2026-10-25 freeze
+# runs: train pairs up to 2.78, bf16 1.36, phased 0.88, test 0.77) plus about 0.4 of context, rounded up; the arms run
+# one at a time
+PAIR_GPU_MEM_GB = {"core_hf_train_bf16": 2.0, "core_hf_fts_train": 1.5}
+PAIR_GPU_MEM_GB.update({name: 3.5 for name in PAIRED if name.endswith("_train") and name not in PAIR_GPU_MEM_GB})
+PAIR_GPU_MEM_GB.update({name: 1.5 for name in PAIRED if name.endswith("_test")})
 
 
 def _artifact_dir(tmp_path: Path) -> Path:
@@ -43,7 +49,7 @@ def _frozen(vendor: str, composition: str) -> dict | None:
     return (bounds.get(vendor) or {}).get(composition)
 
 
-@RunIf(min_cuda_gpus=1, profiling=True)
+@RunIf(min_cuda_gpus=1, min_gpu_mem_gb=1.0, profiling=True)
 def test_harness_detects_planted_defects(tmp_path):
     """The instrument's positive and null controls: a planted leak and a planted overhead in the interpretune arm
     of the synthetic pair must surface as exactly those deltas, and a clean pair must show none."""
@@ -66,8 +72,13 @@ def test_harness_detects_planted_defects(tmp_path):
     assert any(f.startswith("peak_alloc") for f in evaluate(heavy.deltas, zero))
 
 
-@RunIf(min_cuda_gpus=1, profiling=True)
-@pytest.mark.parametrize("composition", PAIRED)
+@pytest.mark.parametrize(
+    "composition",
+    [
+        pytest.param(name, marks=RunIf(min_cuda_gpus=1, min_gpu_mem_gb=PAIR_GPU_MEM_GB[name], profiling=True))
+        for name in PAIRED
+    ],
+)
 def test_delta_pair(tmp_path, composition):
     out_dir = _artifact_dir(tmp_path)
     pair = measure_pair(composition, out_dir / "arms")

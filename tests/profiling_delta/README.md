@@ -1,9 +1,11 @@
 # Memory-profiling deltas: interpretune against the upstream stack it wraps
 
-Each sampled composition runs twice per measurement: an interpretune arm, and a matched upstream arm that reproduces
-the same model, batches, optimizer, precision and step order with plain PyTorch, Hugging Face, Lightning or
-finetuning-scheduler calls. The gate is on the difference (interpretune minus upstream), so upstream drift between
-releases and between vendors cancels, and what remains is the memory interpretune's orchestration adds.
+Each sampled composition runs twice per measurement: an interpretune arm, and a matched upstream arm that reproduces the
+same model, batches, optimizer, precision and step order with plain PyTorch, Hugging Face, Lightning or
+finetuning-scheduler calls, using each interpretability package natively (TransformerLens `boot_transformers`, NNsight
+`LanguageModel`), so interpretune's construction and call paths are inside the delta. The gate is on the difference
+(interpretune minus upstream), so upstream drift between releases and between vendors cancels, and what remains is the
+memory interpretune's orchestration adds.
 
 | Composition | Interpretune arm | Upstream arm |
 | --- | --- | --- |
@@ -11,6 +13,9 @@ releases and between vendors cancels, and what remains is the memory interpretun
 | `core_hf_test` | core session `test_step` (generative classification) | HF `generate` with the same kwargs |
 | `lightning_train`, `lightning_test` | Lightning composition under `Trainer` | vanilla `LightningModule`, same `Trainer` |
 | `core_hf_fts_train` | core loop with `FTSCoreCallback`, 3-phase schedule | plain loop driving the same `TuningScheduler` |
+| `tl_train`, `tl_test` | core session with the TransformerLens adapter (a `TransformerBridge` over gpt2) | a native `TransformerBridge.boot_transformers` bridge in a plain loop, or its `generate` |
+| `nnsight_train` | core session with the NNsight adapter (a `LanguageModel` over gpt2) | a native `LanguageModel` trace in a plain loop |
+| `nnsight_lightning_train` | the Lightning + NNsight composition under `Trainer` | a vanilla `LightningModule` stepping a native `LanguageModel` trace, same `Trainer` |
 | `synthetic` | small MLP, optionally with a planted leak or overhead | the same MLP: the harness's own control |
 
 ## How a pair is measured
