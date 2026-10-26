@@ -13,12 +13,13 @@
 from typing import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
+import re
 
 import pytest
 
 from interpretune.protocol import Adapter
 from tests.base_defaults import BaseAugTest, BaseCfg, pytest_factory
-from tests.configuration import IT_GLOBAL_STATE_LOG_MODE
+from tests.configuration import IT_GLOBAL_STATE_LOG_MODE, config_modules
 from tests.orchestration import parity_test
 from tests.parity_acceptance.cfg_aliases import (
     cuda,
@@ -30,6 +31,7 @@ from tests.parity_acceptance.cfg_aliases import (
 )
 from tests.parity_acceptance.expected import tl_parity_results, profiling_results
 from tests.results import collect_results
+from tests.runif import RunIf
 from tests.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS
 
 # TODO: add tl and tl_profiling bf16 tests if/when support vetted
@@ -139,3 +141,20 @@ def test_tl_profiling(recwarn, tmp_path, test_alias, test_cfg):
     parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)
     unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)
+
+
+@pytest.mark.parametrize(
+    "device_cfg", [pytest.param({}, id="cpu"), pytest.param(cuda, id="cuda", marks=RunIf(min_cuda_gpus=1))]
+)
+def test_tl_bridge_keeps_qkv_views(tmp_path, device_cfg):
+    """On its target device the bridge keeps each layer's split q/k/v parameters as views of the fused qkv one.
+
+    Moving the bridge after wrapping gave every view its own storage, about 81 MiB on gpt2 (#824).
+    """
+    it_session = config_modules(TLProfileCfg(**device_cfg), "test_tl_bridge_keeps_qkv_views", {}, tmp_path)
+    storage_of = {n: p.untyped_storage().data_ptr() for n, p in it_session.module.model.named_parameters()}
+    split = [n for n in storage_of if any(f".attn.{s}." in n for s in "qkv")]
+    assert split, "no split q/k/v parameters found on the bridge"
+    for name in split:
+        fused = re.sub(r"\.attn\.[qkv]\.", ".attn.qkv.", name)
+        assert storage_of[name] == storage_of[fused], f"{name} no longer shares storage with {fused}"

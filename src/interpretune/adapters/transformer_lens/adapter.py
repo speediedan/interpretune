@@ -73,6 +73,18 @@ def _ensure_bridge_processed_weight_device_patch() -> None:
     _BRIDGE_PROCESSED_WEIGHT_PATCH_APPLIED = True
 
 
+def _place_hf_model_before_wrap(hf_model: torch.nn.Module, pruned_cfg: dict) -> None:
+    """Move the HF model to its target device before a ``TransformerBridge`` wraps it.
+
+    The bridge's split q/k/v weights are views of the fused attention weight, which share its storage. Moving the bridge
+    afterwards converts each parameter separately and gives every view its own copy (on gpt2, 36 extra 768x768
+    storages, about 81 MiB), so the move has to happen while the HF model is the only owner of its storage.
+    ``boot_transformers`` loads onto the target device for the same reason.
+    """
+    if pruned_cfg.get("move_to_device", True) and "device" in pruned_cfg:
+        hf_model.to(pruned_cfg["device"])
+
+
 class TLensAttributeMixin:
     """TransformerLens-aware attribute access: config and device resolution off the wrapped TL model."""
 
@@ -405,6 +417,7 @@ class BaseITLensModule(BaseITModule):
 
         # Create adapter and bridge
         adapter = ArchitectureAdapterFactory.select_architecture_adapter(bridge_config)
+        _place_hf_model_before_wrap(hf_model, pruned_cfg)
         self.model = TransformerBridge(model=hf_model, adapter=adapter, tokenizer=tokenizer_handle)
 
         # Debug shim: log component mapping for troubleshooting checkpoint restoration
