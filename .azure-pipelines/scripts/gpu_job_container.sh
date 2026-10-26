@@ -3,8 +3,8 @@
 # gpu-job.yml) through ctr.sh, with the checkout at the working directory. The GPU phases and leases have scripts of
 # their own beside this one (gpu_phase.sh, gpu_stage_lease.sh, check_gpu_phases.sh).
 #
-#   gpu_job_container.sh hf-cache-check | hf-cache-probe | hf-cache-reset | install | env | plan | warm
-#                        | extended-profile | extended-optional | coverage | hf-cache-fix
+#   gpu_job_container.sh hf-cache-check | hf-cache-probe | hf-cache-reset | install | env | plan | collect | warm
+#                        | report | extended-profile | extended-optional | coverage | hf-cache-fix
 #
 # Parameters arrive as IT_* variables, which ctr.sh forwards: IT_RESET_HF_CACHE, IT_GPU_MODE and IT_GPU_EXTENDED_PARAM
 # (the pipeline's parameters as Azure renders them), and IT_FORCE_CACHE_RESET (set by hf-cache-probe).
@@ -12,6 +12,9 @@ set -uo pipefail
 
 CACHE=/opt/interpretune/hf_cache
 VENV=/tmp/venvs/it_dev
+# Phase manifests, records and reports (tests/gpu_ci/phase_report.py), on the template's evidence mount.
+PHASES_OUT=/evidence/it-phases
+PHASES=(cuda standalone profile_ci)
 venv() { source "${VENV}/bin/activate"; }
 # The checkout belongs to the host's uid, which git inside the container may refuse as "dubious ownership". Trust it
 # for each git call only: GIT_CONFIG_* is command-line scope, which git honours for safe.directory.
@@ -90,6 +93,31 @@ PY
         venv
         trusted_git_env
         python -m tests.gpu_ci.plan_gpu_run --mode "${IT_GPU_MODE:-auto}" --extended "${IT_GPU_EXTENDED_PARAM:-False}"
+        ;;
+    collect)
+        # CPU only, executes nothing: what each phase's paths collect and its selection keeps. A collection error fails
+        # here, before any GPU work, rather than surfacing as a phase that silently ran less.
+        set -e
+        venv
+        trusted_git_env
+        mkdir -p "$PHASES_OUT"
+        args=(); for phase in "${PHASES[@]}"; do args+=(--phase "$phase"); done
+        python -m tests.gpu_ci.phase_report collect "${args[@]}" --out-dir "$PHASES_OUT"
+        echo "##vso[task.setvariable variable=IT_PHASES_COLLECTED]true"
+        ;;
+    report)
+        # One report per collected phase, under the vendor the agent reported, gated by its class (phase_report.gate).
+        venv
+        lease_mode=$(cat /tmp/azp_gpu_large.pid.mode 2>/dev/null || echo none)
+        status=0
+        for phase in "${PHASES[@]}"; do
+            [[ -f "${PHASES_OUT}/manifests/${phase}.json" ]] || continue
+            python -m tests.gpu_ci.phase_report report --phase "$phase" --out-dir "$PHASES_OUT" \
+                --vendor "${IT_GPU_VENDOR:?}" --evidence-class pipeline --job-class "${IT_JOB_CLASS:-ci-any-vendor}" \
+                --lease-mode "$lease_mode" --image "${IT_IMAGE:?}" --reviewed-exclusions tests/gpu_ci/reviewed_exclusions.json \
+                || { echo "##vso[task.logissue type=error]phase ${phase}: report does not pass a ${IT_JOB_CLASS:-ci-any-vendor} job"; status=1; }
+        done
+        exit "$status"
         ;;
     warm)
         set -e

@@ -1,0 +1,152 @@
+# The interpretune GPU job's steps, shared by gpu-tests.yml (gates, main and scheduled builds) and gpu-release.yml (the
+# two vendor-demanded release legs). Each runs inside the job's container through .azure-pipelines/scripts/ctr.sh; the
+# template that starts the container is templates/gpu-job.yml.
+parameters:
+  - name: reset_hf_cache
+    type: boolean
+    default: false
+  - name: mode
+    type: string
+    default: auto
+  - name: extended
+    type: boolean
+    default: false
+  # the GPU job's class: a release leg's phase reports also refuse an unreviewed skip
+  - name: jobClass
+    type: string
+    default: ci-any-vendor
+
+steps:
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh hf-cache-check'
+    displayName: 'Verify runner hf_cache mount & permissions'
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh hf-cache-probe'
+    displayName: 'Debug: Probe HF cache lock file permissions'
+    continueOnError: true
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh hf-cache-reset'
+    displayName: 'Maybe reset HF cache'
+    env:
+      IT_RESET_HF_CACHE: ${{ parameters.reset_hf_cache }}
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh install'
+    displayName: 'Install dependencies'
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh env'
+    displayName: 'Env details and package versions'
+  # Decide what this run executes and export it to the steps below (see tests/gpu_ci/plan_gpu_run.py): the full
+  # GPU set, only the tests a pull request's change selects, or none of them; whether the extended tiers run; and
+  # the lease-wait policy. Anything the planner cannot establish runs the full set, named in this step's log.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh plan'
+    displayName: 'Plan the GPU run'
+    env:
+      IT_GPU_MODE: ${{ parameters.mode }}
+      IT_GPU_EXTENDED_PARAM: ${{ parameters.extended }}
+  # Each phase's manifest, collected on the CPU before any GPU work (tests/gpu_ci/phase_report.py): the node ids its
+  # paths collect and the ones its selection keeps, a selected run's narrowing included. The phase reports below count
+  # the phases' recorded outcomes against these, so a node a phase never ran fails it rather than going unnoticed.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh collect'
+    displayName: 'Collect phase manifests'
+    condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh warm'
+    displayName: 'Warm Hub components from manifest'
+    env:
+      HF_TOKEN: $(HF_MCP_TOKEN_RW)
+  # Serialize the GPU phases against local work on this shared host (finetuning-scheduler uses it too), and place
+  # them on the smallest device that fits. The agent runs one Azure job at a time, so the leases guard only against
+  # interactive/agent sessions. Each stage takes `gpu` (the whole server, or one device under it) and then
+  # `cpu-heavy` for HOST MEMORY, in the host tool's fixed order, since a full local suite beside this job's suite
+  # once OOM-killed both sides. Nothing before this needs either: install and cache warming are light. Waiting here
+  # for tens of minutes behind a local GPU job is the lease working, not a hung build.
+  #
+  # TWO STAGES (.azure-pipelines/scripts/gpu_stage_lease.sh):
+  #   small  one device sized to the smallest card (best fit), for the single-device tests declaring no more than
+  #          that and not needing bf16, so they can run on the small card while someone holds the large one;
+  #   large  the whole server, for everything else and the extended tiers.
+  # The memory classes partition each phase (tests/conftest.py), so the two stages together run it whole. Without
+  # the host lease tool mounted, or on an AMD agent (identical cards, so placement buys nothing), the job takes one
+  # whole-server lease and runs one stage.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh acquire small'
+    displayName: 'Acquire host GPU lease: small-device stage'
+    condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+  # gated-model tests (llama3/gemma) and the notebook/example tests run in the GPU phases and read these secrets;
+  # without the mapping they fail with a KeyError on the secret's name. HF_TOKEN feeds from HF_MCP_TOKEN_RW so the
+  # J-space steering section can pull the PRIVATE speediedan/jlens_steering_ops collection (#273); the gated key
+  # cannot read it (probed). Revert to a read-scoped token at the #261 public flip.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh cuda small'
+    displayName: 'Testing: standard gpu cuda-marked (small)'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+    env:
+      HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+      HF_TOKEN: $(HF_MCP_TOKEN_RW)
+  # --allow-failures in the special phases: run every test and fail the step at the end, so one failure cannot
+  # hide the result of every test after it. For the same reason every phase runs whether or not an earlier one
+  # failed, as long as its stage holds its lease (IT_GPU_LEASE_HELD, IT_GPU_LARGE_HELD), as finetuning-scheduler's
+  # template does: a cuda-phase failure once hid the standalone and profiling phases on the AMD agent.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh standalone small'
+    displayName: 'Testing: standalone gpu (small)'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+    env:
+      HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+      HF_TOKEN: $(HF_MCP_TOKEN_RW)
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh profile_ci small'
+    displayName: 'Testing: CI Profiling (small)'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh release small'
+    displayName: 'Release host GPU lease: small-device stage'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh acquire large'
+    displayName: 'Acquire host GPU lease: whole-server stage'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh cuda large'
+    displayName: 'Testing: standard gpu cuda-marked (large)'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
+    env:
+      HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+      HF_TOKEN: $(HF_MCP_TOKEN_RW)
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh standalone large'
+    displayName: 'Testing: standalone gpu (large)'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
+    env:
+      HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+      HF_TOKEN: $(HF_MCP_TOKEN_RW)
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh profile_ci large'
+    displayName: 'Testing: CI Profiling (large)'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
+  # Each class may be empty on its own; a FULL run whose phase came out empty in both means the collector broke.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/check_gpu_phases.sh'
+    displayName: 'Check: no GPU phase ran empty on a full run'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
+  # One report per phase, under the vendor the agent reported: collected beside passed, skipped and failed, counted
+  # against the phase's manifest. A failing phase fails the job; so does an empty one on a full run, and on a release
+  # leg a skip without a reviewed reason (tests/gpu_ci/reviewed_exclusions.json). The template publishes the evidence.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh report'
+    displayName: 'Phase reports'
+    condition: and(succeededOrFailed(), eq(variables['IT_PHASES_COLLECTED'], 'true'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
+    env:
+      IT_JOB_CLASS: ${{ parameters.jobClass }}
+  # The extended tiers no gate runs: the full profiling tier and the optional GPU tests (the SAELens notebooks
+  # among them). Weekly, on release and tag builds, and on a manual run with `extended`.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh extended-profile'
+    displayName: 'Testing: extended profiling'
+    condition: and(succeeded(), eq(variables['IT_GPU_EXTENDED'], '1'))
+    # Profiling runs with releases but never gates them: on release and tag builds, and on the release pipeline's legs,
+    # a delta beyond its frozen bound is reported (tests/profiling_delta); the weekly run is where it fails.
+    ${{ if or(startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'), startsWith(variables['Build.SourceBranch'], 'refs/tags/'), eq(parameters.jobClass, 'ci-release')) }}:
+      env:
+        IT_PROFILING_DELTA_REPORT_ONLY: '1'
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh extended-optional'
+    displayName: 'Testing: extended optional'
+    condition: and(succeeded(), eq(variables['IT_GPU_EXTENDED'], '1'))
+    env:
+      HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+      HF_TOKEN: $(HF_MCP_TOKEN_RW)
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh coverage'
+    displayName: 'Upload Coverage to Codecov'
+    condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
+    env:
+      CODECOV_TOK: $(CODECOV_TOKEN)
+  # The leases are released, and the container removed, by the template's final step.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh hf-cache-fix'
+    displayName: 'Fix HF cache permissions for the next run'
+    condition: always()

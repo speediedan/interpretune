@@ -42,7 +42,14 @@ class ITMeta(type):
 
         The declared ``bases`` are replaced rather than extended: the registry decides the composition,
         so honoring a caller-supplied base list here would let the two disagree silently.
+
+        A class created with no build context at all, over a base this metaclass already built, is an ordinary
+        subclass of that composition: FSDP2's ``fully_shard`` wraps a module this way (``type(f"FSDP{name}",
+        (FSDPModule, cls), ...)``), as does any plain ``class Sub(Composed)`` (#820). A partial or invalid build
+        context is still refused by name.
         """
+        if not kwargs and any(isinstance(base, ITMeta) for base in bases):
+            return super().__new__(mcs, name, bases, classdict)
         component, input_cls, ctx = mcs._validate_build_ctx(kwargs)
         # TODO: add runtime checks for adherence to IT protocol here?
         composition_classes = mcs._map_composition_target(component, ctx)

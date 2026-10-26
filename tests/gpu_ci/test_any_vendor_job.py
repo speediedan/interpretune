@@ -31,6 +31,17 @@ def _template_use(pipeline: dict) -> dict:
     return job["parameters"]
 
 
+def _steps(params: dict) -> list[dict]:
+    """A job's steps, with a steps template it names (templates/it-gpu-steps.yml) expanded in place."""
+    steps = []
+    for step in params["steps"]:
+        if "template" in step:
+            steps.extend(yaml.safe_load((PIPELINES / step["template"]).read_text())["steps"])
+        else:
+            steps.append(step)
+    return steps
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="the GPU pipeline's steps run on a Linux agent")
 class TestCtr:
     @staticmethod
@@ -62,7 +73,7 @@ class TestCtr:
 
 @pytest.mark.parametrize("name", ["gpu-tests.yml", "readme-flow-gpu.yml"])
 def test_every_step_runs_inside_the_container(name):
-    steps = _template_use(_load(name))["steps"]
+    steps = _steps(_template_use(_load(name)))
     assert steps
     for step in steps:
         assert step["bash"].startswith("bash .azure-pipelines/scripts/ctr.sh "), step["bash"]
@@ -71,9 +82,9 @@ def test_every_step_runs_inside_the_container(name):
 def test_both_pipelines_pin_the_same_images_by_digest():
     images = [
         next(p["default"] for p in _load(name)["parameters"] if p["name"] == "images")
-        for name in ("gpu-tests.yml", "readme-flow-gpu.yml")
+        for name in ("gpu-tests.yml", "readme-flow-gpu.yml", "gpu-release.yml")
     ]
-    assert images[0] == images[1]
+    assert images[0] == images[1] == images[2]
     assert set(images[0]) == {"nvidia", "amd"}
     for vendor, image in images[0].items():
         assert DIGEST.match(image), (vendor, image)
@@ -101,9 +112,44 @@ def test_amd_takes_one_whole_server_stage():
 
 def test_every_gpu_phase_runs_while_its_stage_holds_its_lease():
     """One phase's failure must not hide the others (it once hid standalone and profiling on the AMD agent)."""
-    steps = _template_use(_load("gpu-tests.yml"))["steps"]
+    steps = _steps(_template_use(_load("gpu-tests.yml")))
     phases = [s for s in steps if s["displayName"].startswith("Testing: ") and "extended" not in s["displayName"]]
     assert len(phases) == 6
     for step in phases:
         held = "IT_GPU_LARGE_HELD" if "(large)" in step["displayName"] else "IT_GPU_LEASE_HELD"
         assert step["condition"].startswith("and(succeededOrFailed(),") and held in step["condition"], step
+
+
+def test_phases_are_collected_before_and_reported_after_the_gpu_work():
+    names = [s["displayName"] for s in _steps(_template_use(_load("gpu-tests.yml")))]
+    collect, report = names.index("Collect phase manifests"), names.index("Phase reports")
+    assert collect < names.index("Acquire host GPU lease: small-device stage")
+    assert report > max(i for i, n in enumerate(names) if n.startswith("Testing: ") and "extended" not in n)
+    step = _steps(_template_use(_load("gpu-tests.yml")))[report]
+    # it reports whatever the phases did, and only when the phases were collected
+    assert step["condition"].startswith("and(succeededOrFailed(),") and "IT_PHASES_COLLECTED" in step["condition"]
+    assert step["env"]["IT_JOB_CLASS"] == "${{ parameters.jobClass }}"
+    template = TEMPLATE.read_text()
+    assert '-v "$(Build.ArtifactStagingDirectory)/evidence:/evidence"' in template
+    assert "artifact: it-release-${{ parameters.vendor }}-$(System.JobAttempt)" in template
+
+
+def test_release_pipeline_demands_each_vendor_and_checks_both():
+    release = _load("gpu-release.yml")
+    assert release["trigger"] == "none" and release["pr"] == "none"
+    legs = [j["parameters"] for j in release["jobs"] if j.get("template") == "templates/gpu-job.yml"]
+    assert [(leg["jobName"], leg["vendor"], leg["jobClass"]) for leg in legs] == [
+        ("release_nvidia", "nvidia", "ci-release"),
+        ("release_amd", "amd", "ci-release"),
+    ]
+    gate = _load("gpu-tests.yml")["jobs"][0]["parameters"]["steps"]
+    for leg in legs:
+        (steps,) = leg["steps"]
+        # the gate's steps, run full, under the release class
+        assert steps["template"] == gate[0]["template"] == "templates/it-gpu-steps.yml"
+        assert steps["parameters"] == {"mode": "full", "extended": False, "jobClass": "ci-release"}
+    (check,) = [j for j in release["jobs"] if j.get("job") == "release_eligibility"]
+    assert check["dependsOn"] == ["release_nvidia", "release_amd"]
+    script = next(s["bash"] for s in check["steps"] if "bash" in s)
+    # the agent's own Python runs it: as a script, standard library only
+    assert "python3 tests/gpu_ci/release_eligibility.py" in script

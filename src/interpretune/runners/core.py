@@ -396,6 +396,7 @@ def run_step(step_fn, module, batch, batch_idx, optimizer: Optimizable | None = 
             module,
             hook_name="on_train_batch_end",
             hook_msg="Running custom on_train_batch end hook",
+            optional=True,
             outputs=output,
             batch=batch,
             batch_idx=batch_idx,
