@@ -190,3 +190,97 @@ def test_azure_refuses_a_non_json_answer(monkeypatch):
 def test_parse_time_accepts_azure_precision():
     assert srd._parse_time("2026-10-25T10:00:08.2352154Z").microsecond == 235215
     assert srd._parse_time("2026-10-25T10:00:08Z").second == 8
+
+
+# --in-job: the coverage test inside a scheduled build, which is not held for approval
+
+JOB_ENV = {
+    "BUILD_REASON": "Schedule",
+    "BUILD_CRONSCHEDULE_DISPLAYNAME": "nightly full GPU run",
+    "SYSTEM_COLLECTIONURI": "https://dev.azure.com/x/",
+    "SYSTEM_TEAMPROJECT": "interpretune",
+    "SYSTEM_ACCESSTOKEN": "token",
+    "BUILD_BUILDID": "1800",
+    "BUILD_REPOSITORY_NAME": "speediedan/interpretune",
+    "BUILD_SOURCEVERSION": "a855ed3f" + "0" * 32,
+}
+
+
+@pytest.fixture
+def job(monkeypatch):
+    """Azure and GitHub replaced: the build's definition, its tree, the full runs, and a record of cancels."""
+    calls = {"patch": [], "sleep": []}
+    monkeypatch.setattr(srd.Azure, "get", lambda self, project, path, **q: {"definition": {"id": 2}})
+    monkeypatch.setattr(srd.Azure, "patch", lambda self, project, path, body: calls["patch"].append((path, body)))
+    monkeypatch.setattr(srd, "commit_tree", lambda repo, sha: TREE)
+    monkeypatch.setattr(srd, "last_green_scheduled", lambda az, project, definition: "2026-10-12T16:49:20Z")
+    monkeypatch.setattr(srd, "full_runs_since", lambda az, project, definition, repo, since: FULL)
+    return calls
+
+
+def _in_job(calls, **env):
+    return srd.in_job({**JOB_ENV, **env}, sleep=calls["sleep"].append)
+
+
+def test_in_job_cancels_a_nightly_of_a_covered_tree(job, capsys):
+    assert _in_job(job) == 0
+    assert job["patch"] == [("build/builds/1800", {"status": "cancelling"})]
+    assert job["sleep"] == [300]
+    out = capsys.readouterr().out
+    assert "already run green in full by build 1724" in out and "did not take effect" in out
+
+
+def test_in_job_runs_an_uncovered_tree(job, monkeypatch, capsys):
+    monkeypatch.setattr(srd, "commit_tree", lambda repo, sha: "f" * 40)
+    assert _in_job(job) == 0 and job["patch"] == []
+    assert "has no green full run" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "env, why",
+    [
+        ({"BUILD_CRONSCHEDULE_DISPLAYNAME": srd.WEEKLY_SCHEDULE}, "weekly extended run"),
+        ({"BUILD_REASON": "PullRequest"}, "not a scheduled build"),
+        ({"BUILD_REASON": "Manual"}, "not a scheduled build"),
+    ],
+)
+def test_in_job_never_skips_the_weekly_run_or_other_builds(job, capsys, env, why):
+    assert _in_job(job, **env) == 0 and job["patch"] == []
+    assert why in capsys.readouterr().out
+
+
+def test_in_job_runs_when_coverage_cannot_be_established(job, monkeypatch, capsys):
+    def down(*a, **k):
+        raise srd.urllib.error.URLError("unreachable")
+
+    monkeypatch.setattr(srd, "full_runs_since", down)
+    assert _in_job(job) == 0 and job["patch"] == []
+    assert "could not be established" in capsys.readouterr().out
+
+
+def test_in_job_runs_when_the_tree_cannot_be_read(job, monkeypatch, capsys):
+    monkeypatch.setattr(srd, "commit_tree", lambda repo, sha: None)
+    assert _in_job(job) == 0 and job["patch"] == []
+    assert "cannot be read" in capsys.readouterr().out
+
+
+def test_in_job_runs_when_the_cancel_request_fails(job, monkeypatch, capsys):
+    def refused(self, project, path, body):
+        raise srd.urllib.error.HTTPError("u", 403, "forbidden", None, None)
+
+    monkeypatch.setattr(srd.Azure, "patch", refused)
+    assert _in_job(job) == 0 and job["sleep"] == []
+    assert "cancel request failed" in capsys.readouterr().out
+
+
+def test_in_job_without_a_token_runs(job, capsys):
+    assert _in_job(job, SYSTEM_ACCESSTOKEN="") == 0 and job["patch"] == []
+    assert "could not be established" in capsys.readouterr().out
+
+
+def test_main_dispatches_in_job(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(srd, "in_job", lambda env: seen.setdefault("env", env) and 0)
+    monkeypatch.setenv("BUILD_REASON", "Schedule")
+    assert srd.main(["--in-job"]) == 0
+    assert seen["env"]["BUILD_REASON"] == "Schedule"

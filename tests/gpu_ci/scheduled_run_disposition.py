@@ -17,13 +17,21 @@ It decides and prints; releasing or rejecting the approval stays with whoever op
 establish is refused by name rather than guessed: a build that is not a queued scheduled build, a missing credential,
 no lease state (pass ``--no-lease`` to say there is none), a tree that cannot be read.
 
+**In the job** (``--in-job``, the first GPU step of a scheduled build): scheduled builds of main are not held for
+approval, so the coverage test runs inside the job instead. A nightly run whose tree a green full run already covered
+cancels itself, through the build REST API with the job's access token, as a run whose lease wait times out does. The
+idle test is that lease wait, capped at two hours by the planner. The weekly run and every other build reason always
+run. This direction never fails closed: anything the step cannot establish (the API, the tree, the cancel) lets the
+run go ahead in full, because an extra full run costs a slot and a skipped one could hide a regression.
+
 Usage, from the repository root in a dev environment (the module itself uses only the standard library)::
 
     python -m tests.gpu_ci.scheduled_run_disposition --build 1704 \\
         --org https://dev.azure.com/<org> --project interpretune --pool-project <another project on the pool> \\
         --lease-status-cmd "$GPU_LEASE_CMD --status"
+    python -m tests.gpu_ci.scheduled_run_disposition --in-job   # in a pipeline step, from its predefined variables
 
-Exit status: 0 release, 1 reject, 3 hold, 2 refused (nothing decided).
+Exit status: 0 release, 1 reject, 3 hold, 2 refused (nothing decided). ``--in-job`` always exits 0.
 """
 
 from __future__ import annotations
@@ -36,6 +44,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -103,10 +112,8 @@ class Verdict:
 
 def dispose(*, tree: str, weekly: bool, full_runs: Iterable[FullRun], host: HostState, waited: timedelta) -> Verdict:
     """The verdict for a queued scheduled build whose commit has ``tree``, after ``waited`` in the queue."""
-    if not weekly:
-        for run in full_runs:
-            if run.tree is not None and run.tree == tree:
-                return Verdict(REJECT, f"covered by build {run.build_id} ({run.sha}), a green full run of tree {tree}")
+    if not weekly and (run := covering_run(tree, full_runs)) is not None:
+        return Verdict(REJECT, f"covered by build {run.build_id} ({run.sha}), a green full run of tree {tree}")
     blockers = host.blockers()
     why = "weekly extended run" if weekly else f"tree {tree} has no green full run"
     if not blockers:
@@ -158,11 +165,14 @@ def _parse_time(value: str) -> datetime:
 class Azure:
     """The few Azure DevOps REST reads the disposition needs, with the PAT from ``AZURE_DEVOPS_EXT_PAT``."""
 
-    def __init__(self, org: str, pat: str | None):
-        if not pat:
+    def __init__(self, org: str, pat: str | None = None, *, bearer: str | None = None):
+        if bearer:
+            self.auth = f"Bearer {bearer}"
+        elif pat:
+            self.auth = "Basic " + base64.b64encode(f":{pat}".encode()).decode()
+        else:
             raise Refused("AZURE_DEVOPS_EXT_PAT is not set: the build and approval state cannot be read")
         self.org = org.rstrip("/")
-        self.auth = "Basic " + base64.b64encode(f":{pat}".encode()).decode()
 
     def get(self, project: str, path: str, **query) -> dict:
         query.setdefault("api-version", "7.1")
@@ -175,6 +185,17 @@ class Azure:
         except ValueError as exc:
             # a rejected credential can come back as a sign-in page, not an error: never read it as an empty list
             raise Refused(f"Azure answered {path} with something that is not JSON (is the PAT valid?)") from exc
+
+    def patch(self, project: str, path: str, body: dict) -> None:
+        url = f"{self.org}/{urllib.parse.quote(project)}/_apis/{path}?api-version=7.1"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode(),
+            method="PATCH",
+            headers={"Authorization": self.auth, "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30):
+            pass
 
     def text(self, project: str, path: str) -> str:
         url = f"{self.org}/{urllib.parse.quote(project)}/_apis/{path}?api-version=7.1"
@@ -276,7 +297,57 @@ def _run(cmd: str) -> str:
     return proc.stdout
 
 
+def covering_run(tree: str, runs: Iterable[FullRun]) -> FullRun | None:
+    """The first green full run of exactly ``tree``, if any; a run whose tree could not be read covers nothing."""
+    return next((run for run in runs if run.tree is not None and run.tree == tree), None)
+
+
+def in_job(env: dict, sleep: Callable[[float], None] = time.sleep) -> int:
+    """The in-job coverage test for a scheduled build: cancel a nightly run of a covered tree, run anything else."""
+
+    def proceed(why: str) -> int:
+        print(f"scheduled-run coverage: {why}; running")
+        return 0
+
+    if env.get("BUILD_REASON") != "Schedule":
+        return proceed(f"build reason {env.get('BUILD_REASON')!r}, not a scheduled build")
+    if env.get("BUILD_CRONSCHEDULE_DISPLAYNAME") == WEEKLY_SCHEDULE:
+        return proceed("the weekly extended run, whose extra tiers run in no other build")
+    try:
+        az = Azure(env["SYSTEM_COLLECTIONURI"], bearer=env.get("SYSTEM_ACCESSTOKEN"))
+        project, build_id = env["SYSTEM_TEAMPROJECT"], int(env["BUILD_BUILDID"])
+        repo, sha = env["BUILD_REPOSITORY_NAME"], env["BUILD_SOURCEVERSION"]
+        definition = az.get(project, f"build/builds/{build_id}")["definition"]["id"]
+        tree = commit_tree(repo, sha)
+        if tree is None:
+            return proceed(f"the tree of {sha} cannot be read")
+        covering = covering_run(
+            tree, full_runs_since(az, project, definition, repo, last_green_scheduled(az, project, definition))
+        )
+    except (Refused, urllib.error.URLError, KeyError, ValueError) as exc:
+        print(f"##vso[task.logissue type=warning]Scheduled-run coverage could not be established ({exc}); running.")
+        return 0
+    if covering is None:
+        return proceed(f"tree {tree} has no green full run since the last green scheduled run")
+    print(
+        f"##vso[task.logissue type=warning]This scheduled run's tree {tree} was already run green in full by build "
+        f"{covering.build_id} ({covering.sha}); cancelling this run rather than repeating it."
+    )
+    try:
+        az.patch(project, f"build/builds/{build_id}", {"status": "cancelling"})
+    except (urllib.error.URLError, ValueError) as exc:
+        print(f"##vso[task.logissue type=warning]The cancel request failed ({exc}); running.")
+        return 0
+    sleep(300)  # the cancel ends this step; reaching the next line means it did not take effect
+    print("##vso[task.logissue type=warning]The cancel did not take effect within five minutes; running.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv == ["--in-job"]:
+        return in_job(dict(os.environ))
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--build", type=int, required=True, help="the queued scheduled build")
     ap.add_argument("--org", required=True, help="https://dev.azure.com/<org>")

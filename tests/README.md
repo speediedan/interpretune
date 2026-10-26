@@ -486,17 +486,22 @@ named in the `Plan the GPU run` step's log. A selected run uploads coverage unde
 partial run never reads as a `gpu` coverage drop. To force the full set on a pull request, add the `ci:gpu-full`
 label before the gate is released; a label added later applies from the next build.
 
-**Releasing a scheduled build.** A scheduled build waits for the pool's approval like any other. Main is not built
-on merge, so it must also pass the test a manual run of main does: something to cover, and an otherwise idle host.
-`python -m tests.gpu_ci.scheduled_run_disposition --build <id> ...` prints one verdict:
+**Scheduled builds test their own reason to run.** Main is not built on merge, so a scheduled build must pass the
+test a manual run of main does: something to cover, and an otherwise idle host. Scheduled builds of main are not held
+for approval, so both tests run inside the job:
 
-- `REJECT covered`: a green full run (the planner's own `mode=full`, never a selected gate) already ran the same tree;
-  the weekly run is exempt, because its extended tiers run nowhere else;
+- **Coverage.** The job's `Skip a scheduled run of a covered tree` step cancels a nightly run when a green full run
+  (the planner's own `mode=full`, never a selected gate) already ran the same tree. The weekly run is exempt, because
+  its extended tiers run nowhere else. Anything the step cannot establish lets the run go ahead.
+- **Idle.** The lease wait is capped at two hours, after which the run cancels itself rather than failing.
+
+Where a scheduled build still waits for an approval, `python -m tests.gpu_ci.scheduled_run_disposition --build <id>
+...` prints what to do with it:
+
+- `REJECT covered`: the tree is covered, as above;
 - `RELEASE`: the tree is uncovered and the host is quiet across every project on the pool, with no lease held;
 - `HOLD`: the host is busy, and the verdict names what is busy;
 - `REJECT stale`: still not releasable after two hours, so a `batch: true` schedule is never stuck behind an old build.
-
-The release or rejection itself stays with whoever operates the pool.
 
 **Device placement.** Each GPU phase runs in two stages, and each stage takes its own lease through the host's lease
 tool:

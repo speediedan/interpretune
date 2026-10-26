@@ -30,6 +30,17 @@ steps:
     displayName: 'Install dependencies'
   - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh env'
     displayName: 'Env details and package versions'
+  # A scheduled build of main is not held for approval, so it tests its own reason to run (#728): a nightly run whose
+  # tree a green full run already covered cancels itself, as a run whose lease wait times out does. The weekly run and
+  # every other build always run, and anything this step cannot establish lets the run go ahead
+  # (tests/gpu_ci/scheduled_run_disposition.py).
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh scheduled-coverage'
+    displayName: 'Skip a scheduled run of a covered tree'
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'Schedule'))
+    # a crash here must not stop the run: running in full is the safe direction
+    continueOnError: true
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
   # Decide what this run executes and export it to the steps below (see tests/gpu_ci/plan_gpu_run.py): the full
   # GPU set, only the tests a pull request's change selects, or none of them; whether the extended tiers run; and
   # the lease-wait policy. Anything the planner cannot establish runs the full set, named in this step's log.
