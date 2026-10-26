@@ -36,6 +36,8 @@ unset no_reruns
 unset reruns_count
 unset reruns_delay
 unset allow_failures
+# every phase that exited non-zero, so the run reports an explicit final status under --allow-failures too
+failed_phases=()
 unset resource_debug
 declare -a from_source_specs
 
@@ -257,6 +259,8 @@ PY
         set -e
         echo "${phase_name} exit code: ${phase_status}" >> "$coverage_session_log"
         log_shell_resource_snapshot "coverage-phase:end:${phase_name}" >> "$coverage_session_log" 2>&1 || true
+        # recorded even under --allow-failures, which continues past a failed phase but must not end the run green
+        [[ $phase_status -ne 0 ]] && failed_phases+=("${phase_name} (exit ${phase_status})")
         if [[ $phase_status -ne 0 && $allow_failures -ne 1 ]]; then
             return $phase_status
         fi
@@ -312,19 +316,19 @@ PY
             >> "$coverage_session_log" 2>&1
         run_logged_phase \
             "special tests standalone" \
-            bash -lc "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+            bash -c "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
         run_logged_phase \
             "special tests profile_ci" \
-            bash -lc "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+            bash -c "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
         run_logged_phase \
             "special tests profile" \
-            bash -lc "./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+            bash -c "./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
         run_logged_phase \
             "special tests optional" \
-            bash -lc "./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+            bash -c "./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
         run_logged_cuda_phase \
             "special tests benchmark" \
-            bash -lc "./tests/special_tests.sh --mark_type=benchmark --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+            bash -c "./tests/special_tests.sh --mark_type=benchmark --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
     else
         # Using pytest-cov ensures coverage starts before test collection imports
         run_logged_phase \
@@ -337,10 +341,10 @@ PY
             >> "$coverage_session_log" 2>&1
         run_logged_phase \
             "special tests standalone" \
-            bash -lc "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+            bash -c "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
         run_logged_phase \
             "special tests profile_ci" \
-            bash -lc "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
+            bash -c "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
     fi
 }
 
@@ -387,3 +391,7 @@ if [[ ${resource_debug:-0} -eq 1 ]]; then
     echo "Resource summary JSON: ${resource_summary_json}" >> "$coverage_session_log"
 fi
 show_elapsed_time $coverage_session_log "IT coverage collection"
+if [[ ${#failed_phases[@]} -gt 0 ]]; then
+    printf 'Coverage phases that failed: %s\n' "${failed_phases[*]}" | tee -a "$coverage_session_log" >&2
+    exit 1
+fi
