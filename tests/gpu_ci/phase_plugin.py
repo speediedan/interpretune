@@ -3,7 +3,8 @@
 Ported from finetuning-scheduler's ``tests/gpu_ci/phase_plugin.py`` so both repositories' phase reports read the same
 records. Load it with ``-p tests.gpu_ci.phase_plugin`` (or through ``PYTEST_ADDOPTS``, which the per-test pytest
 processes ``tests/special_tests.sh`` starts inherit). It does nothing unless ``IT_PHASE_RECORD_DIR`` names a directory;
-then each pytest session appends JSON lines to its own file there:
+then each pytest session appends JSON lines to its own file there (only a session rooted at ``IT_PHASE_RECORD_ROOT``,
+when that is set):
 
 - ``{"event": "start"}`` when the session starts;
 - ``{"event": "collect_error", "nodeid": ...}`` for each collector that failed (an import error, say);
@@ -22,6 +23,10 @@ import os
 from pathlib import Path
 
 RECORD_DIR_ENV = "IT_PHASE_RECORD_DIR"
+# The rootdir a recorded session must have, when set (``phase_report.run_env`` sets the repository's). A test that runs
+# pytest itself, on a tree of its own under a temporary directory, inherits ``PYTEST_ADDOPTS`` and the record directory;
+# its session is not the phase's and is not recorded.
+RECORD_ROOT_ENV = "IT_PHASE_RECORD_ROOT"
 
 
 def _identity() -> dict:
@@ -85,6 +90,9 @@ class _PhaseRecorder:
 def pytest_configure(config):
     record_dir = os.environ.get(RECORD_DIR_ENV)
     if not record_dir:
+        return
+    record_root = os.environ.get(RECORD_ROOT_ENV)
+    if record_root and Path(config.rootpath).resolve() != Path(record_root).resolve():
         return
     Path(record_dir).mkdir(parents=True, exist_ok=True)
     ident = _identity()

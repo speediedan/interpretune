@@ -49,9 +49,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 if __package__:
-    from tests.gpu_ci.phase_plugin import RECORD_DIR_ENV
+    from tests.gpu_ci.phase_plugin import RECORD_DIR_ENV, RECORD_ROOT_ENV
 else:  # run as a script beside its siblings (release_eligibility.py on a host Python without the test dependencies)
-    from phase_plugin import RECORD_DIR_ENV
+    from phase_plugin import RECORD_DIR_ENV, RECORD_ROOT_ENV
 
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = "speediedan/interpretune"
@@ -364,7 +364,8 @@ def run_env(phase_name: str, out_dir: Path) -> dict:
     PHASES[phase_name]  # an unknown phase is a KeyError, not an empty record directory
     addopts = " ".join(filter(None, [os.environ.get("PYTEST_ADDOPTS", ""), "-p", PLUGIN]))
     record_dir = Path(out_dir).resolve() / "records" / phase_name
-    return {RECORD_DIR_ENV: str(record_dir), "PYTEST_ADDOPTS": addopts.strip()}
+    # only the phase's own sessions: a test that runs pytest on a tree of its own inherits these too
+    return {RECORD_DIR_ENV: str(record_dir), RECORD_ROOT_ENV: str(ROOT), "PYTEST_ADDOPTS": addopts.strip()}
 
 
 def _write_json(path: Path, doc: dict) -> None:

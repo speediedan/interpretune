@@ -1,1 +1,9 @@
-{}
+{
+  "src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook": "needs NEURONPEDIA_API_KEY, which the GPU job does not map: the notebook calls the live Neuronpedia API",
+  "tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerLightningTLBackendInitialization::test_lightning_adapter_backend_support[lightning_transformerlens]": "circuit-tracer's TransformerLens backend is disabled pending its TransformerLens 4.0 support (the class's `_CT_TL_DISABLED` mark; its compositions are commented out in tests/test_module_registry.yaml)",
+  "tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerTLBackend::test_tl_backend_integration": "circuit-tracer's TransformerLens backend is disabled pending its TransformerLens 4.0 support (the class's `_CT_TL_DISABLED` mark; its compositions are commented out in tests/test_module_registry.yaml)",
+  "tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_a_batch_above_the_declared_limit_is_refused_by_name": "gated on single_prompt=True: the circuit-tracer target is not declared single-prompt, so there is no batch limit to refuse",
+  "tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_supplied_settings_survive_composition": "the circuit-tracer conformance target supplies no module_cfg_extras, so there is no supplied setting to check",
+  "tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_undeclared_all_positions_is_refused": "a negative conformance case: the circuit-tracer target declares the all-positions scope, so there is no refusal to check (its positive twin runs instead)",
+  "tests/core/test_backend_conformance.py::TestCircuitTracerConformance::test_undeclared_last_token_is_refused": "a negative conformance case: the circuit-tracer target declares the last-token scope, so there is no refusal to check (its positive twin runs instead)"
+}

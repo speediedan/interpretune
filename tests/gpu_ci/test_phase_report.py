@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.gpu_ci import phase_report as pr
-from tests.gpu_ci.phase_plugin import RECORD_DIR_ENV, node_outcome
+from tests.gpu_ci.phase_plugin import RECORD_DIR_ENV, RECORD_ROOT_ENV, node_outcome
 
 SYNTHETIC_TESTS = """
 import os
@@ -152,6 +152,7 @@ def test_run_env_records_every_pytest_process(tmp_path, monkeypatch):
     monkeypatch.setenv("PYTEST_ADDOPTS", "-x")
     env = pr.run_env("standalone", tmp_path)
     assert env[RECORD_DIR_ENV] == str(tmp_path.resolve() / "records" / "standalone")
+    assert env[RECORD_ROOT_ENV] == str(pr.ROOT)
     assert env["PYTEST_ADDOPTS"] == f"-x -p {pr.PLUGIN}"
     with pytest.raises(KeyError):
         pr.run_env("extended", tmp_path)
@@ -173,6 +174,14 @@ def test_collect_run_and_report_end_to_end(tmp_path):
     assert report["collection"] == {"raw": 7, "deselected": 1, "selected": 6, "errors": 0}
     assert report["classification"] == "failing" and report["evidence_class"] == "parity-pre-agent"
     assert report["nodes"]["test_synthetic.py::test_setup_error"]["outcome"] == "errors"
+
+
+def test_a_session_rooted_elsewhere_is_not_recorded(tmp_path):
+    """A test that runs pytest on a tree of its own inherits the phase's recording; its session is not the phase's
+    (measured: a cuda-phase test's ``test_alloc.py`` ran unmanifested and failed the report)."""
+    (tmp_path / "test_synthetic.py").write_text(SYNTHETIC_TESTS)
+    assert _run_recorded(tmp_path, "test_synthetic.py", env_update={RECORD_ROOT_ENV: str(pr.ROOT)}) == []
+    assert _run_recorded(tmp_path, "test_synthetic.py", env_update={RECORD_ROOT_ENV: str(tmp_path)})
 
 
 def test_a_rerun_that_passes_counts_once_as_passed(tmp_path):
@@ -293,5 +302,6 @@ def test_reviewed_exclusions_name_existing_tests():
         assert reason.strip(), nodeid
         module, _, test = nodeid.partition("::")
         name = test.split("::")[-1].partition("[")[0]
-        source = (pr.ROOT / module).read_text(encoding="utf-8")
-        assert f"def {name}(" in source, nodeid
+        # conformance targets inherit their cases from interpretune.testing.conformance
+        sources = [pr.ROOT / module, *(pr.ROOT / "src/interpretune/testing/conformance").glob("*.py")]
+        assert any(f"def {name}(" in s.read_text(encoding="utf-8") for s in sources), nodeid
