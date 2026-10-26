@@ -89,6 +89,16 @@ cuda:
     slope[0]:
       baseline: 0.0
       tolerance: 65536.0
+  nnsight_lightning_train:
+    end_current:
+      baseline: -2315776.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -1791488.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
   nnsight_train:
     end_current:
       baseline: 512.0
@@ -163,6 +173,16 @@ rocm:
       baseline: 0.0
       tolerance: 65536.0
   lightning_train:
+    end_current:
+      baseline: -1737216.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -1050112.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  nnsight_lightning_train:
     end_current:
       baseline: -1737216.0
       tolerance: 8388608.0
