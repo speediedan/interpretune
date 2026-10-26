@@ -368,10 +368,10 @@ src/interpretune/           # Main package
 └── utils/                  # Utility functions
 
 src/it_examples/            # Example experiments
-├── config/                 # YAML configuration files
-│   ├── experiments/        # Experiment configs
+├── examples/               # In-tree publish sources of example components (e.g. rte/configs)
+├── tuning/                 # Phased fine-tuning examples (finetuning-scheduler)
 │   └── ft_schedules/       # Fine-tuning schedules
-└── experiments/            # Python experiment modules
+└── notebooks/              # Example notebooks
 ```
 
 ### Configuration Files

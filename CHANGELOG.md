@@ -103,7 +103,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 - Local, dispatched nnsight compositions register their HF module on the module as `hf_model` through the cooperative `register_tunable_modules()` hook (run after every init path), so the optimizer, checkpoints and the identity view reach its parameters; remote (NDIF) and undispatched compositions are refused with their reasons (#774)
 - A top-level Tuning docs section: the adapter-agnostic Tuning page, ending in a summary of what each composition declares (with the issues tracking each refused composition's tuning paths), and a tuning page per packaged adapter (core/HF, TransformerLens, sae_lens, nnsight, circuit-tracer, interp-engine) to hold its example usage (#812)
 
+- An RTE phased fine-tuning example that runs one finetuning-scheduler schedule on either host (`it_examples.tuning.rte_phased_ft`): the core loop with `FTSCoreCallback`, a `PlateauTransition` and a `BestCheckpoint`, or Lightning with `FinetuningScheduler`, `FTSEarlyStopping` and `FTSCheckpoint`, configured alike. Each run records every epoch's depth, thawed parameters and validation metrics, and the best checkpoint's depth. The `rte` component gains an `rte_ft` variant with `rte_ft.gemma3.core` (#697's schedule for gemma-3-1b-it, fp32 on one GPU) and `rte_ft.gpt2.core` (CPU-sized), and a CPU test checks that the two hosts thaw the same parameters each epoch, transition in the same epochs and keep the same best checkpoint ([#765](https://github.com/speediedan/interpretune/issues/765))
+
 ### Changed
+
+- The finetuning-scheduler schedules under `tests/benchmarks/configs/rte_boolq/ft_schedules/`, which nothing referenced, are retired: the GPT-2 three-phase schedule continues as `it_examples/tuning/ft_schedules/rte_ft.gpt2.yaml` in current idioms (each later phase sets its `lr`, phase 0 is bounded by `max_transition_epoch`), beside #697's gemma-3-1b-it schedule ([#14](https://github.com/speediedan/interpretune/issues/14))
 
 - The docs use the full window width on every page, as finetuning-scheduler's do: both sidebars are pinned at fixed widths and the article takes the rest, rather than widening only notebook and table pages up to a 70rem cap
 
@@ -121,6 +125,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 - SAE-Lens adapter expanded from TL-only to dual-backend with hook resolution (455+ lines added)
 
 ### Fixed
+- `configure_optimizers` returns no lr schedulers, rather than `[None]`, when `lr_scheduler_init` is empty (Lightning refused the `None` scheduler, and the core loop kept an `LRSchedulerConfig` wrapping `None`), and returns `None` when `optimizer_init` is empty ([#765](https://github.com/speediedan/interpretune/issues/765))
 - The core training loop dispatches `on_train_batch_end` as optional, like every other hook in `run_step`: a module without it (the hub's RTE demo module, for one) failed at the first optimizer step ([#817](https://github.com/speediedan/interpretune/issues/817))
 - `ITMeta` builds a class created with no build context over a composition it already built as an ordinary subclass, so FSDP2's `fully_shard` (which wraps a module by subclassing its class) can shard an interpretune module, the root unit included; a partial or invalid build context is still refused by name ([#820](https://github.com/speediedan/interpretune/issues/820))
 - A ROCm tolerance for the circuit-tracer edge-prediction conformance case's active-feature check (`ROCM_EDGE_ATOL`, 2.6e-3 against 1e-3 elsewhere): on the AMD agent one of 3,030 active features measured 1.29e-3 off its edge prediction in two runs, the same element both times ([#703](https://github.com/speediedan/interpretune/issues/703))

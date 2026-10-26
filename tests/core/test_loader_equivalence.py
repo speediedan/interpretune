@@ -52,7 +52,7 @@ EXAMPLE_CONFIGS = example_configuration_files()
 
 
 def test_all_example_configurations_discovered():
-    assert len(EXAMPLE_CONFIGS) == 7, sorted(str(c) for c in EXAMPLE_CONFIGS)
+    assert len(EXAMPLE_CONFIGS) == 9, sorted(str(c) for c in EXAMPLE_CONFIGS)
 
 
 @pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
@@ -195,9 +195,14 @@ def test_materialized_defaults_present_and_declarative():
     for config_path in EXAMPLE_CONFIGS:
         key, body = load_config_file(config_path)
         loaded = load_session_cfg(body, expected_key=key)
-        assert loaded.datamodule_cfg.prepare_data_map_cfg == {"batched": True}, key
         assert isinstance(loaded.module_cfg.optimizer_init, dict), key
         assert loaded.module_cfg.optimizer_init["class_path"] == "torch.optim.AdamW", key
+        if key.startswith("rte_ft."):
+            # the fine-tuning variant sets its own: no lr scheduler, so both hosts step the same learning rates
+            assert not loaded.module_cfg.lr_scheduler_init, key
+            assert loaded.datamodule_cfg.prepare_data_map_cfg["batched"] is True, key
+            continue
+        assert loaded.datamodule_cfg.prepare_data_map_cfg == {"batched": True}, key
         assert loaded.module_cfg.lr_scheduler_init["init_args"]["T_mult"] == 2, key
 
 
