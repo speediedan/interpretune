@@ -157,6 +157,9 @@ NS_PROFILING_CONFIGS = (
 EXPECTED_PARITY_NS_PROFILING = {cfg.alias: cfg.expected for cfg in NS_PROFILING_CONFIGS}
 
 
+# a rerun measures in a process still holding the failed attempt (its traceback keeps the model alive), so a
+# memory-footprint failure is reported from its first attempt rather than inflated by later ones
+@pytest.mark.flaky(reruns=0)
 @pytest.mark.usefixtures("make_deterministic")
 @pytest.mark.parametrize(("test_alias", "test_cfg"), pytest_factory(NS_PROFILING_CONFIGS, unpack=False, fq_alias=True))
 def test_ns_profiling(recwarn, tmp_path, test_alias, test_cfg):
