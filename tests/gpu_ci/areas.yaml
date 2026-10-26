@@ -132,6 +132,7 @@ areas:
       - src/interpretune/config/extensions.py
       - src/interpretune/config/profiling.py
       - src/interpretune/runners/core.py
+      - src/interpretune/runners/distributed.py
       - src/interpretune/extensions/__init__.py
       - src/interpretune/extensions/memprofiler.py
       - src/interpretune/utils/**
@@ -157,6 +158,7 @@ areas:
       - src/interpretune/adapters/lightning.py
       - src/interpretune/adapters/sae_lens/**
       - src/interpretune/runners/core.py
+      - src/interpretune/runners/distributed.py
       - src/interpretune/extensions/**
       - src/interpretune/utils/**
     tests:

@@ -1,5 +1,5 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Any, TYPE_CHECKING, Iterable, Sequence
+from typing import Any, TYPE_CHECKING, Iterable, Literal, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -185,8 +185,19 @@ class SessionRunnerCfg:
     # validate with gradients enabled (e.g. for an objective computed with `torch.autograd.grad`) rather than under
     # `torch.inference_mode()`
     validate_with_grad: bool = False
+    # how the core loops place the module across processes launched by torchrun: 'single' (one process), 'ddp' (every
+    # rank holds the model, gradients averaged) or 'fsdp2' (parameters, gradients and optimizer state sharded); see
+    # `interpretune.runners.distributed`
+    placement: Literal["single", "ddp", "fsdp2"] = "single"
+    # the class names of the modules `fsdp2` shards as their own units (a transformer's block class, each spliced
+    # instrument's class), deepest first and before the module itself; `[]` shards the module as one unit
+    shard_units: Sequence[str] | None = None
 
     def __post_init__(self):
+        if self.placement not in ("single", "ddp", "fsdp2"):
+            raise MisconfigurationException(
+                f"Unknown placement '{self.placement}': expected one of 'single', 'ddp', 'fsdp2'."
+            )
         if self.it_session is not None:
             self._session_validation()
         else:
@@ -236,6 +247,11 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
 
     def __post_init__(self):
         super().__post_init__()
+        if self.placement != "single":
+            raise MisconfigurationException(
+                f"The analysis runner supports placement 'single' only, not '{self.placement}': attribution and"
+                " analysis ops read activations and weights in ways not yet designed for data-parallel placement."
+            )
         assert self.it_session is not None and self.it_session.module is not None
         self.it_session.module.analysis_run_cfg = self  # type: ignore[attr-defined]
 

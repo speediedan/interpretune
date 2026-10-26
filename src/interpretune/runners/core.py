@@ -9,9 +9,17 @@ from pathlib import Path
 import torch
 
 from interpretune.config import SessionRunnerCfg
-from interpretune.base import _call_itmodule_hook, it_init, it_session_end, ITDataModule
+from interpretune.base import _call_itmodule_hook, it_configure_optimizers, it_init, it_session_end, ITDataModule
 from interpretune.protocol import Optimizable, CorePhases
-from interpretune.utils import MisconfigurationException, rank_zero_warn
+from interpretune.runners.distributed import (
+    DistributedRun,
+    distributed_dataloader,
+    init_process_group,
+    place_module,
+    reduce_metrics,
+    resolve_placement,
+)
+from interpretune.utils import MisconfigurationException, rank_zero_only, rank_zero_warn
 
 if TYPE_CHECKING:
     from interpretune.adapters import ITModule
@@ -114,6 +122,7 @@ def epoch_metrics(module: Any) -> dict[str, float]:
     return metrics
 
 
+@rank_zero_only
 def _print_metrics(label: str, metrics: Mapping[str, float]) -> None:
     metrics_str = ", ".join(f"'{k}': {v:.4f}" for k, v in metrics.items())
     print(f"\n{label}: {{{metrics_str}}}")
@@ -163,6 +172,7 @@ def core_train_loop(
     max_steps: int = -1,
     callbacks: Sequence[Any] = (),
     validate_with_grad: bool = False,
+    dist_run: DistributedRun | None = None,
     **kwargs,
 ) -> CoreLoopContext:
     """Run the core (framework-free) training loop, with optional interleaved validation.
@@ -183,6 +193,9 @@ def core_train_loop(
         callbacks: Objects with any of :class:`CoreCallback`'s methods.
         validate_with_grad: Validate with gradients enabled (for objectives that call ``torch.autograd.grad``)
             instead of under ``torch.inference_mode()``.
+        dist_run: This rank's place in a data-parallel run (set by the runner for placements other than
+            ``single``): each loader is rebuilt over this rank's share of the data, and the epoch's metrics are
+            averaged across ranks before callbacks and lr schedulers see them.
 
     Returns:
         The loop's final context.
@@ -190,6 +203,10 @@ def core_train_loop(
     assert hasattr(datamodule, "train_dataloader"), "Datamodule is expected to have a train dataloader"
     train_dataloader = datamodule.train_dataloader()  # type: ignore[attr-defined]
     val_dataloader = datamodule.val_dataloader() if hasattr(datamodule, "val_dataloader") else None  # type: ignore[attr-defined]  # duck typing
+    if dist_run is not None:
+        train_dataloader = distributed_dataloader(train_dataloader, dist_run)
+        if val_dataloader is not None:
+            val_dataloader = distributed_dataloader(val_dataloader, dist_run)
     assert module.optimizers, "Module has no optimizers configured"
     ctx = CoreLoopContext(module=module, max_epochs=max_epochs, max_steps=max_steps, callbacks=tuple(callbacks))
     val_grad_ctx = torch.enable_grad if validate_with_grad else torch.inference_mode
@@ -201,6 +218,8 @@ def core_train_loop(
             assert module.model is not None, "Model must be initialized before training"
             module.model.train()
             module.current_epoch = ctx.epoch = epoch_idx
+            if dist_run is not None:
+                train_dataloader.sampler.set_epoch(epoch_idx)
             _call_itmodule_hook(
                 module, hook_name="on_train_epoch_start", hook_msg="Running train epoch start hooks", optional=True
             )
@@ -226,6 +245,8 @@ def core_train_loop(
                     if prof is not None:
                         prof.step()
             ctx.epoch_metrics = epoch_metrics(module)
+            if dist_run is not None:
+                ctx.epoch_metrics = reduce_metrics(ctx.epoch_metrics, dist_run)
             if ctx.epoch_metrics:
                 _print_metrics(f"Epoch {epoch_idx} end", ctx.epoch_metrics)
             _callbacks(ctx, "on_validation_end", ctx.epoch_metrics)
@@ -331,8 +352,18 @@ def load_checkpoint_state(module: Any, checkpoint: Mapping[str, Any], ctx: CoreL
                 cb.load_state_dict(checkpoint["callbacks"][key])
 
 
-def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batches: int, *args, **kwargs):
+def core_test_loop(
+    module: ITModule,
+    datamodule: ITDataModule,
+    limit_test_batches: int,
+    *args,
+    dist_run: DistributedRun | None = None,
+    **kwargs,
+):
     """Run the test loop over the datamodule's test dataloader.
+
+    Under a data-parallel ``dist_run``, each rank tests its share of the data and the reported metrics are averaged
+    across ranks.
 
     Raises:
         AssertionError: the datamodule exposes no ``test_dataloader``.
@@ -340,6 +371,8 @@ def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batche
     if not hasattr(datamodule, "test_dataloader"):
         raise AssertionError("Datamodule is expected to have a test dataloader")
     dataloader = datamodule.test_dataloader()  # type: ignore[attr-defined]  # duck typing, checked above
+    if dist_run is not None:
+        dataloader = distributed_dataloader(dataloader, dist_run)
     test_ctx = {}
     module._it_state._current_epoch = 0
     assert module.model is not None, "Model must be initialized before testing"
@@ -353,7 +386,10 @@ def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batche
             if prof is not None:
                 prof.step()
     # Print accumulated metrics from log/log_dict calls (core framework epoch-end reporting)
-    if metrics := epoch_metrics(module):
+    metrics = epoch_metrics(module)
+    if dist_run is not None:
+        metrics = reduce_metrics(metrics, dist_run)
+    if metrics:
         _print_metrics("Test epoch end", metrics)
     _call_itmodule_hook(module, hook_name="on_test_epoch_end", hook_msg="Running test epoch end hooks", optional=True)
 
@@ -424,6 +460,8 @@ class SessionRunner:
         self.run_cfg = run_cfg if isinstance(run_cfg, SessionRunnerCfg) else SessionRunnerCfg(**run_cfg)
         # Only training and testing commands are supported in SessionRunner
         self.supported_commands = (None, "train", "test")
+        # this process's place in a data-parallel run, or None for placement 'single'
+        self.dist_run: DistributedRun | None = None
         self.it_init()
 
     @property
@@ -436,10 +474,26 @@ class SessionRunner:
         self._current_phase = phase
 
     def it_init(self):
-        """Dispatch the framework-independent session init unless a subclass overrides it."""
+        """Dispatch the framework-independent session init unless a subclass overrides it.
+
+        Under a data-parallel placement, the process group is joined first and the ranks build the session in turn,
+        rank 0 first. Only each host's local rank 0 prepares data (as in Lightning): a later rank re-preparing would
+        rewrite files an earlier rank has already memory-mapped. The ranks then place the module together (see
+        :func:`~interpretune.runners.distributed.place_module`) before its optimizers are built over the placed
+        parameters.
+        """
         # Unless overridden we dispatch the trainer-independent `it_init`
         assert self.run_cfg.it_session is not None, "Expected ITSession object"
-        it_init(**self.run_cfg.it_session)
+        self.dist_run = resolve_placement(self.run_cfg.placement)
+        if self.dist_run is None:
+            it_init(**self.run_cfg.it_session)
+            return
+        init_process_group(self.dist_run)
+        with self.dist_run.rank_zero_first():
+            it_init(**self.run_cfg.it_session, prepare_data=self.dist_run.local_rank == 0, configure_optimizers=False)
+        assert self.run_cfg.module is not None
+        place_module(self.run_cfg.module, self.dist_run, self.run_cfg.shard_units)
+        it_configure_optimizers(self.run_cfg.module)
 
     def it_session_end(self):
         """Dispatch any phase-specific session end hooks."""
@@ -449,7 +503,7 @@ class SessionRunner:
 
     def _run(self, phase, loop_fn, *args: Any, **kwargs: Any) -> Any | None:
         self.phase = CorePhases[phase]
-        phase_artifacts = loop_fn(**self.run_cfg.__dict__)
+        phase_artifacts = loop_fn(**self.run_cfg.__dict__, dist_run=self.dist_run)
         self.it_session_end()
         return phase_artifacts
 
