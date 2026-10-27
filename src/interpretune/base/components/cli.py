@@ -86,6 +86,14 @@ class ITSessionMixin:
         # DAG (ITSharedConfig propagation) is retired: the loader's shared_config handling is the one
         # merge site.
         parser.add_argument("--session_cfg", type=dict, default={}, help="Session configuration mapping.")
+        # A Hub component configuration as the session's base (#847): `<repo_id>:<config_key>[@<revision>]`, resolved
+        # cache-only like `interpretune.hub.load`; the configuration files' session keys merge over it.
+        parser.add_argument(
+            "--session_ref",
+            type=str | None,
+            default=None,
+            help="A cached Hub component configuration to base the session on: <repo_id>:<config_key>[@<revision>].",
+        )
         # A flattened one-door body (4b) spells that same subtree as top-level keys, so the shim must
         # ACCEPT what `_session_mapping_from_sources` already knows how to read. Plain-mapping types for
         # the same reason `session_cfg` is one: these are shim keys, not a construction surface.
@@ -145,13 +153,21 @@ class ITSessionMixin:
         return merged
 
     def _session_mapping_from_sources(
-        self, config_files: Sequence[Any], default_config_files: Sequence[Any] | None
+        self,
+        config_files: Sequence[Any],
+        default_config_files: Sequence[Any] | None,
+        session_ref: str | None = None,
     ) -> dict[str, Any]:
-        """Assemble the session mapping: defaults-dir files first, then explicit configs, in order."""
+        """Assemble the session mapping: defaults-dir files first, then the ``session_ref`` component
+        configuration, then explicit configs, in order."""
         import yaml as _yaml
 
         mapping: dict[str, Any] = {}
-        for source in [*(default_config_files or []), *(config_files or [])]:
+        sources: list[Any] = [*(default_config_files or []), *(config_files or [])]
+        n_defaults = len(default_config_files or [])
+        for i, source in enumerate(sources):
+            if i == n_defaults and session_ref:
+                mapping = self._deep_merge(mapping, self._hub_session_mapping(session_ref))
             source_path = Path(str(source))
             if not source_path.is_file():
                 continue
@@ -162,7 +178,66 @@ class ITSessionMixin:
                 mapping = self._deep_merge(mapping, body["session_cfg"])
             elif "registered_cfg" in body:  # flattened one-door bodies (4b): body keys at top level
                 mapping = self._deep_merge(mapping, {k: body[k] for k in ONE_DOOR_BODY_KEYS if k in body})
+        if len(sources) == n_defaults and session_ref:
+            mapping = self._deep_merge(mapping, self._hub_session_mapping(session_ref))
         return mapping
+
+    @staticmethod
+    def _hub_session_mapping(session_ref: str) -> dict[str, Any]:
+        """The session keys of a cached Hub component configuration, ``<repo_id>:<config_key>[@<revision>]``."""
+        from interpretune.hub.components import resolve_component_config
+
+        repo_id, sep, key = session_ref.partition(":")
+        key, _, revision = key.partition("@")
+        if not (sep and repo_id and key):
+            raise MisconfigurationException(
+                f"`session_ref` {session_ref!r} is not of the form <repo_id>:<config_key>[@<revision>]."
+            )
+        _, body = resolve_component_config(repo_id, key, revision=revision or None)
+        return {k: body[k] for k in ONE_DOOR_BODY_KEYS if k in body}
+
+    @staticmethod
+    def _resolve_hub_args(args: ArgsType) -> ArgsType:
+        """Command-line arguments with each ``hub://`` file reference resolved to its cached file (#847), so that
+        ``--config hub://<org>/<repo>/<path>`` reads a run configuration a component ships."""
+        from interpretune.hub.components import HUB_FILE_SCHEME, resolve_component_file
+
+        argv = sys.argv[1:] if args is None else args
+        if not isinstance(argv, (list, tuple)) or not any(isinstance(a, str) and HUB_FILE_SCHEME in a for a in argv):
+            return args
+
+        def resolve(arg: Any) -> Any:
+            if not isinstance(arg, str):
+                return arg
+            if arg.startswith(HUB_FILE_SCHEME):
+                return str(resolve_component_file(arg))
+            flag, eq, value = arg.partition("=")
+            if eq and value.startswith(HUB_FILE_SCHEME):
+                return f"{flag}={resolve_component_file(value)}"
+            return arg
+
+        return [resolve(a) for a in argv]
+
+    @classmethod
+    def _resolve_hub_refs(cls, value: Any) -> Any:
+        """A parsed configuration with each ``hub://`` string value resolved to its cached file (#847), so that a
+        callback's schedule path can name a file a component ships.
+
+        Namespaces are updated in place.
+        """
+        from interpretune.hub.components import HUB_FILE_SCHEME, resolve_component_file
+
+        if isinstance(value, str):
+            return str(resolve_component_file(value)) if value.startswith(HUB_FILE_SCHEME) else value
+        if isinstance(value, Namespace):
+            for k, v in vars(value).items():
+                setattr(value, k, cls._resolve_hub_refs(v))
+            return value
+        if isinstance(value, dict):
+            return {k: cls._resolve_hub_refs(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return type(value)(cls._resolve_hub_refs(v) for v in value)
+        return value
 
     def _merge_parsed_session_overrides(self, config: Namespace, session_mapping: dict[str, Any]) -> dict[str, Any]:
         """Overlay the parsed session surface onto the file-sourced mapping.
@@ -375,7 +450,7 @@ class ITCLI(ITSessionMixin):
 
         # TODO: consider supporting parse_object path in the future and document its (in)availability either way
         # e.g. self.config = parser.parse_object(args)
-        self.config = parser.parse_args(args)  # type: ignore[arg-type]
+        self.config = parser.parse_args(self._resolve_hub_args(args))  # type: ignore[arg-type]
 
     def _set_seed(self) -> None:
         """Sets the seed."""
@@ -394,10 +469,13 @@ class ITCLI(ITSessionMixin):
 
     def instantiate_classes(self) -> None:
         """Builds the session via the unified loader, then the run config and runner around it."""
+        self._resolve_hub_refs(self.config)
         self.config_init = self.parser.instantiate(self.config)
         default_files = self.parser_kwargs.get("default_config_files")
         session_mapping = self._session_mapping_from_sources(
-            self._get(self.config, "config") or [], default_files if isinstance(default_files, (list, tuple)) else None
+            self._get(self.config, "config") or [],
+            default_files if isinstance(default_files, (list, tuple)) else None,
+            self._get(self.config, "session_ref"),
         )
         session_mapping = self._merge_parsed_session_overrides(self.config, session_mapping)
         self.it_session = self.build_it_session(session_mapping)
@@ -528,19 +606,26 @@ if _LIGHTNING_AVAILABLE:
             """
             # the session is built FIRST via the unified loader (one door); Lightning then instantiates
             # the trainer and resolves data/model from the built session through `_get`'s mapping
+            self._resolve_hub_refs(self.config)  # type: ignore[attr-defined]  # mixin provides hub resolution
             sub_config = self.config.get(str(self.subcommand), self.config)  # type: ignore[attr-defined]
             parser_kwargs = getattr(self, "parser_kwargs", None) or {}
             defaults = (
                 parser_kwargs.get(str(self.subcommand), parser_kwargs) or {}  # type: ignore[attr-defined]
             ).get("default_config_files")
             session_mapping = self._session_mapping_from_sources(  # type: ignore[attr-defined]
-                sub_config.get("config") or [], defaults if isinstance(defaults, (list, tuple)) else None
+                sub_config.get("config") or [],
+                defaults if isinstance(defaults, (list, tuple)) else None,
+                sub_config.get("session_ref"),
             )
             session_mapping = self._merge_parsed_session_overrides(self.config, session_mapping)  # type: ignore[attr-defined]  # mixin provides the overlay
             self.it_session = self.build_it_session(session_mapping)  # type: ignore[attr-defined]  # mixin provides build_it_session
             super().instantiate_classes()  # type: ignore[misc]  # mixin provides instantiate_classes
             # create a convenient alias for the lightning model attribute that uses a standard `module` reference
             self.module = weakref.proxy(self.model)  # type: ignore[attr-defined]  # mixin provides model
+
+        def parse_arguments(self, parser: LightningArgumentParser, args: ArgsType) -> None:
+            """Resolve ``hub://`` file references in the arguments, then parse as Lightning does."""
+            super().parse_arguments(parser, self._resolve_hub_args(args))  # type: ignore[misc,attr-defined]
 
         def _it_session_object_attr(self, key) -> InterpretunableType | None:
             try:

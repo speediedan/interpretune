@@ -1,7 +1,7 @@
 # Derived key: rte_ft.gpt2.core
-# Phased fine-tuning (finetuning-scheduler) of GPT-2 on RTE, on either host: the core loop with `FTSCoreCallback`, or
-# Lightning with the `FinetuningScheduler` callback. Small enough for CPU; `it_examples.tuning.rte_phased_ft` drives it
-# and its CPU test compares the two hosts. The lr scheduler is left out so both hosts step the same learning rates.
+# Phased fine-tuning (finetuning-scheduler) of GPT-2 on RTE, small enough for a CPU. `runs/rte_ft.gpt2.core.yaml` and
+# `runs/rte_ft.gpt2.lightning.yaml` run it on the core loop and on Lightning from the CLI. The lr scheduler is left out
+# so both interfaces step the same learning rates.
 task_variant: rte_ft
 model: gpt2
 composition: []

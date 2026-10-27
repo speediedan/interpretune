@@ -1,9 +1,9 @@
 # A three-phase schedule for GPT-2 small on RTE (12 blocks, LM head tied to `wte`), named as an interpretune module
 # names them (`model.` is the module's HF model). Successor of the former
 # `tests/benchmarks/configs/rte_boolq/ft_schedules/ITModule_ft_schedule_gpt2_small_sc_notl_3_phase.yaml`, rewritten for
-# the LM head the `rte_ft` configs use (it thawed a sequence-classification head first) and current idioms: phase 0
-# is bounded by `max_transition_epoch` (later phases advance on the driver's transition policy) and each later phase
-# sets its own learning rate rather than inheriting finetuning-scheduler's `base_max_lr`.
+# the LM head the `rte_ft` configs use (it thawed a sequence-classification head first) and current idioms: phase 0 is
+# bounded by `max_transition_epoch` (later phases advance on the run configurations' transition policy) and each later
+# phase sets its own learning rate rather than inheriting finetuning-scheduler's `base_max_lr`.
 0:
   params:
   - model.transformer.ln_f.*

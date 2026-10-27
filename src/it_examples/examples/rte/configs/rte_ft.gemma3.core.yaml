@@ -1,8 +1,8 @@
 # Derived key: rte_ft.gemma3.core
-# Phased fine-tuning (finetuning-scheduler) of gemma-3-1b-it on RTE (interpretune#697's schedule), on either host: the
-# core loop with `FTSCoreCallback`, or Lightning with the `FinetuningScheduler` callback. `it_examples.tuning.
-# rte_phased_ft` drives it. fp32 on both hosts so the two can be compared exactly (the core loop has no bf16-mixed or
-# gradient accumulation yet: interpretune#836); one 24 GB GPU.
+# Phased fine-tuning (finetuning-scheduler) of gemma-3-1b-it on RTE (interpretune#697's schedule).
+# `runs/rte_ft.gemma3.core.yaml` and `runs/rte_ft.gemma3.lightning.yaml` run it on the core loop and on Lightning from
+# the CLI. fp32 on both interfaces so the two can be compared exactly (the core loop has no bf16-mixed or gradient
+# accumulation yet: interpretune#836); one 24 GB GPU.
 task_variant: rte_ft
 model: gemma3
 composition: []

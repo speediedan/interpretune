@@ -136,8 +136,6 @@ areas:
       - src/interpretune/utils/**
       - src/interpretune/hub/adapters.py
       - src/it_examples/examples/**
-      # the RTE phased fine-tuning example drives core and Lightning sessions (#765)
-      - src/it_examples/tuning/**
       - tests/core/fixtures/**
       - tests/parity_acceptance/**
     tests:

@@ -198,7 +198,7 @@ def test_materialized_defaults_present_and_declarative():
         assert isinstance(loaded.module_cfg.optimizer_init, dict), key
         assert loaded.module_cfg.optimizer_init["class_path"] == "torch.optim.AdamW", key
         if key.startswith("rte_ft."):
-            # the fine-tuning variant sets its own: no lr scheduler, so both hosts step the same learning rates
+            # the fine-tuning variant sets its own: no lr scheduler, so both interfaces step the same learning rates
             assert not loaded.module_cfg.lr_scheduler_init, key
             assert loaded.datamodule_cfg.prepare_data_map_cfg["batched"] is True, key
             continue
