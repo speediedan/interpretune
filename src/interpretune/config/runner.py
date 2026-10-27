@@ -188,6 +188,9 @@ class SessionRunnerCfg:
     # validate with gradients enabled (e.g. for an objective computed with `torch.autograd.grad`) rather than under
     # `torch.inference_mode()`
     validate_with_grad: bool = False
+    # resume training from a core-loop checkpoint (`interpretune.runners.core.checkpoint_state`, or a path to one saved
+    # with `torch.save`) taken at the end of an epoch; training continues at the next epoch
+    resume_from: str | Path | Mapping[str, Any] | None = None
 
     def __post_init__(self):
         self.callbacks = tuple(

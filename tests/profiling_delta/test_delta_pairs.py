@@ -33,11 +33,16 @@ from tests.runif import RunIf
 BOUNDS_FILE = Path(__file__).with_name("delta_bounds.yaml")
 PAIRED = sorted(name for name in COMPOSITIONS if name != "synthetic")
 # device total each pair needs, in GiB: the larger arm's measured reserved peak (NVIDIA and AMD, 2026-10-25 freeze
-# runs: train pairs up to 2.78, bf16 1.36, phased 0.88, test 0.77) plus about 0.4 of context, rounded up; the arms run
-# one at a time
-PAIR_GPU_MEM_GB = {"core_hf_train_bf16": 2.0, "core_hf_fts_train": 1.5}
+# runs: train pairs up to 2.78, bf16 1.36, phased 0.88, test 0.77; 2026-10-26: sae_lens_train 3.41, circuit_tracer_test
+# 4.19, other test pairs up to 0.86) plus about 0.4 of context, rounded up; the arms run one at a time
+PAIR_GPU_MEM_GB = {
+    "core_hf_train_bf16": 2.0,
+    "core_hf_fts_train": 1.5,
+    "sae_lens_train": 4.0,
+    "circuit_tracer_test": 5.0,
+}
 PAIR_GPU_MEM_GB.update({name: 3.5 for name in PAIRED if name.endswith("_train") and name not in PAIR_GPU_MEM_GB})
-PAIR_GPU_MEM_GB.update({name: 1.5 for name in PAIRED if name.endswith("_test")})
+PAIR_GPU_MEM_GB.update({name: 1.5 for name in PAIRED if name.endswith("_test") and name not in PAIR_GPU_MEM_GB})
 
 
 def _artifact_dir(tmp_path: Path) -> Path:
