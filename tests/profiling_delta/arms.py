@@ -96,7 +96,14 @@ def synthetic_arm(recorder: StepRecorder, steps: int, seed: int, plant: dict[str
 ########################################################################################################################
 
 
-def _core_cfg(phase: str, steps: int, device_type: str, precision: str | None, adapter_ctx: tuple | None = None):
+def _core_cfg(
+    phase: str,
+    steps: int,
+    device_type: str,
+    precision: str | None,
+    adapter_ctx: tuple | None = None,
+    cfg_extras: dict[str, Any] | None = None,
+):
     from tests.parity_acceptance.cfg_aliases import bs_override
     from tests.base_defaults import BaseCfg
 
@@ -123,6 +130,9 @@ def _core_cfg(phase: str, steps: int, device_type: str, precision: str | None, a
             from interpretune.adapters.nnsight.config import NNsightConfig
 
             kwargs["nnsight_cfg"] = NNsightConfig(model_name="openai-community/gpt2")  # as the absolute cases use
+    if cfg_extras:
+        # a callable builds the extras in the arm's subprocess, so importing this module never imports an adapter
+        kwargs.update(cfg_extras() if callable(cfg_extras) else cfg_extras)
     return _DeltaCfg(**kwargs)
 
 
@@ -159,6 +169,7 @@ def core_hf_it_arm(
     phase: str,
     precision: str | None = None,
     adapter_ctx: tuple[str, ...] | None = None,
+    cfg_extras: dict[str, Any] | None = None,
 ) -> None:
     from lightning.fabric.utilities.seed import seed_everything
 
@@ -166,7 +177,8 @@ def core_hf_it_arm(
 
     seed_everything(seed)
     with _tmpdir() as tmp:
-        cfg = _core_cfg(phase, steps, _device().type, precision, _ctx(*adapter_ctx) if adapter_ctx else None)
+        ctx = _ctx(*adapter_ctx) if adapter_ctx else None
+        cfg = _core_cfg(phase, steps, _device().type, precision, ctx, cfg_extras)
         session = _session(cfg, tmp)
         runner = init_it_runner(session, cfg)
         module = session.module
@@ -216,6 +228,7 @@ class _UpstreamSpec:
     tokenizer: Any = None
     tl_bridge: bool = False
     nnsight_kwargs: dict[str, Any] | None = None
+    sae_refs: tuple[tuple[str, str], ...] = ()  # (release, sae_id) per SAE spliced in at init
 
 
 def _import(path: str):
@@ -231,6 +244,19 @@ def _label_token_ids(it_cfg) -> torch.Tensor | None:
     return None
 
 
+def _sae_refs(it_cfg) -> tuple[tuple[str, str], ...]:
+    """The pretrained SAE references a sae_lens session splices in, so the upstream arm loads the same ones
+    natively."""
+    from interpretune.adapters.sae_lens.config import SAELensFromPretrainedConfig
+
+    refs = []
+    for sae_cfg in getattr(it_cfg, "sae_cfgs", None) or ():
+        if not isinstance(sae_cfg, SAELensFromPretrainedConfig):
+            raise ValueError("the sae_lens delta pairs reproduce pretrained SAEs only")
+        refs.append((sae_cfg.release, sae_cfg.sae_id))
+    return tuple(refs)
+
+
 def _nnsight_kwargs(it_cfg) -> dict[str, Any] | None:
     ns_cfg = getattr(it_cfg, "nnsight_cfg", None)
     if ns_cfg is None:
@@ -239,7 +265,11 @@ def _nnsight_kwargs(it_cfg) -> dict[str, Any] | None:
 
 
 def _upstream_spec(
-    phase: str, steps: int, precision: str | None, adapter_ctx: tuple[str, ...] | None = None
+    phase: str,
+    steps: int,
+    precision: str | None,
+    adapter_ctx: tuple[str, ...] | None = None,
+    cfg_extras: dict[str, Any] | None = None,
 ) -> _UpstreamSpec:
     """Realize interpretune's session for this composition on the CPU and read off the configuration to reproduce.
 
@@ -249,7 +279,7 @@ def _upstream_spec(
     from interpretune.base.call import it_init
 
     with _tmpdir() as tmp:
-        cfg = _core_cfg(phase, steps, "cpu", precision, _ctx(*adapter_ctx) if adapter_ctx else None)
+        cfg = _core_cfg(phase, steps, "cpu", precision, _ctx(*adapter_ctx) if adapter_ctx else None, cfg_extras)
         session = _session(cfg, tmp)
         it_init(**session)
         module, dm = session.module, session.datamodule
@@ -258,7 +288,8 @@ def _upstream_spec(
         hf_cfg = module.it_cfg.hf_from_pretrained_cfg
         gen_cfg = module.it_cfg.generative_step_cfg
         # a TransformerLens session holds a bridge over the HF model; the bridge keeps the HF config as `config`
-        tl_bridge = "transformer_lens" in (adapter_ctx or ())
+        # (a sae_lens session's wrapper is a bridge subclass, so it counts as one here too)
+        tl_bridge = bool({"transformer_lens", "sae_lens"} & set(adapter_ctx or ()))
         spec = _UpstreamSpec(
             model_class=_import(hf_cfg.model_head) if tl_bridge else type(module.model),
             model_name=module.it_cfg.model_name_or_path,
@@ -278,14 +309,48 @@ def _upstream_spec(
             tokenizer=dm.tokenizer,
             tl_bridge=tl_bridge,
             nnsight_kwargs=_nnsight_kwargs(module.it_cfg),
+            sae_refs=_sae_refs(module.it_cfg),
         )
         del session, module, dm, loader
     return spec
 
 
+class _SaeRoot(nn.Module):
+    """A native SAETransformerBridge with its spliced SAEs registered, so one optimizer sees what training them
+    takes.
+
+    ``SAETransformerBridge.add_sae`` keeps a spliced SAE outside the bridge's module tree, so its parameters are in no
+    ``parameters()`` and nothing native steps them; anyone training SAEs without interpretune has to register them
+    somewhere, as interpretune's ``attached_saes`` does. The same SAE objects are held here, so the splice and the
+    optimizer act on one copy.
+    """
+
+    def __init__(self, bridge: nn.Module, saes: list[nn.Module]) -> None:
+        super().__init__()
+        self.bridge = bridge
+        self.saes = nn.ModuleList(saes)
+
+    def forward(self, *args, **kwargs):
+        return self.bridge(*args, **kwargs)
+
+    def generate(self, *args, **kwargs):
+        return self.bridge.generate(*args, **kwargs)
+
+
 def _upstream_model(spec: _UpstreamSpec, dev: torch.device) -> nn.Module:
     if spec.nnsight_kwargs is not None:
         return _nnsight_model(spec, dev)
+    if spec.sae_refs:
+        from sae_lens import SAE, SAETransformerBridge
+
+        # SAELens's own entry points: its bridge factory and `SAE.from_pretrained`, spliced with `add_sae`
+        bridge = SAETransformerBridge.boot_transformers(spec.model_name, device=dev, dtype=spec.dtype)
+        saes = []
+        for release, sae_id in spec.sae_refs:
+            sae = SAE.from_pretrained(release, sae_id, device=str(dev))
+            bridge.add_sae(sae)
+            saes.append(sae)
+        return _SaeRoot(bridge, saes)
     if spec.tl_bridge:
         from transformer_lens.model_bridge import TransformerBridge
 
@@ -362,8 +427,9 @@ def core_hf_upstream_arm(
     phase: str,
     precision: str | None = None,
     adapter_ctx: tuple[str, ...] | None = None,
+    cfg_extras: dict[str, Any] | None = None,
 ) -> None:
-    spec = _upstream_spec(phase, steps, precision, adapter_ctx)
+    spec = _upstream_spec(phase, steps, precision, adapter_ctx, cfg_extras)
     torch.manual_seed(seed)
     dev = _device()
     model = _upstream_model(spec, dev)
@@ -689,6 +755,87 @@ def core_hf_fts_upstream_arm(recorder: StepRecorder, steps: int, seed: int) -> N
 
 
 ########################################################################################################################
+# Circuit-tracer attribution: interpretune's circuit_tracer composition versus a bare ReplacementModel
+########################################################################################################################
+
+# The smallest model/transcoder pair the circuit-tracer notebooks run, and the one the test registry's
+# circuit-tracer composition uses (google/gemma-3-1b-pt with the width_16k gemma-scope transcoders). An
+# attribution is a step. Replacement-model construction dominates both arms' retained bytes, which is the
+# point: the native arm subtracts it out, leaving interpretune's attribution orchestration.
+CT_MODEL_NAME = "google/gemma-3-1b-pt"
+CT_TRANSCODER_SET = "mwhanna/gemma-scope-2-1b-pt/transcoder_all/width_16k_l0_small_affine"
+CT_PROMPT = "Fact: the capital of the state containing Dallas is"
+CT_ATTRIBUTION_KWARGS: dict[str, Any] = {
+    "attribution_targets": ["▁Dallas", "▁Austin"],
+    "max_n_logits": 10,
+    "desired_logit_prob": 0.95,
+    "batch_size": 256,
+    "max_feature_nodes": 8192,
+    "offload": "cpu",
+    "verbose": False,
+}
+
+
+def _ct_note_input(recorder: StepRecorder, tokenizer) -> None:
+    recorder.note_input({"input_ids": tokenizer(CT_PROMPT, return_tensors="pt")["input_ids"]})
+
+
+def circuit_tracer_it_arm(recorder: StepRecorder, steps: int, seed: int) -> None:
+    from lightning.fabric.utilities.seed import seed_everything
+    from transformers import AutoTokenizer
+
+    from tests.conftest import FixtPhase, session_fixture_hook_exec
+    from tests.configuration import config_modules
+    from tests.core.cfg_aliases import CircuitTracerNNsightGemma3
+
+    seed_everything(seed)
+    tokenizer = AutoTokenizer.from_pretrained(CT_MODEL_NAME)
+    with _tmpdir() as tmp:
+        cfg = CircuitTracerNNsightGemma3(device_type=_device().type)
+        session = config_modules(cfg, "profiling_delta_ct", {}, tmp)
+        session_fixture_hook_exec(session, FixtPhase.setup)
+        module = session.module
+        for _ in range(steps):
+            _ct_note_input(recorder, tokenizer)
+            module.generate_attribution_graph(CT_PROMPT, verbose=False)
+            recorder.step_end()
+            # the module retains every graph it generates; the native arm discards each, so match that or the
+            # retained graphs read as a leak in the interpretune arm alone
+            module.attribution_graphs.clear()
+        del session, module
+
+
+def circuit_tracer_upstream_arm(recorder: StepRecorder, steps: int, seed: int) -> None:
+    from circuit_tracer import ReplacementModel, attribute
+    from transformers import AutoTokenizer
+
+    from tests.core.cfg_aliases import CircuitTracerNNsightGemma3
+
+    torch.manual_seed(seed)
+    tokenizer = AutoTokenizer.from_pretrained(CT_MODEL_NAME)
+    # circuit-tracer's own factory with the kwargs the interpretune composition passes it, read from its config:
+    # the dtype (bfloat16, not float32) and the lazy-encoder setting (on when offloading) move gigabytes
+    cfg = CircuitTracerNNsightGemma3().circuit_tracer_cfg
+    assert cfg is not None and cfg.transcoder_set == CT_TRANSCODER_SET
+    model = ReplacementModel.from_pretrained(
+        CT_MODEL_NAME,
+        CT_TRANSCODER_SET,
+        backend=cfg.backend,
+        dtype=cfg.dtype,
+        lazy_encoder=cfg.lazy_encoder if cfg.lazy_encoder is not None else (cfg.offload == "cpu"),
+        lazy_decoder=cfg.lazy_decoder,
+        device_map=0,
+        device=str(_device()),
+    )
+    for _ in range(steps):
+        _ct_note_input(recorder, tokenizer)
+        graph = attribute(prompt=CT_PROMPT, model=model, **CT_ATTRIBUTION_KWARGS)
+        recorder.step_end()
+        del graph
+    del model
+
+
+########################################################################################################################
 # Registry
 ########################################################################################################################
 
@@ -743,6 +890,45 @@ COMPOSITIONS["nnsight_train"] = Composition(
     "trace of the same checkpoint in a plain torch loop",
     it_arm=partial(core_hf_it_arm, phase="train", adapter_ctx=("core", "nnsight")),
     upstream_arm=partial(core_hf_upstream_arm, phase="train", adapter_ctx=("core", "nnsight")),
+)
+
+
+def _sae_cfg_extras() -> dict[str, Any]:
+    """One gpt2-small-res-jb SAE spliced in at init, as the sae_lens pairs measure (interpretune#825)."""
+    from interpretune.adapters.sae_lens.config import SAELensFromPretrainedConfig
+
+    return {
+        "add_saes_on_init": True,
+        "sae_cfgs": [SAELensFromPretrainedConfig(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre")],
+    }
+
+
+for _phase in ("train", "test"):
+    COMPOSITIONS[f"sae_lens_{_phase}"] = Composition(
+        name=f"sae_lens_{_phase}",
+        description="core session with the sae_lens adapter (SAEs spliced at init on gpt2) versus SAELens's own "
+        "SAETransformerBridge with the same SAEs attached through add_sae",
+        it_arm=partial(core_hf_it_arm, phase=_phase, adapter_ctx=("core", "sae_lens"), cfg_extras=_sae_cfg_extras),
+        upstream_arm=partial(
+            core_hf_upstream_arm, phase=_phase, adapter_ctx=("core", "sae_lens"), cfg_extras=_sae_cfg_extras
+        ),
+    )
+COMPOSITIONS["nnsight_test"] = Composition(
+    name="nnsight_test",
+    description="core session with the NNsight adapter, test_step (generative classification through the Envoy) versus "
+    "the same call on a native LanguageModel",
+    it_arm=partial(core_hf_it_arm, phase="test", adapter_ctx=("core", "nnsight")),
+    upstream_arm=partial(core_hf_upstream_arm, phase="test", adapter_ctx=("core", "nnsight")),
+)
+COMPOSITIONS["circuit_tracer_test"] = Composition(
+    name="circuit_tracer_test",
+    description="core session with the circuit_tracer adapter (NNsight backend, gemma-3-1b-pt) attributing one "
+    "prompt per step versus a bare circuit-tracer ReplacementModel attributing the same prompt",
+    it_arm=circuit_tracer_it_arm,
+    upstream_arm=circuit_tracer_upstream_arm,
+    # an attribution is far heavier than a training step: one warmup attribution and a 3-attribution window
+    warmup=1,
+    window=3,
 )
 COMPOSITIONS["lightning_train"] = Composition(
     name="lightning_train",
