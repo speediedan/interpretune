@@ -251,6 +251,38 @@ def test_a_callback_given_as_configuration_is_instantiated():
     assert isinstance(fts, FTSCoreCallback) and fts.schedule == TWO_PHASES and kept is snaps
 
 
+def test_object_valued_tuning_scheduler_kwargs_are_built_from_configuration(tmp_path):
+    """A transition or checkpoint policy given as a `class_path` mapping is instantiated when the tuning scheduler
+    is built (#847), and the callback's own arguments stay plain configuration."""
+    from finetuning_scheduler.core.checkpoint import BestCheckpoint
+    from finetuning_scheduler.core.transitions import PlateauTransition
+
+    transition = {
+        "class_path": f"{PlateauTransition.__module__}.PlateauTransition",
+        "init_args": {"monitor": "val_loss"},
+    }
+    checkpoint = {
+        "class_path": f"{BestCheckpoint.__module__}.BestCheckpoint",
+        "init_args": {"dirpath": str(tmp_path), "monitor": "val_loss"},
+    }
+    kwargs = {"transition": transition, "checkpoint": checkpoint, "max_depth": 1}
+    fts = FTSCoreCallback(TWO_PHASES, tuning_scheduler_kwargs=kwargs)
+    module = core_loop.TinyModule()
+    module.it_cfg.optimizer_init = {"class_path": "torch.optim.SGD", "init_args": {"lr": 0.05}}
+    core_loop._train(module, max_epochs=1, callbacks=[fts])
+    assert isinstance(fts.tuning_scheduler._checkpoint, BestCheckpoint)
+    assert fts.tuning_scheduler_kwargs == kwargs and fts.tuning_scheduler_kwargs["transition"] is transition
+
+
+def test_a_list_of_class_path_mappings_is_built_element_by_element():
+    from interpretune.tuning.core_loop import _instantiate_config_value
+
+    sgd = {"class_path": "torch.optim.SGD", "init_args": {"params": [torch.zeros(1, requires_grad=True)], "lr": 0.1}}
+    built = _instantiate_config_value([sgd, 3])
+    assert isinstance(built, list) and isinstance(built[0], torch.optim.SGD) and built[1] == 3
+    assert _instantiate_config_value({"plain": 1}) == {"plain": 1}
+
+
 def test_fts_core_callback_round_trips_through_a_parsed_configuration(tmp_path, get_it_session__core_cust__initonly):
     """A core-loop FTS run built from its parsed configuration alone: the configuration dumps and parses back
     unchanged, and two runs built from it train the same phases under the same tuning scheduler configuration."""

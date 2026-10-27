@@ -11,6 +11,8 @@ The benchmark runner supports two CLI modes, auto-detected from the registry ent
 
 To explicitly set the CLI mode for a registry entry, add `cli_mode: core` or `cli_mode: lightning`. If omitted, the mode is inferred from `adapter_ctx`.
 
+Most benchmarks evaluate a pretrained model (`test`). A fine-tuning benchmark sets `run_command: train` (core CLI) or `run_command: fit` (Lightning CLI): it trains the configuration and is scored on the last validation accuracy the run reports, and a `--limit-batches` smoke run limits its training and validation batches instead of its test batches. Its `config_path` may be a `hub://<org>/<repo>/<path>` reference to a run configuration a cached component ships (for example `hub://speediedan/rte/runs/rte_ft.gemma3.core.yaml`), which the CLI resolves from the components cache; `timeout_s` raises the default 1800 s limit when a run needs it.
+
 ## Quick Start
 
 ```bash
@@ -51,10 +53,12 @@ The registry (`benchmark_registry.yaml`) uses a nested structure:
 benchmarks:
   <experiment_name>:           # e.g., rte_boolq
     <benchmark_id>:            # e.g., gemma2_2b_it_l
-      config_path: ...         # YAML config path relative to repo root
+      config_path: ...         # YAML config path relative to repo root, or a hub:// run configuration
       expected_accuracy: 0.809 # Target metric
       tolerance: 0.03          # Acceptable deviation from target
       cli_mode: lightning      # Optional: "lightning" or "core" (auto-detected from adapter_ctx)
+      run_command: test        # Optional: "test" (default), or "train"/"fit" for a fine-tuning benchmark
+      timeout_s: 1800          # Optional: the run's time limit in seconds
       adapter_ctx: [...]       # Adapters composing the ITSession
       backends: [...]          # Model/analysis backends
       description: "..."       # Human-readable description

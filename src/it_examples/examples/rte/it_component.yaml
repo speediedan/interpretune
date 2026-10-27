@@ -30,6 +30,8 @@ module:
     variants:
       rte_demo:
         description: demo-scale prompting flavor used by the example notebooks
+      rte_ft:
+        description: phased fine-tuning with finetuning-scheduler, on the core loop or Lightning (runs/)
   configs:
     rte_demo.gemma2.circuit_tracer: configs/rte_demo.gemma2.circuit_tracer.yaml
     rte_demo.gemma2.circuit_tracer+nnsight: configs/rte_demo.gemma2.circuit_tracer+nnsight.yaml
@@ -38,7 +40,14 @@ module:
     rte_demo.gpt2.core: configs/rte_demo.gpt2.core.yaml
     rte_demo.gpt2.nnsight+sae_lens: configs/rte_demo.gpt2.nnsight+sae_lens.yaml
     rte_demo.gpt2.sae_lens: configs/rte_demo.gpt2.sae_lens.yaml
+    rte_ft.gemma3.core: configs/rte_ft.gemma3.core.yaml
+    rte_ft.gpt2.core: configs/rte_ft.gpt2.core.yaml
 datamodules:
   rte_boolq:
     entrypoint: rte_boolq.py
     config: configs/datamodule.rte_boolq.yaml
+# files the component ships for its users (#765, #847): finetuning-scheduler schedules, and CLI run configurations for
+# the `rte_ft` variant on each training-loop interface (`interpretune --config hub://speediedan/rte/runs/<file>`)
+extra_files:
+- ft_schedules
+- runs
