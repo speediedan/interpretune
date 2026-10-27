@@ -1,6 +1,7 @@
 from typing import Any, Tuple, List
 import logging
 import os
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,6 +53,26 @@ class ChatTemplatePromptConfig(PromptConfig):
     def bind_tokenizer(self, tokenizer: Any) -> None:
         """Bind the datamodule's tokenizer so template construction can delegate to it."""
         self._tokenizer = tokenizer
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Leave the bound tokenizer out of a pickled config.
+
+        The binding is runtime state, not configuration. A Lightning datamodule's hyperparameters hold its config, so
+        a checkpoint would otherwise pickle the tokenizer, and Lightning, which loads checkpoints with
+        ``weights_only=True``, refuses it (restoring a best checkpoint at a phase transition included). The owning
+        datamodule binds its tokenizer again when it prepares data.
+        """
+        state = self.__dict__.copy()
+        state["_tokenizer"] = None
+        return state
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "ChatTemplatePromptConfig":
+        """Copy the configuration, sharing the bound tokenizer rather than copying it."""
+        clone = type(self).__new__(type(self))
+        memo[id(self)] = clone
+        for name, value in self.__dict__.items():
+            setattr(clone, name, value if name == "_tokenizer" else deepcopy(value, memo))
+        return clone
 
     def build_messages(self, task_prompt: str) -> list[dict[str, str]]:
         """Wrap the task prompt as a single user message.

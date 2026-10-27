@@ -48,13 +48,21 @@ def pull(
     A key-less pull also materializes the payloads the manifest's non-configuration kinds need (the
     adapters and promptconfigs entrypoints, the hookmaps documents), pinned to the resolved commit, so the
     cache-only loaders (``load_hub_adapter``, ``load_hookmaps``, ``compose_ref``) can complete from the
-    snapshot. Loading never downloads; this is the verb that downloads on purpose.
+    snapshot, and the manifest's ``extra_files`` (fine-tuning schedules, CLI run configurations), which
+    configurations and the CLI reference as ``hub://<repo_id>/<path>``. Loading never downloads; this is the verb
+    that downloads on purpose.
     """
-    from interpretune.hub.components import pull_component_config, pull_component_manifest, pull_component_payloads
+    from interpretune.hub.components import (
+        pull_component_config,
+        pull_component_extra_files,
+        pull_component_manifest,
+        pull_component_payloads,
+    )
 
     if key is None:
         manifest, commit = pull_component_manifest(repo_id, revision=revision, cache_dir=cache_dir, token=token)
         pull_component_payloads(repo_id, manifest, commit, cache_dir=cache_dir, token=token)
+        pull_component_extra_files(repo_id, manifest, commit, cache_dir=cache_dir, token=token)
         return manifest, commit
     canonical, body = pull_component_config(repo_id, key, revision=revision, cache_dir=cache_dir, token=token)
     return _hydrate_component_body(canonical, body, cache_dir=cache_dir)
