@@ -94,6 +94,15 @@ class CircuitTracerConfig(ITSerializableCfg):
     ``None`` (default) adds none, and lazily loaded weights are left out of the view.
     """
     lazy_delta_rank: int | None = None
+    """Let the tunable view tune the base model's parameters (role ``base``) under the replacement model's
+    transcoders, which stay ``instrument`` unless promoted.
+
+    ``False`` (default) refuses base-model names by name. The transcoders were trained on the untuned base model's
+    activations, so tuning the base moves what they are asked to reconstruct: attribution graphs stay complete (the
+    error nodes absorb the mismatch) but carry more of their influence through those error nodes. Measure that drift
+    with ``interpretune.adapters.circuit_tracer.drift.TranscoderFitMeter`` before trusting graphs from a tuned base.
+    """
+    tune_base: bool = False
     """Whether to display detailed progress information."""
     verbose: bool = True
 

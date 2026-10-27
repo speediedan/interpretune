@@ -1,5 +1,6 @@
 """The circuit-tracer composition's tunable view (#787): transcoders as promotable instruments, the base model
-refused by name, and low-rank corrections that let lazily loaded transcoder weights be tuned."""
+refused by name unless ``tune_base`` asks for it (#813), attribution unaffected by what a schedule thawed, and low-
+rank corrections that let lazily loaded transcoder weights be tuned."""
 
 from __future__ import annotations
 
@@ -24,13 +25,15 @@ from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig  # n
 from interpretune.adapters.circuit_tracer.tunable_view import (  # noqa: E402
     BASE_MODEL_REASON,
     DISK_OFFLOAD_REASON,
+    PROMOTE_BASE_REASON,
     CircuitTracerView,
     CrossLayerTranscoderWithDeltas,
     SingleLayerTranscoderWithDeltas,
     attach_lazy_deltas,
+    attribution_frozen,
     lazy_weights,
 )
-from tests.core.circuit_tracer_toy import tiny_gemma2_replacement_model  # noqa: E402
+from tests.core.circuit_tracer_toy import TOY_PROMPT, only_token_zero_special, tiny_gemma2_replacement_model  # noqa: E402
 
 D_MODEL, D_TC = 8, 32
 
@@ -176,8 +179,95 @@ class TestTranscoderView:
         with pytest.raises(TypeError, match="not a transcoder layout this view knows"):
             CircuitTracerView(nn.Linear(2, 2), nn.Linear(2, 2))
 
-    def test_base_reason_names_the_tracking_issue(self):
-        assert "interpretune#813" in BASE_MODEL_REASON
+    def test_base_reason_names_the_opt_in(self):
+        assert "tune_base=True" in BASE_MODEL_REASON
+
+
+def _base_names(module: nn.Module) -> list[str]:
+    return [n for n, _ in module.named_parameters() if ".transcoders." not in n]
+
+
+class TestBaseTuning:
+    """``tune_base``: the base model's parameters as ``base``, beside transcoders that stay ``instrument``."""
+
+    def test_base_parameters_resolve_as_base(self):
+        module = _toy_module(tune_base=True)
+        view = as_view(module.build_tunable_view())
+        base = _base_names(module)
+        assert base and set(base) <= {n for n, _ in view.logical_named_parameters()}
+        assert set(view.roles().values()) == {"instrument"} and not set(base) & set(view.roles())
+        assert view.to_physical(base[:2]) == {n: (n,) for n in base[:2]}
+        assert "base" in view.support().declared_roles
+
+    def test_base_parameters_are_not_promoted(self):
+        view = as_view(_toy_module(tune_base=True).build_tunable_view())
+        with pytest.raises(Unresolvable) as excinfo:
+            view.promote(_base_names(view.root)[:1], "latent:transcoder")
+        assert PROMOTE_BASE_REASON in str(excinfo.value)
+
+    def test_default_schedule_thaws_base_pairs_from_the_last(self):
+        """The base model in pairs from its last parameter; the transcoder groups follow, empty until a
+        promotion."""
+        from finetuning_scheduler.core.compile import view_default_schedule
+
+        module = _toy_module(tune_base=True)
+        base = _base_names(module)
+        phases = [phase["params"] for phase in view_default_schedule(module.build_tunable_view()).values()]
+        assert phases[0] == base[::-1][:2]
+        assert sorted(n for phase in phases for n in phase) == sorted(base)
+
+    def test_conformance(self):
+        """Finetuning-scheduler's cases with the base model tunable and one transcoder layer promoted."""
+        report = TunableViewConformance(lambda: _promoted_view(_toy_module(tune_base=True))).run()
+        assert report.ok, report.failures
+        assert {"step_changes_only_thawed", "checkpoint_round_trip", "frozen_roles_refuse"} <= set(report.ran)
+
+
+class TestAttributionAfterThawing:
+    """Circuit-tracer freezes the replacement model at construction and attributes with ``backward()``, so what a
+    schedule thawed must not reach attribution."""
+
+    @staticmethod
+    def _thawed(embedding: bool):
+        model = tiny_gemma2_replacement_model()
+        tc = {id(p) for p in model.transcoders.parameters()}
+        thawed = [p for n, p in model.named_parameters() if id(p) not in tc and (embedding or "embed" not in n)]
+        for p in thawed:
+            p.requires_grad_(True)
+        return model, thawed
+
+    @staticmethod
+    def _attribute(model):
+        from circuit_tracer import attribute
+
+        with only_token_zero_special(model):
+            return attribute(TOY_PROMPT, model, max_n_logits=3, batch_size=8, verbose=False)
+
+    def test_unguarded_attribution_is_changed_by_thawed_base_parameters(self):
+        """The positive control: without the guard a thawed embedding fails attribution, and other thawed base
+        parameters accumulate its gradients."""
+        model, _ = self._thawed(embedding=True)
+        with pytest.raises(RuntimeError, match="leaf variables"):
+            self._attribute(model)
+        model, thawed = self._thawed(embedding=False)
+        self._attribute(model)
+        assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in thawed)
+
+    def test_guarded_attribution_leaves_thawed_parameters_untouched(self):
+        model, thawed = self._thawed(embedding=True)
+        with attribution_frozen(model):
+            graph = self._attribute(model)
+        assert graph.adjacency_matrix.numel() > 0
+        assert all(p.grad is None for p in thawed) and all(p.requires_grad for p in thawed)
+
+    def test_the_module_attributes_under_the_guard(self):
+        module = _toy_module(tune_base=True)
+        module.attribution_graphs = []
+        for p in module.parameters():
+            p.requires_grad_(True)
+        with only_token_zero_special(module.replacement_model):
+            module.generate_attribution_graph(TOY_PROMPT, max_n_logits=3, batch_size=8, verbose=False)
+        assert all(p.grad is None and p.requires_grad for p in module.parameters())
 
 
 class TestLazyCorrections:

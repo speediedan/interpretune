@@ -117,8 +117,9 @@ class BaseCircuitTracerModule(BaseITModule):
 
     def build_tunable_view(self) -> Any | None:
         """The transcoders' view (:class:`~interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`):
-        every transcoder tensor ``instrument`` until promoted, base-model tensors refused by name, and the whole
-        composition refused while ``offload='disk'``.
+        every transcoder tensor ``instrument`` until promoted, base-model tensors refused by name unless
+        ``CircuitTracerConfig.tune_base`` makes them ``base``, and the whole composition refused while
+        ``offload='disk'``.
 
         A composition with no replacement model loaded is refused.
         """
@@ -141,7 +142,7 @@ class BaseCircuitTracerModule(BaseITModule):
                 " corrections, or load them eagerly (`lazy_encoder=False`, `lazy_decoder=False`)."
             )
         refusal = DISK_OFFLOAD_REASON if cfg is not None and cfg.offload == "disk" else None
-        return CircuitTracerView(self, transcoders, refusal=refusal)
+        return CircuitTracerView(self, transcoders, refusal=refusal, tune_base=cfg is not None and cfg.tune_base)
 
     def register_tunable_modules(self) -> None:
         """Make the transcoders this module's parameters, once, and give lazily loaded transcoder weights their
@@ -344,8 +345,10 @@ class BaseCircuitTracerModule(BaseITModule):
         # Override with any provided kwargs
         attribution_kwargs.update(kwargs)
 
-        # Generate the attribution graph
-        graph = attribute(prompt=prompt, model=self.replacement_model, **attribution_kwargs)
+        from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen
+
+        with attribution_frozen(self.replacement_model):
+            graph = attribute(prompt=prompt, model=self.replacement_model, **attribution_kwargs)
 
         # Store the graph
         instantiated_graph = InstantiatedGraph(handle=graph, metadata={"prompt": prompt, **attribution_kwargs})
