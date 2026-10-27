@@ -123,4 +123,6 @@ run in which no case applies fails. Each case builds a fresh session, because ca
 | a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |
 
 Any composition can also carry [latent models](fts_tuning_latent_models.md) (SAEs, transcoders and other
-dictionaries) spliced in at a site, which take the role `latent:<name>`.
+dictionaries) spliced in at a site, which take the role `latent:<name>`, and learned
+[interventions](fts_tuning_interventions.md) (steering vectors and other site rewrites), which take the role
+`intervention:<kind>`.
