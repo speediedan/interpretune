@@ -117,3 +117,6 @@ run in which no case applies fails. Each case builds a fresh session, because ca
 | [circuit-tracer](fts_tuning_circuit_tracer.md) | refused, with the reason; tuning paths tracked in [#813](https://github.com/speediedan/interpretune/issues/813), [#787](https://github.com/speediedan/interpretune/issues/787) and [#709](https://github.com/speediedan/interpretune/issues/709) | |
 | [interp-engine (hub adapter)](fts_tuning_interp_engine.md) | interpretune's default identity view until the adapter declares its own; its circuit-tracer composition takes the circuit-tracer refusal | none declared yet |
 | a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |
+
+Any composition can also carry [latent models](fts_tuning_latent_models.md) (SAEs, transcoders and other
+dictionaries) spliced in at a site, which take the role `latent:<name>`.

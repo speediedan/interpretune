@@ -172,6 +172,7 @@ sae_lens <usage/fts_tuning_sae_lens>
 nnsight <usage/fts_tuning_nnsight>
 circuit-tracer <usage/fts_tuning_circuit_tracer>
 interp-engine (hub adapter) <usage/fts_tuning_interp_engine>
+Latent models <usage/fts_tuning_latent_models>
 ```
 
 ```{toctree}
