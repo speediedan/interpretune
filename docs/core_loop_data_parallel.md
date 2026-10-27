@@ -77,8 +77,9 @@ else:
 - Without `drop_last`, `DistributedSampler` pads the last round with repeated samples so that every rank takes the same
   number of batches. A metric averaged over a dataset that does not divide evenly therefore counts a few samples twice.
 - The core loop's `checkpoint_state` is not distributed-aware.
-- Phased tuning with `FTSCoreCallback` under `ddp` or `fsdp2` needs finetuning-scheduler's FSDP2 adapter, which is not
-  in a release yet.
+- Phased tuning with `FTSCoreCallback` under `ddp` or `fsdp2` is not covered by a test yet. The pinned
+  finetuning-scheduler carries an FSDP2 adapter that checkpoints sharded modules through
+  `torch.distributed.checkpoint`, but the combination with these placements has not been run.
 - Mixed precision still uses the loop's `torch.autocast` rather than FSDP2's `MixedPrecisionPolicy`.
 - The session is built fully on each rank before it is sharded, so each rank must fit the whole model once. Building on
   the meta device or the CPU and sharding before materializing is the next step for 12B-to-27B models.
