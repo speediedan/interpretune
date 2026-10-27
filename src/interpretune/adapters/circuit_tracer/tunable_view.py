@@ -224,10 +224,18 @@ def attach_lazy_deltas(transcoders: nn.Module, rank: int) -> list[str]:
     return lazy_weights(transcoders)
 
 
+REFIT_SUGGESTION = (
+    "Attributing with base-model parameters thawed (`CircuitTracerConfig.tune_base`): the transcoders were trained on"
+    " the untuned base model, so the graph stays complete but may route more influence through error nodes. Measure"
+    " the transcoders' fit with `interpretune.adapters.circuit_tracer.drift.TranscoderFitMeter`; if it has degraded,"
+    " consider re-fitting them by promoting them to `latent:transcoder` and tuning them against the tuned base."
+)
+
+
 @contextmanager
-def attribution_frozen(replacement_model: Any) -> Iterator[None]:
+def attribution_frozen(replacement_model: Any) -> Iterator[list[nn.Parameter]]:
     """Run circuit-tracer attribution with every parameter of ``replacement_model`` frozen, restoring each
-    parameter's ``requires_grad`` afterwards.
+    parameter's ``requires_grad`` afterwards. Yields the parameters it froze.
 
     circuit-tracer freezes the replacement model at construction and attributes with ``backward()``, so a parameter
     a schedule has since thawed changes attribution: a thawed embedding fails it outright (its output is no longer a
@@ -239,7 +247,7 @@ def attribution_frozen(replacement_model: Any) -> Iterator[None]:
     for p in thawed:
         p.requires_grad_(False)
     try:
-        yield
+        yield thawed
     finally:
         for p in thawed:
             p.requires_grad_(True)

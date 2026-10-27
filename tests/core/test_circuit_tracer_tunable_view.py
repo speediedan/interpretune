@@ -265,9 +265,19 @@ class TestAttributionAfterThawing:
         module.attribution_graphs = []
         for p in module.parameters():
             p.requires_grad_(True)
-        with only_token_zero_special(module.replacement_model):
+        with only_token_zero_special(module.replacement_model), pytest.warns(UserWarning, match="consider re-fitting"):
             module.generate_attribution_graph(TOY_PROMPT, max_n_logits=3, batch_size=8, verbose=False)
         assert all(p.grad is None and p.requires_grad for p in module.parameters())
+
+    def test_the_refit_suggestion_needs_a_thawed_base(self, recwarn):
+        """Thawed transcoders alone (the latent path) do not move what the transcoders reconstruct."""
+        module = _toy_module(tune_base=True)
+        module.attribution_graphs = []
+        for n, p in module.named_parameters():
+            p.requires_grad_(".transcoders." in n)
+        with only_token_zero_special(module.replacement_model):
+            module.generate_attribution_graph(TOY_PROMPT, max_n_logits=3, batch_size=8, verbose=False)
+        assert not [w for w in recwarn if "consider re-fitting" in str(w.message)]
 
 
 class TestLazyCorrections:

@@ -345,10 +345,14 @@ class BaseCircuitTracerModule(BaseITModule):
         # Override with any provided kwargs
         attribution_kwargs.update(kwargs)
 
-        from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen
+        from interpretune.adapters.circuit_tracer.tunable_view import REFIT_SUGGESTION, attribution_frozen
 
-        with attribution_frozen(self.replacement_model):
+        with attribution_frozen(self.replacement_model) as thawed:
             graph = attribute(prompt=prompt, model=self.replacement_model, **attribution_kwargs)
+        transcoders = _replacement_transcoders(self)
+        tc_ids = {id(p) for p in transcoders.parameters()} if transcoders is not None else set()
+        if cfg is not None and cfg.tune_base and any(id(p) not in tc_ids for p in thawed):
+            rank_zero_warn(REFIT_SUGGESTION)
 
         # Store the graph
         instantiated_graph = InstantiatedGraph(handle=graph, metadata={"prompt": prompt, **attribution_kwargs})

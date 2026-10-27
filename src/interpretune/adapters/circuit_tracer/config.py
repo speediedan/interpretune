@@ -100,7 +100,9 @@ class CircuitTracerConfig(ITSerializableCfg):
     ``False`` (default) refuses base-model names by name. The transcoders were trained on the untuned base model's
     activations, so tuning the base moves what they are asked to reconstruct: attribution graphs stay complete (the
     error nodes absorb the mismatch) but carry more of their influence through those error nodes. Measure that drift
-    with ``interpretune.adapters.circuit_tracer.drift.TranscoderFitMeter`` before trusting graphs from a tuned base.
+    with ``interpretune.adapters.circuit_tracer.drift.TranscoderFitMeter`` before trusting graphs from a tuned base; an
+    attribution with base parameters thawed warns, suggesting re-fitting the transcoders (promoted to
+    ``latent:transcoder``) when their fit has degraded.
     """
     tune_base: bool = False
     """Whether to display detailed progress information."""
