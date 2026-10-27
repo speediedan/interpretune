@@ -31,7 +31,11 @@ MIN_DELTA = 2.0
 
 @pytest.fixture
 def rte_component(monkeypatch):
-    """The in-tree ``rte`` component, published locally with the cached ``rte_boolq.py``."""
+    """The revision of the in-tree ``rte`` component, published locally with the cached ``rte_boolq.py``.
+
+    Every reference the run makes names this revision: a cache warmed at a pinned Hub revision (as CI's is) resolves an
+    unrevisioned reference to the pin, which need not carry ``rte_ft``.
+    """
     from interpretune.hub.components import local_publish
     from tests.rte_component import rte_entrypoint_src
 
@@ -40,12 +44,15 @@ def rte_component(monkeypatch):
     return local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
 
 
-def _run_config(interface: str, tmp_path: Path, record: Path) -> Path:
-    """The shipped run configuration for ``interface``, with a recorder and the CPU-sized plateau threshold."""
+def _run_config(interface: str, revision: str, tmp_path: Path, record: Path) -> Path:
+    """The shipped run configuration for ``interface`` at ``revision``, with its references pinned to that
+    revision, a recorder and the CPU-sized plateau threshold."""
     from interpretune.hub.components import resolve_component_file
 
-    shipped = resolve_component_file(f"hub://speediedan/rte/runs/rte_ft.gpt2.{interface}.yaml")
-    cfg = yaml.safe_load(shipped.read_text(encoding="utf-8"))
+    shipped = resolve_component_file(f"hub://speediedan/rte@{revision}/runs/rte_ft.gpt2.{interface}.yaml")
+    text = shipped.read_text(encoding="utf-8").replace("hub://speediedan/rte/", f"hub://speediedan/rte@{revision}/")
+    cfg = yaml.safe_load(text)
+    cfg["session_ref"] = f"{cfg['session_ref']}@{revision}"
     if interface == "core":
         callbacks = cfg["run_cfg"]["callbacks"]
         callbacks[0]["init_args"]["tuning_scheduler_kwargs"]["transition"]["init_args"]["min_delta"] = MIN_DELTA
@@ -60,14 +67,14 @@ def _run_config(interface: str, tmp_path: Path, record: Path) -> Path:
     return path
 
 
-def _run(interface: str, tmp_path: Path, monkeypatch) -> dict:
+def _run(interface: str, revision: str, tmp_path: Path, monkeypatch) -> dict:
     from interpretune.base.components.cli import core_cli_main, l_cli_main
 
     work = tmp_path / interface
     work.mkdir()
     monkeypatch.chdir(work)  # checkpoints are written relative to the working directory
     record = work / "record.json"
-    args = ["--config", str(_run_config(interface, work, record))]
+    args = ["--config", str(_run_config(interface, revision, work, record))]
     args += ["--registered_cfg", json.dumps({"datamodule_cfg": {"dataset_path": str(work / "dataset")}})]
     if interface == "core":
         args += [f"--run_cfg.{k}={v}" for k, v in LIMITS.items()]
@@ -82,8 +89,8 @@ def _run(interface: str, tmp_path: Path, monkeypatch) -> dict:
 
 
 def test_the_core_loop_and_lightning_agree_phase_by_phase(rte_component, clean_cli_env, tmp_path, monkeypatch):
-    core = _run("core", tmp_path, monkeypatch)
-    lightning = _run("lightning", tmp_path, monkeypatch)
+    core = _run("core", rte_component, tmp_path, monkeypatch)
+    lightning = _run("lightning", rte_component, tmp_path, monkeypatch)
     # phase 0 ends at its `max_transition_epoch` (2); phase 1 on a validation-loss plateau
     assert core["transition_epochs"] == lightning["transition_epochs"] == [2, 5]
     assert core["final_depth"] == lightning["final_depth"] == 2
