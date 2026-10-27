@@ -92,19 +92,22 @@ transformer_lens = "interpretune.adapters.transformer_lens"
 circuit_tracer = "interpretune.adapters.circuit_tracer"
 nnsight = "interpretune.adapters.nnsight"
 
-[project.entry-points."finetuning_scheduler.strategy_adapters"]
-transformerbridge = "interpretune.adapters.transformer_lens:TransformerBridgeStrategyAdapter"
-
 [project.optional-dependencies]
 
-lightning = [
-    # 2.13.0 published 2026-07-26; interpretune had been pinning its release candidate by git SHA
-    # (c378e55) while it was unpublished. The consumed surface — StrategyAdapter,
-    # ScheduleImplMixin.save_schedule and the `finetuning_scheduler.strategy_adapters` entry point —
-    # is identical between that SHA and the release, so this is a pin-form change, not a version bump.
+# Tuning through finetuning-scheduler, under its PyTorch API or Lightning (#764). `peft` and `bitsandbytes` serve the
+# core HF path's LoRA and quantized loading (`HFFromPretrainedMixin._configure_peft`), which needs no Lightning.
+tune = [
+    # The floor rises to 2.15.0, the first release carrying the `TunableView` protocol, once it is published (#760);
+    # until then the git-deps group and the `override-dependencies` entry install it by SHA.
     "finetuning-scheduler >= 2.13.0",
     "bitsandbytes; platform_system != 'Darwin'",
     "peft>=0.18",
+]
+# Lightning by name rather than only through finetuning-scheduler, which drops it from its base dependencies no earlier
+# than 2.17 (speediedan/finetuning-scheduler#59). The range is finetuning-scheduler's own.
+lightning = [
+    "interpretune[tune]",
+    "lightning >= 2.6.0,<2.7.0",
 ]
 
 # Scope: what someone running the shipped notebooks needs. Test and maintainer tooling belongs in the
@@ -230,9 +233,9 @@ git-deps = [
     "sae-dashboard @ git+https://github.com/speediedan/SAEDashboard.git@f428a579132aa68061304c51492f79fb6d47dbda",
     # finetuning-scheduler by git SHA until 2.15.0 is published (#758): see its `override-dependencies` entry,
     # which carries the same URL and replaces the lock file's release pin at install. Kept here too so an
-    # install still gets it once a relock drops it from the lock (`--no-emit-package`). The SHA is the head of
-    # finetuning-scheduler#131 (FTSController renamed TuningScheduler, no aliases) until it lands; then main's.
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@d30b6d0f20998b3e5e0e56c79c383155f93e1abe",
+    # install still gets it once a relock drops it from the lock (`--no-emit-package`). The SHA is finetuning-scheduler
+    # main with #137 (views attach as `tunable_view`; protocol violations raise `TunableViewError`).
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@4ef546f22627d0db75f9e494dbc8dbcef2fa2145",
 ]
 
 dev = [
@@ -315,9 +318,9 @@ override-dependencies = [
     # the view conformance cases (`finetuning_scheduler.core.views`, `.core.roles`, `.testing`) are in no release
     # yet (#758). Here, not in requirements/ci/overrides.txt, because hosted CI and the gated install read only
     # this. The lock script leaves it out of the universal lock (`--no-emit-package`), whose 2.13.0 pin is
-    # replaced by this at install. RETIRE it, and raise the `lightning` extra's floor to 2.15.0, once 2.15.0
+    # replaced by this at install. RETIRE it, and raise the `tune` extra's floor to 2.15.0, once 2.15.0
     # is published.
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@d30b6d0f20998b3e5e0e56c79c383155f93e1abe",
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@4ef546f22627d0db75f9e494dbc8dbcef2fa2145",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.

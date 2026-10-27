@@ -12,10 +12,10 @@
 """Each module composition's finetuning-scheduler ``TunableView`` (#758) and its support record (#759).
 
 A composition declares how it can be tuned by returning a view from ``build_tunable_view()``; the view's
-``support()`` is the record. :func:`attach_tunable_view` attaches it to the module as ``fts_tunable_view`` once the
-model is initialized, where finetuning-scheduler discovers it. Every view's root is the interpretune module itself, so
-physical names are the module's own (``model.<...>``) and modules registered beside the model (spliced SAEs,
-interventions) are reachable.
+``support()`` is the record. :func:`attach_tunable_view` attaches it to the module as ``tunable_view`` (the tunable view
+protocol's ``VIEW_ATTR``) once the model is initialized, where finetuning-scheduler discovers it. Every view's root is
+the interpretune module itself, so physical names are the module's own (``model.<...>``) and modules registered beside
+the model (spliced SAEs, interventions) are reachable.
 
 ``BaseITModule.build_tunable_view()`` is itself a declaration (the identity view), so a composition that does not
 override it is trainable; one whose ``build_tunable_view()`` returns ``None`` declares nothing and gets a view refusing
@@ -30,13 +30,14 @@ from typing import Any
 
 from torch import nn
 
-VIEW_ATTR = "fts_tunable_view"
+# `finetuning_scheduler.tunable_view.VIEW_ATTR`, kept here so attaching imports nothing from finetuning-scheduler
+VIEW_ATTR = "tunable_view"
 
 
 def fts_views_available() -> bool:
-    """Whether the installed finetuning-scheduler provides ``TunableView`` support."""
+    """Whether the installed finetuning-scheduler provides the tunable view protocol."""
     try:
-        import finetuning_scheduler.core.views  # noqa: F401
+        import finetuning_scheduler.tunable_view  # noqa: F401
     except ImportError:
         return False
     return True
@@ -67,7 +68,7 @@ def peft_adapter_roles(root: nn.Module) -> dict[str, str]:
 
 def identity_view(root: nn.Module, roles: Mapping[str, str] | None = None) -> Any:
     """Finetuning-scheduler's identity view over ``root``, with PEFT adapter roles and any further ``roles``."""
-    from finetuning_scheduler.core.views import CanonicalView
+    from finetuning_scheduler.tunable_view import CanonicalView
 
     return CanonicalView(root, roles={**peft_adapter_roles(root), **(roles or {})})
 
@@ -86,13 +87,13 @@ class RefusingView:
 
     def support(self) -> Any:
         """Not trainable, with :attr:`reason`."""
-        from finetuning_scheduler.core.views import TunableSupport
+        from finetuning_scheduler.tunable_view import TunableSupport
 
         return TunableSupport(trainable=False, reason=self.reason)
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Nothing resolves."""
-        from finetuning_scheduler.core.views import Unresolvable
+        from finetuning_scheduler.tunable_view import Unresolvable
 
         raise Unresolvable(list(logical), self.reason)
 
@@ -110,7 +111,7 @@ def undeclared_reason(module: nn.Module) -> str:
 
 
 def attach_tunable_view(module: nn.Module) -> Any | None:
-    """Attach ``module``'s view as ``fts_tunable_view``, or a :class:`RefusingView` when it declares none.
+    """Attach ``module``'s view as ``tunable_view``, or a :class:`RefusingView` when it declares none.
 
     Does nothing when finetuning-scheduler predates views, or when a view is already attached (an explicit attachment,
     for example by a hub adapter's ``post_auto_model_init``, is never replaced).
