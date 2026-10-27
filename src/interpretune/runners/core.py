@@ -49,6 +49,9 @@ class CoreLoopContext:
         max_epochs: The epoch budget (``-1`` for none).
         max_steps: The optimizer-step budget (``-1`` for none).
         epoch_metrics: The current epoch's averaged ``log()``/``log_dict()`` values, set after validation.
+        epoch_lr_pending: Whether the current epoch's epoch-interval lr scheduler step is still to come: set while
+            the callbacks' ``on_train_epoch_end`` runs, so that a checkpoint taken there resumes with that step (see
+            ``resume_from``).
         should_stop: Set by a callback to end training after the current step (or, if set at an epoch boundary, before
             the next epoch).
     """
@@ -59,6 +62,7 @@ class CoreLoopContext:
     max_epochs: int = -1
     max_steps: int = -1
     epoch_metrics: dict[str, float] = field(default_factory=dict)
+    epoch_lr_pending: bool = False
     should_stop: bool = False
     callbacks: Sequence[Any] = ()
 
@@ -93,7 +97,9 @@ class CoreCallback(Protocol):
     - ``on_validation_end(ctx, metrics)``: after each epoch's validation, with the epoch's averaged metrics.
     - ``on_train_epoch_end(ctx, metrics)``: after the module's own ``on_train_epoch_end`` hook, before epoch-interval
       lr schedulers step.
-    - ``state_dict()`` and ``load_state_dict(state)``: included in :func:`checkpoint_state`.
+    - ``state_dict()`` and ``load_state_dict(state)``: included in :func:`checkpoint_state`. A callback's state is
+      loaded before the module's and the optimizers', after every callback's ``on_train_start`` when the loop
+      resumes (``resume_from``).
     """
 
 
@@ -163,6 +169,7 @@ def core_train_loop(
     max_steps: int = -1,
     callbacks: Sequence[Any] = (),
     validate_with_grad: bool = False,
+    resume_from: str | Path | Mapping[str, Any] | None = None,
     **kwargs,
 ) -> CoreLoopContext:
     """Run the core (framework-free) training loop, with optional interleaved validation.
@@ -183,6 +190,10 @@ def core_train_loop(
         callbacks: Objects with any of :class:`CoreCallback`'s methods.
         validate_with_grad: Validate with gradients enabled (for objectives that call ``torch.autograd.grad``)
             instead of under ``torch.inference_mode()``.
+        resume_from: A :func:`checkpoint_state` (or a path to one saved with ``torch.save``) taken at the end of an
+            epoch, in a callback's ``on_train_epoch_end`` (after ``FTSCoreCallback`` in ``callbacks``, when it is
+            used). It is loaded once every callback's ``on_train_start`` has run, and the loop continues at the epoch
+            after the checkpoint's.
 
     Returns:
         The loop's final context.
@@ -194,8 +205,9 @@ def core_train_loop(
     ctx = CoreLoopContext(module=module, max_epochs=max_epochs, max_steps=max_steps, callbacks=tuple(callbacks))
     val_grad_ctx = torch.enable_grad if validate_with_grad else torch.inference_mode
     _callbacks(ctx, "on_train_start")
+    start_epoch = _resume(ctx, resume_from) if resume_from is not None else 0
     with profiling(module) as prof:
-        for epoch_idx in range(max_epochs):
+        for epoch_idx in range(start_epoch, max_epochs):
             if ctx.should_stop or ctx.steps_exhausted:
                 break
             assert module.model is not None, "Model must be initialized before training"
@@ -233,10 +245,23 @@ def core_train_loop(
             _call_itmodule_hook(
                 module, hook_name="on_train_epoch_end", hook_msg="Running train epoch end hooks", optional=True
             )
+            ctx.epoch_lr_pending = True
             _callbacks(ctx, "on_train_epoch_end", ctx.epoch_metrics)
             step_lr_schedulers(module, "epoch", epoch_idx + 1, ctx.epoch_metrics)
+            ctx.epoch_lr_pending = False
     _callbacks(ctx, "on_train_end")
     return ctx
+
+
+def _resume(ctx: CoreLoopContext, resume_from: str | Path | Mapping[str, Any]) -> int:
+    """Load ``resume_from`` into ``ctx``, completing the epoch it was taken in, and return the epoch to start
+    at."""
+    checkpoint = resume_from if isinstance(resume_from, Mapping) else torch.load(resume_from, weights_only=False)
+    load_checkpoint_state(ctx.module, checkpoint, ctx)
+    loop = checkpoint["loop"]
+    if loop.get("epoch_lr_pending"):  # taken in `on_train_epoch_end`, before the epoch-interval lr schedulers stepped
+        step_lr_schedulers(ctx.module, "epoch", loop["epoch"] + 1, loop.get("epoch_metrics"))
+    return loop["epoch"] + 1
 
 
 def _rng_state() -> dict[str, Any]:
@@ -279,7 +304,9 @@ def checkpoint_state(module: Any, ctx: CoreLoopContext | None = None) -> dict[st
         "loop": {"epoch": module.current_epoch, "global_step": module.global_step},
     }
     if ctx is not None:
-        checkpoint["loop"]["optimizer_step"] = ctx.optimizer_step
+        checkpoint["loop"].update(
+            optimizer_step=ctx.optimizer_step, epoch_lr_pending=ctx.epoch_lr_pending, epoch_metrics=ctx.epoch_metrics
+        )
         checkpoint["callbacks"] = {
             f"{i}:{type(cb).__name__}": cb.state_dict()
             for i, cb in enumerate(ctx.callbacks)
@@ -297,7 +324,8 @@ def checkpoint_state(module: Any, ctx: CoreLoopContext | None = None) -> dict[st
 
 def load_checkpoint_state(module: Any, checkpoint: Mapping[str, Any], ctx: CoreLoopContext | None = None) -> None:
     """Restore what :func:`checkpoint_state` saved. The module's ``on_load_checkpoint(checkpoint)`` hook, if
-    defined, runs first.
+    defined, runs first, then the callbacks' ``load_state_dict`` (a callback may rebuild the module's optimizers,
+    as ``FTSCoreCallback`` does), then the module's, optimizers' and lr schedulers' state.
 
     Raises:
         MisconfigurationException: If the checkpoint's optimizer or lr scheduler count differs from the module's.
@@ -309,6 +337,11 @@ def load_checkpoint_state(module: Any, checkpoint: Mapping[str, Any], ctx: CoreL
         optional=True,
         checkpoint=checkpoint,
     )
+    if ctx is not None:
+        for i, cb in enumerate(ctx.callbacks):
+            key = f"{i}:{type(cb).__name__}"
+            if hasattr(cb, "load_state_dict") and key in checkpoint.get("callbacks", {}):
+                cb.load_state_dict(checkpoint["callbacks"][key])
     module.load_state_dict(checkpoint["module"])
     optimizers = module.optimizers or []
     schedulers = [cfg.scheduler for cfg in (getattr(module, "lr_scheduler_configs", None) or [])]
@@ -325,10 +358,6 @@ def load_checkpoint_state(module: Any, checkpoint: Mapping[str, Any], ctx: CoreL
     module.global_step = checkpoint["loop"]["global_step"]
     if ctx is not None:
         ctx.optimizer_step = checkpoint["loop"].get("optimizer_step", 0)
-        for i, cb in enumerate(ctx.callbacks):
-            key = f"{i}:{type(cb).__name__}"
-            if hasattr(cb, "load_state_dict") and key in checkpoint.get("callbacks", {}):
-                cb.load_state_dict(checkpoint["callbacks"][key])
 
 
 def core_test_loop(module: ITModule, datamodule: ITDataModule, limit_test_batches: int, *args, **kwargs):
