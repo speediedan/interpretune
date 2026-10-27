@@ -270,6 +270,72 @@ def pull_component_payloads(
     return paths
 
 
+def pull_component_extra_files(
+    repo_id: str, manifest: dict, commit: str, cache_dir: Path | None = None, token: str | None = None
+) -> list[Path]:
+    """Materialize a manifest's declared ``extra_files`` (files or directories) into the snapshot, pinned to
+    ``commit``.
+
+    These are files a component ships for its users rather than for a loader (a fine-tuning schedule, a CLI run
+    configuration), which configurations and runs reference as ``hub://<repo_id>/<path>``.
+    """
+    rels = [str(rel).rstrip("/") for rel in manifest.get("extra_files") or []]
+    if not rels:
+        return []
+    from huggingface_hub import snapshot_download
+
+    snapshot = Path(
+        snapshot_download(
+            repo_id,
+            revision=commit,  # pinned: the snapshot stays single-revision coherent
+            allow_patterns=[p for rel in rels for p in (rel, f"{rel}/**")],
+            cache_dir=str(cache_dir or IT_COMPONENTS_HUB_CACHE),
+            token=token,
+            **_TELEMETRY,
+        )
+    )
+    return [snapshot / rel for rel in rels if (snapshot / rel).exists()]
+
+
+#: The scheme of a reference to a file inside a cached component: ``hub://<org>/<repo>[@<revision>]/<path>``.
+HUB_FILE_SCHEME = "hub://"
+
+
+def parse_hub_file_ref(ref: str) -> tuple[str, str | None, str]:
+    """Split ``hub://<org>/<repo>[@<revision>]/<path>`` into ``(repo_id, revision, path)``."""
+    if not ref.startswith(HUB_FILE_SCHEME):
+        raise ValueError(f"{ref!r} is not a {HUB_FILE_SCHEME}<org>/<repo>[@<revision>]/<path> reference.")
+    parts = ref[len(HUB_FILE_SCHEME) :].split("/", 2)
+    if len(parts) != 3 or not all(parts):
+        raise ValueError(f"{ref!r} is not a {HUB_FILE_SCHEME}<org>/<repo>[@<revision>]/<path> reference.")
+    org, repo, rel = parts
+    repo, _, revision = repo.partition("@")
+    return f"{org}/{repo}", revision or None, rel
+
+
+def resolve_component_file(ref: str, cache_dir: Path | None = None) -> Path:
+    """CACHE-ONLY resolution of a ``hub://`` reference to the cached snapshot's file; never touches the network.
+
+    The revision is the reference's own, else the component's recorded pin, else ``refs/main``, as for a configuration.
+    A path that leaves the snapshot is refused.
+    """
+    import os
+
+    repo_id, revision, rel = parse_hub_file_ref(ref)
+    _, snapshot, _ = resolve_component_manifest(repo_id, cache_dir=cache_dir, revision=revision)
+    # normalize lexically: a snapshot's files are links into the cache's blobs, so resolving them would leave it
+    snapshot = Path(os.path.normpath(snapshot))
+    path = Path(os.path.normpath(snapshot / rel))
+    if snapshot not in path.parents:
+        raise ValueError(f"{ref!r} resolves outside the {repo_id} snapshot; refusing it.")
+    if not path.is_file():
+        raise ComponentFileNotCachedError(
+            f"{repo_id}: {rel!r} is not in the cached snapshot (revision {describe_revision(snapshot.name)}). Loading "
+            f"never downloads; fetch the component's files first: interpretune.hub.pull({repo_id!r})"
+        )
+    return path
+
+
 def pull_experiment_payloads(
     repo_id: str, manifest: dict, key: str, commit: str, cache_dir: Path | None = None, token: str | None = None
 ) -> Path:
