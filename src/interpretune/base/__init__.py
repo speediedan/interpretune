@@ -10,7 +10,7 @@ from interpretune.base.components.mixins import (
 )
 from interpretune.base.components.core import BaseITComponents, BaseConfigImpl, PropertyDispatcher, CoreHelperAttributes
 from interpretune.base.modules import BaseITModule
-from interpretune.base.call import _call_itmodule_hook, it_session_end, it_init
+from interpretune.base.call import _call_itmodule_hook, it_session_end, it_init, it_configure_optimizers
 from interpretune.base.components.cli import (
     ITCLI,
     IT_BASE,
@@ -56,4 +56,5 @@ __all__ = [
     "_call_itmodule_hook",
     "it_session_end",
     "it_init",
+    "it_configure_optimizers",
 ]
