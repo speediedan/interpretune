@@ -23,7 +23,10 @@ rather than model it through latents:
 - :func:`intervention_roles`, the roles to declare: ``intervention:<kind>`` for a tunable intervention, or
   ``instrument`` for one applied but never trained (a precomputed steering vector, say: finetuning-scheduler never
   thaws an instrument, and promotes instruments only to latent roles);
-- :class:`InterventionsMixin`, which declares those roles through ``tunable_roles()``.
+- :class:`InterventionsMixin`, which declares those roles through ``tunable_roles()``;
+- :class:`InterventionCfg`, an intervention declared in a module's configuration (``tuning_interventions``), which
+  every interpretune module attaches once its model is built (:func:`attach_configured_interventions`), so an example
+  needs no module code to steer.
 
 Sites are module paths under the root, as latent models' are, so the same intervention attaches to a core module's
 ``model.model.layers.N``, an nnsight module's ``hf_model.model.layers.N`` or a TransformerLens bridge's
@@ -33,7 +36,8 @@ Sites are module paths under the root, as latent models' are, so the same interv
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -196,3 +200,58 @@ class InterventionsMixin:
         roles = super().tunable_roles()  # type: ignore[misc]
         roles.update(intervention_roles(self))  # type: ignore[arg-type]
         return roles
+
+
+@dataclass(frozen=True, kw_only=True)
+class InterventionCfg:
+    """An intervention declared in a module's configuration, attached once the module's model is built.
+
+    Args:
+        name: The intervention's name (``interventions.<name>``).
+        site: Path, under the module, of the module whose output it rewrites.
+        kind: Which intervention to build: ``steer``, a :class:`SteeringVector`.
+        width: The site's activation width. Defaults to the model's (``config.hidden_size`` of an HF or nnsight model,
+            ``cfg.d_model`` of a TransformerLens one).
+        scale: The steering vector's fixed multiplier.
+        frozen: Attach it as an ``instrument``: applied, never trained.
+    """
+
+    name: str
+    site: str
+    kind: str = "steer"
+    width: int | None = None
+    scale: float = 1.0
+    frozen: bool = False
+
+
+def _model_width(root: nn.Module) -> int | None:
+    model = getattr(root, "model", None)
+    for cfg_attr, width_attr in (("config", "hidden_size"), ("cfg", "d_model")):
+        width = getattr(getattr(model, cfg_attr, None), width_attr, None)
+        if isinstance(width, int):
+            return width
+    return None
+
+
+def attach_configured_interventions(root: nn.Module, cfgs: Sequence[InterventionCfg]) -> list[nn.Module]:
+    """Build and attach each configured intervention (:class:`InterventionCfg`) on ``root``, in order.
+
+    Returns:
+        The attached interventions.
+
+    Raises:
+        ValueError: a kind is not one this module builds, or no width is given and the model's cannot be read.
+    """
+    attached = []
+    for cfg in cfgs:
+        if cfg.kind != SteeringVector.kind:
+            raise ValueError(
+                f"Intervention {cfg.name!r} has kind {cfg.kind!r}; a configuration builds only {SteeringVector.kind!r}"
+                " (attach other kinds with `attach_intervention`)"
+            )
+        width = cfg.width if cfg.width is not None else _model_width(root)
+        if width is None:
+            raise ValueError(f"Intervention {cfg.name!r} needs a `width`: the model's activation width is not readable")
+        steer = SteeringVector(width, scale=cfg.scale)
+        attached.append(attach_intervention(root, cfg.name, steer, cfg.site, frozen=cfg.frozen))
+    return attached

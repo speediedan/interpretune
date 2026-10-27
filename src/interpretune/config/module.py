@@ -22,6 +22,7 @@ from interpretune.utils.repr_helpers import (
     state_repr,
 )
 from interpretune.protocol import LRSchedulerConfig, Optimizable, StrOrPath
+from interpretune.tuning.interventions import InterventionCfg
 
 if TYPE_CHECKING:
     from interpretune.protocol import AnalysisCfgProtocol
@@ -100,6 +101,14 @@ class CompatConf(ITSerializableCfg):
 
 
 @dataclass(kw_only=True)
+class TuningConf(ITSerializableCfg):
+    """Tunable modules the module attaches once its model is built (#812)."""
+
+    # interventions spliced in at a site and declared `intervention:<kind>` (`interpretune.tuning.interventions`)
+    tuning_interventions: list[InterventionCfg] = field(default_factory=list)
+
+
+@dataclass(kw_only=True)
 class ITConfig(
     ITSharedConfig,
     ModelConf,
@@ -108,6 +117,7 @@ class ITConfig(
     MixinsConf,
     LoggingConf,
     CompatConf,
+    TuningConf,
     AutoCompConf,
     ExtensionConf,
 ):

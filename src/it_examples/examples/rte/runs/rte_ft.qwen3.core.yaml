@@ -1,0 +1,31 @@
+# Phased fine-tuning (finetuning-scheduler) of Qwen3-0.6B on RTE, steered first (interpretune#812), fp32 on one 24 GB
+# GPU, on interpretune's core loop:
+#
+#   interpretune --run_command train --config hub://speediedan/rte/runs/rte_ft.qwen3.core.yaml
+#
+# The session is the component's `rte_ft.qwen3.core` configuration and the schedule is
+# `ft_schedules/rte_ft.qwen3.core.yaml`, run through every phase (`max_depth: -1`): the steering vector, then the top
+# layers, then the middle ones. `FTSCoreCallback` drives finetuning-scheduler's `TuningScheduler`: a phase advances on a
+# validation-loss plateau (or at its `max_transition_epoch`), and the best checkpoint by validation loss is kept.
+# `runs/rte_ft.qwen3.lightning.yaml` is the same run on the Lightning interface.
+session_ref: speediedan/rte:rte_ft.qwen3.core
+seed_everything: 0
+run_cfg:
+  max_epochs: 10
+  callbacks:
+    - class_path: interpretune.tuning.core_loop.FTSCoreCallback
+      init_args:
+        schedule: hub://speediedan/rte/ft_schedules/rte_ft.qwen3.core.yaml
+        tuning_scheduler_kwargs:
+          max_depth: -1
+          transition:
+            class_path: finetuning_scheduler.core.transitions.PlateauTransition
+            init_args:
+              monitor: val_loss
+              patience: 1
+              min_delta: 0.001
+          checkpoint:
+            class_path: finetuning_scheduler.core.checkpoint.BestCheckpoint
+            init_args:
+              dirpath: checkpoints/rte_ft.qwen3.core
+              monitor: val_loss

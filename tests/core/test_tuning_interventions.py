@@ -260,3 +260,63 @@ class TestOnAnInterpretuneModule:
         ids = torch.randint(0, module.model.tok_embeddings.num_embeddings, (2, 5))
         module.model(ids).float().sum().backward()
         assert module.interventions["steer"].vector.grad is not None
+
+
+def _site(module, cfg_fixture: str) -> str:
+    """A first-block residual site, in the composition's own module names."""
+    if cfg_fixture.startswith("get_it_session_cfg__core"):
+        return "model.layers.0"
+    if cfg_fixture.startswith("get_it_session_cfg__ns"):
+        return "hf_model.transformer.h.0"
+    # a TransformerLens bridge (sae_lens's bridge composition too): the first block's output hook point
+    return next(
+        f"model.{n}" for n, _ in module.model.named_modules() if n.startswith("blocks.0.") and n.endswith("hook_out")
+    )
+
+
+@pytest.mark.parametrize(
+    "cfg_fixture",
+    [
+        pytest.param("get_it_session_cfg__core_cust", id="core"),
+        pytest.param("get_it_session_cfg__tl_cust", id="tl"),
+        pytest.param("get_it_session_cfg__ns_gpt2", id="nnsight"),
+        pytest.param("get_it_session_cfg__sl_br_gpt2", id="sae_lens_bridge"),
+    ],
+)
+def test_a_configured_steering_vector_is_attached_and_scheduled_by_role(request, cfg_fixture):
+    """``tuning_interventions`` attaches a steering vector on every composition, declared in its own view."""
+    pytest.importorskip("finetuning_scheduler.tunable_view", reason="finetuning-scheduler predates the view")
+    from copy import deepcopy
+
+    from finetuning_scheduler.core.compile import compile_schedule
+    from finetuning_scheduler.tunable_view import as_view
+
+    from interpretune.session import ITSession
+    from interpretune.tuning.interventions import InterventionCfg
+    from interpretune.tuning.views import VIEW_ATTR
+
+    probe = ITSession(deepcopy(request.getfixturevalue(cfg_fixture))).module
+    site = _site(probe, cfg_fixture)
+    cfg = deepcopy(request.getfixturevalue(cfg_fixture))
+    width = probe.model.tok_embeddings.embedding_dim if cfg_fixture.endswith("core_cust") else None
+    cfg.module_cfg.tuning_interventions = [InterventionCfg(name="steer", site=site, width=width)]
+    module = ITSession(cfg).module
+    assert intervention_sites(module) == {"steer": site}
+    view = getattr(module, VIEW_ATTR)
+    roles = as_view(view).roles()
+    assert {n for n, r in roles.items() if r == "intervention:steer"} == {"interventions.steer.vector"}
+    compiled = compile_schedule({0: {"params": ["role:intervention:steer"]}}, view)
+    assert compiled.physical_for(0) == ("interventions.steer.vector",)
+
+
+def test_a_configured_kind_must_be_one_a_configuration_builds():
+    from interpretune.tuning.interventions import InterventionCfg, attach_configured_interventions
+
+    with pytest.raises(ValueError, match="builds only 'steer'"):
+        attach_configured_interventions(Root(), [InterventionCfg(name="edit", site="model.blocks.0", kind="edit")])
+    with pytest.raises(ValueError, match="needs a `width`"):
+        attach_configured_interventions(Root(), [InterventionCfg(name="steer", site="model.blocks.0")])
+    (steer,) = attach_configured_interventions(
+        root := Root(), [InterventionCfg(name="s", site="model.blocks.0", width=D)]
+    )
+    assert root.interventions["s"] is steer and isinstance(steer, SteeringVector)
