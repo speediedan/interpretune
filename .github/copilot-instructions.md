@@ -368,9 +368,7 @@ src/interpretune/           # Main package
 └── utils/                  # Utility functions
 
 src/it_examples/            # Example experiments
-├── examples/               # In-tree publish sources of example components (e.g. rte/configs)
-├── tuning/                 # Phased fine-tuning examples (finetuning-scheduler)
-│   └── ft_schedules/       # Fine-tuning schedules
+├── examples/               # In-tree publish sources of example components (e.g. rte/configs, rte/runs)
 └── notebooks/              # Example notebooks
 ```
 
