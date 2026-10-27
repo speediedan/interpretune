@@ -17,9 +17,10 @@
 # split-attention overhead): tl_train, tl_test, sae_lens_train, nnsight_test and circuit_tracer_test, every delta within
 # 0.13 MiB of zero, zero spread except circuit_tracer_test's peak (0.69 MiB in one run), so every tolerance is again its
 # floor.
-# sae_lens_test is not frozen: interpretune's sae_lens composition retains the prefill attention patterns after
-# generation, a steady +24 MiB over native SAELens on both vendors, which is attributed (#838) before a bound would
-# accept it as the baseline.
+# Frozen 2026-10-27 from two 5-repeat runs per vendor, after #838 passed interpretune's generate kwargs to the native
+# SAELens arm (its root wrapper had hidden the bridge's signature, so the native arm generated the bridge's default 10
+# tokens against interpretune's one): sae_lens_test, every delta within 0.10 MiB of zero, zero spread, so every
+# tolerance is its floor.
 cuda:
   circuit_tracer_test:
     end_current:
@@ -129,6 +130,16 @@ cuda:
       tolerance: 8388608.0
     peak_alloc:
       baseline: 512.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  sae_lens_test:
+    end_current:
+      baseline: 99840.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -28160.0
       tolerance: 8388608.0
     slope[0]:
       baseline: 0.0
@@ -272,6 +283,16 @@ rocm:
       tolerance: 8388608.0
     peak_alloc:
       baseline: 512.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  sae_lens_test:
+    end_current:
+      baseline: 99840.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 98816.0
       tolerance: 8388608.0
     slope[0]:
       baseline: 0.0
