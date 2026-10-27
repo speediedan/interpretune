@@ -82,10 +82,14 @@ at the module it is given, and one rooted elsewhere is refused once it is set up
 - **Metric-stepped lr schedulers** (`ReduceLROnPlateau`) use the epoch interval: step-interval schedulers are stepped
   without metrics. Only `interval`, `frequency` and `monitor` are taken from `pl_lrs_cfg`, so a missing monitored metric
   fails in finetuning-scheduler rather than being skipped as the core loop's `strict=False` would.
-- **Resume** through the tuning scheduler (`callback.tuning_scheduler.save` and `load`). The core loop's
-  `checkpoint_state` holds none of the tuning scheduler's state, so loading one into the callback is refused rather than
-  resuming half a run; routing resume through it is
-  [interpretune#809](https://github.com/speediedan/interpretune/issues/809).
+- **Resume** from the core loop's own checkpoint. The callback's `state_dict` is the tuning scheduler's `resume_state`
+  (phase, pending decision, gate records, RNG forks, lr schedulers and registered state; the random streams stay with
+  the loop's checkpoint), and taking it marks the resume point with the tuning scheduler's checkpoint policy, so the
+  best checkpoint and rollback point it refers to are kept. Take `ctx.checkpoint_state()` in a callback's
+  `on_train_epoch_end` listed after `FTSCoreCallback`, and pass it (or the path it was saved to) as
+  `SessionRunnerCfg.resume_from`. The loop builds the tuning scheduler, loads its resume state, which rebuilds the
+  optimizer phase by phase to the saved depth, then loads the module's and that optimizer's state and continues at the
+  next epoch.
 
 ## Conformance
 

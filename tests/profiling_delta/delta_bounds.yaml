@@ -13,10 +13,24 @@
 # Frozen 2026-10-25 from two 5-repeat runs per vendor, the second with these bounds enforced: NVIDIA RTX 4090 (torch
 # 2.15.0+cu130) and AMD (torch 2.15.0+rocm10.0). Every metric showed zero spread across repeats and across runs, so
 # every tolerance is its floor. Runs on a 2070 SUPER matched the 4090 within 2.4 MiB (bf16) and to the byte elsewhere.
-# tl_train and tl_test are not frozen: interpretune's TransformerLens composition holds ~81 MiB more than a native
-# TransformerBridge.boot_transformers bridge on both vendors (steady, no slope), which is attributed before a bound
-# would accept it as the baseline.
+# Frozen 2026-10-26 from two 5-repeat runs per vendor, on main with #829 (which removed TransformerLens's
+# split-attention overhead): tl_train, tl_test, sae_lens_train, nnsight_test and circuit_tracer_test, every delta within
+# 0.13 MiB of zero, zero spread except circuit_tracer_test's peak (0.69 MiB in one run), so every tolerance is again its
+# floor.
+# sae_lens_test is not frozen: interpretune's sae_lens composition retains the prefill attention patterns after
+# generation, a steady +24 MiB over native SAELens on both vendors, which is attributed (#838) before a bound would
+# accept it as the baseline.
 cuda:
+  circuit_tracer_test:
+    end_current:
+      baseline: 512.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 512.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
   core_hf_fts_train:
     end_current:
       baseline: 515072.0
@@ -99,6 +113,16 @@ cuda:
     slope[0]:
       baseline: 0.0
       tolerance: 65536.0
+  nnsight_test:
+    end_current:
+      baseline: 0.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 512.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
   nnsight_train:
     end_current:
       baseline: 512.0
@@ -109,7 +133,47 @@ cuda:
     slope[0]:
       baseline: 0.0
       tolerance: 65536.0
+  sae_lens_train:
+    end_current:
+      baseline: 98816.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 98816.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  tl_test:
+    end_current:
+      baseline: 1536.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: -124928.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  tl_train:
+    end_current:
+      baseline: 512.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 512.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
 rocm:
+  circuit_tracer_test:
+    end_current:
+      baseline: 512.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 512.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
   core_hf_fts_train:
     end_current:
       baseline: 359424.0
@@ -192,7 +256,47 @@ rocm:
     slope[0]:
       baseline: 0.0
       tolerance: 65536.0
+  nnsight_test:
+    end_current:
+      baseline: 0.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 512.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
   nnsight_train:
+    end_current:
+      baseline: 512.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 512.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  sae_lens_train:
+    end_current:
+      baseline: 98816.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 98816.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  tl_test:
+    end_current:
+      baseline: 1536.0
+      tolerance: 8388608.0
+    peak_alloc:
+      baseline: 512.0
+      tolerance: 8388608.0
+    slope[0]:
+      baseline: 0.0
+      tolerance: 65536.0
+  tl_train:
     end_current:
       baseline: 512.0
       tolerance: 8388608.0

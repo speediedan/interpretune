@@ -81,32 +81,26 @@ def _parse_accuracy(output: str) -> float | None:
 )
 def test_benchmark(experiment_name, benchmark_id, benchmark_entry):
     """Run a benchmark config and verify accuracy against expected."""
-    config_path = REPO_ROOT / benchmark_entry["config_path"]
-    assert config_path.exists(), f"Config not found: {config_path}"
-
     expected = benchmark_entry.get("expected_accuracy")
     tolerance = benchmark_entry.get("tolerance", 0.02)
 
-    # Run via CLI subprocess to match production execution path, honoring the registry's
-    # cli_mode exactly like run_benchmarks.py does (core-CLI entries compose a non-Lightning
-    # InterpretunableModule that the Lightning trainer rejects)
-    from tests.benchmarks.run_benchmarks import _detect_cli_mode
+    # Run via CLI subprocess to match production execution path, honoring the registry's cli_mode and run command
+    # exactly like run_benchmarks.py does (core-CLI entries compose a non-Lightning InterpretunableModule that the
+    # Lightning trainer rejects; a fine-tuning entry trains rather than tests)
+    from tests.benchmarks.run_benchmarks import _detect_cli_mode, benchmark_cli_command
 
-    cli_flag = "--lightning_cli" if _detect_cli_mode(benchmark_entry) == "lightning" else "--run_command"
-    cmd = [
-        "interpretune",
-        cli_flag,
-        "test",
-        "--config",
-        str(config_path),
-    ]
+    cmd = benchmark_cli_command(
+        benchmark_entry["config_path"],
+        _detect_cli_mode(benchmark_entry),
+        benchmark_entry.get("run_command", "test"),
+    )
 
     result = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
-        timeout=1800,
+        timeout=benchmark_entry.get("timeout_s", 1800),
     )
 
     assert result.returncode == 0, (
@@ -292,3 +286,35 @@ def test_gitignore_check_does_not_read_a_refusing_git_as_not_ignored(monkeypatch
     )
     with pytest.raises(AssertionError, match="could not answer"):
         _assert_path_is_gitignored(tmp_path / "benchmark_update.allow", tmp_path)
+
+
+################################################################################
+# CLI command pins (ungated: no GPU and no benchmark run)
+################################################################################
+
+
+@pytest.mark.parametrize(
+    ("cli_mode", "run_command", "limits"),
+    [
+        ("core", "test", ["--run_cfg.limit_test_batches", "5"]),
+        ("core", "train", ["--run_cfg.limit_train_batches", "5", "--run_cfg.limit_val_batches", "5"]),
+        ("lightning", "test", ["--trainer.limit_test_batches", "5"]),
+        ("lightning", "fit", ["--trainer.limit_train_batches", "5", "--trainer.limit_val_batches", "5"]),
+    ],
+)
+def test_a_benchmark_runs_its_command_with_that_commands_limits(cli_mode, run_command, limits):
+    """A fine-tuning entry (#848) trains rather than tests, and a smoke run limits the batches that command
+    runs."""
+    from tests.benchmarks.run_benchmarks import benchmark_cli_command
+
+    ref = "hub://speediedan/rte/runs/rte_ft.gemma3.core.yaml"
+    cmd = benchmark_cli_command(ref, cli_mode, run_command, limit_batches=5)
+    flag = ["--lightning_cli", run_command] if cli_mode == "lightning" else ["--run_command", run_command]
+    assert cmd == ["interpretune", *flag, "--config", ref, *limits]
+
+
+def test_a_missing_repo_config_is_refused():
+    from tests.benchmarks.run_benchmarks import benchmark_config_arg
+
+    with pytest.raises(FileNotFoundError, match="Config not found"):
+        benchmark_config_arg("tests/benchmarks/configs/absent.yaml")

@@ -1,0 +1,31 @@
+# Phased fine-tuning (finetuning-scheduler) of gemma-3-1b-it on RTE (interpretune#697's schedule), fp32 on one 24 GB
+# GPU, on interpretune's core loop:
+#
+#   interpretune --run_command train --config hub://speediedan/rte/runs/rte_ft.gemma3.core.yaml
+#
+# The session is the component's `rte_ft.gemma3.core` configuration and the schedule is
+# `ft_schedules/rte_ft.gemma3.yaml`, run through phases 0 and 1 (`max_depth: 1`), as #697 does. `FTSCoreCallback` drives
+# finetuning-scheduler's `TuningScheduler`: a phase advances on a validation-loss plateau (or at its
+# `max_transition_epoch`), and the best checkpoint by validation loss is kept. `runs/rte_ft.gemma3.lightning.yaml` is
+# the same run on the Lightning interface.
+session_ref: speediedan/rte:rte_ft.gemma3.core
+seed_everything: 0
+run_cfg:
+  max_epochs: 10
+  callbacks:
+    - class_path: interpretune.tuning.core_loop.FTSCoreCallback
+      init_args:
+        schedule: hub://speediedan/rte/ft_schedules/rte_ft.gemma3.yaml
+        tuning_scheduler_kwargs:
+          max_depth: 1
+          transition:
+            class_path: finetuning_scheduler.core.transitions.PlateauTransition
+            init_args:
+              monitor: val_loss
+              patience: 1
+              min_delta: 0.001
+          checkpoint:
+            class_path: finetuning_scheduler.core.checkpoint.BestCheckpoint
+            init_args:
+              dirpath: checkpoints/rte_ft.gemma3.core
+              monitor: val_loss

@@ -327,3 +327,36 @@ benchmarks:
         transformers: 5.12.1
         datasets: 5.0.0
         torch: 2.13.0+cu130
+    gemma3_1b_it_ft_core:
+      config_path: hub://speediedan/rte/runs/rte_ft.gemma3.core.yaml
+      expected_accuracy: 0.7693
+      tolerance: 0.02
+      cli_mode: core
+      run_command: train
+      timeout_s: 1200
+      adapter_ctx:
+      - core
+      backends: []
+      description: Gemma3-1b-IT phased fine-tuning on RTE (finetuning-scheduler, core loop) via the core CLI
+      last_validated: '20261027_180000'
+      notes: 'Fine-tuning benchmark (#848): trains `rte_ft.gemma3.core` through `FTSCoreCallback` (#697''s schedule, fp32,
+        `max_depth: 1`) and scores the last validation accuracy the core loop reports. Measured 0.7693 at epoch 2 (phase 1)
+        in about 4 minutes on one RTX 4090; the same run on the Lightning interface gave 0.7690. The run configuration is
+        read from the `speediedan/rte` component (`hub://`), so the cached component must carry `runs/` and
+        `ft_schedules/`: a key-less `it.hub.pull("speediedan/rte")`, or a local publish of the in-tree component.
+
+        '
+      tags:
+      - fine_tuning
+      - finetuning_scheduler
+      - core
+      - gemma3
+      - 1b
+      commit_sha: 10573124
+      salient_pkg_versions:
+        interpretune: 0.1.0.dev647+g0f2429790 (branch:feature/765_rte_core_loop_example, sha:10573124 plus the #847 rework)
+        finetuning_scheduler: 2.15.0.dev0 (sha:4ef546f)
+        lightning: 2.6.6
+        transformers: 5.21.0
+        datasets: 5.1.0
+        torch: 2.15.0+cu130

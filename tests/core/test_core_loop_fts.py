@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 from functools import partial
 
 import pytest
@@ -123,22 +124,68 @@ def test_a_tuning_scheduler_rooted_elsewhere_is_refused():
         core_loop._train(core_loop.TinyModule(), max_epochs=1, callbacks=[fts])
 
 
-def test_a_core_loop_checkpoint_is_refused_on_resume():
-    """`checkpoint_state` holds none of the tuning scheduler's state, so loading it into the callback refuses."""
-    from interpretune.runners.core import checkpoint_state, load_checkpoint_state
+class SaveAt:
+    """Takes the core loop's checkpoint at the end of epoch ``epoch``, serialized as a real checkpoint is."""
 
-    saved = {}
+    def __init__(self, epoch: int) -> None:
+        self.epoch, self.checkpoint = epoch, None
 
-    class Save:
-        def on_train_end(self, ctx):
-            saved["ckpt"], saved["ctx"] = checkpoint_state(ctx.module, ctx), ctx
+    def on_train_epoch_end(self, ctx, metrics):
+        if ctx.epoch == self.epoch:
+            buffer = io.BytesIO()
+            torch.save(ctx.checkpoint_state(), buffer)
+            self.checkpoint = torch.load(io.BytesIO(buffer.getvalue()), weights_only=False)
 
-    module = core_loop.TinyModule()
+
+def _reinit_fts():
+    """Two phases, the second reinitializing the optimizer, with an epoch-interval lr scheduler."""
+    schedule = {
+        0: {"params": ["model.bias"], "max_transition_epoch": 2},
+        1: {
+            "params": ["model.weight"],
+            "new_optimizer": {"optimizer_init": {"class_path": "torch.optim.Adam", "init_args": {"lr": 0.01}}},
+        },
+    }
+    lr_scheduler = partial(torch.optim.lr_scheduler.StepLR, step_size=1, gamma=0.5)
+    kwargs = {"optimizer": _sgd(), "lr_scheduler": lr_scheduler, "lr_scheduler_cfg": {"interval": "epoch"}}
+    return FTSCoreCallback(schedule, tuning_scheduler_kwargs=kwargs)
+
+
+@pytest.mark.parametrize("save_epoch", [0, 2], ids=["before-the-transition", "after-the-reinit"])
+def test_a_phased_run_resumes_from_the_core_loops_checkpoint(save_epoch):
+    """The core loop's checkpoint carries the tuning scheduler's resume state, so `resume_from` continues a phased run
+    exactly: before the transition it replays it, after it the rebuilt optimizer is the reinitialized one (#809)."""
+    ref, ref_fts, ref_snaps, save = core_loop.TinyModule(), _reinit_fts(), Snapshots(), SaveAt(save_epoch)
+    core_loop._train(ref, max_epochs=4, callbacks=[ref_fts, ref_snaps, save])
+    assert isinstance(ref_fts.tuning_scheduler.optimizer, torch.optim.Adam)
+    assert save.checkpoint["callbacks"]["0:FTSCoreCallback"]["resume_state"]["rng"] is None  # the loop holds them
+
+    module, fts, snaps = core_loop.TinyModule(), _reinit_fts(), Snapshots()
+    core_loop._train(module, max_epochs=4, callbacks=[fts, snaps], resume_from=save.checkpoint)
+    tuning_scheduler = fts.tuning_scheduler
+    assert len(snaps.params) == 3 - save_epoch
+    for expected, got in zip(ref_snaps.params[save_epoch + 1 :], snaps.params):
+        assert all(torch.equal(expected[n], got[n]) for n in expected)
+    assert isinstance(tuning_scheduler.optimizer, torch.optim.Adam) and tuning_scheduler.curr_depth == 1
+    assert module.optimizers == [tuning_scheduler.optimizer]
+    ref_lrs = [g["lr"] for g in ref_fts.tuning_scheduler.optimizer.param_groups]
+    assert [g["lr"] for g in tuning_scheduler.optimizer.param_groups] == ref_lrs
+    assert tuning_scheduler.global_step == ref_fts.tuning_scheduler.global_step
+
+
+def test_resume_state_loads_only_into_a_set_up_tuning_scheduler():
+    """The callback loads its state once the loop has built the tuning scheduler, and refuses a checkpoint without
+    a resume state."""
     fts = FTSCoreCallback(TWO_PHASES, tuning_scheduler_kwargs={"optimizer": _sgd()})
-    core_loop._train(module, max_epochs=1, callbacks=[fts, Save()])
-    assert saved["ckpt"]["callbacks"]["0:FTSCoreCallback"] == {"resume_through_tuning_scheduler": True}
-    with pytest.raises(MisconfigurationException, match="resume through the tuning scheduler"):
-        load_checkpoint_state(module, saved["ckpt"], saved["ctx"])
+    assert fts.state_dict() == {}
+    with pytest.raises(MisconfigurationException, match="resume through the core loop's `resume_from`"):
+        fts.load_state_dict({"resume_state": {}})
+    save = SaveAt(0)
+    core_loop._train(core_loop.TinyModule(), max_epochs=1, callbacks=[fts, save])
+    stale = dict(save.checkpoint, callbacks={"0:FTSCoreCallback": {"resume_through_tuning_scheduler": True}})
+    fresh = FTSCoreCallback(TWO_PHASES, tuning_scheduler_kwargs={"optimizer": _sgd()})
+    with pytest.raises(MisconfigurationException, match="holds no tuning scheduler resume state"):
+        core_loop._train(core_loop.TinyModule(), max_epochs=2, callbacks=[fresh], resume_from=stale)
 
 
 def test_an_epoch_interval_lr_scheduler_steps_once_per_epoch():
@@ -202,6 +249,38 @@ def test_a_callback_given_as_configuration_is_instantiated():
     run_cfg = SessionRunnerCfg(module=core_loop.TinyModule(), datamodule=object(), callbacks=[entry, snaps])
     fts, kept = run_cfg.callbacks
     assert isinstance(fts, FTSCoreCallback) and fts.schedule == TWO_PHASES and kept is snaps
+
+
+def test_object_valued_tuning_scheduler_kwargs_are_built_from_configuration(tmp_path):
+    """A transition or checkpoint policy given as a `class_path` mapping is instantiated when the tuning scheduler
+    is built (#847), and the callback's own arguments stay plain configuration."""
+    from finetuning_scheduler.core.checkpoint import BestCheckpoint
+    from finetuning_scheduler.core.transitions import PlateauTransition
+
+    transition = {
+        "class_path": f"{PlateauTransition.__module__}.PlateauTransition",
+        "init_args": {"monitor": "val_loss"},
+    }
+    checkpoint = {
+        "class_path": f"{BestCheckpoint.__module__}.BestCheckpoint",
+        "init_args": {"dirpath": str(tmp_path), "monitor": "val_loss"},
+    }
+    kwargs = {"transition": transition, "checkpoint": checkpoint, "max_depth": 1}
+    fts = FTSCoreCallback(TWO_PHASES, tuning_scheduler_kwargs=kwargs)
+    module = core_loop.TinyModule()
+    module.it_cfg.optimizer_init = {"class_path": "torch.optim.SGD", "init_args": {"lr": 0.05}}
+    core_loop._train(module, max_epochs=1, callbacks=[fts])
+    assert isinstance(fts.tuning_scheduler._checkpoint, BestCheckpoint)
+    assert fts.tuning_scheduler_kwargs == kwargs and fts.tuning_scheduler_kwargs["transition"] is transition
+
+
+def test_a_list_of_class_path_mappings_is_built_element_by_element():
+    from interpretune.tuning.core_loop import _instantiate_config_value
+
+    sgd = {"class_path": "torch.optim.SGD", "init_args": {"params": [torch.zeros(1, requires_grad=True)], "lr": 0.1}}
+    built = _instantiate_config_value([sgd, 3])
+    assert isinstance(built, list) and isinstance(built[0], torch.optim.SGD) and built[1] == 3
+    assert _instantiate_config_value({"plain": 1}) == {"plain": 1}
 
 
 def test_fts_core_callback_round_trips_through_a_parsed_configuration(tmp_path, get_it_session__core_cust__initonly):

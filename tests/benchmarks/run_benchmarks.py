@@ -149,44 +149,58 @@ def _detect_cli_mode(entry: dict) -> str:
     return "lightning" if "lightning" in adapter_ctx else "core"
 
 
+#: the limit flags a `--limit-batches` smoke run sets, per run command: an evaluation run limits its test batches, a
+#: training run its training and validation batches
+_LIMIT_KEYS = {"test": ("limit_test_batches",), "train": ("limit_train_batches", "limit_val_batches")}
+_LIMIT_KEYS["fit"] = _LIMIT_KEYS["train"]
+
+
+def benchmark_config_arg(config_path: str) -> str:
+    """The `--config` argument for a registry `config_path`: a repo-relative file, or a `hub://` file reference the
+    CLI resolves from the components cache (a run configuration a component ships)."""
+    if config_path.startswith("hub://"):
+        return config_path
+    abs_config = REPO_ROOT / config_path
+    if not abs_config.exists():
+        raise FileNotFoundError(f"Config not found: {abs_config}")
+    return str(abs_config)
+
+
+def benchmark_cli_command(
+    config_path: str, cli_mode: str = "lightning", run_command: str = "test", limit_batches: int | None = None
+) -> list[str]:
+    """The interpretune CLI command a benchmark runs: `run_command` (`test` by default; `train` for a core-loop
+    fine-tuning benchmark, `fit` for a Lightning one) on its configuration."""
+    if cli_mode == "lightning":
+        cmd, prefix = ["interpretune", "--lightning_cli", run_command], "trainer"
+    else:
+        cmd, prefix = ["interpretune", "--run_command", run_command], "run_cfg"
+    cmd += ["--config", benchmark_config_arg(config_path)]
+    if limit_batches is not None:
+        for key in _LIMIT_KEYS[run_command]:
+            cmd += [f"--{prefix}.{key}", str(limit_batches)]
+    return cmd
+
+
 def run_cli_benchmark(
     config_path: str,
     limit_batches: int | None = None,
     log_dir: Path | None = None,
     debug: bool = False,
     cli_mode: str = "lightning",
+    run_command: str = "test",
+    timeout: int = DEFAULT_TIMEOUT,
 ) -> dict:
     """Run a benchmark via the interpretune CLI and capture results.
 
     Args:
         cli_mode: ``"lightning"`` for Lightning CLI or ``"core"`` for core CLI.
+        run_command: the CLI command to run: ``"test"`` scores an evaluation; ``"train"`` (core) or ``"fit"``
+            (Lightning) scores a fine-tuning run by the last validation accuracy it reports.
 
     Returns dict with keys: accuracy, raw_output, return_code, duration_s
     """
-    abs_config = REPO_ROOT / config_path
-    if not abs_config.exists():
-        raise FileNotFoundError(f"Config not found: {abs_config}")
-
-    if cli_mode == "lightning":
-        cmd = [
-            "interpretune",
-            "--lightning_cli",
-            "test",
-            "--config",
-            str(abs_config),
-        ]
-        if limit_batches is not None:
-            cmd.extend(["--trainer.limit_test_batches", str(limit_batches)])
-    else:
-        cmd = [
-            "interpretune",
-            "--run_command",
-            "test",
-            "--config",
-            str(abs_config),
-        ]
-        if limit_batches is not None:
-            cmd.extend(["--run_cfg.limit_test_batches", str(limit_batches)])
+    cmd = benchmark_cli_command(config_path, cli_mode, run_command, limit_batches)
 
     env = os.environ.copy()
     # Capture plain text, not a terminal rendering. `capture_output` already makes stdout a pipe, but an
@@ -210,7 +224,7 @@ def run_cli_benchmark(
         text=True,
         cwd=str(REPO_ROOT),
         env=env,
-        timeout=DEFAULT_TIMEOUT,
+        timeout=timeout,
     )
     duration = time.monotonic() - start
 
@@ -255,7 +269,7 @@ def run_debug_diagnostics(
     Args:
         cli_mode: ``"lightning"`` or ``"core"``. Passed through to ``run_shared_diagnostics``.
     """
-    abs_config = REPO_ROOT / config_path
+    abs_config = benchmark_config_arg(config_path)
     ts = timestamp()
     diag_log = log_dir / f"diagnostics_{ts}.log"
 
@@ -424,6 +438,8 @@ def main():
             log_dir=log_dir,
             debug=args.debug,
             cli_mode=cli_mode,
+            run_command=entry.get("run_command", "test"),
+            timeout=entry.get("timeout_s", DEFAULT_TIMEOUT),
         )
         results[full_id] = result
 
