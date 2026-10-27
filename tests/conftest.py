@@ -848,8 +848,6 @@ def ft_schedule_fixture_factory(config_key, phase):
     @pytest.fixture(scope=FIXTURE_CFGS[config_key].scope)
     def get_ft_schedule(tmpdir_factory, request):
         """Generate a fine-tuning schedule for this specific configuration."""
-        from tests.parity_acceptance.cfg_aliases import tl_bridge_custom_adapter_map
-
         # Map config_key to model_key and schedule transforms
         # Defined here to have access to transform functions that are defined later in conftest.py
         SCHEDULE_CONFIG_MAP = {
@@ -863,18 +861,13 @@ def ft_schedule_fixture_factory(config_key, phase):
                 "model_key": "l_tl_bridge_gpt2",
                 "session_fixture": "get_it_session__l_tl_bridge_gpt2__setup",
                 "transforms": {"multiphase_explicit": tl_bridge_multiphase_explicit},
-                "fts_kwargs": {
-                    "custom_strategy_adapters": tl_bridge_custom_adapter_map,
-                },
+                "fts_kwargs": {},
             },
             "l_tl_bridge_gpt2_tl_names_sched": {
                 "model_key": "l_tl_bridge_gpt2",
                 "session_fixture": "get_it_session__l_tl_bridge_gpt2__setup",
                 "transforms": {"multiphase_explicit_tl_names": tl_bridge_multiphase_explicit_tl_names},
-                "fts_kwargs": {
-                    "custom_strategy_adapters": tl_bridge_custom_adapter_map,
-                    "strategy_adapter_cfg": {"use_tl_names": True},
-                },
+                "fts_kwargs": {},
             },
         }
 

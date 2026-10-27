@@ -1,18 +1,14 @@
 import warnings
 from copy import deepcopy
 from dataclasses import dataclass, field
-import inspect
 import re
-from typing import Dict
 
 import pytest
 import torch
 from torch import device
-from finetuning_scheduler.strategy_adapters.base import StrategyAdapter
 
 from interpretune.config import ITLensFromPretrainedConfig, ITLensConfig, ITLensCustomConfig
 from interpretune.utils import MisconfigurationException
-from interpretune.adapters.transformer_lens import TransformerBridgeStrategyAdapter
 from tests.warns import unexpected_warns, TL_CTX_WARNS
 from tests.utils import ablate_cls_attrs
 from tests.base_defaults import default_test_task
@@ -43,11 +39,13 @@ class ArchitectureExpectations:
         canonical_attn_pattern: Regex pattern for canonical attention params (for mapping validation)
         canonical_mlp_pattern: Regex pattern for canonical MLP params (for mapping validation)
         canonical_embed_pattern: Regex pattern for canonical embedding params (for mapping validation)
-        expected_mapped_tl_count: Expected number of TL params with canonical mappings
-        expected_unmapped_tl_count: Expected number of unmapped TL params (synthetic biases)
-        expected_mapped_canonical_count: Expected number of canonical params with TL mappings
-        expected_unmapped_canonical_count: Expected number of unmapped canonical params
-                                          (LayerNorms, pre-split QKV, etc.)
+        expected_mapped_tl_count: Expected number of TL params the view traces to parameters
+        expected_unmapped_tl_count: Expected number of untraced TL params (synthetic zero biases)
+        expected_mapped_canonical_count: Expected number of the module's parameters some TL name reaches
+        expected_unmapped_canonical_count: Expected number of the module's parameters no TL name reaches
+                                          (norms TL does not name, joint QKV, etc.)
+        expected_uncoupled_canonical_count: Of those, how many no thaw couples either: parameters the forward pass
+                                           never uses
         hf_block_path: Wrapped HuggingFace model's path to a block, with ``{i}`` for the layer index
         hf_block_norms: The block's norm submodules, by the HuggingFace model's own names
         hf_final_norm: Path to the final norm in the wrapped HuggingFace model
@@ -78,6 +76,7 @@ class ArchitectureExpectations:
     expected_unmapped_tl_count: int = 0  # All TL params should map
     expected_mapped_canonical_count: int | None = None
     expected_unmapped_canonical_count: int | None = None
+    expected_uncoupled_canonical_count: int = 0
 
     # The norms an implicit thaw must cover, named from the HuggingFace side so the expectation does not share a
     # source with the component index the adapter builds.
@@ -173,11 +172,13 @@ GPT2_EXPECTATIONS = ArchitectureExpectations(
     # Mapping counts: 12 layers * (8 attn + 4 mlp + 4 LayerNorm) + 4 embed/pos_embed/unembed + 2 ln_final = 198 TL
     # params. TransformerLens 4.0 gives LayerNorms TL-style names (`blocks.N.ln1.w`, `ln_final.b`, ...); before it
     # they had none, the TL count was 148 and the 50 LayerNorm params were the unmapped canonical remainder.
-    # Canonical: 221 = 198 TL + 24 q/k/v split components - 1 shared embed/unembed, every one mapped.
+    # Canonical: 221 = 197 reached (198 TL names, embed and unembed sharing one tensor) + the 24 joint QKV weights and
+    # biases (12 * 2), which no TL name reaches: their q/k/v splits are strided views of them, so each is thawed with
+    # its splits as a storage alias.
     expected_mapped_tl_count=198,
     expected_unmapped_tl_count=0,
-    expected_mapped_canonical_count=221,  # 198 TL + 24 q/k/v split components - 1 shared embed/unembed
-    expected_unmapped_canonical_count=0,
+    expected_mapped_canonical_count=197,
+    expected_unmapped_canonical_count=24,
     hf_block_path="transformer.h.{i}",
     hf_block_norms=("ln_1", "ln_2"),
     hf_final_norm="transformer.ln_f",
@@ -214,12 +215,14 @@ GPT2_PROCESSED_EXPECTATIONS = ArchitectureExpectations(
     canonical_embed_pattern=r"model\.(embed|pos_embed|unembed)\._original_component\.(weight|bias)",
     # TL counts match unprocessed GPT-2: 198, LayerNorms included (see GPT2_EXPECTATIONS).
     # Compatible mode adds extra canonical params: 222 total (vs 221 for unprocessed)
-    # Canonical: 198 TL mapped + 24 unmapped = 222 total (embed/unembed not shared with processed mode)
-    # Unmapped: 24 QKV joints (12*2)
+    # Canonical: 198 reached + 24 unreached = 222 total (embed/unembed not shared with processed mode)
+    # Unreached: the 24 joint QKV params (12*2). Compatible mode materializes the q/k/v splits as tensors of their own,
+    # so the joints share no storage with them and the forward pass never uses them: nothing couples them either.
     expected_mapped_tl_count=198,
     expected_unmapped_tl_count=0,
     expected_mapped_canonical_count=198,
     expected_unmapped_canonical_count=24,  # QKV joint params (compatible mode)
+    expected_uncoupled_canonical_count=24,
     hf_block_path="transformer.h.{i}",
     hf_block_norms=("ln_1", "ln_2"),
     hf_final_norm="transformer.ln_f",
@@ -508,72 +511,6 @@ class TestTrailingPadTensorRefusal:
         assert {key: owner for key, owner in owners.items() if owner is not BaseITLensModule} == {}
 
 
-class TestBasicTransformerBridgeAdapter:
-    """Basic tests for TransformerBridgeStrategyAdapter without model fixtures.
-
-    These tests validate adapter initialization, properties, and basic behavior without requiring actual
-    TransformerBridge model instantiation.
-    """
-
-    def test_basic_properties(self):
-        """Sanity check for TransformerBridgeStrategyAdapter plugin.
-
-        This ensures the adapter is well-formed and provides the hooks required by FTS restore logic.
-        """
-        assert issubclass(TransformerBridgeStrategyAdapter, StrategyAdapter)
-        methods = inspect.getmembers(TransformerBridgeStrategyAdapter, predicate=inspect.isfunction)
-        method_names = {n for n, _ in methods}
-        # Should implement the adapter's before_restore_model hook (new preferred name) and backward compat alias
-        assert "before_restore_model" in method_names
-        assert "fts_optim_transform" in method_names
-        assert "logical_param_translation" in method_names
-
-    @pytest.mark.parametrize("use_tl_names", [True, False])
-    def test_initialization(self, use_tl_names):
-        """Test TransformerBridgeStrategyAdapter initialization with use_tl_names flag."""
-        adapter = TransformerBridgeStrategyAdapter(use_tl_names=use_tl_names)
-        assert adapter._use_tl_names == use_tl_names
-        assert adapter.model_view is None  # Not initialized until on_before_init_fts
-
-    def test_tl_names_disabled(self):
-        """Test that CanonicalModelView is used when use_tl_names=False."""
-        adapter = TransformerBridgeStrategyAdapter(use_tl_names=False)
-
-        # Verify initialization state
-        assert adapter._use_tl_names is False
-        assert adapter.model_view is None  # Not initialized until on_before_init_fts
-
-        # The actual delegation behavior is tested via the full test_bidirectional_mapping
-        # tests with real ITLens modules
-
-    @pytest.mark.parametrize(
-        "tl_name,expected_canonical_pattern",
-        [
-            ("blocks.9.attn.W_Q", "model.blocks.9._original_component.attn.q._original_component.weight"),
-            ("blocks.9.attn.b_Q", "model.blocks.9._original_component.attn.q._original_component.bias"),
-            ("blocks.0.mlp.W_in", "model.blocks.0._original_component.mlp._original_component.0.weight"),
-            ("embed.W_E", "model.embed._original_component.weight"),
-            ("unembed.W_U", "model.unembed.W_U"),
-        ],
-        ids=["attn_weight", "attn_bias", "mlp_weight", "embed", "unembed"],
-    )
-    def test_naming_patterns(self, tl_name, expected_canonical_pattern):
-        """Test expected naming patterns between TL-style and canonical names."""
-        # This test documents the expected naming conventions
-        # Actual mapping is built from tensor data_ptr() matching, not string patterns
-        assert "blocks" in tl_name or "embed" in tl_name or "unembed" in tl_name
-        assert "_original_component" in expected_canonical_pattern or expected_canonical_pattern == "model.unembed.W_U"
-
-    def test_gen_ft_schedule_disabled(self):
-        """Test gen_ft_schedule delegates to parent when use_tl_names=False."""
-        adapter = TransformerBridgeStrategyAdapter(use_tl_names=False)
-
-        # Without a pl_module set, calling parent gen_ft_schedule should work (uses default implementation)
-        # The actual schedule generation is tested in integration tests
-        assert hasattr(adapter, "gen_ft_schedule")
-        assert callable(adapter.gen_ft_schedule)
-
-
 # Every architecture the mapping tests cover; the gated models need bf16 CUDA and the gated-repo token.
 ARCH_MAPPING_CASES = [
     pytest.param("get_it_session__l_tl_bridge_gpt2__setup", GPT2_EXPECTATIONS, id="gpt2"),
@@ -596,329 +533,81 @@ ARCH_MAPPING_CASES = [
 
 
 # =============================================================================
-# Parameter Mapping Validation Tests
+# TransformerLens View Mapping, per Architecture
 # =============================================================================
-class TestArchitectureParameterMapping:
-    """Parameterized architecture parameter mapping tests.
+class TestBridgeViewArchitectures:
+    """The TransformerLens view (``TransformerBridgeView``) on each architecture the bridge wraps.
 
-    Validates TL-style parameter naming and bidirectional mapping for multiple architectures:
-    - GPT-2: MHA, learned pos_embed, biases (non-standalone, fast)
-    - Llama3: GQA, SwiGLU, RMSNorm, RoPE (standalone)
-    - Gemma2: GQA, GeGLU, RMSNorm, sliding window attention (standalone)
+    - GPT-2: MHA, learned pos_embed, biases (unprocessed and processed)
+    - Llama3: GQA, SwiGLU, RMSNorm, RoPE (bf16 CUDA)
+    - Gemma2: GQA, GeGLU, RMSNorm with pre and post norms, sliding window attention (bf16 CUDA)
 
-    Uses ArchitectureExpectations dataclass for per-model validation criteria.
-    Validates the component-tracing approach in TransformerBridgeStrategyAdapter.
-
-    Also includes tests for validating TL-style to canonical parameter mapping functionality:
-    - TL-style names (e.g., blocks.9.attn.W_Q, embed.W_E)
-    - Canonical names (e.g., model.blocks.9._original_component.attn.q._original_component.weight)
-
-    The mapping must be:
-    1. Complete: All TL params should map to canonical params
-    2. Invertible: Canonical params should map back to TL params
-    3. Architecture-invariant: Work across GPT-2, Llama, Gemma, etc.
+    finetuning-scheduler's mapping cases run here per architecture (interpretune#760); the rest checks what those cases
+    cannot know: the TransformerLens names each architecture should have, how many trace to parameters, and that the
+    implicit norm thaw covers exactly the norms the wrapped HuggingFace model has.
     """
 
-    # Expected TL-style parameter patterns for different component types
-    TL_ATTENTION_PATTERNS = {
-        r"blocks\.\d+\.attn\.W_Q",
-        r"blocks\.\d+\.attn\.W_K",
-        r"blocks\.\d+\.attn\.W_V",
-        r"blocks\.\d+\.attn\.W_O",
-        r"blocks\.\d+\.attn\.b_Q",
-        r"blocks\.\d+\.attn\.b_K",
-        r"blocks\.\d+\.attn\.b_V",
-        r"blocks\.\d+\.attn\.b_O",
-    }
+    @staticmethod
+    def _view(request, session_fixture: str):
+        pytest.importorskip("finetuning_scheduler.tunable_view")
+        from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
+        from interpretune.tuning.views import VIEW_ATTR
 
-    TL_MLP_PATTERNS = {
-        r"blocks\.\d+\.mlp\.W_in",
-        r"blocks\.\d+\.mlp\.W_out",
-        r"blocks\.\d+\.mlp\.b_in",
-        r"blocks\.\d+\.mlp\.b_out",
-        # Gated MLPs (Llama, Gemma)
-        r"blocks\.\d+\.mlp\.W_gate",
-        r"blocks\.\d+\.mlp\.b_gate",
-    }
-
-    TL_EMBEDDING_PATTERNS = {
-        r"embed\.W_E",
-        r"pos_embed\.W_pos",
-        r"unembed\.W_U",
-        r"unembed\.b_U",
-    }
-
-    TL_LAYERNORM_PATTERNS = {
-        r"blocks\.\d+\.ln1\.w",
-        r"blocks\.\d+\.ln1\.b",
-        r"blocks\.\d+\.ln2\.w",
-        r"blocks\.\d+\.ln2\.b",
-        r"ln_final\.w",
-        r"ln_final\.b",
-    }
+        module = request.getfixturevalue(session_fixture).it_session.module
+        view = getattr(module, VIEW_ATTR)
+        assert isinstance(view, TransformerBridgeView) and view.root is module
+        return module, view
 
     @staticmethod
-    def get_tl_params_from_bridge(bridge) -> dict[str, torch.Tensor]:
-        """Get TL-style parameters from a TransformerBridge instance."""
-        return dict(bridge.tl_named_parameters())
-
-    @staticmethod
-    def get_canonical_params_from_module(module) -> dict[str, torch.Tensor]:
-        """Get canonical parameters from a LightningModule."""
-        return dict(module.named_parameters())
-
-    @staticmethod
-    def categorize_tl_param(name: str) -> str:
-        """Categorize a TL-style parameter name by component type."""
-        if ".attn." in name:
-            return "attention"
-        elif ".mlp." in name:
-            return "mlp"
-        elif "embed" in name or "unembed" in name:
-            return "embedding"
-        elif "ln" in name:
-            return "layernorm"
-        else:
-            return "other"
-
-    @staticmethod
-    def validate_mapping_structure(tl_to_canonical: Dict, canonical_to_tl: Dict) -> dict[str, set[str]]:
-        """Validate the structure of bidirectional mappings.
-
-        Returns:
-            Dict with 'unmapped_tl', 'unmapped_canonical', 'multi_mapped_canonical' sets
-        """
-        issues = {
-            "unmapped_tl": set(),
-            "unmapped_canonical": set(),
-            "multi_mapped_canonical": set(),
-        }
-
-        # Check for unmapped TL params
-        for tl_name, canonical_list in tl_to_canonical.items():
-            if not canonical_list:
-                issues["unmapped_tl"].add(tl_name)
-
-        # Check for canonical params with multiple TL mappings (which is OK for views)
-        canonical_counts = {}
-        for canonical_name, tl_name in canonical_to_tl.items():
-            if tl_name not in canonical_counts:
-                canonical_counts[tl_name] = []
-            canonical_counts[tl_name].append(canonical_name)
-
-        # Multi-mapping is expected for views, but log for awareness
-        for tl_name, canonical_list in canonical_counts.items():
-            if len(canonical_list) > 1:
-                issues["multi_mapped_canonical"].add(tl_name)
-
-        return issues
-
-    def test_tl_param_pattern_coverage(self):
-        """Test that TL-style parameter patterns are comprehensive."""
-        # Verify pattern sets are non-empty and well-formed
-        assert len(self.TL_ATTENTION_PATTERNS) >= 8
-        assert len(self.TL_MLP_PATTERNS) >= 4
-        assert len(self.TL_EMBEDDING_PATTERNS) >= 2
-
-        # Verify patterns compile without error
-        all_patterns = (
-            self.TL_ATTENTION_PATTERNS | self.TL_MLP_PATTERNS | self.TL_EMBEDDING_PATTERNS | self.TL_LAYERNORM_PATTERNS
-        )
-        for pattern in all_patterns:
-            compiled = re.compile(pattern)
-            assert compiled is not None
-
-    def test_param_categorization(self):
-        """Test that parameter categorization works correctly."""
-        test_cases = [
-            ("blocks.0.attn.W_Q", "attention"),
-            ("blocks.11.attn.b_O", "attention"),
-            ("blocks.5.mlp.W_in", "mlp"),
-            ("blocks.5.mlp.W_gate", "mlp"),
-            ("embed.W_E", "embedding"),
-            ("unembed.W_U", "embedding"),
-            ("pos_embed.W_pos", "embedding"),
-            ("blocks.0.ln1.w", "layernorm"),
-            ("ln_final.w", "layernorm"),
-        ]
-
-        for param_name, expected_category in test_cases:
-            actual = self.categorize_tl_param(param_name)
-            assert actual == expected_category, f"Expected {expected_category} for {param_name}, got {actual}"
-
-    def _validate_tl_param_structure(
-        self, bridge, module, arch_expectations: ArchitectureExpectations
-    ) -> tuple[Dict, Dict]:
-        """Verify TransformerBridge has expected TL-style parameter structure.
-
-        Validates:
-        - Non-empty parameters
-        - Correct number of layers
-        - All expected attention params per layer
-        - All expected MLP params per layer
-        - All expected embedding params
-
-        Args:
-            bridge: TransformerBridge model
-            module: Lightning module wrapping the model
-            arch_expectations: Expected architecture parameters
-
-        Returns:
-            Tuple of (tl_params, canonical_params) dicts for further validation
-        """
+    def _validate_tl_param_structure(bridge, arch: ArchitectureExpectations) -> dict[str, torch.Tensor]:
+        """The bridge's TransformerLens names: layer count and the attention, MLP and embedding names expected."""
         tl_params = dict(bridge.tl_named_parameters())
-        canonical_params = dict(module.named_parameters())
-
-        # ===== Basic Structure Validation =====
-        assert len(tl_params) > 0, f"[{arch_expectations.model_name}] No TL-style parameters found"
-        assert len(canonical_params) > 0, f"[{arch_expectations.model_name}] No canonical parameters found"
-
-        # ===== Layer Count Validation =====
-        layer_indices = set()
-        for name in tl_params.keys():
-            match = re.match(r"blocks\.(\d+)\.", name)
-            if match:
-                layer_indices.add(int(match.group(1)))
-
-        assert len(layer_indices) == arch_expectations.n_layers, (
-            f"[{arch_expectations.model_name}] Expected {arch_expectations.n_layers} layers, found {len(layer_indices)}"
-        )
-
-        # ===== Attention Parameter Validation =====
-        for attn_suffix in arch_expectations.expected_tl_attn_params:
-            param_name = f"blocks.0.{attn_suffix}"
-            assert param_name in tl_params, f"[{arch_expectations.model_name}] Missing attention param: {param_name}"
-
-        # ===== MLP Parameter Validation =====
-        for mlp_suffix in arch_expectations.expected_tl_mlp_params:
-            param_name = f"blocks.0.{mlp_suffix}"
-            assert param_name in tl_params, f"[{arch_expectations.model_name}] Missing MLP param: {param_name}"
-
-        # ===== Embedding Parameter Validation =====
-        for embed_param in arch_expectations.expected_tl_embed_params:
-            assert embed_param in tl_params, f"[{arch_expectations.model_name}] Missing embedding param: {embed_param}"
-
-        # Check position embeddings based on architecture
-        if arch_expectations.has_pos_embed:
-            assert "pos_embed.W_pos" in tl_params, (
-                f"[{arch_expectations.model_name}] Expected pos_embed.W_pos but not found"
-            )
-
-        # ===== Parameter Count Summary =====
-        tl_count = len(tl_params)
-        canonical_count = len(canonical_params)
-        print(f"[{arch_expectations.model_name}] Parameter counts - TL: {tl_count}, Canonical: {canonical_count}")
-
-        return tl_params, canonical_params
+        assert tl_params, f"[{arch.model_name}] No TL-style parameters found"
+        layers = {int(m.group(1)) for name in tl_params if (m := re.match(r"blocks\.(\d+)\.", name))}
+        assert len(layers) == arch.n_layers, f"[{arch.model_name}] Expected {arch.n_layers} layers, found {len(layers)}"
+        for suffix in (*arch.expected_tl_attn_params, *arch.expected_tl_mlp_params):
+            assert f"blocks.0.{suffix}" in tl_params, f"[{arch.model_name}] Missing block param: blocks.0.{suffix}"
+        for name in arch.expected_tl_embed_params:
+            assert name in tl_params, f"[{arch.model_name}] Missing embedding param: {name}"
+        assert ("pos_embed.W_pos" in tl_params) == arch.has_pos_embed, f"[{arch.model_name}] pos_embed.W_pos"
+        return tl_params
 
     @pytest.mark.parametrize("session_fixture, arch_expectations", ARCH_MAPPING_CASES)
-    def test_bidirectional_mapping(self, request, session_fixture: str, arch_expectations: ArchitectureExpectations):
-        """Validate bidirectional TL <-> canonical parameter mapping using component tracing.
+    def test_view_conformance(self, request, session_fixture: str, arch_expectations: ArchitectureExpectations):
+        """The read-only finetuning-scheduler cases: a complete, round-tripping mapping and a default schedule that
+        compiles."""
+        _, view = self._view(request, session_fixture)
+        from finetuning_scheduler.testing import TunableViewConformance
 
-        First validates TL parameter structure as a precondition, then tests the
-        TransformerBridgeStrategyAdapter's _build_param_mapping() method which uses
-        component structure tracing to build mappings.
+        cases = ["mapping_completeness", "mapping_round_trip", "default_schedule_compiles"]
+        report = TunableViewConformance(lambda: view).run(select=cases)
+        assert report.ok, report.failures
+        assert set(report.ran) == set(cases), report.ran
 
-        Validates:
-        - TL parameter structure (layer count, attention/MLP/embedding params)
-        - All non-LayerNorm TL params have canonical mappings
-        - Canonical params without TL equivalents are expected (joint QKV, etc.)
-        - Mapping is consistent (same param doesn't map to multiple TL names)
-        """
-        fixture = request.getfixturevalue(session_fixture)
-        module = fixture.it_session.module
-        bridge = module.model
-
-        # ===== Precondition: Validate TL param structure =====
-        tl_params, canonical_params = self._validate_tl_param_structure(bridge, module, arch_expectations)
-
-        # ===== Build param mapping using component tracing =====
-        adapter = TransformerBridgeStrategyAdapter(use_tl_names=True)
-
-        # Create a mock fts_handle to provide pl_module and trainer access
-        class MockTrainer:
-            pass  # Minimal trainer stub
-
-        class MockFTSHandle:
-            def __init__(self, pl_module):
-                self.pl_module = pl_module
-                self.trainer = MockTrainer()
-
-        adapter.fts_handle = MockFTSHandle(module)
-
-        # Build the parameter mapping using component tracing
-        # (ModelView gets created in on_before_init_fts)
-        adapter.on_before_init_fts()
-
-        assert adapter.model_view is not None, "ModelView not created"
-        tl_to_canonical = adapter.model_view._tl_to_canonical_mapping
-        canonical_to_tl = adapter.model_view._canonical_to_tl_mapping
-
-        assert tl_to_canonical is not None, "TL to canonical mapping not built"
-        assert canonical_to_tl is not None, "Canonical to TL mapping not built"
-
-        # ===== TL -> Canonical Mapping Validation =====
-        unmapped_tl = []
-        mapped_tl_count = 0
-        for tl_name in tl_params.keys():
-            canonical_names = tl_to_canonical.get(tl_name, [])
-            if canonical_names:
-                mapped_tl_count += 1
-                # Verify canonical names actually exist
-                for cn in canonical_names:
-                    assert cn in canonical_params, (
-                        f"[{arch_expectations.model_name}] TL '{tl_name}' maps to non-existent canonical '{cn}'"
-                    )
-            else:
-                unmapped_tl.append(tl_name)
-
-        print(
-            f"[{arch_expectations.model_name}] TL->Canonical: {mapped_tl_count}/{len(tl_params)} mapped, "
-            f"{len(unmapped_tl)} unmapped"
+    @pytest.mark.parametrize("session_fixture, arch_expectations", ARCH_MAPPING_CASES)
+    def test_trace_covers_the_model(self, request, session_fixture: str, arch_expectations: ArchitectureExpectations):
+        """Every TransformerLens name traces to parameters except the synthesized zero biases, and every parameter
+        the model uses is reached by a name or thawed with one (a fused projection's storage alias, a norm
+        TransformerLens does not name)."""
+        module, view = self._view(request, session_fixture)
+        arch = arch_expectations
+        tl_params = self._validate_tl_param_structure(module.model, arch)
+        physical = dict(module.named_parameters())
+        traced = dict(view.to_physical(list(n for n in tl_params if n not in view.untraced)))
+        assert len(traced) == arch.expected_mapped_tl_count, f"[{arch.model_name}] traced {len(traced)}"
+        assert len(view.untraced) == arch.expected_unmapped_tl_count, f"[{arch.model_name}] {view.untraced[:10]}"
+        assert all(not tl_params[n].any() for n in view.untraced), f"[{arch.model_name}] an untraced name is not zero"
+        reached = {p for ps in traced.values() for p in ps}
+        assert reached <= set(physical)
+        unreached = set(physical) - reached
+        assert len(reached) == arch.expected_mapped_canonical_count, f"[{arch.model_name}] reached {len(reached)}"
+        assert len(unreached) == arch.expected_unmapped_canonical_count, (
+            f"[{arch.model_name}] unreached {sorted(unreached)[:10]}"
         )
-
-        # Validate exact mapping counts - ALL TL params should be mapped
-        assert mapped_tl_count == arch_expectations.expected_mapped_tl_count, (
-            f"[{arch_expectations.model_name}] TL mapping count mismatch: "
-            f"expected {arch_expectations.expected_mapped_tl_count}, got {mapped_tl_count}"
+        uncoupled = unreached - set(view.coupled(sorted(reached)))
+        assert len(uncoupled) == arch.expected_uncoupled_canonical_count, (
+            f"[{arch.model_name}] neither reached nor coupled: {sorted(uncoupled)[:10]}"
         )
-        assert len(unmapped_tl) == arch_expectations.expected_unmapped_tl_count, (
-            f"[{arch_expectations.model_name}] Unmapped TL count mismatch: "
-            f"expected {arch_expectations.expected_unmapped_tl_count}, got {len(unmapped_tl)}. "
-            f"Unmapped: {unmapped_tl[:10]}"
-        )
-
-        # ===== Canonical -> TL Mapping Validation =====
-        mapped_canonical_count = len(canonical_to_tl)
-        unmapped_canonical = [k for k in canonical_params.keys() if k not in canonical_to_tl]
-
-        print(
-            f"[{arch_expectations.model_name}] Canonical->TL: {mapped_canonical_count}/{len(canonical_params)} mapped, "
-            f"{len(unmapped_canonical)} unmapped"
-        )
-
-        # Validate exact mapping counts for canonical params
-        assert mapped_canonical_count == arch_expectations.expected_mapped_canonical_count, (
-            f"[{arch_expectations.model_name}] Canonical mapping count mismatch: "
-            f"expected {arch_expectations.expected_mapped_canonical_count}, got {mapped_canonical_count}"
-        )
-        assert len(unmapped_canonical) == arch_expectations.expected_unmapped_canonical_count, (
-            f"[{arch_expectations.model_name}] Unmapped canonical count mismatch: "
-            f"expected {arch_expectations.expected_unmapped_canonical_count}, got {len(unmapped_canonical)}. "
-            f"Unmapped: {unmapped_canonical[:10]}"
-        )
-
-        # Many canonical params won't have TL equivalents (LayerNorms, joint QKV, original components, etc.)
-        # This is expected - we just validate that the reverse mapping is consistent
-        for canonical_name, tl_name in canonical_to_tl.items():
-            assert tl_name in tl_params, (
-                f"[{arch_expectations.model_name}] Canonical '{canonical_name}' maps to non-existent TL '{tl_name}'"
-            )
-            # Verify bidirectional consistency
-            assert canonical_name in tl_to_canonical.get(tl_name, []), (
-                f"[{arch_expectations.model_name}] Bidirectional inconsistency: "
-                f"canonical '{canonical_name}' -> TL '{tl_name}' but TL doesn't map back"
-            )
 
     @pytest.mark.parametrize("session_fixture, arch_expectations", ARCH_MAPPING_CASES)
     def test_implicit_norm_thaw_covers_every_norm(
@@ -927,241 +616,32 @@ class TestArchitectureParameterMapping:
         """Thawing part of a block thaws every norm of that block, and thawing an embedding thaws the final norm.
 
         The expected norms come from the wrapped HuggingFace model's own module paths, not from the bridge's components,
-        so a component index that missed a norm (or matched one family's names) fails here.
+        so a component index that missed a norm (or matched one family's names) fails here. Norms are what the implicit
+        thaw adds over the storage aliases a view without it couples.
         """
-        module = request.getfixturevalue(session_fixture).it_session.module
-        adapter = TransformerBridgeStrategyAdapter(use_tl_names=True)
+        from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
 
-        class MockTrainer:
-            pass
-
-        class MockFTSHandle:
-            def __init__(self, pl_module):
-                self.pl_module = pl_module
-                self.trainer = MockTrainer()
-
-        adapter.fts_handle = MockFTSHandle(module)
-        adapter.on_before_init_fts()
-        view = adapter.model_view
-        canonical = dict(module.named_parameters())
+        module, view = self._view(request, session_fixture)
+        arch = arch_expectations
+        aliases_only = TransformerBridgeView(module, implicit_norm_thaw=False)
+        physical = dict(module.named_parameters())
         hf_model = module.model.original_model
 
-        def ptrs_of(canonical_names):
-            return {canonical[name].data_ptr() for name in canonical_names}
+        def norms_thawed_with(logical: str) -> set[int]:
+            ps = view.to_physical([logical])[logical]
+            added = set(view.coupled(ps)) - set(aliases_only.coupled(ps))
+            return {physical[name].data_ptr() for name in added}
 
         def hf_ptrs(*paths):
             return {p.data_ptr() for path in paths for p in hf_model.get_submodule(path).parameters()}
 
-        for layer in (0, arch_expectations.n_layers - 1):
-            block = arch_expectations.hf_block_path.format(i=layer)
-            thawed = view._get_implicit_layernorm_params([f"blocks.{layer}.attn.W_Q"])
-            expected = hf_ptrs(*(f"{block}.{norm}" for norm in arch_expectations.hf_block_norms))
-            assert expected, f"[{arch_expectations.model_name}] no HF norm params found under {block}"
-            assert ptrs_of(thawed) == expected, (
-                f"[{arch_expectations.model_name}] layer {layer}: implicit thaw {sorted(thawed)} does not cover "
-                f"exactly {arch_expectations.hf_block_norms}"
+        for layer in (0, arch.n_layers - 1):
+            block = arch.hf_block_path.format(i=layer)
+            expected = hf_ptrs(*(f"{block}.{norm}" for norm in arch.hf_block_norms))
+            assert expected, f"[{arch.model_name}] no HF norm params found under {block}"
+            assert norms_thawed_with(f"blocks.{layer}.attn.W_Q") == expected, (
+                f"[{arch.model_name}] layer {layer}: the implicit thaw does not cover exactly {arch.hf_block_norms}"
             )
-
-        final = view._get_implicit_layernorm_params(["embed.W_E"])
-        assert ptrs_of(final) == hf_ptrs(arch_expectations.hf_final_norm), (
-            f"[{arch_expectations.model_name}] implicit thaw {sorted(final)} is not {arch_expectations.hf_final_norm}"
+        assert norms_thawed_with("embed.W_E") == hf_ptrs(arch.hf_final_norm), (
+            f"[{arch.model_name}] the implicit thaw of embed.W_E is not {arch.hf_final_norm}"
         )
-
-
-# =============================================================================
-# Custom ModelView Tests
-# =============================================================================
-
-
-class TestCustomModelView:
-    """Tests for custom ModelView usage."""
-
-    def test_custom_model_view(self, get_it_session__l_tl_bridge_gpt2__setup):
-        """Test that a simple custom ModelView can be successfully instantiated and used."""
-        from interpretune.adapters.model_view import ModelView
-        import os
-
-        # Define a simple custom ModelView that prefixes all param names
-        class PrefixedModelView(ModelView):
-            """Test view that adds 'custom_' prefix to all parameter names."""
-
-            def __init__(self, adapter):
-                super().__init__(adapter)
-                self.prefix = "custom_"
-
-            def build_param_mapping(self) -> None:
-                """No complex mapping needed for this simple test."""
-                pass
-
-            def transform_to_canonical(self, param_names: list[str], inspect_only: bool = False) -> list[str]:
-                """Strip custom prefix to get canonical names."""
-                return [
-                    name.replace(self.prefix, "", 1) if name.startswith(self.prefix) else name for name in param_names
-                ]
-
-            def transform_from_canonical(self, param_names: list[str]) -> list[str]:
-                """Add custom prefix to canonical names."""
-                return [f"{self.prefix}{name}" for name in param_names]
-
-            def get_named_params(self) -> dict[str, torch.Tensor]:
-                """Get params with custom prefix."""
-                return {f"{self.prefix}{name}": param for name, param in self.pl_module.named_parameters()}
-
-            def gen_schedule(self, dump_loc: str | os.PathLike) -> os.PathLike | None:
-                """Not tested in this simple test."""
-                return None
-
-            def validate_schedule(self) -> None:
-                """Not tested in this simple test."""
-                pass
-
-        # Get the fixture
-        fixture = get_it_session__l_tl_bridge_gpt2__setup
-        module = fixture.it_session.module
-
-        # Create adapter with custom ModelView class
-        adapter = TransformerBridgeStrategyAdapter(model_view=PrefixedModelView)
-
-        # Create mock FTS handle
-        class MockFTSHandle:
-            def __init__(self, pl_module):
-                self.pl_module = pl_module
-
-        class MockTrainer:
-            pass
-
-        adapter.fts_handle = MockFTSHandle(module)
-        adapter.fts_handle.trainer = MockTrainer()
-
-        # Initialize the model view
-        adapter.on_before_init_fts()
-
-        # Verify custom ModelView was created
-        assert adapter.model_view is not None
-        assert isinstance(adapter.model_view, PrefixedModelView)
-
-        # Test transformations
-        canonical_params = ["model.embed.weight", "model.blocks.0.attn.W_Q"]
-
-        # Transform to canonical (should strip prefix)
-        prefixed_params = adapter.model_view.transform_from_canonical(canonical_params)
-        assert all(p.startswith("custom_") for p in prefixed_params)
-        assert prefixed_params == ["custom_model.embed.weight", "custom_model.blocks.0.attn.W_Q"]
-
-        # Transform back to canonical (should remove prefix)
-        back_to_canonical = adapter.model_view.transform_to_canonical(prefixed_params)
-        assert back_to_canonical == canonical_params
-
-        # Test get_named_params returns prefixed names
-        named_params = adapter.model_view.get_named_params()
-        assert all(name.startswith("custom_") for name in named_params.keys())
-        assert len(named_params) > 0  # Should have some parameters
-
-
-class TestImplicitLayerNormThawing:
-    """Test implicit LayerNorm thawing configuration in TLNamesModelView."""
-
-    def test_implicit_ln_thaw_default(self, get_it_session__l_tl_bridge_gpt2__setup):
-        """Test that implicit_ln_thaw defaults to True (existing behavior)."""
-        fixture = get_it_session__l_tl_bridge_gpt2__setup
-        module = fixture.it_session.module
-
-        # Create adapter with use_tl_names=True (creates TLNamesModelView)
-        adapter = TransformerBridgeStrategyAdapter(use_tl_names=True)
-
-        # Set up the adapter
-        class MockFTSHandle:
-            def __init__(self, pl_module):
-                self.pl_module = pl_module
-
-        class MockTrainer:
-            pass
-
-        adapter.fts_handle = MockFTSHandle(module)
-        adapter.fts_handle.trainer = MockTrainer()
-        adapter.on_before_init_fts()
-
-        # Default adapter with use_tl_names=True should have TLNamesModelView with implicit_ln_thaw=True
-        assert hasattr(adapter.model_view, "implicit_ln_thaw"), (
-            "TLNamesModelView should have implicit_ln_thaw attribute"
-        )
-        assert adapter.model_view.implicit_ln_thaw is True
-
-        # Test that LayerNorm params are included when thawing attention blocks
-        tl_params = ["blocks.0.attn.W_Q", "blocks.0.attn.W_K"]
-        canonical_params = adapter.model_view.transform_to_canonical(tl_params)
-
-        # Should include ln_1 and ln_2 for block 0
-        ln_params = [p for p in canonical_params if "ln_1" in p or "ln_2" in p]
-        assert len(ln_params) > 0, "Should include implicit LayerNorm params with implicit_ln_thaw=True"
-
-    def test_implicit_ln_thaw_disabled(self, get_it_session__l_tl_bridge_gpt2__setup):
-        """Test that implicit_ln_thaw=False disables LayerNorm thawing."""
-        fixture = get_it_session__l_tl_bridge_gpt2__setup
-        module = fixture.it_session.module
-
-        # Create new adapter with implicit_ln_thaw=False
-        adapter = TransformerBridgeStrategyAdapter(use_tl_names=True, model_view_cfg={"implicit_ln_thaw": False})
-
-        # Set up the adapter
-        class MockFTSHandle:
-            def __init__(self, pl_module):
-                self.pl_module = pl_module
-
-        class MockTrainer:
-            pass
-
-        adapter.fts_handle = MockFTSHandle(module)
-        adapter.fts_handle.trainer = MockTrainer()
-        adapter.on_before_init_fts()
-
-        # Verify implicit_ln_thaw is False
-        assert adapter.model_view.implicit_ln_thaw is False
-
-        # Test that LayerNorm params are NOT included
-        tl_params = ["blocks.0.attn.W_Q", "blocks.0.attn.W_K"]
-        canonical_params = adapter.model_view.transform_to_canonical(tl_params)
-
-        # Should NOT include ln_1 or ln_2 for block 0
-        ln_params = [p for p in canonical_params if "ln_1" in p or "ln_2" in p]
-        assert len(ln_params) == 0, "Should not include LayerNorm params with implicit_ln_thaw=False"
-
-        # Verify only the requested TL params were transformed
-        # Each TL param may map to one or more canonical params (e.g., weight and bias)
-        assert len(canonical_params) >= len(tl_params), "Should have at least the requested params"
-
-    def test_implicit_ln_thaw_with_model_view_class(self, get_it_session__l_tl_bridge_gpt2__setup):
-        """Test passing model_view_cfg when using model_view parameter."""
-        fixture = get_it_session__l_tl_bridge_gpt2__setup
-        module = fixture.it_session.module
-
-        # Import TLNamesModelView
-        from interpretune.adapters.transformer_lens import TLNamesModelView
-
-        # Create adapter with model_view class and config
-        adapter = TransformerBridgeStrategyAdapter(
-            model_view=TLNamesModelView, model_view_cfg={"implicit_ln_thaw": False}
-        )
-
-        # Set up the adapter
-        class MockFTSHandle:
-            def __init__(self, pl_module):
-                self.pl_module = pl_module
-
-        class MockTrainer:
-            pass
-
-        adapter.fts_handle = MockFTSHandle(module)
-        adapter.fts_handle.trainer = MockTrainer()
-        adapter.on_before_init_fts()
-
-        # Verify config was passed correctly
-        assert adapter.model_view.implicit_ln_thaw is False
-
-        # Test transformation
-        tl_params = ["blocks.0.mlp.W_in"]
-        canonical_params = adapter.model_view.transform_to_canonical(tl_params)
-
-        # Should NOT include LayerNorm params
-        ln_params = [p for p in canonical_params if "ln_" in p]
-        assert len(ln_params) == 0, "Should not include LayerNorm params"

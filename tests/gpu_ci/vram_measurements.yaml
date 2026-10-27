@@ -138,46 +138,6 @@ tests/core/test_adapters_sae_lens.py::TestClassSAELens::test_sl_tl_device_sync_w
   torch: 2.13.0+cu130
   seconds: 0.03
   date: '2026-10-01'
-tests/core/test_adapters_transformer_lens.py::TestArchitectureParameterMapping::test_bidirectional_mapping[gemma2]:
-  outcome: failed
-  need_gb: 5.581
-  allocator_peak_gb: 5.135
-  device_peak_gb: 5.581
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 7.75
-  date: '2026-10-01'
-tests/core/test_adapters_transformer_lens.py::TestArchitectureParameterMapping::test_bidirectional_mapping[llama3]:
-  outcome: failed
-  need_gb: 9.946
-  allocator_peak_gb: 9.5
-  device_peak_gb: 9.946
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 10.18
-  date: '2026-10-01'
-? tests/core/test_adapters_transformer_lens.py::TestArchitectureParameterMapping::test_implicit_norm_thaw_covers_every_norm[gemma2]
-: outcome: passed
-  need_gb: 5.544
-  allocator_peak_gb: 5.098
-  device_peak_gb: 5.544
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 7.59
-  date: '2026-10-01'
-? tests/core/test_adapters_transformer_lens.py::TestArchitectureParameterMapping::test_implicit_norm_thaw_covers_every_norm[llama3]
-: outcome: passed
-  need_gb: 8.21
-  allocator_peak_gb: 7.764
-  device_peak_gb: 8.21
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 7.28
-  date: '2026-10-01'
 tests/core/test_analysis_backend_parity.py::test_analysis_backend_parity_gemma3_it_direct_session_intervention_graph:
   outcome: passed
   need_gb: 14.445

@@ -102,8 +102,9 @@ uv venv ${VENV_BASE}/${IT_TARGET_VENV} --python 3.13 && source ${VENV_BASE}/${IT
 uv pip install -e ".[examples]" --group git-deps
 ```
 
-Add `lightning` only if you want the Lightning adapter and its fine-tuning-scheduler integration:
-`".[examples,lightning]"`. It is a genuinely optional adapter, not part of the base install.
+Add `tune` to fine-tune through finetuning-scheduler on the core training loop (`".[examples,tune]"`), or `lightning`
+for the Lightning adapter, which includes `tune` (`".[examples,lightning]"`). Both are genuinely optional, not part of
+the base install.
 
 The `examples` extra includes the interp-engine execution backend, which the cross-backend parity suite
 drives. That installs the **engine** only: the hub adapter composing it into a session is pulled separately

@@ -173,20 +173,22 @@ ns_parity_results = {
 #   - Joint and split QKV parameters do NOT share underlying storage
 #   - Result: 2 additional params per attention layer × 3 blocks = +6 params
 #
-# TransformerBridge TL Names vs HookedTransformer (parameter differences):
-#   - TL names mode transforms canonical parameter names to TL-style names
-#   - LayerNorms handled differently: explicit in HookedTransformer schedules, implicit_ln_thaw in Bridge
+# TransformerBridge canonical names: the module declares the identity view (CanonicalViewDivergeTestITModule), so its
+# schedules name the module's own parameters, which may expose architectural differences reducing schedule portability.
+#
+# TransformerBridge TL names (the TransformerLens composition's own view, TransformerBridgeView):
+#   - Schedules name TransformerLens names; the view maps each to the physical parameters it is computed from
+#   - The counts below are physical parameters thawed: each block's 16 named tensors plus its joint QKV weight and bias,
+#     which the q/k/v splits are strided views of (18 per block), and every norm of a thawed block (implicit norm thaw)
 #   - Unembed parameters may differ (weight tying depends on enable_compatibility_mode)
 #   - Using TL names provides standard interface for cross-architecture schedules
-#   - CanonicalModelView (use_tl_names=False, default) allows direct canonical specification
-#     but may expose architectural differences reducing schedule portability
 #
 # CHECKPOINT RESTORATION (with additive penalty divergence):
 #   - Divergence starts at epoch 2 (first epoch of phase 1)
 #   - Best checkpoint remains at depth 0 (phase 0) for all architectures
 #   - All tests correctly restore to best checkpoint from phase 0 in epochs 3-4
 #
-# See docs/fts_transformerlens_integration.md for detailed documentation
+# See docs/fts_tuning_transformer_lens.md for the TransformerLens view
 # =====================================================================================
 
 # Base GPT-2 FTS Results (3-phase schedule: 36 → 60 → 148 params)
@@ -319,9 +321,9 @@ l_tl_bridge_fts_multiphase_callback_results = {
     },
 }
 
-# TransformerBridge TL Names FTS Results (3-phase schedule: 48 → 80 → 197 params)
-# TL-style naming mode (blocks.9.attn.W_Q) with 1:1 mapping to canonical params
-# Joint QKV params excluded from TL name mapping, implicitly thawed via regex wildcard patterns
+# TransformerBridge TL Names FTS Results (3-phase schedule: 54 → 90 → 221 physical params)
+# TL-style names (blocks.9.attn.W_Q) resolved by the TransformerLens view; counts are the physical parameters thawed,
+# joint QKV params included as storage aliases of the q/k/v splits (48 → 80 → 197 TL names)
 l_tl_bridge_fts_tl_names_multiphase_callback_results = {
     0: {
         "curr_depth": 0,
@@ -330,7 +332,7 @@ l_tl_bridge_fts_tl_names_multiphase_callback_results = {
         "current_ckpt_depth": 0,
         "best_ckpt_depth": 0,
         "best_ckpt_pgs_len": 0,
-        "curr_thawed_params": 48,
+        "curr_thawed_params": 54,
         "optim_pg_len": 1,
         "ckpt_cback_current_ckpt_depth": 0,
         "ckpt_cback_best_ckpt_depth": 0,
@@ -342,7 +344,7 @@ l_tl_bridge_fts_tl_names_multiphase_callback_results = {
         "current_ckpt_depth": 0,
         "best_ckpt_depth": 0,
         "best_ckpt_pgs_len": 1,
-        "curr_thawed_params": 48,
+        "curr_thawed_params": 54,
         "optim_pg_len": 1,
         "ckpt_cback_current_ckpt_depth": 0,
         "ckpt_cback_best_ckpt_depth": 0,
@@ -354,7 +356,7 @@ l_tl_bridge_fts_tl_names_multiphase_callback_results = {
         "current_ckpt_depth": 0,
         "best_ckpt_depth": 0,
         "best_ckpt_pgs_len": 1,
-        "curr_thawed_params": 80,
+        "curr_thawed_params": 90,
         "optim_pg_len": 2,
         "ckpt_cback_current_ckpt_depth": 0,
         "ckpt_cback_best_ckpt_depth": 0,
@@ -366,7 +368,7 @@ l_tl_bridge_fts_tl_names_multiphase_callback_results = {
         "current_ckpt_depth": 0,
         "best_ckpt_depth": 0,
         "best_ckpt_pgs_len": 1,
-        "curr_thawed_params": 197,
+        "curr_thawed_params": 221,
         "optim_pg_len": 3,
         "ckpt_cback_current_ckpt_depth": 0,
         "ckpt_cback_best_ckpt_depth": 0,
@@ -378,7 +380,7 @@ l_tl_bridge_fts_tl_names_multiphase_callback_results = {
         "current_ckpt_depth": 0,
         "best_ckpt_depth": 0,
         "best_ckpt_pgs_len": 1,
-        "curr_thawed_params": 197,
+        "curr_thawed_params": 221,
         "optim_pg_len": 3,
         "ckpt_cback_current_ckpt_depth": 0,
         "ckpt_cback_best_ckpt_depth": 0,
