@@ -64,6 +64,13 @@ class TestResolvePlacement:
         with pytest.raises(MisconfigurationException, match="Unknown placement 'tp'"):
             SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="tp")  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize("placement", ["ddp", "fsdp2"])
+    def test_resuming_a_data_parallel_run_is_refused(self, placement):
+        """A core-loop checkpoint is one process's state; a sharded run needs distributed checkpointing."""
+        with pytest.raises(MisconfigurationException, match=f"supports placement 'single' only, not '{placement}'"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement=placement, resume_from={})
+        SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="single", resume_from={})
+
     def test_analysis_runner_refuses_data_parallel(self):
         with pytest.raises(MisconfigurationException, match="supports placement 'single' only, not 'ddp'"):
             AnalysisRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="ddp")

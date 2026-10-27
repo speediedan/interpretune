@@ -195,6 +195,9 @@ class SessionRunnerCfg:
     # the class names of the modules `fsdp2` shards as their own units (a transformer's block class, each spliced
     # instrument's class), deepest first and before the module itself; `[]` shards the module as one unit
     shard_units: Sequence[str] | None = None
+    # resume training from a core-loop checkpoint (`interpretune.runners.core.checkpoint_state`, or a path to one saved
+    # with `torch.save`) taken at the end of an epoch; training continues at the next epoch
+    resume_from: str | Path | Mapping[str, Any] | None = None
 
     def __post_init__(self):
         self.callbacks = tuple(
@@ -204,6 +207,14 @@ class SessionRunnerCfg:
         if self.placement not in ("single", "ddp", "fsdp2"):
             raise MisconfigurationException(
                 f"Unknown placement '{self.placement}': expected one of 'single', 'ddp', 'fsdp2'."
+            )
+        if self.resume_from is not None and self.placement != "single":
+            # a core-loop checkpoint is one process's `state_dict()`; under 'ddp' and 'fsdp2' every rank holds
+            # DTensor shards, which need a distributed checkpoint format to save and restore
+            raise MisconfigurationException(
+                f"`resume_from` supports placement 'single' only, not '{self.placement}': a core-loop checkpoint is one"
+                " process's state, and resuming a sharded run needs distributed checkpointing, which the core loop"
+                " does not do yet."
             )
         if self.it_session is not None:
             self._session_validation()

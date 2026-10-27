@@ -301,6 +301,63 @@ class TestCheckpointState:
         with pytest.raises(MisconfigurationException, match="holds 1 optimizers but the module has 2"):
             load_checkpoint_state(module, state)
 
+    @pytest.mark.parametrize("as_path", [False, True], ids=["mapping", "path"])
+    def test_resume_from_continues_as_the_uninterrupted_run(self, tmp_path, as_path):
+        """A checkpoint taken in `on_train_epoch_end` resumes at the next epoch with the epoch-interval lr
+        scheduler step it was taken before (#809)."""
+
+        def module_with_epoch_scheduler():
+            module = TinyModule(lr=0.1)
+            sched = torch.optim.lr_scheduler.StepLR(module.optimizers[0], step_size=1, gamma=0.5)
+            module.lr_scheduler_configs = [LRSchedulerConfig(sched, interval="epoch")]
+            return module
+
+        class Save:
+            def __init__(self):
+                self.checkpoint = None
+
+            def on_train_epoch_end(self, ctx, metrics):
+                if ctx.epoch == 1:
+                    buffer = io.BytesIO()
+                    torch.save(ctx.checkpoint_state(), buffer)
+                    self.checkpoint = buffer.getvalue()
+
+        ref, save = module_with_epoch_scheduler(), Save()
+        ref_ctx = _train(ref, max_epochs=4, callbacks=[save])
+        checkpoint = torch.load(io.BytesIO(save.checkpoint), weights_only=False)
+        assert checkpoint["loop"]["epoch_lr_pending"] and checkpoint["loop"]["epoch"] == 1
+        if as_path:
+            torch.save(checkpoint, tmp_path / "ckpt.pt")
+        resume_from = tmp_path / "ckpt.pt" if as_path else checkpoint
+
+        resumed, recorder = module_with_epoch_scheduler(), Recorder()
+        ctx = _train(resumed, max_epochs=4, callbacks=[recorder], resume_from=resume_from)
+        assert [e[1] for e in recorder.events if e[0] == "epoch_start"] == [2, 3]
+        assert all(torch.equal(p, q) for p, q in zip(ref.parameters(), resumed.parameters()))
+        assert resumed.lr_scheduler_configs[0].scheduler.last_epoch == 4
+        assert resumed.optimizers[0].param_groups[0]["lr"] == ref.optimizers[0].param_groups[0]["lr"]
+        assert (ctx.optimizer_step, resumed.global_step) == (ref_ctx.optimizer_step, ref.global_step)
+
+    def test_callbacks_load_before_the_module_and_optimizers(self):
+        """A callback's `load_state_dict` runs first, so it may rebuild the optimizers the checkpoint's state loads
+        into."""
+        module = TinyModule()
+        order = []
+
+        class Rebuild:
+            def state_dict(self):
+                return {}
+
+            def load_state_dict(self, state):
+                order.append("callback")
+                module.optimizers = [torch.optim.SGD(module.model.parameters(), lr=0.5)]
+
+        ctx = CoreLoopContext(module=module, callbacks=(Rebuild(),))
+        state = ctx.checkpoint_state()
+        module.load_state_dict = lambda sd, _load=module.load_state_dict: (order.append("module"), _load(sd))[1]
+        ctx.load_checkpoint_state(state)
+        assert order == ["callback", "module"] and module.optimizers[0].param_groups[0]["lr"] == 1.0
+
     def test_context_shortcuts(self):
         module = TinyModule()
         ctx = CoreLoopContext(module=module, optimizer_step=7)
