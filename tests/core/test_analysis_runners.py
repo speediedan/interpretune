@@ -397,6 +397,7 @@ class TestAnalysisRunner:
         runner.run_cfg = MagicMock()
         runner.run_cfg.it_session = {}
         runner.run_cfg.module = module
+        runner.run_cfg.placement = "single"
 
         with patch("interpretune.runners.core.it_init") as mock_init:
             runner.it_init()

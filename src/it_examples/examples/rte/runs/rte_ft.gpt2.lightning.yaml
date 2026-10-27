@@ -1,0 +1,33 @@
+# Phased fine-tuning (finetuning-scheduler) of GPT-2 on RTE, small enough for a CPU, on the Lightning interface:
+#
+#   interpretune --lightning_cli fit --config hub://speediedan/rte/runs/rte_ft.gpt2.lightning.yaml
+#
+# The same session, schedule and policies as `runs/rte_ft.gpt2.core.yaml`, through Lightning's callbacks: the
+# `FinetuningScheduler` callback with `FTSEarlyStopping` (a phase advances on a validation-loss plateau) and
+# `FTSCheckpoint` (the best checkpoint by validation loss), run through every phase (`max_depth: -1`).
+session_ref: speediedan/rte:rte_ft.gpt2.core
+adapter_ctx:
+  - lightning
+seed_everything: 0
+trainer:
+  accelerator: cpu
+  devices: 1
+  max_epochs: 10
+  num_sanity_val_steps: 0
+  logger: false
+  enable_progress_bar: false
+  callbacks:
+    - class_path: finetuning_scheduler.FinetuningScheduler
+      init_args:
+        ft_schedule: hub://speediedan/rte/ft_schedules/rte_ft.gpt2.yaml
+        max_depth: -1
+    - class_path: finetuning_scheduler.FTSEarlyStopping
+      init_args:
+        monitor: val_loss
+        patience: 1
+        min_delta: 0.001
+    - class_path: finetuning_scheduler.FTSCheckpoint
+      init_args:
+        dirpath: checkpoints/rte_ft.gpt2.lightning
+        monitor: val_loss
+        save_top_k: 1

@@ -1,9 +1,0 @@
-0:
-  params:
-  - model.score.weight
-  - model.model.norm.weight
-1:
-  params:
-  - model.model.layers.{0,31}.(mlp|self_attn).*.weight
-  - model.model.layers.{0,31}.(post_attention_layernorm|input_layernorm).weight
-  - model.model.embed_tokens.weight
