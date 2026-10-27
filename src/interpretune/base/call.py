@@ -10,16 +10,26 @@ log = logging.getLogger(__name__)
 HOOKABLE_ITMODULE = ITDataModule | BaseITModule
 
 
-def it_init(module, datamodule, *args, **kwargs):
+def it_init(module, datamodule, *args, prepare_data: bool = True, configure_optimizers: bool = True, **kwargs):
     """Initialize a session: prepare data, set up both halves, then optimizers if configured.
 
     Order is the contract, not a convenience: the datamodule prepares and sets up BEFORE the module,
     because the module's setup reads the tokenizer the datamodule configures. Optimizers are built last
     and only when an optimizer configuration exists, so an analysis-only session skips them entirely.
+    ``configure_optimizers=False`` stops before them, for a caller that places the module first (sharding
+    replaces its parameters) and then calls :func:`it_configure_optimizers`. ``prepare_data=False`` skips data
+    preparation, for the ranks of a data-parallel run that set up from what one rank per host prepared.
     """
-    _call_itmodule_hook(datamodule, hook_name="prepare_data", hook_msg="Preparing data", target_model=module.model)
+    if prepare_data:
+        _call_itmodule_hook(datamodule, hook_name="prepare_data", hook_msg="Preparing data", target_model=module.model)
     _call_itmodule_hook(datamodule, hook_name="setup", hook_msg="Setting up datamodule")
     _call_itmodule_hook(module, hook_name="setup", hook_msg="Setting up model", datamodule=datamodule)
+    if configure_optimizers:
+        it_configure_optimizers(module)
+
+
+def it_configure_optimizers(module, *args, **kwargs):
+    """Build the module's optimizers and lr schedulers, when it has an optimizer configuration."""
     if module.it_cfg.optimizer_init:  # only attempt optimizer/scheduler initialization if a configuration is provided
         _call_itmodule_hook(
             module,

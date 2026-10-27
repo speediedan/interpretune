@@ -86,7 +86,11 @@ class BaseITHooks:
                 "scheduler": instantiate_class(args=optimizer, init=self.it_cfg.lr_scheduler_init),
                 **self.it_cfg.pl_lrs_cfg,
             }
-        return [optimizer], [scheduler]  # type: ignore[return-value]
+        if optimizer is None:
+            return None
+        # no lr scheduler is an empty list, not `[None]`: Lightning refuses a `None` scheduler, and the core loop would
+        # otherwise carry an `LRSchedulerConfig` wrapping `None`
+        return [optimizer], [scheduler] if scheduler is not None else []  # type: ignore[return-value]
 
     def on_session_end(self) -> Any | None:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
