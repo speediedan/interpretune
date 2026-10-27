@@ -65,11 +65,12 @@ def load_schedule(model: str) -> dict[int, dict[str, Any]]:
 
 def build_session(host: str, model: str, *, device: str, dataset_dir: Path | None = None) -> Any:
     """The ``rte_ft.<model>.core`` session, composed for ``host``."""
+    from interpretune.hub.api import load as hub_load
     from interpretune.hub.components import local_publish, resolve_component_manifest
 
     _, snapshot, _ = resolve_component_manifest("speediedan/rte")
     revision = local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=snapshot / "rte_boolq.py")
-    cfg = it.hub.load("speediedan/rte", f"rte_ft.{model}.core", revision=revision)
+    cfg = hub_load("speediedan/rte", f"rte_ft.{model}.core", revision=revision)
     dm_cfg, m_cfg = copy.deepcopy(cfg.datamodule_cfg), copy.deepcopy(cfg.module_cfg)
     if dataset_dir is not None:
         dm_cfg.dataset_path = dataset_dir
@@ -98,6 +99,10 @@ class EpochRecord:
 
     def end(self, metrics: dict[str, Any]) -> None:
         self.epochs[-1].update({k: float(metrics[k]) for k in (MONITOR, "accuracy") if k in metrics})
+
+
+def _score(value: torch.Tensor | None) -> float | None:
+    return None if value is None else float(value)
 
 
 def run_core(
@@ -130,6 +135,7 @@ def run_core(
 
     class Recorder:
         def on_train_epoch_start(self, ctx: Any) -> None:
+            assert fts.tuning_scheduler is not None
             record.start(ctx.epoch, fts.tuning_scheduler.curr_depth, ctx.module)
 
         def on_train_epoch_end(self, ctx: Any, metrics: dict[str, Any]) -> None:
@@ -145,10 +151,11 @@ def run_core(
     )
     it.SessionRunner(run_cfg=run_cfg).train()
     ts = fts.tuning_scheduler
+    assert ts is not None
     return {
         "final_depth": ts.curr_depth,
         "best_depth": checkpoint.best_depth,
-        "best_score": float(checkpoint.best_score),
+        "best_score": _score(checkpoint.best_score),
         "epochs": record.epochs,
     }
 
@@ -202,7 +209,7 @@ def run_lightning(
     return {
         "final_depth": fts.curr_depth,
         "best_depth": checkpoint.best_ckpt_depth,
-        "best_score": float(checkpoint.best_model_score),
+        "best_score": _score(checkpoint.best_model_score),
         "epochs": record.epochs,
     }
 
@@ -226,39 +233,50 @@ def run(
     if host not in ("core", "lightning"):
         raise ValueError(f"host must be 'core' or 'lightning', got {host!r}")
     defaults = MODEL_DEFAULTS[model]
-    device = device or defaults["device"]
-    max_depth = defaults["max_depth"] if max_depth is None else max_depth
+    resolved_device: str = device if device is not None else str(defaults["device"])
+    resolved_depth: int = int(defaults["max_depth"]) if max_depth is None else max_depth
     schedule = load_schedule(model)
-    ckpt_dir = ckpt_dir or tempfile.mkdtemp(prefix=f"rte_ft_{host}_")
+    resolved_ckpt_dir = ckpt_dir or tempfile.mkdtemp(prefix=f"rte_ft_{host}_")
     torch.manual_seed(seed)
-    session = build_session(host, model, device=device, dataset_dir=dataset_dir)
-    kwargs = dict(
-        max_epochs=max_epochs,
-        max_depth=max_depth,
-        limit_train_batches=limit_train_batches,
-        limit_val_batches=limit_val_batches,
-        patience=patience,
-        min_delta=min_delta,
-        ckpt_dir=ckpt_dir,
-    )
-    result = (
-        run_core(session, schedule, **kwargs)
-        if host == "core"
-        else run_lightning(session, schedule, **kwargs, device=device)
-    )
+    session = build_session(host, model, device=resolved_device, dataset_dir=dataset_dir)
+    if host == "core":
+        result = run_core(
+            session,
+            schedule,
+            max_epochs=max_epochs,
+            max_depth=resolved_depth,
+            limit_train_batches=limit_train_batches,
+            limit_val_batches=limit_val_batches,
+            patience=patience,
+            min_delta=min_delta,
+            ckpt_dir=resolved_ckpt_dir,
+        )
+    else:
+        result = run_lightning(
+            session,
+            schedule,
+            max_epochs=max_epochs,
+            max_depth=resolved_depth,
+            limit_train_batches=limit_train_batches,
+            limit_val_batches=limit_val_batches,
+            patience=patience,
+            min_delta=min_delta,
+            ckpt_dir=resolved_ckpt_dir,
+            device=resolved_device,
+        )
     transitions = [e["epoch"] for prev, e in zip(result["epochs"], result["epochs"][1:]) if e["depth"] != prev["depth"]]
     return {
         "host": host,
         "model": model,
         "seed": seed,
-        "max_depth": max_depth,
+        "max_depth": resolved_depth,
         "transition_epochs": transitions,
         **result,
     }
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--host", choices=("core", "lightning"), required=True)
     parser.add_argument("--model", choices=tuple(MODEL_DEFAULTS), default="gpt2")
     parser.add_argument("--max-epochs", type=int, default=10)

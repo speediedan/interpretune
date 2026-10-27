@@ -90,7 +90,7 @@ class BaseITHooks:
             return None
         # no lr scheduler is an empty list, not `[None]`: Lightning refuses a `None` scheduler, and the core loop would
         # otherwise carry an `LRSchedulerConfig` wrapping `None`
-        return [optimizer], [scheduler] if scheduler is not None else []
+        return [optimizer], [scheduler] if scheduler is not None else []  # type: ignore[return-value]
 
     def on_session_end(self) -> Any | None:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
