@@ -121,7 +121,6 @@ areas:
     paths:
       - src/interpretune/adapters/core.py
       - src/interpretune/adapters/lightning.py
-      - src/interpretune/adapters/model_view.py
       - src/interpretune/adapters/transformer_lens/**
       - src/interpretune/adapters/nnsight/**
       - src/interpretune/adapters/sae_lens/**
@@ -167,10 +166,9 @@ areas:
       - tests/core/test_memprofiler.py
       - tests/gpu_ci/
   tl_arch:
-    # TransformerLens bridge parameter mapping on gated llama3/gemma2
+    # the TransformerLens view's parameter mapping on gated llama3/gemma2
     paths:
       - src/interpretune/adapters/transformer_lens/**
-      - src/interpretune/adapters/model_view.py
     tests:
       - tests/core/test_adapters_transformer_lens.py
   analysis:

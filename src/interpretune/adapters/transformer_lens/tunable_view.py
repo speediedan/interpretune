@@ -20,9 +20,8 @@ identity, never by ``data_ptr``, which a fused projection shares with its first 
 
 Two kinds of tensor are thawed implicitly (``coupled``):
 
-- every norm of a block whose parameters are thawed, and the final norm with the embeddings (as the legacy
-  ``TLNamesModelView`` does with ``implicit_ln_thaw``), found by component type so norms TransformerLens does not
-  name are covered too;
+- every norm of a block whose parameters are thawed, and the final norm with the embeddings, found by component type
+  so norms TransformerLens does not name are covered too;
 - physical parameters that alias a thawed tensor's storage but that no logical name reaches, e.g. GPT-2's fused
   ``attn.qkv`` weight, whose ``q``/``k``/``v`` splits are strided views of it. A step through a split changes the
   fused parameter's values, so the fused parameter is thawed with it.
@@ -44,7 +43,7 @@ import torch
 from torch import nn, Tensor
 
 if TYPE_CHECKING:
-    from finetuning_scheduler.core.views import TunableSupport
+    from finetuning_scheduler.tunable_view import TunableSupport
 
 _BLOCK = re.compile(r"^blocks\.(\d+)\.")
 # the TransformerLens name prefixes `depth_groups` orders; a traced name matching none is grouped last
@@ -131,7 +130,7 @@ class TransformerBridgeView:
         implicit_norm_thaw: bool = True,
         roles: Mapping[str, str] | None = None,
     ) -> None:
-        from finetuning_scheduler.core.roles import validate_roles
+        from finetuning_scheduler.tunable_view.roles import validate_roles
 
         self._roles = validate_roles(
             roles or {}, (n for n, _ in root.named_parameters()), (n for n, _ in root.named_buffers())
@@ -218,8 +217,8 @@ class TransformerBridgeView:
     def support(self) -> TunableSupport:
         """Trainable, in TransformerLens names that are reshaped views of the physical tensors; refused, naming the
         tensors, when the bridge holds quantized or packed (non-floating-point) parameters."""
-        from finetuning_scheduler.core.roles import declared_kinds
-        from finetuning_scheduler.core.views import TunableSupport
+        from finetuning_scheduler.tunable_view import TunableSupport
+        from finetuning_scheduler.tunable_view.roles import declared_kinds
 
         if packed := packed_parameters(self.bridge):
             shown = ", ".join(packed[:3]) + (f" and {len(packed) - 3} more" if len(packed) > 3 else "")
@@ -238,7 +237,7 @@ class TransformerBridgeView:
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Each TransformerLens name mapped to the parameters its tensor is computed from."""
-        from finetuning_scheduler.core.views import Unresolvable
+        from finetuning_scheduler.tunable_view import Unresolvable
 
         self._build()
         unresolved = [n for n in logical if n not in self._table]

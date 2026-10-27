@@ -131,23 +131,15 @@ l_tl_bridge_gpt2_fts_multiphase = {
         enable_compatibility_mode=True,
         enable_compatibility_mode_kwargs={"no_processing": True},
     ),
-    "module_cls": "tests.modules.DivergeTestITModule",
+    # schedules here name the module's own parameters, so the module declares the identity view rather than the
+    # TransformerLens composition's TransformerLens-names view
+    "module_cls": "tests.modules.CanonicalViewDivergeTestITModule",
     "model_cfg": {"diverge_on_epoch": 2},
     "logging_level": "DEBUG",
     "max_epochs": 5,
 }
 
-# When running TransformerBridge based configs with FTS, favor a strategy adapter that can translate HF
-# canonical names to runtime names; by default map a few common strategy keys for local/CI testing.
-# Uses the plugin alias 'transformerbridge' registered via entry point in pyproject.toml
-tl_bridge_custom_adapter_map = {
-    "single_device": "transformerbridge",
-    "auto": "transformerbridge",
-}
-tl_bridge_fts_kwargs = {**default_test_fts_kwargs, "custom_strategy_adapters": tl_bridge_custom_adapter_map}
-get_nested(l_tl_bridge_gpt2_fts_multiphase, "callback_cfgs")[TestFTS] = {**tl_bridge_fts_kwargs}
-
-# TL-style naming variant: uses clean TL parameter names in schedules
+# TL-style naming variant: schedules use TransformerLens names, which the composition's view resolves
 l_tl_bridge_gpt2_tl_names_fts = {
     "callback_cfgs": {TestFTS: {**default_test_fts_kwargs}},
     **l_tl_bridge_gpt2_tl_names_multiphase_sched,
@@ -157,12 +149,6 @@ l_tl_bridge_gpt2_tl_names_fts = {
     "logging_level": "DEBUG",
     "max_epochs": 5,
 }
-tl_bridge_fts_tl_names_kwargs = {
-    **default_test_fts_kwargs,
-    "custom_strategy_adapters": tl_bridge_custom_adapter_map,
-    "strategy_adapter_cfg": {"use_tl_names": True},
-}
-get_nested(l_tl_bridge_gpt2_tl_names_fts, "callback_cfgs")[TestFTS] = {**tl_bridge_fts_tl_names_kwargs}
 
 ########################################################################################################################
 # Composable CLI config aliases

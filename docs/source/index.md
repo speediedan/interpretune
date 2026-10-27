@@ -211,9 +211,7 @@ design/activation_point_vocabulary
 design/intervention_hook_pattern_support
 design/resource_management
 design/tl_config_hierarchy_overview
-design/tl_style_naming_implementation
 design/adapter_parity_governance
-design/fts_transformerlens_integration
 ```
 
 ```{toctree}

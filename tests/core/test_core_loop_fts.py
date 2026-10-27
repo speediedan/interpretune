@@ -179,3 +179,66 @@ def test_a_core_session_trains_phase_by_phase(get_it_session__core_cust__initonl
     assert not torch.equal(snaps.params[0][last], initial[last])
     assert not torch.equal(snaps.params[1][earlier], snaps.params[0][earlier])
     assert fts.tuning_scheduler.curr_depth == 1 and module.optimizers == [fts.tuning_scheduler.optimizer]
+
+
+_FTS_CALLBACK_PATH = "interpretune.tuning.core_loop.FTSCoreCallback"
+
+
+def _run_cfg_parser():
+    """The run configuration's parse surface, as `ITCLI` builds it."""
+    from jsonargparse import ArgumentParser
+
+    parser = ArgumentParser()
+    parser.add_class_arguments(
+        SessionRunnerCfg, "run_cfg", instantiate=False, sub_configs=True, skip={"it_session", "module", "datamodule"}
+    )
+    return parser
+
+
+def test_a_callback_given_as_configuration_is_instantiated():
+    """`SessionRunnerCfg` builds a callback given as `class_path`/`init_args`, and leaves objects as they are."""
+    snaps = Snapshots()
+    entry = {"class_path": _FTS_CALLBACK_PATH, "init_args": {"schedule": TWO_PHASES}}
+    run_cfg = SessionRunnerCfg(module=core_loop.TinyModule(), datamodule=object(), callbacks=[entry, snaps])
+    fts, kept = run_cfg.callbacks
+    assert isinstance(fts, FTSCoreCallback) and fts.schedule == TWO_PHASES and kept is snaps
+
+
+def test_fts_core_callback_round_trips_through_a_parsed_configuration(tmp_path, get_it_session__core_cust__initonly):
+    """A core-loop FTS run built from its parsed configuration alone: the configuration dumps and parses back
+    unchanged, and two runs built from it train the same phases under the same tuning scheduler configuration."""
+    import yaml
+
+    module = get_it_session__core_cust__initonly.it_session.module
+    *_, earlier, last = [n for n, p in module.named_parameters() if p.requires_grad]
+    schedule_path = tmp_path / "schedule.yaml"
+    schedule_path.write_text(
+        yaml.safe_dump({0: {"params": [last], "max_transition_epoch": 1}, 1: {"params": [earlier]}})
+    )
+    config = {
+        "run_cfg": {
+            "max_epochs": 2,
+            "limit_train_batches": 1,
+            "limit_val_batches": 1,
+            "callbacks": [
+                {
+                    "class_path": _FTS_CALLBACK_PATH,
+                    "init_args": {"schedule": str(schedule_path), "tuning_scheduler_kwargs": {"max_depth": 1}},
+                }
+            ],
+        }
+    }
+    parser = _run_cfg_parser()
+    parsed = parser.parse_string(yaml.safe_dump(config))
+    reparsed = parser.parse_string(parser.dump(parsed))
+    assert reparsed == parsed
+
+    results = []
+    for ns in (parsed, reparsed):
+        session = get_deepcopied_session(get_it_session__core_cust__initonly.it_session)
+        run_cfg = SessionRunnerCfg(it_session=session, **ns.run_cfg.as_dict())
+        (fts,) = run_cfg.callbacks
+        assert isinstance(fts, FTSCoreCallback)
+        SessionRunner(run_cfg=run_cfg).train()
+        results.append((fts.tuning_scheduler.curr_depth, fts.tuning_scheduler.config_hash))
+    assert results[0] == results[1] and results[0][0] == 1
