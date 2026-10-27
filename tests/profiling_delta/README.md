@@ -14,7 +14,10 @@ memory interpretune's orchestration adds.
 | `lightning_train`, `lightning_test` | Lightning composition under `Trainer` | vanilla `LightningModule`, same `Trainer` |
 | `core_hf_fts_train` | core loop with `FTSCoreCallback`, 3-phase schedule | plain loop driving the same `TuningScheduler` |
 | `tl_train`, `tl_test` | core session with the TransformerLens adapter (a `TransformerBridge` over gpt2) | a native `TransformerBridge.boot_transformers` bridge in a plain loop, or its `generate` |
+| `sae_lens_train`, `sae_lens_test` | core session with the `sae_lens` adapter, SAE spliced at init | SAELens's `SAETransformerBridge` with the same SAE in `add_sae` |
 | `nnsight_train` | core session with the NNsight adapter (a `LanguageModel` over gpt2) | a native `LanguageModel` trace in a plain loop |
+| `nnsight_test` | core session with the `nnsight` adapter, `test_step` | the same `generate` call on a bare nnsight `LanguageModel` |
+| `circuit_tracer_test` | core session with the `circuit_tracer` adapter attributing one prompt per step | bare circuit-tracer `ReplacementModel` on the same model and transcoders |
 | `nnsight_lightning_train` | the Lightning + NNsight composition under `Trainer` | a vanilla `LightningModule` stepping a native `LanguageModel` trace, same `Trainer` |
 | `synthetic` | small MLP, optionally with a planted leak or overhead | the same MLP: the harness's own control |
 
