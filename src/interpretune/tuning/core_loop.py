@@ -33,10 +33,13 @@ scheduler step settings and so on), with the optimizer and lr scheduler taken fr
 ``lr_scheduler_init``. Arguments that are objects stay Python-only: ``tuning_scheduler_factory``, and
 ``tuning_scheduler_kwargs`` values such as optimizer factories, transition policies, a checkpoint policy or gates.
 
-Resume a run through the tuning scheduler (``tuning_scheduler.save`` and ``tuning_scheduler.load``): the core loop's
-``checkpoint_state`` captures the module and the tuning scheduler's optimizer but none of the tuning scheduler's own
-state (its phase, pending decision, gate records and RNG forks), so loading such a checkpoint into a callback is refused
-rather than resuming half a run.
+A run resumes from the core loop's own checkpoint (#809). The callback's ``state_dict`` is the tuning scheduler's
+``resume_state`` (its phase, pending decision, gate records, RNG forks, lr schedulers and registered state; the random
+streams stay with ``checkpoint_state``), which also marks the resume point with the tuning scheduler's checkpoint policy
+so that the best checkpoint and rollback point it refers to are kept. Take the checkpoint in a callback's
+``on_train_epoch_end`` placed after this one, and pass it to the loop as ``resume_from``: the loop builds the tuning
+scheduler (``on_train_start``), loads its resume state, which rebuilds the optimizer phase by phase to the saved depth,
+then loads the module's and that optimizer's state, and continues at the next epoch.
 """
 
 from __future__ import annotations
@@ -85,6 +88,7 @@ class FTSCoreCallback:
         self.tuning_scheduler_kwargs = dict(tuning_scheduler_kwargs or {})
         self.tuning_scheduler_factory = tuning_scheduler_factory
         self.tuning_scheduler: Any | None = None
+        self._ctx: Any | None = None
 
     def build_tuning_scheduler(self, module: Any) -> Any:
         """The tuning scheduler over ``module``, from the factory or the schedule and keyword arguments."""
@@ -120,17 +124,32 @@ class FTSCoreCallback:
             ctx.module.optimizers, ctx.module.lr_scheduler_configs = optimizers, lr_scheduler_configs
 
     def state_dict(self) -> dict[str, Any]:
-        """A marker only: the tuning scheduler's state is saved with ``tuning_scheduler.save``, not by the core loop's
-        ``checkpoint_state``."""
-        return {"resume_through_tuning_scheduler": True}
+        """The tuning scheduler's resume state, without the random streams (the core loop's ``checkpoint_state``
+        holds them), once training has started."""
+        if self.tuning_scheduler is None:
+            return {}
+        return {"resume_state": self.tuning_scheduler.resume_state(rng=False)}
 
     def load_state_dict(self, state_dict: Mapping[str, Any]) -> None:
-        """Refuse a core-loop checkpoint, which lacks the tuning scheduler's state."""
-        raise MisconfigurationException(
-            "FTSCoreCallback cannot resume from the core loop's `checkpoint_state`, which holds none of the tuning"
-            " scheduler's state (phase, pending decision, gate records, RNG forks); resume through the tuning"
-            " scheduler (`tuning_scheduler.save` and `tuning_scheduler.load`) instead."
-        )
+        """Load the tuning scheduler's resume state and install the optimizer it rebuilt, before the core loop
+        loads the module's and the optimizer's state.
+
+        Raises:
+            MisconfigurationException: If the tuning scheduler is not built yet (resume through the core loop's
+                ``resume_from``, which loads after ``on_train_start``), or the checkpoint holds no resume state.
+        """
+        if self.tuning_scheduler is None:
+            raise MisconfigurationException(
+                "FTSCoreCallback loads its state once training has started and the tuning scheduler is set up: resume"
+                " through the core loop's `resume_from`."
+            )
+        if "resume_state" not in state_dict:
+            raise MisconfigurationException(
+                "This checkpoint holds no tuning scheduler resume state (it was taken before training started, or by"
+                " an interpretune whose FTSCoreCallback did not save one), so it cannot resume the phased run."
+            )
+        self.tuning_scheduler.load_resume_state(state_dict["resume_state"])
+        self._install(self._ctx)
 
     def _sync_stop(self, ctx: Any) -> None:
         assert self.tuning_scheduler is not None
@@ -140,6 +159,7 @@ class FTSCoreCallback:
     def on_train_start(self, ctx: Any) -> None:
         """Build and set up the tuning scheduler, then install its optimizer."""
         self.tuning_scheduler = tuning_scheduler = self.build_tuning_scheduler(ctx.module)
+        self._ctx = ctx
         tuning_scheduler.setup()
         if tuning_scheduler.view.root is not ctx.module:
             raise MisconfigurationException(
