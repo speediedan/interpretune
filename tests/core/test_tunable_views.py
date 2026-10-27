@@ -186,6 +186,66 @@ class TestAttachRules:
         assert attach_tunable_view(module) is None and getattr(module, VIEW_ATTR, None) is None
 
 
+_CANONICAL = {"class_path": "finetuning_scheduler.tunable_view.CanonicalView"}
+_BRIDGE = "interpretune.adapters.transformer_lens.tunable_view.TransformerBridgeView"
+
+
+class TestConfiguredView:
+    """``it_cfg.tunable_view`` chooses the view in configuration, ahead of ``build_tunable_view()`` (#841)."""
+
+    def test_a_tl_composition_can_schedule_its_own_parameter_names(self, request):
+        from finetuning_scheduler.tunable_view import CanonicalView
+
+        module = _fresh_module(request, "get_it_session_cfg__tl_cust", tunable_view=_CANONICAL)
+        view = getattr(module, VIEW_ATTR)
+        assert isinstance(view, CanonicalView) and view.root is module
+        assert as_view(view).support().naming_scheme == "physical"
+        name = next(n for n, _ in module.named_parameters() if n.endswith("ln1._original_component.weight"))
+        assert compile_schedule({0: {"params": [name]}}, view).phases[0].physical == (name,)
+
+    def test_the_bridge_view_can_leave_norms_to_the_schedule(self, request):
+        no_thaw = {"class_path": _BRIDGE, "init_args": {"implicit_norm_thaw": False}}
+        module = _fresh_module(request, "get_it_session_cfg__tl_cust", tunable_view=no_thaw)
+        view = getattr(module, VIEW_ATTR)
+        assert view.implicit_norm_thaw is False and view.root is module
+        default = getattr(_fresh_module(request, "get_it_session_cfg__tl_cust"), VIEW_ATTR)
+        physical = view.to_physical(["blocks.0.attn.W_Q"])["blocks.0.attn.W_Q"]
+        norms = set(default.coupled(physical)) - set(view.coupled(physical))
+        assert norms and all(".ln" in n for n in norms)  # the default thaws the block's norms, this view does not
+
+    def test_the_compositions_roles_reach_a_configured_view(self, request):
+        overrides = {"add_saes_on_init": True, "sae_cfgs": _SPLICEABLE_SAES, "tunable_view": _CANONICAL}
+        module = _fresh_module(request, "get_it_session_cfg__sl_cust", **overrides)
+        roles = as_view(getattr(module, VIEW_ATTR)).roles()
+        assert roles and roles == {**peft_adapter_roles(module), **module.tunable_roles()}
+        assert any(r.startswith("latent") for r in roles.values())
+
+    def test_init_args_roles_are_used_as_given(self, request):
+        cfg = {**_CANONICAL, "init_args": {"roles": {}}}
+        module = _fresh_module(
+            request, "get_it_session_cfg__sl_cust", add_saes_on_init=True, sae_cfgs=_SPLICEABLE_SAES, tunable_view=cfg
+        )
+        assert as_view(getattr(module, VIEW_ATTR)).roles() == {}
+
+    @pytest.mark.parametrize(
+        "bad, match",
+        [
+            pytest.param("finetuning_scheduler.tunable_view.CanonicalView", "mapping with a `class_path`", id="str"),
+            pytest.param({"init_args": {}}, "mapping with a `class_path`", id="no_class_path"),
+            pytest.param({**_CANONICAL, "args": [1]}, "not \\['args'\\]", id="extra_key"),
+            pytest.param({**_CANONICAL, "init_args": [1]}, "must be a mapping", id="init_args"),
+            pytest.param({**_CANONICAL, "init_args": {"root": None}}, "cannot set `root`", id="root"),
+        ],
+    )
+    def test_a_malformed_configuration_is_refused(self, request, bad, match):
+        from interpretune.utils import MisconfigurationException
+
+        it_cfg = deepcopy(request.getfixturevalue("get_it_session_cfg__core_cust").module_cfg)
+        it_cfg.tunable_view = bad
+        with pytest.raises(MisconfigurationException, match=match):
+            it_cfg._check_tunable_view()
+
+
 class TestDefaultOptimizer:
     """The default optimizer covers what a trainable view selects, so modules beside the model train (#761)."""
 
@@ -246,6 +306,24 @@ class TestBridgeView:
         support = as_view(view).support()
         assert not support.trainable and "packed" in support.reason
         assert view.untraced is not None  # tracing skips the integer tensor rather than raising
+
+    def test_a_parameter_no_tl_name_reaches_is_scheduled_by_its_own_name(self, request):
+        """A parameter no TransformerLens name reaches (here one registered on a block, as an unnamed norm or a
+        fused projection is on a real architecture) resolves to itself; a reached parameter is scheduled by its
+        TransformerLens name (#841)."""
+        from finetuning_scheduler.tunable_view import Unresolvable
+
+        module = _fresh_module(request, "get_it_session_cfg__tl_cust")
+        module.model.blocks[0].register_parameter("extra", nn.Parameter(torch.zeros(2)))
+        view = getattr(module, VIEW_ATTR)
+        (unreached,) = [n for n, _ in module.named_parameters() if n.endswith(".extra")]
+        assert dict(view.to_physical([unreached])) == {unreached: (unreached,)}
+        assert view.to_logical([unreached]) == [unreached]  # and it round-trips
+        compiled = compile_schedule({0: {"params": [unreached]}}, view)
+        assert compiled.phases[0].physical == (unreached,)
+        reached = view.to_physical(["blocks.0.attn.W_Q"])["blocks.0.attn.W_Q"][0]
+        with pytest.raises(Unresolvable, match="TransformerLens name"):
+            view.to_physical([reached])
 
     def test_logical_tensors_are_live(self, request):
         module = _fresh_module(request, "get_it_session_cfg__tl_cust")

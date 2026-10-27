@@ -866,7 +866,10 @@ def ft_schedule_fixture_factory(config_key, phase):
             "l_tl_bridge_gpt2_tl_names_sched": {
                 "model_key": "l_tl_bridge_gpt2",
                 "session_fixture": "get_it_session__l_tl_bridge_gpt2__setup",
-                "transforms": {"multiphase_explicit_tl_names": tl_bridge_multiphase_explicit_tl_names},
+                "transforms": {
+                    "multiphase_explicit_tl_names": tl_bridge_multiphase_explicit_tl_names,
+                    "multiphase_explicit_tl_names_attn_mlp": tl_bridge_multiphase_explicit_tl_names_attn_mlp,
+                },
                 "fts_kwargs": {},
             },
         }
@@ -1180,6 +1183,16 @@ def tl_bridge_multiphase_explicit_tl_names(sched_dict: Dict) -> Dict:
         ],
         "lr": 1e-06,
     }
+    return tl_sched
+
+
+def tl_bridge_multiphase_explicit_tl_names_attn_mlp(sched_dict: Dict) -> Dict:
+    """The TL-style multi-phase schedule with a first phase naming only attention and MLP tensors (no norms), for a
+    view whose implicit norm thaw is off (#841): layers 9-11's norms then thaw with the final phase, which names
+    every remaining block tensor (norms included) and the final norm."""
+    tl_sched = tl_bridge_multiphase_explicit_tl_names(sched_dict)
+    tl_sched[0]["params"] = [r"blocks.(9|1[0-1]).(attn|mlp).*"]
+    tl_sched[2]["params"] = [*tl_sched[2]["params"], r"blocks.(9|1[0-1]).ln.*", r"ln_final.*"]
     return tl_sched
 
 

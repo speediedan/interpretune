@@ -75,6 +75,7 @@ def apply_it_test_cfg(base_it_cfg: ITConfig, test_cfg: BaseCfg, core_log_dir: St
         "analysis_cfgs",
         "logging_level",
         "nnsight_cfg",
+        "tunable_view",
     ]
     default_extensions = ExtensionsContext().DEFAULT_EXTENSIONS
     test_cfg_override_attrs.extend(f"{it_ext.ext_attr}_cfg" for it_ext in default_extensions)

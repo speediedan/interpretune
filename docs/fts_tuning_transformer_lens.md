@@ -13,7 +13,11 @@ TransformerLens synthesizes for a bias-free projection) is left out, and a sched
   default schedule keeps each block whole. finetuning-scheduler refuses a schedule that thaws a block's `W_Q` and `W_K`
   in different phases, because their storage overlaps.
 - **Norms.** With `implicit_norm_thaw` (the default), thawing any of a block's parameters thaws the block's norms, and
-  thawing an embedding thaws the final norm.
+  thawing an embedding thaws the final norm. Turned off (see [Choosing the naming](#choosing-the-naming)), norms thaw
+  only where the schedule names them.
+- **Parameters no name reaches.** A parameter no TransformerLens name reaches (a norm TransformerLens does not name,
+  such as Gemma 2's `ln1_post`, or GPT-2's fused `qkv`) can be named in a schedule by its own (physical) name, which the
+  view resolves to itself. A parameter a TransformerLens name reaches is scheduled by that name.
 - **Live tensors.** `logical_named_parameters()` computes the TransformerLens tensors on each call, so they carry the
   parameters' current values.
 - **Every traced name is scheduled.** The default schedule orders the unembedding, the blocks and the embeddings; a
@@ -42,17 +46,32 @@ architectures:
 finetuning-scheduler reports what it thaws in physical parameters, so a GPT-2 block thawed by name counts 18: its 16
 named tensors and the fused `qkv` weight and bias they are views of. Its norms are thawed with it.
 
-A composition that would rather name the module's own parameters (`model.blocks.9._original_component.attn.q.<...>`)
-declares the identity view instead, by overriding `build_tunable_view()`:
+## Choosing the naming
 
-```python
-from interpretune.tuning.views import identity_view
+The module configuration's `tunable_view` (see [Choosing the view in configuration](fts_tunable_views.md)) selects either
+alternative to the default, with no subclass.
 
+To name the module's own parameters (`model.blocks.9._original_component.attn.q.<...>`), select finetuning-scheduler's
+identity view:
 
-class CanonicalNamesModule(MyModule):  # MyModule: your module, composed with the TransformerLens adapter
-    def build_tunable_view(self):
-        return identity_view(self, roles=self.tunable_roles())
+```yaml
+tunable_view:
+  class_path: finetuning_scheduler.tunable_view.CanonicalView
 ```
+
+To keep TransformerLens names but thaw only the norms a schedule names, turn the implicit norm thaw off:
+
+```yaml
+tunable_view:
+  class_path: interpretune.adapters.transformer_lens.tunable_view.TransformerBridgeView
+  init_args:
+    implicit_norm_thaw: false
+```
+
+A schedule then names norms itself: `blocks.9.ln.*` for the norms TransformerLens names, `ln_final.*` for the final norm,
+and the physical name for a norm it does not name. With the schedule above, phase 0 thaws 54 physical parameters with
+the implicit thaw on; with it off, and phase 0 naming only `blocks.(9|1[0-1]).(attn|mlp).*`, it thaws 42 (each block's
+attention and MLP tensors and the fused `qkv` weight and bias, without the 12 norm parameters).
 
 The Lightning callback and `FTSCoreCallback` both discover the view the module carries, so no strategy adapter is
 configured for either.

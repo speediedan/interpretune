@@ -113,6 +113,9 @@ l_tl_bridge_gpt2_multiphase_sched = {"fts_schedule_key": ("l_tl_bridge_gpt2_sche
 l_tl_bridge_gpt2_tl_names_multiphase_sched = {
     "fts_schedule_key": ("l_tl_bridge_gpt2_tl_names_sched", "multiphase_explicit_tl_names")
 }
+l_tl_bridge_gpt2_tl_names_attn_mlp_sched = {
+    "fts_schedule_key": ("l_tl_bridge_gpt2_tl_names_sched", "multiphase_explicit_tl_names_attn_mlp")
+}
 l_ctx = {"adapter_ctx": (Adapter.lightning,)}
 l_gpt2_fts = {
     "callback_cfgs": {TestFTS: {**default_test_fts_kwargs}},
@@ -131,9 +134,10 @@ l_tl_bridge_gpt2_fts_multiphase = {
         enable_compatibility_mode=True,
         enable_compatibility_mode_kwargs={"no_processing": True},
     ),
-    # schedules here name the module's own parameters, so the module declares the identity view rather than the
-    # TransformerLens composition's TransformerLens-names view
-    "module_cls": "tests.modules.CanonicalViewDivergeTestITModule",
+    # schedules here name the module's own parameters, so the configuration selects finetuning-scheduler's identity view
+    # in place of the TransformerLens composition's TransformerLens-names view (#841)
+    "tunable_view": {"class_path": "finetuning_scheduler.tunable_view.CanonicalView"},
+    "module_cls": "tests.modules.DivergeTestITModule",
     "model_cfg": {"diverge_on_epoch": 2},
     "logging_level": "DEBUG",
     "max_epochs": 5,
@@ -148,6 +152,19 @@ l_tl_bridge_gpt2_tl_names_fts = {
     "model_cfg": {"diverge_on_epoch": 2},
     "logging_level": "DEBUG",
     "max_epochs": 5,
+}
+
+# TL-style naming without the implicit norm thaw: the configuration selects the TransformerLens view with
+# `implicit_norm_thaw` off (#841), and the schedule's first phase names only attention and MLP tensors, so that phase's
+# blocks keep their norms frozen until a later phase names them
+l_tl_bridge_gpt2_tl_names_no_norm_thaw_fts = {
+    **l_tl_bridge_gpt2_tl_names_fts,
+    **l_tl_bridge_gpt2_tl_names_attn_mlp_sched,
+    "callback_cfgs": {TestFTS: {**default_test_fts_kwargs}},
+    "tunable_view": {
+        "class_path": "interpretune.adapters.transformer_lens.tunable_view.TransformerBridgeView",
+        "init_args": {"implicit_norm_thaw": False},
+    },
 }
 
 ########################################################################################################################

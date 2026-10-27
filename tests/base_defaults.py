@@ -101,6 +101,7 @@ class BaseCfg:
     tl_cfg: ITLensCfg | None = None
     circuit_tracer_cfg: CircuitTracerConfig | None = None
     nnsight_cfg: NNsightConfig | None = None
+    tunable_view: Dict | None = None  # `it_cfg.tunable_view`: the finetuning-scheduler view to attach (#841)
     sae_cfgs: Dict | None = None
     auto_comp_cfg: AutoCompConfig | None = None
     add_saes_on_init: bool = False
