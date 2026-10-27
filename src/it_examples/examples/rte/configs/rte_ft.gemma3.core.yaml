@@ -30,12 +30,15 @@ registered_cfg:
     signature_columns: ['input_ids', 'attention_mask', 'labels']
     text_fields: ["premise", "hypothesis"]
     enable_datasets_cache: True
-    train_batch_size: 16
-    eval_batch_size: 16
+    train_batch_size: 8
+    eval_batch_size: 8
     dataloader_kwargs:
       drop_last: true
+    # tokenize (and pad) in chunks of one batch: unshuffled batches are then padded to their own longest prompt, not
+    # to the longest of 1,000
     prepare_data_map_cfg:
       batched: true
+      batch_size: 8
   module_cfg:
     class_path: interpretune.config.module.ITConfig
     init_args:
@@ -65,6 +68,10 @@ registered_cfg:
             dtype: float32
             attn_implementation: eager
           model_head: transformers.Gemma3ForCausalLM
+      # the loss reads only the answer position (the last, with left padding): skip the other positions' logits,
+      # which at a 262k vocabulary are most of the activation memory
+      cust_fwd_kwargs:
+        logits_to_keep: 1
       optimizer_init:
         class_path: torch.optim.AdamW
         init_args:

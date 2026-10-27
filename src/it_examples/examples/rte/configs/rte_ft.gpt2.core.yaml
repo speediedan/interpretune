@@ -67,6 +67,9 @@ registered_cfg:
             device_map: cpu
             dtype: float32
           model_head: transformers.GPT2LMHeadModel
+      # the loss reads only the answer position (the last, with left padding)
+      cust_fwd_kwargs:
+        logits_to_keep: 1
       optimizer_init:
         class_path: torch.optim.AdamW
         init_args:
