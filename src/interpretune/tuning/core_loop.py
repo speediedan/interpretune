@@ -13,7 +13,7 @@
 boundaries (#762).
 
 :class:`FTSCoreCallback` is a core-loop callback (``SessionRunnerCfg.callbacks``). It builds the tuning scheduler over
-the session's module once training starts, so the tuning scheduler's view is the module's attached ``fts_tunable_view``
+the session's module once training starts, so the tuning scheduler's view is the module's attached ``tunable_view``
 (#758, #759) and its physical names are the module's own. The callback places the tuning scheduler's calls; phase hooks,
 payloads, transition policies and gates (veto included), RNG forking and checkpoint policies stay
 finetuning-scheduler's. Lightning compositions keep using the ``FinetuningScheduler`` callback.
@@ -24,6 +24,14 @@ lr schedulers are dropped so that nothing is stepped twice. Step-interval lr sch
 a metric-stepped scheduler (``ReduceLROnPlateau``) must use the epoch interval, where it receives the epoch's metrics.
 Those are the core loop's ``log()`` averages, in which a training and a validation value logged under one name are
 averaged together: a transition or checkpoint policy monitoring that name sees the blend.
+
+A run's callback can come from its configuration alone: ``SessionRunnerCfg.callbacks`` instantiates an entry given as
+``{"class_path": "interpretune.tuning.core_loop.FTSCoreCallback", "init_args": {...}}``, as a parsed config holds it, so
+the run dumps, reloads and reproduces the tuning scheduler's ``config_hash``. Configuration expresses ``schedule`` (a
+mapping or a YAML path) and ``tuning_scheduler_kwargs`` values that are plain data (``max_depth``, ``restore_best``, lr
+scheduler step settings and so on), with the optimizer and lr scheduler taken from the module's ``optimizer_init`` and
+``lr_scheduler_init``. Arguments that are objects stay Python-only: ``tuning_scheduler_factory``, and
+``tuning_scheduler_kwargs`` values such as optimizer factories, transition policies, a checkpoint policy or gates.
 
 Resume a run through the tuning scheduler (``tuning_scheduler.save`` and ``tuning_scheduler.load``): the core loop's
 ``checkpoint_state`` captures the module and the tuning scheduler's optimizer but none of the tuning scheduler's own

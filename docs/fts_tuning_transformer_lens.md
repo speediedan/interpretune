@@ -13,7 +13,7 @@ TransformerLens synthesizes for a bias-free projection) is left out, and a sched
   default schedule keeps each block whole. finetuning-scheduler refuses a schedule that thaws a block's `W_Q` and `W_K`
   in different phases, because their storage overlaps.
 - **Norms.** With `implicit_norm_thaw` (the default), thawing any of a block's parameters thaws the block's norms, and
-  thawing an embedding thaws the final norm, as the legacy `TLNamesModelView` does.
+  thawing an embedding thaws the final norm.
 - **Live tensors.** `logical_named_parameters()` computes the TransformerLens tensors on each call, so they carry the
   parameters' current values.
 - **Every traced name is scheduled.** The default schedule orders the unembedding, the blocks and the embeddings; a
@@ -21,5 +21,40 @@ TransformerLens synthesizes for a bias-free projection) is left out, and a sched
   being dropped. Norms are found anywhere in a block, including inside its attention.
 - **Copies.** `copy.deepcopy` of a bridge does not preserve the fused-projection aliasing (the splits become independent
   copies), so build a view over the bridge a session actually trains.
+
+## Schedules
+
+A schedule for a TransformerLens composition names TransformerLens names, which the same schedule can use across
+architectures:
+
+```yaml
+0:
+  params:
+  - blocks.(9|1[0-1]).*
+  max_transition_epoch: 2
+1:
+  params:
+  - blocks.([0-8](?!\d)).*
+  - (pos_embed|embed|unembed).*
+  lr: 1.0e-06
+```
+
+finetuning-scheduler reports what it thaws in physical parameters, so a GPT-2 block thawed by name counts 18: its 16
+named tensors and the fused `qkv` weight and bias they are views of. Its norms are thawed with it.
+
+A composition that would rather name the module's own parameters (`model.blocks.9._original_component.attn.q.<...>`)
+declares the identity view instead, by overriding `build_tunable_view()`:
+
+```python
+from interpretune.tuning.views import identity_view
+
+
+class CanonicalNamesModule(MyModule):  # MyModule: your module, composed with the TransformerLens adapter
+    def build_tunable_view(self):
+        return identity_view(self, roles=self.tunable_roles())
+```
+
+The Lightning callback and `FTSCoreCallback` both discover the view the module carries, so no strategy adapter is
+configured for either.
 
 Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/speediedan/interpretune/issues/812).

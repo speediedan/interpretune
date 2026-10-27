@@ -1,9 +1,10 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
+from collections.abc import Mapping
 from typing import Any, TYPE_CHECKING, Iterable, Literal, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from interpretune.utils import rank_zero_warn, rank_zero_debug, MisconfigurationException
+from interpretune.utils import rank_zero_warn, rank_zero_debug, MisconfigurationException, instantiate_class
 from interpretune.analysis import AnalysisOp
 from interpretune.analysis.cache import get_analysis_cache_dir
 from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg, LatentAnalysisTargets
@@ -180,7 +181,9 @@ class SessionRunnerCfg:
     limit_test_batches: int = -1
     max_steps: int = -1
     max_epochs: int = -1
-    # objects with any of `interpretune.runners.core.CoreCallback`'s methods, called by the core training loop
+    # objects with any of `interpretune.runners.core.CoreCallback`'s methods, called by the core training loop. An
+    # entry given as configuration (`{"class_path": ..., "init_args": {...}}`, as a parsed config holds it) is
+    # instantiated, so a run's callbacks can come from its configuration alone
     callbacks: Sequence[Any] = ()
     # validate with gradients enabled (e.g. for an objective computed with `torch.autograd.grad`) rather than under
     # `torch.inference_mode()`
@@ -194,6 +197,10 @@ class SessionRunnerCfg:
     shard_units: Sequence[str] | None = None
 
     def __post_init__(self):
+        self.callbacks = tuple(
+            instantiate_class(dict(cb)) if isinstance(cb, Mapping) and "class_path" in cb else cb
+            for cb in self.callbacks
+        )
         if self.placement not in ("single", "ddp", "fsdp2"):
             raise MisconfigurationException(
                 f"Unknown placement '{self.placement}': expected one of 'single', 'ddp', 'fsdp2'."
