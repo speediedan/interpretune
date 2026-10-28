@@ -1,0 +1,19 @@
+# The steered, phased schedule of `rte_ft.qwen3.core.yaml` for Qwen3-0.6B through a TransformerLens bridge, in
+# TransformerLens names (interpretune#812), which `TransformerBridgeView` maps to the bridge's parameters. Phase 0
+# trains the steering vector alone (`role:intervention:steer`, at the optimizer's learning rate) for at most two epochs;
+# the later phases thaw the top blocks and the final norm, then the middle blocks, each at its own learning rate. A
+# block's norms (`ln1`, `ln2` and the attention's `q_norm` and `k_norm`, which TransformerLens does not name) thaw with
+# it. The lower blocks and the embeddings stay frozen. Later phases advance on a validation-loss plateau.
+0:
+  params:
+  - role:intervention:steer
+  max_transition_epoch: 2
+1:
+  params:
+  - ln_final.w
+  - blocks.2[4-7]\..*
+  lr: 1.0e-05
+2:
+  params:
+  - blocks.(1[4-9]|2[0-3])\..*
+  lr: 1.0e-05

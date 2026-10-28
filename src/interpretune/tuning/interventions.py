@@ -224,6 +224,19 @@ class InterventionCfg:
     frozen: bool = False
 
 
+def as_intervention_cfg(entry: InterventionCfg | Mapping[str, Any]) -> InterventionCfg:
+    """An :class:`InterventionCfg` from itself or from the mapping a YAML configuration gives.
+
+    jsonargparse types ``tuning_interventions`` when it parses ``ITConfig`` itself, but a configuration synthesized by
+    auto-composition (a TransformerLens or SAE Lens composition) is built from mappings, which arrive untyped.
+    """
+    if isinstance(entry, InterventionCfg):
+        return entry
+    if isinstance(entry, Mapping):
+        return InterventionCfg(**entry)
+    raise TypeError(f"An intervention configuration must be an InterventionCfg or a mapping, got {entry!r}")
+
+
 def _model_width(root: nn.Module) -> int | None:
     model = getattr(root, "model", None)
     for cfg_attr, width_attr in (("config", "hidden_size"), ("cfg", "d_model")):
@@ -233,17 +246,20 @@ def _model_width(root: nn.Module) -> int | None:
     return None
 
 
-def attach_configured_interventions(root: nn.Module, cfgs: Sequence[InterventionCfg]) -> list[nn.Module]:
-    """Build and attach each configured intervention (:class:`InterventionCfg`) on ``root``, in order.
+def attach_configured_interventions(
+    root: nn.Module, cfgs: Sequence[InterventionCfg | Mapping[str, Any]]
+) -> list[nn.Module]:
+    """Build and attach each configured intervention (an :class:`InterventionCfg` or its mapping) in order.
 
     Returns:
         The attached interventions.
 
     Raises:
         ValueError: a kind is not one this module builds, or no width is given and the model's cannot be read.
+        TypeError: an entry is neither an :class:`InterventionCfg` nor a mapping.
     """
     attached = []
-    for cfg in cfgs:
+    for cfg in map(as_intervention_cfg, cfgs):
         if cfg.kind != SteeringVector.kind:
             raise ValueError(
                 f"Intervention {cfg.name!r} has kind {cfg.kind!r}; a configuration builds only {SteeringVector.kind!r}"

@@ -283,8 +283,10 @@ def _site(module, cfg_fixture: str) -> str:
         pytest.param("get_it_session_cfg__sl_br_gpt2", id="sae_lens_bridge"),
     ],
 )
-def test_a_configured_steering_vector_is_attached_and_scheduled_by_role(request, cfg_fixture):
-    """``tuning_interventions`` attaches a steering vector on every composition, declared in its own view."""
+@pytest.mark.parametrize("as_mapping", [False, True], ids=["cfg", "mapping"])
+def test_a_configured_steering_vector_is_attached_and_scheduled_by_role(request, cfg_fixture, as_mapping):
+    """``tuning_interventions`` attaches a steering vector on every composition, declared in its own view, whether
+    an entry is an ``InterventionCfg`` or the mapping a YAML configuration gives."""
     pytest.importorskip("finetuning_scheduler.tunable_view", reason="finetuning-scheduler predates the view")
     from copy import deepcopy
 
@@ -299,7 +301,8 @@ def test_a_configured_steering_vector_is_attached_and_scheduled_by_role(request,
     site = _site(probe, cfg_fixture)
     cfg = deepcopy(request.getfixturevalue(cfg_fixture))
     width = probe.model.tok_embeddings.embedding_dim if cfg_fixture.endswith("core_cust") else None
-    cfg.module_cfg.tuning_interventions = [InterventionCfg(name="steer", site=site, width=width)]
+    entry = {"name": "steer", "site": site, "width": width}
+    cfg.module_cfg.tuning_interventions = [entry if as_mapping else InterventionCfg(**entry)]
     module = ITSession(cfg).module
     assert intervention_sites(module) == {"steer": site}
     view = getattr(module, VIEW_ATTR)
@@ -316,6 +319,8 @@ def test_a_configured_kind_must_be_one_a_configuration_builds():
         attach_configured_interventions(Root(), [InterventionCfg(name="edit", site="model.blocks.0", kind="edit")])
     with pytest.raises(ValueError, match="needs a `width`"):
         attach_configured_interventions(Root(), [InterventionCfg(name="steer", site="model.blocks.0")])
+    with pytest.raises(TypeError, match="InterventionCfg or a mapping"):
+        attach_configured_interventions(Root(), ["model.blocks.0"])
     (steer,) = attach_configured_interventions(
         root := Root(), [InterventionCfg(name="s", site="model.blocks.0", width=D)]
     )
