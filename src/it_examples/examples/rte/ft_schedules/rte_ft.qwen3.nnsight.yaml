@@ -1,0 +1,19 @@
+# The steered, phased schedule of `rte_ft.qwen3.core.yaml` for Qwen3-0.6B through nnsight (28 decoder layers), named as
+# the HF module nnsight wraps is registered on the interpretune module (`hf_model.`) (interpretune#812). Phase 0 trains
+# the steering vector alone (`role:intervention:steer`, at the optimizer's learning rate) for at most two epochs; the
+# later phases thaw the top layers and the final norm, then the middle layers, by name, each at its own learning rate.
+# The lower layers and the embeddings stay frozen. Later phases advance on a validation-loss plateau (the run
+# configurations' transition policy).
+0:
+  params:
+  - role:intervention:steer
+  max_transition_epoch: 2
+1:
+  params:
+  - hf_model.model.norm.weight
+  - hf_model.model.layers.2[4-7]\..*
+  lr: 1.0e-05
+2:
+  params:
+  - hf_model.model.layers.(1[4-9]|2[0-3])\..*
+  lr: 1.0e-05

@@ -43,6 +43,7 @@ module:
     rte_ft.gemma3.core: configs/rte_ft.gemma3.core.yaml
     rte_ft.gpt2.core: configs/rte_ft.gpt2.core.yaml
     rte_ft.qwen3.core: configs/rte_ft.qwen3.core.yaml
+    rte_ft.qwen3.nnsight: configs/rte_ft.qwen3.nnsight.yaml
     rte_ft.qwen3.transformer_lens: configs/rte_ft.qwen3.transformer_lens.yaml
 datamodules:
   rte_boolq:
