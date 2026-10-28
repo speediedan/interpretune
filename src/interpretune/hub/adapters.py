@@ -23,7 +23,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import importlib.util
+import re
 import sys
+from collections.abc import Iterable
 from contextvars import ContextVar
 from pathlib import Path
 from types import ModuleType
@@ -208,6 +210,19 @@ class HubAdapterLoad:
     skipped: list[tuple[str, str]]
 
 
+#: Every adapter component loaded in this process, ``repo_id -> {"revision": <full revision>, "adapters": [...]}``.
+#: Written at the one place adapter code executes (``load_hub_adapter``), so the record covers the CLI and Python
+#: paths alike; a module's hyperparameters carry it as the run's provenance (see :func:`loaded_hub_adapters`).
+_LOADED_HUB_ADAPTERS: dict[str, dict[str, str | list[str]]] = {}
+
+
+def loaded_hub_adapters() -> dict[str, dict[str, str | list[str]]]:
+    """The adapter components loaded in this process, each with the full revision it executed and the adapter names
+    it declares: what a run records as provenance. A repo loaded at two revisions reports the most recent, the one
+    its stable ``it_hub_adapters`` alias names."""
+    return {repo_id: dict(record) for repo_id, record in _LOADED_HUB_ADAPTERS.items()}
+
+
 def load_hub_adapter(
     repo_id: str,
     cache_dir: Path | None = None,
@@ -365,4 +380,113 @@ def load_hub_adapter(
                 "registers: the card renders the declared list, and an undeclared registration makes it claim the "
                 "component supplies less than it does."
             )
+    _LOADED_HUB_ADAPTERS[repo_id] = {"revision": revision, "adapters": list(names)}
     return HubAdapterLoad(members=members, skipped=list(unsupported))
+
+
+################################################################################
+# Hub adapters named by a run configuration (#872)
+################################################################################
+
+#: The run-configuration key naming the adapter components a session needs, each ``<org>/<repo>@<revision>``.
+HUB_ADAPTERS_KEY = "hub_adapters"
+
+#: A pinned entry: a Hub commit (7 to 40 hex characters, a prefix as git accepts one) or a local-publish revision.
+_PINNED_ENTRY = re.compile(r"^(?P<repo_id>[\w.-]+/[\w.-]+)@(?P<revision>[0-9a-f]{7,40}|local[0-9a-f]{7,35})$")
+
+
+def parse_hub_adapter_entry(entry: str) -> tuple[str, str]:
+    """``(repo_id, revision)`` for one ``hub_adapters`` entry, refusing an unpinned one.
+
+    A branch or tag is refused along with a bare repo id: either can move between two runs of one configuration, and
+    the entry exists so that the code that runs is the code it names.
+    """
+    match = _PINNED_ENTRY.match(str(entry).strip())
+    if match is None:
+        raise AdapterComponentError(
+            f"`{HUB_ADAPTERS_KEY}` entry {entry!r} is not pinned: write it as <org>/<repo>@<commit>, with the commit "
+            "the adapter component was published at (at least 7 hex characters). A branch, a tag or a bare repo id "
+            "can resolve to different code on the next run, so none of them is accepted."
+        )
+    return match["repo_id"], match["revision"]
+
+
+def _cached_revision(repo_id: str, revision: str, cache_dir: Path | None) -> str | None:
+    from interpretune.hub.components import cached_component_revisions
+
+    matches = [r for r in cached_component_revisions(repo_id, cache_dir) if r.startswith(revision)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def load_run_hub_adapters(
+    entries: Iterable[str] | str | None, cache_dir: Path | None = None, registry=None
+) -> list[HubAdapterLoad]:
+    """Load the adapter components a run configuration's ``hub_adapters`` names, in order, before its session is
+    built.
+
+    For each ``<org>/<repo>@<revision>`` entry: the trust gate is checked first, so a refused component is never
+    downloaded; a revision not yet cached is pulled at that revision (the manifest, its adapters entrypoint and its
+    extra files, as a key-less ``interpretune.hub.pull`` does), while a cached one is used without network access;
+    then :func:`load_hub_adapter` registers it at exactly that revision, and the load is recorded for the run's
+    provenance (:func:`loaded_hub_adapters`). Loading is idempotent, so naming an entry twice, or loading it again
+    after the CLI has parsed its configuration, executes nothing a second time.
+    """
+    from interpretune.hub.components import is_local_revision
+    from interpretune.hub.trust import ensure_remote_code_trusted
+
+    if entries is None:
+        return []
+    if isinstance(entries, str):
+        entries = [entries]
+    loads = []
+    for entry in entries:
+        repo_id, revision = parse_hub_adapter_entry(entry)
+        ensure_remote_code_trusted(repo_id, what=f"the adapter component {entry!r} named by `{HUB_ADAPTERS_KEY}`")
+        cached = _cached_revision(repo_id, revision, cache_dir)
+        if cached is None:
+            if is_local_revision(revision):
+                raise AdapterComponentError(
+                    f"`{HUB_ADAPTERS_KEY}` entry {entry!r} names a local-publish revision that is not in the "
+                    "components cache, and a local revision cannot be fetched from the Hub. Publish it locally again."
+                )
+            from interpretune.hub.api import pull
+
+            pull(repo_id, revision=revision, cache_dir=cache_dir)
+            cached = _cached_revision(repo_id, revision, cache_dir) or revision
+        loads.append(load_hub_adapter(repo_id, cache_dir=cache_dir, registry=registry, revision=cached))
+    return loads
+
+
+def hub_adapter_hint(name: str, cache_dir: Path | None = None) -> str:
+    """How to make an unregistered adapter ``name`` available, naming each cached component that declares it.
+
+    Read only when an adapter context names an adapter nothing has registered, so the cache scan never runs on a working
+    configuration.
+    """
+    from interpretune.hub import components
+    from interpretune.hub.manifest import IT_COMPONENT_MANIFEST
+
+    import yaml
+
+    root = Path(cache_dir or components.IT_COMPONENTS_HUB_CACHE)
+    providers = []
+    for repo_dir in sorted(root.glob("models--*--*")) if root.is_dir() else []:
+        repo_id = repo_dir.name.removeprefix("models--").replace("--", "/", 1)
+        for revision in components.cached_component_revisions(repo_id, cache_dir):
+            try:
+                manifest = yaml.safe_load((repo_dir / "snapshots" / revision / IT_COMPONENT_MANIFEST).read_text())
+                declares = declared_adapters(manifest, source=repo_id) if isinstance(manifest, dict) else []
+            except (OSError, yaml.YAMLError, AdapterComponentError):
+                continue
+            if name in declares:
+                providers.append(f"{repo_id}@{revision[:12]}")
+    if providers:
+        return (
+            f"Cached adapter component(s) declaring {name!r}: {', '.join(providers)}. Name the one to load in the run "
+            f"configuration, e.g. `{HUB_ADAPTERS_KEY}: [{providers[-1]}]`, or call "
+            "`interpretune.hub.load_hub_adapter` before building the session."
+        )
+    return (
+        f"If a Hub adapter component provides {name!r}, name it in the run configuration as "
+        f"`{HUB_ADAPTERS_KEY}: [<org>/<repo>@<commit>]`, or call `interpretune.hub.load_hub_adapter` first."
+    )

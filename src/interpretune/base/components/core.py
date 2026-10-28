@@ -243,6 +243,11 @@ class BaseConfigImpl:
             }
         )
         self._it_state._init_hparams["env_info"] = collect_env_info() if self.it_cfg.log_env_details else None
+        # the Hub adapter components this process executed, each at its full revision (#872)
+        from interpretune.hub.adapters import loaded_hub_adapters
+
+        if hub_adapters := loaded_hub_adapters():
+            self._it_state._init_hparams["hub_adapters"] = hub_adapters
 
 
 class PropertyDispatcher:
