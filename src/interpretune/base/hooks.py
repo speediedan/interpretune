@@ -3,7 +3,7 @@ from typing import Any, TYPE_CHECKING
 from collections.abc import Iterator
 import torch
 
-from interpretune.utils import MisconfigurationException, instantiate_class
+from interpretune.utils import MisconfigurationException, instantiate_class, rank_zero_warn
 from interpretune.protocol import OptimizerLRScheduler, STEP_OUTPUT
 from interpretune.tuning.views import VIEW_ATTR
 
@@ -76,12 +76,31 @@ class BaseITHooks:
 
     def configure_optimizers(self) -> OptimizerLRScheduler | None:
         """Optional because it is not mandatory in the context of core IT modules (required for some adapter
-        modules)."""
+        modules).
+
+        A module with nothing to optimize gets no optimizer (or lr scheduler), with a warning, rather than torch's
+        empty-parameter-list error: an attached view whose every tensor has a role finetuning-scheduler never optimizes
+        (a circuit-tracer composition's transcoders are all ``instrument`` until promoted) still serves sessions that
+        do not train, analysis among them, whose configuration sets ``optimizer_init`` (#859).
+        """
         self.set_input_require_grads()  # type: ignore[attr-defined]  # provided by mixin composition
         optimizer, scheduler = None, None
         if self.it_cfg.optimizer_init:  # in case this hook is manually invoked by the user
-            optimizer = instantiate_class(args=self.optimizer_parameters(), init=self.it_cfg.optimizer_init)
-        if self.it_cfg.lr_scheduler_init:
+            if params := list(self.optimizer_parameters()):
+                optimizer = instantiate_class(args=params, init=self.it_cfg.optimizer_init)
+            else:
+                why = (
+                    "every parameter of its tunable view has a role finetuning-scheduler never optimizes"
+                    " (`instrument` or `fitted`) until a schedule promotes it"
+                    if getattr(self, VIEW_ATTR, None) is not None
+                    else "it has no parameters"
+                )
+                rank_zero_warn(
+                    f"`optimizer_init` is set but {type(self).__name__} has nothing to optimize: {why}. No optimizer"
+                    " is configured; promote the tensors to tune, or leave `optimizer_init` unset for a session that"
+                    " does not train."
+                )
+        if optimizer is not None and self.it_cfg.lr_scheduler_init:
             scheduler = {
                 "scheduler": instantiate_class(args=optimizer, init=self.it_cfg.lr_scheduler_init),
                 **self.it_cfg.pl_lrs_cfg,
