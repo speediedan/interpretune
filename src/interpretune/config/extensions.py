@@ -27,12 +27,12 @@ class ExtensionsContext:
         ITExtension(
             "debug_lm",
             "interpretune.extensions.debug_generation.DebugGeneration",
-            "interpretune.extensions.debug_generation.DebugLMConfig",
+            "interpretune.config.extension_cfgs.DebugLMConfig",
         ),
         ITExtension(
             "memprofiler",
             "interpretune.extensions.memprofiler.MemProfiler",
-            "interpretune.extensions.memprofiler.MemProfilerCfg",
+            "interpretune.config.extension_cfgs.MemProfilerCfg",
         ),
     )
     OPTIONAL_EXTENSIONS: list = field(default_factory=list)
@@ -44,7 +44,7 @@ class ExtensionsContext:
                 ITExtension(
                     "neuronpedia",
                     "interpretune.extensions.neuronpedia.NeuronpediaIntegration",
-                    "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+                    "interpretune.config.extension_cfgs.NeuronpediaConfig",
                 )
             )
         self.DEFAULT_EXTENSIONS = self.BASE_EXTENSIONS + tuple(self.OPTIONAL_EXTENSIONS)
@@ -57,20 +57,35 @@ class ITExtensionsConfigMixin:
         super().__init__(*args, **kwargs)
         self.extensions_context = ExtensionsContext()
 
-    def _detect_extensions(self):
+    @staticmethod
+    def _resolve_extension_class(it_ext: ITExtension, fqn: str) -> Any:
+        try:
+            return _import_class(fqn)
+        except (ImportError, AttributeError) as e:
+            err_msg = (
+                f"Unable to import and resolve specified extension and/or its configuration class from"
+                f" `ext_cls_fqn`: {it_ext.ext_cls_fqn}, `ext_cfg_fqn`: {it_ext.ext_cfg_fqn}, error: {e}"
+            )
+            raise MisconfigurationException(err_msg)
+
+    def _detect_extension_cfgs(self):
+        """Resolve each extension's configuration class, without importing the extension itself.
+
+        This is all ``ExtensionConf`` needs when ``interpretune.config`` is imported.
+        """
         # TODO: update custom extensions to be read/added from it_cfg once interface stabilizes
         for it_ext in self.extensions_context.DEFAULT_EXTENSIONS:
-            try:
-                ext_class = _import_class(it_ext.ext_cls_fqn)
-                ext_cfg_class = _import_class(it_ext.ext_cfg_fqn)
-            except (ImportError, AttributeError) as e:
-                err_msg = (
-                    f"Unable to import and resolve specified extension and/or its configuration class from"
-                    f" `ext_cls_fqn`: {it_ext.ext_cls_fqn}, `ext_cfg_fqn`: {it_ext.ext_cfg_fqn}, error: {e}"
-                )
-                raise MisconfigurationException(err_msg)
-            self.extensions_context.SUPPORTED_EXTENSIONS[it_ext.ext_attr] = ext_class
-            self.extensions_context.SUPPORTED_EXTENSION_CFGS[it_ext.ext_attr] = ext_cfg_class
+            self.extensions_context.SUPPORTED_EXTENSION_CFGS[it_ext.ext_attr] = self._resolve_extension_class(
+                it_ext, it_ext.ext_cfg_fqn
+            )
+
+    def _detect_extensions(self):
+        """Resolve each extension and its configuration class, when a module connects its extensions."""
+        self._detect_extension_cfgs()
+        for it_ext in self.extensions_context.DEFAULT_EXTENSIONS:
+            self.extensions_context.SUPPORTED_EXTENSIONS[it_ext.ext_attr] = self._resolve_extension_class(
+                it_ext, it_ext.ext_cls_fqn
+            )
 
     def _connect_extensions(self):
         self._detect_extensions()
@@ -99,7 +114,7 @@ class ITExtensionsConfigMixin:
 #       external extensions if ever advertising such an API
 supported_ext_cfgs = []
 TMP_EXT_REGISTRY = ITExtensionsConfigMixin()
-TMP_EXT_REGISTRY._detect_extensions()
+TMP_EXT_REGISTRY._detect_extension_cfgs()
 for ext_attr, ext_cfg_cls in TMP_EXT_REGISTRY.extensions_context.SUPPORTED_EXTENSION_CFGS.items():
     supported_ext_cfgs.append((f"{ext_attr}_cfg", ext_cfg_cls, field(default_factory=ext_cfg_cls)))
 ExtensionConf = make_dataclass("ExtensionsConf", supported_ext_cfgs, bases=(ITSerializableCfg,), kw_only=True)

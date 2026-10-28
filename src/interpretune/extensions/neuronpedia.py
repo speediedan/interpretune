@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import Any, Dict, cast
-from dataclasses import dataclass, field
 from pathlib import Path
 from copy import deepcopy
 import json
@@ -13,7 +12,7 @@ import random
 
 from jsonschema import ValidationError, validate
 
-from interpretune.config import ITSerializableCfg
+from interpretune.config.extension_cfgs import NeuronpediaConfig as NeuronpediaConfig
 from interpretune.utils import (
     rank_zero_warn,
     rank_zero_info,
@@ -22,57 +21,9 @@ from interpretune.utils import (
 )
 
 
-def _default_np_cache_root() -> str:
-    """The default Neuronpedia cache root, resolved without importing the analysis package.
-
-    Lives behind a function (rather than reading the hub cache roots) so the on-disk default stays exactly
-    ``$IT_ANALYSIS_CACHE/neuronpedia``: the hub and analysis caches honor different overrides, so naming the hub root
-    here would silently move existing caches.
-    """
-    from interpretune.analysis import IT_ANALYSIS_CACHE
-
-    return os.path.join(IT_ANALYSIS_CACHE, "neuronpedia")
-
-
 logger = logging.getLogger(__name__)
 
 if _NEURONPEDIA_AVAILABLE:
-
-    @dataclass(kw_only=True)
-    class NeuronpediaConfig(ITSerializableCfg):
-        """Configuration for Neuronpedia integration."""
-
-        """Enable Neuronpedia integration."""
-        enabled: bool = False
-        """Whether to automatically transform Circuit Tracer graphs for Neuronpedia compatibility."""
-        auto_transform: bool = True
-        """Sample size for json graph validation prior to upload.
-
-        Applied to nodes and links fields. Set to 0 to disable, -1 to validate full graph.
-        """
-        graph_validation_sample_size: int = 10
-        """Whether to create backup of original graph files before transformation."""
-        backup_original: bool = False
-        """Whether to pretty-print JSON (vs minify) when saving transformed graphs."""
-        pretty_print_json: bool = True
-        """Whether to dynamically fetch the latest Neuronpedia graph schema."""
-        dynamic_np_schema_validation: bool = False
-        """Default prefix for graph slugs when not specified."""
-        default_slug_prefix: str = "it-generated"
-        """Default metadata to add to graphs."""
-        default_metadata: dict[str, Any] = field(
-            default_factory=lambda: {
-                "info": {
-                    "creator_name": "interpretune-user",
-                    "creator_url": "https://github.com/speediedan/interpretune",
-                    "generator": {
-                        "name": "Interpretune Circuit Tracer",
-                        "version": "latest",
-                        "url": "https://github.com/speediedan/interpretune",
-                    },
-                },
-            }
-        )
 
     class NeuronpediaIntegration:
         """Neuronpedia integration extension for Interpretune.
@@ -125,7 +76,9 @@ if _NEURONPEDIA_AVAILABLE:
                 raise RuntimeError("Neuronpedia package is not available.")
 
             schema_path = Path(schema_path)
-            cache_dir = Path(os.getenv("IT_NP_CACHE", _default_np_cache_root()))
+            from interpretune.utils.neuronpedia_explanations import default_np_cache_dir
+
+            cache_dir = default_np_cache_dir()
             cache_dir.mkdir(parents=True, exist_ok=True)
             cached_schema_path = cache_dir / "graph-schema.json"
             cached_tag_path = cache_dir / "graph-schema.tag"
@@ -605,5 +558,4 @@ if _NEURONPEDIA_AVAILABLE:
                 )
                 return transformed_graph, None
 else:
-    NeuronpediaConfig = object  # type: ignore[assignment]
     NeuronpediaIntegration = object  # type: ignore[assignment]
