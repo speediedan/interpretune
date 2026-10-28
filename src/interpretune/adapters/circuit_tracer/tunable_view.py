@@ -66,6 +66,13 @@ PROMOTE_BASE_REASON = (
     " model's own tensors are already `base` under `CircuitTracerConfig.tune_base`."
 )
 
+BASE_UNREACHABLE_REASON = (
+    "`CircuitTracerConfig.tune_base` is set, but none of the base model's parameters are parameters of this module:"
+    " the nnsight backend's replacement model is not a torch module, so only its transcoders are registered here,"
+    " and tuning would silently leave the base model untouched. Register the base model's torch module on the"
+    " interpretune module, or leave `tune_base` unset."
+)
+
 DISK_OFFLOAD_REASON = (
     "circuit-tracer's disk offload reloads every offloaded module with `load_state_dict(assign=True)`, replacing its"
     " Parameter objects, so an optimizer built over this view would keep stepping the replaced tensors after an"
@@ -264,7 +271,8 @@ class CircuitTracerView:
         transcoders: The replacement model's transcoders, registered on ``root``.
         refusal: A reason to refuse the whole composition (disk offload), or ``None``.
         tune_base: Whether the base model's parameters (every parameter of ``root`` outside the transcoders) join
-            the view as ``base``.
+            the view as ``base``. With none outside the transcoders (the nnsight backend's replacement model is not a
+            torch module), the whole composition is refused, naming why.
     """
 
     def __init__(
@@ -275,11 +283,12 @@ class CircuitTracerView:
         lazy_weights(transcoders)  # refuses an unknown layout by name
         self.root = root
         self.transcoders = transcoders
-        self.refusal = refusal
         self.tune_base = tune_base
         ids = {id(p) for p in transcoders.parameters()}
         self._names = [n for n, p in root.named_parameters() if id(p) in ids]
         self._base_names = [n for n, p in root.named_parameters() if id(p) not in ids] if tune_base else []
+        # an opt-in that reaches nothing is refused by name rather than tuning the transcoders alone (#859)
+        self.refusal = refusal or (BASE_UNREACHABLE_REASON if tune_base and not self._base_names else None)
         if len(self._names) != len(ids):
             raise ValueError(
                 f"{len(ids) - len(self._names)} of the transcoders' {len(ids)} parameters are not parameters of"
