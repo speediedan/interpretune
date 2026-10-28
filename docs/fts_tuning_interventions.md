@@ -50,5 +50,6 @@ A schedule then trains the steering vector alone first, and thaws blocks by the 
   params: ["model\\.model\\.layers\\.(2[4-7])\\..*"]
 ```
 
-The [core and HF](fts_tuning_core_hf.md), [TransformerLens](fts_tuning_transformer_lens.md) and [nnsight](fts_tuning_nnsight.md)
-Tuning pages each walk through a steered, phased fine-tune of Qwen3-0.6B configured this way.
+The [core and HF](fts_tuning_core_hf.md), [TransformerLens](fts_tuning_transformer_lens.md), [nnsight](fts_tuning_nnsight.md)
+and [sae_lens](fts_tuning_sae_lens.md) Tuning pages each walk through a steered, phased fine-tune of Qwen3-0.6B
+configured this way.
