@@ -116,6 +116,13 @@ class TestSplicing:
         assert f"{INTERVENTIONS_ATTR}.steer.vector" in root.state_dict()
         assert intervention_sites(root) == {"steer": "model.blocks.0"}
 
+    def test_the_intervention_moves_to_the_sites_device_and_keeps_its_dtype(self):
+        root = Root().to(device="meta", dtype=torch.float16)
+        steer = attach_intervention(root, "s", SteeringVector(D), "model.blocks.0")
+        assert steer.vector.device.type == "meta" and steer.vector.dtype == torch.float32
+        root.model["hook"] = nn.Identity()  # a site holding no tensors (a hook point) takes the root's device
+        assert attach_intervention(root, "h", SteeringVector(D), "model.hook").vector.device.type == "meta"
+
     def test_the_vector_follows_the_activations_dtype(self):
         steer = SteeringVector(D)
         assert steer(torch.zeros(2, D, dtype=torch.bfloat16)).dtype == torch.bfloat16

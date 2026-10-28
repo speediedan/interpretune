@@ -88,6 +88,15 @@ def _interventions(root: nn.Module, create: bool = False) -> nn.ModuleDict | Non
     return held
 
 
+def _site_device(root: nn.Module, target: nn.Module) -> torch.device | None:
+    """The device of the site's tensors, or of ``root``'s when the site holds none (a TransformerLens hook
+    point)."""
+    for module in (target, root):
+        for t in (*module.parameters(), *module.buffers()):
+            return t.device
+    return None
+
+
 def attach_intervention(
     root: nn.Module, name: str, intervention: nn.Module, site: str, *, kind: str | None = None, frozen: bool = False
 ) -> nn.Module:
@@ -96,7 +105,9 @@ def attach_intervention(
     The intervention rewrites the output of the module at ``site`` (the first element of a tuple output, as HF decoder
     layers return): the output becomes ``intervention(output)``. Its parameters become ``root``'s
     (``interventions.<name>.<...>``), so they are saved in its state dict and reachable by its tunable view.
-    :func:`intervention_roles` declares them ``intervention:<kind>``, or ``instrument`` when ``frozen``.
+    :func:`intervention_roles` declares them ``intervention:<kind>``, or ``instrument`` when ``frozen``. The
+    intervention moves to the site's device (a model placed by ``device_map`` is not moved again by the core loop), and
+    keeps its dtype.
 
     Args:
         root: The module the intervention is registered on (an interpretune module is its view's root).
@@ -126,6 +137,8 @@ def attach_intervention(
     if name in held:
         raise ValueError(f"An intervention named {name!r} is already attached; detach it first")
     target = root.get_submodule(site)
+    if (device := _site_device(root, target)) is not None:
+        intervention.to(device=device)
 
     def rewrite(module: nn.Module, args: tuple[Any, ...], output: Any) -> Any:
         return _with_first(output, intervention(_first(output)))
