@@ -212,6 +212,10 @@ areas:
       - tests/core/test_backend_conformance.py::TestCircuitTracerConformance
       - tests/core/test_adapters_circuit_tracer.py
       - tests/core/test_analysis_backend_parity.py
+      # the two public notebooks whose nnsight composition registers no HF module, the shape #859's regression hit
+      # (about 2.5 min together on the NVIDIA agent); the rest of `ct_notebooks` stays selected by its own sources
+      - src/it_examples/tests/test_notebooks.py::test_ct_analysis_backend_notebook[ct_analysis_backend_nnsight_public]
+      - src/it_examples/tests/test_notebooks.py::test_ct_concept_steering_notebook[ct_concept_steering_public]
   jlens:
     paths:
       - src/interpretune/analysis/ops/bundled/jlens/**

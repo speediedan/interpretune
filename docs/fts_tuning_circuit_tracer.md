@@ -18,6 +18,12 @@ transcoders, whichever backend it runs over:
 
 The transcoders are registered on the interpretune module once: under `model` when the replacement model is a torch
 module, under the nnsight model's registered HF module (`hf_model`) when there is one, and as `transcoders` otherwise.
+In that last case the base model's parameters are not the module's, so `CircuitTracerConfig.tune_base` refuses the
+composition, naming why, rather than tuning nothing of the base.
+
+With the transcoders registered as `transcoders`, every parameter of the module is a transcoder tensor, `instrument`
+until a promotion, so there is nothing to optimize: a session whose configuration sets `optimizer_init` gets no
+optimizer, with a warning, and analysis sessions run as before.
 
 ## Lazily loaded weights
 

@@ -24,6 +24,7 @@ from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule
 from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig  # noqa: E402
 from interpretune.adapters.circuit_tracer.tunable_view import (  # noqa: E402
     BASE_MODEL_REASON,
+    BASE_UNREACHABLE_REASON,
     DISK_OFFLOAD_REASON,
     PROMOTE_BASE_REASON,
     CircuitTracerView,
@@ -33,6 +34,7 @@ from interpretune.adapters.circuit_tracer.tunable_view import (  # noqa: E402
     attribution_frozen,
     lazy_weights,
 )
+from interpretune.tuning.views import VIEW_ATTR  # noqa: E402
 from tests.core.circuit_tracer_toy import TOY_PROMPT, only_token_zero_special, tiny_gemma2_replacement_model  # noqa: E402
 
 D_MODEL, D_TC = 8, 32
@@ -221,6 +223,45 @@ class TestBaseTuning:
         report = TunableViewConformance(lambda: _promoted_view(_toy_module(tune_base=True))).run()
         assert report.ok, report.failures
         assert {"step_changes_only_thawed", "checkpoint_round_trip", "frozen_roles_refuse"} <= set(report.ran)
+
+    def test_an_unreachable_base_is_refused_by_name(self):
+        """With no HF module registered, the nnsight backend's base model is not this module's: the opt-in would
+        tune nothing of it, so the composition is refused rather than tuning its transcoders alone (#859)."""
+        support = as_view(_ct_module(tiny_gemma2_replacement_model(), tune_base=True).build_tunable_view()).support()
+        assert not support.trainable and support.reason == BASE_UNREACHABLE_REASON
+
+
+class TestDefaultOptimizer:
+    """The default optimizer over a composition with no HF module registered (the circuit-tracer notebooks'), whose
+    parameters are all transcoder ``instrument`` tensors until a promotion (#859)."""
+
+    @staticmethod
+    def _bare_module_with_view(layer: int | None = None) -> _CTModule:
+        module = _ct_module(tiny_gemma2_replacement_model())
+        module.it_cfg.optimizer_init = {"class_path": "torch.optim.AdamW", "init_args": {"lr": 1e-3}}
+        module.it_cfg.lr_scheduler_init = {
+            "class_path": "torch.optim.lr_scheduler.StepLR",
+            "init_args": {"step_size": 1},
+        }
+        module.it_cfg.pl_lrs_cfg = {}
+        view = as_view(module.build_tunable_view())
+        if layer is not None:
+            view.promote([n for n in view.roles() if f".transcoders.{layer}." in n], "latent:transcoder")
+        object.__setattr__(module, VIEW_ATTR, view)
+        return module
+
+    def test_nothing_to_optimize_configures_no_optimizer(self):
+        module = self._bare_module_with_view()
+        assert all(".transcoders." in n for n, _ in module.named_parameters())
+        with pytest.warns(UserWarning, match="nothing to optimize"):
+            assert module.configure_optimizers() is None
+
+    def test_promoted_transcoders_are_optimized(self):
+        module = self._bare_module_with_view(layer=2)
+        optimizers, schedulers = module.configure_optimizers()
+        promoted = {id(p) for n, p in module.named_parameters() if ".transcoders.2." in n}
+        assert promoted and {id(p) for g in optimizers[0].param_groups for p in g["params"]} == promoted
+        assert len(schedulers) == 1
 
 
 class TestAttributionAfterThawing:
