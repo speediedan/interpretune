@@ -665,19 +665,6 @@ class DivergeTestITModule(DivergeOnEpochMixin, BaseTestModule, RTEBoolqSteps, RT
     pass
 
 
-class CanonicalViewDivergeTestITModule(DivergeTestITModule):
-    """``DivergeTestITModule`` declaring the identity view, so its schedules name the module's own parameters.
-
-    A composition chooses its view by overriding ``build_tunable_view()``; this one does so over a TransformerLens
-    composition, whose own view resolves TransformerLens names.
-    """
-
-    def build_tunable_view(self):
-        from interpretune.tuning.views import identity_view
-
-        return identity_view(self, roles=self.tunable_roles())
-
-
 class TestFTS(StateLogInspectMixin, FinetuningScheduler):
     def on_train_epoch_start(self, trainer, pl_module):
         super().on_train_epoch_start(trainer, pl_module)

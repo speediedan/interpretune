@@ -26,6 +26,7 @@ from tests.parity_acceptance.cfg_aliases import (
     l_gpt2_fts,
     l_tl_bridge_gpt2_fts_multiphase,
     l_tl_bridge_gpt2_tl_names_fts,
+    l_tl_bridge_gpt2_tl_names_no_norm_thaw_fts,
     TestFTS,
 )
 from tests.parity_acceptance.expected import fts_parity_results
@@ -70,6 +71,12 @@ PARITY_FTS_CONFIGS = (
     FTSParityTest(
         alias="train_cuda_32_l_tl_bridge_tl_names_fts",
         cfg=FTSParityCfg(**l_tl_bridge_gpt2_tl_names_fts, **cuda),
+        marks="cuda",
+        gpu_mem_gb=3.5,
+    ),
+    FTSParityTest(
+        alias="train_cuda_32_l_tl_bridge_tl_names_no_norm_thaw_fts",
+        cfg=FTSParityCfg(**l_tl_bridge_gpt2_tl_names_no_norm_thaw_fts, **cuda),
         marks="cuda",
         gpu_mem_gb=3.5,
     ),

@@ -52,6 +52,23 @@ found and stay `base`.
 The default optimizer (`optimizer_parameters()`) steps the attached trainable view's root parameters, less those whose
 role finetuning-scheduler never optimizes (`fitted` and `instrument`).
 
+## Choosing the view in configuration
+
+A run can choose its view in configuration instead, with the module configuration's `tunable_view`: a `class_path` and
+optional `init_args`, instantiated with the module as the view's root. It takes precedence over `build_tunable_view()`,
+so how a schedule names parameters is part of the run's configuration, and of its configuration hash, rather than of a
+Python subclass. A view class taking `roles` receives the composition's roles (PEFT adapter roles and `tunable_roles()`)
+unless `init_args` sets them.
+
+```yaml
+# schedule a composition by its own (physical) parameter names
+tunable_view:
+  class_path: finetuning_scheduler.tunable_view.CanonicalView
+```
+
+`init_args` cannot set the view's root, which is always the module. The [TransformerLens](fts_tuning_transformer_lens.md)
+page shows both of its choices.
+
 ## Phased fine-tuning on the core loop
 
 Lightning compositions use finetuning-scheduler's `FinetuningScheduler` callback. On the core loop,

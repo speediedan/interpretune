@@ -6,17 +6,17 @@ NVIDIA host. **ROCm execution is pending AMD hardware**: nothing in this directo
 result, and no number below is a pass count. Every count is a *collected* count for a named
 phase, reported beside its phase because a bare count reads as a suite result.
 
-## Measured collection (2026-10-19, this branch)
+## Measured collection (2026-10-27, re-measured for #841)
 
-Pins: git `b7095a1b0c06824267b88568fd0c5d31b66b1d44` plus this branch's new tests, Python
-3.13.11, torch 2.13.0+cu130 (`torch.version.hip` is `None`: this is a CUDA build, as expected
+Pins: git `f13318f6c87c28023ebe9cb5cee51182af99115e` (clean tree), Python
+3.13.11, torch 2.15.0+cu130 (`torch.version.hip` is `None`: this is a CUDA build, as expected
 pre-hardware), collect dirs `tests src/it_examples/tests`, `CUDA_VISIBLE_DEVICES` emptied so
 collection executed nothing on any GPU.
 
 | phase | selector | collected | executed |
 | --- | --- | ---: | ---: |
-| baseline | (none) | 3521 | 0 |
-| cuda | `IT_RUN_CUDA_TESTS=1` | 107 | 0 |
+| baseline | (none) | 3743 | 0 |
+| cuda | `IT_RUN_CUDA_TESTS=1` | 113 | 0 |
 | standalone | `IT_RUN_STANDALONE_TESTS=1` | 8 | 0 |
 | profile_ci | `IT_RUN_PROFILING_TESTS=1` | 6 | 0 |
 | optional | `IT_RUN_OPTIONAL_TESTS=1` | 23 | 0 |

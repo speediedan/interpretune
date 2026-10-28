@@ -18,7 +18,8 @@ graph, so the mapping follows whatever TransformerLens emits rather than a table
 behind it (a zero bias TransformerLens synthesizes for a bias-free projection) is left out. Parameters are matched by
 identity, never by ``data_ptr``, which a fused projection shares with its first split.
 
-Two kinds of tensor are thawed implicitly (``coupled``):
+A physical parameter no TransformerLens name reaches can still be scheduled by its own (physical) name, which
+``to_physical`` maps to itself. Two kinds of tensor are thawed implicitly (``coupled``):
 
 - every norm of a block whose parameters are thawed, and the final norm with the embeddings, found by component type
   so norms TransformerLens does not name are covered too;
@@ -174,6 +175,7 @@ class TransformerBridgeView:
             for p in physical:
                 self._reverse.setdefault(p, logical)
         reached = set(self._reverse)
+        self._unreached = {n for n, _ in named if n not in reached}
         # physical parameters on one storage, for the aliases no logical name reaches (a fused projection)
         by_storage: dict[tuple[str, int], list[str]] = {}
         for n, p in named:
@@ -236,14 +238,24 @@ class TransformerBridgeView:
         return dict(self._roles)
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
-        """Each TransformerLens name mapped to the parameters its tensor is computed from."""
+        """Each TransformerLens name mapped to the parameters its tensor is computed from.
+
+        The physical name of a parameter no TransformerLens name reaches (a norm TransformerLens does not name, such as
+        Gemma 2's ``ln1_post``, or a fused projection) maps to itself, so a schedule can name it exactly; with
+        ``implicit_norm_thaw`` off, that is how such a norm is thawed. A parameter a TransformerLens name reaches is
+        scheduled by that name.
+        """
         from finetuning_scheduler.tunable_view import Unresolvable
 
         self._build()
-        unresolved = [n for n in logical if n not in self._table]
+        unresolved = [n for n in logical if n not in self._table and n not in self._unreached]
         if unresolved:
-            raise Unresolvable(unresolved, "They are not TransformerLens names this bridge's view could trace.")
-        return {n: self._table[n] for n in logical}
+            raise Unresolvable(
+                unresolved,
+                "They are neither TransformerLens names this bridge's view could trace nor physical names of parameters"
+                " no TransformerLens name reaches (schedule a reached parameter by its TransformerLens name).",
+            )
+        return {n: self._table[n] if n in self._table else (n,) for n in logical}
 
     def to_logical(self, physical: Sequence[str]) -> list[str]:
         """Physical names as TransformerLens names; a name no TransformerLens name reaches passes through."""

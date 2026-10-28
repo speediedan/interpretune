@@ -1,5 +1,6 @@
 # N.B. we need to avoid annotations import here due to jsonargparse validation issues that emerge when it is used
 # from __future__ import annotations
+from collections.abc import Mapping
 from typing import Any, TYPE_CHECKING, Tuple, Type
 from dataclasses import dataclass, field
 
@@ -121,6 +122,13 @@ class ITConfig(
     # extension field, and _check_profiler_selection refuses enabling both.
     profiler_cfg: ProfilerCfg = field(default_factory=ProfilerCfg)
 
+    # The finetuning-scheduler view to attach in place of the composition's own (interpretune#841): a `class_path`
+    # and optional `init_args` mapping, instantiated with the module as the view's root. For example
+    # `finetuning_scheduler.tunable_view.CanonicalView` schedules a composition by its own (physical) parameter names,
+    # and `interpretune.adapters.transformer_lens.tunable_view.TransformerBridgeView` with `implicit_norm_thaw: false`
+    # thaws only the norms a schedule names. Unset, the composition's `build_tunable_view()` decides.
+    tunable_view: dict[str, Any] | None = None
+
     # """Dataclass to encapsulate the ITModule internal state."""
     # See NOTE [Interpretune Dataclass-Oriented Configuration]
     # dynamic fields added via ExtensionConf contingent on supported extension availability
@@ -136,6 +144,29 @@ class ITConfig(
                 rank_zero_info(f"Specified dtype `{self._dtype}` being overridden by quantization config.")
                 self._dtype = None
         self._check_profiler_selection()
+        self._check_tunable_view()
+
+    def _check_tunable_view(self) -> None:
+        """Refuse a ``tunable_view`` that is not a ``class_path`` (and optional ``init_args``) mapping, or that
+        sets the view's root, which is always the module."""
+        if self.tunable_view is None:
+            return
+        cfg = self.tunable_view
+        if not isinstance(cfg, Mapping) or not isinstance(cfg.get("class_path"), str):
+            raise MisconfigurationException(
+                f"it_cfg.tunable_view must be a mapping with a `class_path` (and optional `init_args`), got {cfg!r}."
+            )
+        if extra := set(cfg) - {"class_path", "init_args"}:
+            raise MisconfigurationException(
+                f"it_cfg.tunable_view takes `class_path` and `init_args`, not {sorted(extra)}."
+            )
+        init_args = cfg.get("init_args") or {}
+        if not isinstance(init_args, Mapping):
+            raise MisconfigurationException(f"it_cfg.tunable_view's `init_args` must be a mapping, got {init_args!r}.")
+        if "root" in init_args:
+            raise MisconfigurationException(
+                "it_cfg.tunable_view's `init_args` cannot set `root`: the view's root is always the module."
+            )
 
     def _check_profiler_selection(self) -> None:
         """Refuse two profilers observing one module: the PyTorch profiler and an enabled MemProfiler.

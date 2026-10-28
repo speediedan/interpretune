@@ -21,10 +21,16 @@ the model (spliced SAEs, interventions) are reachable.
 override it is trainable; one whose ``build_tunable_view()`` returns ``None`` declares nothing and gets a view refusing
 it, so it is never assumed trainable. Nothing is attached when the installed finetuning-scheduler predates views, and an
 attached view is never replaced.
+
+A run can choose the view in its configuration instead (``it_cfg.tunable_view``, #841): a ``class_path`` and
+``init_args``, instantiated with the module as the view's root by :func:`configured_view`. It takes precedence over
+``build_tunable_view()``, so a schedule's naming (TransformerLens names or the module's own, the implicit norm thaw on
+or off) is part of the run's configuration rather than of a Python subclass.
 """
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -73,6 +79,27 @@ def identity_view(root: nn.Module, roles: Mapping[str, str] | None = None) -> An
     return CanonicalView(root, roles={**peft_adapter_roles(root), **(roles or {})})
 
 
+def configured_view(module: nn.Module) -> Any | None:
+    """The view ``module.it_cfg.tunable_view`` configures (#841), or ``None`` when none is configured.
+
+    The view class is instantiated with ``module`` as its root and the configured ``init_args``. A class taking
+    ``roles`` receives the composition's roles (PEFT adapter roles and the module's ``tunable_roles()``) unless
+    ``init_args`` sets them.
+    """
+    cfg = getattr(getattr(module, "it_cfg", None), "tunable_view", None)
+    if not cfg:
+        return None
+    from interpretune.utils import instantiate_class
+
+    view_cls = instantiate_class({"class_path": cfg["class_path"]}, import_only=True)
+    init_args = dict(cfg.get("init_args") or {})
+    if "roles" not in init_args and "roles" in inspect.signature(view_cls).parameters:
+        tunable_roles = getattr(module, "tunable_roles", None)
+        declared = tunable_roles() if callable(tunable_roles) else None
+        init_args["roles"] = {**peft_adapter_roles(module), **(declared if isinstance(declared, Mapping) else {})}
+    return view_cls(module, **init_args)
+
+
 class RefusingView:
     """A view declaring its module cannot be tuned, with the reason finetuning-scheduler reports when it refuses.
 
@@ -111,7 +138,8 @@ def undeclared_reason(module: nn.Module) -> str:
 
 
 def attach_tunable_view(module: nn.Module) -> Any | None:
-    """Attach ``module``'s view as ``tunable_view``, or a :class:`RefusingView` when it declares none.
+    """Attach ``module``'s view as ``tunable_view``: the one its configuration names (:func:`configured_view`),
+    else the one ``build_tunable_view()`` declares, or a :class:`RefusingView` when it declares none.
 
     Does nothing when finetuning-scheduler predates views, or when a view is already attached (an explicit attachment,
     for example by a hub adapter's ``post_auto_model_init``, is never replaced).
@@ -121,8 +149,10 @@ def attach_tunable_view(module: nn.Module) -> Any | None:
     """
     if not fts_views_available() or getattr(module, VIEW_ATTR, None) is not None:
         return None
-    build = getattr(module, "build_tunable_view", None)
-    view = build() if callable(build) else None
+    view = configured_view(module)
+    if view is None:
+        build = getattr(module, "build_tunable_view", None)
+        view = build() if callable(build) else None
     if view is None:
         view = RefusingView(module, undeclared_reason(module))
     object.__setattr__(module, VIEW_ATTR, view)
