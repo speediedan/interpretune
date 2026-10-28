@@ -173,7 +173,7 @@ ns_parity_results = {
 #   - Joint and split QKV parameters do NOT share underlying storage
 #   - Result: 2 additional params per attention layer × 3 blocks = +6 params
 #
-# TransformerBridge canonical names: the module declares the identity view (CanonicalViewDivergeTestITModule), so its
+# TransformerBridge canonical names: the configuration selects the identity view (`tunable_view`, #841), so its
 # schedules name the module's own parameters, which may expose architectural differences reducing schedule portability.
 #
 # TransformerBridge TL names (the TransformerLens composition's own view, TransformerBridgeView):
@@ -387,6 +387,16 @@ l_tl_bridge_fts_tl_names_multiphase_callback_results = {
     },
 }
 
+# TransformerBridge TL Names without the implicit norm thaw (3-phase schedule: 42 → 78 → 221 physical params)
+# The configuration selects TransformerBridgeView with `implicit_norm_thaw` off (#841) and the first phase names only
+# attention and MLP tensors, so layers 9-11 thaw without their 12 norm parameters (each block's 12 attention and MLP
+# tensors plus its joint QKV weight and bias, 14 per block); the final phase names those norms and the final norm. With
+# the thaw on, the same schedule thaws 54 → 90 → 221, as the schedule naming whole blocks does.
+l_tl_bridge_fts_tl_names_no_norm_thaw_callback_results = {
+    epoch: {**results, "curr_thawed_params": {54: 42, 90: 78}.get(results["curr_thawed_params"], 221)}
+    for epoch, results in l_tl_bridge_fts_tl_names_multiphase_callback_results.items()
+}
+
 
 # TODO: using result dicts in this module for now but ultimately plan to save/construct TestResults from a yaml file
 # here to make programmatic management of expected results easier
@@ -407,5 +417,9 @@ fts_parity_results = {
     "train_cuda_32_l_tl_bridge_tl_names_fts": TestResult(
         exact_results=def_results("cuda", 32, ds_cfg="train"),
         callback_results=l_tl_bridge_fts_tl_names_multiphase_callback_results,
+    ),
+    "train_cuda_32_l_tl_bridge_tl_names_no_norm_thaw_fts": TestResult(
+        exact_results=def_results("cuda", 32, ds_cfg="train"),
+        callback_results=l_tl_bridge_fts_tl_names_no_norm_thaw_callback_results,
     ),
 }

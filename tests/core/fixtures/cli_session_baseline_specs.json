@@ -240,6 +240,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "entailment_mapping": [
         "Yes",
         "No"
@@ -500,6 +501,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "backend": "transformerlens",
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensBridgeConfig",
@@ -787,6 +789,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "backend": "transformerlens",
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig",
@@ -1079,6 +1082,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "backend": "transformerlens",
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedNoProcessingConfig",
@@ -1350,6 +1354,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "entailment_mapping": [
         "Yes",
         "No"
@@ -1594,6 +1599,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "entailment_mapping": [
         "Yes",
         "No"
@@ -1612,6 +1618,8 @@
         "offload": "cpu",
         "lazy_encoder": null,
         "lazy_decoder": true,
+        "lazy_delta_rank": null,
+        "tune_base": false,
         "verbose": true,
         "default_node_threshold": 0.8,
         "default_edge_threshold": 0.98,
@@ -1885,6 +1893,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "entailment_mapping": [
         "Yes",
         "No"
@@ -2108,6 +2117,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "entailment_mapping": [
         "Yes",
         "No"
@@ -2126,6 +2136,8 @@
         "offload": "cpu",
         "lazy_encoder": null,
         "lazy_decoder": true,
+        "lazy_delta_rank": null,
+        "tune_base": false,
         "verbose": true,
         "default_node_threshold": 0.8,
         "default_edge_threshold": 0.98,
@@ -2371,6 +2383,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "entailment_mapping": [
         "Yes",
         "No"
@@ -2389,6 +2402,8 @@
         "offload": "cpu",
         "lazy_encoder": null,
         "lazy_decoder": true,
+        "lazy_delta_rank": null,
+        "tune_base": false,
         "verbose": true,
         "default_node_threshold": 0.8,
         "default_edge_threshold": 0.98,
@@ -2633,6 +2648,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "nnsight_cfg": {
         "__class__": "interpretune.adapters.nnsight.config.NNsightConfig",
         "model_name": "google/gemma-3-1b-it",
@@ -2871,6 +2887,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "nnsight_cfg": {
         "__class__": "interpretune.adapters.nnsight.config.NNsightConfig",
         "model_name": "google/gemma-3-1b-it",
@@ -3123,6 +3140,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "entailment_mapping": [
         "Yes",
         "No"
@@ -3141,6 +3159,8 @@
         "offload": "cpu",
         "lazy_encoder": null,
         "lazy_decoder": true,
+        "lazy_delta_rank": null,
+        "tune_base": false,
         "verbose": true,
         "default_node_threshold": 0.8,
         "default_edge_threshold": 0.98,
@@ -3399,6 +3419,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "entailment_mapping": [
         "Yes",
         "No"
@@ -3417,6 +3438,8 @@
         "offload": "cpu",
         "lazy_encoder": null,
         "lazy_decoder": true,
+        "lazy_delta_rank": null,
+        "tune_base": false,
         "verbose": true,
         "default_node_threshold": 0.8,
         "default_edge_threshold": 0.98,
@@ -3698,6 +3721,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "tl_cfg": {
         "__class__": "interpretune.adapters.transformer_lens.config.ITLensFromPretrainedConfig",
         "move_to_device": true,
@@ -3982,6 +4006,7 @@
         "which": "none",
         "pytorch_profiler_cfg": {}
       },
+      "tunable_view": null,
       "entailment_mapping": [
         "Yes",
         "No"

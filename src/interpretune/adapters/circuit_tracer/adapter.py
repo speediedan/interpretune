@@ -95,6 +95,17 @@ class CircuitTracerAttributeMixin:
         return None
 
 
+def _replacement_transcoders(module: Any) -> nn.Module | None:
+    """``module``'s replacement-model transcoders as a torch module, or ``None`` when there are none to tune.
+
+    The nnsight backend's replacement model hands its transcoders back wrapped in an nnsight envoy, so the torch module
+    is unwrapped.
+    """
+    transcoders = getattr(getattr(module, "_replacement_model", None), "transcoders", None)
+    transcoders = getattr(transcoders, "_module", transcoders)
+    return transcoders if isinstance(transcoders, nn.Module) else None
+
+
 class BaseCircuitTracerModule(BaseITModule):
     """Backend-agnostic base module for Circuit Tracer.
 
@@ -105,18 +116,54 @@ class BaseCircuitTracerModule(BaseITModule):
     """
 
     def build_tunable_view(self) -> Any | None:
-        """A refusal for now (#758): circuit-tracer freezes the whole replacement model at construction and loads
-        lazy transcoder weights as plain tensors, which no optimizer can track.
+        """The transcoders' view (:class:`~interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`):
+        every transcoder tensor ``instrument`` until promoted, base-model tensors refused by name unless
+        ``CircuitTracerConfig.tune_base`` makes them ``base``, and the whole composition refused while
+        ``offload='disk'``.
 
-        Promoting transcoders to trainable latents is #709's work.
+        A composition with no replacement model loaded is refused.
         """
+        from interpretune.adapters.circuit_tracer.tunable_view import (
+            DISK_OFFLOAD_REASON,
+            CircuitTracerView,
+            lazy_weights,
+        )
         from interpretune.tuning.views import RefusingView
 
-        return RefusingView(
-            self,
-            "circuit-tracer replacement models are frozen at construction and may hold lazily loaded transcoder weights"
-            " that are not parameters; tuning them through finetuning-scheduler is not supported yet.",
-        )
+        transcoders = _replacement_transcoders(self)
+        if transcoders is None:
+            return RefusingView(self, "no circuit-tracer replacement model (with transcoders) is loaded to tune.")
+        cfg = self.circuit_tracer_cfg
+        if cfg is not None and cfg.lazy_delta_rank is None and (lazy := lazy_weights(transcoders)):
+            shown = ", ".join(lazy[:3]) + (f" and {len(lazy) - 3} more" if len(lazy) > 3 else "")
+            rank_zero_warn(
+                f"Lazily loaded transcoder weights ({shown}) are not parameters, so they are left out of this"
+                " composition's tunable view; set `CircuitTracerConfig.lazy_delta_rank` to tune them through low-rank"
+                " corrections, or load them eagerly (`lazy_encoder=False`, `lazy_decoder=False`)."
+            )
+        refusal = DISK_OFFLOAD_REASON if cfg is not None and cfg.offload == "disk" else None
+        return CircuitTracerView(self, transcoders, refusal=refusal, tune_base=cfg is not None and cfg.tune_base)
+
+    def register_tunable_modules(self) -> None:
+        """Make the transcoders this module's parameters, once, and give lazily loaded transcoder weights their
+        low-rank corrections when ``lazy_delta_rank`` is set.
+
+        A replacement model that is a torch module is registered as ``model``, which reaches its transcoders already.
+        The nnsight backend's is an nnsight ``LanguageModel``, not a torch module, so its transcoders are registered
+        here as ``transcoders`` unless something already registered them.
+        """
+        super().register_tunable_modules()
+        from interpretune.adapters.circuit_tracer.tunable_view import attach_lazy_deltas
+
+        transcoders = _replacement_transcoders(self)
+        if transcoders is None:
+            return
+        cfg = self.circuit_tracer_cfg
+        if cfg is not None and cfg.lazy_delta_rank is not None:
+            attach_lazy_deltas(transcoders, cfg.lazy_delta_rank)
+        registered = {id(p) for p in self.parameters()}
+        if not any(id(p) in registered for p in transcoders.parameters()):
+            self._modules["transcoders"] = transcoders
 
     def __init__(self, *args, **kwargs):
         # Initialize attributes that may be required in base init methods
@@ -204,7 +251,9 @@ class BaseCircuitTracerModule(BaseITModule):
                 f"got {type(replacement_model).__name__} (registered backends: {sorted(CT_BACKEND_REGISTRY)})"
             )
 
-        self._replacement_model = replacement_model
+        # A plain attribute, not a submodule: `model` below registers the replacement model, and registering it twice
+        # would duplicate every one of its state-dict keys (under `model.` and `_replacement_model.`).
+        object.__setattr__(self, "_replacement_model", replacement_model)
 
         # Assigned from the NARROWED LOCAL, not re-read from the attribute: `_replacement_model` is
         # declared optional (it is None before init), so reading it back here would reintroduce the
@@ -296,8 +345,14 @@ class BaseCircuitTracerModule(BaseITModule):
         # Override with any provided kwargs
         attribution_kwargs.update(kwargs)
 
-        # Generate the attribution graph
-        graph = attribute(prompt=prompt, model=self.replacement_model, **attribution_kwargs)
+        from interpretune.adapters.circuit_tracer.tunable_view import REFIT_SUGGESTION, attribution_frozen
+
+        with attribution_frozen(self.replacement_model) as thawed:
+            graph = attribute(prompt=prompt, model=self.replacement_model, **attribution_kwargs)
+        transcoders = _replacement_transcoders(self)
+        tc_ids = {id(p) for p in transcoders.parameters()} if transcoders is not None else set()
+        if cfg is not None and cfg.tune_base and any(id(p) not in tc_ids for p in thawed):
+            rank_zero_warn(REFIT_SUGGESTION)
 
         # Store the graph
         instantiated_graph = InstantiatedGraph(handle=graph, metadata={"prompt": prompt, **attribution_kwargs})

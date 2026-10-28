@@ -464,7 +464,9 @@ def core_hf_upstream_arm(
                 batch.pop("labels")
                 with _autocast(dev, spec.dtype):
                     if spec.generative and spec.tl_bridge:
-                        model.generate(batch.pop("input"), **_accepted(model.generate, spec.generate_kwargs), **batch)
+                        # filter against the bridge's own signature: `_SaeRoot.generate` only forwards `**kwargs`
+                        gen_kwargs = _accepted(getattr(model, "bridge", model).generate, spec.generate_kwargs)
+                        model.generate(batch.pop("input"), **gen_kwargs, **batch)
                     elif spec.generative:
                         model.generate(**batch, **spec.generate_kwargs)
                     else:

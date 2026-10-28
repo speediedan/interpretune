@@ -604,6 +604,8 @@ class TestBridgeViewArchitectures:
         assert len(unreached) == arch.expected_unmapped_canonical_count, (
             f"[{arch.model_name}] unreached {sorted(unreached)[:10]}"
         )
+        # a parameter no TransformerLens name reaches can still be scheduled by its own name (#841)
+        assert dict(view.to_physical(sorted(unreached))) == {n: (n,) for n in unreached}
         uncoupled = unreached - set(view.coupled(sorted(reached)))
         assert len(uncoupled) == arch.expected_uncoupled_canonical_count, (
             f"[{arch.model_name}] neither reached nor coupled: {sorted(uncoupled)[:10]}"
