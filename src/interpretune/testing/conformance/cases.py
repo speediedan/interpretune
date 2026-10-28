@@ -124,17 +124,20 @@ def _assert_close_padded(got: torch.Tensor, ref: torch.Tensor, *, what: str) -> 
 #: - ``ROCM_COMMUTE_ATOL``: two adds in opposite orders, measured at 1.07e-4 to 1.47e-4 greatest absolute difference
 #:   (``CONVERGENCE_ATOL`` is 1e-4; NVIDIA agrees within it).
 #: - ``ROCM_BATCHED_MISMATCH_FRACTION`` and ``ROCM_BATCHED_ATOL``: fused (batched) hook configs against sequential ones.
-#:   One run agreed within the padded tolerance and two did not, identically: 104,923 of 149,422,080 logits (7.0e-4)
-#:   beyond it, the greatest 3.13e-2 absolute. The fused batch selects different GEMM kernels, and the selection is
-#:   not stable from run to run, so most elements still meet the padded tolerance and a bounded fraction may exceed
-#:   it, up to a hard cap.
+#:   The two paths' SAE inputs differ by about one float32 ulp, and pre-activations within about 2e-4 of their JumpReLU
+#:   threshold land on different sides of it; each such latent switches on in one path only, a discrete jump that
+#:   moves a stable block of logits. hipBLASLt picks the SAE encoder's GEMM kernel once per process, and that choice
+#:   decides how many latents flip (one passes the padded tolerance, two do not), so the outcome varies by process.
+#:   Worst measured on gfx1201 (33 diverging local runs and the first AMD CI run): 375,886 of 149,422,080 logits
+#:   (2.52e-3) beyond the padded tolerance, the greatest 8.54e-2 absolute. The bound covers this prompt's
+#:   near-threshold latents; another prompt may have more.
 #: - ``ROCM_EDGE_ATOL``: the circuit-tracer edge-prediction case's active-feature check (``atol`` 1e-3 elsewhere). On
 #:   speedieamd, two of the first AMD CI runs (#703) put one of 3,030 active features at 1.293e-3 and 1.295e-3 off its
 #:   edge prediction, the same feature and element both times; other runs, and NVIDIA, agree within 1e-3.
 ROCM_COMMUTE_ATOL = 3e-4
 ROCM_EDGE_ATOL = 2.6e-3
-ROCM_BATCHED_MISMATCH_FRACTION = 1.5e-3
-ROCM_BATCHED_ATOL = 6e-2
+ROCM_BATCHED_MISMATCH_FRACTION = 5e-3
+ROCM_BATCHED_ATOL = 1.5e-1
 
 
 def _on_rocm_device(t: torch.Tensor) -> bool:
@@ -1146,22 +1149,18 @@ class ModelBackendConformance:
         # Measured on the macOS runner with the nnsight backend: 3 of 26,334,668 elements at 1.07e-4 absolute and
         # 1.5e-6 relative, on logits of magnitude ~100; Linux agreed exactly. The positive control below is what
         # keeps this from being satisfiable by two runs that ignored their hooks.
-        # On ROCm the fused batch's kernel selection varies from run to run, so a bounded fraction of the logits may
-        # exceed the padded tolerance (see `ROCM_BATCHED_MISMATCH_FRACTION`).
-        rocm_exceeded: list[str] = []
+        # On ROCm a bounded fraction of the logits may exceed the padded tolerance: rounding decides which side of
+        # their JumpReLU threshold a few SAE latents land on (see `ROCM_BATCHED_MISMATCH_FRACTION`).
         for k, config in enumerate(configs):
             sequential = self._forward_with_hooks(suite, index, config)
             if _suite_on_rocm(suite):
-                try:
-                    _assert_mostly_close(
-                        batched[k],
-                        sequential,
-                        what=f"config {k}: batched and sequential logits differ",
-                        max_fraction=ROCM_BATCHED_MISMATCH_FRACTION,
-                        cap=ROCM_BATCHED_ATOL,
-                    )
-                except AssertionError as err:
-                    rocm_exceeded.append(str(err))
+                _assert_mostly_close(
+                    batched[k],
+                    sequential,
+                    what=f"config {k}: batched and sequential logits differ",
+                    max_fraction=ROCM_BATCHED_MISMATCH_FRACTION,
+                    cap=ROCM_BATCHED_ATOL,
+                )
                 continue
             torch.testing.assert_close(
                 batched[k],
@@ -1173,11 +1172,6 @@ class ModelBackendConformance:
         assert not torch.allclose(batched[0], batched[1], rtol=0, atol=CONVERGENCE_ATOL), (
             f"ablating latent {first} and latent {second} gave the same logits, so the agreement above is vacuous"
         )
-        if rocm_exceeded:
-            # far beyond float32 roundoff and varying run to run (interpretune#818): recorded, with the measured
-            # numbers, until that issue decides between a fix and a measured ROCm tolerance; the positive control above
-            # still fails the case
-            pytest.xfail("ROCm batched/sequential divergence, interpretune#818: " + "; ".join(rocm_exceeded))
 
     @conformance_case(capability=ModelBackendCapability.LATENT_MODELS)
     def test_ablating_a_dead_latent_is_identity(self, suite):

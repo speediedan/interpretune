@@ -120,6 +120,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- On ROCm, the batched-against-sequential hooks conformance case asserts its bounded fraction directly instead of recording an xfail beyond it, with `ROCM_BATCHED_MISMATCH_FRACTION` raised to 5e-3 and `ROCM_BATCHED_ATOL` to 1.5e-1 (about twice the worst measured). The divergence was measured to be decided once per process: hipBLASLt's kernel choice for the SAE encoder GEMM determines how many latents within about 2e-4 of their JumpReLU threshold land on different sides of it in the two paths ([#818](https://github.com/speediedan/interpretune/issues/818))
+
 - The finetuning-scheduler schedules under `tests/benchmarks/configs/rte_boolq/ft_schedules/`, which nothing referenced, are retired: the GPT-2 three-phase schedule continues as the `rte` component's `ft_schedules/rte_ft.gpt2.yaml` in current idioms (each later phase sets its `lr`, phase 0 is bounded by `max_transition_epoch`), beside #697's gemma-3-1b-it schedule ([#14](https://github.com/speediedan/interpretune/issues/14))
 
 - `SessionRunnerCfg.callbacks` instantiates an entry given as configuration (`class_path` and `init_args`), so a core-loop FTS run builds `FTSCoreCallback` from its parsed configuration alone: the configuration dumps and reloads unchanged and reproduces the tuning scheduler's `config_hash`. `schedule` and plain-data `tuning_scheduler_kwargs` are configuration-expressible; object-valued arguments (`tuning_scheduler_factory`, optimizer factories, policies, gates) stay Python-only ([#809](https://github.com/speediedan/interpretune/issues/809))

@@ -87,7 +87,7 @@ the profiling failure were sorted and calibrated as follows, each scoped so NVID
 | --- | --- | --- | --- |
 | `test_l_profiling[test_cuda_32_l]` | `resource-calibration` | `reserved_bytes.all.peak` 689963008 against 576716800 (+19.6%), identical in all three; the allocated stats and `npp_diff` pass | a ROCm override (`expected_mem_rocm` in `profile_memory_footprints.yaml`) for that stat only, at the default 10% tolerance: the HIP caching allocator sizes its segments differently, and the allocated bytes agree |
 | `TestCircuitTracerConformance::test_mixed_modes_apply_in_declaration_order` | `numerics-tolerance` | the commuting control (two adds in opposite orders) at 1.07e-4 to 1.47e-4 against `atol=1e-4`, 3 of 3 | `ROCM_COMMUTE_ATOL = 3e-4` on a ROCm device |
-| `TestCircuitTracerConformance::test_batched_hooks_agree_with_sequential` | `numerics-tolerance` | 2 of 3 failed identically (104,923 of 149,422,080 logits, 7.0e-4, beyond the padded tolerance; greatest 3.13e-2), 1 of 3 agreed | on a ROCm device, at most `ROCM_BATCHED_MISMATCH_FRACTION = 1.5e-3` of the logits beyond the padded tolerance and none beyond `ROCM_BATCHED_ATOL = 6e-2` |
+| `TestCircuitTracerConformance::test_batched_hooks_agree_with_sequential` | `numerics-tolerance` | 2 of 3 failed identically (104,923 of 149,422,080 logits, 7.0e-4, beyond the padded tolerance; greatest 3.13e-2), 1 of 3 agreed. Later measured (#818): per process, not per call; the SAE encoder GEMM's kernel, chosen once per process, decides how many latents within about 2e-4 of their JumpReLU threshold flip between the paths. Worst of 33 diverging local runs and the first AMD CI run: 2.52e-3 of the logits, greatest 8.54e-2 | on a ROCm device, at most `ROCM_BATCHED_MISMATCH_FRACTION = 5e-3` of the logits beyond the padded tolerance and none beyond `ROCM_BATCHED_ATOL = 1.5e-1` (was 1.5e-3 and 6e-2, an xfail beyond them until #818 was measured) |
 
 **Revised after the first CI run on the AMD agent (az 1692, in the job container):** the commuting control measured
 1.373e-4 but was still checked against 1e-4, because its logits come back on the CPU and the ROCm scope read the
@@ -95,6 +95,14 @@ tensor's device; it is now decided from the suite's device. Batched hooks measur
 padded tolerance, greatest 8.54e-2, in float32. That is far beyond roundoff and varies run to run, so it is not
 widened further: on ROCm the case records a non-strict xfail with the measured numbers (interpretune#818) when the
 bound is exceeded, after its positive control has run.
+
+**Resolved by measurement (interpretune#818):** the divergence is decided once per process, not per call. hipBLASLt
+selects the SAE encoder's GEMM kernel once per process; the two paths' SAE inputs differ by about one float32 ulp, and
+latents within about 2e-4 of their JumpReLU threshold land on different sides of it, each a discrete jump in the
+logits. Pinning that GEMM's kernel with TunableOp made the outcome deterministic, and swapping that one entry flipped
+it both ways. Since it is two correct float32 computations rounded differently against a hard threshold, the case now
+asserts the bounded fraction directly (`ROCM_BATCHED_MISMATCH_FRACTION = 5e-3`, `ROCM_BATCHED_ATOL = 1.5e-1`, about
+twice the worst measured) instead of recording an xfail.
 
 Each ROCm bound is about twice the measured spread. For the batched case, a bounded fraction was chosen over a
 uniformly wider tolerance, which would loosen all 149 million logits sixty-fold, and over a ROCm skip, which would drop
