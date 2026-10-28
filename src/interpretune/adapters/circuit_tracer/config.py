@@ -87,6 +87,13 @@ class CircuitTracerConfig(ITSerializableCfg):
     lazy_encoder: bool | None = None
     """Lazily load transcoder decoder weights from disk on access (default ``True``)."""
     lazy_decoder: bool = True
+    """Rank of the trainable low-rank correction each lazily loaded transcoder weight gets, so a composition loaded
+    with ``lazy_encoder`` or ``lazy_decoder`` can tune those weights through its tunable view (see
+    ``interpretune.adapters.circuit_tracer.tunable_view``).
+
+    ``None`` (default) adds none, and lazily loaded weights are left out of the view.
+    """
+    lazy_delta_rank: int | None = None
     """Whether to display detailed progress information."""
     verbose: bool = True
 

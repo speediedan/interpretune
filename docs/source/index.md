@@ -166,6 +166,7 @@ usage/circuit_tracer_backend_support
 :hidden:
 
 Overview <usage/fts_tunable_views>
+Data-parallel core loop <usage/core_loop_data_parallel>
 core and HF <usage/fts_tuning_core_hf>
 TransformerLens <usage/fts_tuning_transformer_lens>
 sae_lens <usage/fts_tuning_sae_lens>
