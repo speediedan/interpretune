@@ -141,14 +141,15 @@ class TestAttachment:
         assert "hf_model" not in module._modules
         assert "not built through nnsight" in BaseNNsightModule._hf_model_unregistered_reason(module)  # type: ignore[arg-type]
 
-    def test_circuit_tracer_is_refused_with_its_reason(self):
+    def test_circuit_tracer_without_a_replacement_model_is_refused(self):
         view = BaseCircuitTracerModule.build_tunable_view(nn.Linear(2, 2))  # type: ignore[arg-type]
         support = as_view(view).support()
-        assert not support.trainable and "frozen at construction" in support.reason
+        assert not support.trainable and "no circuit-tracer replacement model" in support.reason
 
-    def test_every_circuit_tracer_composition_takes_the_refusal(self):
-        """The refusal reaches a composed circuit-tracer module only by MRO order (ahead of the TransformerLens and
-        nnsight modules, whose views are trainable), so assert it on every registered composition."""
+    def test_every_circuit_tracer_composition_takes_the_transcoder_view(self):
+        """The transcoder view reaches a composed circuit-tracer module only by MRO order (ahead of the
+        TransformerLens and nnsight modules, whose views expose the base model), so assert it on every registered
+        composition."""
         from interpretune.adapter_registry import ADAPTER_REGISTRY
         from interpretune.protocol import Adapter
 
