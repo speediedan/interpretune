@@ -12,7 +12,7 @@ are never materialized.
 
 What this recipe measures is capacity: memory per card, host memory, load time and step time for one batch shape
 (``--batch BxL``) on a fixed synthetic prompt. It is not a data pipeline; the core loop's placement is the path for
-real training. See ``docs/large_model_fsdp2.md`` for the measured results and why these settings were chosen.
+real training. The measured results and the reasons for these settings are recorded on interpretune#833.
 
 Controls:
 - ``--reference`` compares the sharded model's logits on a fixed prompt with a plain ``from_pretrained`` copy on rank

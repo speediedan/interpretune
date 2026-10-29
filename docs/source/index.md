@@ -167,7 +167,6 @@ usage/circuit_tracer_backend_support
 
 Overview <usage/fts_tunable_views>
 Data-parallel core loop <usage/core_loop_data_parallel>
-Large models on two cards (FSDP2) <usage/large_model_fsdp2>
 core and HF <usage/fts_tuning_core_hf>
 TransformerLens <usage/fts_tuning_transformer_lens>
 sae_lens <usage/fts_tuning_sae_lens>
