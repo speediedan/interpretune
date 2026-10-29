@@ -208,6 +208,26 @@ class TestClassBaseConfigs:
         assert ITDataModuleConfig(**itdm_cfg)
 
     @pytest.mark.parametrize(
+        "dataloader_kwargs, expected",
+        [
+            pytest.param({}, {"num_workers": 0, "pin_memory": False}, id="defaults"),
+            pytest.param(
+                {"shuffle": True, "drop_last": True, "num_workers": 2},
+                {"num_workers": 2, "pin_memory": False, "shuffle": True, "drop_last": True},
+                id="declared_keys_kept",
+            ),
+        ],
+    )
+    def test_datamodule_cfg_keeps_declared_dataloader_kwargs(self, dataloader_kwargs, expected):
+        """Every declared ``dataloader_kwargs`` key reaches the loader, over defaults for the two worker settings.
+
+        ``shuffle`` and ``drop_last`` were once replaced by those defaults alone, so a configuration asking for
+        shuffled batches trained on the same unshuffled order and nothing reported it.
+        """
+        itdm_cfg = deepcopy(TestClassBaseConfigs.core_gpt2_shared_config) | {"dataloader_kwargs": dataloader_kwargs}
+        assert ITDataModuleConfig(**itdm_cfg).dataloader_kwargs == expected
+
+    @pytest.mark.parametrize(
         "env, expected_root",
         [
             pytest.param(
