@@ -1,0 +1,100 @@
+# Derived key: rte_ft.qwen3.sae_lens
+# `rte_ft.qwen3.transformer_lens` with an SAE Lens transcoder spliced in (interpretune#812): the layer-13 transcoder of
+# `mwhanna-qwen3-0.6b-transcoders-lowl0`, spliced at init with its reconstruction error added back (so the model's
+# outputs are unchanged) and configured `frozen`, which makes it an `instrument`: applied in every forward pass, never
+# thawed or checkpointed. The steering vector after block 13 and the TransformerLens-named schedule are the
+# TransformerLens example's (`ft_schedules/rte_ft.qwen3.transformer_lens.yaml`). `runs/rte_ft.qwen3.sae_lens.core.yaml`
+# and `runs/rte_ft.qwen3.sae_lens.lightning.yaml` run it on the core loop and on Lightning from the CLI. fp32; one 24 GB
+# GPU.
+task_variant: rte_ft
+model: qwen3
+composition: [sae_lens]
+extensions: []
+descriptor: null
+reg_info:
+  model_src_key: qwen3
+  model_cfg_key: rte_ft
+  adapter_combinations:
+    - [core, sae_lens]
+    - [lightning, sae_lens]
+  description: Steered, phased fine-tuning of Qwen3-0.6B beside a frozen SAE Lens transcoder, core loop or Lightning
+shared_config:
+  task_name: rte
+  model_name_or_path: Qwen/Qwen3-0.6B
+  tokenizer_kwargs:
+    # the bridge passes tokens to the HF model under `input`, with the attention mask for left padding
+    model_input_names: ['input', 'attention_mask']
+    padding_side: left
+    add_bos_token: true
+registered_cfg:
+  datamodule_cfg:
+    prompt_cfg:
+      class_path: rte_boolq.RTEBoolqPromptConfig
+    signature_columns: ['input', 'attention_mask', 'labels']
+    text_fields: ["premise", "hypothesis"]
+    enable_datasets_cache: True
+    train_batch_size: 8
+    eval_batch_size: 8
+    dataloader_kwargs:
+      drop_last: true
+    # tokenize (and pad) in chunks of one batch: unshuffled batches are then padded to their own longest prompt, not to
+    # the longest of 1,000
+    prepare_data_map_cfg:
+      batched: true
+      batch_size: 8
+  module_cfg:
+    class_path: interpretune.config.module.ITConfig
+    init_args:
+      auto_comp_cfg:
+        class_path: interpretune.config.shared.AutoCompConfig
+        init_args:
+          module_cfg_name: RTEBoolqConfig
+          module_cfg_mixin:
+            class_path: rte_boolq.RTEBoolqEntailmentMapping
+            import_only: true
+      generative_step_cfg:
+        class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
+        init_args:
+          enabled: true
+          lm_generation_cfg:
+            class_path: interpretune.adapters.transformer_lens.config.TLensGenerationConfig
+            init_args:
+              max_new_tokens: 1
+      hf_from_pretrained_cfg:
+        class_path: interpretune.config.mixins.HFFromPretrainedConfig
+        init_args:
+          pretrained_kwargs:
+            device_map: cuda
+            dtype: float32
+          model_head: transformers.Qwen3ForCausalLM
+      tl_cfg:
+        class_path: interpretune.adapters.transformer_lens.config.ITLensBridgeConfig
+        init_args:
+          model_name: Qwen/Qwen3-0.6B
+          default_padding_side: left
+      # the layer-13 transcoder, spliced at init (`add_saes_on_init`) and frozen: an `instrument`, so no phase can thaw
+      # it; its reconstruction error is added back, so the spliced model computes what the pretrained one does
+      add_saes_on_init: true
+      sae_cfgs:
+        - class_path: interpretune.adapters.sae_lens.config.SAELensFromPretrainedConfig
+          init_args:
+            release: mwhanna-qwen3-0.6b-transcoders-lowl0
+            sae_id: layer_13
+            use_error_term: true
+            frozen: true
+      # a steering vector on the residual stream after block 13 (of 28), at the bridge's hook point, declared
+      # `intervention:steer`; it starts at zero, so the steered model starts out identical to the pretrained one
+      tuning_interventions:
+        - name: steer
+          site: model.blocks.13.hook_out
+      # phase 0's learning rate, the steering vector's: one direction takes a far larger step than a block does (the
+      # block phases set their own `lr`)
+      optimizer_init:
+        class_path: torch.optim.AdamW
+        init_args:
+          weight_decay: 0.0
+          lr: 1.0e-03
+  datamodule_cls:
+    class_path: rte_boolq.RTEBoolqDataModule
+  module_cls:
+    class_path: rte_boolq.RTEBoolqModule

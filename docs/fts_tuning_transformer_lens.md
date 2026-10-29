@@ -76,4 +76,36 @@ attention and MLP tensors and the fused `qkv` weight and bias, without the 12 no
 The Lightning callback and `FTSCoreCallback` both discover the view the module carries, so no strategy adapter is
 configured for either.
 
-Concrete example usage for this adapter is to come; it is tracked in [interpretune#812](https://github.com/speediedan/interpretune/issues/812).
+## Example: a steered, phased fine-tune
+
+`rte_ft.qwen3.transformer_lens` in the `speediedan/rte` component is the [core and HF](fts_tuning_core_hf.md) example
+through a `TransformerBridge`: the steering vector sits on the bridge's hook point after block 13
+(`model.blocks.13.hook_out`), and the schedule names TransformerLens names:
+
+```yaml
+0:
+  params:
+  - role:intervention:steer
+  max_transition_epoch: 2
+1:
+  params:
+  - ln_final.w
+  - blocks.2[4-7]\..*
+  lr: 1.0e-05
+2:
+  params:
+  - blocks.(1[4-9]|2[0-3])\..*
+  lr: 1.0e-05
+```
+
+A block's norms thaw with it, Qwen3's `q_norm` and `k_norm` included, which TransformerLens does not name. Run it on
+either interface:
+
+```bash
+interpretune --run_command train --config hub://speediedan/rte/runs/rte_ft.qwen3.transformer_lens.core.yaml
+interpretune --lightning_cli fit --config hub://speediedan/rte/runs/rte_ft.qwen3.transformer_lens.lightning.yaml
+```
+
+The component's entrypoint is code from the Hub, so opt in to running it first (`IT_TRUST_REMOTE_CODE=1`; see
+[the trust posture](hub_trust_posture.md)). Its losses match the HF run's, epoch for epoch: the view maps the
+TransformerLens names to the same parameters the HF schedule names.

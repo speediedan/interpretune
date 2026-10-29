@@ -23,6 +23,7 @@ from interpretune.utils.repr_helpers import (
     state_repr,
 )
 from interpretune.protocol import LRSchedulerConfig, Optimizable, StrOrPath
+from interpretune.tuning.interventions import InterventionCfg, as_intervention_cfg
 
 if TYPE_CHECKING:
     from interpretune.protocol import AnalysisCfgProtocol
@@ -101,6 +102,14 @@ class CompatConf(ITSerializableCfg):
 
 
 @dataclass(kw_only=True)
+class TuningConf(ITSerializableCfg):
+    """Tunable modules the module attaches once its model is built (#812)."""
+
+    # interventions spliced in at a site and declared `intervention:<kind>` (`interpretune.tuning.interventions`)
+    tuning_interventions: list[InterventionCfg] = field(default_factory=list)
+
+
+@dataclass(kw_only=True)
 class ITConfig(
     ITSharedConfig,
     ModelConf,
@@ -109,6 +118,7 @@ class ITConfig(
     MixinsConf,
     LoggingConf,
     CompatConf,
+    TuningConf,
     AutoCompConf,
     ExtensionConf,
 ):
@@ -145,6 +155,15 @@ class ITConfig(
                 self._dtype = None
         self._check_profiler_selection()
         self._check_tunable_view()
+        self._coerce_tuning_interventions()
+
+    def _coerce_tuning_interventions(self) -> None:
+        """Build each ``tuning_interventions`` mapping into an :class:`InterventionCfg` (see
+        :func:`~interpretune.tuning.interventions.as_intervention_cfg`)."""
+        try:
+            self.tuning_interventions = [as_intervention_cfg(e) for e in self.tuning_interventions or ()]
+        except TypeError as err:
+            raise MisconfigurationException(f"it_cfg.tuning_interventions: {err}") from err
 
     def _check_tunable_view(self) -> None:
         """Refuse a ``tunable_view`` that is not a ``class_path`` (and optional ``init_args``) mapping, or that

@@ -46,6 +46,9 @@ class SAELensFromPretrainedConfig(ITSerializableCfg):
     # sae_lens loader takes no such flag, so instantiate_saes applies it to the handle after
     # loading; off by default so default construction stays warning-free.
     use_error_term: bool = False
+    # Declare the spliced SAE's parameters `instrument` rather than `latent:sae`: applied in every forward pass,
+    # never thawed or checkpointed until a schedule promotes it (with `add_saes_on_init`).
+    frozen: bool = False
 
     def __post_init__(self) -> None:
         if self.device is None:  # align with TL default device resolution
@@ -60,6 +63,8 @@ class SAELensCustomConfig(ITSerializableCfg):
     # Carried into the StandardSAE constructor (which accepts it directly, unlike the
     # pretrained loader); see SAELensFromPretrainedConfig for what the flag does downstream.
     use_error_term: bool = False
+    # as on SAELensFromPretrainedConfig: an `instrument` rather than `latent:sae`
+    frozen: bool = False
 
     # TODO: may add additional custom behavior handling attributes here
     def __post_init__(self) -> None:

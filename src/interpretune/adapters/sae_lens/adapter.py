@@ -114,9 +114,10 @@ class BaseSAELensModule(BaseITModule):
             original_cfg, sparsity = None, None
             if isinstance(sae_cfg, SAELensFromPretrainedConfig):
                 # Filter None values so sae_lens defaults (e.g. dtype="float32") take effect; drop
-                # use_error_term too (the loader takes no such flag) and apply it after loading.
+                # use_error_term and frozen too (the loader takes neither) and apply use_error_term after loading.
                 sae_kwargs = {k: v for k, v in sae_cfg.__dict__.items() if v is not None}
                 use_error_term = sae_kwargs.pop("use_error_term", False)
+                sae_kwargs.pop("frozen", None)
                 handle, original_cfg, sparsity = SAE.from_pretrained_with_cfg_and_sparsity(**sae_kwargs)
                 if use_error_term:
                     # Set on the handle rather than passed to `add_sae(..., use_error_term=...)`: only the
@@ -135,15 +136,15 @@ class BaseSAELensModule(BaseITModule):
             # pre-composed config), in which case there is no splice setting and splicing stays off.
             if getattr(self.it_cfg, "add_saes_on_init", False) and hasattr(self.model, "add_sae"):
                 self.model.add_sae(added_sae.handle)  # type: ignore[operator]
-                self._register_attached_sae(added_sae.handle)
+                self._register_attached_sae(added_sae.handle, frozen=sae_cfg.frozen)
 
     @staticmethod
     def attached_sae_key(hook_name: str) -> str:
         """The ``attached_saes`` key for an SAE spliced at ``hook_name`` (module names cannot contain ``.``)."""
         return hook_name.replace(".", "__")
 
-    def _register_attached_sae(self, handle: SAE) -> None:
-        """Register a spliced SAE as a submodule of this module.
+    def _register_attached_sae(self, handle: SAE, frozen: bool = False) -> None:
+        """Register a spliced SAE as a submodule of this module (an ``instrument`` when ``frozen``).
 
         ``SAETransformerBridge.add_sae`` keeps the SAE outside the module tree (its wrapper holds it in
         ``__dict__``, so hook names carry no ``.sae.`` segment), and the bridge's ``parameters()`` delegate to the
@@ -161,7 +162,10 @@ class BaseSAELensModule(BaseITModule):
         attached = self._attached_saes()
         if attached is None:
             attached = self.attached_saes = torch.nn.ModuleDict()
-        attached[self.attached_sae_key(hook_name)] = handle
+        key = self.attached_sae_key(hook_name)
+        attached[key] = handle
+        frozen_keys: set[str] = self.__dict__.setdefault("_frozen_attached_saes", set())
+        (frozen_keys.add if frozen else frozen_keys.discard)(key)
 
     def _attached_saes(self) -> torch.nn.ModuleDict | None:
         attached = self._modules.get("attached_saes")
@@ -193,11 +197,15 @@ class BaseSAELensModule(BaseITModule):
                     yield param
 
     def tunable_roles(self) -> dict[str, str]:
-        """Spliced SAEs' parameters take the ``latent:sae`` role (#758)."""
+        """Spliced SAEs' parameters take the ``latent:sae`` role (#758), or ``instrument`` for one configured
+        ``frozen`` (#812)."""
         roles = super().tunable_roles()  # cooperative, provided by BaseITModule
         attached = self._attached_saes()
         if attached is not None:
-            roles.update({f"attached_saes.{n}": "latent:sae" for n, _ in attached.named_parameters()})
+            frozen_keys = self.__dict__.get("_frozen_attached_saes", set())
+            for key, sae in attached.items():
+                role = "instrument" if key in frozen_keys else "latent:sae"
+                roles.update({f"attached_saes.{key}.{n}": role for n, _ in sae.named_parameters()})
         return roles
 
     def _capture_hyperparameters(self) -> None:
