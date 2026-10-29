@@ -175,7 +175,7 @@ class TestComponentTreeRegistryLaziness:
     def test_all_seed_keys_resolve_from_cache(self, tmp_path):
         """Every seed configuration resolves CACHE-ONLY post-flip (bridge -> resolve -> hydrate).
 
-        The RTE experiment is Hub-resident now: its six published module keys hydrate from the
+        The RTE experiment is Hub-resident now: its nine published module keys hydrate from the
         warmed default cache at the pinned self-contained revision, while the local-publish
         bridge roundtrip below covers the remaining seeds (a dev checkout without the warmed
         component fails here naming the fetch).
@@ -193,6 +193,6 @@ class TestComponentTreeRegistryLaziness:
                 assert it.hub.load(repo_id, key, cache_dir=cache) is not None
         rte_manifest, _, _ = resolve_component_manifest(SEED_REPO, revision=SEED_REVISION)
         rte_keys = sorted((rte_manifest.get("module") or {}).get("configs") or {})
-        assert len(rte_keys) == 6
+        assert len(rte_keys) == 9
         for key in rte_keys:
             assert it.hub.load(SEED_REPO, key, revision=SEED_REVISION) is not None
