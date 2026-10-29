@@ -129,6 +129,8 @@ areas:
       - src/interpretune/tuning/**
       - src/interpretune/config/runner.py
       - src/interpretune/config/extensions.py
+      # the bundled extensions' configuration classes (#624)
+      - src/interpretune/config/extension_cfgs.py
       - src/interpretune/config/profiling.py
       - src/interpretune/runners/core.py
       - src/interpretune/runners/distributed.py
@@ -159,6 +161,7 @@ areas:
       - src/interpretune/runners/core.py
       - src/interpretune/runners/distributed.py
       - src/interpretune/extensions/**
+      - src/interpretune/config/extension_cfgs.py
       - src/interpretune/utils/**
     tests:
       - tests/core/test_components_mixins.py
@@ -232,6 +235,7 @@ areas:
     paths:
       - src/interpretune/analysis/injection/**
       - src/interpretune/extensions/neuronpedia.py
+      - src/interpretune/config/extension_cfgs.py
       - src/interpretune/harness/**
       - src/it_examples/utils/**
       - src/it_examples/notebooks/publish/attribution_analysis/**

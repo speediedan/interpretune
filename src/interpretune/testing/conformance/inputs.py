@@ -24,7 +24,7 @@ SEED_REPO = "speediedan/rte"
 #: The republished self-contained revision (single-segment class paths): refs/main roulette across
 #: cached revisions resolves whatever revision was written last, so every seed resolution below pins
 #: this explicitly rather than inheriting whatever the cache holds.
-SEED_REVISION = "a9b2407a96e5d267c2d4a4c8700e503b4d2b5fb1"
+SEED_REVISION = "14d388e1b6a2f8f850ff9e6fe8eb4e8462e870ec"
 SEED_CONFIGS = {
     "bridge": "rte_demo.gpt2.sae_lens",
     "nnsight": "rte_demo.gpt2.nnsight+sae_lens",

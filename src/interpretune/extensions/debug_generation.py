@@ -1,37 +1,15 @@
 from typing import List, Any, Dict, cast
-from dataclasses import dataclass, field
 from copy import deepcopy
 
 import torch
 from datasets import load_dataset, Dataset
-import numpy as np
 from torch.nn import CrossEntropyLoss
 
-from interpretune.config import ITSerializableCfg
+from interpretune.config.extension_cfgs import DebugLMConfig as DebugLMConfig
 from interpretune.utils import rank_zero_warn, sanitize_input_name, DEFAULT_DECODE_KWARGS
 from transformers.utils.generic import ModelOutput
 from transformers.generation.utils import GenerateDecoderOnlyOutput
 from interpretune.protocol import ITModuleGenDebuggable
-
-
-@dataclass(kw_only=True)
-class DebugLMConfig(ITSerializableCfg):
-    """Configuration for the generation-debugging extension."""
-
-    enabled: bool = False
-    debug_raw_preds: np.ndarray | None = None
-    debug_raw_labels: np.ndarray | None = None
-    debug_raw_sequences: list[str] | None = None
-    raw_debug_sequences: list = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        if len(self.raw_debug_sequences) == 0 and self.enabled:
-            self.raw_debug_sequences = [
-                "What is the color of a banana?",
-                "List the first 5 letters in the alphabet.",
-                "How many days in a week?",
-                "How old is Barack Obama?",
-            ]
 
 
 class DebugGeneration:

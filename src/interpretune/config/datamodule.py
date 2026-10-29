@@ -174,10 +174,8 @@ class ITDataModuleConfig(ITSharedConfig, TokenizationConfig, DatasetProcessingCo
 
     def __post_init__(self) -> None:
         # TODO: validate prompt_cfg validity
-        self.dataloader_kwargs = {
-            "num_workers": self.dataloader_kwargs.get("num_workers", 0),
-            "pin_memory": self.dataloader_kwargs.get("pin_memory", False),
-        }
+        # defaults for the two worker settings, under every key the user declared (``shuffle``, ``drop_last``, ...)
+        self.dataloader_kwargs = {"num_workers": 0, "pin_memory": False, **self.dataloader_kwargs}
         if not self.data_collator_cfg:
             self.data_collator_cfg = {"collator_class": "transformers.DataCollatorWithPadding"}
 

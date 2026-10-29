@@ -56,7 +56,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -64,17 +64,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -97,7 +97,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -110,7 +110,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -128,7 +128,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -310,7 +310,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqSLConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -318,17 +318,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -351,7 +351,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -364,7 +364,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -382,7 +382,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -598,7 +598,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqSLConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -606,17 +606,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -639,7 +639,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -652,7 +652,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -670,7 +670,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -891,7 +891,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqSLConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -899,17 +899,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -932,7 +932,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -945,7 +945,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -963,7 +963,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -1181,7 +1181,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -1189,17 +1189,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -1222,7 +1222,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -1235,7 +1235,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -1253,7 +1253,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -1427,7 +1427,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqCTConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -1435,17 +1435,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -1468,7 +1468,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -1481,7 +1481,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -1499,7 +1499,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -1705,7 +1705,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -1713,17 +1713,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -1746,7 +1746,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -1759,7 +1759,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -1777,7 +1777,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -1964,7 +1964,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqCTConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -1972,17 +1972,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -2005,7 +2005,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -2018,7 +2018,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -2036,7 +2036,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -2230,7 +2230,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqCTConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -2238,17 +2238,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -2271,7 +2271,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -2284,7 +2284,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -2302,7 +2302,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -2495,7 +2495,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqNNsightConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -2503,17 +2503,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -2536,7 +2536,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -2549,7 +2549,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -2567,7 +2567,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -2734,7 +2734,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqNNsightConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -2742,17 +2742,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -2775,7 +2775,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -2788,7 +2788,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -2806,7 +2806,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -2974,7 +2974,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqCTConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -2982,17 +2982,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -3015,7 +3015,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -3028,7 +3028,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -3046,7 +3046,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -3253,7 +3253,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqCTConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -3261,17 +3261,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -3294,7 +3294,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -3307,7 +3307,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -3325,7 +3325,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -3532,7 +3532,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqTLConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -3540,17 +3540,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -3573,7 +3573,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -3586,7 +3586,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -3604,7 +3604,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
@@ -3821,7 +3821,7 @@
     "module_cfg": {
       "__class__": "it_hub_components.speediedan__rte.RTEBoolqConfig",
       "debug_lm_cfg": {
-        "__class__": "interpretune.extensions.debug_generation.DebugLMConfig",
+        "__class__": "interpretune.config.extension_cfgs.DebugLMConfig",
         "enabled": false,
         "debug_raw_preds": null,
         "debug_raw_labels": null,
@@ -3829,17 +3829,17 @@
         "raw_debug_sequences": []
       },
       "memprofiler_cfg": {
-        "__class__": "interpretune.extensions.memprofiler.MemProfilerCfg",
+        "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
         "cuda_allocator_history": false,
         "schedule": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerSchedule",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
           "warmup_steps": 0,
           "max_step": null
         },
         "save_dir": null,
         "enabled_funcs": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerFuncs",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
           "cuda": [
             "predict_step",
             "test_step",
@@ -3862,7 +3862,7 @@
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
-          "__class__": "interpretune.extensions.memprofiler.MemProfilerHooks",
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
             "interpretune.extensions.memprofiler._hook_npp_pre_forward"
           ],
@@ -3875,7 +3875,7 @@
         },
         "saved_tensors_funcs": [
           "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.extensions.memprofiler.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -3893,7 +3893,7 @@
         ]
       },
       "neuronpedia_cfg": {
-        "__class__": "interpretune.extensions.neuronpedia.NeuronpediaConfig",
+        "__class__": "interpretune.config.extension_cfgs.NeuronpediaConfig",
         "enabled": false,
         "auto_transform": true,
         "graph_validation_sample_size": 10,
