@@ -111,6 +111,10 @@ runs:
         echo "Installing locked CI requirements from ${{ inputs.requirements_file }}..."
         uv pip install -r "requirements/ci/${{ inputs.requirements_file }}" ${TORCH_BACKEND_FLAG}
 
+        # the shared GPU release eligibility checker, for its contract test (CI only, never package metadata)
+        echo "Installing the gpu-epsilon pin from requirements/ci/gpu_epsilon.txt..."
+        uv pip install -r requirements/ci/gpu_epsilon.txt
+
     # The project install resolves torch's requirement again. It should find the prerelease already
     # satisfying it, but nothing at that step fails if a dependency pulls torch to a release it pairs
     # with instead, and the run would then test a torch nobody asked for while reading as a prerelease run.

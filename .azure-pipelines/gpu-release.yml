@@ -1,8 +1,9 @@
 # Release validation on both GPU vendors (#703, after finetuning-scheduler's #57): a release needs one demanded, full,
 # clean run per vendor at the release candidate's revision. One leg per vendor runs through
 # .azure-pipelines/templates/gpu-job.yml under the `ci-release` class with the gate's steps
-# (templates/it-gpu-steps.yml), and a CPU job then checks both legs' phase evidence
-# (tests/gpu_ci/release_eligibility.py). Its verdict, published as `it-release-eligibility`, is the release's GPU gate;
+# (templates/it-gpu-steps.yml), and a CPU job then checks both legs' phase evidence with the checker shared with
+# finetuning-scheduler (gpu-epsilon's `gpu_epsilon.release_eligibility`, configured by tests/gpu_ci/release.json and
+# pinned in requirements/ci/gpu_epsilon.txt). Its verdict, published as `it-release-eligibility`, is the release's GPU gate;
 # the legs' own results are necessary, not sufficient.
 #
 # Queued by hand on the candidate's branch or tag, never triggered: a vendor-demanded job queued while no agent in the
@@ -51,8 +52,10 @@ jobs:
             jobClass: ci-release
 
   # Vendor-neutral and CPU only. It runs on an agent already taking release work (the class demand), on that host's
-  # Python: the checker needs only the standard library. It runs whatever the legs' results, so a failed or missing leg
-  # still ends in a named INELIGIBLE reason.
+  # Python (3.10 on one agent, 3.12 on the other). The shared checker (gpu-epsilon) is standard library only, so it runs
+  # from source: its pinned commit, read from its one pin, fetched with git. Neither agent's Python has pip or ensurepip,
+  # so a venv or pip install would fail there. It runs whatever the legs' results, so a failed or missing leg still ends
+  # in a named INELIGIBLE reason.
   - job: release_eligibility
     dependsOn: [release_nvidia, release_amd]
     condition: not(canceled())
@@ -80,8 +83,19 @@ jobs:
 
       - bash: |
           set -euo pipefail
-          python3 tests/gpu_ci/release_eligibility.py --artifacts "$(Pipeline.Workspace)" \
-            --revision "$(Build.SourceVersion)" --nvidia-result "$NVIDIA_RESULT" --amd-result "$AMD_RESULT" \
+          # the pin's one source: `gpu-epsilon @ git+<url>@<commit>` in requirements/ci/gpu_epsilon.txt
+          read -r pin < <(grep -E '^gpu-epsilon @ git\+' requirements/ci/gpu_epsilon.txt)
+          url="${pin#*git+}"
+          commit="${url##*@}"
+          url="${url%@*}"
+          src="$(Agent.TempDirectory)/gpu-epsilon"
+          rm -rf "$src"
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 "$url" "$commit"
+          git -C "$src" checkout -q FETCH_HEAD
+          PYTHONPATH="$src/src" python3 -m gpu_epsilon.release_eligibility --config tests/gpu_ci/release.json \
+            --artifacts "$(Pipeline.Workspace)" --revision "$(Build.SourceVersion)" \
+            --nvidia-result "$NVIDIA_RESULT" --amd-result "$AMD_RESULT" \
             --output "$(Build.ArtifactStagingDirectory)/it-release-eligibility.json"
         env:
           NVIDIA_RESULT: $(nvidiaResult)

@@ -315,6 +315,10 @@ it_install(){
     echo "Installing locked dependencies..."
     uv pip install ${uv_install_flags} -r "${ci_reqs_file}"
 
+    # 2.5 The shared GPU release eligibility checker (CI only, never package metadata; no dependencies)
+    echo "Installing the gpu-epsilon pin..."
+    uv pip install ${uv_install_flags} -r "${repo_home}/requirements/ci/gpu_epsilon.txt"
+
     # from-source installs manage UV_OVERRIDE themselves (per-package, with filtering)
     unset UV_OVERRIDE
 

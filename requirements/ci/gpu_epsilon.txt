@@ -1,0 +1,6 @@
+# The GPU release eligibility checker shared with finetuning-scheduler (speediedan/gpu-epsilon), configured by
+# tests/gpu_ci/release.json. CI only, never package metadata: the hosted CI action and build_it_env.sh install it for
+# the contract test (tests/gpu_ci/test_release_eligibility.py), and .azure-pipelines/gpu-release.yml reads the commit
+# from this line and runs the checker from source on the agent's own Python. This file is its one pin, in this one-line
+# form; it has no dependencies.
+gpu-epsilon @ git+https://github.com/speediedan/gpu-epsilon@14db1b502a872faff4a0f2e8429b0ec66e72b0d5
