@@ -1,0 +1,11 @@
+{
+  "description": "interpretune's release evidence, as its tests/gpu_ci/phase_report.py writes it",
+  "repository": "speediedan/interpretune",
+  "artifact_prefix": "it-release",
+  "phases_dir": "it-phases",
+  "phases": ["cuda", "standalone", "profile_ci"],
+  "failure_counts": ["missing_completions"],
+  "required_versions": ["interpretune", "torch"],
+  "shared_versions": ["lightning", "finetuning-scheduler", "transformer-lens", "nnsight", "sae-lens"],
+  "shared_builds": ["torch_git_version"]
+}
