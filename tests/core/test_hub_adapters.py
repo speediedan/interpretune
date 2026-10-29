@@ -18,9 +18,13 @@ def restore_adapter_enum():
     """Undo dynamic ``Adapter`` members a test adds; the enum is process-global state."""
     from interpretune.protocol import Adapter
     from interpretune.adapters import registration
+    from interpretune.hub import adapters as hub_adapters
 
     names = set(Adapter._member_map_)
+    loaded = dict(hub_adapters._LOADED_HUB_ADAPTERS)
     yield
+    hub_adapters._LOADED_HUB_ADAPTERS.clear()
+    hub_adapters._LOADED_HUB_ADAPTERS.update(loaded)
     for name in set(Adapter._member_map_) - names:
         member = Adapter._member_map_.pop(name)
         Adapter._member_names_.remove(name)

@@ -94,6 +94,15 @@ class ITSessionMixin:
             default=None,
             help="A cached Hub component configuration to base the session on: <repo_id>:<config_key>[@<revision>].",
         )
+        # Hub adapter components the session needs (#872), each pinned `<org>/<repo>@<commit>`: loaded before the
+        # arguments are parsed (see `_load_hub_adapters_from_args`), so their compositions and `it_hub_adapters.*`
+        # class paths resolve.
+        parser.add_argument(
+            "--hub_adapters",
+            type=list[str],
+            default=[],
+            help="Hub adapter components to load before the session is built: <org>/<repo>@<commit>, each pinned.",
+        )
         # A flattened one-door body (4b) spells that same subtree as top-level keys, so the shim must
         # ACCEPT what `_session_mapping_from_sources` already knows how to read. Plain-mapping types for
         # the same reason `session_cfg` is one: these are shim keys, not a construction surface.
@@ -217,6 +226,41 @@ class ITSessionMixin:
             return arg
 
         return [resolve(a) for a in argv]
+
+    @staticmethod
+    def _load_hub_adapters_from_args(args: ArgsType) -> list[str]:
+        """Load the ``hub_adapters`` a run's arguments name, BEFORE they are parsed (#872).
+
+        Parsing already needs them: a parsed class path such as ``it_hub_adapters.<org>__<repo>.<Class>`` (a Lightning
+        callback's, say) is imported while the arguments are parsed, and exists only once its component is loaded. So
+        the arguments are read here the way the parser will read them, in order, with a later ``--config`` file's
+        top-level ``hub_adapters`` or a later ``--hub_adapters`` value replacing an earlier one, as a list does when
+        jsonargparse merges. ``hub://`` file references must already be resolved. The parsed value is loaded again
+        when the session is built (idempotently), so the parse remains the authority on what the run named.
+        """
+        import yaml as _yaml
+        from interpretune.hub.adapters import HUB_ADAPTERS_KEY, load_run_hub_adapters
+
+        argv = sys.argv[1:] if args is None else args
+        if not isinstance(argv, (list, tuple)):
+            return []
+        entries: list[str] = []
+        flag = f"--{HUB_ADAPTERS_KEY}"
+        argv = [str(a) for a in argv]
+        for i, arg in enumerate(argv):
+            name, eq, value = arg.partition("=")
+            if not eq:
+                value = argv[i + 1] if i + 1 < len(argv) else ""
+            if name in ("-c", "--config"):
+                path = Path(value)
+                body = _yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else None
+                if isinstance(body, dict) and HUB_ADAPTERS_KEY in body:
+                    entries = list(body[HUB_ADAPTERS_KEY] or [])
+            elif name == flag:
+                parsed = _yaml.safe_load(value) if value else []
+                entries = [parsed] if isinstance(parsed, str) else list(parsed or [])
+        load_run_hub_adapters(entries)
+        return entries
 
     @classmethod
     def _resolve_hub_refs(cls, value: Any) -> Any:
@@ -450,7 +494,9 @@ class ITCLI(ITSessionMixin):
 
         # TODO: consider supporting parse_object path in the future and document its (in)availability either way
         # e.g. self.config = parser.parse_object(args)
-        self.config = parser.parse_args(self._resolve_hub_args(args))  # type: ignore[arg-type]
+        args = self._resolve_hub_args(args)
+        self._load_hub_adapters_from_args(args)
+        self.config = parser.parse_args(args)  # type: ignore[arg-type]
 
     def _set_seed(self) -> None:
         """Sets the seed."""
@@ -469,6 +515,9 @@ class ITCLI(ITSessionMixin):
 
     def instantiate_classes(self) -> None:
         """Builds the session via the unified loader, then the run config and runner around it."""
+        from interpretune.hub.adapters import load_run_hub_adapters
+
+        load_run_hub_adapters(self._get(self.config, "hub_adapters"))
         self._resolve_hub_refs(self.config)
         self.config_init = self.parser.instantiate(self.config)
         default_files = self.parser_kwargs.get("default_config_files")
@@ -606,8 +655,11 @@ if _LIGHTNING_AVAILABLE:
             """
             # the session is built FIRST via the unified loader (one door); Lightning then instantiates
             # the trainer and resolves data/model from the built session through `_get`'s mapping
+            from interpretune.hub.adapters import load_run_hub_adapters
+
             self._resolve_hub_refs(self.config)  # type: ignore[attr-defined]  # mixin provides hub resolution
             sub_config = self.config.get(str(self.subcommand), self.config)  # type: ignore[attr-defined]
+            load_run_hub_adapters(sub_config.get("hub_adapters"))
             parser_kwargs = getattr(self, "parser_kwargs", None) or {}
             defaults = (
                 parser_kwargs.get(str(self.subcommand), parser_kwargs) or {}  # type: ignore[attr-defined]
@@ -624,8 +676,11 @@ if _LIGHTNING_AVAILABLE:
             self.module = weakref.proxy(self.model)  # type: ignore[attr-defined]  # mixin provides model
 
         def parse_arguments(self, parser: LightningArgumentParser, args: ArgsType) -> None:
-            """Resolve ``hub://`` file references in the arguments, then parse as Lightning does."""
-            super().parse_arguments(parser, self._resolve_hub_args(args))  # type: ignore[misc,attr-defined]
+            """Resolve ``hub://`` file references in the arguments and load the ``hub_adapters`` they name, then
+            parse as Lightning does."""
+            args = self._resolve_hub_args(args)  # type: ignore[attr-defined]  # mixin provides hub resolution
+            self._load_hub_adapters_from_args(args)  # type: ignore[attr-defined]
+            super().parse_arguments(parser, args)  # type: ignore[misc,attr-defined]
 
         def _it_session_object_attr(self, key) -> InterpretunableType | None:
             try:

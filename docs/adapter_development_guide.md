@@ -548,6 +548,31 @@ follows the most recent load of that component; with one revision loaded, the no
 `interpretune.hub.stable_module_name(repo_id)` returns the alias, and `loaded_adapter_module(repo_id)` returns
 the same module object for callers in Python.
 
+### Loading a hub adapter from a run configuration
+
+A run configuration names the adapter components its session needs under `hub_adapters`, each pinned to the commit
+it was published at, so a hub adapter's composition runs from the CLI with no Python step:
+
+```yaml
+hub_adapters:
+  - org/my-adapter@<commit>
+session_ref: org/my-component:<config_key>
+adapter_ctx: [core, my_adapter]
+```
+
+Before the arguments are parsed (a class path under `it_hub_adapters` may already be needed while they are), the CLI
+loads each entry in order: it checks the trust gate (`IT_TRUST_REMOTE_CODE`), so a refused component is never
+downloaded; pulls the revision when it is not in the components cache (the manifest, the adapters entrypoint and the
+extra files, as a key-less `interpretune.hub.pull` does), and otherwise uses the cache without network access; then
+runs `load_hub_adapter` at exactly that revision. A branch, a tag or a bare repo id is refused, because each can name
+different code on the next run. `--hub_adapters` sets the same list on the command line, and a later file's or the
+command line's list replaces an earlier one. `interpretune.hub.load_run_hub_adapters` does the same from Python.
+
+Each load is recorded for the run's provenance: `interpretune.hub.loaded_hub_adapters()` maps each loaded component
+to the full revision it executed and the adapters it declares, and a module's hyperparameters carry it as
+`hub_adapters`. An adapter context naming an adapter nothing has registered fails with the cached components that
+declare it, or with the `hub_adapters` entry shape when none does.
+
 ## Publishing what the conformance suite measured
 
 The adapter card renders the validated manifest and says what it cannot tell a reader: the capabilities an adapter
