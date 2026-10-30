@@ -198,12 +198,30 @@ class SessionRunnerCfg:
     # resume training from a core-loop checkpoint (`interpretune.runners.core.checkpoint_state`, or a path to one saved
     # with `torch.save`) taken at the end of an epoch; training continues at the next epoch
     resume_from: str | Path | Mapping[str, Any] | None = None
+    # the core loop's autocast precision, with Lightning's names: 'bf16-mixed' autocasts the step functions to
+    # bfloat16 around fp32 master weights, 'bf16-true' autocasts a module whose weights are already bfloat16, and
+    # '32' never autocasts. None (the default) keeps the module dtype's meaning: autocast exactly when the module's
+    # dtype is bfloat16, as runs did before this setting existed; see
+    # `interpretune.runners.core.autocast_dtype`
+    precision: Literal["32", "bf16-mixed", "bf16-true"] | None = None
+    # accumulate gradients over this many training batches per optimizer step (the loss is scaled by its
+    # reciprocal); a partial window at an epoch's end still steps. `max_steps` and step-interval lr schedulers
+    # count optimizer steps, not batches
+    accumulate_grad_batches: int = 1
 
     def __post_init__(self):
         self.callbacks = tuple(
             instantiate_class(dict(cb)) if isinstance(cb, Mapping) and "class_path" in cb else cb
             for cb in self.callbacks
         )
+        if self.precision not in (None, "32", "bf16-mixed", "bf16-true"):
+            raise MisconfigurationException(
+                f"Unknown precision '{self.precision}': expected one of '32', 'bf16-mixed', 'bf16-true' or None."
+            )
+        if self.accumulate_grad_batches < 1:
+            raise MisconfigurationException(
+                f"`accumulate_grad_batches` must be at least 1, got {self.accumulate_grad_batches}."
+            )
         if self.placement not in ("single", "ddp", "fsdp2"):
             raise MisconfigurationException(
                 f"Unknown placement '{self.placement}': expected one of 'single', 'ddp', 'fsdp2'."
