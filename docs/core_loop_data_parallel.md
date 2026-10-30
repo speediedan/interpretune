@@ -68,6 +68,30 @@ A `class:` key matches subclasses too, and a regex matches every module name it 
 select the blocks but not their children). A plan under the `single` placement, a key that selects no module, and a plan
 without finetuning-scheduler installed are each refused by name.
 
+## Models larger than one rank's accelerator
+
+By default every rank builds the whole model before it is sharded, so each rank must fit it once. For a model loaded
+with `from_pretrained` (`hf_from_pretrained_cfg`), `meta_init: true` builds it on the meta device instead:
+
+```yaml
+module_cfg:
+  init_args:
+    hf_from_pretrained_cfg:
+      init_args:
+        meta_init: true
+```
+
+Every rank then builds the model from its configuration without any weights, and the launcher's rank 0 also loads the
+checkpoint on the CPU. The placement shards the empty model with the plan, materializes each rank's shards on its
+device, and loads them from rank 0's copy (`torch.distributed.checkpoint.state_dict.set_model_state_dict` with
+`broadcast_from_rank0`), broadcasting the buffers too, since non-persistent ones such as rotary frequencies are in no
+state dict. No accelerator ever holds the whole model; rank 0's host holds one copy of it while loading.
+
+The load is checked rather than trusted: when rank 0's copy is missing a key of the model, has one the model lacks, or
+differs in a shape (embeddings resized after the build, for one), every rank refuses, naming the keys. `meta_init`
+cannot be combined with `lora_cfg` or `bitsandbytesconfig`, and a module built only partly on the meta device is
+refused.
+
 ## What the runner does
 
 1. **Joins the process group** from the launcher's `WORLD_SIZE`, `RANK` and `LOCAL_RANK`. When accelerators are
@@ -112,9 +136,10 @@ else:
   process on the combined batch step for step), not yet under `ddp` or on accelerators.
 - FSDP2's `MixedPrecisionPolicy` can be passed as a unit's `mp_policy` from Python, but has no configuration alias yet,
   so a YAML run uses the loop's `torch.autocast`.
-- The session is built fully on each rank before it is sharded, so each rank must fit the whole model once. Building on
-  the meta device and loading after sharding, for 12B-to-27B models, is tracked in
-  [interpretune#882](https://github.com/speediedan/interpretune/issues/882).
+- Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
+  model once. `meta_init` covers the core `from_pretrained` path only: TransformerLens, nnsight and circuit-tracer
+  compositions build their models their own way, and loading rank 0's copy file by file (so its host never holds the
+  whole model) is not done yet. Both are tracked in [interpretune#882](https://github.com/speediedan/interpretune/issues/882).
 
 The design, and the work that remains for attribution and J++ ops, is tracked in
 [interpretune#803](https://github.com/speediedan/interpretune/issues/803).

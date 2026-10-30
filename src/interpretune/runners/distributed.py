@@ -41,6 +41,9 @@ from interpretune.utils import _FTS_AVAILABLE, MisconfigurationException, rank_z
 
 Placement = Literal["single", "ddp", "fsdp2"]
 PLACEMENTS: tuple[str, ...] = ("single", "ddp", "fsdp2")
+# the attribute holding rank 0's CPU copy of a model built on the meta device (`HFFromPretrainedConfig.meta_init`),
+# which `place_module` loads into the sharded model and then drops
+META_INIT_SOURCE = "_meta_init_source"
 
 
 @dataclass
@@ -249,25 +252,32 @@ def place_module(
     differed (an unseeded random init) would otherwise train different replicas (``ddp``) or assemble one model from
     shards of different ones (``fsdp2``), with no error.
 
+    A module built on the meta device (``HFFromPretrainedConfig.meta_init``) holds no values to broadcast. It is
+    sharded as it is, materialized on each rank's device with ``to_empty``, and then loaded from rank 0's CPU copy of
+    the checkpoint (see :func:`_load_from_rank0`), so no rank ever holds the whole model on its accelerator.
+
     Raises:
         MisconfigurationException: If a rank's module spans several devices or holds no parameters, ranks share an
             accelerator or differ in device type, a parameter is non-contiguous, ``fsdp_plan`` is missing (for
-            ``fsdp2``) or has a key that selects no module, or a plan is given without finetuning-scheduler installed.
+            ``fsdp2``) or has a key that selects no module, a plan is given without finetuning-scheduler installed, or
+            a meta-built module cannot be loaded (see :func:`_load_from_rank0`).
     """
     import torch.distributed as dist
     from torch.distributed.device_mesh import init_device_mesh
     from torch.distributed.fsdp import fully_shard
 
-    local = sorted({str(param.device) for param in module.parameters()})
+    on_meta = meta_built(module)
+    local = [str(rank_device(run))] if on_meta else sorted({str(param.device) for param in module.parameters()})
     per_rank: list[Any] = [None] * run.world_size
     dist.all_gather_object(per_rank, local)
     run.devices = _check_devices(per_rank, run.placement)
     _refuse_unshardable(module)
     _require_fts(fsdp_plan, fsdp_default_kwargs)
     units = _resolve_plan(module, fsdp_plan, fsdp_default_kwargs, run.placement)
-    with torch.no_grad():
-        for tensor in [*module.parameters(), *module.buffers()]:
-            dist.broadcast(tensor, src=0)
+    if not on_meta:
+        with torch.no_grad():
+            for tensor in [*module.parameters(), *module.buffers()]:
+                dist.broadcast(tensor, src=0)
     device_type = torch.device(run.devices[run.rank]).type
     if run.placement == "ddp":
         mesh = init_device_mesh(device_type, (run.world_size, 1), mesh_dim_names=("replicate", "shard"))
@@ -284,6 +294,82 @@ def place_module(
     else:
         fully_shard(module, mesh=mesh)
     run.mesh = mesh
+    if on_meta:
+        module.to_empty(device=rank_device(run))
+        _load_from_rank0(module, run)
+
+
+def rank_device(run: DistributedRun) -> torch.device:
+    """The device this rank's module belongs on: its accelerator (made current when the group was joined), else the
+    CPU."""
+    return torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
+
+
+def meta_built(module: torch.nn.Module) -> bool:
+    """Whether ``module`` was built on the meta device, refusing one only partly built there."""
+    tensors = [*module.parameters(), *module.buffers()]
+    on_meta = [t.is_meta for t in tensors]
+    if any(on_meta) and not all(on_meta):
+        names = [n for n, t in [*module.named_parameters(), *module.named_buffers()] if not t.is_meta]
+        raise MisconfigurationException(
+            f"This module was built partly on the meta device: {len(names)} tensors are not ({', '.join(names[:3])}"
+            f"{' and more' if len(names) > 3 else ''}). Materializing the meta part would also discard their values,"
+            " so build the whole module on the meta device or none of it."
+        )
+    return bool(tensors) and all(on_meta)
+
+
+def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
+    """Load rank 0's CPU copy of the checkpoint into ``module.model``, sharded and materialized on every rank.
+
+    Rank 0 checks the copy against the model first and every rank raises the same refusal, so no rank is left
+    waiting in a collective. Buffers are broadcast from the copy too, since ``to_empty`` left them uninitialized and
+    the non-persistent ones (rotary frequencies, for one) are in no state dict.
+
+    Raises:
+        MisconfigurationException: If rank 0 holds no copy (the module was built on the meta device by something other
+            than ``meta_init``), or the copy is missing a key of the model, has one the model lacks, or differs from it
+            in a shape (for one, embeddings resized after the build).
+    """
+    import torch.distributed as dist
+    from torch.distributed.checkpoint.state_dict import StateDictOptions, set_model_state_dict
+
+    model = getattr(module, "model", None)
+    source = getattr(module, META_INIT_SOURCE, None)
+    problem, full = None, {}
+    if run.rank == 0:
+        if not isinstance(model, torch.nn.Module) or source is None:
+            problem = (
+                "The module was built on the meta device, but rank 0 holds no checkpoint to load it from. Build it"
+                " with `HFFromPretrainedConfig.meta_init`, which loads one on rank 0's CPU."
+            )
+        else:
+            full = source.state_dict()
+            expected = {k: tuple(v.shape) for k, v in model.state_dict().items()}
+            missing = sorted(set(expected) - set(full))
+            unexpected = sorted(set(full) - set(expected))
+            reshaped = sorted(k for k in set(expected) & set(full) if tuple(full[k].shape) != expected[k])
+            if missing or unexpected or reshaped:
+                problem = (
+                    "Rank 0's checkpoint does not match the meta-built model, so loading it would leave parameters"
+                    f" uninitialized or misplaced. Missing: {missing[:5]}; unexpected: {unexpected[:5]}; different"
+                    f" shapes: {reshaped[:5]}."
+                )
+    box = [problem]
+    dist.broadcast_object_list(box, src=0)
+    if box[0] is not None:
+        raise MisconfigurationException(box[0])
+    assert isinstance(model, torch.nn.Module)
+    options = StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
+    set_model_state_dict(model, full, options=options)
+    with torch.no_grad():
+        for name, buffer in model.named_buffers():
+            if run.rank == 0:
+                assert source is not None
+                buffer.copy_(source.get_buffer(name))
+            dist.broadcast(buffer, src=0)
+    if source is not None:
+        object.__delattr__(module, META_INIT_SOURCE)
 
 
 def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0) -> Any:

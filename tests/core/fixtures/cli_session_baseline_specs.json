@@ -207,7 +207,8 @@
         },
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
-        "default_head": "transformers.AutoModelForCausalLM"
+        "default_head": "transformers.AutoModelForCausalLM",
+        "meta_init": false
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -468,7 +469,8 @@
         "bitsandbytesconfig": {},
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
-        "default_head": "transformers.AutoModelForCausalLM"
+        "default_head": "transformers.AutoModelForCausalLM",
+        "meta_init": false
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -756,7 +758,8 @@
         "bitsandbytesconfig": {},
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
-        "default_head": "transformers.AutoModelForCausalLM"
+        "default_head": "transformers.AutoModelForCausalLM",
+        "meta_init": false
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -1049,7 +1052,8 @@
         "bitsandbytesconfig": {},
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
-        "default_head": "transformers.AutoModelForCausalLM"
+        "default_head": "transformers.AutoModelForCausalLM",
+        "meta_init": false
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -1319,7 +1323,8 @@
         "bitsandbytesconfig": {},
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
-        "default_head": "transformers.AutoModelForCausalLM"
+        "default_head": "transformers.AutoModelForCausalLM",
+        "meta_init": false
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -1564,7 +1569,8 @@
         "bitsandbytesconfig": {},
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
-        "default_head": "transformers.AutoModelForCausalLM"
+        "default_head": "transformers.AutoModelForCausalLM",
+        "meta_init": false
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -1860,7 +1866,8 @@
         },
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
-        "default_head": "transformers.AutoModelForCausalLM"
+        "default_head": "transformers.AutoModelForCausalLM",
+        "meta_init": false
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -3109,7 +3116,8 @@
         "bitsandbytesconfig": {},
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
-        "default_head": "transformers.AutoModelForCausalLM"
+        "default_head": "transformers.AutoModelForCausalLM",
+        "meta_init": false
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -3388,7 +3396,8 @@
         "bitsandbytesconfig": {},
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
-        "default_head": "transformers.AutoModelForCausalLM"
+        "default_head": "transformers.AutoModelForCausalLM",
+        "meta_init": false
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -3688,7 +3697,8 @@
         "bitsandbytesconfig": {},
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
-        "default_head": "transformers.AutoModelForCausalLM"
+        "default_head": "transformers.AutoModelForCausalLM",
+        "meta_init": false
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -3970,7 +3980,8 @@
         },
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
-        "default_head": "transformers.AutoModelForCausalLM"
+        "default_head": "transformers.AutoModelForCausalLM",
+        "meta_init": false
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,

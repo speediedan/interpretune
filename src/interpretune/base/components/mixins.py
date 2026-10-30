@@ -488,12 +488,38 @@ class HFFromPretrainedMixin:
                 self.it_cfg.model_class = _import_class(
                     self.it_cfg.hf_from_pretrained_cfg.default_head
                 )  # mixin provides it_cfg
+            if self.hf_cfg.meta_init:
+                return self._hf_meta_model_init(cust_config, access_token)
             model = self.it_cfg.model_class.from_pretrained(  # mixin provides it_cfg
                 **self.hf_cfg.pretrained_kwargs, config=cust_config, token=access_token
             )
         else:  # defer model materialization (e.g., to `configure_model` hook)
             with torch.device("meta"):
                 model = self.it_cfg.model_class(config=cust_config)  # mixin provides it_cfg
+        return model
+
+    def _hf_meta_model_init(self, cust_config: PretrainedConfig, access_token: str | None) -> torch.nn.Module:
+        """The model built on the meta device, for a data-parallel placement to shard before loading it.
+
+        The process a launcher made rank 0 (``RANK`` unset counts as rank 0) also loads the checkpoint on the CPU, kept
+        as the module's meta-init source for the placement to load from. It is set as a plain attribute, not a
+        submodule, so its parameters are not the module's.
+        """
+        from interpretune.runners.distributed import META_INIT_SOURCE
+
+        assert self.hf_cfg is not None, "hf_cfg should be set when calling _hf_meta_model_init"
+        model_class = self.it_cfg.model_class  # mixin provides it_cfg
+        kwargs = dict(self.hf_cfg.pretrained_kwargs)
+        dtype = {"dtype": kwargs["dtype"]} if kwargs.get("dtype") is not None else {}
+        # an Auto class builds from a config with `from_config`, a concrete model class with `_from_config`
+        build = model_class.from_config if hasattr(model_class, "from_config") else model_class._from_config
+        with torch.device("meta"):
+            model = build(cust_config, **dtype)
+        model.eval()  # as `from_pretrained` returns it, so the two builds differ only in where the weights are
+        if int(os.environ.get("RANK", "0")) == 0:
+            kwargs["device_map"] = "cpu"
+            source = model_class.from_pretrained(**kwargs, config=cust_config, token=access_token)
+            object.__setattr__(self, META_INIT_SOURCE, source)
         return model
 
     def _hf_cust_token_cfg(self) -> None:

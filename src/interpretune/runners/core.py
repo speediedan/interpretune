@@ -15,7 +15,9 @@ from interpretune.runners.distributed import (
     DistributedRun,
     distributed_dataloader,
     init_process_group,
+    meta_built,
     place_module,
+    rank_device,
     reduce_metrics,
     resolve_placement,
 )
@@ -518,9 +520,13 @@ class SessionRunner:
             it_init(**self.run_cfg.it_session)
             return
         init_process_group(self.dist_run)
+        assert self.run_cfg.module is not None
+        if meta_built(self.run_cfg.module):
+            # setup builds tensors on the module's device (a classification mapping's token ids, for one), which for a
+            # meta-built model would otherwise be the meta device the placement is about to leave
+            self.run_cfg.module.device = rank_device(self.dist_run)
         with self.dist_run.rank_zero_first():
             it_init(**self.run_cfg.it_session, prepare_data=self.dist_run.local_rank == 0, configure_optimizers=False)
-        assert self.run_cfg.module is not None
         place_module(self.run_cfg.module, self.dist_run, self.run_cfg.fsdp_plan, self.run_cfg.fsdp_default_kwargs)
         it_configure_optimizers(self.run_cfg.module)
 

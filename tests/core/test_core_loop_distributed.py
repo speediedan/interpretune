@@ -24,12 +24,14 @@ from interpretune.runners.distributed import (
     _require_fts,
     _resolve_plan,
     distributed_dataloader,
+    meta_built,
     resolve_placement,
 )
 from interpretune.utils import _FTS_AVAILABLE, MisconfigurationException
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKER = Path(__file__).with_name("distributed_core_loop_worker.py")
+META_WORKER = Path(__file__).with_name("distributed_meta_init_worker.py")
 
 
 def _run(rank: int, world_size: int = 2, placement: str = "ddp") -> DistributedRun:
@@ -200,6 +202,22 @@ class TestPlacementChecks:
         with pytest.raises(MisconfigurationException, match="which is not installed"):
             _require_fts(None, {"reshard_after_forward": False})
 
+    def test_meta_built_needs_the_whole_module_on_meta(self):
+        assert not meta_built(nn.Linear(2, 2))
+        with torch.device("meta"):
+            assert meta_built(nn.Linear(2, 2))
+            partial = nn.Sequential(nn.Linear(2, 2))
+        partial.append(nn.Linear(2, 2))
+        with pytest.raises(MisconfigurationException, match="built partly on the meta device: 2 tensors are not"):
+            meta_built(partial)
+
+    def test_meta_init_refuses_wrapped_or_quantized_models(self):
+        from interpretune.config.mixins import HFFromPretrainedConfig
+
+        HFFromPretrainedConfig(meta_init=True)
+        with pytest.raises(MisconfigurationException, match="cannot be combined with `lora_cfg` or"):
+            HFFromPretrainedConfig(meta_init=True, lora_cfg={"r": 8})
+
     def test_plan_under_single_placement_is_refused(self):
         with pytest.raises(MisconfigurationException, match="but the placement is 'single'"):
             SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), fsdp_plan={"class:Block": {}})
@@ -291,3 +309,42 @@ def test_two_rank_phased_tuning_under_fsdp2_matches_global_batch(phased_global_b
         assert record["depth"] == reference["depth"] == 1
         assert record["trainable"] == reference["trainable"]
         assert len(record["fsdp_units"]) == 3
+
+
+def _launch_meta(checkpoint: Path, out_dir: Path, *extra: str) -> list[dict]:
+    out_dir.mkdir(exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    worker = [str(META_WORKER), "--checkpoint", str(checkpoint), "--out-dir", str(out_dir), *extra]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, f"meta-init run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    return [json.loads((out_dir / f"rank{rank}.json").read_text()) for rank in range(2)]
+
+
+@pytest.fixture(scope="module")
+def tiny_gpt2_checkpoint(tmp_path_factory):
+    from transformers import GPT2Config, GPT2LMHeadModel
+
+    torch.manual_seed(0)
+    path = tmp_path_factory.mktemp("tiny_gpt2")
+    GPT2LMHeadModel(GPT2Config(n_layer=2, n_embd=32, n_head=2, vocab_size=128, n_positions=32)).save_pretrained(path)
+    return path
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+def test_a_meta_built_model_is_sharded_then_loaded_from_rank_zero(tiny_gpt2_checkpoint, tmp_path):
+    """A model built on the meta device on both ranks and loaded from rank 0's CPU copy computes exactly what
+    ``from_pretrained`` does, keeps its LM head tied to the embedding and drops the copy; a copy missing a module
+    is refused on every rank, naming the missing keys."""
+    for record in _launch_meta(tiny_gpt2_checkpoint, tmp_path / "loaded"):
+        assert record["max_abs_diff"] == 0.0
+        assert record["tied"] and record["source_dropped"]
+        assert record["param_types"] == ["DTensor"]
+    planted = tmp_path / "planted"
+    planted.mkdir()
+    for record in _launch_meta(tiny_gpt2_checkpoint, planted, "--drop", "ln_f"):
+        assert "does not match the meta-built model" in record["refused"]
+        assert "transformer.ln_f.bias" in record["refused"]

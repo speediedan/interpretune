@@ -9,7 +9,7 @@ import torch
 from transformers.generation.configuration_utils import GenerationConfig
 
 from interpretune.config import ITSerializableCfg
-from interpretune.utils import rank_zero_warn, _resolve_dtype
+from interpretune.utils import MisconfigurationException, rank_zero_warn, _resolve_dtype
 
 
 @dataclass(kw_only=True)
@@ -112,10 +112,20 @@ class HFFromPretrainedConfig(ITSerializableCfg):
     # Whether to enable gradients for the input embeddings. Useful for finetuning adapter weights w/ a frozen model.
     enable_input_require_grads: bool = True
     default_head: str = "transformers.AutoModelForCausalLM"
+    # Build the model on the meta device in every process, for a data-parallel placement to shard before it holds any
+    # weights. The process a launcher made rank 0 (or one with no launcher) also loads the checkpoint on the CPU, and
+    # the placement loads it into the sharded model from there (`interpretune.runners.distributed`), so no rank's
+    # accelerator holds the whole model and only rank 0's host does. A model with no placement to load it stays on meta.
+    meta_init: bool = False
 
     def __post_init__(self):
         if self.pretrained_kwargs.get("token", None):
             del self.pretrained_kwargs["token"]
+        if self.meta_init and (self.lora_cfg or self.bitsandbytesconfig):
+            raise MisconfigurationException(
+                "`meta_init` builds an unquantized model to shard and load from rank 0; it cannot be combined with"
+                " `lora_cfg` or `bitsandbytesconfig`, whose wrapping and quantized parameters FSDP2 does not shard."
+            )
 
     def _dtype_serde(self) -> torch.dtype | None:
         """Resolve and remove a 'dtype' entry from pretrained_kwargs if present."""
