@@ -208,7 +208,8 @@
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
         "default_head": "transformers.AutoModelForCausalLM",
-        "meta_init": false
+        "meta_init": false,
+        "meta_init_load": "rank0"
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -470,7 +471,8 @@
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
         "default_head": "transformers.AutoModelForCausalLM",
-        "meta_init": false
+        "meta_init": false,
+        "meta_init_load": "rank0"
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -759,7 +761,8 @@
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
         "default_head": "transformers.AutoModelForCausalLM",
-        "meta_init": false
+        "meta_init": false,
+        "meta_init_load": "rank0"
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -1053,7 +1056,8 @@
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
         "default_head": "transformers.AutoModelForCausalLM",
-        "meta_init": false
+        "meta_init": false,
+        "meta_init_load": "rank0"
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -1324,7 +1328,8 @@
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
         "default_head": "transformers.AutoModelForCausalLM",
-        "meta_init": false
+        "meta_init": false,
+        "meta_init_load": "rank0"
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -1570,7 +1575,8 @@
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
         "default_head": "transformers.AutoModelForCausalLM",
-        "meta_init": false
+        "meta_init": false,
+        "meta_init_load": "rank0"
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -1867,7 +1873,8 @@
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
         "default_head": "transformers.AutoModelForCausalLM",
-        "meta_init": false
+        "meta_init": false,
+        "meta_init_load": "rank0"
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -3117,7 +3124,8 @@
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
         "default_head": "transformers.AutoModelForCausalLM",
-        "meta_init": false
+        "meta_init": false,
+        "meta_init_load": "rank0"
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -3397,7 +3405,8 @@
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
         "default_head": "transformers.AutoModelForCausalLM",
-        "meta_init": false
+        "meta_init": false,
+        "meta_init_load": "rank0"
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -3698,7 +3707,8 @@
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
         "default_head": "transformers.AutoModelForCausalLM",
-        "meta_init": false
+        "meta_init": false,
+        "meta_init_load": "rank0"
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,
@@ -3981,7 +3991,8 @@
         "activation_checkpointing": false,
         "enable_input_require_grads": true,
         "default_head": "transformers.AutoModelForCausalLM",
-        "meta_init": false
+        "meta_init": false,
+        "meta_init_load": "rank0"
       },
       "classification_mapping": null,
       "classification_mapping_indices": null,

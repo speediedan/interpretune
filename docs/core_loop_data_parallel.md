@@ -87,6 +87,27 @@ device, and loads them from rank 0's copy (`torch.distributed.checkpoint.state_d
 `broadcast_from_rank0`), broadcasting the buffers too, since non-persistent ones such as rotary frequencies are in no
 state dict. No accelerator ever holds the whole model; rank 0's host holds one copy of it while loading.
 
+When even one host copy is too much, `meta_init_load: dcp` loads each rank's shards straight from the checkpoint's
+safetensors files with distributed checkpointing (`torch.distributed.checkpoint` with `HuggingFaceStorageReader`), so
+every rank reads only the slices it holds and no host ever holds the whole model:
+
+```yaml
+module_cfg:
+  init_args:
+    hf_from_pretrained_cfg:
+      init_args:
+        meta_init: true
+        meta_init_load: dcp
+```
+
+Only the parameters are built on the meta device then, while buffers such as rotary frequencies, which no checkpoint
+holds, are computed on the CPU as the model is built and kept through the placement. Checkpoint keys are renamed the
+way `from_pretrained` renames them, and a parameter tied to one the checkpoint supplies (an LM head tied to the
+embedding) needs no key of its own. Before reading anything, every rank refuses a checkpoint key that matches no model
+key and a parameter no key supplies, naming them, and a model whose checkpoint needs transformers' weight converters
+(which merge or reshape tensors rather than rename them) is refused in favor of the default `rank0` load. A Hub model's
+safetensors files are downloaded to the local cache first, on every rank.
+
 The load is checked rather than trusted: when rank 0's copy is missing a key of the model, has one the model lacks, or
 differs in a shape (embeddings resized after the build, for one), every rank refuses, naming the keys. `meta_init`
 cannot be combined with `lora_cfg` or `bitsandbytesconfig`, a module built only partly on the meta device is
@@ -139,8 +160,8 @@ else:
   so a YAML run uses the loop's `torch.autocast`.
 - Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
   model once. `meta_init` covers the core `from_pretrained` path only: TransformerLens, nnsight and circuit-tracer
-  compositions build their models their own way and refuse it at construction, and loading rank 0's copy file by file (so its host never holds the
-  whole model) is not done yet. Both are tracked in [interpretune#882](https://github.com/speediedan/interpretune/issues/882).
+  compositions build their models their own way and refuse it at construction (tracked in
+  [interpretune#882](https://github.com/speediedan/interpretune/issues/882)).
 
 The design, and the work that remains for attribution and J++ ops, is tracked in
 [interpretune#803](https://github.com/speediedan/interpretune/issues/803).

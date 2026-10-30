@@ -117,10 +117,22 @@ class HFFromPretrainedConfig(ITSerializableCfg):
     # the placement loads it into the sharded model from there (`interpretune.runners.distributed`), so no rank's
     # accelerator holds the whole model and only rank 0's host does. A model with no placement to load it stays on meta.
     meta_init: bool = False
+    # How a `meta_init` model is loaded once sharded. "rank0": rank 0 loads the whole checkpoint on its CPU and the
+    # placement scatters it, which works for any checkpoint `from_pretrained` reads. "dcp": every rank reads only its
+    # own shards of the checkpoint's safetensors files with distributed checkpointing, so no host holds the whole model;
+    # it handles key renames but refuses a model whose checkpoint needs transformers' weight converters.
+    meta_init_load: str = "rank0"
 
     def __post_init__(self):
         if self.pretrained_kwargs.get("token", None):
             del self.pretrained_kwargs["token"]
+        if self.meta_init_load not in ("rank0", "dcp"):
+            raise MisconfigurationException(f"`meta_init_load` must be 'rank0' or 'dcp', not {self.meta_init_load!r}.")
+        if self.meta_init_load != "rank0" and not self.meta_init:
+            raise MisconfigurationException(
+                f"`meta_init_load: {self.meta_init_load}` chooses how a `meta_init` model is loaded, but `meta_init`"
+                " is not set."
+            )
         if self.meta_init and (self.lora_cfg or self.bitsandbytesconfig):
             raise MisconfigurationException(
                 "`meta_init` builds an unquantized model to shard and load from rank 0; it cannot be combined with"

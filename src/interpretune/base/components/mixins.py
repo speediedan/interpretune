@@ -501,11 +501,13 @@ class HFFromPretrainedMixin:
     def _hf_meta_model_init(self, cust_config: PretrainedConfig, access_token: str | None) -> torch.nn.Module:
         """The model built on the meta device, for a data-parallel placement to shard before loading it.
 
-        The process a launcher made rank 0 (``RANK`` unset counts as rank 0) also loads the checkpoint on the CPU, kept
-        as the module's meta-init source for the placement to load from. It is set as a plain attribute, not a
-        submodule, so its parameters are not the module's.
+        With ``meta_init_load: rank0``, the process a launcher made rank 0 (``RANK`` unset counts as rank 0) also loads
+        the checkpoint on the CPU, kept as the module's meta-init source for the placement to load from. It is set as
+        a plain attribute, not a submodule, so its parameters are not the module's. With ``meta_init_load: dcp``, only
+        the parameters are built on the meta device (buffers such as rotary frequencies, which no checkpoint holds,
+        are computed on the CPU), and every rank records the checkpoint's local directory to read its own shards from.
         """
-        from interpretune.runners.distributed import META_INIT_SOURCE
+        from interpretune.runners.distributed import META_INIT_CHECKPOINT, META_INIT_SOURCE, params_on_meta
 
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _hf_meta_model_init"
         model_class = self.it_cfg.model_class  # mixin provides it_cfg
@@ -513,15 +515,32 @@ class HFFromPretrainedMixin:
         dtype = {"dtype": kwargs["dtype"]} if kwargs.get("dtype") is not None else {}
         # an Auto class builds from a config with `from_config`, a concrete model class with `_from_config`
         build = model_class.from_config if hasattr(model_class, "from_config") else model_class._from_config
-        with torch.device("meta"):
+        streamed = self.hf_cfg.meta_init_load == "dcp"
+        with params_on_meta() if streamed else torch.device("meta"):
             model = build(cust_config, **dtype)
         model.eval()  # as `from_pretrained` returns it, so the two builds differ only in where the weights are
         self._meta_init_built = True  # checked once init returns, since other init paths ignore `meta_init`
-        if int(os.environ.get("RANK", "0")) == 0:
+        if streamed:
+            object.__setattr__(self, META_INIT_CHECKPOINT, self._hf_checkpoint_dir(kwargs, access_token))
+        elif int(os.environ.get("RANK", "0")) == 0:
             kwargs["device_map"] = "cpu"
             source = model_class.from_pretrained(**kwargs, config=cust_config, token=access_token)
             object.__setattr__(self, META_INIT_SOURCE, source)
         return model
+
+    @staticmethod
+    def _hf_checkpoint_dir(kwargs: dict, access_token: str | None) -> str:
+        """The local directory holding the checkpoint's safetensors files, downloading them from the Hub if needed."""
+        name = str(kwargs["pretrained_model_name_or_path"])
+        if os.path.isdir(name):
+            path = name
+        else:
+            from huggingface_hub import snapshot_download
+
+            path = snapshot_download(
+                name, revision=kwargs.get("revision"), allow_patterns=["*.safetensors", "*.json"], token=access_token
+            )
+        return os.path.join(path, kwargs["subfolder"]) if kwargs.get("subfolder") else path
 
     def _hf_cust_token_cfg(self) -> None:
         if self.it_cfg.tokenizer_id_overrides:  # mixin provides it_cfg

@@ -1,8 +1,10 @@
 """One rank of the meta-device placement runs (``tests/core/test_core_loop_distributed.py``).
 
-Every rank builds a small GPT-2 from the checkpoint's config on the meta device, and rank 0 also loads the checkpoint
-on the CPU, as ``HFFromPretrainedConfig.meta_init`` does. ``place_module`` then shards the model with a block plan and
-loads it from rank 0. With ``--drop ln_f``, rank 0's copy lacks the final norm, which must be refused by name.
+Every rank builds a small model (GPT-2, or Llama with ``--arch llama``) from the checkpoint's config on the meta
+device, as ``HFFromPretrainedConfig.meta_init`` does. With ``--loader rank0``, rank 0 also loads the checkpoint on the
+CPU and ``place_module`` loads the sharded model from it; with ``--drop ln_f``, rank 0's copy lacks the final norm,
+which must be refused by name. With ``--loader dcp``, only the parameters are built on meta (buffers keep their values)
+and every rank reads its own slices of the checkpoint's safetensors files.
 
 Writes ``<out_dir>/rank<rank>.json``: the largest difference between the placed model's logits and a plain
 ``from_pretrained`` copy's on a fixed input, whether the LM head is still tied to the embedding, and the parameter types
@@ -37,13 +39,17 @@ def main() -> None:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--drop", default=None, help="a submodule to delete from rank 0's copy (a planted defect)")
+    parser.add_argument("--loader", default="rank0", choices=("rank0", "dcp"))
+    parser.add_argument("--arch", default="gpt2", choices=("gpt2", "llama"))
     args = parser.parse_args()
 
-    from transformers import GPT2LMHeadModel
+    from transformers import GPT2LMHeadModel, LlamaForCausalLM
 
     from interpretune.runners.distributed import (
+        META_INIT_CHECKPOINT,
         META_INIT_SOURCE,
         init_process_group,
+        params_on_meta,
         place_module,
         resolve_placement,
     )
@@ -52,17 +58,21 @@ def main() -> None:
     run = resolve_placement("fsdp2")
     assert run is not None
     init_process_group(run)
-    reference = GPT2LMHeadModel.from_pretrained(args.checkpoint)
-    with torch.device("meta"):
-        holder = Holder(GPT2LMHeadModel._from_config(reference.config).eval())  # `from_pretrained` returns eval mode
-    if run.rank == 0:
-        source = GPT2LMHeadModel.from_pretrained(args.checkpoint)
+    archs = {"gpt2": (GPT2LMHeadModel, "GPT2Block"), "llama": (LlamaForCausalLM, "LlamaDecoderLayer")}
+    model_class, block = archs[args.arch]
+    reference = model_class.from_pretrained(args.checkpoint)
+    with torch.device("meta") if args.loader == "rank0" else params_on_meta():
+        holder = Holder(model_class._from_config(reference.config).eval())  # `from_pretrained` returns eval mode
+    if args.loader == "dcp":
+        object.__setattr__(holder, META_INIT_CHECKPOINT, args.checkpoint)
+    elif run.rank == 0:
+        source = model_class.from_pretrained(args.checkpoint)
         if args.drop:
             delattr(source.transformer, args.drop)
         object.__setattr__(holder, META_INIT_SOURCE, source)
     record: dict = {}
     try:
-        place_module(holder, run, {"class:GPT2Block": {}})
+        place_module(holder, run, {f"class:{block}": {}})
     except MisconfigurationException as err:
         record["refused"] = str(err)
     else:
@@ -74,8 +84,8 @@ def main() -> None:
             expected = reference(input_ids).logits
         model = holder.model
         record["max_abs_diff"] = float((placed - expected).abs().max())
-        record["tied"] = model.lm_head.weight is model.transformer.wte.weight
-        record["source_dropped"] = not hasattr(holder, META_INIT_SOURCE)
+        record["tied"] = model.lm_head.weight is model.get_input_embeddings().weight
+        record["source_dropped"] = not hasattr(holder, META_INIT_SOURCE) and not hasattr(holder, META_INIT_CHECKPOINT)
     Path(args.out_dir, f"rank{os.environ['RANK']}.json").write_text(json.dumps(record))
 
 

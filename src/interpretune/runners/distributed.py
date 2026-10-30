@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import atexit
 import os
+import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -44,6 +45,9 @@ PLACEMENTS: tuple[str, ...] = ("single", "ddp", "fsdp2")
 # the attribute holding rank 0's CPU copy of a model built on the meta device (`HFFromPretrainedConfig.meta_init`),
 # which `place_module` loads into the sharded model and then drops
 META_INIT_SOURCE = "_meta_init_source"
+# the attribute holding the local directory of safetensors files every rank reads its own shards from
+# (`HFFromPretrainedConfig.meta_init_load: dcp`)
+META_INIT_CHECKPOINT = "_meta_init_checkpoint"
 
 
 @dataclass
@@ -295,8 +299,17 @@ def place_module(
         fully_shard(module, mesh=mesh)
     run.mesh = mesh
     if on_meta:
+        kept = {name: buffer.clone() for name, buffer in module.named_buffers() if not buffer.is_meta}
         module.to_empty(device=rank_device(run))
-        _load_from_rank0(module, run)
+        with torch.no_grad():
+            for name, value in kept.items():
+                buffer = module.get_buffer(name)
+                buffer.copy_(value)
+                dist.broadcast(buffer, src=0)
+        if hasattr(module, META_INIT_CHECKPOINT):
+            _load_from_checkpoint_files(module, run)
+        else:
+            _load_from_rank0(module, run)
 
 
 def rank_device(run: DistributedRun) -> torch.device:
@@ -305,18 +318,152 @@ def rank_device(run: DistributedRun) -> torch.device:
     return torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
 
 
+@contextmanager
+def params_on_meta() -> Iterator[None]:
+    """Within the context, each parameter a module registers is moved to the meta device as it is registered, while
+    buffers are built with their values on the CPU.
+
+    A model built here holds no weights, but its non-persistent buffers (rotary frequencies, for one) are real; under
+    ``torch.device("meta")`` they would be uninitialized with no checkpoint to load them from. Each parameter is
+    allocated on the CPU only until it is registered, so the peak is one parameter, not the model. It patches
+    ``torch.nn.Module.register_parameter`` for the duration, so it is not safe to build other modules concurrently.
+    """
+    register = torch.nn.Module.register_parameter
+
+    def register_on_meta(self: torch.nn.Module, name: str, param: torch.nn.Parameter | None) -> None:
+        register(self, name, param)
+        # a parameter already on meta is re-registered as it is, so tying one module's weight to another's (as
+        # `tie_weights` does by assignment) keeps them one object
+        if param is not None and not param.is_meta:
+            kwargs = {**param.__dict__, "requires_grad": param.requires_grad}
+            self._parameters[name] = type(param)(param.to("meta"), **kwargs)
+
+    torch.nn.Module.register_parameter = register_on_meta
+    try:
+        yield
+    finally:
+        torch.nn.Module.register_parameter = register
+
+
 def meta_built(module: torch.nn.Module) -> bool:
-    """Whether ``module`` was built on the meta device, refusing one only partly built there."""
-    tensors = [*module.parameters(), *module.buffers()]
-    on_meta = [t.is_meta for t in tensors]
+    """Whether ``module``'s parameters were built on the meta device, refusing a module only partly built there.
+
+    Buffers may hold values on a meta-built module (see :func:`params_on_meta`); :func:`place_module` keeps them across
+    materialization. A buffer left on the meta device of a module whose parameters are not is refused, since nothing
+    would ever give it values.
+    """
+    params = dict(module.named_parameters())
+    on_meta = [p.is_meta for p in params.values()]
     if any(on_meta) and not all(on_meta):
-        names = [n for n, t in [*module.named_parameters(), *module.named_buffers()] if not t.is_meta]
+        names = [n for n, p in params.items() if not p.is_meta]
         raise MisconfigurationException(
             f"This module was built partly on the meta device: {len(names)} tensors are not ({', '.join(names[:3])}"
             f"{' and more' if len(names) > 3 else ''}). Materializing the meta part would also discard their values,"
             " so build the whole module on the meta device or none of it."
         )
-    return bool(tensors) and all(on_meta)
+    built = bool(params) and all(on_meta)
+    if not built and (meta_buffers := [n for n, b in module.named_buffers() if b.is_meta]):
+        raise MisconfigurationException(
+            f"This module was built partly on the meta device: its parameters are not, but {len(meta_buffers)} buffers"
+            f" are ({', '.join(meta_buffers[:3])}{' and more' if len(meta_buffers) > 3 else ''}), and nothing would"
+            " give them values. Build the whole module on the meta device or none of it."
+        )
+    return built
+
+
+def _checkpoint_renamer(model: torch.nn.Module) -> Any:
+    """``rename(checkpoint_key, model_keys)``: the model key transformers' own checkpoint conversion maps a key to.
+
+    Raises:
+        MisconfigurationException: If the model's conversion mapping has weight converters (which merge or reshape
+            tensors), since loading per-rank slices can only rename.
+    """
+    from transformers import PreTrainedModel, conversion_mapping, core_model_loading
+
+    if not isinstance(model, PreTrainedModel):
+        raise MisconfigurationException(
+            f"`meta_init_load: dcp` renames checkpoint keys with transformers' conversion mapping, which needs a"
+            f" `PreTrainedModel`, not a {type(model).__name__}. Use `meta_init_load: rank0`."
+        )
+    transforms = conversion_mapping.get_model_conversion_mapping(model)
+    renamings = [t for t in transforms if isinstance(t, core_model_loading.WeightRenaming)]
+    converters = [t for t in transforms if isinstance(t, core_model_loading.WeightConverter)]
+    if converters:
+        raise MisconfigurationException(
+            "`meta_init_load: dcp` reads each rank's slices of the checkpoint as they are stored, but"
+            f" {type(model).__name__}'s checkpoint needs transformers' weight converters"
+            f" ({', '.join(str(c.source_patterns) for c in converters[:3])}), which merge or reshape tensors. Use"
+            " `meta_init_load: rank0`."
+        )
+    prefix = getattr(model, "base_model_prefix", None) or None
+
+    def rename(key: str, model_keys: Mapping[str, Any]) -> str:
+        return core_model_loading.rename_source_key(key, renamings, [], prefix, dict(model_keys))[0]
+
+    return rename
+
+
+def _load_from_checkpoint_files(module: torch.nn.Module, run: DistributedRun) -> None:
+    """Load ``module.model``'s sharded parameters from the checkpoint's safetensors files, each rank reading only
+    the slices it holds (``torch.distributed.checkpoint`` with ``HuggingFaceStorageReader``).
+
+    Every rank checks the checkpoint's keys against the model before reading, from the same files, so all ranks refuse
+    together. A parameter tied to one the checkpoint supplies (an LM head tied to the embedding) needs no key of its
+    own, and keys the model declares ``from_pretrained`` should ignore (``_keys_to_ignore_on_load_unexpected`` and
+    ``_keys_to_ignore_on_load_missing``) are ignored here too. Buffers are not read: :func:`place_module` kept their
+    built values.
+
+    Raises:
+        MisconfigurationException: If the directory holds no safetensors checkpoint, a checkpoint key maps to no model
+            key, a model parameter is supplied by no key, or the model needs weight converters.
+    """
+    import json
+
+    from torch.distributed.checkpoint.hf_storage import HuggingFaceStorageReader
+    from torch.distributed.checkpoint.state_dict_loader import load
+
+    model = getattr(module, "model", None)
+    assert isinstance(model, torch.nn.Module)
+    path = getattr(module, META_INIT_CHECKPOINT)
+    index = os.path.join(path, "model.safetensors.index.json")
+    single = os.path.join(path, "model.safetensors")
+    if os.path.isfile(index):
+        with open(index) as f:
+            keys = list(json.load(f)["weight_map"])
+    elif os.path.isfile(single):
+        from safetensors import safe_open
+
+        with safe_open(single, framework="pt") as f:
+            keys = list(f.keys())
+    else:
+        raise MisconfigurationException(
+            f"`meta_init_load: dcp` reads safetensors files, but {path} holds neither `model.safetensors` nor"
+            " `model.safetensors.index.json`. Use `meta_init_load: rank0`."
+        )
+    rename = _checkpoint_renamer(model)
+    targets = model.state_dict()
+    params = dict(model.named_parameters())
+    # patterns a model declares for keys `from_pretrained` ignores (old checkpoints' attention-mask buffers, for one)
+    ignore_unexpected = getattr(model, "_keys_to_ignore_on_load_unexpected", None) or []
+    ignore_missing = getattr(model, "_keys_to_ignore_on_load_missing", None) or []
+    mapped = {key: rename(key, targets) for key in keys}
+    ignored = {k for k, v in mapped.items() if v not in targets and any(re.search(p, k) for p in ignore_unexpected)}
+    mapped = {k: v for k, v in mapped.items() if k not in ignored}
+    unknown = sorted(k for k, v in mapped.items() if v not in targets)
+    supplied = {id(params[v]) for v in mapped.values() if v in params}
+    unsupplied = sorted(
+        n
+        for n, p in model.named_parameters(remove_duplicate=False)
+        if id(p) not in supplied and not any(re.search(pattern, n) for pattern in ignore_missing)
+    )
+    if unknown or unsupplied:
+        raise MisconfigurationException(
+            "The checkpoint's files do not match the meta-built model, so loading them would leave parameters"
+            f" uninitialized or misplaced. Keys no model key matches: {unknown[:5]}; parameters no key supplies:"
+            f" {unsupplied[:5]}."
+        )
+    load({key: targets[name] for key, name in mapped.items()}, storage_reader=HuggingFaceStorageReader(path))
+    object.__delattr__(module, META_INIT_CHECKPOINT)
 
 
 def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:

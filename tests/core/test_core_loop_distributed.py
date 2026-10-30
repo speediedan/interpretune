@@ -370,3 +370,76 @@ def test_a_meta_built_model_is_sharded_then_loaded_from_rank_zero(tiny_gpt2_chec
     for record in _launch_meta(tiny_gpt2_checkpoint, planted, "--drop", "ln_f"):
         assert "does not match the meta-built model" in record["refused"]
         assert "transformer.ln_f.bias" in record["refused"]
+
+
+@pytest.fixture(scope="module")
+def tiny_llama_checkpoint(tmp_path_factory):
+    """A Llama checkpoint split over several safetensors files (with an index), whose rotary frequencies are a non-
+    persistent buffer no file holds."""
+    from transformers import LlamaConfig, LlamaForCausalLM
+
+    torch.manual_seed(0)
+    path = tmp_path_factory.mktemp("tiny_llama")
+    config = LlamaConfig(
+        num_hidden_layers=2,
+        hidden_size=32,
+        intermediate_size=64,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        vocab_size=128,
+        bos_token_id=0,
+        eos_token_id=1,
+    )
+    LlamaForCausalLM(config).save_pretrained(path, max_shard_size="20KB")
+    return path
+
+
+def _edited_checkpoint(checkpoint: Path, out: Path, drop: str | None = None, add: str | None = None) -> Path:
+    """A copy of a single-file checkpoint with key ``drop`` removed and a key ``add`` added (planted defects)."""
+    import shutil
+
+    from safetensors.torch import load_file, save_file
+
+    out.mkdir()
+    shutil.copy(checkpoint / "config.json", out / "config.json")
+    tensors = load_file(checkpoint / "model.safetensors")
+    if drop:
+        del tensors[drop]
+    if add:
+        tensors[add] = torch.zeros(2)
+    save_file(tensors, out / "model.safetensors", metadata={"format": "pt"})
+    return out
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+def test_a_meta_built_model_is_loaded_from_each_ranks_checkpoint_slices(
+    tiny_gpt2_checkpoint, tiny_llama_checkpoint, tmp_path
+):
+    """With ``meta_init_load: dcp``, each rank reads its own slices of the checkpoint files: a single-file GPT-2
+    (tied head) and a multi-file Llama (rotary buffers kept from the build) compute exactly what
+    ``from_pretrained`` does.
+
+    A key the model tells ``from_pretrained`` to ignore (an old GPT-2 checkpoint's
+    attention-mask buffer) is ignored, while a checkpoint missing a parameter or holding a key no model key matches
+    is refused on every rank, naming it.
+    """
+    assert len(list(tiny_llama_checkpoint.glob("*.safetensors"))) > 1
+    ignorable = _edited_checkpoint(tiny_gpt2_checkpoint, tmp_path / "ignorable_ckpt", add="transformer.h.0.attn.bias")
+    for checkpoint, arch in ((tiny_gpt2_checkpoint, "gpt2"), (tiny_llama_checkpoint, "llama"), (ignorable, "gpt2")):
+        for record in _launch_meta(checkpoint, tmp_path / checkpoint.name, "--loader", "dcp", "--arch", arch):
+            assert record["max_abs_diff"] == 0.0, checkpoint.name
+            assert record["source_dropped"] and record["param_types"] == ["DTensor"]
+            assert record["tied"] == (arch == "gpt2")
+    missing = _edited_checkpoint(tiny_gpt2_checkpoint, tmp_path / "missing_ckpt", drop="transformer.ln_f.bias")
+    for record in _launch_meta(missing, tmp_path / "missing", "--loader", "dcp"):
+        assert "do not match the meta-built model" in record["refused"]
+        refusal = record["refused"]
+        assert "Keys no model key matches: []; parameters no key supplies: ['transformer.ln_f.bias']" in refusal
+    unknown = _edited_checkpoint(tiny_gpt2_checkpoint, tmp_path / "unknown_ckpt", add="transformer.h.0.attn.extra")
+    for record in _launch_meta(unknown, tmp_path / "unknown", "--loader", "dcp"):
+        assert (
+            "Keys no model key matches: ['transformer.h.0.attn.extra']; parameters no key supplies: []"
+            in (record["refused"])
+        )
