@@ -25,7 +25,7 @@ from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import CircuitTracerConfig, ITConfig
 from interpretune.adapters.circuit_tracer.config import require_hooked_transformer
 from interpretune.analysis.backends.capabilities import get_model_backend
-from interpretune.utils import _SL_AVAILABLE, rank_zero_warn, rank_zero_info
+from interpretune.utils import _SL_AVAILABLE, MisconfigurationException, rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
 
 if TYPE_CHECKING:
@@ -106,6 +106,87 @@ def _replacement_transcoders(module: Any) -> nn.Module | None:
     return transcoders if isinstance(transcoders, nn.Module) else None
 
 
+# The per-layer transcoder methods circuit-tracer calls outside `forward`, each reading the transcoder's parameters.
+# `TranscoderSet.apply_activation_function` also calls a transcoder's activation function directly, so that submodule
+# (a JumpReLU holds its threshold) is declared on its own.
+TRANSCODER_DIRECT_METHODS = (
+    "forward",
+    "encode",
+    "decode",
+    "compute_skip",
+    "_get_decoder_vectors",
+    "encode_sparse",
+    "decode_sparse",
+)
+
+
+def transcoder_direct_calls(transcoders: nn.Module) -> list[tuple[str, nn.Module, tuple[str, ...]]]:
+    """The direct calls circuit-tracer makes on a transcoder set's per-layer transcoders, for a data-parallel
+    placement to register (see ``BaseITModule.fsdp_direct_calls``).
+
+    Raises:
+        MisconfigurationException: For a transcoder type whose methods have not been enumerated (a cross-layer
+            transcoder, for one), since an unregistered method would compute with sharded parameters.
+    """
+    from circuit_tracer.transcoder import SingleLayerTranscoder
+
+    calls: list[tuple[str, nn.Module, tuple[str, ...]]] = []
+    for name, child in transcoders.named_modules():
+        if name and child is not transcoders and isinstance(child, SingleLayerTranscoder):
+            calls.append((f"transcoders.{name}", child, TRANSCODER_DIRECT_METHODS))
+            activation = getattr(child, "activation_function", None)
+            if isinstance(activation, nn.Module) and any(True for _ in activation.parameters()):
+                calls.append((f"transcoders.{name}.activation_function", activation, ("forward",)))
+    if not calls and any(True for _ in transcoders.parameters()):
+        raise MisconfigurationException(
+            f"A data-parallel placement shards {type(transcoders).__name__} only once the methods circuit-tracer calls"
+            " on it are enumerated; only `SingleLayerTranscoder` sets are, so place this composition with `single`."
+        )
+    return calls
+
+
+def meta_replacement_model(
+    model_name: str, transcoder_set: str, dtype: torch.dtype, load_source: bool
+) -> tuple[Any, nn.Module | None]:
+    """A circuit-tracer replacement model over nnsight built on the meta device and, with ``load_source``, the
+    Hugging Face module (transcoders included) of the same model loaded on the CPU, for a data-parallel placement
+    to load the meta build from.
+
+    Both builds load the transcoders eagerly: a lazily loaded weight is read from disk on access rather than held as a
+    parameter, so a placement could not shard it. The meta build moves each parameter to the meta device as it is
+    registered (``params_on_meta``), so it reads no Hugging Face checkpoint and holds one transcoder tensor at a time.
+    """
+    import os
+
+    from circuit_tracer.replacement_model.replacement_model_nnsight import NNSightReplacementModel
+    from circuit_tracer.utils.hf_utils import load_transcoder_from_hub
+    from transformers import AutoConfig
+
+    from interpretune.runners.distributed import params_on_meta
+
+    def transcoders() -> Any:
+        cpu = torch.device("cpu")
+        return load_transcoder_from_hub(transcoder_set, cpu, dtype, lazy_encoder=False, lazy_decoder=False)[0]
+
+    with params_on_meta():
+        # circuit-tracer annotates `from_config`'s config as the `AutoConfig` factory, which no config instance is
+        config: Any = AutoConfig.from_pretrained(model_name)
+        config.dtype = dtype  # `from_config` builds in the config's dtype
+        model = NNSightReplacementModel.from_config(config, transcoders())
+    # circuit-tracer keeps the transcoders and every attribution tensor on this device. The model is built before the
+    # process group is joined, so it is the device joining will make current: this rank's accelerator, else the CPU.
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    model.attribution_device = torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device("cpu")
+    source = None
+    if load_source:
+        loaded = NNSightReplacementModel.from_pretrained_and_transcoders(
+            model_name, transcoders(), device=torch.device("cpu"), dtype=dtype
+        )
+        source = loaded._model
+        assert isinstance(source, nn.Module)  # a locally loaded model, never a remote nnsight envoy
+    return model, source
+
+
 class BaseCircuitTracerModule(BaseITModule):
     """Backend-agnostic base module for Circuit Tracer.
 
@@ -143,6 +224,14 @@ class BaseCircuitTracerModule(BaseITModule):
             )
         refusal = DISK_OFFLOAD_REASON if cfg is not None and cfg.offload == "disk" else None
         return CircuitTracerView(self, transcoders, refusal=refusal, tune_base=cfg is not None and cfg.tune_base)
+
+    def fsdp_direct_calls(self) -> list[tuple[str, nn.Module, tuple[str, ...]]]:
+        """Add the transcoder methods circuit-tracer calls outside ``forward`` (see
+        :func:`transcoder_direct_calls`)."""
+        calls = super().fsdp_direct_calls()
+        if (transcoders := _replacement_transcoders(self)) is not None:
+            calls.extend(transcoder_direct_calls(transcoders))
+        return calls
 
     def register_tunable_modules(self) -> None:
         """Make the transcoders this module's parameters, once, and give lazily loaded transcoder weights their
@@ -217,15 +306,19 @@ class BaseCircuitTracerModule(BaseITModule):
         # Factory returns backend-specific implementation based on backend parameter
         # Determine lazy_encoder: explicit config takes precedence, otherwise auto-enable when offloading
         lazy_encoder = cfg.lazy_encoder if cfg.lazy_encoder is not None else (cfg.offload == "cpu")
-        replacement_model = ReplacementModel.from_pretrained(
-            model_name=cfg.model_name or self.it_cfg.model_name_or_path,
-            transcoder_set=cfg.transcoder_set,
-            dtype=cfg.dtype,
-            backend=backend,
-            lazy_encoder=lazy_encoder,
-            lazy_decoder=cfg.lazy_decoder,
-            **pretrained_kwargs,
-        )
+        hf_cfg = self.it_cfg.hf_from_pretrained_cfg
+        if hf_cfg is not None and hf_cfg.meta_init:
+            replacement_model = self._meta_replacement_model(cfg, lazy_encoder, pretrained_kwargs)
+        else:
+            replacement_model = ReplacementModel.from_pretrained(
+                model_name=cfg.model_name or self.it_cfg.model_name_or_path,
+                transcoder_set=cfg.transcoder_set,
+                dtype=cfg.dtype,
+                backend=backend,
+                lazy_encoder=lazy_encoder,
+                lazy_decoder=cfg.lazy_decoder,
+                **pretrained_kwargs,
+            )
 
         # NARROWED EXPLICITLY, and the reason is a real tension rather than a type-checker workaround.
         # circuit-tracer types `backend` as a CLOSED `Literal` of the backends IT ships, and overloads
@@ -273,6 +366,52 @@ class BaseCircuitTracerModule(BaseITModule):
                     f"No model-backend factory registered for circuit-tracer backend {backend!r}; "
                     "leaving the module's model backend unset for its own adapter to attach."
                 )
+
+    def _meta_replacement_model(self, cfg: CircuitTracerConfig, lazy_encoder: bool, pretrained_kwargs: dict) -> Any:
+        """The replacement model built on the meta device for ``hf_from_pretrained_cfg.meta_init`` (see
+        :func:`meta_replacement_model`), rank 0 (``RANK`` unset counts as rank 0) also keeping the CPU-loaded
+        Hugging Face module as the meta-init source a data-parallel placement loads every rank from.
+
+        Raises:
+            MisconfigurationException: For a backend other than nnsight, ``meta_init_load: dcp``, lazily loaded
+                transcoder weights, a composition without ``nnsight_cfg``, or remote execution or a device map, none of
+                which the meta build honors.
+        """
+        import os
+
+        from interpretune.runners.distributed import META_INIT_SOURCE
+
+        hf_cfg = self.it_cfg.hf_from_pretrained_cfg
+        assert hf_cfg is not None
+        refused = []
+        if cfg.backend != "nnsight":
+            refused.append(f"backend {cfg.backend!r} (only 'nnsight' builds on the meta device)")
+        if hf_cfg.meta_init_load != "rank0":
+            refused.append(
+                f"`meta_init_load: {hf_cfg.meta_init_load}` (the transcoders are not in the model's checkpoint; use"
+                " 'rank0')"
+            )
+        if lazy_encoder or cfg.lazy_decoder:
+            refused.append("lazily loaded transcoder weights (set `lazy_encoder: false` and `lazy_decoder: false`)")
+        if getattr(self.it_cfg, "nnsight_cfg", None) is None:
+            refused.append(
+                "no `nnsight_cfg` (without one the Hugging Face module is not registered on this module, so the"
+                " placement would neither shard nor load it)"
+            )
+        if placed := sorted(k for k in ("remote", "device_map", "max_memory") if k in pretrained_kwargs):
+            refused.append(f"{', '.join(placed)} (the data-parallel placement decides where the model runs)")
+        if refused:
+            raise MisconfigurationException(
+                "`hf_from_pretrained_cfg.meta_init` builds a circuit-tracer composition on the meta device for a"
+                f" data-parallel placement to shard and load, which this configuration cannot do: {'; '.join(refused)}."
+            )
+        model_name = cfg.model_name or self.it_cfg.model_name_or_path
+        rank0 = int(os.environ.get("RANK", "0")) == 0
+        model, source = meta_replacement_model(model_name, cfg.transcoder_set, cfg.dtype, load_source=rank0)
+        if source is not None:
+            object.__setattr__(self, META_INIT_SOURCE, source)
+        self._meta_init_built = True  # checked once init returns, since other init paths ignore `meta_init`
+        return model
 
     def _capture_hyperparameters(self) -> None:
         """Capture hyperparameters for logging."""

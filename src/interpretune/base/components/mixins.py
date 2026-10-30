@@ -488,6 +488,8 @@ class HFFromPretrainedMixin:
                 self.it_cfg.model_class = _import_class(
                     self.it_cfg.hf_from_pretrained_cfg.default_head
                 )  # mixin provides it_cfg
+            if self.hf_cfg.meta_init:
+                return self._hf_meta_model_init(cust_config, access_token)
             model = self.it_cfg.model_class.from_pretrained(  # mixin provides it_cfg
                 **self.hf_cfg.pretrained_kwargs, config=cust_config, token=access_token
             )
@@ -495,6 +497,50 @@ class HFFromPretrainedMixin:
             with torch.device("meta"):
                 model = self.it_cfg.model_class(config=cust_config)  # mixin provides it_cfg
         return model
+
+    def _hf_meta_model_init(self, cust_config: PretrainedConfig, access_token: str | None) -> torch.nn.Module:
+        """The model built on the meta device, for a data-parallel placement to shard before loading it.
+
+        With ``meta_init_load: rank0``, the process a launcher made rank 0 (``RANK`` unset counts as rank 0) also loads
+        the checkpoint on the CPU, kept as the module's meta-init source for the placement to load from. It is set as
+        a plain attribute, not a submodule, so its parameters are not the module's. With ``meta_init_load: dcp``, only
+        the parameters are built on the meta device (buffers such as rotary frequencies, which no checkpoint holds,
+        are computed on the CPU), and every rank records the checkpoint's local directory to read its own shards from.
+        """
+        from interpretune.runners.distributed import META_INIT_CHECKPOINT, META_INIT_SOURCE, params_on_meta
+
+        assert self.hf_cfg is not None, "hf_cfg should be set when calling _hf_meta_model_init"
+        model_class = self.it_cfg.model_class  # mixin provides it_cfg
+        kwargs = dict(self.hf_cfg.pretrained_kwargs)
+        dtype = {"dtype": kwargs["dtype"]} if kwargs.get("dtype") is not None else {}
+        # an Auto class builds from a config with `from_config`, a concrete model class with `_from_config`
+        build = model_class.from_config if hasattr(model_class, "from_config") else model_class._from_config
+        streamed = self.hf_cfg.meta_init_load == "dcp"
+        with params_on_meta() if streamed else torch.device("meta"):
+            model = build(cust_config, **dtype)
+        model.eval()  # as `from_pretrained` returns it, so the two builds differ only in where the weights are
+        self._meta_init_built = True  # checked once init returns, since other init paths ignore `meta_init`
+        if streamed:
+            object.__setattr__(self, META_INIT_CHECKPOINT, self._hf_checkpoint_dir(kwargs, access_token))
+        elif int(os.environ.get("RANK", "0")) == 0:
+            kwargs["device_map"] = "cpu"
+            source = model_class.from_pretrained(**kwargs, config=cust_config, token=access_token)
+            object.__setattr__(self, META_INIT_SOURCE, source)
+        return model
+
+    @staticmethod
+    def _hf_checkpoint_dir(kwargs: dict, access_token: str | None) -> str:
+        """The local directory holding the checkpoint's safetensors files, downloading them from the Hub if needed."""
+        name = str(kwargs["pretrained_model_name_or_path"])
+        if os.path.isdir(name):
+            path = name
+        else:
+            from huggingface_hub import snapshot_download
+
+            path = snapshot_download(
+                name, revision=kwargs.get("revision"), allow_patterns=["*.safetensors", "*.json"], token=access_token
+            )
+        return os.path.join(path, kwargs["subfolder"]) if kwargs.get("subfolder") else path
 
     def _hf_cust_token_cfg(self) -> None:
         if self.it_cfg.tokenizer_id_overrides:  # mixin provides it_cfg
@@ -527,23 +573,32 @@ class HFFromPretrainedMixin:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _hf_post_init_cfg"
         self.model.config.use_cache = self.hf_cfg.use_model_cache  # type: ignore[attr-defined]  # mixin provides model
         self._configure_gradient_checkpointing()
-        # TODO: disentagle use of bnb and lora configs in the future, create single peft config perhaps
-        if all((_BNB_AVAILABLE, self.hf_cfg.bitsandbytesconfig, self.hf_cfg.lora_cfg)):
-            self._configure_peft()
+        # LoRA on an unquantized base, or QLoRA when bitsandbytes is configured and installed
+        if self.hf_cfg.lora_cfg and not self.hf_cfg.bitsandbytesconfig:
+            self._configure_peft(quantized=False)
+        elif all((_BNB_AVAILABLE, self.hf_cfg.bitsandbytesconfig, self.hf_cfg.lora_cfg)):
+            self._configure_peft(quantized=True)
 
     def _configure_gradient_checkpointing(self) -> None:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _configure_gradient_checkpointing"
         if self.hf_cfg.activation_checkpointing:
             self.model.gradient_checkpointing_enable()  # type: ignore[attr-defined]  # mixin provides model
 
-    def _configure_peft(self) -> None:
+    def _configure_peft(self, quantized: bool = True) -> None:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _configure_peft"
         if self.hf_cfg.activation_checkpointing:
             self.model.gradient_checkpointing_enable()  # type: ignore[attr-defined]  # mixin provides model
         from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 
-        self.model = prepare_model_for_kbit_training(self.model)  # mixin provides model
+        if quantized:
+            self.model = prepare_model_for_kbit_training(self.model)  # mixin provides model
         self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))  # mixin provides model
+        from interpretune.runners.distributed import META_INIT_SOURCE
+
+        # a meta-built model loads from rank 0's copy, so the copy takes the same adapters: its initial adapter values
+        # become every rank's, and its keys stay the model's
+        if (source := getattr(self, META_INIT_SOURCE, None)) is not None:
+            object.__setattr__(self, META_INIT_SOURCE, get_peft_model(source, LoraConfig(**self.hf_cfg.lora_cfg)))
 
 
 class BaseITMixins(

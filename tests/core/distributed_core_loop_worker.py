@@ -5,8 +5,12 @@ one-process reference, which trains on the global batch (the per-rank batch time
 share out. Each rank seeds its model differently and the reference is seeded as rank 0: the runner broadcasts rank 0's
 weights before placement, and without that broadcast the ranks would not match it.
 
+With ``--phased``, finetuning-scheduler's ``TuningScheduler`` drives two phases through ``FTSCoreCallback``: the
+last block first, then everything before it.
+
 Writes ``<out_dir>/<placement>_rank<rank>.json`` with the per-step training losses, the epoch metrics the callbacks saw,
-each rank's recorded device and the parameter types after placement.
+each rank's recorded device, the parameter types and FSDP units after placement, and (phased) the final depth and the
+parameters trainable at the end.
 """
 
 from __future__ import annotations
@@ -40,7 +44,8 @@ def main() -> None:
     parser.add_argument("--placement", required=True)
     parser.add_argument("--world-size", type=int, default=2, help="the ranks the reference's global batch stands for")
     parser.add_argument("--out-dir", required=True)
-    parser.add_argument("--shard-units", nargs="*", default=None)
+    parser.add_argument("--fsdp-plan", type=json.loads, default=None, help="the FSDP2 plan, as JSON")
+    parser.add_argument("--phased", action="store_true", help="tune in two phases with FTSCoreCallback")
     args = parser.parse_args()
 
     from interpretune.config import SessionRunnerCfg
@@ -52,7 +57,7 @@ def main() -> None:
     batch_size = PER_RANK_BATCH * (args.world_size if args.placement == "single" else 1)
     test_cfg = CoreCfg(
         force_prepare_data=False,
-        max_epochs=1,
+        max_epochs=2 if args.phased else 1,
         limit_train_batches=3,
         limit_val_batches=2,
         dm_override_cfg={"train_batch_size": batch_size, "eval_batch_size": batch_size},
@@ -63,24 +68,48 @@ def main() -> None:
     torch.manual_seed(1 + rank)  # ranks initialize differently; placement must broadcast rank 0's weights
     it_session = config_modules(test_cfg, f"dist_{args.placement}", {}, out_dir / f"{args.placement}_rank{rank}")
     recorder = LossRecorder()
+    callbacks: list = [recorder]
+    fts = None
+    if args.phased:
+        from interpretune.tuning.core_loop import FTSCoreCallback
+
+        fts = FTSCoreCallback()  # its schedule names the placed module's parameters, set once they exist
+        callbacks.insert(0, fts)
     runner_cfg = SessionRunnerCfg(
         it_session=it_session,
         max_epochs=test_cfg.max_epochs,
         limit_train_batches=test_cfg.limit_train_batches,
         limit_val_batches=test_cfg.limit_val_batches,
-        callbacks=[recorder],
+        callbacks=callbacks,
         placement=args.placement,
-        shard_units=args.shard_units,
+        fsdp_plan=args.fsdp_plan,
     )
     runner = SessionRunner(run_cfg=runner_cfg)
-    param_types = sorted({type(p).__name__ for p in it_session.module.parameters()})
+    from torch.distributed.fsdp import FSDPModule
+
+    module = it_session.module
+    param_types = sorted({type(p).__name__ for p in module.parameters()})
+    fsdp_units = [name for name, sub in module.named_modules() if isinstance(sub, FSDPModule)]
+    if fts is not None:
+        trainable = [n for n, p in module.named_parameters() if p.requires_grad]
+        last_block = max({n.rsplit(".", 2)[0] for n in trainable if ".layers." in n})
+        last = [n for n in trainable if n.startswith(last_block + ".")]
+        fts.schedule = {
+            0: {"params": last, "max_transition_epoch": 1},
+            1: {"params": [n for n in trainable if n not in last]},
+        }
     runner.train()
     record = {
         "losses": recorder.losses,
         "epoch_metrics": recorder.epoch_metrics,
         "devices": list(runner.dist_run.devices) if runner.dist_run else [],
         "param_types": param_types,
+        "fsdp_units": fsdp_units,
     }
+    if fts is not None:
+        assert fts.tuning_scheduler is not None
+        record["depth"] = fts.tuning_scheduler.curr_depth
+        record["trainable"] = sorted(n for n, p in module.named_parameters() if p.requires_grad)
     (out_dir / f"{args.placement}_rank{rank}.json").write_text(json.dumps(record))
 
 
