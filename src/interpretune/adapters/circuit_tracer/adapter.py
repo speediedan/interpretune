@@ -169,7 +169,8 @@ def meta_replacement_model(
         return load_transcoder_from_hub(transcoder_set, cpu, dtype, lazy_encoder=False, lazy_decoder=False)[0]
 
     with params_on_meta():
-        config = AutoConfig.from_pretrained(model_name)
+        # circuit-tracer annotates `from_config`'s config as the `AutoConfig` factory, which no config instance is
+        config: Any = AutoConfig.from_pretrained(model_name)
         config.dtype = dtype  # `from_config` builds in the config's dtype
         model = NNSightReplacementModel.from_config(config, transcoders())
     # circuit-tracer keeps the transcoders and every attribution tensor on this device. The model is built before the
@@ -182,6 +183,7 @@ def meta_replacement_model(
             model_name, transcoders(), device=torch.device("cpu"), dtype=dtype
         )
         source = loaded._model
+        assert isinstance(source, nn.Module)  # a locally loaded model, never a remote nnsight envoy
     return model, source
 
 
