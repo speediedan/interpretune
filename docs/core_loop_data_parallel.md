@@ -109,9 +109,10 @@ key and a parameter no key supplies, naming them, and a model whose checkpoint n
 safetensors files are downloaded to the local cache first, on every rank.
 
 The load is checked rather than trusted: when rank 0's copy is missing a key of the model, has one the model lacks, or
-differs in a shape (embeddings resized after the build, for one), every rank refuses, naming the keys. `meta_init`
-cannot be combined with `lora_cfg` or `bitsandbytesconfig`, a module built only partly on the meta device is
-refused, and so is `meta_init` on a composition whose model init does not build on the meta device (a
+differs in a shape (embeddings resized after the build, for one), every rank refuses, naming the keys. With
+`lora_cfg`, rank 0's copy takes the same LoRA adapters as the model, so their initial values reach every rank with the
+base weights. `meta_init` cannot be combined with `bitsandbytesconfig` (FSDP2 does not shard quantized parameters), a
+module built only partly on the meta device is refused, and so is `meta_init` on a composition whose model init does not build on the meta device (a
 TransformerLens bridge, an nnsight or circuit-tracer model, or `defer_model_init`), rather than being ignored.
 
 ## What the runner does

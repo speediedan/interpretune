@@ -211,12 +211,19 @@ class TestPlacementChecks:
         with pytest.raises(MisconfigurationException, match="built partly on the meta device: 2 tensors are not"):
             meta_built(partial)
 
-    def test_meta_init_refuses_wrapped_or_quantized_models(self):
+    def test_meta_init_refuses_quantized_models_and_adapters_it_cannot_load(self):
         from interpretune.config.mixins import HFFromPretrainedConfig
 
         HFFromPretrainedConfig(meta_init=True)
-        with pytest.raises(MisconfigurationException, match="cannot be combined with `lora_cfg` or"):
-            HFFromPretrainedConfig(meta_init=True, lora_cfg={"r": 8})
+        HFFromPretrainedConfig(meta_init=True, lora_cfg={"r": 8})  # rank 0's copy carries the adapters
+        with pytest.raises(MisconfigurationException, match="cannot be combined with\\s+`bitsandbytesconfig`"):
+            HFFromPretrainedConfig(meta_init=True, bitsandbytesconfig={"load_in_4bit": True})
+        with pytest.raises(MisconfigurationException, match="hold no LoRA adapters"):
+            HFFromPretrainedConfig(meta_init=True, meta_init_load="dcp", lora_cfg={"r": 8})
+        with pytest.raises(MisconfigurationException, match="must be 'rank0' or 'dcp', not 'stream'"):
+            HFFromPretrainedConfig(meta_init=True, meta_init_load="stream")
+        with pytest.raises(MisconfigurationException, match="but `meta_init` is not set"):
+            HFFromPretrainedConfig(meta_init_load="dcp")
 
     def test_meta_init_is_refused_when_the_init_did_not_build_on_meta(self):
         from types import SimpleNamespace
@@ -370,6 +377,11 @@ def test_a_meta_built_model_is_sharded_then_loaded_from_rank_zero(tiny_gpt2_chec
     for record in _launch_meta(tiny_gpt2_checkpoint, planted, "--drop", "ln_f"):
         assert "does not match the meta-built model" in record["refused"]
         assert "transformer.ln_f.bias" in record["refused"]
+    # LoRA: rank 0's copy carries the adapters (non-zero B, so they move the output), and every rank gets its values
+    for record in _launch_meta(tiny_gpt2_checkpoint, tmp_path / "lora", "--lora"):
+        assert record["max_abs_diff"] == 0.0 and record["adapter_effect"] > 0.1
+        assert record["trainable"] == ["default"] and record["param_types"] == ["DTensor"]
+        assert record["tied"] and record["source_dropped"]
 
 
 @pytest.fixture(scope="module")

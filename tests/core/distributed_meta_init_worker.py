@@ -34,6 +34,25 @@ class Holder(nn.Module):
         return self.model(input_ids).logits
 
 
+def with_adapters(model: nn.Module) -> nn.Module:
+    """``model`` with seeded LoRA adapters whose ``B`` is non-zero, so they change the output (PEFT starts it at
+    zero).
+
+    The same seed gives every copy the same values, and a meta-built model the same keys.
+    """
+    from peft import LoraConfig, get_peft_model
+
+    torch.manual_seed(0)
+    lora = LoraConfig(r=4, lora_alpha=8, target_modules=["c_attn", "c_proj"], lora_dropout=0.0, task_type="CAUSAL_LM")
+    model = get_peft_model(model, lora)
+    if not any(p.is_meta for p in model.parameters()):
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if "lora_B" in name:
+                    param.normal_(0.0, 0.5)
+    return model
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
@@ -41,6 +60,7 @@ def main() -> None:
     parser.add_argument("--drop", default=None, help="a submodule to delete from rank 0's copy (a planted defect)")
     parser.add_argument("--loader", default="rank0", choices=("rank0", "dcp"))
     parser.add_argument("--arch", default="gpt2", choices=("gpt2", "llama"))
+    parser.add_argument("--lora", action="store_true", help="LoRA on the model and on rank 0's copy (GPT-2, rank0)")
     args = parser.parse_args()
 
     from transformers import GPT2LMHeadModel, LlamaForCausalLM
@@ -61,15 +81,22 @@ def main() -> None:
     archs = {"gpt2": (GPT2LMHeadModel, "GPT2Block"), "llama": (LlamaForCausalLM, "LlamaDecoderLayer")}
     model_class, block = archs[args.arch]
     reference = model_class.from_pretrained(args.checkpoint)
+    base_logits = None
+    if args.lora:
+        with torch.no_grad():
+            base_logits = reference(torch.arange(12).reshape(2, 6)).logits
+        reference = with_adapters(reference)
     with torch.device("meta") if args.loader == "rank0" else params_on_meta():
         holder = Holder(model_class._from_config(reference.config).eval())  # `from_pretrained` returns eval mode
+    if args.lora:
+        holder.model = with_adapters(holder.model)
     if args.loader == "dcp":
         object.__setattr__(holder, META_INIT_CHECKPOINT, args.checkpoint)
     elif run.rank == 0:
         source = model_class.from_pretrained(args.checkpoint)
         if args.drop:
             delattr(source.transformer, args.drop)
-        object.__setattr__(holder, META_INIT_SOURCE, source)
+        object.__setattr__(holder, META_INIT_SOURCE, with_adapters(source) if args.lora else source)
     record: dict = {}
     try:
         place_module(holder, run, {f"class:{block}": {}})
@@ -86,6 +113,9 @@ def main() -> None:
         record["max_abs_diff"] = float((placed - expected).abs().max())
         record["tied"] = model.lm_head.weight is model.get_input_embeddings().weight
         record["source_dropped"] = not hasattr(holder, META_INIT_SOURCE) and not hasattr(holder, META_INIT_CHECKPOINT)
+        record["trainable"] = sorted({n.split(".")[-2] for n, p in holder.named_parameters() if p.requires_grad})
+        if base_logits is not None:  # how far the adapters move the output, so a dropped adapter cannot pass
+            record["adapter_effect"] = float((expected - base_logits).abs().max())
     Path(args.out_dir, f"rank{os.environ['RANK']}.json").write_text(json.dumps(record))
 
 

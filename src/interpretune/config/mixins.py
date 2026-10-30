@@ -133,10 +133,16 @@ class HFFromPretrainedConfig(ITSerializableCfg):
                 f"`meta_init_load: {self.meta_init_load}` chooses how a `meta_init` model is loaded, but `meta_init`"
                 " is not set."
             )
-        if self.meta_init and (self.lora_cfg or self.bitsandbytesconfig):
+        if self.meta_init and self.bitsandbytesconfig:
             raise MisconfigurationException(
-                "`meta_init` builds an unquantized model to shard and load from rank 0; it cannot be combined with"
-                " `lora_cfg` or `bitsandbytesconfig`, whose wrapping and quantized parameters FSDP2 does not shard."
+                "`meta_init` builds an unquantized model to shard and load; it cannot be combined with"
+                " `bitsandbytesconfig`, whose quantized parameters FSDP2 does not shard."
+            )
+        if self.meta_init_load == "dcp" and self.lora_cfg:
+            raise MisconfigurationException(
+                "`meta_init_load: dcp` reads every value from the checkpoint's files, which hold no LoRA adapters, so"
+                " it cannot initialize `lora_cfg`'s. Use `meta_init_load: rank0`, which wraps rank 0's copy with the"
+                " same adapters and loads them with the base."
             )
 
     def _dtype_serde(self) -> torch.dtype | None:

@@ -593,6 +593,12 @@ class HFFromPretrainedMixin:
         if quantized:
             self.model = prepare_model_for_kbit_training(self.model)  # mixin provides model
         self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))  # mixin provides model
+        from interpretune.runners.distributed import META_INIT_SOURCE
+
+        # a meta-built model loads from rank 0's copy, so the copy takes the same adapters: its initial adapter values
+        # become every rank's, and its keys stay the model's
+        if (source := getattr(self, META_INIT_SOURCE, None)) is not None:
+            object.__setattr__(self, META_INIT_SOURCE, get_peft_model(source, LoraConfig(**self.hf_cfg.lora_cfg)))
 
 
 class BaseITMixins(

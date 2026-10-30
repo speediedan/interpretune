@@ -122,6 +122,31 @@ class TestClassMixins:
         assert trainable and all("lora_" in n for n in trainable)
         assert not any(type(m).__name__.startswith("Linear4bit") for m in mixin.model.modules())
 
+    def test_hf_from_pretrained_lora_on_a_meta_built_model(self, monkeypatch):
+        """With ``meta_init``, the meta-built model and rank 0's CPU copy take the same LoRA adapters, so the copy
+        supplies every key the model has, the adapters' initial values included."""
+        from peft import PeftModel
+
+        from interpretune.runners.distributed import META_INIT_SOURCE
+        from tests.core.cfg_aliases import gpt2_lora_cfg
+
+        monkeypatch.delenv("RANK", raising=False)  # no launcher: this process is rank 0 and keeps the copy
+        test_it_cfg = deepcopy(TestClassMixins.test_core_gpt2)
+        test_it_cfg["hf_from_pretrained_cfg"].lora_cfg = deepcopy(gpt2_lora_cfg)
+        test_it_cfg["hf_from_pretrained_cfg"].meta_init = True
+        mixin = TestClassMixins._get_hf_from_pretrained_mixin(test_it_cfg)
+        mixin.generation_cfg = None
+        cust_config, _ = mixin._hf_gen_cust_config()
+        mixin.model = mixin.hf_configured_model_init(cust_config)
+        mixin._hf_post_init_cfg()
+        source = getattr(mixin, META_INIT_SOURCE)
+        assert isinstance(mixin.model, PeftModel) and isinstance(source, PeftModel)
+        assert all(p.is_meta for p in mixin.model.parameters())
+        assert not any(p.is_meta for p in source.parameters())
+        expected = {k: tuple(v.shape) for k, v in mixin.model.state_dict().items()}
+        assert {k: tuple(v.shape) for k, v in source.state_dict().items()} == expected
+        assert any("lora_A" in k for k in expected)
+
     @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=1.5)
     def test_hf_from_pretrained_peft_init(self, get_it_session__core_gpt2_peft__initonly):
         fixture = get_it_session__core_gpt2_peft__initonly
