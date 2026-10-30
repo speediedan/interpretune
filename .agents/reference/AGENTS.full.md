@@ -439,6 +439,14 @@ that in CI runs on the GitHub-hosted matrix instead:
 - `Testing: standard gpu cuda-marked` reruns only regular CUDA / bf16-marked tests with `IT_RUN_CUDA_TESTS=1`
 - `Testing: standalone gpu` and `Testing: CI Profiling` remain separate special-test phases
 
+`tests/special_tests.sh` is a short entry script for gpu-epsilon's shared special-test runner
+(`gpu_epsilon.special_tests`, pinned in `requirements/ci/gpu_epsilon.txt`), configured by
+`[tool.gpu-epsilon.special-tests]` in `pyproject.toml`: the marks and the selection variables each sets, the collection
+roots, the coverage command, and the `--reruns`/`--reruns-delay`/`--no-reruns`/`--resource-debug` options. It runs each
+node in its own process and reads its outcome from per-rank records rather than the log: any rank's failure, a
+non-zero exit, or a session that never finished fails the node. A run writes a JSON results file beside its session
+log. Change a mark or the coverage command in that table, not in the script.
+
 When debugging fixture or CUDA memory growth locally, add `--resource-debug` to `gen_it_coverage.sh` or
 `special_tests.sh`. That exports the canonical `IT_RESOURCE_DEBUG=1`
 flags used by `tests/conftest.py`, `tests/analysis_resource_utils.py`, and the coverage harness summary

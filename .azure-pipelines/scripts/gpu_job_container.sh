@@ -66,8 +66,10 @@ case "${1:?command}" in
         [[ -f "${VENV}/torch-excludes.txt" ]] && excludes=(--excludes "${VENV}/torch-excludes.txt")
         uv pip install -e . --group git-deps "${excludes[@]}"
         uv pip install -r requirements/ci/requirements.txt "${excludes[@]}"
+        # the special-test runner tests/special_tests.sh execs (gpu-epsilon, standard library only)
+        uv pip install -r requirements/ci/gpu_epsilon.txt
         uv pip list
-        for pkg in coverage pytest torch transformers; do
+        for pkg in coverage pytest torch transformers gpu-epsilon; do
             uv pip show "$pkg" >/dev/null 2>&1 || { echo "ERROR: ${pkg} is NOT installed" >&2; exit 1; }
         done
         # The image carries torch and the steps above resolve against it. A resolve that moved torch (or an image
