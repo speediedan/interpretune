@@ -120,7 +120,7 @@ class TestCircuitTracerConfig:
         monkeypatch.setattr(ReplacementModel, "from_pretrained", _capture)
         stub = SimpleNamespace(
             circuit_tracer_cfg=CircuitTracerConfig(backend="nnsight", **split),
-            it_cfg=SimpleNamespace(model_name_or_path="google/gemma-3-4b-it"),
+            it_cfg=SimpleNamespace(model_name_or_path="google/gemma-3-4b-it", hf_from_pretrained_cfg=None),
         )
         with pytest.raises(_Reached):
             BaseCircuitTracerModule._load_replacement_model(stub)  # type: ignore[arg-type]
