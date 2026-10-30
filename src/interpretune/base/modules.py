@@ -5,6 +5,7 @@ import torch
 from interpretune.config import ITConfig
 from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
 from interpretune.tuning.views import attach_tunable_view
+from interpretune.utils import MisconfigurationException
 
 
 class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):  # type: ignore[misc]
@@ -45,6 +46,7 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         if self.cuda_allocator_history:
             torch.cuda.memory._record_memory_history()
         self.auto_model_init()
+        self._refuse_unbuilt_meta_init()
         # Use `is not None` to avoid triggering __bool__/__len__ on special model wrappers
         # (e.g., NNsight's LanguageModel/Envoy which don't support truthiness checks)
         if self.model is not None:
@@ -64,6 +66,22 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         hf_from_pretrained_cfg, tl_from_config etc.)."""
         if self.it_cfg.hf_from_pretrained_cfg:
             self.hf_pretrained_model_init()
+
+    def _refuse_unbuilt_meta_init(self) -> None:
+        """Refuse ``meta_init`` when this composition's model init did not build on the meta device.
+
+        Only interpretune's own Hugging Face ``from_pretrained`` path honors it. Every other init path (a
+        TransformerLens bridge, an nnsight or circuit-tracer model, a deferred init) builds the model its own way, so
+        the flag would be ignored and each rank would hold the whole model, which is what it was set to avoid.
+        """
+        hf_cfg = self.it_cfg.hf_from_pretrained_cfg
+        if getattr(hf_cfg, "meta_init", False) and not getattr(self, "_meta_init_built", False):
+            raise MisconfigurationException(
+                f"`hf_from_pretrained_cfg.meta_init` is set, but {type(self).__name__} built its model without the"
+                " meta-device build: only interpretune's Hugging Face `from_pretrained` init (without"
+                " `defer_model_init`) builds on the meta device and loads from rank 0. Unset `meta_init` for this"
+                " composition."
+            )
 
     def post_auto_model_init(self) -> None:
         """Optionally modify init of an existing configuration-driven model."""

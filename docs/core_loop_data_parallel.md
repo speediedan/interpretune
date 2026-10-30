@@ -89,8 +89,9 @@ state dict. No accelerator ever holds the whole model; rank 0's host holds one c
 
 The load is checked rather than trusted: when rank 0's copy is missing a key of the model, has one the model lacks, or
 differs in a shape (embeddings resized after the build, for one), every rank refuses, naming the keys. `meta_init`
-cannot be combined with `lora_cfg` or `bitsandbytesconfig`, and a module built only partly on the meta device is
-refused.
+cannot be combined with `lora_cfg` or `bitsandbytesconfig`, a module built only partly on the meta device is
+refused, and so is `meta_init` on a composition whose model init does not build on the meta device (a
+TransformerLens bridge, an nnsight or circuit-tracer model, or `defer_model_init`), rather than being ignored.
 
 ## What the runner does
 
@@ -138,7 +139,7 @@ else:
   so a YAML run uses the loop's `torch.autocast`.
 - Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
   model once. `meta_init` covers the core `from_pretrained` path only: TransformerLens, nnsight and circuit-tracer
-  compositions build their models their own way, and loading rank 0's copy file by file (so its host never holds the
+  compositions build their models their own way and refuse it at construction, and loading rank 0's copy file by file (so its host never holds the
   whole model) is not done yet. Both are tracked in [interpretune#882](https://github.com/speediedan/interpretune/issues/882).
 
 The design, and the work that remains for attribution and J++ ops, is tracked in

@@ -516,6 +516,7 @@ class HFFromPretrainedMixin:
         with torch.device("meta"):
             model = build(cust_config, **dtype)
         model.eval()  # as `from_pretrained` returns it, so the two builds differ only in where the weights are
+        self._meta_init_built = True  # checked once init returns, since other init paths ignore `meta_init`
         if int(os.environ.get("RANK", "0")) == 0:
             kwargs["device_map"] = "cpu"
             source = model_class.from_pretrained(**kwargs, config=cust_config, token=access_token)

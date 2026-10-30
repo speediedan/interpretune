@@ -218,6 +218,28 @@ class TestPlacementChecks:
         with pytest.raises(MisconfigurationException, match="cannot be combined with `lora_cfg` or"):
             HFFromPretrainedConfig(meta_init=True, lora_cfg={"r": 8})
 
+    def test_meta_init_is_refused_when_the_init_did_not_build_on_meta(self):
+        from types import SimpleNamespace
+
+        from interpretune.base.modules import BaseITModule
+        from interpretune.config.mixins import HFFromPretrainedConfig
+
+        def module(meta_init: bool, built: bool | None):
+            stub = SimpleNamespace(
+                it_cfg=SimpleNamespace(hf_from_pretrained_cfg=HFFromPretrainedConfig(meta_init=meta_init))
+            )
+            if built is not None:
+                stub._meta_init_built = built
+            return stub
+
+        BaseITModule._refuse_unbuilt_meta_init(module(meta_init=False, built=None))
+        BaseITModule._refuse_unbuilt_meta_init(module(meta_init=True, built=True))  # the HF from_pretrained meta build
+        # a TransformerLens bridge, nnsight or circuit-tracer init (or a deferred one) never runs the meta build
+        with pytest.raises(MisconfigurationException, match="built its model without the meta-device build"):
+            BaseITModule._refuse_unbuilt_meta_init(module(meta_init=True, built=None))
+        no_hf_cfg = SimpleNamespace(it_cfg=SimpleNamespace(hf_from_pretrained_cfg=None))
+        BaseITModule._refuse_unbuilt_meta_init(no_hf_cfg)
+
     def test_plan_under_single_placement_is_refused(self):
         with pytest.raises(MisconfigurationException, match="but the placement is 'single'"):
             SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), fsdp_plan={"class:Block": {}})
