@@ -192,9 +192,15 @@ class SessionRunnerCfg:
     # rank holds the model, gradients averaged) or 'fsdp2' (parameters, gradients and optimizer state sharded); see
     # `interpretune.runners.distributed`
     placement: Literal["single", "ddp", "fsdp2"] = "single"
-    # the class names of the modules `fsdp2` shards as their own units (a transformer's block class, each spliced
-    # instrument's class), deepest first and before the module itself; `[]` shards the module as one unit
-    shard_units: Sequence[str] | None = None
+    # the modules a data-parallel placement shards as their own units, in finetuning-scheduler's FSDP2 plan grammar
+    # (`finetuning_scheduler.strategies.plan`): each key (a module name, a regex matched from the start of module
+    # names, or `class:<name>` for every instance of a class or its subclasses) maps to its `fully_shard` kwargs, plus
+    # the aliases `act_ckpt` and `cpu_offload_policy`. Applied deepest first, then to the module itself. 'fsdp2' needs
+    # one (`{}` shards the module as one unit); under 'ddp' it is optional
+    fsdp_plan: Mapping[str, Mapping[str, Any] | None] | None = None
+    # `fully_shard` kwargs every planned unit takes unless its entry overrides them; all but `act_ckpt` also apply to
+    # the module itself
+    fsdp_default_kwargs: Mapping[str, Any] | None = None
     # resume training from a core-loop checkpoint (`interpretune.runners.core.checkpoint_state`, or a path to one saved
     # with `torch.save`) taken at the end of an epoch; training continues at the next epoch
     resume_from: str | Path | Mapping[str, Any] | None = None
@@ -207,6 +213,11 @@ class SessionRunnerCfg:
         if self.placement not in ("single", "ddp", "fsdp2"):
             raise MisconfigurationException(
                 f"Unknown placement '{self.placement}': expected one of 'single', 'ddp', 'fsdp2'."
+            )
+        if self.placement == "single" and (self.fsdp_plan is not None or self.fsdp_default_kwargs):
+            raise MisconfigurationException(
+                "`fsdp_plan` and `fsdp_default_kwargs` shard the module across ranks, but the placement is 'single'."
+                " Set `placement` to 'fsdp2' or 'ddp' (and launch with torchrun), or drop the plan."
             )
         if self.resume_from is not None and self.placement != "single":
             # a core-loop checkpoint is one process's `state_dict()`; under 'ddp' and 'fsdp2' every rank holds

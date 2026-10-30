@@ -21,11 +21,12 @@ from interpretune.runners.distributed import (
     DistributedRun,
     _check_devices,
     _refuse_unshardable,
-    _shard_units,
+    _require_fts,
+    _resolve_plan,
     distributed_dataloader,
     resolve_placement,
 )
-from interpretune.utils import MisconfigurationException
+from interpretune.utils import _FTS_AVAILABLE, MisconfigurationException
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKER = Path(__file__).with_name("distributed_core_loop_worker.py")
@@ -149,7 +150,10 @@ class TestPlacementChecks:
         with pytest.raises(MisconfigurationException, match="non-contiguous parameters, and this module has 1: q"):
             _refuse_unshardable(module)
 
-    def test_shard_units_are_ordered_children_first(self):
+    @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+    def test_plan_units_are_ordered_children_first(self):
+        """A plan listing a block before the instrument spliced into it still shards the instrument first."""
+
         class Inner(nn.Linear):
             pass
 
@@ -159,17 +163,48 @@ class TestPlacementChecks:
                 self.inner = Inner(2, 2)
 
         model = nn.Sequential(Block(), Block())
-        units = _shard_units(model, ["Block", "Inner"], "fsdp2")
-        assert [type(u).__name__ for u in units] == ["Inner", "Inner", "Block", "Block"]
+        plan = {"class:Block": {}, "class:Inner": {"reshard_after_forward": False}}
+        units = _resolve_plan(model, plan, None, "fsdp2")
+        assert list(units) == ["0.inner", "1.inner", "0", "1"]
+        assert units["0.inner"] == {"reshard_after_forward": False}
 
-    def test_fsdp2_needs_shard_units_and_ddp_does_not(self):
+    @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+    def test_plan_keys_select_by_name_regex_and_class_with_defaults(self):
+        class Block(nn.Linear):
+            pass
+
+        model = nn.Sequential(Block(2, 2), nn.Linear(2, 2), Block(2, 2))
+        defaults = {"reshard_after_forward": True}
+        # `class:` matches subclasses too (here every Block is an nn.Linear), unlike the retired class-name list
+        assert list(_resolve_plan(model, {"class:Linear": None}, defaults, "fsdp2")) == ["0", "1", "2"]
+        units = _resolve_plan(model, {"1": {"reshard_after_forward": False}, "[02]": None}, defaults, "fsdp2")
+        assert units == {"1": {"reshard_after_forward": False}, "0": defaults, "2": defaults}
+
+    @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+    def test_fsdp2_needs_a_plan_and_ddp_does_not(self):
         model = nn.Sequential(nn.Linear(2, 2))
-        assert _shard_units(model, None, "ddp") == []
-        assert _shard_units(model, [], "fsdp2") == []
-        with pytest.raises(MisconfigurationException, match="Placement 'fsdp2' needs `shard_units`"):
-            _shard_units(model, None, "fsdp2")
-        with pytest.raises(MisconfigurationException, match=r"does not contain: \['Block'\]"):
-            _shard_units(model, ["Linear", "Block"], "fsdp2")
+        assert _resolve_plan(model, None, None, "ddp") == {}
+        assert _resolve_plan(model, {}, None, "fsdp2") == {}
+        with pytest.raises(MisconfigurationException, match="Placement 'fsdp2' needs `fsdp_plan`"):
+            _resolve_plan(model, None, None, "fsdp2")
+        with pytest.raises(MisconfigurationException, match="'class:Block' specified in `fsdp_plan` did not match"):
+            _resolve_plan(model, {"class:Linear": {}, "class:Block": {}}, None, "fsdp2")
+
+    def test_plan_without_finetuning_scheduler_is_refused(self, monkeypatch):
+        import interpretune.runners.distributed as distributed
+
+        monkeypatch.setattr(distributed, "_FTS_AVAILABLE", False)
+        _require_fts({}, None)  # an empty plan shards the module as one unit, with no plan grammar to apply
+        with pytest.raises(MisconfigurationException, match="FSDP2 plan, which is not installed"):
+            _require_fts({"class:Block": {}}, None)
+        with pytest.raises(MisconfigurationException, match="which is not installed"):
+            _require_fts(None, {"reshard_after_forward": False})
+
+    def test_plan_under_single_placement_is_refused(self):
+        with pytest.raises(MisconfigurationException, match="but the placement is 'single'"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), fsdp_plan={"class:Block": {}})
+        with pytest.raises(MisconfigurationException, match="but the placement is 'single'"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), fsdp_default_kwargs={"x": 1})
 
 
 def _launch(placement: str, out_dir: Path, *extra: str) -> None:
@@ -196,11 +231,22 @@ def global_batch_reference(tmp_path_factory):
     return json.loads((out_dir / "single_rank0.json").read_text())
 
 
+@pytest.fixture(scope="module")
+def phased_global_batch_reference(tmp_path_factory):
+    out_dir = tmp_path_factory.mktemp("dist_phased_reference")
+    _launch("single", out_dir, "--phased")
+    return json.loads((out_dir / "single_rank0.json").read_text())
+
+
+# one unit per TransformerBlock, then the module itself as the root unit
+BLOCK_PLAN = ("--fsdp-plan", '{"class:TransformerBlock": {}}')
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
 @pytest.mark.parametrize(
     "placement, extra",
-    [("ddp", ()), ("fsdp2", ("--shard-units", "TransformerBlock"))],
+    [("ddp", ()), ("fsdp2", BLOCK_PLAN)],
     ids=["ddp", "fsdp2"],
 )
 def test_two_rank_core_loop_matches_global_batch(placement, extra, global_batch_reference, tmp_path):
@@ -220,4 +266,28 @@ def test_two_rank_core_loop_matches_global_batch(placement, extra, global_batch_
         assert record["epoch_metrics"][0] == pytest.approx(global_batch_reference["epoch_metrics"][0], rel=1e-5)
         assert record["devices"] == ["cpu", "cpu"]
         assert record["param_types"] == ["DTensor"]
+        # the plan's units were sharded, not only the root (whose sharding alone would also make every DTensor)
+        n_units = 3 if placement == "fsdp2" else 1
+        assert len(record["fsdp_units"]) == n_units and "" in record["fsdp_units"]
     assert global_batch_reference["param_types"] == ["Parameter"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning is finetuning-scheduler's")
+def test_two_rank_phased_tuning_under_fsdp2_matches_global_batch(phased_global_batch_reference, tmp_path):
+    """Two phases of finetuning-scheduler's ``TuningScheduler`` over a plan-sharded module match one process.
+
+    Phase 0 thaws the last block, phase 1 the rest. The ranks match the reference step for step only if each thaw
+    reaches the sharded parameters and the optimizer the tuning scheduler rebuilds at the transition steps them.
+    """
+    reference = phased_global_batch_reference
+    _launch("fsdp2", tmp_path, *BLOCK_PLAN, "--phased")
+    records = [json.loads((tmp_path / f"fsdp2_rank{rank}.json").read_text()) for rank in range(2)]
+    rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
+    assert len(rank_mean) == len(reference["losses"]) == 6
+    assert rank_mean == pytest.approx(reference["losses"], rel=1e-5)
+    for record in records:
+        assert record["depth"] == reference["depth"] == 1
+        assert record["trainable"] == reference["trainable"]
+        assert len(record["fsdp_units"]) == 3

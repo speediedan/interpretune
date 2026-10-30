@@ -28,14 +28,45 @@ from interpretune.config import SessionRunnerCfg
 from interpretune.runners import SessionRunner
 
 runner = SessionRunner(SessionRunnerCfg(it_session=session, max_epochs=2, placement="fsdp2",
-                                        shard_units=["GPT2Block"]))
+                                        fsdp_plan={"class:GPT2Block": {}}))
 runner.train()
 ```
 
-`fsdp2` needs `shard_units`: the class names of the modules to shard as their own units. That is usually the model's
-block class, plus each spliced instrument's class, so that an instrument is gathered on its own rather than with the
-block around it. `fully_shard` is applied deepest first, then to the interpretune module itself as the root unit. An
-empty list shards the whole module as one unit, which gathers every parameter for the entire forward pass.
+## The FSDP2 plan
+
+`fsdp2` needs `fsdp_plan`: the modules to shard as their own units, each with its `fully_shard` keyword arguments. It
+is finetuning-scheduler's FSDP2 plan (`finetuning_scheduler.strategies.plan.shard_model`), so the core loop takes the
+same grammar as finetuning-scheduler's own interfaces:
+
+| key | selects |
+| --- | --- |
+| `model.layers.3` | the module with that name |
+| `model\.layers\.\d+$` | every module whose name the regular expression matches from the start |
+| `class:GPT2Block` (or `class:<module>.<qualname>`) | every instance of that class or of a subclass |
+
+Each value is a mapping of `fully_shard` keyword arguments (or `null`), plus two aliases: `act_ckpt: composable`
+applies composable activation checkpointing to the unit before it is sharded, and `cpu_offload_policy` (a mapping of
+`CPUOffloadPolicy` arguments) becomes its `offload_policy`. `fsdp_default_kwargs` gives every planned unit keyword
+arguments its entry does not override; all but `act_ckpt` also apply to the root unit.
+
+```yaml
+run_cfg:
+  placement: fsdp2
+  fsdp_plan:
+    class:GPT2Block: {act_ckpt: composable}
+  fsdp_default_kwargs:
+    cpu_offload_policy: {pin_memory: true}
+```
+
+A plan is usually the model's block class, plus each spliced instrument's class, so that an instrument is gathered on
+its own rather than with the block around it. Units are sharded deepest first whatever the plan's key order, so an
+instrument spliced inside a block can be listed after the block, and then the interpretune module itself is sharded as
+the root unit. An empty plan (`{}`) shards the whole module as one unit, which gathers every parameter for the entire
+forward pass. Under `ddp` a plan is optional; without one the module is the only unit.
+
+A `class:` key matches subclasses too, and a regex matches every module name it is a prefix of (anchor it with `$` to
+select the blocks but not their children). A plan under the `single` placement, a key that selects no module, and a plan
+without finetuning-scheduler installed are each refused by name.
 
 ## What the runner does
 
@@ -77,12 +108,13 @@ else:
 - Without `drop_last`, `DistributedSampler` pads the last round with repeated samples so that every rank takes the same
   number of batches. A metric averaged over a dataset that does not divide evenly therefore counts a few samples twice.
 - The core loop's `checkpoint_state` is not distributed-aware.
-- Phased tuning with `FTSCoreCallback` under `ddp` or `fsdp2` is not covered by a test yet. The pinned
-  finetuning-scheduler carries an FSDP2 adapter that checkpoints sharded modules through
-  `torch.distributed.checkpoint`, but the combination with these placements has not been run.
-- Mixed precision still uses the loop's `torch.autocast` rather than FSDP2's `MixedPrecisionPolicy`.
+- Phased tuning with `FTSCoreCallback` is tested under `fsdp2` with a plan on two CPU ranks (two phases, matching one
+  process on the combined batch step for step), not yet under `ddp` or on accelerators.
+- FSDP2's `MixedPrecisionPolicy` can be passed as a unit's `mp_policy` from Python, but has no configuration alias yet,
+  so a YAML run uses the loop's `torch.autocast`.
 - The session is built fully on each rank before it is sharded, so each rank must fit the whole model once. Building on
-  the meta device or the CPU and sharding before materializing is the next step for 12B-to-27B models.
+  the meta device and loading after sharding, for 12B-to-27B models, is tracked in
+  [interpretune#882](https://github.com/speediedan/interpretune/issues/882).
 
 The design, and the work that remains for attribution and J++ ops, is tracked in
 [interpretune#803](https://github.com/speediedan/interpretune/issues/803).

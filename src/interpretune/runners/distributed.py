@@ -8,8 +8,12 @@
   the module is wrapped in place: no wrapper module stands between callers and ``module.model``, hooks or a tunable
   view's names, and finetuning-scheduler sees the same kind of module under both data-parallel placements.
 - ``fsdp2``: parameters, gradients and optimizer state are sharded across ranks. ``fully_shard`` is applied to every
-  module whose class ``SessionRunnerCfg.shard_units`` names, deepest first, then to the interpretune module as the root
-  unit.
+  module ``SessionRunnerCfg.fsdp_plan`` selects, deepest first, then to the interpretune module as the root unit.
+
+The plan is finetuning-scheduler's FSDP2 plan (``finetuning_scheduler.strategies.plan.shard_model``), so the core loop
+takes the same keys (module names, regexes and ``class:`` selectors), per-unit ``fully_shard`` kwargs and aliases
+(``act_ckpt``, ``cpu_offload_policy``) as finetuning-scheduler's own interfaces. Under ``ddp`` a plan is optional and
+shards over the ``(replicate, shard)`` mesh.
 
 A run is launched with ``torchrun``, which sets ``WORLD_SIZE``, ``RANK`` and ``LOCAL_RANK``. Each rank builds the
 session in turn (rank 0 first, so dataset preparation is not raced), the ranks then agree on their devices and the
@@ -33,7 +37,7 @@ from typing import Any, Literal
 
 import torch
 
-from interpretune.utils import MisconfigurationException, rank_zero_only
+from interpretune.utils import _FTS_AVAILABLE, MisconfigurationException, rank_zero_only, rank_zero_warn
 
 Placement = Literal["single", "ddp", "fsdp2"]
 PLACEMENTS: tuple[str, ...] = ("single", "ddp", "fsdp2")
@@ -188,24 +192,55 @@ def _refuse_unshardable(module: torch.nn.Module) -> None:
         )
 
 
-def _shard_units(module: torch.nn.Module, shard_units: Sequence[str] | None, placement: str) -> list[torch.nn.Module]:
-    if shard_units is None:
+def _resolve_plan(
+    module: torch.nn.Module,
+    fsdp_plan: Mapping[str, Mapping[str, Any] | None] | None,
+    default_kwargs: Mapping[str, Any] | None,
+    placement: str,
+) -> dict[str, dict[str, Any]]:
+    """``fsdp_plan`` expanded to the modules it selects, each with its ``fully_shard`` kwargs, deepest first.
+
+    finetuning-scheduler applies a plan in the order its keys first select modules and refuses a module whose ancestor
+    is already sharded, so ``class:Block`` listed before ``class:Instrument`` would fail for an instrument spliced
+    inside a block. Ordering by depth makes the plan's key order immaterial. The module itself is sharded last, as the
+    root.
+    """
+    if fsdp_plan is None:
         if placement == "ddp":
-            return []
+            return {}
         raise MisconfigurationException(
-            "Placement 'fsdp2' needs `shard_units`: the class names of the modules to shard as their own units (a"
-            " transformer's block class, and each spliced instrument's class so that it is gathered on its own). An"
-            " empty list shards the module as one unit, which gathers every parameter for the whole forward."
+            "Placement 'fsdp2' needs `fsdp_plan`: the modules to shard as their own units, keyed by name, regex or"
+            " `class:<name>` (for example `{'class:GPT2Block': {}}`, plus each spliced instrument's class so that it is"
+            " gathered on its own). An empty plan shards the module as one unit, which gathers every parameter for the"
+            " whole forward."
         )
-    named = [(name, sub) for name, sub in module.named_modules() if name and type(sub).__name__ in shard_units]
-    if unmatched := sorted(set(shard_units) - {type(sub).__name__ for _, sub in named}):
-        raise MisconfigurationException(f"`shard_units` names classes this module does not contain: {unmatched}.")
-    # children before their parents: `fully_shard` refuses a module whose ancestor is already sharded
-    named.sort(key=lambda item: item[0].count("."), reverse=True)
-    return [sub for _, sub in named]
+    if not fsdp_plan:
+        return {}
+    from finetuning_scheduler.core.exceptions import FTSConfigurationError
+    from finetuning_scheduler.strategies.plan import resolve_fsdp_plan
+
+    try:
+        resolved = resolve_fsdp_plan(module, fsdp_plan, default_kwargs, warn=rank_zero_warn)
+    except FTSConfigurationError as err:
+        raise MisconfigurationException(str(err)) from err
+    resolved.pop("", None)  # the module itself is always the last, root unit
+    return dict(sorted(resolved.items(), key=lambda item: item[0].count("."), reverse=True))
 
 
-def place_module(module: torch.nn.Module, run: DistributedRun, shard_units: Sequence[str] | None = None) -> None:
+def _require_fts(fsdp_plan: Mapping[str, Any] | None, default_kwargs: Mapping[str, Any] | None) -> None:
+    if (fsdp_plan or default_kwargs) and not _FTS_AVAILABLE:
+        raise MisconfigurationException(
+            "`fsdp_plan` and `fsdp_default_kwargs` are applied with finetuning-scheduler's FSDP2 plan, which is not"
+            " installed. Install interpretune's `tune` extra, or shard the module as one unit with an empty plan."
+        )
+
+
+def place_module(
+    module: torch.nn.Module,
+    run: DistributedRun,
+    fsdp_plan: Mapping[str, Mapping[str, Any] | None] | None = None,
+    fsdp_default_kwargs: Mapping[str, Any] | None = None,
+) -> None:
     """Agree on each rank's device, build the mesh and shard ``module`` in place as ``run.placement`` asks.
 
     Runs on every rank, after the session is built and before its optimizers are, since sharding replaces the
@@ -216,8 +251,8 @@ def place_module(module: torch.nn.Module, run: DistributedRun, shard_units: Sequ
 
     Raises:
         MisconfigurationException: If a rank's module spans several devices or holds no parameters, ranks share an
-            accelerator or differ in device type, a parameter is non-contiguous, or ``shard_units`` is missing (for
-            ``fsdp2``) or names a class the module does not contain.
+            accelerator or differ in device type, a parameter is non-contiguous, ``fsdp_plan`` is missing (for
+            ``fsdp2``) or has a key that selects no module, or a plan is given without finetuning-scheduler installed.
     """
     import torch.distributed as dist
     from torch.distributed.device_mesh import init_device_mesh
@@ -228,7 +263,8 @@ def place_module(module: torch.nn.Module, run: DistributedRun, shard_units: Sequ
     dist.all_gather_object(per_rank, local)
     run.devices = _check_devices(per_rank, run.placement)
     _refuse_unshardable(module)
-    units = _shard_units(module, shard_units, run.placement)
+    _require_fts(fsdp_plan, fsdp_default_kwargs)
+    units = _resolve_plan(module, fsdp_plan, fsdp_default_kwargs, run.placement)
     with torch.no_grad():
         for tensor in [*module.parameters(), *module.buffers()]:
             dist.broadcast(tensor, src=0)
@@ -237,9 +273,16 @@ def place_module(module: torch.nn.Module, run: DistributedRun, shard_units: Sequ
         mesh = init_device_mesh(device_type, (run.world_size, 1), mesh_dim_names=("replicate", "shard"))
     else:
         mesh = init_device_mesh(device_type, (run.world_size,), mesh_dim_names=("shard",))
-    for unit in units:
-        fully_shard(unit, mesh=mesh)
-    fully_shard(module, mesh=mesh)
+    if units or fsdp_default_kwargs:
+        from finetuning_scheduler.core.exceptions import FTSConfigurationError
+        from finetuning_scheduler.strategies.plan import shard_model
+
+        try:
+            shard_model(module, mesh, units, default_kwargs=fsdp_default_kwargs)
+        except FTSConfigurationError as err:
+            raise MisconfigurationException(str(err)) from err
+    else:
+        fully_shard(module, mesh=mesh)
     run.mesh = mesh
 
 

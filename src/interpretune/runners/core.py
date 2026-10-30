@@ -521,7 +521,7 @@ class SessionRunner:
         with self.dist_run.rank_zero_first():
             it_init(**self.run_cfg.it_session, prepare_data=self.dist_run.local_rank == 0, configure_optimizers=False)
         assert self.run_cfg.module is not None
-        place_module(self.run_cfg.module, self.dist_run, self.run_cfg.shard_units)
+        place_module(self.run_cfg.module, self.dist_run, self.run_cfg.fsdp_plan, self.run_cfg.fsdp_default_kwargs)
         it_configure_optimizers(self.run_cfg.module)
 
     def it_session_end(self):
