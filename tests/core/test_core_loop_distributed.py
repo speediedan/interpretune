@@ -367,7 +367,11 @@ def tiny_gpt2_checkpoint(tmp_path_factory):
 def test_a_meta_built_model_is_sharded_then_loaded_from_rank_zero(tiny_gpt2_checkpoint, tmp_path):
     """A model built on the meta device on both ranks and loaded from rank 0's CPU copy computes exactly what
     ``from_pretrained`` does, keeps its LM head tied to the embedding and drops the copy; a copy missing a module
-    is refused on every rank, naming the missing keys."""
+    is refused on every rank, naming the missing keys.
+
+    With LoRA, the copy's adapters load too, and one training step of the adapters over the frozen sharded base matches
+    the same step in one process.
+    """
     for record in _launch_meta(tiny_gpt2_checkpoint, tmp_path / "loaded"):
         assert record["max_abs_diff"] == 0.0
         assert record["tied"] and record["source_dropped"]
@@ -378,8 +382,10 @@ def test_a_meta_built_model_is_sharded_then_loaded_from_rank_zero(tiny_gpt2_chec
         assert "does not match the meta-built model" in record["refused"]
         assert "transformer.ln_f.bias" in record["refused"]
     # LoRA: rank 0's copy carries the adapters (non-zero B, so they move the output), and every rank gets its values
-    for record in _launch_meta(tiny_gpt2_checkpoint, tmp_path / "lora", "--lora"):
+    for record in _launch_meta(tiny_gpt2_checkpoint, tmp_path / "lora", "--lora", "--train-step"):
         assert record["max_abs_diff"] == 0.0 and record["adapter_effect"] > 0.1
+        # one adapter step on both ranks matches one process's, and moves the output
+        assert record["step_diff"] < 1e-6 and record["step_effect"] > 0.01
         assert record["trainable"] == ["default"] and record["param_types"] == ["DTensor"]
         assert record["tied"] and record["source_dropped"]
 
