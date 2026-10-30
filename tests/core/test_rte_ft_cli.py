@@ -13,6 +13,9 @@ the same epochs, and keep the same best checkpoint. The run is long enough for o
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -101,3 +104,43 @@ def test_the_core_loop_and_lightning_agree_phase_by_phase(rte_component, clean_c
         [e["val_loss"] for e in lightning["epochs"]], rel=1e-5
     )
     assert core["best_score"] == pytest.approx(lightning["best_score"], rel=1e-5)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+def test_the_cli_runs_the_phased_core_loop_under_torchrun_with_an_fsdp2_plan(rte_component, clean_cli_env, tmp_path):
+    """The shipped core run configuration, launched through the interpretune CLI under ``torchrun`` on two ranks
+    with ``placement: fsdp2`` and a plan sharding each GPT-2 block, runs every phase as one process does.
+
+    Each rank thaws the same parameters each epoch and transitions in the same epochs as the one-process run above
+    (whose thawed counts are asserted there), every parameter ends as a ``DTensor``, and the ranks agree on the
+    validation metrics and the best checkpoint, since the loop averages metrics across ranks.
+    """
+    # the console script installed beside this interpreter, launched as the docs show (`torchrun --no-python`)
+    cli = Path(sys.executable).with_name("interpretune")
+    if not cli.exists():
+        pytest.skip(f"no `interpretune` console script beside {sys.executable}")
+    work = tmp_path / "torchrun"
+    work.mkdir()
+    cfg = _run_config("core", rte_component, work, work / "record_rank{rank}.json")
+    args = [str(cli), "--run_command", "train", "--config", str(cfg)]
+    args += ["--registered_cfg", json.dumps({"datamodule_cfg": {"dataset_path": str(work / "dataset")}})]
+    args += [f"--run_cfg.{k}={v}" for k, v in LIMITS.items()]
+    args += ["--run_cfg.placement=fsdp2", "--run_cfg.fsdp_plan", json.dumps({"class:GPT2Block": {}})]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", "--no-python", *args]
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    # each rank imports `tests.*` (the recorder), which a subprocess finds only through PYTHONPATH
+    repo_root = Path(__file__).resolve().parents[2]
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(repo_root), env.get("PYTHONPATH")) if p)
+    proc = subprocess.run(cmd, cwd=work, env=env, capture_output=True, text=True, timeout=1500)
+    assert proc.returncode == 0, f"torchrun failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    records = [json.loads((work / f"record_rank{rank}.json").read_text()) for rank in range(2)]
+    for record in records:
+        epochs = record["epochs"]
+        transitions = [e["epoch"] for prev, e in zip(epochs, epochs[1:]) if e["depth"] != prev["depth"]]
+        assert transitions == [2, 5]
+        assert [len(e["thawed"]) for e in epochs] == [26, 26, 74, 74, 74, 148]
+        assert record["final_depth"] == record["best_depth"] == 2
+        assert record["param_types"] == ["DTensor"]
+    assert [e["thawed"] for e in records[0]["epochs"]] == [e["thawed"] for e in records[1]["epochs"]]
+    assert [e["val_loss"] for e in records[0]["epochs"]] == [e["val_loss"] for e in records[1]["epochs"]]
+    assert records[0]["best_score"] == records[1]["best_score"]
