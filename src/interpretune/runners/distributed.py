@@ -298,6 +298,7 @@ def place_module(
     else:
         fully_shard(module, mesh=mesh)
     run.mesh = mesh
+    _register_direct_calls(module)
     if on_meta:
         kept = {name: buffer.clone() for name, buffer in module.named_buffers() if not buffer.is_meta}
         module.to_empty(device=rank_device(run))
@@ -310,6 +311,39 @@ def place_module(
             _load_from_checkpoint_files(module, run)
         else:
             _load_from_rank0(module, run)
+
+
+def _register_direct_calls(module: torch.nn.Module) -> None:
+    """Register the methods a composition calls on its submodules outside its own forward as FSDP2 forward methods.
+
+    FSDP2 gathers a unit's parameters in hooks on ``forward``, so a submodule called directly (an nnsight model's
+    Hugging Face module, which nnsight calls rather than the interpretune module) or through another method (a
+    transcoder's ``encode``) would compute with sharded parameters. The module declares these calls with
+    ``fsdp_direct_calls()``; each declared submodule must be its own unit for its methods to be registered.
+
+    Raises:
+        MisconfigurationException: If a declared submodule is not its own FSDP2 unit, naming the plan keys to add.
+    """
+    from torch.distributed.fsdp import FSDPModule, register_fsdp_forward_method
+
+    declare = getattr(module, "fsdp_direct_calls", None)
+    entries: list[tuple[str, torch.nn.Module, tuple[str, ...]]] = list(declare()) if callable(declare) else []  # type: ignore[arg-type]
+    missing: dict[str, list[str]] = {}
+    for name, submodule, methods in entries:
+        sharded = isinstance(submodule, FSDPModule)  # a flag, not a narrowing: the module stays a torch module
+        if not sharded:
+            missing.setdefault(type(submodule).__name__, []).append(name)
+            continue
+        for method in methods:
+            if method != "forward":
+                register_fsdp_forward_method(submodule, method)
+    if missing:
+        names = [n for group in missing.values() for n in group]
+        raise MisconfigurationException(
+            f"This composition calls {', '.join(names[:3])}{' and more' if len(names) > 3 else ''} directly rather"
+            " than through its forward, so FSDP2 gathers their parameters only if each is its own unit. Add"
+            f" {', '.join(f'`class:{cls}`' for cls in sorted(missing))} to `fsdp_plan`."
+        )
 
 
 def rank_device(run: DistributedRun) -> torch.device:

@@ -25,7 +25,7 @@ from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import CircuitTracerConfig, ITConfig
 from interpretune.adapters.circuit_tracer.config import require_hooked_transformer
 from interpretune.analysis.backends.capabilities import get_model_backend
-from interpretune.utils import _SL_AVAILABLE, rank_zero_warn, rank_zero_info
+from interpretune.utils import _SL_AVAILABLE, MisconfigurationException, rank_zero_warn, rank_zero_info
 from interpretune.protocol import Adapter
 
 if TYPE_CHECKING:
@@ -106,6 +106,45 @@ def _replacement_transcoders(module: Any) -> nn.Module | None:
     return transcoders if isinstance(transcoders, nn.Module) else None
 
 
+# The per-layer transcoder methods circuit-tracer calls outside `forward`, each reading the transcoder's parameters.
+# `TranscoderSet.apply_activation_function` also calls a transcoder's activation function directly, so that submodule
+# (a JumpReLU holds its threshold) is declared on its own.
+TRANSCODER_DIRECT_METHODS = (
+    "forward",
+    "encode",
+    "decode",
+    "compute_skip",
+    "_get_decoder_vectors",
+    "encode_sparse",
+    "decode_sparse",
+)
+
+
+def transcoder_direct_calls(transcoders: nn.Module) -> list[tuple[str, nn.Module, tuple[str, ...]]]:
+    """The direct calls circuit-tracer makes on a transcoder set's per-layer transcoders, for a data-parallel
+    placement to register (see ``BaseITModule.fsdp_direct_calls``).
+
+    Raises:
+        MisconfigurationException: For a transcoder type whose methods have not been enumerated (a cross-layer
+            transcoder, for one), since an unregistered method would compute with sharded parameters.
+    """
+    from circuit_tracer.transcoder import SingleLayerTranscoder
+
+    calls: list[tuple[str, nn.Module, tuple[str, ...]]] = []
+    for name, child in transcoders.named_modules():
+        if name and child is not transcoders and isinstance(child, SingleLayerTranscoder):
+            calls.append((f"transcoders.{name}", child, TRANSCODER_DIRECT_METHODS))
+            activation = getattr(child, "activation_function", None)
+            if isinstance(activation, nn.Module) and any(True for _ in activation.parameters()):
+                calls.append((f"transcoders.{name}.activation_function", activation, ("forward",)))
+    if not calls and any(True for _ in transcoders.parameters()):
+        raise MisconfigurationException(
+            f"A data-parallel placement shards {type(transcoders).__name__} only once the methods circuit-tracer calls"
+            " on it are enumerated; only `SingleLayerTranscoder` sets are, so place this composition with `single`."
+        )
+    return calls
+
+
 class BaseCircuitTracerModule(BaseITModule):
     """Backend-agnostic base module for Circuit Tracer.
 
@@ -143,6 +182,14 @@ class BaseCircuitTracerModule(BaseITModule):
             )
         refusal = DISK_OFFLOAD_REASON if cfg is not None and cfg.offload == "disk" else None
         return CircuitTracerView(self, transcoders, refusal=refusal, tune_base=cfg is not None and cfg.tune_base)
+
+    def fsdp_direct_calls(self) -> list[tuple[str, nn.Module, tuple[str, ...]]]:
+        """Add the transcoder methods circuit-tracer calls outside ``forward`` (see
+        :func:`transcoder_direct_calls`)."""
+        calls = super().fsdp_direct_calls()
+        if (transcoders := _replacement_transcoders(self)) is not None:
+            calls.extend(transcoder_direct_calls(transcoders))
+        return calls
 
     def register_tunable_modules(self) -> None:
         """Make the transcoders this module's parameters, once, and give lazily loaded transcoder weights their

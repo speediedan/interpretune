@@ -27,11 +27,12 @@ from interpretune.runners.distributed import (
     meta_built,
     resolve_placement,
 )
-from interpretune.utils import _FTS_AVAILABLE, MisconfigurationException
+from interpretune.utils import _CT_AVAILABLE, _FTS_AVAILABLE, MisconfigurationException
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKER = Path(__file__).with_name("distributed_core_loop_worker.py")
 META_WORKER = Path(__file__).with_name("distributed_meta_init_worker.py")
+CT_WORKER = Path(__file__).with_name("distributed_ct_worker.py")
 
 
 def _run(rank: int, world_size: int = 2, placement: str = "ddp") -> DistributedRun:
@@ -461,3 +462,48 @@ def test_a_meta_built_model_is_loaded_from_each_ranks_checkpoint_slices(
             "Keys no model key matches: ['transformer.h.0.attn.extra']; parameters no key supplies: []"
             in (record["refused"])
         )
+
+
+def _launch_ct(plan: dict, out_dir: Path) -> list[dict]:
+    out_dir.mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    worker = [str(CT_WORKER), "--plan", json.dumps(plan), "--out-dir", str(out_dir)]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, f"circuit-tracer run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    return [json.loads((out_dir / f"rank{rank}.json").read_text()) for rank in range(2)]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+@pytest.mark.skipif(not _CT_AVAILABLE, reason="circuit-tracer is not installed")
+def test_a_circuit_tracer_model_is_sharded_with_its_direct_calls_registered(tmp_path):
+    """A circuit-tracer replacement model sharded on two ranks gives the logits, the nnsight trace and the
+    transcoder activations of one process, once the calls circuit-tracer makes outside the module's forward are
+    registered: the Hugging Face module nnsight calls directly, and each transcoder's ``encode`` and activation
+    function.
+
+    A plan that leaves the Hugging Face module to the root unit, whose hooks those direct calls bypass, is refused by
+    name.
+    """
+    units = {"class:Gemma2DecoderLayer": {}, "class:SingleLayerTranscoder": {}, "class:JumpReLU": {}}
+    for record in _launch_ct({**units, "class:Gemma2ForCausalLM": {}}, tmp_path / "placed"):
+        assert record["active"] > 0  # so equal activations are not two empty caches
+        assert record["plain_diff"] == record["trace_diff"] == record["activations_diff"] == 0.0
+    for record in _launch_ct(units, tmp_path / "no_entry_unit"):
+        assert "calls hf_model directly" in record["refused"]
+        assert "Add `class:Gemma2ForCausalLM` to `fsdp_plan`" in record["refused"]
+
+
+@pytest.mark.skipif(not _CT_AVAILABLE, reason="circuit-tracer is not installed")
+def test_transcoder_direct_calls_refuse_an_unenumerated_transcoder_type():
+    from interpretune.adapters.circuit_tracer.adapter import transcoder_direct_calls
+
+    assert transcoder_direct_calls(nn.Module()) == []  # nothing to shard, nothing to declare
+    other = nn.Module()
+    other.weight = nn.Parameter(torch.zeros(2))
+    with pytest.raises(MisconfigurationException, match="only `SingleLayerTranscoder` sets are"):
+        transcoder_direct_calls(other)

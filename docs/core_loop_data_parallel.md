@@ -68,6 +68,26 @@ A `class:` key matches subclasses too, and a regex matches every module name it 
 select the blocks but not their children). A plan under the `single` placement, a key that selects no module, and a plan
 without finetuning-scheduler installed are each refused by name.
 
+FSDP2 gathers a unit's parameters in hooks on its `forward`, so a module called some other way computes with sharded
+parameters. Some compositions do exactly that: nnsight calls the Hugging Face model directly rather than through the
+interpretune module, and circuit-tracer reads transcoders through methods such as `encode` and calls their activation
+functions directly. Such a composition declares these calls (`fsdp_direct_calls`), the placement registers the methods
+as FSDP2 forward methods, and each called module must be its own unit. A circuit-tracer composition over nnsight with
+Gemma 2 transcoders, for one, needs:
+
+```yaml
+run_cfg:
+  placement: fsdp2
+  fsdp_plan:
+    class:Gemma2DecoderLayer: {}
+    class:SingleLayerTranscoder: {}
+    class:JumpReLU: {}
+    class:Gemma2ForCausalLM: {}
+```
+
+A plan that leaves a called module to the root unit is refused, naming the `class:` keys to add. FSDP2 cannot shard a
+0-d parameter, which it refuses by name too.
+
 ## Models larger than one rank's accelerator
 
 By default every rank builds the whole model before it is sharded, so each rank must fit it once. For a model loaded

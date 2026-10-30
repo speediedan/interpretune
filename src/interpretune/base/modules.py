@@ -86,6 +86,15 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
     def post_auto_model_init(self) -> None:
         """Optionally modify init of an existing configuration-driven model."""
 
+    def fsdp_direct_calls(self) -> list[tuple[str, torch.nn.Module, tuple[str, ...]]]:
+        """Submodules this composition calls outside its own forward, each as ``(name, submodule, methods)``.
+
+        A data-parallel placement registers ``methods`` as FSDP2 forward methods, so the submodule's parameters are
+        gathered for them, and refuses a plan that does not make each submodule its own unit. Cooperative: an adapter
+        extends ``super()``'s list. The core path calls its model through the module, so it declares none.
+        """
+        return []
+
     def register_tunable_modules(self) -> None:
         """Register on this module any model-owned module its view must reach, once the model exists.
 

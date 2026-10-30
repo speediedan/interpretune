@@ -168,6 +168,13 @@ class BaseNNsightModule(BaseITModule):
             return
         self._modules["hf_model"] = hf_model
 
+    def fsdp_direct_calls(self) -> list[tuple[str, torch.nn.Module, tuple[str, ...]]]:
+        """Nnsight calls the registered Hugging Face module directly, not through this module's forward."""
+        calls = super().fsdp_direct_calls()
+        if isinstance(hf_model := self._modules.get("hf_model"), torch.nn.Module):
+            calls.append(("hf_model", hf_model, ("forward",)))
+        return calls
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.loss_fn = None
