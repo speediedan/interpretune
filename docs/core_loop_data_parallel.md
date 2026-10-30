@@ -132,8 +132,17 @@ The load is checked rather than trusted: when rank 0's copy is missing a key of 
 differs in a shape (embeddings resized after the build, for one), every rank refuses, naming the keys. With
 `lora_cfg`, rank 0's copy takes the same LoRA adapters as the model, so their initial values reach every rank with the
 base weights. `meta_init` cannot be combined with `bitsandbytesconfig` (FSDP2 does not shard quantized parameters), a
-module built only partly on the meta device is refused, and so is `meta_init` on a composition whose model init does not build on the meta device (a
-TransformerLens bridge, an nnsight or circuit-tracer model, or `defer_model_init`), rather than being ignored.
+module built only partly on the meta device is refused, and so is `meta_init` on a composition whose model init does
+not build on the meta device (a TransformerLens bridge, a plain nnsight model, or `defer_model_init`), rather than being
+ignored.
+
+A circuit-tracer composition over nnsight builds on the meta device too: its replacement model is built from the
+model's config with every Hugging Face and transcoder parameter on the meta device, and rank 0 also loads the model and
+its transcoders on the CPU, which the placement loads every rank from into the Hugging Face module nnsight wraps (the
+transcoders are registered inside it). The transcoders must be loaded eagerly (`lazy_encoder: false`,
+`lazy_decoder: false`), since a lazily loaded weight is read from disk rather than held as a parameter, and the
+composition needs an `nnsight_cfg` without `device_map` or remote execution; `meta_init_load: dcp` is refused, since the
+transcoders are not in the model's checkpoint. Each of these is refused by name.
 
 ## What the runner does
 
@@ -180,9 +189,9 @@ else:
 - FSDP2's `MixedPrecisionPolicy` can be passed as a unit's `mp_policy` from Python, but has no configuration alias yet,
   so a YAML run uses the loop's `torch.autocast`.
 - Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
-  model once. `meta_init` covers the core `from_pretrained` path only: TransformerLens, nnsight and circuit-tracer
-  compositions build their models their own way and refuse it at construction (tracked in
-  [interpretune#882](https://github.com/speediedan/interpretune/issues/882)).
+  model once. `meta_init` covers the core `from_pretrained` path and circuit-tracer over nnsight (with `rank0` loading
+  only): TransformerLens and plain nnsight compositions build their models their own way and refuse it at construction
+  (tracked in [interpretune#882](https://github.com/speediedan/interpretune/issues/882)).
 
 The design, and the work that remains for attribution and J++ ops, is tracked in
 [interpretune#803](https://github.com/speediedan/interpretune/issues/803).

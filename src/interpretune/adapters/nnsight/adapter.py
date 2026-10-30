@@ -175,6 +175,12 @@ class BaseNNsightModule(BaseITModule):
             calls.append(("hf_model", hf_model, ("forward",)))
         return calls
 
+    def meta_load_target(self) -> torch.nn.Module:
+        """The registered Hugging Face module, since the model is nnsight's wrapper around it, not a torch
+        module."""
+        hf_model = self._modules.get("hf_model")
+        return hf_model if isinstance(hf_model, torch.nn.Module) else super().meta_load_target()
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.loss_fn = None

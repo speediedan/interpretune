@@ -70,17 +70,18 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
     def _refuse_unbuilt_meta_init(self) -> None:
         """Refuse ``meta_init`` when this composition's model init did not build on the meta device.
 
-        Only interpretune's own Hugging Face ``from_pretrained`` path honors it. Every other init path (a
-        TransformerLens bridge, an nnsight or circuit-tracer model, a deferred init) builds the model its own way, so
-        the flag would be ignored and each rank would hold the whole model, which is what it was set to avoid.
+        Interpretune's own Hugging Face ``from_pretrained`` path and the circuit-tracer composition over nnsight
+        honor it. Every other init path (a TransformerLens bridge, a plain nnsight model, a deferred init) builds the
+        model its own way, so the flag would be ignored and each rank would hold the whole model, which is what it was
+        set to avoid.
         """
         hf_cfg = self.it_cfg.hf_from_pretrained_cfg
         if getattr(hf_cfg, "meta_init", False) and not getattr(self, "_meta_init_built", False):
             raise MisconfigurationException(
                 f"`hf_from_pretrained_cfg.meta_init` is set, but {type(self).__name__} built its model without the"
                 " meta-device build: only interpretune's Hugging Face `from_pretrained` init (without"
-                " `defer_model_init`) builds on the meta device and loads from rank 0. Unset `meta_init` for this"
-                " composition."
+                " `defer_model_init`) and the circuit-tracer composition over nnsight build on the meta device and load"
+                " from rank 0. Unset `meta_init` for this composition."
             )
 
     def post_auto_model_init(self) -> None:
@@ -94,6 +95,13 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         extends ``super()``'s list. The core path calls its model through the module, so it declares none.
         """
         return []
+
+    def meta_load_target(self) -> torch.nn.Module:
+        """The torch module a data-parallel placement loads a meta-built model's weights into: ``self.model`` here.
+
+        An adapter whose model wraps a torch module rather than being one (nnsight) returns the module it wraps.
+        """
+        return self.model
 
     def register_tunable_modules(self) -> None:
         """Register on this module any model-owned module its view must reach, once the model exists.

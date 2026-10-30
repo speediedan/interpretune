@@ -437,9 +437,21 @@ def _checkpoint_renamer(model: torch.nn.Module) -> Any:
     return rename
 
 
+def _load_target(module: torch.nn.Module) -> torch.nn.Module | None:
+    """The torch module a meta-built model is loaded into: the module's ``meta_load_target()``, else ``module.model``.
+
+    An adapter whose model is a wrapper rather than a torch module (an nnsight or circuit-tracer model) names the module
+    it wraps, which holds every parameter the placement sharded.
+    """
+    target = getattr(module, "meta_load_target", None)
+    model = target() if callable(target) else getattr(module, "model", None)
+    return model if isinstance(model, torch.nn.Module) else None
+
+
 def _load_from_checkpoint_files(module: torch.nn.Module, run: DistributedRun) -> None:
-    """Load ``module.model``'s sharded parameters from the checkpoint's safetensors files, each rank reading only
-    the slices it holds (``torch.distributed.checkpoint`` with ``HuggingFaceStorageReader``).
+    """Load the load target's (see :func:`_load_target`) sharded parameters from the checkpoint's safetensors
+    files, each rank reading only the slices it holds (``torch.distributed.checkpoint`` with
+    ``HuggingFaceStorageReader``).
 
     Every rank checks the checkpoint's keys against the model before reading, from the same files, so all ranks refuse
     together. A parameter tied to one the checkpoint supplies (an LM head tied to the embedding) needs no key of its
@@ -456,8 +468,8 @@ def _load_from_checkpoint_files(module: torch.nn.Module, run: DistributedRun) ->
     from torch.distributed.checkpoint.hf_storage import HuggingFaceStorageReader
     from torch.distributed.checkpoint.state_dict_loader import load
 
-    model = getattr(module, "model", None)
-    assert isinstance(model, torch.nn.Module)
+    model = _load_target(module)
+    assert model is not None
     path = getattr(module, META_INIT_CHECKPOINT)
     index = os.path.join(path, "model.safetensors.index.json")
     single = os.path.join(path, "model.safetensors")
@@ -501,7 +513,8 @@ def _load_from_checkpoint_files(module: torch.nn.Module, run: DistributedRun) ->
 
 
 def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
-    """Load rank 0's CPU copy of the checkpoint into ``module.model``, sharded and materialized on every rank.
+    """Load rank 0's CPU copy of the checkpoint into the load target (see :func:`_load_target`), sharded and
+    materialized on every rank.
 
     Rank 0 checks the copy against the model first and every rank raises the same refusal, so no rank is left
     waiting in a collective. Buffers are broadcast from the copy too, since ``to_empty`` left them uninitialized and
@@ -515,11 +528,17 @@ def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
     import torch.distributed as dist
     from torch.distributed.checkpoint.state_dict import StateDictOptions, set_model_state_dict
 
-    model = getattr(module, "model", None)
+    model = _load_target(module)
     source = getattr(module, META_INIT_SOURCE, None)
     problem, full = None, {}
     if run.rank == 0:
-        if not isinstance(model, torch.nn.Module) or source is None:
+        if model is None:
+            wrapper = type(getattr(module, "model", None)).__name__
+            problem = (
+                f"The module was built on the meta device, but its model is a {wrapper} rather than a torch module and"
+                " `meta_load_target()` names none to load the checkpoint into."
+            )
+        elif source is None:
             problem = (
                 "The module was built on the meta device, but rank 0 holds no checkpoint to load it from. Build it"
                 " with `HFFromPretrainedConfig.meta_init`, which loads one on rank 0's CPU."
@@ -540,7 +559,7 @@ def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
     dist.broadcast_object_list(box, src=0)
     if box[0] is not None:
         raise MisconfigurationException(box[0])
-    assert isinstance(model, torch.nn.Module)
+    assert model is not None
     options = StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
     set_model_state_dict(model, full, options=options)
     with torch.no_grad():

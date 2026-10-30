@@ -242,7 +242,7 @@ class TestPlacementChecks:
 
         BaseITModule._refuse_unbuilt_meta_init(module(meta_init=False, built=None))
         BaseITModule._refuse_unbuilt_meta_init(module(meta_init=True, built=True))  # the HF from_pretrained meta build
-        # a TransformerLens bridge, nnsight or circuit-tracer init (or a deferred one) never runs the meta build
+        # a TransformerLens bridge or plain nnsight init (or a deferred one) never runs the meta build
         with pytest.raises(MisconfigurationException, match="built its model without the meta-device build"):
             BaseITModule._refuse_unbuilt_meta_init(module(meta_init=True, built=None))
         no_hf_cfg = SimpleNamespace(it_cfg=SimpleNamespace(hf_from_pretrained_cfg=None))
@@ -464,12 +464,12 @@ def test_a_meta_built_model_is_loaded_from_each_ranks_checkpoint_slices(
         )
 
 
-def _launch_ct(plan: dict, out_dir: Path) -> list[dict]:
+def _launch_ct(plan: dict, out_dir: Path, meta: bool = False) -> list[dict]:
     out_dir.mkdir()
     env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
     env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
     env["CUDA_VISIBLE_DEVICES"] = ""
-    worker = [str(CT_WORKER), "--plan", json.dumps(plan), "--out-dir", str(out_dir)]
+    worker = [str(CT_WORKER), "--plan", json.dumps(plan), "--out-dir", str(out_dir), *(["--meta"] if meta else [])]
     cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
     assert proc.returncode == 0, f"circuit-tracer run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
@@ -496,6 +496,77 @@ def test_a_circuit_tracer_model_is_sharded_with_its_direct_calls_registered(tmp_
     for record in _launch_ct(units, tmp_path / "no_entry_unit"):
         assert "calls hf_model directly" in record["refused"]
         assert "Add `class:Gemma2ForCausalLM` to `fsdp_plan`" in record["refused"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
+@pytest.mark.skipif(not _CT_AVAILABLE, reason="circuit-tracer is not installed")
+def test_a_meta_built_circuit_tracer_model_loads_from_rank0(tmp_path):
+    """A circuit-tracer replacement model built on the meta device (``meta_replacement_model``), sharded on two
+    ranks and loaded from rank 0's copy into the Hugging Face module nnsight wraps, gives the logits, the nnsight
+    trace and the transcoder activations of the copy in one process."""
+    plan = {f"class:{c}": {} for c in ("Gemma2DecoderLayer", "SingleLayerTranscoder", "JumpReLU", "Gemma2ForCausalLM")}
+    for record in _launch_ct(plan, tmp_path / "meta", meta=True):
+        assert record["active"] > 0
+        assert record["plain_diff"] == record["trace_diff"] == record["activations_diff"] == 0.0
+
+
+@pytest.mark.skipif(not _CT_AVAILABLE, reason="circuit-tracer is not installed")
+def test_circuit_tracer_meta_init_refuses_what_the_meta_build_cannot_honor(monkeypatch):
+    """The circuit-tracer meta build refuses, by name and all at once, a backend other than nnsight, ``dcp``
+    loading, lazily loaded transcoder weights, a composition without ``nnsight_cfg`` (whose Hugging Face module is
+    never registered) and a placement of its own; otherwise rank 0 keeps the loaded copy as the meta-init source
+    and the module records that it built on the meta device."""
+    from types import SimpleNamespace
+
+    from interpretune.adapters.circuit_tracer import adapter
+    from interpretune.config import CircuitTracerConfig
+    from interpretune.config.mixins import HFFromPretrainedConfig
+    from interpretune.runners.distributed import META_INIT_SOURCE
+
+    def stub(load: str, nnsight_cfg: object | None = object()):
+        hf_cfg = HFFromPretrainedConfig(meta_init=True, meta_init_load=load)
+        it_cfg = SimpleNamespace(hf_from_pretrained_cfg=hf_cfg, model_name_or_path="m", nnsight_cfg=nnsight_cfg)
+        return SimpleNamespace(it_cfg=it_cfg)
+
+    build = adapter.BaseCircuitTracerModule._meta_replacement_model
+    with pytest.raises(MisconfigurationException, match="cannot do") as refused:
+        placement = {"device_map": "a", "remote": 1}
+        build(stub("dcp", None), CircuitTracerConfig(backend="transformerlens"), True, placement)
+    for name in (
+        "'transformerlens'",
+        "`meta_init_load: dcp`",
+        "`lazy_decoder: false`",
+        "`nnsight_cfg`",
+        "device_map, remote",
+    ):
+        assert name in str(refused.value)
+    with pytest.raises(MisconfigurationException, match="lazily loaded transcoder weights"):
+        build(stub("rank0"), CircuitTracerConfig(backend="nnsight"), False, {})  # lazy_decoder defaults to True
+
+    built, source = object(), torch.nn.Linear(1, 1)
+    calls = []
+    monkeypatch.setattr(adapter, "meta_replacement_model", lambda *a, **k: calls.append((a, k)) or (built, source))
+    monkeypatch.delenv("RANK", raising=False)
+    module = stub("rank0")
+    cfg = CircuitTracerConfig(backend="nnsight", lazy_decoder=False, transcoder_set="t", model_name="n")
+    assert build(module, cfg, False, {"dispatch": True}) is built
+    assert calls == [(("n", "t", cfg.dtype), {"load_source": True})]
+    assert getattr(module, META_INIT_SOURCE) is source and module._meta_init_built
+    monkeypatch.setenv("RANK", "1")
+    build(stub("rank0"), cfg, False, {})
+    assert calls[-1][1] == {"load_source": False}
+
+
+def test_an_nnsight_module_loads_meta_weights_into_its_registered_hf_module():
+    from types import SimpleNamespace
+
+    from interpretune.adapters.nnsight.adapter import BaseNNsightModule
+
+    hf_model = torch.nn.Linear(1, 1)
+    module = SimpleNamespace(_modules={"hf_model": hf_model}, model=object())  # nnsight's wrapper is no torch module
+    assert BaseNNsightModule.meta_load_target(module) is hf_model
 
 
 @pytest.mark.skipif(not _CT_AVAILABLE, reason="circuit-tracer is not installed")
