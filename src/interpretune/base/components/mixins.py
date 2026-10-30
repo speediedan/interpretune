@@ -573,22 +573,25 @@ class HFFromPretrainedMixin:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _hf_post_init_cfg"
         self.model.config.use_cache = self.hf_cfg.use_model_cache  # type: ignore[attr-defined]  # mixin provides model
         self._configure_gradient_checkpointing()
-        # TODO: disentagle use of bnb and lora configs in the future, create single peft config perhaps
-        if all((_BNB_AVAILABLE, self.hf_cfg.bitsandbytesconfig, self.hf_cfg.lora_cfg)):
-            self._configure_peft()
+        # LoRA on an unquantized base, or QLoRA when bitsandbytes is configured and installed
+        if self.hf_cfg.lora_cfg and not self.hf_cfg.bitsandbytesconfig:
+            self._configure_peft(quantized=False)
+        elif all((_BNB_AVAILABLE, self.hf_cfg.bitsandbytesconfig, self.hf_cfg.lora_cfg)):
+            self._configure_peft(quantized=True)
 
     def _configure_gradient_checkpointing(self) -> None:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _configure_gradient_checkpointing"
         if self.hf_cfg.activation_checkpointing:
             self.model.gradient_checkpointing_enable()  # type: ignore[attr-defined]  # mixin provides model
 
-    def _configure_peft(self) -> None:
+    def _configure_peft(self, quantized: bool = True) -> None:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _configure_peft"
         if self.hf_cfg.activation_checkpointing:
             self.model.gradient_checkpointing_enable()  # type: ignore[attr-defined]  # mixin provides model
         from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 
-        self.model = prepare_model_for_kbit_training(self.model)  # mixin provides model
+        if quantized:
+            self.model = prepare_model_for_kbit_training(self.model)  # mixin provides model
         self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))  # mixin provides model
 
 
