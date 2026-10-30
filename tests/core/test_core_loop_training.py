@@ -423,6 +423,15 @@ class TestPrecision:
         with pytest.raises(MisconfigurationException, match="bf16-true"):
             core_train_loop(_bf16_module(), _bf16_datamodule(), -1, -1, 1, precision="bf16-mixed")
 
+    def test_fixture_cfg_dtype_precision_is_not_scraped_into_the_runner(self):
+        """A fixture cfg's `precision` is its model dtype (`tests.base_defaults.BaseCfg`), a different meaning than
+        the runner's loop precision: the harness's name-based extraction must not carry it across."""
+        from tests.utils import kwargs_from_cfg_obj
+
+        source = SimpleNamespace(precision="torch.float32", limit_train_batches=3)
+        scraped = kwargs_from_cfg_obj(SessionRunnerCfg, source, exclude=("precision",))
+        assert "precision" not in scraped and scraped["limit_train_batches"] == 3
+
     def test_unknown_precision_refuses_by_name(self):
         with pytest.raises(MisconfigurationException, match="Unknown precision '16-mixed'"):
             SessionRunnerCfg(module=TinyModule(), datamodule=_datamodule(), precision="16-mixed")

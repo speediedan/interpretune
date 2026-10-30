@@ -625,7 +625,10 @@ def runner_fixture_init(sess_fixture, fixt_cfg, run_phase: RunPhase):
         Tuple of (result, runner, run_config)
     """
     # Extract configuration parameters
-    run_config = kwargs_from_cfg_obj(AnalysisRunnerCfg, fixt_cfg, base_kwargs={"it_session": sess_fixture})
+    # a fixture cfg's `precision` is its model dtype ("torch.float32"), not the runner's loop precision (#836)
+    run_config = kwargs_from_cfg_obj(
+        AnalysisRunnerCfg, fixt_cfg, base_kwargs={"it_session": sess_fixture}, exclude=("precision",)
+    )
 
     # If we're just configuring, return the config dictionary only
     if run_phase.value <= RunPhase.cfgonly.value:
