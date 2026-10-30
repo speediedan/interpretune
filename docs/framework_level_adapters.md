@@ -63,6 +63,8 @@ This is configured via `_it_cls_metadata` on each adapter.
 
 - **`max_steps`**: An optimizer-step budget (`-1` for none), whichever of it and `max_epochs` is reached first. The epoch in which the budget is spent still validates and runs its epoch-end hooks. Optimizer steps are counted on the loop context (`ctx.optimizer_step`), because `module.global_step` counts every step `run_step` dispatches, validation and test steps included.
 - **`validate_with_grad`**: Validate with gradients enabled rather than under `torch.inference_mode()`, for a validation objective computed with `torch.autograd.grad`. Off by default.
+- **`precision`**: The step functions' autocast, with Lightning's names: `"bf16-mixed"` runs them under `torch.autocast(dtype=torch.bfloat16)` around fp32 master weights (the optimizer steps the fp32 parameters), `"bf16-true"` does the same for a module whose weights are already bfloat16, and `"32"` never autocasts. The default, `None`, keeps the module dtype's meaning: autocast exactly when the module's dtype is bfloat16, so an existing run is unchanged. A precision that contradicts the module's dtype is refused by name (`"bf16-mixed"` on bfloat16 weights is `"bf16-true"`), and training, validation and test steps all take the same precision, as Lightning applies its precision to every phase. This is the loop's autocast only: under an `fsdp2` placement it is separate from FSDP2's `MixedPrecisionPolicy`.
+- **`accumulate_grad_batches`**: Accumulate gradients over this many training batches per optimizer step, each batch's loss scaled by the reciprocal, so an accumulated step matches one step on the window's mean loss. The optimizer, step-interval lr schedulers, `on_train_step_end` and `max_steps` all count optimizer steps, and a partial window at an epoch's end steps before validation, keeping the reciprocal scale (as in Lightning: a short final window steps proportionally less). A tuning scheduler that counts steps through its optimizer's post-hook therefore sees only real steps. Under a data-parallel placement every batch's backward still synchronizes gradients, so accumulation there saves optimizer steps, not communication.
 - **`callbacks`**: Objects with any of `CoreCallback`'s methods (`interpretune.runners.core`): `on_train_start(ctx)`, `on_train_epoch_start(ctx)`, `on_train_step_end(ctx, outputs)`, `on_validation_end(ctx, metrics)`, `on_train_epoch_end(ctx, metrics)` and `on_train_end(ctx)`, plus `state_dict()` / `load_state_dict(state)` for checkpoints. A callback ends training by setting `ctx.should_stop`, which is how early stopping is written:
 
 ```python
@@ -125,7 +127,7 @@ For any `compatibility_attrs` key that is **not** `log` or `log_dict`, a `_dummy
 | Logging | Accumulate-and-print | TensorBoard, W&B, CSV, etc. |
 | Callbacks | A minimal `CoreCallback` list (step, validation-end and epoch boundaries) | Early stopping, checkpointing, LR monitor |
 | Distributed training | Not supported | DDP, FSDP, DeepSpeed |
-| Mixed precision | Manual `torch.autocast` | Precision plugins |
+| Mixed precision | `precision` (`bf16-mixed`, `bf16-true`, `32`) via `torch.autocast` | Precision plugins |
 | Checkpointing | `checkpoint_state` / `load_checkpoint_state` (module, optimizers, lr schedulers, RNG), saved by a callback | Automatic model checkpointing |
 | Progress bars | Not supported | Built-in progress tracking |
 | Profiling | Not supported | Lightning profilers |

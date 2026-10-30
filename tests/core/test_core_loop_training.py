@@ -1,5 +1,5 @@
 """The core training loop's lr scheduler stepping, step budget, per-epoch metrics, callbacks, validation with
-gradients and checkpoint state (#761)."""
+gradients and checkpoint state (#761), and its precision and gradient accumulation (#836)."""
 
 from __future__ import annotations
 
@@ -38,6 +38,9 @@ class TinyModule(nn.Module):
         self._logged_metrics: dict[str, list[float]] = {}
         self.calls: list[str] = []
         self.val_grad_modes: list[tuple[bool, bool]] = []
+        self.train_autocast: list[torch.dtype | None] = []
+        self.val_autocast: list[torch.dtype | None] = []
+        self.weight_at_batch: list[float] = []
         if epoch_hooks:
             self.on_train_epoch_start = lambda: self.calls.append("epoch_start")
             self.on_train_epoch_end = lambda: self.calls.append("epoch_end")
@@ -51,12 +54,19 @@ class TinyModule(nn.Module):
     def batch_to_device(self, batch):
         return batch
 
+    @staticmethod
+    def _autocast_dtype():
+        return torch.get_autocast_dtype("cpu") if torch.is_autocast_enabled("cpu") else None
+
     def training_step(self, batch, batch_idx):
+        self.train_autocast.append(self._autocast_dtype())
+        self.weight_at_batch.append(self.model.weight.detach().float().flatten()[0].item())
         loss = self.model(batch).pow(2).mean()
         self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
+        self.val_autocast.append(self._autocast_dtype())
         self.val_grad_modes.append((torch.is_grad_enabled(), torch.is_inference_mode_enabled()))
         self.log("val_loss", float(self.current_epoch + batch_idx))
 
@@ -365,6 +375,124 @@ class TestCheckpointState:
         ctx.optimizer_step = 0
         ctx.load_checkpoint_state(state)
         assert ctx.optimizer_step == 7
+
+
+def _bf16_module():
+    module = TinyModule()
+    module.model.to(torch.bfloat16)
+    module.dtype = torch.bfloat16
+    return module
+
+
+def _bf16_datamodule(n_train: int = 2, n_val: int = 1):
+    batches = [torch.ones(1, 2, dtype=torch.bfloat16) * (i + 1) for i in range(max(n_train, n_val))]
+    return SimpleNamespace(train_dataloader=lambda: batches[:n_train], val_dataloader=lambda: batches[:n_val])
+
+
+class TestPrecision:
+    """`precision` (#836): 'bf16-mixed' autocasts around fp32 master weights, 'bf16-true' names the module-dtype
+    behavior, '32' never autocasts, and the default keeps the module-dtype meaning."""
+
+    def test_default_keeps_module_dtype_meaning(self):
+        fp32 = TinyModule()
+        _train(fp32)
+        assert set(fp32.train_autocast) == {None}
+        bf16 = _bf16_module()
+        core_train_loop(bf16, _bf16_datamodule(), -1, -1, 1)
+        assert set(bf16.train_autocast) == {torch.bfloat16}
+
+    def test_bf16_mixed_autocasts_and_keeps_fp32_master_weights(self):
+        module = TinyModule()
+        before = module.model.weight.detach().clone()
+        _train(module, precision="bf16-mixed")
+        assert set(module.train_autocast) == {torch.bfloat16}
+        assert set(module.val_autocast) == {torch.bfloat16}
+        assert module.model.weight.dtype == torch.float32
+        assert not torch.equal(module.model.weight, before)  # the fp32 weights are what the optimizer steps
+
+    def test_32_never_autocasts_even_for_a_bf16_module(self):
+        module = _bf16_module()
+        core_train_loop(module, _bf16_datamodule(), -1, -1, 1, precision="32")
+        assert set(module.train_autocast) == {None}
+
+    def test_bf16_true_on_fp32_weights_refuses_naming_bf16_mixed(self):
+        with pytest.raises(MisconfigurationException, match="bf16-mixed"):
+            _train(TinyModule(), precision="bf16-true")
+
+    def test_bf16_mixed_on_bf16_weights_refuses_naming_bf16_true(self):
+        with pytest.raises(MisconfigurationException, match="bf16-true"):
+            core_train_loop(_bf16_module(), _bf16_datamodule(), -1, -1, 1, precision="bf16-mixed")
+
+    def test_fixture_cfg_dtype_precision_is_not_scraped_into_the_runner(self):
+        """A fixture cfg's `precision` is its model dtype (`tests.base_defaults.BaseCfg`), a different meaning than
+        the runner's loop precision: the harness's name-based extraction must not carry it across."""
+        from tests.utils import kwargs_from_cfg_obj
+
+        source = SimpleNamespace(precision="torch.float32", limit_train_batches=3)
+        scraped = kwargs_from_cfg_obj(SessionRunnerCfg, source, exclude=("precision",))
+        assert "precision" not in scraped and scraped["limit_train_batches"] == 3
+
+    def test_unknown_precision_refuses_by_name(self):
+        with pytest.raises(MisconfigurationException, match="Unknown precision '16-mixed'"):
+            SessionRunnerCfg(module=TinyModule(), datamodule=_datamodule(), precision="16-mixed")
+        with pytest.raises(MisconfigurationException, match="Unknown precision"):
+            _train(TinyModule(), precision="16-mixed")
+
+
+class TestGradientAccumulation:
+    """`accumulate_grad_batches` (#836): the optimizer, step-interval schedulers, step-end callbacks and the step
+    budget all count optimizer steps, taken every N batches and flushed at the epoch's end."""
+
+    def test_steps_every_n_batches_and_flushes_the_partial_window(self):
+        module, recorder = TinyModule(), Recorder()
+        sched = torch.optim.lr_scheduler.StepLR(module.optimizers[0], step_size=1, gamma=0.5)
+        module.lr_scheduler_configs = [LRSchedulerConfig(sched, interval="step")]
+        ctx = _train(module, dm={"n_train": 5}, callbacks=[recorder], accumulate_grad_batches=2)
+        assert ctx.optimizer_step == 3  # two full windows plus the flushed fifth batch
+        assert sched.last_epoch == 3
+        assert [e[1] for e in recorder.events if e[0] == "step_end"] == [1, 2, 3]
+        w = module.weight_at_batch
+        assert w[1] == w[0] and w[2] != w[1]  # no step inside a window, a step at its end
+
+    def test_accumulated_step_matches_one_step_on_the_mean_loss(self):
+        batches = [torch.ones(1, 2), torch.ones(1, 2) * 2]
+        reference = TinyModule(lr=0.1)
+        loss = sum(reference.model(b).pow(2).mean() for b in batches) / 2
+        reference.optimizers[0].zero_grad()
+        loss.backward()
+        reference.optimizers[0].step()
+
+        module = TinyModule(lr=0.1)  # same seed, so the same initial weights
+        dm = SimpleNamespace(train_dataloader=lambda: batches, val_dataloader=lambda: batches[:1])
+        core_train_loop(module, dm, -1, -1, 1, accumulate_grad_batches=2)
+        assert torch.allclose(module.model.weight, reference.model.weight)
+        assert torch.allclose(module.model.bias, reference.model.bias)
+
+    def test_max_steps_counts_optimizer_steps_not_batches(self):
+        module = TinyModule()
+        ctx = _train(module, max_epochs=3, dm={"n_train": 6}, max_steps=1, accumulate_grad_batches=2)
+        assert ctx.optimizer_step == 1
+        assert len(module.weight_at_batch) == 2  # one optimizer step is two accumulated batches, then it stops
+
+    def test_accumulate_grad_batches_below_one_refuses(self):
+        with pytest.raises(MisconfigurationException, match="accumulate_grad_batches"):
+            SessionRunnerCfg(module=TinyModule(), datamodule=_datamodule(), accumulate_grad_batches=0)
+        with pytest.raises(MisconfigurationException, match="accumulate_grad_batches"):
+            _train(TinyModule(), accumulate_grad_batches=0)
+
+
+def test_session_runner_cfg_precision_and_accumulation_reach_the_loop():
+    module, recorder = TinyModule(), Recorder()
+    cfg = SessionRunnerCfg(
+        module=module,
+        datamodule=_datamodule(n_train=4),
+        max_epochs=1,
+        callbacks=[recorder],
+        precision="bf16-mixed",
+        accumulate_grad_batches=2,
+    )
+    ctx = core_train_loop(**cfg.__dict__)
+    assert ctx.optimizer_step == 2 and set(module.train_autocast) == {torch.bfloat16}
 
 
 def test_session_runner_cfg_fields_reach_the_loop():

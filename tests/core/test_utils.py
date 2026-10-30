@@ -186,7 +186,10 @@ class TestClassUtils:
     def test_basic_trainer_warns(self, get_it_session__core_cust__setup):
         fixture = get_it_session__core_cust__setup
         it_session, test_cfg = fixture.it_session, fixture.test_cfg()
-        test_cfg_overrides = {k: v for k, v in test_cfg.__dict__.items() if k in SessionRunnerCfg.__dict__.keys()}
+        # a test cfg's `precision` is its model dtype ("torch.float32"), not the runner's loop precision (#836)
+        test_cfg_overrides = {
+            k: v for k, v in test_cfg.__dict__.items() if k in SessionRunnerCfg.__dict__.keys() and k != "precision"
+        }
         with pytest.raises(MisconfigurationException, match="If not providing `it_session`"):
             _ = SessionRunnerCfg(module=it_session.module, datamodule=None, **test_cfg_overrides)
         assert test_cfg
