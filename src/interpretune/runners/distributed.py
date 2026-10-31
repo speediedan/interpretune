@@ -29,6 +29,7 @@ whose parameters span several devices (a layer split under data parallelism), tw
 from __future__ import annotations
 
 import atexit
+import functools
 import os
 import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -334,9 +335,7 @@ def _register_direct_calls(module: torch.nn.Module) -> None:
         if not sharded:
             missing.setdefault(type(submodule).__name__, []).append(name)
             continue
-        for method in methods:
-            if method != "forward":
-                register_fsdp_forward_method(submodule, method)
+        _register_forward_methods(submodule, methods, register_fsdp_forward_method)
     if missing:
         names = [n for group in missing.values() for n in group]
         raise MisconfigurationException(
@@ -344,6 +343,47 @@ def _register_direct_calls(module: torch.nn.Module) -> None:
             " than through its forward, so FSDP2 gathers their parameters only if each is its own unit. Add"
             f" {', '.join(f'`class:{cls}`' for cls in sorted(missing))} to `fsdp_plan`."
         )
+
+
+def _register_forward_methods(submodule: torch.nn.Module, methods: Sequence[str], register: Any) -> None:
+    """Register ``methods`` of one FSDP2 unit as forward methods, gathering its parameters only at the outermost
+    call.
+
+    The declared methods call one another (a transcoder's ``decode_sparse`` calls ``_get_decoder_vectors``, its
+    ``forward`` calls ``encode`` and ``decode``), and FSDP2 reshards a unit when any registered method returns. Without
+    this guard the inner call's return reshards the unit while the outer call is still computing, which then reads a
+    sharded parameter (``aten.add.Tensor got mixed torch.Tensor and DTensor``). So a call made while another registered
+    call on the same unit is in flight, ``forward`` included, runs the original method.
+    """
+    depth = [0]
+
+    def enter(*_: Any) -> None:
+        depth[0] += 1
+
+    def leave(*_: Any) -> None:
+        depth[0] -= 1
+
+    if "forward" in methods:
+        submodule.register_forward_pre_hook(enter)
+        submodule.register_forward_hook(leave, always_call=True)
+    for method in methods:
+        if method == "forward":
+            continue
+        inner = getattr(submodule, method)
+        register(submodule, method)
+        outer = getattr(submodule, method)
+
+        @functools.wraps(inner)
+        def guarded(*args: Any, _inner: Any = inner, _outer: Any = outer, **kwargs: Any) -> Any:
+            if depth[0]:
+                return _inner(*args, **kwargs)
+            depth[0] += 1
+            try:
+                return _outer(*args, **kwargs)
+            finally:
+                depth[0] -= 1
+
+        setattr(submodule, method, guarded)
 
 
 def rank_device(run: DistributedRun) -> torch.device:

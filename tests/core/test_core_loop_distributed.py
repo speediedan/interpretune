@@ -481,10 +481,11 @@ def _launch_ct(plan: dict, out_dir: Path, meta: bool = False) -> list[dict]:
 @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
 @pytest.mark.skipif(not _CT_AVAILABLE, reason="circuit-tracer is not installed")
 def test_a_circuit_tracer_model_is_sharded_with_its_direct_calls_registered(tmp_path):
-    """A circuit-tracer replacement model sharded on two ranks gives the logits, the nnsight trace and the
-    transcoder activations of one process, once the calls circuit-tracer makes outside the module's forward are
-    registered: the Hugging Face module nnsight calls directly, and each transcoder's ``encode`` and activation
-    function.
+    """A circuit-tracer replacement model sharded on two ranks gives the logits, the nnsight trace, the transcoder
+    activations and the sparse encode and decode of one process, once the calls circuit-tracer makes outside the
+    module's forward are registered: the Hugging Face module nnsight calls directly, and each transcoder's methods
+    and activation function. A registered method calling another on the same unit (``decode_sparse`` calls
+    ``_get_decoder_vectors``) must not reshard the unit under its caller.
 
     A plan that leaves the Hugging Face module to the root unit, whose hooks those direct calls bypass, is refused by
     name.
@@ -492,7 +493,9 @@ def test_a_circuit_tracer_model_is_sharded_with_its_direct_calls_registered(tmp_
     units = {"class:Gemma2DecoderLayer": {}, "class:SingleLayerTranscoder": {}, "class:JumpReLU": {}}
     for record in _launch_ct({**units, "class:Gemma2ForCausalLM": {}}, tmp_path / "placed"):
         assert record["active"] > 0  # so equal activations are not two empty caches
-        assert record["plain_diff"] == record["trace_diff"] == record["activations_diff"] == 0.0
+        assert (
+            record["plain_diff"] == record["trace_diff"] == record["activations_diff"] == record["sparse_diff"] == 0.0
+        )
     for record in _launch_ct(units, tmp_path / "no_entry_unit"):
         assert "calls hf_model directly" in record["refused"]
         assert "Add `class:Gemma2ForCausalLM` to `fsdp_plan`" in record["refused"]
@@ -505,11 +508,13 @@ def test_a_circuit_tracer_model_is_sharded_with_its_direct_calls_registered(tmp_
 def test_a_meta_built_circuit_tracer_model_loads_from_rank0(tmp_path):
     """A circuit-tracer replacement model built on the meta device (``meta_replacement_model``), sharded on two
     ranks and loaded from rank 0's copy into the Hugging Face module nnsight wraps, gives the logits, the nnsight
-    trace and the transcoder activations of the copy in one process."""
+    trace, the transcoder activations and the sparse encode and decode of the copy in one process."""
     plan = {f"class:{c}": {} for c in ("Gemma2DecoderLayer", "SingleLayerTranscoder", "JumpReLU", "Gemma2ForCausalLM")}
     for record in _launch_ct(plan, tmp_path / "meta", meta=True):
         assert record["active"] > 0
-        assert record["plain_diff"] == record["trace_diff"] == record["activations_diff"] == 0.0
+        assert (
+            record["plain_diff"] == record["trace_diff"] == record["activations_diff"] == record["sparse_diff"] == 0.0
+        )
 
 
 @pytest.mark.skipif(not _CT_AVAILABLE, reason="circuit-tracer is not installed")
