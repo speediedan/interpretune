@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("venngram", reason="the venngram extra is not installed")
 
 from interpretune.analysis.backends.capabilities import InterventionSupport
-from interpretune.analysis.venngram import check_recipe, require_supported, venngram_support
+from interpretune.analysis.venngram import check_recipe, require_supported, support_mapping, venngram_support
 from interpretune.utils import MisconfigurationException
 
 BOOK = {
@@ -93,3 +93,40 @@ class TestCheckRecipe:
             book=recipe.book,
         )
         assert any("operand `concept` is not supported yet" in r for r in check_recipe(with_operand, _support()))
+
+    def test_the_published_record_round_trips_and_conformance_agrees(self, tmp_path):
+        import yaml
+        from venngram import conformance, store
+        from venngram.ops import Support
+
+        support = _support()
+        document = support_mapping(support)
+        reread = Support.from_mapping(document)
+        assert (reread.ops, reread.targets, reread.tokens, reread.values, reread.sites, reread.name) == (
+            support.ops,
+            support.targets,
+            support.tokens,
+            support.values,
+            support.sites,
+            support.name,
+        )
+
+        root = tmp_path / "published"
+        root.mkdir()
+        recipe = {
+            "schema_version": 2,
+            "kind": "recipe",
+            "name": "dose-the-units",
+            "model": {"id": "m", "revision": "r1"},
+            "book": BOOK,
+            "stages": [
+                {"site": "mlp.hook_out", "ops": [{"op": "add", "target": {"set": "chess"}, "value": {"dose": 0.8}}]}
+            ],
+        }
+        (root / "recipe.yaml").write_text(yaml.safe_dump(recipe))
+        (root / "support.yaml").write_text(yaml.safe_dump(document))
+        store.publish(
+            "local", str(root), root, documents=[("recipe", "recipe.yaml"), ("support_record", "support.yaml")]
+        )
+        report = conformance.check(f"local:{root}", supports=[reread])
+        assert report.ok, [(d.path, d.error, dict(d.refusals)) for d in report.documents]

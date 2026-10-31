@@ -12,10 +12,16 @@ Everything in this package needs the optional ``venngram`` extra; importing inte
 .. warning:: This is an experimental API and may change in a future release.
 """
 
-from interpretune.analysis.venngram.support import check_recipe, require_supported, venngram_support
+from interpretune.analysis.venngram.apply import recipe_interventions
+from interpretune.analysis.venngram.fetch import FetchedRecipe, load_recipe
+from interpretune.analysis.venngram.support import check_recipe, require_supported, support_mapping, venngram_support
 
 __all__ = [
+    "FetchedRecipe",
     "check_recipe",
+    "load_recipe",
+    "recipe_interventions",
     "require_supported",
+    "support_mapping",
     "venngram_support",
 ]

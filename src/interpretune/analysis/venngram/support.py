@@ -15,9 +15,9 @@ backend already publishes, never restated by hand:
   no interpretune spelling yet and are not declared.
 - **sites** from :class:`~interpretune.analysis.backends.capabilities.CaptureSupport`'s capturable points, which
   are layer-free base spellings like a recipe's sites. A site the backend cannot capture on this model is a site
-  a treatment cannot be verified at, so it is not declared reachable. Notably, recipes name ``mlp.out.hook_in``
-  (the MLP hidden activation's input), which interpretune's point vocabulary has no point for yet: it is refused
-  by name until that point exists, rather than guessed at.
+  a treatment cannot be verified at, so it is not declared reachable. Recipes name ``mlp.out.hook_in`` for the
+  MLP hidden activation; the vocabulary's semantic spelling for that tensor is ``hook_mlp_hidden_in`` (the down
+  projection's input), and both spellings parse to the one point.
 - **targets and values**: unit targets with ``dose``/``doses`` values, what the apply path implements today.
   Feature targets, evidence-sourced values and transforms are refused by name.
 
@@ -87,6 +87,36 @@ def venngram_support(
         sites=None if capture is None else frozenset(capture.capturable),
         name=name,
     )
+
+
+def support_mapping(support: Any) -> dict[str, Any]:
+    """A derived ``venngram.ops.Support`` as its publishable ``support_record`` document.
+
+    The document is what a recipe is checked against without this consumer installed (venngram's conformance command
+    takes it directly), so it must carry exactly what the in-process record declares: the same fields, sorted, with an
+    unbounded site set omitted rather than spelled as an empty list. A callable site predicate cannot be published and
+    is refused by name rather than dropped.
+    """
+    if callable(support.sites):
+        raise MisconfigurationException(
+            "A support record with a callable site predicate cannot be published as a document; derive it from a "
+            "CaptureSupport instead."
+        )
+    doc: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "support_record",
+        "name": support.name,
+        "ops": sorted(support.ops),
+        "targets": sorted(support.targets),
+        "tokens": sorted(support.tokens),
+        "values": sorted(support.values),
+        "transforms": sorted(support.transforms),
+    }
+    if support.sites is not None:
+        doc["sites"] = sorted(support.sites)
+    if support.bases is not None:
+        doc["bases"] = sorted(support.bases)
+    return doc
 
 
 def check_recipe(recipe: Any, support: Any) -> list[str]:
