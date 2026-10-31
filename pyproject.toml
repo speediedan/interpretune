@@ -110,6 +110,13 @@ lightning = [
     "lightning >= 2.6.0,<2.7.0",
 ]
 
+# The venngram consumer integration (`interpretune.analysis.venngram`, #887): venngram's core only. Its Hub
+# stores sit behind venngram's own `hf` extra, which a fetch-by-reference user adds themselves. The floor is
+# the one finetuning-scheduler declares for the same pre-release line; both rise to 0.1.0 when it publishes.
+venngram = [
+    "venngram>=0.1.0.dev0,<0.2.0",
+]
+
 # Scope: what someone running the shipped notebooks needs. Test and maintainer tooling belongs in the
 # dependency-groups below, so `.[examples]` alone is a usable notebook install.
 #
