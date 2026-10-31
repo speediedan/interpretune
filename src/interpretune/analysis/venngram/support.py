@@ -26,6 +26,7 @@ backend already publishes, never restated by hand:
 
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING, Any
 
 from interpretune.analysis.backends.capabilities import InterventionSupport, PositionScope
@@ -44,12 +45,11 @@ _APPLIED_OPS = frozenset({"add"})
 
 def _require_venngram():
     try:
-        import venngram.ops
+        return importlib.import_module("venngram.ops")
     except ImportError as e:
         raise MisconfigurationException(
             "The venngram integration needs the optional `venngram` extra: install `interpretune[venngram]`."
         ) from e
-    return venngram.ops
 
 
 def venngram_support(
