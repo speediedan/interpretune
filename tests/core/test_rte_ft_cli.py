@@ -13,6 +13,7 @@ the same epochs, and keep the same best checkpoint. The run is long enough for o
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -111,9 +112,9 @@ def test_the_core_loop_and_lightning_agree_phase_by_phase(rte_component, clean_c
 
 
 @pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="the bf16 CPU autocast path is the same torch code covered on the Linux and macOS legs, and two full "
-    "CLI comparisons exceed the Windows leg's 90-minute job timeout (its fp32 comparison alone takes ~59 min)",
+    sys.platform == "win32" or (sys.platform == "linux" and os.environ.get("GITHUB_ACTIONS") == "true"),
+    reason="the bf16 CPU autocast path is the same torch code covered on the macOS leg and on local Linux runs, and "
+    "two full CLI comparisons exceed the Windows and ubuntu hosted legs' 90-minute job timeout",
 )
 def test_the_hosts_agree_in_bf16_mixed_with_accumulation(rte_component, clean_cli_env, tmp_path, monkeypatch):
     """#697's configuration on both hosts (bf16-mixed, two-step accumulation), which the core loop could not
