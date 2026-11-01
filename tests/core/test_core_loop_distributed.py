@@ -20,6 +20,7 @@ from interpretune.config import AnalysisRunnerCfg, SessionRunnerCfg
 from interpretune.runners.distributed import (
     DistributedRun,
     _check_devices,
+    _meta_offloads,
     _refuse_unshardable,
     _require_fts,
     _resolve_plan,
@@ -211,6 +212,18 @@ class TestPlacementChecks:
         partial.append(nn.Linear(2, 2))
         with pytest.raises(MisconfigurationException, match="built partly on the meta device: 2 tensors are not"):
             meta_built(partial)
+
+    def test_a_meta_build_materializes_on_the_cpu_only_when_every_unit_offloads(self):
+        """FSDP2 keeps an offloaded unit's shards on the CPU, so a meta-built module is materialized there when
+        every unit offloads, on the rank's device when none does, and a plan offloading only some units is
+        refused."""
+        from torch.distributed.fsdp import CPUOffloadPolicy
+
+        assert _meta_offloads({"model.layers.0": {}}, {"cpu_offload_policy": {"pin_memory": True}})
+        assert not _meta_offloads({"model.layers.0": {}, "model.layers.1": None}, None)
+        assert not _meta_offloads({"model.layers.0": {}}, {"reshard_after_forward": True})
+        with pytest.raises(MisconfigurationException, match=r"only some units \(model.layers.1\)"):
+            _meta_offloads({"model.layers.0": {}, "model.layers.1": {"offload_policy": CPUOffloadPolicy()}}, None)
 
     def test_meta_init_refuses_quantized_models_and_adapters_it_cannot_load(self):
         from interpretune.config.mixins import HFFromPretrainedConfig

@@ -302,7 +302,7 @@ def place_module(
     _register_direct_calls(module)
     if on_meta:
         kept = {name: buffer.clone() for name, buffer in module.named_buffers() if not buffer.is_meta}
-        module.to_empty(device=rank_device(run))
+        _materialize(module, run, _meta_offloads(units, fsdp_default_kwargs))
         with torch.no_grad():
             for name, value in kept.items():
                 buffer = module.get_buffer(name)
@@ -312,6 +312,49 @@ def place_module(
             _load_from_checkpoint_files(module, run)
         else:
             _load_from_rank0(module, run)
+
+
+def _offloads(kwargs: Mapping[str, Any] | None) -> bool:
+    """Whether a unit's ``fully_shard`` kwargs (plan grammar) offload its parameters to the CPU."""
+    from torch.distributed.fsdp import CPUOffloadPolicy
+
+    kwargs = kwargs or {}
+    return kwargs.get("cpu_offload_policy") is not None or isinstance(kwargs.get("offload_policy"), CPUOffloadPolicy)
+
+
+def _meta_offloads(units: Mapping[str, Mapping[str, Any]], default_kwargs: Mapping[str, Any] | None) -> bool:
+    """Whether a meta-built module's shards are materialized on the CPU: when every unit offloads.
+
+    FSDP2 keeps an offloaded unit's shards on the CPU, so they must be materialized there, while every other unit's
+    belong on the rank's accelerator. A plan that offloads only some units would need a device per unit, which is not
+    supported yet, so it is refused rather than materializing the offloaded shards on the accelerator (which fails on
+    the first state-dict read, after ranks have diverged).
+
+    Raises:
+        MisconfigurationException: If some units offload and others do not.
+    """
+    if _offloads(default_kwargs):
+        return True
+    if partial := sorted(name for name, kwargs in units.items() if _offloads(kwargs)):
+        raise MisconfigurationException(
+            f"`meta_init` with CPU offload on only some units ({', '.join(partial[:3])}) is not supported: set"
+            " `cpu_offload_policy` in `fsdp_default_kwargs` to offload every unit, or offload none."
+        )
+    return False
+
+
+def _materialize(module: torch.nn.Module, run: DistributedRun, offloaded: bool) -> None:
+    """Give a sharded meta-built module real storage: shards on the rank's device, or on the CPU when every unit
+    offloads, and buffers on the rank's device either way (FSDP2 offloads parameters, not buffers)."""
+    device = rank_device(run)
+    if not offloaded:
+        module.to_empty(device=device)
+        return
+    module.to_empty(device=torch.device("cpu"))
+    for submodule in module.modules():
+        for name, buffer in submodule._buffers.items():
+            if buffer is not None:
+                submodule._buffers[name] = buffer.to(device)
 
 
 def _register_direct_calls(module: torch.nn.Module) -> None:
@@ -571,6 +614,7 @@ def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
     model = _load_target(module)
     source = getattr(module, META_INIT_SOURCE, None)
     problem, full = None, {}
+    failure: Exception | None = None
     if run.rank == 0:
         if model is None:
             wrapper = type(getattr(module, "model", None)).__name__
@@ -584,19 +628,26 @@ def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
                 " with `HFFromPretrainedConfig.meta_init`, which loads one on rank 0's CPU."
             )
         else:
-            full = source.state_dict()
-            expected = {k: tuple(v.shape) for k, v in model.state_dict().items()}
-            missing = sorted(set(expected) - set(full))
-            unexpected = sorted(set(full) - set(expected))
-            reshaped = sorted(k for k in set(expected) & set(full) if tuple(full[k].shape) != expected[k])
-            if missing or unexpected or reshaped:
-                problem = (
-                    "Rank 0's checkpoint does not match the meta-built model, so loading it would leave parameters"
-                    f" uninitialized or misplaced. Missing: {missing[:5]}; unexpected: {unexpected[:5]}; different"
-                    f" shapes: {reshaped[:5]}."
-                )
+            try:
+                full = source.state_dict()
+                expected = {k: tuple(v.shape) for k, v in model.state_dict().items()}
+            except Exception as err:  # the other ranks wait in the broadcast below, so they must hear of it
+                failure = err
+                problem = f"Rank 0 could not read the checkpoint or the meta-built model's state dict: {err!r}"
+            else:
+                missing = sorted(set(expected) - set(full))
+                unexpected = sorted(set(full) - set(expected))
+                reshaped = sorted(k for k in set(expected) & set(full) if tuple(full[k].shape) != expected[k])
+                if missing or unexpected or reshaped:
+                    problem = (
+                        "Rank 0's checkpoint does not match the meta-built model, so loading it would leave parameters"
+                        f" uninitialized or misplaced. Missing: {missing[:5]}; unexpected: {unexpected[:5]}; different"
+                        f" shapes: {reshaped[:5]}."
+                    )
     box = [problem]
     dist.broadcast_object_list(box, src=0)
+    if failure is not None:
+        raise failure
     if box[0] is not None:
         raise MisconfigurationException(box[0])
     assert model is not None
