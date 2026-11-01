@@ -61,7 +61,7 @@ Rules that must not be missed:
   validation). The CI lock is regenerated with `./requirements/utils/lock_ci_requirements.sh`. A rebuild that changes
   benchmark-relevant dependencies must end with the dashboard parity gates green and a fresh benchmark wave.
 
-<!-- section: Testing sha=f2eb4f426e26 -->
+<!-- section: Testing sha=056da7b8e0d4 -->
 Basic run (mirrors `ci_test-full.yml`): `python -m pytest tests src/it_examples/tests -v`; add
 `--cov=src/interpretune --cov-append --cov-report=` for coverage. Standalone tests take inline variables, never
 `export` (marker conflicts): `IT_RUN_STANDALONE_TESTS=1 python -m pytest <node>`; the harness is
@@ -82,8 +82,9 @@ a selection variable or the coverage command there, not in the script. Node outc
 - **Run long suites in the background**, never in the foreground or through `tee`: the basic suite takes about 30
   minutes and `gen_it_coverage.sh` about 50, and terminal lifecycle or OOM kills foreground runs. Use
   `nohup ... > log 2>&1 &` plus `disown`, or `scripts/manage_standalone_processes.sh --use-nohup scripts/gen_it_coverage.sh --repo-home=... --target-env-name=... --venv-dir=... --no-rebuild-base`
-  (`--allow-failures --no-reruns` while debugging, `--resource-debug` for per-test and per-GPU logging). Kill any
-  earlier run first, by exact PID.
+  (`--allow-failures --no-reruns` while debugging, `--resource-debug` for per-test and per-GPU logging, `--dry-run`
+  for the phase plan). Its test phases run through gpu-epsilon's phase driver from `[tool.gpu-epsilon.phases]` in
+  `pyproject.toml`; change a phase there, not in the script. Kill any earlier run first, by exact PID.
 - **Watch a background run with `scripts/watch_run.sh`**, which prints exactly one terminal line (`GREEN`, `RED`,
   `DEAD`, `TIMEOUT`, `QUERY-FAILED`) and exits. Subjects: `--pid PID --log FILE`, `-- CMD`, `--azure-build ID`,
   `--pr-checks N`, `--find PATTERN`. The rules behind it: never `pgrep -f` a pattern your own watcher command

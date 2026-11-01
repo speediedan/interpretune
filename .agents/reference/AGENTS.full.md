@@ -378,6 +378,18 @@ ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
 tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
 ```
 
+`gen_it_coverage.sh` keeps its environment half in shell (building or activating the venv, torch backend selection,
+the GPU lease), since that runs before a usable Python environment exists, then runs its test phases through
+gpu-epsilon's phase driver (`python -m gpu_epsilon.phases`), which reads them from `[tool.gpu-epsilon.phases]` in
+`pyproject.toml`: `main` (no GPU visible), `cuda` (the cuda-marked tests, skipped without CUDA), `standalone` and
+`profile_ci`, plus `profile`, `optional` and `benchmark` under `--run-all-and-examples`. The driver erases the coverage
+data first and writes the report last, even after a failed phase. Without `--allow-failures` it stops at the first
+failed phase; with it every phase runs and the run still exits 1, naming each failed phase. `--dry-run` prints the phase
+plan. The rerun flags reach the main-suite phases through `PYTEST_ADDOPTS` and the special-test phases as runner
+options. The session log carries every phase's outcome and the main-suite output, each special-test phase writes its
+own `phases_<time>_<name>.log` beside it, and the driver's JSON record of the run sits next to the session log. Change a
+phase in that table, not in the script.
+
 **Watching a background run: use `scripts/watch_run.sh`.** It prints exactly one terminal line and exits,
 so a watch cannot report nothing: `GREEN`, `RED`, `DEAD` (the subject went away without a verdict),
 `TIMEOUT` (the deadline passed first; the subject is not known to be done) or `QUERY-FAILED` (the probe
@@ -450,7 +462,8 @@ log. Change a mark or the coverage command in that table, not in the script.
 When debugging fixture or CUDA memory growth locally, add `--resource-debug` to `gen_it_coverage.sh` or
 `special_tests.sh`. That exports the canonical `IT_RESOURCE_DEBUG=1`
 flags used by `tests/conftest.py`, `tests/analysis_resource_utils.py`, and the coverage harness summary
-parser for per-test / per-fixture / per-GPU logging.
+parser for per-test / per-fixture / per-GPU logging. `gen_it_coverage.sh` summarizes the session log and every
+special-test phase's log.
 
 If semantic concept-direction intervention parity drifts unexpectedly, use the normal gate in
 `tests/core/test_analysis_backend_parity.py`. The manual upstream sanity-check workflow that used to

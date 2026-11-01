@@ -58,3 +58,25 @@ def test_parse_resource_log_and_build_summary(tmp_path):
     assert "GPU Peak Usage" in summary_text
     assert "Fixture VRAM Estimates" in summary_text
     assert "ct_nnsight" in summary_text
+
+
+def test_main_reads_every_log_file(tmp_path, monkeypatch, capsys):
+    # the coverage harness passes the session log and each special-test phase's log, which the phase driver keeps apart
+    module = _load_summary_module()
+    snapshot = (
+        "[shell_resource_debug] {label}: context=shell rss_gb=1.00 vms_gb=2.00 cuda_available=true "
+        "cuda_device_count=1 cuda_gpu0_total_gb=40.00 cuda_gpu0_current_allocated_gb=1.00 "
+        "cuda_gpu0_current_reserved_gb=1.00 cuda_gpu0_peak_allocated_gb={peak:.2f} "
+        "cuda_gpu0_peak_reserved_gb={peak:.2f}"
+    )
+    session_log, phase_log = tmp_path / "session.log", tmp_path / "phases_standalone.log"
+    session_log.write_text(snapshot.format(label="phases:start:main", peak=2.0) + "\n", encoding="utf-8")
+    phase_log.write_text(snapshot.format(label="special-tests:collect:start", peak=10.0) + "\n", encoding="utf-8")
+    json_output = tmp_path / "summary.json"
+    argv = ["resource_debug_summary.py", "--log-file", str(session_log), "--log-file", str(phase_log)]
+    monkeypatch.setattr("sys.argv", [*argv, "--json-output", str(json_output)])
+
+    assert module.main() == 0
+    payload = module.json.loads(json_output.read_text(encoding="utf-8"))
+    assert payload["gpu_summary"][0]["peak_reserved_pct"] == 25.0
+    assert "GPU Peak Usage" in capsys.readouterr().out
