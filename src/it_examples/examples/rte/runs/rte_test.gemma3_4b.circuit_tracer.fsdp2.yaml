@@ -1,0 +1,34 @@
+# The RTE test loop of a circuit-tracer composition (gemma-3-4b-it with every layer's Gemma Scope 2 transcoder, over
+# nnsight), sharded with FSDP2 on two ranks and built on the meta device:
+#
+#   torchrun --standalone --nproc-per-node 2 --no-python interpretune --run_command test \
+#     --config hub://speediedan/rte/runs/rte_test.gemma3_4b.circuit_tracer.fsdp2.yaml
+#
+# Every rank builds the replacement model on the meta device, transcoders included; rank 0 also loads the model and
+# its transcoders on the CPU, and the placement loads each rank's shards from that copy (`meta_init`). Each decoder
+# layer, each transcoder and its JumpReLU, and the Hugging Face model are their own units: circuit-tracer calls the
+# transcoders and nnsight calls the Hugging Face model outside the interpretune module's forward, so each called module
+# must be gathered on its own. The vision tower's layers are units too, so the unused tower stays sharded.
+#
+# The model and transcoders take about 15 GB in bf16. CPU offload keeps the shards in host memory and gathers one unit
+# at a time onto its rank's accelerator, so the run fits two cards of unequal size (24 GB and 8 GB here); drop
+# `fsdp_default_kwargs` when each card holds half the model with room to spare.
+session_ref: speediedan/rte:rte_demo.gemma3.circuit_tracer+nnsight.fsdp2
+seed_everything: 0
+registered_cfg:
+  module_cfg:
+    init_args:
+      hf_from_pretrained_cfg:
+        init_args:
+          meta_init: true
+run_cfg:
+  placement: fsdp2
+  fsdp_plan:
+    class:Gemma3DecoderLayer: {}
+    class:SiglipEncoderLayer: {}
+    class:SingleLayerTranscoder: {}
+    class:JumpReLU: {}
+    class:Gemma3ForConditionalGeneration: {}
+  fsdp_default_kwargs:
+    cpu_offload_policy: {pin_memory: true}
+  limit_test_batches: 16
