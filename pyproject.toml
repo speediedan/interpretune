@@ -511,6 +511,88 @@ tmp_path_retention_count = 30  # allow retention of more successful runs during 
 # header). The config was inert, but inert config for an uninstalled tool is a landmine, so it goes
 # with the dependency rather than after it.
 
+[tool.gpu-epsilon.special-tests]
+# tests/special_tests.sh runs gpu-epsilon's shared runner (gpu_epsilon.special_tests) with this table: one process per
+# node id, each outcome read from per-rank records. Change the marks, the selection variables or the coverage command
+# here, not in the script.
+name = "IT"
+# Both roots: special-marked tests also live under src/it_examples/tests (the example notebooks).
+collect-dirs = ["tests", "src/it_examples/tests"]
+# Every selection variable tests/conftest.py reads, not only the ones a mark sets: conftest checks IT_RUN_CUDA_TESTS
+# before the profiling levels, so one inherited from the caller's shell would turn `--mark_type=profile_ci` into the
+# cuda-marked selection.
+unset = [
+    "IT_RUN_CUDA_TESTS",
+    "IT_RUN_OPTIONAL_TESTS",
+    "IT_RUN_PROFILING_TESTS",
+    "IT_RUN_STANDALONE_TESTS",
+    "IT_RUN_BENCHMARK_TESTS",
+    "IT_EXPERIMENTAL_PATCH_TESTS",
+]
+# pytest-cov rather than `coverage run`, so import-time lines are measured
+exec = [
+    "-m", "pytest", "--cov=src/interpretune", "--cov-append", "--cov-report=",
+    "--capture=no", "--no-header", "-v", "-s", "-rA",
+]
+# scripts/analyze_test_coverage.py names its coverage rc file, and records each test's context
+exec-overrides = [
+    { env = "COVERAGE_ANALYSIS_CONFIG_FILE", exec = [
+        "-m", "pytest", "--cov", "--cov-config={value}", "--cov-append", "--cov-context=test", "--cov-report=",
+        "--capture=no", "--no-header", "-v", "-s", "-rA",
+    ] },
+]
+experiments-list = "tests/.experiments"
+raw-log-copy-dir = "lightning_logs"
+# the raw log is uploaded to the Azure build (a logging command, inert elsewhere)
+publish = "azure"
+
+[tool.gpu-epsilon.special-tests.marks.standalone]
+env = { IT_RUN_STANDALONE_TESTS = "1" }
+description = "Collecting and running standalone tests."
+
+[tool.gpu-epsilon.special-tests.marks.profile]
+env = { IT_RUN_PROFILING_TESTS = "2" }
+description = "Collecting and running profile tests."
+
+[tool.gpu-epsilon.special-tests.marks.profile_ci]
+env = { IT_RUN_PROFILING_TESTS = "1" }
+description = "Collecting and running only profile tests marked for CI."
+
+[tool.gpu-epsilon.special-tests.marks.optional]
+env = { IT_RUN_OPTIONAL_TESTS = "1" }
+description = "Collecting and running optional tests."
+
+[tool.gpu-epsilon.special-tests.marks.benchmark]
+env = { IT_RUN_BENCHMARK_TESTS = "1" }
+description = "Collecting and running benchmark tests."
+
+[tool.gpu-epsilon.special-tests.marks.exp_patch]
+# nothing here reads IT_EXPERIMENTAL_PATCH_TESTS, so the mark would run the whole suite one process per test
+refused = "this repository defines no experimental-patch tests, so there is nothing to select."
+
+# Reruns default to 2 with a 5 s delay, for transient Hugging Face read timeouts (pytest-rerunfailures; the runner's
+# records ignore its `rerun` reports, so a node's verdict is its last attempt's).
+[tool.gpu-epsilon.special-tests.options.reruns]
+help = "pytest-rerunfailures reruns per test (default 2)"
+takes-value = true
+default = "2"
+args = ["--reruns", "{value}"]
+
+[tool.gpu-epsilon.special-tests.options.reruns-delay]
+help = "seconds between reruns (default 5)"
+takes-value = true
+default = "5"
+args = ["--reruns-delay", "{value}"]
+
+[tool.gpu-epsilon.special-tests.options.no-reruns]
+help = "run each test once"
+clears = ["reruns", "reruns-delay"]
+
+# The entry script also turns on the runner's per-boundary resource snapshots (GPU_EPSILON_EVENT_CMD) for this flag.
+[tool.gpu-epsilon.special-tests.options.resource-debug]
+help = "opt-in per-test and fixture resource diagnostics (IT_RESOURCE_DEBUG=1)"
+env = { IT_RESOURCE_DEBUG = "1" }
+
 [tool.notebook-publishing]
 # interpretune's own example notebooks, read by the publisher (src/interpretune/utils/notebook_publishing.py) and the
 # docs-artifact renderer (src/interpretune/utils/notebook_docs.py). Both are repository-neutral, so another

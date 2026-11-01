@@ -28,14 +28,121 @@ from interpretune.config import SessionRunnerCfg
 from interpretune.runners import SessionRunner
 
 runner = SessionRunner(SessionRunnerCfg(it_session=session, max_epochs=2, placement="fsdp2",
-                                        shard_units=["GPT2Block"]))
+                                        fsdp_plan={"class:GPT2Block": {}}))
 runner.train()
 ```
 
-`fsdp2` needs `shard_units`: the class names of the modules to shard as their own units. That is usually the model's
-block class, plus each spliced instrument's class, so that an instrument is gathered on its own rather than with the
-block around it. `fully_shard` is applied deepest first, then to the interpretune module itself as the root unit. An
-empty list shards the whole module as one unit, which gathers every parameter for the entire forward pass.
+## The FSDP2 plan
+
+`fsdp2` needs `fsdp_plan`: the modules to shard as their own units, each with its `fully_shard` keyword arguments. It
+is finetuning-scheduler's FSDP2 plan (`finetuning_scheduler.strategies.plan.shard_model`), so the core loop takes the
+same grammar as finetuning-scheduler's own interfaces:
+
+| key | selects |
+| --- | --- |
+| `model.layers.3` | the module with that name |
+| `model\.layers\.\d+$` | every module whose name the regular expression matches from the start |
+| `class:GPT2Block` (or `class:<module>.<qualname>`) | every instance of that class or of a subclass |
+
+Each value is a mapping of `fully_shard` keyword arguments (or `null`), plus two aliases: `act_ckpt: composable`
+applies composable activation checkpointing to the unit before it is sharded, and `cpu_offload_policy` (a mapping of
+`CPUOffloadPolicy` arguments) becomes its `offload_policy`. `fsdp_default_kwargs` gives every planned unit keyword
+arguments its entry does not override; all but `act_ckpt` also apply to the root unit.
+
+```yaml
+run_cfg:
+  placement: fsdp2
+  fsdp_plan:
+    class:GPT2Block: {act_ckpt: composable}
+  fsdp_default_kwargs:
+    cpu_offload_policy: {pin_memory: true}
+```
+
+A plan is usually the model's block class, plus each spliced instrument's class, so that an instrument is gathered on
+its own rather than with the block around it. Units are sharded deepest first whatever the plan's key order, so an
+instrument spliced inside a block can be listed after the block, and then the interpretune module itself is sharded as
+the root unit. An empty plan (`{}`) shards the whole module as one unit, which gathers every parameter for the entire
+forward pass. Under `ddp` a plan is optional; without one the module is the only unit.
+
+A `class:` key matches subclasses too, and a regex matches every module name it is a prefix of (anchor it with `$` to
+select the blocks but not their children). A plan under the `single` placement, a key that selects no module, and a plan
+without finetuning-scheduler installed are each refused by name.
+
+FSDP2 gathers a unit's parameters in hooks on its `forward`, so a module called some other way computes with sharded
+parameters. Some compositions do exactly that: nnsight calls the Hugging Face model directly rather than through the
+interpretune module, and circuit-tracer reads transcoders through methods such as `encode` and calls their activation
+functions directly. Such a composition declares these calls (`fsdp_direct_calls`), the placement registers the methods
+as FSDP2 forward methods, and each called module must be its own unit. A circuit-tracer composition over nnsight with
+Gemma 2 transcoders, for one, needs:
+
+```yaml
+run_cfg:
+  placement: fsdp2
+  fsdp_plan:
+    class:Gemma2DecoderLayer: {}
+    class:SingleLayerTranscoder: {}
+    class:JumpReLU: {}
+    class:Gemma2ForCausalLM: {}
+```
+
+A plan that leaves a called module to the root unit is refused, naming the `class:` keys to add. FSDP2 cannot shard a
+0-d parameter, which it refuses by name too.
+
+## Models larger than one rank's accelerator
+
+By default every rank builds the whole model before it is sharded, so each rank must fit it once. For a model loaded
+with `from_pretrained` (`hf_from_pretrained_cfg`), `meta_init: true` builds it on the meta device instead:
+
+```yaml
+module_cfg:
+  init_args:
+    hf_from_pretrained_cfg:
+      init_args:
+        meta_init: true
+```
+
+Every rank then builds the model from its configuration without any weights, and the launcher's rank 0 also loads the
+checkpoint on the CPU. The placement shards the empty model with the plan, materializes each rank's shards on its
+device, and loads them from rank 0's copy (`torch.distributed.checkpoint.state_dict.set_model_state_dict` with
+`broadcast_from_rank0`), broadcasting the buffers too, since non-persistent ones such as rotary frequencies are in no
+state dict. No accelerator ever holds the whole model; rank 0's host holds one copy of it while loading.
+
+When even one host copy is too much, `meta_init_load: dcp` loads each rank's shards straight from the checkpoint's
+safetensors files with distributed checkpointing (`torch.distributed.checkpoint` with `HuggingFaceStorageReader`), so
+every rank reads only the slices it holds and no host ever holds the whole model:
+
+```yaml
+module_cfg:
+  init_args:
+    hf_from_pretrained_cfg:
+      init_args:
+        meta_init: true
+        meta_init_load: dcp
+```
+
+Only the parameters are built on the meta device then, while buffers such as rotary frequencies, which no checkpoint
+holds, are computed on the CPU as the model is built and kept through the placement. Checkpoint keys are renamed the
+way `from_pretrained` renames them, and a parameter tied to one the checkpoint supplies (an LM head tied to the
+embedding) needs no key of its own. Before reading anything, every rank refuses a checkpoint key that matches no model
+key and a parameter no key supplies, naming them, and a model whose checkpoint needs transformers' weight converters
+(which merge or reshape tensors rather than rename them) is refused in favor of the default `rank0` load. A Hub model's
+safetensors files are downloaded to the local cache first, on every rank.
+
+The load is checked rather than trusted: when rank 0's copy is missing a key of the model, has one the model lacks, or
+differs in a shape (embeddings resized after the build, for one), every rank refuses, naming the keys. With
+`lora_cfg`, rank 0's copy takes the same LoRA adapters as the model, so their initial values reach every rank with the
+base weights. `meta_init` cannot be combined with `bitsandbytesconfig` (FSDP2 does not shard quantized parameters), a
+module built only partly on the meta device is refused, and so is `meta_init` on a composition whose model init does
+not build on the meta device (a TransformerLens bridge, a plain nnsight model, or `defer_model_init`), rather than being
+ignored.
+
+A circuit-tracer composition over nnsight builds on the meta device too: its replacement model is built from the
+model's config with every Hugging Face and transcoder parameter on the meta device, and rank 0 also loads the model and
+its transcoders on the CPU, which the placement loads every rank from into the Hugging Face module nnsight wraps (the
+transcoders are registered inside it). The transcoders must be loaded eagerly (`lazy_encoder: false`,
+`lazy_decoder: false`), since a lazily loaded weight is read from disk rather than held as a parameter, and the
+composition needs an `nnsight_cfg` without `device_map` or remote execution; `meta_init_load: dcp` is refused, since the
+transcoders are not in the model's checkpoint. Each of these is refused by name.
 
 ## What the runner does
 
@@ -77,12 +184,14 @@ else:
 - Without `drop_last`, `DistributedSampler` pads the last round with repeated samples so that every rank takes the same
   number of batches. A metric averaged over a dataset that does not divide evenly therefore counts a few samples twice.
 - The core loop's `checkpoint_state` is not distributed-aware.
-- Phased tuning with `FTSCoreCallback` under `ddp` or `fsdp2` is not covered by a test yet. The pinned
-  finetuning-scheduler carries an FSDP2 adapter that checkpoints sharded modules through
-  `torch.distributed.checkpoint`, but the combination with these placements has not been run.
-- Mixed precision still uses the loop's `torch.autocast` rather than FSDP2's `MixedPrecisionPolicy`.
-- The session is built fully on each rank before it is sharded, so each rank must fit the whole model once. Building on
-  the meta device or the CPU and sharding before materializing is the next step for 12B-to-27B models.
+- Phased tuning with `FTSCoreCallback` is tested under `fsdp2` with a plan on two CPU ranks (two phases, matching one
+  process on the combined batch step for step), not yet under `ddp` or on accelerators.
+- FSDP2's `MixedPrecisionPolicy` can be passed as a unit's `mp_policy` from Python, but has no configuration alias yet,
+  so a YAML run uses the loop's `torch.autocast`.
+- Without `meta_init`, the session is built fully on each rank before it is sharded, so each rank must fit the whole
+  model once. `meta_init` covers the core `from_pretrained` path and circuit-tracer over nnsight (with `rank0` loading
+  only): TransformerLens and plain nnsight compositions build their models their own way and refuse it at construction
+  (tracked in [interpretune#882](https://github.com/speediedan/interpretune/issues/882)).
 
 The design, and the work that remains for attribution and J++ ops, is tracked in
 [interpretune#803](https://github.com/speediedan/interpretune/issues/803).

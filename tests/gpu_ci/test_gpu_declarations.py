@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -124,8 +125,9 @@ def test_the_special_phases_collect_the_example_tests():
         timeout=600,
     )
     assert "test_sae_lens_notebooks" in proc.stdout, proc.stdout[-2000:]
-    harness = (ROOT / "tests" / "special_tests.sh").read_text()
-    assert 'collect_dir=${collect_dir:-"tests src/it_examples/tests"}' in harness
+    # the special-test runner collects both roots (tests/special_tests.sh, configured in pyproject.toml)
+    runner = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["gpu-epsilon"]["special-tests"]
+    assert runner["collect-dirs"] == ["tests", "src/it_examples/tests"]
 
 
 @RunIf(min_cuda_gpus=1, min_gpu_mem_gb=1.0)

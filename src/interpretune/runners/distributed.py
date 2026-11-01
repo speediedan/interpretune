@@ -8,8 +8,12 @@
   the module is wrapped in place: no wrapper module stands between callers and ``module.model``, hooks or a tunable
   view's names, and finetuning-scheduler sees the same kind of module under both data-parallel placements.
 - ``fsdp2``: parameters, gradients and optimizer state are sharded across ranks. ``fully_shard`` is applied to every
-  module whose class ``SessionRunnerCfg.shard_units`` names, deepest first, then to the interpretune module as the root
-  unit.
+  module ``SessionRunnerCfg.fsdp_plan`` selects, deepest first, then to the interpretune module as the root unit.
+
+The plan is finetuning-scheduler's FSDP2 plan (``finetuning_scheduler.strategies.plan.shard_model``), so the core loop
+takes the same keys (module names, regexes and ``class:`` selectors), per-unit ``fully_shard`` kwargs and aliases
+(``act_ckpt``, ``cpu_offload_policy``) as finetuning-scheduler's own interfaces. Under ``ddp`` a plan is optional and
+shards over the ``(replicate, shard)`` mesh.
 
 A run is launched with ``torchrun``, which sets ``WORLD_SIZE``, ``RANK`` and ``LOCAL_RANK``. Each rank builds the
 session in turn (rank 0 first, so dataset preparation is not raced), the ranks then agree on their devices and the
@@ -26,6 +30,7 @@ from __future__ import annotations
 
 import atexit
 import os
+import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -33,10 +38,16 @@ from typing import Any, Literal
 
 import torch
 
-from interpretune.utils import MisconfigurationException, rank_zero_only
+from interpretune.utils import _FTS_AVAILABLE, MisconfigurationException, rank_zero_only, rank_zero_warn
 
 Placement = Literal["single", "ddp", "fsdp2"]
 PLACEMENTS: tuple[str, ...] = ("single", "ddp", "fsdp2")
+# the attribute holding rank 0's CPU copy of a model built on the meta device (`HFFromPretrainedConfig.meta_init`),
+# which `place_module` loads into the sharded model and then drops
+META_INIT_SOURCE = "_meta_init_source"
+# the attribute holding the local directory of safetensors files every rank reads its own shards from
+# (`HFFromPretrainedConfig.meta_init_load: dcp`)
+META_INIT_CHECKPOINT = "_meta_init_checkpoint"
 
 
 @dataclass
@@ -188,24 +199,55 @@ def _refuse_unshardable(module: torch.nn.Module) -> None:
         )
 
 
-def _shard_units(module: torch.nn.Module, shard_units: Sequence[str] | None, placement: str) -> list[torch.nn.Module]:
-    if shard_units is None:
+def _resolve_plan(
+    module: torch.nn.Module,
+    fsdp_plan: Mapping[str, Mapping[str, Any] | None] | None,
+    default_kwargs: Mapping[str, Any] | None,
+    placement: str,
+) -> dict[str, dict[str, Any]]:
+    """``fsdp_plan`` expanded to the modules it selects, each with its ``fully_shard`` kwargs, deepest first.
+
+    finetuning-scheduler applies a plan in the order its keys first select modules and refuses a module whose ancestor
+    is already sharded, so ``class:Block`` listed before ``class:Instrument`` would fail for an instrument spliced
+    inside a block. Ordering by depth makes the plan's key order immaterial. The module itself is sharded last, as the
+    root.
+    """
+    if fsdp_plan is None:
         if placement == "ddp":
-            return []
+            return {}
         raise MisconfigurationException(
-            "Placement 'fsdp2' needs `shard_units`: the class names of the modules to shard as their own units (a"
-            " transformer's block class, and each spliced instrument's class so that it is gathered on its own). An"
-            " empty list shards the module as one unit, which gathers every parameter for the whole forward."
+            "Placement 'fsdp2' needs `fsdp_plan`: the modules to shard as their own units, keyed by name, regex or"
+            " `class:<name>` (for example `{'class:GPT2Block': {}}`, plus each spliced instrument's class so that it is"
+            " gathered on its own). An empty plan shards the module as one unit, which gathers every parameter for the"
+            " whole forward."
         )
-    named = [(name, sub) for name, sub in module.named_modules() if name and type(sub).__name__ in shard_units]
-    if unmatched := sorted(set(shard_units) - {type(sub).__name__ for _, sub in named}):
-        raise MisconfigurationException(f"`shard_units` names classes this module does not contain: {unmatched}.")
-    # children before their parents: `fully_shard` refuses a module whose ancestor is already sharded
-    named.sort(key=lambda item: item[0].count("."), reverse=True)
-    return [sub for _, sub in named]
+    if not fsdp_plan:
+        return {}
+    from finetuning_scheduler.core.exceptions import FTSConfigurationError
+    from finetuning_scheduler.strategies.plan import resolve_fsdp_plan
+
+    try:
+        resolved = resolve_fsdp_plan(module, fsdp_plan, default_kwargs, warn=rank_zero_warn)
+    except FTSConfigurationError as err:
+        raise MisconfigurationException(str(err)) from err
+    resolved.pop("", None)  # the module itself is always the last, root unit
+    return dict(sorted(resolved.items(), key=lambda item: item[0].count("."), reverse=True))
 
 
-def place_module(module: torch.nn.Module, run: DistributedRun, shard_units: Sequence[str] | None = None) -> None:
+def _require_fts(fsdp_plan: Mapping[str, Any] | None, default_kwargs: Mapping[str, Any] | None) -> None:
+    if (fsdp_plan or default_kwargs) and not _FTS_AVAILABLE:
+        raise MisconfigurationException(
+            "`fsdp_plan` and `fsdp_default_kwargs` are applied with finetuning-scheduler's FSDP2 plan, which is not"
+            " installed. Install interpretune's `tune` extra, or shard the module as one unit with an empty plan."
+        )
+
+
+def place_module(
+    module: torch.nn.Module,
+    run: DistributedRun,
+    fsdp_plan: Mapping[str, Mapping[str, Any] | None] | None = None,
+    fsdp_default_kwargs: Mapping[str, Any] | None = None,
+) -> None:
     """Agree on each rank's device, build the mesh and shard ``module`` in place as ``run.placement`` asks.
 
     Runs on every rank, after the session is built and before its optimizers are, since sharding replaces the
@@ -214,33 +256,320 @@ def place_module(module: torch.nn.Module, run: DistributedRun, shard_units: Sequ
     differed (an unseeded random init) would otherwise train different replicas (``ddp``) or assemble one model from
     shards of different ones (``fsdp2``), with no error.
 
+    A module built on the meta device (``HFFromPretrainedConfig.meta_init``) holds no values to broadcast. It is
+    sharded as it is, materialized on each rank's device with ``to_empty``, and then loaded from rank 0's CPU copy of
+    the checkpoint (see :func:`_load_from_rank0`), so no rank ever holds the whole model on its accelerator.
+
     Raises:
         MisconfigurationException: If a rank's module spans several devices or holds no parameters, ranks share an
-            accelerator or differ in device type, a parameter is non-contiguous, or ``shard_units`` is missing (for
-            ``fsdp2``) or names a class the module does not contain.
+            accelerator or differ in device type, a parameter is non-contiguous, ``fsdp_plan`` is missing (for
+            ``fsdp2``) or has a key that selects no module, a plan is given without finetuning-scheduler installed, or
+            a meta-built module cannot be loaded (see :func:`_load_from_rank0`).
     """
     import torch.distributed as dist
     from torch.distributed.device_mesh import init_device_mesh
     from torch.distributed.fsdp import fully_shard
 
-    local = sorted({str(param.device) for param in module.parameters()})
+    on_meta = meta_built(module)
+    local = [str(rank_device(run))] if on_meta else sorted({str(param.device) for param in module.parameters()})
     per_rank: list[Any] = [None] * run.world_size
     dist.all_gather_object(per_rank, local)
     run.devices = _check_devices(per_rank, run.placement)
     _refuse_unshardable(module)
-    units = _shard_units(module, shard_units, run.placement)
-    with torch.no_grad():
-        for tensor in [*module.parameters(), *module.buffers()]:
-            dist.broadcast(tensor, src=0)
+    _require_fts(fsdp_plan, fsdp_default_kwargs)
+    units = _resolve_plan(module, fsdp_plan, fsdp_default_kwargs, run.placement)
+    if not on_meta:
+        with torch.no_grad():
+            for tensor in [*module.parameters(), *module.buffers()]:
+                dist.broadcast(tensor, src=0)
     device_type = torch.device(run.devices[run.rank]).type
     if run.placement == "ddp":
         mesh = init_device_mesh(device_type, (run.world_size, 1), mesh_dim_names=("replicate", "shard"))
     else:
         mesh = init_device_mesh(device_type, (run.world_size,), mesh_dim_names=("shard",))
-    for unit in units:
-        fully_shard(unit, mesh=mesh)
-    fully_shard(module, mesh=mesh)
+    if units or fsdp_default_kwargs:
+        from finetuning_scheduler.core.exceptions import FTSConfigurationError
+        from finetuning_scheduler.strategies.plan import shard_model
+
+        try:
+            shard_model(module, mesh, units, default_kwargs=fsdp_default_kwargs)
+        except FTSConfigurationError as err:
+            raise MisconfigurationException(str(err)) from err
+    else:
+        fully_shard(module, mesh=mesh)
     run.mesh = mesh
+    _register_direct_calls(module)
+    if on_meta:
+        kept = {name: buffer.clone() for name, buffer in module.named_buffers() if not buffer.is_meta}
+        module.to_empty(device=rank_device(run))
+        with torch.no_grad():
+            for name, value in kept.items():
+                buffer = module.get_buffer(name)
+                buffer.copy_(value)
+                dist.broadcast(buffer, src=0)
+        if hasattr(module, META_INIT_CHECKPOINT):
+            _load_from_checkpoint_files(module, run)
+        else:
+            _load_from_rank0(module, run)
+
+
+def _register_direct_calls(module: torch.nn.Module) -> None:
+    """Register the methods a composition calls on its submodules outside its own forward as FSDP2 forward methods.
+
+    FSDP2 gathers a unit's parameters in hooks on ``forward``, so a submodule called directly (an nnsight model's
+    Hugging Face module, which nnsight calls rather than the interpretune module) or through another method (a
+    transcoder's ``encode``) would compute with sharded parameters. The module declares these calls with
+    ``fsdp_direct_calls()``; each declared submodule must be its own unit for its methods to be registered.
+
+    Raises:
+        MisconfigurationException: If a declared submodule is not its own FSDP2 unit, naming the plan keys to add.
+    """
+    from torch.distributed.fsdp import FSDPModule, register_fsdp_forward_method
+
+    declare = getattr(module, "fsdp_direct_calls", None)
+    entries: list[tuple[str, torch.nn.Module, tuple[str, ...]]] = list(declare()) if callable(declare) else []  # type: ignore[arg-type]
+    missing: dict[str, list[str]] = {}
+    for name, submodule, methods in entries:
+        sharded = isinstance(submodule, FSDPModule)  # a flag, not a narrowing: the module stays a torch module
+        if not sharded:
+            missing.setdefault(type(submodule).__name__, []).append(name)
+            continue
+        for method in methods:
+            if method != "forward":
+                register_fsdp_forward_method(submodule, method)
+    if missing:
+        names = [n for group in missing.values() for n in group]
+        raise MisconfigurationException(
+            f"This composition calls {', '.join(names[:3])}{' and more' if len(names) > 3 else ''} directly rather"
+            " than through its forward, so FSDP2 gathers their parameters only if each is its own unit. Add"
+            f" {', '.join(f'`class:{cls}`' for cls in sorted(missing))} to `fsdp_plan`."
+        )
+
+
+def rank_device(run: DistributedRun) -> torch.device:
+    """The device this rank's module belongs on: its accelerator (made current when the group was joined), else the
+    CPU."""
+    return torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
+
+
+@contextmanager
+def params_on_meta() -> Iterator[None]:
+    """Within the context, each parameter a module registers is moved to the meta device as it is registered, while
+    buffers are built with their values on the CPU.
+
+    A model built here holds no weights, but its non-persistent buffers (rotary frequencies, for one) are real; under
+    ``torch.device("meta")`` they would be uninitialized with no checkpoint to load them from. Each parameter is
+    allocated on the CPU only until it is registered, so the peak is one parameter, not the model. It patches
+    ``torch.nn.Module.register_parameter`` for the duration, so it is not safe to build other modules concurrently.
+    """
+    register = torch.nn.Module.register_parameter
+
+    def register_on_meta(self: torch.nn.Module, name: str, param: torch.nn.Parameter | None) -> None:
+        register(self, name, param)
+        # a parameter already on meta is re-registered as it is, so tying one module's weight to another's (as
+        # `tie_weights` does by assignment) keeps them one object
+        if param is not None and not param.is_meta:
+            kwargs = {**param.__dict__, "requires_grad": param.requires_grad}
+            self._parameters[name] = type(param)(param.to("meta"), **kwargs)
+
+    torch.nn.Module.register_parameter = register_on_meta
+    try:
+        yield
+    finally:
+        torch.nn.Module.register_parameter = register
+
+
+def meta_built(module: torch.nn.Module) -> bool:
+    """Whether ``module``'s parameters were built on the meta device, refusing a module only partly built there.
+
+    Buffers may hold values on a meta-built module (see :func:`params_on_meta`); :func:`place_module` keeps them across
+    materialization. A buffer left on the meta device of a module whose parameters are not is refused, since nothing
+    would ever give it values.
+    """
+    params = dict(module.named_parameters())
+    on_meta = [p.is_meta for p in params.values()]
+    if any(on_meta) and not all(on_meta):
+        names = [n for n, p in params.items() if not p.is_meta]
+        raise MisconfigurationException(
+            f"This module was built partly on the meta device: {len(names)} tensors are not ({', '.join(names[:3])}"
+            f"{' and more' if len(names) > 3 else ''}). Materializing the meta part would also discard their values,"
+            " so build the whole module on the meta device or none of it."
+        )
+    built = bool(params) and all(on_meta)
+    if not built and (meta_buffers := [n for n, b in module.named_buffers() if b.is_meta]):
+        raise MisconfigurationException(
+            f"This module was built partly on the meta device: its parameters are not, but {len(meta_buffers)} buffers"
+            f" are ({', '.join(meta_buffers[:3])}{' and more' if len(meta_buffers) > 3 else ''}), and nothing would"
+            " give them values. Build the whole module on the meta device or none of it."
+        )
+    return built
+
+
+def _checkpoint_renamer(model: torch.nn.Module) -> Any:
+    """``rename(checkpoint_key, model_keys)``: the model key transformers' own checkpoint conversion maps a key to.
+
+    Raises:
+        MisconfigurationException: If the model's conversion mapping has weight converters (which merge or reshape
+            tensors), since loading per-rank slices can only rename.
+    """
+    from transformers import PreTrainedModel, conversion_mapping, core_model_loading
+
+    if not isinstance(model, PreTrainedModel):
+        raise MisconfigurationException(
+            f"`meta_init_load: dcp` renames checkpoint keys with transformers' conversion mapping, which needs a"
+            f" `PreTrainedModel`, not a {type(model).__name__}. Use `meta_init_load: rank0`."
+        )
+    transforms = conversion_mapping.get_model_conversion_mapping(model)
+    renamings = [t for t in transforms if isinstance(t, core_model_loading.WeightRenaming)]
+    converters = [t for t in transforms if isinstance(t, core_model_loading.WeightConverter)]
+    if converters:
+        raise MisconfigurationException(
+            "`meta_init_load: dcp` reads each rank's slices of the checkpoint as they are stored, but"
+            f" {type(model).__name__}'s checkpoint needs transformers' weight converters"
+            f" ({', '.join(str(c.source_patterns) for c in converters[:3])}), which merge or reshape tensors. Use"
+            " `meta_init_load: rank0`."
+        )
+    prefix = getattr(model, "base_model_prefix", None) or None
+
+    def rename(key: str, model_keys: Mapping[str, Any]) -> str:
+        return core_model_loading.rename_source_key(key, renamings, [], prefix, dict(model_keys))[0]
+
+    return rename
+
+
+def _load_target(module: torch.nn.Module) -> torch.nn.Module | None:
+    """The torch module a meta-built model is loaded into: the module's ``meta_load_target()``, else ``module.model``.
+
+    An adapter whose model is a wrapper rather than a torch module (an nnsight or circuit-tracer model) names the module
+    it wraps, which holds every parameter the placement sharded.
+    """
+    target = getattr(module, "meta_load_target", None)
+    model = target() if callable(target) else getattr(module, "model", None)
+    return model if isinstance(model, torch.nn.Module) else None
+
+
+def _load_from_checkpoint_files(module: torch.nn.Module, run: DistributedRun) -> None:
+    """Load the load target's (see :func:`_load_target`) sharded parameters from the checkpoint's safetensors
+    files, each rank reading only the slices it holds (``torch.distributed.checkpoint`` with
+    ``HuggingFaceStorageReader``).
+
+    Every rank checks the checkpoint's keys against the model before reading, from the same files, so all ranks refuse
+    together. A parameter tied to one the checkpoint supplies (an LM head tied to the embedding) needs no key of its
+    own, and keys the model declares ``from_pretrained`` should ignore (``_keys_to_ignore_on_load_unexpected`` and
+    ``_keys_to_ignore_on_load_missing``) are ignored here too. Buffers are not read: :func:`place_module` kept their
+    built values.
+
+    Raises:
+        MisconfigurationException: If the directory holds no safetensors checkpoint, a checkpoint key maps to no model
+            key, a model parameter is supplied by no key, or the model needs weight converters.
+    """
+    import json
+
+    from torch.distributed.checkpoint.hf_storage import HuggingFaceStorageReader
+    from torch.distributed.checkpoint.state_dict_loader import load
+
+    model = _load_target(module)
+    assert model is not None
+    path = getattr(module, META_INIT_CHECKPOINT)
+    index = os.path.join(path, "model.safetensors.index.json")
+    single = os.path.join(path, "model.safetensors")
+    if os.path.isfile(index):
+        with open(index) as f:
+            keys = list(json.load(f)["weight_map"])
+    elif os.path.isfile(single):
+        from safetensors import safe_open
+
+        with safe_open(single, framework="pt") as f:
+            keys = list(f.keys())
+    else:
+        raise MisconfigurationException(
+            f"`meta_init_load: dcp` reads safetensors files, but {path} holds neither `model.safetensors` nor"
+            " `model.safetensors.index.json`. Use `meta_init_load: rank0`."
+        )
+    rename = _checkpoint_renamer(model)
+    targets = model.state_dict()
+    params = dict(model.named_parameters())
+    # patterns a model declares for keys `from_pretrained` ignores (old checkpoints' attention-mask buffers, for one)
+    ignore_unexpected = getattr(model, "_keys_to_ignore_on_load_unexpected", None) or []
+    ignore_missing = getattr(model, "_keys_to_ignore_on_load_missing", None) or []
+    mapped = {key: rename(key, targets) for key in keys}
+    ignored = {k for k, v in mapped.items() if v not in targets and any(re.search(p, k) for p in ignore_unexpected)}
+    mapped = {k: v for k, v in mapped.items() if k not in ignored}
+    unknown = sorted(k for k, v in mapped.items() if v not in targets)
+    supplied = {id(params[v]) for v in mapped.values() if v in params}
+    unsupplied = sorted(
+        n
+        for n, p in model.named_parameters(remove_duplicate=False)
+        if id(p) not in supplied and not any(re.search(pattern, n) for pattern in ignore_missing)
+    )
+    if unknown or unsupplied:
+        raise MisconfigurationException(
+            "The checkpoint's files do not match the meta-built model, so loading them would leave parameters"
+            f" uninitialized or misplaced. Keys no model key matches: {unknown[:5]}; parameters no key supplies:"
+            f" {unsupplied[:5]}."
+        )
+    load({key: targets[name] for key, name in mapped.items()}, storage_reader=HuggingFaceStorageReader(path))
+    object.__delattr__(module, META_INIT_CHECKPOINT)
+
+
+def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
+    """Load rank 0's CPU copy of the checkpoint into the load target (see :func:`_load_target`), sharded and
+    materialized on every rank.
+
+    Rank 0 checks the copy against the model first and every rank raises the same refusal, so no rank is left
+    waiting in a collective. Buffers are broadcast from the copy too, since ``to_empty`` left them uninitialized and
+    the non-persistent ones (rotary frequencies, for one) are in no state dict.
+
+    Raises:
+        MisconfigurationException: If rank 0 holds no copy (the module was built on the meta device by something other
+            than ``meta_init``), or the copy is missing a key of the model, has one the model lacks, or differs from it
+            in a shape (for one, embeddings resized after the build).
+    """
+    import torch.distributed as dist
+    from torch.distributed.checkpoint.state_dict import StateDictOptions, set_model_state_dict
+
+    model = _load_target(module)
+    source = getattr(module, META_INIT_SOURCE, None)
+    problem, full = None, {}
+    if run.rank == 0:
+        if model is None:
+            wrapper = type(getattr(module, "model", None)).__name__
+            problem = (
+                f"The module was built on the meta device, but its model is a {wrapper} rather than a torch module and"
+                " `meta_load_target()` names none to load the checkpoint into."
+            )
+        elif source is None:
+            problem = (
+                "The module was built on the meta device, but rank 0 holds no checkpoint to load it from. Build it"
+                " with `HFFromPretrainedConfig.meta_init`, which loads one on rank 0's CPU."
+            )
+        else:
+            full = source.state_dict()
+            expected = {k: tuple(v.shape) for k, v in model.state_dict().items()}
+            missing = sorted(set(expected) - set(full))
+            unexpected = sorted(set(full) - set(expected))
+            reshaped = sorted(k for k in set(expected) & set(full) if tuple(full[k].shape) != expected[k])
+            if missing or unexpected or reshaped:
+                problem = (
+                    "Rank 0's checkpoint does not match the meta-built model, so loading it would leave parameters"
+                    f" uninitialized or misplaced. Missing: {missing[:5]}; unexpected: {unexpected[:5]}; different"
+                    f" shapes: {reshaped[:5]}."
+                )
+    box = [problem]
+    dist.broadcast_object_list(box, src=0)
+    if box[0] is not None:
+        raise MisconfigurationException(box[0])
+    assert model is not None
+    options = StateDictOptions(full_state_dict=True, broadcast_from_rank0=True)
+    set_model_state_dict(model, full, options=options)
+    with torch.no_grad():
+        for name, buffer in model.named_buffers():
+            if run.rank == 0:
+                assert source is not None
+                buffer.copy_(source.get_buffer(name))
+            dist.broadcast(buffer, src=0)
+    if source is not None:
+        object.__delattr__(module, META_INIT_SOURCE)
 
 
 def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0) -> Any:

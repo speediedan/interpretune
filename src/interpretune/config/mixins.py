@@ -9,7 +9,7 @@ import torch
 from transformers.generation.configuration_utils import GenerationConfig
 
 from interpretune.config import ITSerializableCfg
-from interpretune.utils import rank_zero_warn, _resolve_dtype
+from interpretune.utils import MisconfigurationException, rank_zero_warn, _resolve_dtype
 
 
 @dataclass(kw_only=True)
@@ -112,10 +112,38 @@ class HFFromPretrainedConfig(ITSerializableCfg):
     # Whether to enable gradients for the input embeddings. Useful for finetuning adapter weights w/ a frozen model.
     enable_input_require_grads: bool = True
     default_head: str = "transformers.AutoModelForCausalLM"
+    # Build the model on the meta device in every process, for a data-parallel placement to shard before it holds any
+    # weights. The process a launcher made rank 0 (or one with no launcher) also loads the checkpoint on the CPU, and
+    # the placement loads it into the sharded model from there (`interpretune.runners.distributed`), so no rank's
+    # accelerator holds the whole model and only rank 0's host does. A model with no placement to load it stays on meta.
+    meta_init: bool = False
+    # How a `meta_init` model is loaded once sharded. "rank0": rank 0 loads the whole checkpoint on its CPU and the
+    # placement scatters it, which works for any checkpoint `from_pretrained` reads. "dcp": every rank reads only its
+    # own shards of the checkpoint's safetensors files with distributed checkpointing, so no host holds the whole model;
+    # it handles key renames but refuses a model whose checkpoint needs transformers' weight converters.
+    meta_init_load: str = "rank0"
 
     def __post_init__(self):
         if self.pretrained_kwargs.get("token", None):
             del self.pretrained_kwargs["token"]
+        if self.meta_init_load not in ("rank0", "dcp"):
+            raise MisconfigurationException(f"`meta_init_load` must be 'rank0' or 'dcp', not {self.meta_init_load!r}.")
+        if self.meta_init_load != "rank0" and not self.meta_init:
+            raise MisconfigurationException(
+                f"`meta_init_load: {self.meta_init_load}` chooses how a `meta_init` model is loaded, but `meta_init`"
+                " is not set."
+            )
+        if self.meta_init and self.bitsandbytesconfig:
+            raise MisconfigurationException(
+                "`meta_init` builds an unquantized model to shard and load; it cannot be combined with"
+                " `bitsandbytesconfig`, whose quantized parameters FSDP2 does not shard."
+            )
+        if self.meta_init_load == "dcp" and self.lora_cfg:
+            raise MisconfigurationException(
+                "`meta_init_load: dcp` reads every value from the checkpoint's files, which hold no LoRA adapters, so"
+                " it cannot initialize `lora_cfg`'s. Use `meta_init_load: rank0`, which wraps rank 0's copy with the"
+                " same adapters and loads them with the base."
+            )
 
     def _dtype_serde(self) -> torch.dtype | None:
         """Resolve and remove a 'dtype' entry from pretrained_kwargs if present."""

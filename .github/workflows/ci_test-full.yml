@@ -125,7 +125,7 @@ jobs:
         os: [
           ubuntu-22.04,
           windows-2022,
-          macos-14
+          macos-15
           ]
         python-version: ["3.13"]
     timeout-minutes: 90

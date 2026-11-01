@@ -10,204 +10,41 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# TODO: add parameters supporting conditional running of example tests
+
+# Run the special tests (those that need a process of their own) through gpu-epsilon's shared runner, configured by
+# [tool.gpu-epsilon.special-tests] in pyproject.toml: one process per node id, each outcome read from per-rank records.
+# `python -m gpu_epsilon.special_tests --help` lists the options. Examples, from the repository root:
+#   ./tests/special_tests.sh                                   # every standalone test (--mark_type defaults to standalone)
+#   ./tests/special_tests.sh --mark_type=profile_ci --log_file=/tmp/parent_session.log
+#   ./tests/special_tests.sh --mark_type=standalone --collect_dir='src/it_examples/tests' --filter_pattern='notebook'
+#   ./tests/special_tests.sh --mark_type=standalone --no-reruns --allow-failures   # every test, once (still exits 1)
+#   ./tests/special_tests.sh --mark_type=standalone --resource-debug   # resource snapshots at every boundary
+# --mark_type=exp_patch is refused: no test in this repository selects on an experimental patch.
 
 set -eo pipefail
 
-unset mark_type
-unset log_file
-unset filter_pattern
-unset experiments_list
-unset experiment_patch_mask
-unset collect_dir
-unset no_reruns
-unset reruns_count
-unset reruns_delay
-unset allow_failures
-unset allow_empty
-unset resource_debug
-unset IT_RUN_PROFILING_TESTS
-unset IT_RUN_STANDALONE_TESTS
-unset IT_RUN_BENCHMARK_TESTS
-unset IT_EXPERIMENTAL_PATCH_TESTS
-# Every selection variable tests/conftest.py reads, not only the ones this script sets: conftest checks
-# IT_RUN_CUDA_TESTS before the profiling levels, so one inherited from the caller's shell would silently turn
-# `--mark_type=profile_ci` into the cuda-marked selection.
-unset IT_RUN_CUDA_TESTS
-unset IT_RUN_OPTIONAL_TESTS
+root="$(dirname "$0")/.."
+config="${root}/pyproject.toml"
+_gpu_lease_wrap="${root}/scripts/gpu_lease_wrap.sh"
+# shellcheck source=../scripts/gpu_lease_wrap.sh
+[[ -r "${_gpu_lease_wrap}" ]] && source "${_gpu_lease_wrap}"
+type gpu_lease_reexec &>/dev/null || gpu_lease_reexec() { :; }
 
-# Default rerun settings (for transient httpx read timeouts with HF transformers v5)
-reruns_count=2
-reruns_delay=5
-
-source $(dirname "$0")/test_utils.sh
-
-
-usage(){
->&2 cat << EOF
-Usage: $0
-   [ --mark_type input]
-   [ --log_file input]
-   [ --filter_pattern input]
-   [ --experiments_list input]
-   [ --experiment_patch_mask input]
-   [ --collect_dir input]
-   [ --resource-debug ]          # Enable opt-in per-test/fixture resource diagnostics
-   [ --allow-failures ]          # Continue running tests after failures (the run still exits non-zero)
-   [ --allow-empty ]             # Exit 0 when the selection is empty (by default an empty selection fails)
-   [ --help ]
-   Examples:
-	# run profile tests marked to run with CI following a filter pattern:
-	#   ./special_tests.sh --mark_type=profile --filter_pattern='test_f'
-	# run all profile tests passing a parent process log file to use:
-	#   ./special_tests.sh --mark_type=profile_ci --log_file=/tmp/some_parent_process_file_to_append_to.log
-  # run all standalone tests:
-  #   ./special_tests.sh --mark_type=standalone
-	# run all standalone tests following a pattern using a non-default test collection directory:
-	#   ./tests/special_tests.sh --mark_type=standalone --collect_dir='src/my_examples' --filter_pattern='special_examples'
-  # --mark_type=exp_patch is refused: no test in this repository selects on an experimental patch
-EOF
-exit 1
-}
-
-orig_args=("$@")
-args=$(getopt -o '' --long mark_type:,log_file:,filter_pattern:,experiments_list:,experiment_patch_mask:,collect_dir:,resource-debug,no-reruns,reruns:,reruns-delay:,allow-failures,allow-empty,help -- "$@")
-if [[ $? -gt 0 ]]; then
-  usage
+if ! python -c "import gpu_epsilon.special_tests" 2>/dev/null; then
+  >&2 echo "gpu-epsilon is not installed: python -m pip install -r requirements/ci/gpu_epsilon.txt"
+  exit 1
 fi
-
-eval set -- ${args}
-while :
-do
-  case $1 in
-    --mark_type)  mark_type=$2    ; shift 2  ;;
-    --log_file)  log_file=$2    ; shift 2  ;;
-    --filter_pattern)  filter_pattern=$2    ; shift 2  ;;
-    --experiments_list)  experiments_list=$2    ; shift 2  ;;
-    --experiment_patch_mask) experiment_patch_mask+=($2) ; shift 2  ;;
-    --collect_dir)  collect_dir=$2    ; shift 2  ;;
-    --resource-debug)  resource_debug=1    ; shift  ;;
-    --no-reruns)   no_reruns=1 ; shift ;;
-    --reruns)   reruns_count=$2 ; shift 2 ;;
-    --reruns-delay)   reruns_delay=$2 ; shift 2 ;;
-    --allow-failures)  allow_failures=1    ; shift  ;;
-    --allow-empty)  allow_empty=1    ; shift  ;;
-    --help)    usage      ; shift   ;;
-    --) shift; break ;;
-    *) >&2 echo Unsupported option: $1
-       usage ;;
-  esac
-done
-
-# Serialize this run against other GPU work on the host (no-op unless GPU_LEASE_CMD is set). Done after argument
-# parsing, so a bad flag is reported at once rather than after waiting for the lease.
-# A full suite is HOST-MEMORY-heavy as well as GPU-heavy, so it takes both host leases (gpu, then cpu-heavy in the
-# host tool's order) and stays serialized with every phase of a CI job, whose CPU-only phase holds only cpu-heavy.
-# GPU-only work (a notebook, a benchmark leg) takes the plain lease and may overlap that phase. An explicit
-# GPU_LEASE_ARGS wins.
+# Validate the arguments first, so a bad flag is reported at once rather than after waiting for the GPU lease, then
+# serialize the whole run against other GPU work on the host (no-op unless GPU_LEASE_CMD is set). A full suite is
+# host-memory-heavy as well as GPU-heavy, so it takes both host leases and stays serialized with every phase of a CI
+# job; an explicit GPU_LEASE_ARGS wins.
+python -m gpu_epsilon.special_tests --config "${config}" --check-args "$@"
 GPU_LEASE_ARGS="${GPU_LEASE_ARGS:---cpu-heavy}"
-gpu_lease_reexec "$0" "${orig_args[@]}"
-
-d=`date +%Y%m%d%H%M%S`
-tmp_log_dir="/tmp"
-mark_type=${mark_type:-"standalone"}
-experiments_list=${experiments_list:-$(dirname "$0")/.experiments}
-if [ -s "${experiments_list}" ]; then
-  if [ -z "${experiment_patch_mask:-}" ]; then
-    experiment_patch_mask=($(awk '{for(i=1;i<=NF;i++) print "0"}' "${experiments_list}"))
-  fi
+gpu_lease_reexec "$0" "$@"
+# --resource-debug (or an inherited IT_RESOURCE_DEBUG=1) also snapshots host resources at every collection and test
+# boundary, through the runner's event hook
+for arg in "$@"; do [[ "${arg}" == "--resource-debug" ]] && export IT_RESOURCE_DEBUG=1; done
+if [[ "${IT_RESOURCE_DEBUG:-0}" == "1" ]]; then
+  export GPU_EPSILON_EVENT_CMD="${GPU_EPSILON_EVENT_CMD:-bash ${root}/scripts/resource_snapshot.sh}"
 fi
-# Both test roots: special-marked tests also live under src/it_examples/tests (the example notebooks), and
-# collecting only `tests` silently left them out of every phase.
-collect_dir=${collect_dir:-"tests src/it_examples/tests"}
-special_test_session_log=${log_file:-"${tmp_log_dir}/special_tests_${mark_type}_${d}.log"}
-test_session_tmp_log="${tmp_log_dir}/special_tests_raw_${mark_type}_${d}.log"
-
-if [[ ${resource_debug:-0} -eq 1 ]]; then
-  enable_resource_debug_env
-fi
-
-# Build rerun args string (for transient httpx read timeouts with HF transformers v5)
-if [[ $no_reruns -eq 1 ]]; then
-    rerun_args=""
-else
-    rerun_args="--reruns ${reruns_count} --reruns-delay ${reruns_delay}"
-fi
-
-# default python coverage arguments (using pytest-cov for early import coverage)
-exec_defaults="-m pytest --cov=src/interpretune --cov-append --cov-report= --capture=no --no-header -v -s -rA ${rerun_args}"
-collect_defaults="-m pytest ${collect_dir} -q --collect-only --pythonwarnings ignore"
-start_time=$(date +%s)
-echo `printf "%0.s-" {1..120} && printf "\n"` | tee -a $special_test_session_log
-printf "IT special tests beginning execution at ${d} PT \n" | tee -a $special_test_session_log
-echo `printf "%0.s-" {1..120} && printf "\n"` | tee -a $special_test_session_log
-printf "\n" | tee -a $special_test_session_log
-
-define_configuration(){
-  echo `printf "%0.s-" {1..120} && printf "\n"` | tee -a $special_test_session_log
-  printf "Run configuration: \n" | tee -a $special_test_session_log
-  echo `printf "%0.s-" {1..120} && printf "\n"` | tee -a $special_test_session_log
-  case ${mark_type} in
-    profile)
-      echo "Collecting and running profile tests..." | tee -a $special_test_session_log
-      export IT_RUN_PROFILING_TESTS=2
-      ;;
-    profile_ci)
-      echo "Collecting and running only profile tests marked for CI..." | tee -a $special_test_session_log
-      export IT_RUN_PROFILING_TESTS=1
-      ;;
-    standalone)
-      echo "Collecting and running standalone tests..." | tee -a $special_test_session_log
-      export IT_RUN_STANDALONE_TESTS=1
-      ;;
-    optional)
-      echo "Collecting and running optional tests..." | tee -a $special_test_session_log
-      export IT_RUN_OPTIONAL_TESTS=1
-      ;;
-    benchmark)
-      echo "Collecting and running benchmark tests..." | tee -a $special_test_session_log
-      export IT_RUN_BENCHMARK_TESTS=1
-      ;;
-    exp_patch)
-      # Refused rather than run: no test here selects on experimental patches (nothing reads
-      # IT_EXPERIMENTAL_PATCH_TESTS), so this mode would run the whole suite one process per test.
-      echo "--mark_type=exp_patch: this repository defines no experimental-patch tests, so there is nothing to select." | tee -a $special_test_session_log
-      exit 1
-      ;;
-    *)
-      echo "no matching `mark_type` found, exiting..." | tee -a $special_test_session_log
-      exit 1
-      ;;
-  esac
-
-  if [[ -n "${COVERAGE_ANALYSIS_CONFIG_FILE}" ]]; then
-    echo "Using coverage rc file: ${COVERAGE_ANALYSIS_CONFIG_FILE}" | tee -a $special_test_session_log
-    # Updated to use --cov-branch and --cov-context for more granular test parameterization tracking
-    exec_defaults="-m pytest --cov --cov-config=${COVERAGE_ANALYSIS_CONFIG_FILE} --cov-append --cov-context=test --cov-report= --capture=no --no-header -v -s -rA ${rerun_args}"
-  fi
-
-  if [ -s "${experiments_list}" ]; then
-    # toggle optional experimental patches if requested
-    toggle_experimental_patches ${experiments_list} "${experiment_patch_mask[@]}"
-  else
-    echo "No experimental patches were found in the environment." | tee -a $special_test_session_log
-  fi
-  printf "${patch_report}" | tee -a $special_test_session_log
-
-  if [[ -n ${filter_pattern} ]]; then
-    echo "Using filter pattern: ${filter_pattern}" | tee -a $special_test_session_log
-    exec_defaults+=" -k ${filter_pattern}"
-    collect_defaults+=" -k ${filter_pattern}"
-  fi
-  printf '\n' | tee -a  $special_test_session_log
-}
-
-trap 'show_test_results "$special_test_session_log" "$test_session_tmp_log"' EXIT  # show the output on exit
-
-## Special coverage collection flow
-define_configuration
-collect_tests "$collect_defaults" "$special_test_session_log" "${allow_empty:-0}"
-if [[ ${allow_failures:-0} -eq 1 ]]; then
-    echo "Running in --allow-failures mode: tests will continue past failures." | tee -a $special_test_session_log
-fi
-execute_tests "$exec_defaults" "$special_test_session_log" "$test_session_tmp_log" "${allow_failures:-0}"
+exec python -m gpu_epsilon.special_tests --config "${config}" "$@"

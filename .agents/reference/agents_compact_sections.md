@@ -61,11 +61,14 @@ Rules that must not be missed:
   validation). The CI lock is regenerated with `./requirements/utils/lock_ci_requirements.sh`. A rebuild that changes
   benchmark-relevant dependencies must end with the dashboard parity gates green and a fresh benchmark wave.
 
-<!-- section: Testing sha=9c8273c707bd -->
+<!-- section: Testing sha=f2eb4f426e26 -->
 Basic run (mirrors `ci_test-full.yml`): `python -m pytest tests src/it_examples/tests -v`; add
 `--cov=src/interpretune --cov-append --cov-report=` for coverage. Standalone tests take inline variables, never
 `export` (marker conflicts): `IT_RUN_STANDALONE_TESTS=1 python -m pytest <node>`; the harness is
 `./tests/special_tests.sh --mark_type=standalone [--filter_pattern=...]`. Profiling tests use `IT_RUN_PROFILING_TESTS=1`.
+`special_tests.sh` is an entry script for gpu-epsilon's shared runner (`gpu_epsilon.special_tests`, pinned in
+`requirements/ci/gpu_epsilon.txt`), configured by `[tool.gpu-epsilon.special-tests]` in `pyproject.toml`: change a mark,
+a selection variable or the coverage command there, not in the script. Node outcomes come from per-rank records.
 
 - **Phase marks** (`standalone`, `min_cuda_gpus`, `bf16_cuda`, `profiling`, ...) may sit on a test or on its class:
   collection reads `item.iter_markers()`, so a class-level `@RunIf(...)` selects every test the class collects,
