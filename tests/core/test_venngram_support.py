@@ -1,7 +1,6 @@
 """The venngram support declaration (#887): derived from a backend's own records, refusing by name."""
 
 from dataclasses import dataclass, field
-from types import SimpleNamespace
 
 import pytest
 
@@ -25,7 +24,10 @@ class _Capture:
     capturable: frozenset = field(default_factory=lambda: frozenset({"mlp.hook_out", "hook_resid_pre"}))
 
 
-def _recipe(**stage):
+CONCEPT = {"values": [1.0, 0.0, 0.0, 0.0], "shape": [4], "basis": "jlens_folded"}
+
+
+def _recipe(operands=None, **stage):
     from venngram.recipe import Recipe
 
     doc = {
@@ -36,6 +38,8 @@ def _recipe(**stage):
         "book": BOOK,
         "stages": [stage],
     }
+    if operands:
+        doc["operands"] = operands
     return Recipe.from_mapping(doc)
 
 
@@ -46,18 +50,28 @@ def _support(capture=True):
 class TestDerivedSupport:
     def test_scopes_and_ops_come_from_the_backend_record(self):
         support = _support()
-        assert support.ops == frozenset({"add"})  # only what the apply path implements so far
+        # every core venngram op has a native mode now, `scale` included
+        assert support.ops == frozenset({"add", "replace", "scale", "project", "reject", "patch", "clamp"})
         assert support.tokens == frozenset({"all", "last"})
-        assert support.targets == frozenset({"units"}) and support.values == frozenset({"dose", "doses"})
-        assert support.sites == frozenset({"mlp.hook_out", "hook_resid_pre"}) and support.name == "interpretune"
+        assert support.targets == frozenset({"units", "activation"}) and support.values == frozenset({"dose", "doses"})
+        assert support.sites == frozenset(
+            {"mlp.hook_out", "hook_resid_pre", "blocks.*.mlp.hook_out", "blocks.*.hook_resid_pre"}
+        )
+        assert support.bases == frozenset({"jlens_folded", "jlens_unfolded"}) and support.name == "interpretune"
 
-    def test_a_backend_without_add_declares_no_ops(self):
+    def test_the_default_bases_are_interpretunes_jlens_bases(self):
+        from interpretune.analysis.optools import JLENS_BASIS_NAMES
+        from interpretune.analysis.venngram.support import DEFAULT_BASES
+
+        assert DEFAULT_BASES == frozenset(JLENS_BASIS_NAMES.values())
+
+    def test_ops_are_bounded_by_the_backend_modes(self):
         from interpretune.analysis.backends.capabilities import InterventionMode, PositionScope
 
         support = venngram_support(
             InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, modes={InterventionMode.REPLACE})
         )
-        assert support.ops == frozenset() and support.tokens == frozenset({"last"})
+        assert support.ops == frozenset({"replace"}) and support.tokens == frozenset({"last"})
 
     def test_no_capture_record_declares_no_site_bound(self):
         assert _support(capture=False).sites is None
@@ -80,19 +94,33 @@ class TestCheckRecipe:
         with pytest.raises(MisconfigurationException, match="asks for more than interpretune honours"):
             require_supported(recipe, _support())
 
-    def test_unmapped_ops_and_operand_ops_refuse_by_name(self):
+    def test_operand_ops_at_a_layered_site_are_supported(self):
         recipe = _recipe(
-            site="mlp.hook_out",
-            ops=[{"op": "scale", "target": {"set": "chess"}, "value": {"dose": 2.0}}],
+            operands={"concept": CONCEPT},
+            site="blocks.3.mlp.hook_out",
+            ops=[
+                {"op": "reject", "operand": "concept", "params": {"fraction": 0.5}},
+                {"op": "scale", "value": {"dose": 2}},
+            ],
         )
-        assert any("not supported" in r for r in check_recipe(recipe, _support()))
-        from venngram.recipe import Op, Stage, Tokens
+        assert check_recipe(recipe, _support()) == []
 
-        with_operand = SimpleNamespace(
-            stages=[Stage(site="mlp.hook_out", ops=(Op(op="add", operand="concept"),), tokens=Tokens("all"))],
-            book=recipe.book,
+    def test_untranslatable_ops_refuse_by_name(self):
+        unit_replace = _recipe(
+            site="mlp.hook_out", ops=[{"op": "replace", "target": {"set": "chess"}, "value": {"dose": 2.0}}]
         )
-        assert any("operand `concept` is not supported yet" in r for r in check_recipe(with_operand, _support()))
+        assert any("a unit-targeted `replace` has no native mode" in r for r in check_recipe(unit_replace, _support()))
+        layer_free = _recipe(
+            operands={"concept": CONCEPT}, site="mlp.hook_out", ops=[{"op": "reject", "operand": "concept"}]
+        )
+        assert any("names no layer" in r for r in check_recipe(layer_free, _support()))
+        other_basis = _recipe(
+            operands={"concept": {**CONCEPT, "basis": "unfolded"}},
+            site="blocks.3.mlp.hook_out",
+            ops=[{"op": "reject", "operand": "concept"}],
+        )
+        assert any("basis `unfolded`, which is not supported" in r for r in check_recipe(other_basis, _support()))
+        assert check_recipe(other_basis, venngram_support(InterventionSupport.every(), _Capture(), bases=None)) == []
 
     def test_the_published_record_round_trips_and_conformance_agrees(self, tmp_path):
         import yaml
@@ -102,12 +130,13 @@ class TestCheckRecipe:
         support = _support()
         document = support_mapping(support)
         reread = Support.from_mapping(document)
-        assert (reread.ops, reread.targets, reread.tokens, reread.values, reread.sites, reread.name) == (
+        assert (reread.ops, reread.targets, reread.tokens, reread.values, reread.sites, reread.bases, reread.name) == (
             support.ops,
             support.targets,
             support.tokens,
             support.values,
             support.sites,
+            support.bases,
             support.name,
         )
 

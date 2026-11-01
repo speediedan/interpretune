@@ -735,6 +735,23 @@ class ModelBackendConformance:
         self._assert_moved(forward, what="patch (s, t)")
         self._assert_same_logits(forward, reverse, what="patch (s, t) and patch (t, s) differ")
 
+    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.SCALE)
+    def test_scale_by_ones_is_identity(self, suite):
+        """Multiplying the activation by ones leaves the logits unchanged, and a non-unit multiplier moves them."""
+        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        ones = torch.ones_like(self._vector(suite))
+        store = self._intervene(suite, scope=scope, mode="scale", scale=1.0, vector=ones)
+        for i, (pre, post) in enumerate(zip(store["pre_intervention_logits"], store["post_intervention_logits"])):
+            torch.testing.assert_close(
+                post,
+                pre,
+                rtol=0,
+                atol=CONVERGENCE_ATOL,
+                msg=lambda detail, i=i: f"scale by ones changed the logits (batch {i})\n{detail}",
+            )
+        tripled = self._intervene(suite, scope=scope, mode="scale", scale=1.0, vector=ones * 3.0)
+        self._assert_moved(tripled, what="scale")
+
     @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.PROJECT)
     def test_project_depends_only_on_the_basis_span(self, suite):
         """Projecting onto ``v`` and onto ``-2v`` is the same projection, and it moves the logits."""
@@ -764,6 +781,9 @@ class ModelBackendConformance:
             # the same scale distinguishes them: they partition the activation rather than agreeing.
             "reject": (vector, 1.0),
             "clamp": (vector, 1.0),
+            # `scale` multiplies elementwise, so the same vector moves the activation differently from every
+            # additive, replacing and span mode
+            "scale": (vector, 1.0),
         }
         # Modes whose parameters are not exhausted by (tensor, scale). A clamp needs a BAND: with neither
         # bound it is the identity for every input, so an entry here is what makes the mode exercisable

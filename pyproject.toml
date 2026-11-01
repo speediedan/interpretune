@@ -241,8 +241,11 @@ git-deps = [
     # finetuning-scheduler by git SHA until 2.15.0 is published (#758): see its `override-dependencies` entry,
     # which carries the same URL and replaces the lock file's release pin at install. Kept here too so an
     # install still gets it once a relock drops it from the lock (`--no-emit-package`). The SHA is finetuning-scheduler
-    # main with #137 (views attach as `tunable_view`; protocol violations raise `TunableViewError`).
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@87e1d6d3f11533e5edc57bc58cf7d8954a2addcb",
+    # main with #175, which depends on venngram (role rules resolved through registries, venngram #39).
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@87a2bbd8d9498d4b55f4b89309bf3f7ed8b838bb",
+    # venngram by git SHA until 0.1.0 is published: finetuning-scheduler's base dependencies need it, and the
+    # `venngram` extra's floor admits this pre-release. The SHA is venngram main with #39 (role rules as data).
+    "venngram @ git+https://github.com/speediedan/venngram@b9dcab53449e1b2179c5bad37d0fad8ed4e058ba",
 ]
 
 dev = [
@@ -327,7 +330,10 @@ override-dependencies = [
     # this. The lock script leaves it out of the universal lock (`--no-emit-package`), whose 2.13.0 pin is
     # replaced by this at install. RETIRE it, and raise the `tune` extra's floor to 2.15.0, once 2.15.0
     # is published.
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@87e1d6d3f11533e5edc57bc58cf7d8954a2addcb",
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@87a2bbd8d9498d4b55f4b89309bf3f7ed8b838bb",
+    # venngram by git SHA until 0.1.0 is on PyPI, for the same reason: finetuning-scheduler requires it and it is in
+    # no release. RETIRE it with the `git-deps` entry once 0.1.0 is published.
+    "venngram @ git+https://github.com/speediedan/venngram@b9dcab53449e1b2179c5bad37d0fad8ed4e058ba",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.

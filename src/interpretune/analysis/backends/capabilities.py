@@ -97,6 +97,7 @@ class InterventionMode(str, Enum):
     PROJECT = "project"
     REJECT = "reject"
     CLAMP = "clamp"
+    SCALE = "scale"
 
 
 @dataclass(frozen=True)
