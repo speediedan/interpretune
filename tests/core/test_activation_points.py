@@ -149,6 +149,20 @@ class TestResolve:
         res = resolve(parse("blocks.0.mlp.hook_pre"), cmap)
         assert isinstance(res, TensorRef) and res.io == "output" and res.module_path == cmap.module_for("mlp.in", 0)
 
+    def test_mlp_hidden_activation_is_the_down_projection_input(self, cmap):
+        """`hook_mlp_hidden_in` is the post-activation hidden tensor, addressed at the down projection.
+
+        The semantic name, the component spelling `mlp.out.hook_in` and the TransformerLens alias `mlp.hook_post`
+        are one record, and it resolves to the down projection's INPUT on every bundled architecture: the
+        activation output is not a module output of its own (inline on a two-projection MLP, a gated product on
+        a gated one), so the consumer's argument is the only module boundary that names it everywhere.
+        """
+        semantic = parse("blocks.3.hook_mlp_hidden_in")
+        assert semantic == parse("blocks.3.mlp.out.hook_in") and semantic.alias is None
+        assert parse("blocks.3.mlp.hook_post").component == semantic.component
+        res = resolve(semantic, cmap)
+        assert isinstance(res, TensorRef) and res.io == "input" and res.module_path == cmap.module_for("mlp.out", 3)
+
 
 class TestResolverLayerShape:
     """The resolver refuses a layer on a global point and a missing layer on a block point.
