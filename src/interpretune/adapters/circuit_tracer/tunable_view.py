@@ -50,7 +50,7 @@ from circuit_tracer.transcoder import SingleLayerTranscoder, TranscoderSet
 from circuit_tracer.transcoder.cross_layer_transcoder import CrossLayerTranscoder
 
 if TYPE_CHECKING:
-    from finetuning_scheduler.tunable_view import TunableSupport
+    from venngram.tuning import TunableSupport
 
 #: The attribute each transcoder carries its low-rank corrections under.
 DELTAS_ATTR = "lazy_deltas"
@@ -278,7 +278,7 @@ class CircuitTracerView:
     def __init__(
         self, root: nn.Module, transcoders: nn.Module, refusal: str | None = None, tune_base: bool = False
     ) -> None:
-        from finetuning_scheduler.tunable_view.roles import validate_roles
+        from venngram.roles import validate_roles
 
         lazy_weights(transcoders)  # refuses an unknown layout by name
         self.root = root
@@ -302,8 +302,8 @@ class CircuitTracerView:
 
     def support(self) -> TunableSupport:
         """Trainable through the transcoders (``instrument`` until promoted); refused under disk offload."""
-        from finetuning_scheduler.tunable_view import TunableSupport
-        from finetuning_scheduler.tunable_view.roles import declared_kinds
+        from venngram.tuning import TunableSupport
+        from venngram.roles import declared_kinds
 
         if self.refusal:
             return TunableSupport(trainable=False, reason=self.refusal)
@@ -324,7 +324,7 @@ class CircuitTracerView:
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Each name in the view maps to itself; a base-model name outside ``tune_base`` is refused, naming why."""
-        from finetuning_scheduler.tunable_view import Unresolvable
+        from venngram.tuning import Unresolvable
 
         if self.refusal:
             raise Unresolvable(list(logical), self.refusal)
@@ -343,7 +343,7 @@ class CircuitTracerView:
     def depth_groups(self) -> list[list[str]]:
         """Under ``tune_base``, the base model's parameters in pairs from the last; then one group per transcoder
         layer, from the last (a cross-layer transcoder is one group)."""
-        from finetuning_scheduler.tunable_view.views import pair_groups
+        from venngram.tuning.views import pair_groups
 
         groups = pair_groups(self._base_names) if self._base_names else []
         if isinstance(self.transcoders, CrossLayerTranscoder):
@@ -357,7 +357,7 @@ class CircuitTracerView:
 
     def promote(self, physical: Sequence[str], role: str) -> Mapping[str, str]:
         """Promote transcoder tensors (only; a base-model name is refused) to ``role``, keeping their names."""
-        from finetuning_scheduler.tunable_view import CanonicalView, Unresolvable
+        from venngram.tuning import CanonicalView, Unresolvable
 
         self.to_physical(physical)  # refuses unknown names, and base-model names outside `tune_base`
         if base := [n for n in physical if n in set(self._base_names)]:

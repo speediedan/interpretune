@@ -8,13 +8,13 @@ import pytest
 import torch
 from torch import nn
 
-pytest.importorskip("finetuning_scheduler.tunable_view", reason="finetuning-scheduler predates the tunable view")
+pytest.importorskip("venngram.tuning", reason="venngram, which holds the tunable view protocol, is not installed")
 
 from finetuning_scheduler.core.compile import compile_schedule  # noqa: E402
 from finetuning_scheduler.core.exceptions import FTSConfigurationError  # noqa: E402
-from finetuning_scheduler.tunable_view import as_view  # noqa: E402
+from venngram.tuning import as_view  # noqa: E402
 from finetuning_scheduler.testing import pytest_params, TunableViewConformance  # noqa: E402
-from finetuning_scheduler.tunable_view import TunableViewError, VIEW_ATTR as FTS_VIEW_ATTR  # noqa: E402
+from venngram.tuning import TunableViewError, VIEW_ATTR as FTS_VIEW_ATTR  # noqa: E402
 
 from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule  # noqa: E402
 from interpretune.session import ITSession  # noqa: E402
@@ -187,7 +187,7 @@ class TestAttachRules:
         assert attach_tunable_view(module) is None and getattr(module, VIEW_ATTR, None) is None
 
 
-_CANONICAL = {"class_path": "finetuning_scheduler.tunable_view.CanonicalView"}
+_CANONICAL = {"class_path": "venngram.tuning.CanonicalView"}
 _BRIDGE = "interpretune.adapters.transformer_lens.tunable_view.TransformerBridgeView"
 
 
@@ -195,7 +195,7 @@ class TestConfiguredView:
     """``it_cfg.tunable_view`` chooses the view in configuration, ahead of ``build_tunable_view()`` (#841)."""
 
     def test_a_tl_composition_can_schedule_its_own_parameter_names(self, request):
-        from finetuning_scheduler.tunable_view import CanonicalView
+        from venngram.tuning import CanonicalView
 
         module = _fresh_module(request, "get_it_session_cfg__tl_cust", tunable_view=_CANONICAL)
         view = getattr(module, VIEW_ATTR)
@@ -231,7 +231,7 @@ class TestConfiguredView:
     @pytest.mark.parametrize(
         "bad, match",
         [
-            pytest.param("finetuning_scheduler.tunable_view.CanonicalView", "mapping with a `class_path`", id="str"),
+            pytest.param("venngram.tuning.CanonicalView", "mapping with a `class_path`", id="str"),
             pytest.param({"init_args": {}}, "mapping with a `class_path`", id="no_class_path"),
             pytest.param({**_CANONICAL, "args": [1]}, "not \\['args'\\]", id="extra_key"),
             pytest.param({**_CANONICAL, "init_args": [1]}, "must be a mapping", id="init_args"),
@@ -312,7 +312,7 @@ class TestBridgeView:
         """A parameter no TransformerLens name reaches (here one registered on a block, as an unnamed norm or a
         fused projection is on a real architecture) resolves to itself; a reached parameter is scheduled by its
         TransformerLens name (#841)."""
-        from finetuning_scheduler.tunable_view import Unresolvable
+        from venngram.tuning import Unresolvable
 
         module = _fresh_module(request, "get_it_session_cfg__tl_cust")
         module.model.blocks[0].register_parameter("extra", nn.Parameter(torch.zeros(2)))

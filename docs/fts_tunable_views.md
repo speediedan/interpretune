@@ -63,7 +63,7 @@ unless `init_args` sets them.
 ```yaml
 # schedule a composition by its own (physical) parameter names
 tunable_view:
-  class_path: finetuning_scheduler.tunable_view.CanonicalView
+  class_path: venngram.tuning.CanonicalView
 ```
 
 `init_args` cannot set the view's root, which is always the module. The [TransformerLens](fts_tuning_transformer_lens.md)
