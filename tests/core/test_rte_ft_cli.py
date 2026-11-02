@@ -194,3 +194,64 @@ def test_the_cli_runs_the_phased_core_loop_under_torchrun_with_an_fsdp2_plan(rte
         assert records[0]["best_score"] == records[1]["best_score"]
     assert [e["val_loss"] for e in meta[0]["epochs"]] == [e["val_loss"] for e in plain[0]["epochs"]]
     assert [e["val_loss"] for e in streamed[0]["epochs"]] == [e["val_loss"] for e in plain[0]["epochs"]]
+
+
+def _test_metrics(stdout: str) -> dict[str, float]:
+    """The metrics the core test loop printed at its epoch end (rank 0's, averaged across ranks)."""
+    lines = [line for line in stdout.splitlines() if line.startswith("Test epoch end: ")]
+    assert len(lines) == 1, f"expected one test epoch end report:\n{stdout[-3000:]}"
+    return yaml.safe_load(lines[0].removeprefix("Test epoch end: "))
+
+
+def _test_config(revision: str, work: Path) -> Path:
+    """The shipped core run configuration at ``revision``, without its tuning callbacks (a test run trains
+    nothing)."""
+    from interpretune.hub.components import resolve_component_file
+
+    shipped = resolve_component_file(f"hub://speediedan/rte@{revision}/runs/rte_ft.gpt2.core.yaml")
+    cfg = yaml.safe_load(shipped.read_text(encoding="utf-8"))
+    cfg["session_ref"] = f"{cfg['session_ref']}@{revision}"
+    cfg["run_cfg"].pop("callbacks")
+    path = work / "rte_test.gpt2.core.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+    return path
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+def test_the_cli_runs_the_test_loop_under_torchrun_with_an_fsdp2_plan(
+    rte_component, clean_cli_env, tmp_path, capsys, monkeypatch
+):
+    """``--run_command test`` launched through the CLI under ``torchrun`` on two ranks, sharded with FSDP2 and built on
+    the meta device, reports the metrics one process reports over the same samples.
+
+    The test step generates its answer, and generation calls the Hugging Face model directly rather than through the
+    interpretune module's forward, which is where FSDP2 gathers a unit's parameters. Each rank tests every other
+    sample (``DistributedSampler`` without shuffling), so two ranks of two batches cover the first four batches of the
+    one-process run, and the averaged accuracy over equal shares is the one-process accuracy.
+    """
+    from interpretune.base.components.cli import core_cli_main
+
+    cli = Path(sys.executable).with_name("interpretune")
+    if not cli.exists():
+        pytest.skip(f"no `interpretune` console script beside {sys.executable}")
+    single, sharded = tmp_path / "single", tmp_path / "sharded"
+    single.mkdir()
+    sharded.mkdir()
+    dataset = {"datamodule_cfg": {"dataset_path": str(tmp_path / "dataset")}}
+    monkeypatch.chdir(single)
+    args = ["--config", str(_test_config(rte_component, single)), "--registered_cfg", json.dumps(dataset)]
+    core_cli_main(run_mode="test", args=[*args, "--run_cfg.limit_test_batches=4"])
+    expected = _test_metrics(capsys.readouterr().out)
+
+    hf_cfg = {"meta_init": True, "meta_init_load": "rank0"}
+    registered = {**dataset, "module_cfg": {"init_args": {"hf_from_pretrained_cfg": {"init_args": hf_cfg}}}}
+    args = [str(cli), "--run_command", "test", "--config", str(_test_config(rte_component, sharded))]
+    args += ["--registered_cfg", json.dumps(registered), "--run_cfg.limit_test_batches=2"]
+    args += ["--run_cfg.placement=fsdp2", "--run_cfg.fsdp_plan", json.dumps({"class:GPT2Block": {}})]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", "--no-python", *args]
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    proc = subprocess.run(cmd, cwd=sharded, env=env, capture_output=True, text=True, timeout=1500)
+    assert proc.returncode == 0, f"torchrun failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    metrics = _test_metrics(proc.stdout)
+    assert metrics.keys() == expected.keys()
+    assert metrics["accuracy"] == pytest.approx(expected["accuracy"])

@@ -1,9 +1,10 @@
 """One rank of the circuit-tracer placement runs (``tests/core/test_core_loop_distributed.py``).
 
 Every rank builds the same tiny circuit-tracer replacement model (``tests/core/circuit_tracer_toy.py``) and records its
-logits, an nnsight trace of its LM head and its transcoder activations. A module holding the model's Hugging Face
+logits, an nnsight trace of its LM head, its transcoder activations and each transcoder's sparse encode and decode (the
+calls attribution sets up with). A module holding the model's Hugging Face
 module declares the calls circuit-tracer makes outside its forward, as the nnsight and circuit-tracer adapters do, and
-``place_module`` shards it with the given plan. The same three readings are then taken through the sharded model.
+``place_module`` shards it with the given plan. The same readings are then taken through the sharded model.
 
 With ``--meta``, the model is instead built on the meta device by ``meta_replacement_model`` (its Hub loaders replaced
 by the toy's), rank 0 keeps the toy as the source the placement loads every rank from, and the readings are compared
@@ -92,7 +93,13 @@ def readings(model, prompt: torch.Tensor) -> dict[str, torch.Tensor]:
             traced = nnsight.save(model.lm_head.output)
     with only_token_zero_special(model):
         _, activations = model.get_activations(prompt)
-    return {"plain": plain, "trace": traced.clone(), "activations": activations.clone()}
+    # attribution's setup path: `decode_sparse` calls `_get_decoder_vectors`, both registered on one unit, so this
+    # reading fails if the inner call's return reshards the unit before the outer reads `b_dec`
+    transcoders = model.transcoders._module.transcoders
+    mlp_in = torch.randn(prompt.shape[0], transcoders[0].W_enc.shape[1], generator=torch.Generator().manual_seed(0))
+    with torch.no_grad():
+        sparse = torch.stack([tc.decode_sparse(tc.encode_sparse(mlp_in)[0], mlp_in)[0] for tc in transcoders])
+    return {"plain": plain, "trace": traced.clone(), "activations": activations.clone(), "sparse": sparse.clone()}
 
 
 def main() -> None:

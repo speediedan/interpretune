@@ -203,7 +203,14 @@ class ITSessionMixin:
                 f"`session_ref` {session_ref!r} is not of the form <repo_id>:<config_key>[@<revision>]."
             )
         _, body = resolve_component_config(repo_id, key, revision=revision or None)
-        return {k: body[k] for k in ONE_DOOR_BODY_KEYS if k in body}
+        mapping = {k: body[k] for k in ONE_DOOR_BODY_KEYS if k in body}
+        # A published body declares its compositions in `reg_info` rather than `adapter_ctx`, and `reg_info` is not a
+        # session key, so resolve the context the way the library loader does; otherwise every such configuration
+        # would run as the core composition alone, with its adapter configurations silently unused.
+        from interpretune.config.loading import resolve_adapter_ctx
+
+        mapping["adapter_ctx"] = [adapter.name for adapter in resolve_adapter_ctx(body)]
+        return mapping
 
     @staticmethod
     def _resolve_hub_args(args: ArgsType) -> ArgsType:
