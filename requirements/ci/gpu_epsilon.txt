@@ -1,5 +1,5 @@
 # The GPU CI tooling shared with finetuning-scheduler (speediedan/gpu-epsilon): the release eligibility checker,
-# configured by tests/gpu_ci/release.json, the special-test runner tests/special_tests.sh execs, configured by
+# configured by tests/gpu_ci/release.json, the special-test runner (python -m gpu_epsilon.special_tests), configured by
 # [tool.gpu-epsilon.special-tests] in pyproject.toml, and the phase driver scripts/gen_it_coverage.sh runs its test
 # phases through, configured by [tool.gpu-epsilon.phases]. The GPU job container installs it too. CI only, never package metadata: the hosted CI action and build_it_env.sh install it for
 # the contract test (tests/gpu_ci/test_release_eligibility.py), and .azure-pipelines/gpu-release.yml reads the commit

@@ -92,9 +92,14 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
 
         A data-parallel placement registers ``methods`` as FSDP2 forward methods, so the submodule's parameters are
         gathered for them, and refuses a plan that does not make each submodule its own unit. Cooperative: an adapter
-        extends ``super()``'s list. The core path calls its model through the module, so it declares none.
+        extends ``super()``'s list.
+
+        The core path calls its model through the module's forward, except to generate: ``it_generate`` calls the
+        model's ``generate``, which never runs this module's forward, so the root unit's parameters (the embeddings
+        and LM head, typically) would stay sharded and FSDP2 would not know this module is the root. ``it_generate``
+        is therefore declared on this module itself, the root unit.
         """
-        return []
+        return [(type(self).__name__, self, ("it_generate",))] if hasattr(self, "it_generate") else []
 
     def meta_load_target(self) -> torch.nn.Module:
         """The torch module a data-parallel placement loads a meta-built model's weights into: ``self.model`` here.

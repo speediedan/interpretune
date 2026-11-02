@@ -66,7 +66,7 @@ case "${1:?command}" in
         [[ -f "${VENV}/torch-excludes.txt" ]] && excludes=(--excludes "${VENV}/torch-excludes.txt")
         uv pip install -e . --group git-deps "${excludes[@]}"
         uv pip install -r requirements/ci/requirements.txt "${excludes[@]}"
-        # the special-test runner tests/special_tests.sh execs (gpu-epsilon, standard library only)
+        # the special-test runner the GPU phases run (gpu-epsilon, standard library only)
         uv pip install -r requirements/ci/gpu_epsilon.txt
         uv pip list
         for pkg in coverage pytest torch transformers gpu-epsilon; do
@@ -143,11 +143,11 @@ PY
     extended-profile)
         venv
         mkdir -p /tmp/kernel_cache
-        PYTORCH_KERNEL_CACHE_PATH=/tmp/kernel_cache bash ./tests/special_tests.sh --mark_type=profile --allow-failures
+        PYTORCH_KERNEL_CACHE_PATH=/tmp/kernel_cache python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type=profile --allow-failures
         ;;
     extended-optional)
         venv
-        bash ./tests/special_tests.sh --mark_type=optional --allow-failures
+        python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type=optional --allow-failures
         ;;
     coverage)
         set -e

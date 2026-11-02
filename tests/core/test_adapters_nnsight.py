@@ -377,7 +377,8 @@ class TestNNsightLightningIntegration:
 class TestNNsightTracing:
     """Basic tests for NNsight tracing functionality."""
 
-    @RunIf(standalone=True)
+    # standalone for the trace/coverage clash, not for a device (#731)
+    @RunIf(standalone_cpu=True)
     def test_nnsight_trace_context(self, get_it_session__ns_gpt2__setup):
         """Verify NNsight trace context manager works.
 

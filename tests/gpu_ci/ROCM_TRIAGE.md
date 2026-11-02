@@ -46,7 +46,7 @@ When AMD hardware is present, in a ROCm torch environment under the host GPU lea
 ```bash
 export GPU_LEASE_CMD=<path to gpu_lease.sh>
 $GPU_LEASE_CMD -- env IT_RUN_CUDA_TESTS=1 python -m pytest tests src/it_examples/tests -v 2>&1 | tee rocm-cuda-phase.log
-bash ./tests/special_tests.sh --mark_type=standalone --allow-failures
+python -m gpu_epsilon.special_tests --lease --mark_type=standalone --allow-failures
 $GPU_LEASE_CMD -- env IT_RUN_CUDA_TESTS=1 python -m pytest tests/gpu_ci/test_latent_device_placement.py -v -rA --junitxml=g6.xml   # issue 795
 python tests/gpu_ci/phase_manifest.py --classify-file rocm-cuda-phase.log
 python tests/gpu_ci/phase_manifest.py --classify-junit rocm-cuda-phase.junit.xml   # every failure, cascades attributed

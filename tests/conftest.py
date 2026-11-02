@@ -1384,7 +1384,7 @@ def cuda_phase_selects(kw: dict) -> bool:
     Every other special tier runs in its own phase (or, for ``benchmark``, in none), so a CUDA mark alone does not
     select it here: a benchmark selected into this phase only reported as a skip.
     """
-    special = ("standalone", "profiling", "profiling_ci", "optional", "benchmark")
+    special = ("standalone", "standalone_cpu", "profiling", "profiling_ci", "optional", "benchmark")
     return not any(kw.get(k) for k in special) and bool(kw.get("min_cuda_gpus") or kw.get("bf16_cuda"))
 
 
@@ -1494,6 +1494,9 @@ def pytest_collection_modifyitems(items):
     if os.getenv("IT_RUN_STANDALONE_TESTS", "0") == "1":
         # has `@RunIf(standalone=True)`
         items[:] = [item for item in items if _marked(item, lambda kw: kw.get("standalone"))]
+    elif os.getenv("IT_RUN_STANDALONE_CPU_TESTS", "0") == "1":
+        # has `@RunIf(standalone_cpu=True)`: process isolation without a GPU, run in the hosted Linux job (#731)
+        items[:] = [item for item in items if _marked(item, lambda kw: kw.get("standalone_cpu"))]
     elif os.getenv("IT_RUN_CUDA_TESTS", "0") == "1":
         items[:] = [item for item in items if _marked(item, cuda_phase_selects)]
     elif os.getenv("IT_RUN_PROFILING_TESTS", "0") == "2":

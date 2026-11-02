@@ -121,6 +121,7 @@ class RunIf:
         skip_windows: bool = False,
         skip_mac_os: bool = False,
         standalone: bool = False,
+        standalone_cpu: bool = False,
         profiling: bool = False,
         profiling_ci: bool = False,
         optional: bool = False,
@@ -157,6 +158,9 @@ class RunIf:
                 from a real defect.
             standalone: Mark the test as standalone, our CI will run it in a separate process.
                 This requires that the ``IT_RUN_STANDALONE_TESTS=1`` environment variable is set.
+            standalone_cpu: Mark the test as standalone but device-free: it needs a process of its own, not a GPU, so it
+                runs in the hosted Linux job with GPUs hidden rather than in the GPU standalone phase (#731). This
+                requires that the ``IT_RUN_STANDALONE_CPU_TESTS=1`` environment variable is set.
             profiling: Mark the test as profiling. It will run as a separate process and only be included in CI
                 in limited cases. This requires that the ``IT_RUN_PROFILING_TESTS=2`` environment variable is set.
             profiling_ci: Mark the test as a profiling test intended to run with normal ci. It will run as a separate
@@ -257,6 +261,13 @@ class RunIf:
             reasons.append("Standalone execution")
             # used in conftest.py::pytest_collection_modifyitems
             kwargs["standalone"] = True
+
+        if standalone_cpu:
+            env_flag = os.getenv("IT_RUN_STANDALONE_CPU_TESTS", "0")
+            conditions.append(env_flag != "1")
+            reasons.append("Standalone (device-free) execution")
+            # used in conftest.py::pytest_collection_modifyitems
+            kwargs["standalone_cpu"] = True
 
         if profiling:
             env_flag = os.getenv("IT_RUN_PROFILING_TESTS", "0")

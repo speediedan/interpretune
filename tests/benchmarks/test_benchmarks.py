@@ -17,8 +17,8 @@ Usage:
     IT_RUN_BENCHMARK_TESTS=1 python -m pytest tests/benchmarks/test_benchmarks.py \
         -k "gemma2_2b_it_l" -v
 
-    # Via special_tests.sh harness
-    ./tests/special_tests.sh --mark_type=benchmark
+    # Via the special-test runner
+    python -m gpu_epsilon.special_tests --lease --mark_type=benchmark
 """
 
 from __future__ import annotations

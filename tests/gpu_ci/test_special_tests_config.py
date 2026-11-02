@@ -1,5 +1,5 @@
 """CPU tests for this repository's special-test configuration (``[tool.gpu-epsilon.special-tests]`` in
-``pyproject.toml``), which ``tests/special_tests.sh`` runs through gpu-epsilon's shared runner.
+``pyproject.toml``), which gpu-epsilon's shared runner (``python -m gpu_epsilon.special_tests``) reads.
 
 The runner's own rules are tested in gpu-epsilon. These cases check that this repository's table agrees with what reads
 it: the selection variables ``tests/conftest.py`` selects on, the GPU phases that run each mark, and the options the
@@ -26,7 +26,15 @@ def _run(*argv: str):
 
 def test_every_mark_resolves_to_a_conftest_selection():
     assert CONFIG.default_mark == "standalone"
-    assert set(CONFIG.marks) == {"standalone", "profile", "profile_ci", "optional", "benchmark", "exp_patch"}
+    assert set(CONFIG.marks) == {
+        "standalone",
+        "standalone_cpu",
+        "profile",
+        "profile_ci",
+        "optional",
+        "benchmark",
+        "exp_patch",
+    }
     for mark, spec in CONFIG.marks.items():
         if spec.get("refused"):
             continue
@@ -48,7 +56,7 @@ def test_every_selection_variable_conftest_reads_is_cleared():
 
 def test_the_gpu_phases_run_configured_marks():
     for phase in pr.PHASES.values():
-        if "special_tests.sh" in phase.command:
+        if "gpu_epsilon.special_tests" in phase.command:
             (mark,) = re.findall(r"--mark_type=(\w+)", phase.command)
             assert mark in CONFIG.marks and not CONFIG.marks[mark].get("refused")
 
@@ -76,3 +84,15 @@ def test_the_experiments_default_to_off(monkeypatch):
     assert run.experiment_flags() == dict.fromkeys(names, False)
     env = run.environment()
     assert env["IT_RUN_STANDALONE_TESTS"] == "1" and not set(names) & set(env)
+
+
+def test_the_hosted_linux_job_runs_the_device_free_standalone_tests():
+    """``standalone_cpu`` tests left the GPU standalone phase (#731), so the hosted Linux job must run them."""
+    workflow = (pr.ROOT / ".github" / "workflows" / "ci_test-full.yml").read_text()
+    step = workflow[workflow.index("Run the device-free standalone tests") :]
+    step = step[: step.index("- name:")]
+    assert "runner.os == 'Linux'" in step and 'CUDA_VISIBLE_DEVICES: ""' in step
+    assert "python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type=standalone_cpu" in step
+    # and no GPU phase selects them
+    assert all("IT_RUN_STANDALONE_CPU_TESTS" not in phase.selection_env for phase in pr.PHASES.values())
+    assert all("standalone_cpu" not in phase.command for phase in pr.PHASES.values())
