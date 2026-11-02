@@ -519,9 +519,9 @@ tmp_path_retention_count = 30  # allow retention of more successful runs during 
 # with the dependency rather than after it.
 
 [tool.gpu-epsilon.special-tests]
-# tests/special_tests.sh runs gpu-epsilon's shared runner (gpu_epsilon.special_tests) with this table: one process per
+# gpu-epsilon's shared runner (python -m gpu_epsilon.special_tests) reads this table: one process per
 # node id, each outcome read from per-rank records. Change the marks, the selection variables or the coverage command
-# here, not in the script.
+# here.
 name = "IT"
 # Both roots: special-marked tests also live under src/it_examples/tests (the example notebooks).
 collect-dirs = ["tests", "src/it_examples/tests"]
@@ -595,7 +595,8 @@ args = ["--reruns-delay", "{value}"]
 help = "run each test once"
 clears = ["reruns", "reruns-delay"]
 
-# The entry script also turns on the runner's per-boundary resource snapshots (GPU_EPSILON_EVENT_CMD) for this flag.
+# The runner reads its per-boundary snapshot hook from its own environment, not from an option's: export
+# GPU_EPSILON_EVENT_CMD="bash scripts/resource_snapshot.sh" alongside this flag for those (gen_it_coverage.sh does).
 [tool.gpu-epsilon.special-tests.options.resource-debug]
 help = "opt-in per-test and fixture resource diagnostics (IT_RESOURCE_DEBUG=1)"
 env = { IT_RESOURCE_DEBUG = "1" }

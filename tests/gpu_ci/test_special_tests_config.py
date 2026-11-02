@@ -1,5 +1,5 @@
 """CPU tests for this repository's special-test configuration (``[tool.gpu-epsilon.special-tests]`` in
-``pyproject.toml``), which ``tests/special_tests.sh`` runs through gpu-epsilon's shared runner.
+``pyproject.toml``), which gpu-epsilon's shared runner (``python -m gpu_epsilon.special_tests``) reads.
 
 The runner's own rules are tested in gpu-epsilon. These cases check that this repository's table agrees with what reads
 it: the selection variables ``tests/conftest.py`` selects on, the GPU phases that run each mark, and the options the
@@ -48,7 +48,7 @@ def test_every_selection_variable_conftest_reads_is_cleared():
 
 def test_the_gpu_phases_run_configured_marks():
     for phase in pr.PHASES.values():
-        if "special_tests.sh" in phase.command:
+        if "gpu_epsilon.special_tests" in phase.command:
             (mark,) = re.findall(r"--mark_type=(\w+)", phase.command)
             assert mark in CONFIG.marks and not CONFIG.marks[mark].get("refused")
 

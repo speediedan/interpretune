@@ -196,7 +196,7 @@ def test_a_rerun_that_passes_counts_once_as_passed(tmp_path):
 
 def test_report_counts_sessions_completions_and_drift():
     a, b, c = "t.py::test_a", "t.py::test_b", "t.py::test_c"
-    # special_tests.sh runs each node in its own process: one session per node
+    # the special-test runner runs each node in its own process: one session per node
     per_node = _report(
         _manifest([a, b]), [_session([(a, "passed")], collected=(a,)), _session([(b, "passed")], collected=(b,))]
     )

@@ -2,7 +2,7 @@
 
 Ported from finetuning-scheduler's ``tests/gpu_ci/phase_plugin.py`` so both repositories' phase reports read the same
 records. Load it with ``-p tests.gpu_ci.phase_plugin`` (or through ``PYTEST_ADDOPTS``, which the per-test pytest
-processes ``tests/special_tests.sh`` starts inherit). It does nothing unless ``IT_PHASE_RECORD_DIR`` names a directory;
+processes the special-test runner starts inherit). It does nothing unless ``IT_PHASE_RECORD_DIR`` names a directory;
 then each pytest session appends JSON lines to its own file there (only a session rooted at ``IT_PHASE_RECORD_ROOT``,
 when that is set):
 

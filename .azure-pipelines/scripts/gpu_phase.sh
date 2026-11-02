@@ -50,7 +50,8 @@ case "$PHASE" in
         ;;
     standalone|profile_ci)
         log="${COUNTS}/${PHASE}.${CLASS}.log"
-        bash ./tests/special_tests.sh --mark_type="$PHASE" --allow-failures --allow-empty 2>&1 | tee "$log"
+        # under the job's own host leases, so without --lease
+        python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type="$PHASE" --allow-failures --allow-empty 2>&1 | tee "$log"
         rc=${PIPESTATUS[0]}
         if grep -q "No tests were selected by" "$log"; then record empty; else record ran; fi
         exit "$rc"

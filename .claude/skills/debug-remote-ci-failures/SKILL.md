@@ -86,7 +86,7 @@ grep -nE "Testing: standard gpu cuda-marked|fixture_resource_debug|test_resource
 Interpret these markers with the current coverage split in mind:
 - `Testing: standard` is intentionally CPU-only via `CUDA_VISIBLE_DEVICES=''`
 - `Testing: standard gpu cuda-marked` is where regular CUDA / bf16-marked tests now run under `IT_RUN_CUDA_TESTS=1`
-- `Testing: standalone gpu` and `Testing: CI Profiling` still execute through `tests/special_tests.sh`
+- `Testing: standalone gpu` and `Testing: CI Profiling` still execute through the special-test runner (`python -m gpu_epsilon.special_tests`)
 
 When a prior successful run uploaded `ci_resource_monitor.log`, treat it as a coarse baseline only:
 
@@ -504,7 +504,7 @@ The GitHub checks are only part of the pre-wave gate — the self-hosted Azure G
   PHASE locally rather than re-queueing ~50-minute gated runs per hypothesis —
   `IT_RUN_CUDA_TESTS=1 python -m pytest tests -v` for the cuda-marked phase (these tests SKIP
   silently into the "skipped" count without the env var; needs `HF_GATED_PUBLIC_REPO_AUTH_KEY`/
-  `HF_TOKEN`), `bash ./tests/special_tests.sh --mark_type=standalone|profile_ci` (supports
+  `HF_TOKEN`), `python -m gpu_epsilon.special_tests --lease --mark_type=standalone|profile_ci` (supports
   `--filter_pattern`) for the special phases, then narrow with `-k`/node ids. To debug a branch
   other than your checkout, use a detached worktree + overlay venv (recipe in `CLAUDE.md`
   "Worktrees & Parallel Environments"). Two cautions: the agent shares this machine's GPUs, so
