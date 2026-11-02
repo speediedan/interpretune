@@ -131,7 +131,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- finetuning-scheduler is pinned at `87a2bbd8` (its main with #175), and venngram, which it now requires, is installed by git SHA at `576bf148` (base and overlay maps composed by `venngram.view`, venngram #45) through the `git-deps` group and `override-dependencies` until 0.1.0 is published; the lock script leaves venngram out of the universal lock as it does finetuning-scheduler ([#887](https://github.com/speediedan/interpretune/issues/887))
+- finetuning-scheduler is pinned at `e8cc68eb` (its main with #177: venngram address books, a declared support record and venngram's registry lookup), and venngram, which it now requires, is installed by git SHA at `6e6d7fa6` (venngram #48: one rules kind, a formats support section and treatments in the address book, over #45's base and overlay maps composed by `venngram.view`) through the `git-deps` group and `override-dependencies` until 0.1.0 is published; the lock script leaves venngram out of the universal lock as it does finetuning-scheduler ([#887](https://github.com/speediedan/interpretune/issues/887))
 
 - The tunable view protocol is imported from venngram (`venngram.tuning`, `venngram.roles`), where finetuning-scheduler #162 moved it out of `finetuning_scheduler.tunable_view`. Against finetuning-scheduler's current main the old imports failed and, being guarded, silently switched the tunable-view integration and its tests off; `fts_views_available()` now requires finetuning-scheduler's `core.views` and venngram's protocol. A schedule's `tunable_view.class_path` for the identity view is `venngram.tuning.CanonicalView` ([#896](https://github.com/speediedan/interpretune/issues/896))
 
