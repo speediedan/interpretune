@@ -943,7 +943,7 @@ def test_extract_concept_latent_examples_allows_missing_group_b_labels() -> None
     assert torch.equal(result.concept_example_weight, torch.tensor([2.0, 0.5], dtype=torch.float32))
 
 
-@RUNIF(standalone=True)
+@RUNIF(standalone_cpu=True)  # loads only a tokenizer (#731)
 def test_prompt_alignment_snapshot_reports_probe_and_previous_tokens() -> None:
     tokenizer = _load_gemma3_1b_it_alignment_tokenizer()
     rendered_prompt = "Is this an Ohio entity or Indiana entity? Columbus : Ohio"

@@ -533,6 +533,7 @@ unset = [
     "IT_RUN_OPTIONAL_TESTS",
     "IT_RUN_PROFILING_TESTS",
     "IT_RUN_STANDALONE_TESTS",
+    "IT_RUN_STANDALONE_CPU_TESTS",
     "IT_RUN_BENCHMARK_TESTS",
     "IT_EXPERIMENTAL_PATCH_TESTS",
 ]
@@ -556,6 +557,11 @@ publish = "azure"
 [tool.gpu-epsilon.special-tests.marks.standalone]
 env = { IT_RUN_STANDALONE_TESTS = "1" }
 description = "Collecting and running standalone tests."
+
+# device-free standalone tests: a process of their own, no GPU; the hosted Linux job runs them with GPUs hidden (#731)
+[tool.gpu-epsilon.special-tests.marks.standalone_cpu]
+env = { IT_RUN_STANDALONE_CPU_TESTS = "1" }
+description = "Collecting and running device-free standalone tests."
 
 [tool.gpu-epsilon.special-tests.marks.profile]
 env = { IT_RUN_PROFILING_TESTS = "2" }
@@ -637,6 +643,12 @@ run = [
 [[tool.gpu-epsilon.phases.phase]]
 name = "standalone"
 special-tests = ["--mark_type=standalone"]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "standalone_cpu"
+description = "the device-free standalone tests, with no GPU visible (the hosted Linux job runs them in CI)"
+env = { CUDA_VISIBLE_DEVICES = "" }
+special-tests = ["--mark_type=standalone_cpu"]
 
 [[tool.gpu-epsilon.phases.phase]]
 name = "profile_ci"

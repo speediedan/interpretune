@@ -477,7 +477,7 @@ class TestCrossBackendReadoutAgreement:
     collection filter and a real model load is too heavy for the default CPU lane.
     """
 
-    @RunIf(standalone=True)
+    @RunIf(standalone_cpu=True)  # loads on the CPU (#731)
     def test_tl_and_hf_resolved_readouts_agree_on_gpt2(self):
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
