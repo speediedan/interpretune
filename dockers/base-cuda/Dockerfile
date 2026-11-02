@@ -79,10 +79,7 @@ RUN \
     if [[ "${CUST_BUILD}" -eq 0 ]]; then \
         CUDA_VERSION_MM=${CUDA_VERSION%.*}; \
         uv pip install "torch==${PYTORCH_VERSION}" --no-cache \
-        --find-links="https://download.pytorch.org/whl/cu${CUDA_VERSION_MM//'.'/''}/torch_stable.html" \
-        --find-links="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}/torch" \
-        --find-links="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}/pytorch-triton" \
-        --find-links="https://download.pytorch.org/whl/test/cu${CUDA_VERSION_MM//'.'/''}/triton"; \
+        --index-url "https://download.pytorch.org/whl/${TORCH_CHANNEL:+${TORCH_CHANNEL}/}cu${CUDA_VERSION_MM//'.'/''}"; \
     else \
         # or target a specific cuda build, by specifying a particular index url w/...
         # ... default channel, or the channel named by TORCH_CHANNEL ("test" for a release candidate,
