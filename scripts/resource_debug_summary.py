@@ -283,11 +283,16 @@ def build_summary_payload(entries: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--log-file", required=True, help="Coverage/session log to parse")
+    parser.add_argument(
+        "--log-file",
+        required=True,
+        action="append",
+        help="Coverage/session log to parse; repeat for each special-test phase log (kept apart by the phase driver)",
+    )
     parser.add_argument("--json-output", help="Optional path to write a JSON summary")
     args = parser.parse_args()
 
-    entries = parse_resource_log(args.log_file)
+    entries = [entry for log_file in args.log_file for entry in parse_resource_log(log_file)]
     payload = build_summary_payload(entries)
     print(build_summary_text(entries))
     if args.json_output:

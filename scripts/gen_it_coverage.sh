@@ -2,6 +2,11 @@
 #
 # Utility script to generate local IT coverage for a given environment
 #
+# The environment half (building or activating the venv, torch backend selection, taking the GPU lease) stays in
+# shell, because it runs before a usable Python environment exists. The test phases then run through gpu-epsilon's
+# phase driver (python -m gpu_epsilon.phases), which reads them from [tool.gpu-epsilon.phases] in pyproject.toml,
+# records each phase's outcome and reports one final status.
+#
 # Torch handling:
 # - Uses torch-pre.txt if present (for nightly/test builds)
 # - Otherwise uses stable torch with automatic backend detection
@@ -12,7 +17,7 @@ set -eo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/infra_utils.sh"
 
 # Serialize the whole coverage run against other GPU work on the host (no-op unless GPU_LEASE_CMD is set).
-# Held once for the entire run; nested special_tests.sh calls inherit it.
+# Held once for the entire run; the special-test runs inside it inherit it.
 # A full suite is HOST-MEMORY-heavy as well as GPU-heavy, so it takes both host leases (gpu, then cpu-heavy in the
 # host tool's order) and stays serialized with every phase of a CI job, whose CPU-only phase holds only cpu-heavy.
 # GPU-only work (a notebook, a benchmark leg) takes the plain lease and may overlap that phase. An explicit
@@ -36,8 +41,7 @@ unset no_reruns
 unset reruns_count
 unset reruns_delay
 unset allow_failures
-# every phase that exited non-zero, so the run reports an explicit final status under --allow-failures too
-failed_phases=()
+unset dry_run
 unset resource_debug
 declare -a from_source_specs
 
@@ -63,7 +67,8 @@ Usage: $0
     [ --no-reruns ]  (disable test reruns for transient failures)
     [ --reruns N ]  (number of reruns for transient failures, default: 2)
     [ --reruns-delay N ]  (delay in seconds between reruns, default: 5)
-    [ --allow-failures ]  (continue collecting coverage even if tests fail; useful for debugging)
+    [ --allow-failures ]  (run every phase after a failure; the run still exits 1, naming each failed phase)
+    [ --dry-run ]  (print the phase plan and run nothing)
     [ --resource-debug ]  (enable opt-in CPU/CUDA per-test and per-fixture resource diagnostics)
     [ --help ]
 
@@ -76,6 +81,10 @@ Usage: $0
     - By default, tests are rerun up to 2 times with a 5-second delay on failure
     - Use --no-reruns to disable automatic retries
     - Use --reruns N and --reruns-delay N to customize retry behavior
+
+    Phases ([tool.gpu-epsilon.phases] in pyproject.toml): main (no GPU visible), cuda (cuda-marked tests, skipped
+    without CUDA), standalone and profile_ci; --run-all-and-examples adds profile, optional and benchmark. Without
+    --allow-failures the run stops at the first failed phase; the coverage report is written either way.
 
     Torch Handling:
     - Uses torch-pre.txt if present in requirements/ci/ (for nightly/test builds)
@@ -97,13 +106,15 @@ Usage: $0
     #   ./gen_it_coverage.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --venv-dir=/mnt/cache/${USER}/.venvs --from-source="finetuning_scheduler:${HOME}/repos/finetuning-scheduler:all:USE_CI_COMMIT_PIN=1;circuit_tracer:${HOME}/repos/circuit-tracer;transformer_lens:${HOME}/repos/TransformerLens"
     # generate it_latest coverage with no pip cache:
     #   ./gen_it_coverage.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --pip-install-flags="--no-cache-dir"
+    # print the phase plan of a full run without running it:
+    #   ./gen_it_coverage.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --no-rebuild-base --run-all-and-examples --dry-run
     # generate it_latest coverage with self_test_only:
     #   ./gen_it_coverage.sh --repo-home=${HOME}/repos/interpretune --target-env-name=it_latest --self-test-only
 EOF
 exit 1
 }
 
-args=$(getopt -o '' --long repo-home:,target-env-name:,python-version:,torch-backend:,no-rebuild-base,from-source:,venv-dir:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,it-build-flags:,no-reruns,reruns:,reruns-delay:,allow-failures,resource-debug,help -- "$@")
+args=$(getopt -o '' --long repo-home:,target-env-name:,python-version:,torch-backend:,no-rebuild-base,from-source:,venv-dir:,run-all-and-examples,no-export-cov-xml,pip-install-flags:,self-test-only,it-build-flags:,no-reruns,reruns:,reruns-delay:,allow-failures,dry-run,resource-debug,help -- "$@")
 if [[ $? -gt 0 ]]; then
   usage
 fi
@@ -128,6 +139,7 @@ do
     --reruns)   reruns_count=$2 ; shift 2 ;;
     --reruns-delay)   reruns_delay=$2 ; shift 2 ;;
     --allow-failures)  allow_failures=1 ; shift ;;
+    --dry-run)  dry_run=1 ; shift ;;
     --resource-debug)  resource_debug=1 ; shift ;;
     --help)    usage      ; shift   ;;
     --) shift; break ;;
@@ -145,6 +157,8 @@ d=`date +%Y%m%d%H%M%S`
 tmp_coverage_dir="/tmp"
 coverage_session_log="${tmp_coverage_dir}/gen_it_coverage_${target_env_name}_${d}.log"
 resource_summary_json="${coverage_session_log%.log}_resource_summary.json"
+# the phase driver's JSON record of the run, beside the session log
+phase_record_json="${coverage_session_log%.log}.json"
 echo "Use 'tail -f ${coverage_session_log}' to monitor progress"
 
 # Expand leading ~ in common path arguments
@@ -178,12 +192,6 @@ if [[ -n "${it_build_flags}" ]]; then
     it_build_flags=$(strip_quotes "$it_build_flags")
 fi
 
-# Build rerun args string (for transient httpx read timeouts with HF transformers v5)
-if [[ $no_reruns -eq 1 ]]; then
-    rerun_args=""
-else
-    rerun_args="--reruns ${reruns_count} --reruns-delay ${reruns_delay}"
-fi
 
 check_self_test_only(){
     local message=$1
@@ -228,124 +236,42 @@ collect_env_coverage(){
     cd ${repo_home}
     maybe_deactivate
     source ${venv_path}/bin/activate
-    export PYTHONFAULTHANDLER=1
-    # Use the sys.monitoring measurement core (coverage>=7.4, py>=3.12): nnsight's Tracer calls
-    # sys.settrace(None) on trace teardown, which permanently wipes the default settrace-based
-    # coverage core for the rest of the process (every test after the first in-process nnsight
-    # trace records zero coverage). The sysmon core is immune to settrace clobbering.
-    export COVERAGE_CORE=sysmon
+    check_self_test_only "Skipping all tests and examples." && return
+    if ! python -c "import gpu_epsilon.phases" 2>/dev/null; then
+        fail "gpu-epsilon's phase driver is not installed: uv pip install -r requirements/ci/gpu_epsilon.txt"
+    fi
+
+    # Reruns (for transient httpx read timeouts with HF transformers v5) and resource-debug's per-test output reach
+    # the main-suite phases through PYTEST_ADDOPTS, and the special-test phases as the runner's options.
+    local -a special_args=()
+    local addopts=""
+    if [[ $no_reruns -eq 1 ]]; then
+        special_args+=(--no-reruns)
+    else
+        special_args+=("--reruns=${reruns_count}" "--reruns-delay=${reruns_delay}")
+        addopts="--reruns ${reruns_count} --reruns-delay ${reruns_delay}"
+    fi
     if [[ ${resource_debug:-0} -eq 1 ]]; then
         enable_resource_debug_env
+        special_args+=(--resource-debug)
+        addopts="${addopts:+${addopts} }-s"
+        # resource snapshots at every phase boundary, and at every special-test boundary inside the runner
+        export GPU_EPSILON_EVENT_CMD="${GPU_EPSILON_EVENT_CMD:-bash ${repo_home}/scripts/resource_snapshot.sh}"
         log_shell_resource_snapshot "coverage:bootstrap:$1" >> "$coverage_session_log" 2>&1 || true
     fi
+    [[ -n "${addopts}" ]] && export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:+${PYTEST_ADDOPTS} }${addopts}"
 
-    cuda_phase_available(){
-        python - <<'PY'
-import sys
-
-import torch
-
-raise SystemExit(0 if torch.cuda.is_available() else 1)
-PY
-    }
-
-    run_logged_phase(){
-        local phase_name=$1
-        shift
-        log_shell_resource_snapshot "coverage-phase:start:${phase_name}" >> "$coverage_session_log" 2>&1 || true
-        set +e
-        "$@"
-        local phase_status=$?
-        set -e
-        echo "${phase_name} exit code: ${phase_status}" >> "$coverage_session_log"
-        log_shell_resource_snapshot "coverage-phase:end:${phase_name}" >> "$coverage_session_log" 2>&1 || true
-        # recorded even under --allow-failures, which continues past a failed phase but must not end the run green
-        [[ $phase_status -ne 0 ]] && failed_phases+=("${phase_name} (exit ${phase_status})")
-        if [[ $phase_status -ne 0 && $allow_failures -ne 1 ]]; then
-            return $phase_status
-        fi
-        return 0
-    }
-
-    run_logged_cuda_phase(){
-        local phase_name=$1
-        shift
-        if cuda_phase_available; then
-            run_logged_phase "$phase_name" "$@"
-        else
-            echo "${phase_name} skipped: CUDA unavailable in current environment" >> "$coverage_session_log"
-            return 0
-        fi
-    }
-
-    run_partitioned_cuda_pytest_phase(){
-        env -u CUDA_VISIBLE_DEVICES IT_RUN_CUDA_TESTS=1 python -X faulthandler -m pytest \
-            --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v ${pytest_resource_args} ${rerun_args} \
-            >> "$coverage_session_log" 2>&1
-    }
-
-    # Build special_tests.sh rerun args to pass through
-    special_tests_rerun_args=""
-    [[ $no_reruns -eq 1 ]] && special_tests_rerun_args="--no-reruns"
-    [[ -n "${reruns_count}" && $no_reruns -ne 1 ]] && special_tests_rerun_args="${special_tests_rerun_args} --reruns=${reruns_count}"
-    [[ -n "${reruns_delay}" && $no_reruns -ne 1 ]] && special_tests_rerun_args="${special_tests_rerun_args} --reruns-delay=${reruns_delay}"
-    pytest_resource_args=""
-    if [[ ${resource_debug:-0} -eq 1 ]]; then
-        pytest_resource_args="-s"
-    fi
-
-    # Prepare allow_failures flag for special_tests.sh
-    local failures_flag=""
-    if [[ $allow_failures -eq 1 ]]; then
-        failures_flag="--allow-failures"
-        echo "Running in --allow-failures mode: coverage collection will continue past test failures." >> $coverage_session_log
-    fi
-    # Phases are identical for every env name -- nothing here has ever branched on it, so the
-    # harness runs the same four phases against whatever env --target-env-name selects.
-    check_self_test_only "Skipping all tests and examples." && return
-    python -m coverage erase
-    if [[ $run_all_and_examples -eq 1 ]]; then
-        # Using pytest-cov ensures coverage starts before test collection imports
-        run_logged_phase \
-            "base pytest" \
-            env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-report= tests src/it_examples/tests src/it_examples -v ${pytest_resource_args} ${rerun_args} \
-            >> "$coverage_session_log" 2>&1
-        run_logged_cuda_phase \
-            "base pytest cuda-marked" \
-            run_partitioned_cuda_pytest_phase \
-            >> "$coverage_session_log" 2>&1
-        run_logged_phase \
-            "special tests standalone" \
-            bash -c "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-        run_logged_phase \
-            "special tests profile_ci" \
-            bash -c "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-        run_logged_phase \
-            "special tests profile" \
-            bash -c "./tests/special_tests.sh --mark_type=profile --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-        run_logged_phase \
-            "special tests optional" \
-            bash -c "./tests/special_tests.sh --mark_type=optional --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-        run_logged_cuda_phase \
-            "special tests benchmark" \
-            bash -c "./tests/special_tests.sh --mark_type=benchmark --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-    else
-        # Using pytest-cov ensures coverage starts before test collection imports
-        run_logged_phase \
-            "base pytest" \
-            env CUDA_VISIBLE_DEVICES='' python -X faulthandler -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v ${pytest_resource_args} ${rerun_args} \
-            >> "$coverage_session_log" 2>&1
-        run_logged_cuda_phase \
-            "base pytest cuda-marked" \
-            run_partitioned_cuda_pytest_phase \
-            >> "$coverage_session_log" 2>&1
-        run_logged_phase \
-            "special tests standalone" \
-            bash -c "./tests/special_tests.sh --mark_type=standalone --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-        run_logged_phase \
-            "special tests profile_ci" \
-            bash -c "./tests/special_tests.sh --mark_type=profile_ci --log_file=${coverage_session_log} ${special_tests_rerun_args} ${failures_flag} ${resource_debug:+--resource-debug} >> ${temp_special_log} 2>&1"
-    fi
+    # The phases run in pyproject.toml order: the default ones, plus the optional ones a full run adds. The driver
+    # erases the coverage data first and writes the report last, even after a failed phase. Without --allow-failures
+    # it stops at the first failed phase; with it every phase runs and the run still exits 1, naming each failed phase.
+    local -a driver_args=(--log_file "${coverage_session_log}" --log-dir "${tmp_coverage_dir}")
+    driver_args+=(--special-tests-args "${special_args[*]}")
+    [[ $run_all_and_examples -eq 1 ]] && driver_args+=(--with profile,optional,benchmark)
+    [[ $allow_failures -eq 1 ]] && driver_args+=(--allow-failures)
+    [[ $dry_run -eq 1 ]] && driver_args+=(--dry-run)
+    echo "Running the coverage phases through gpu-epsilon's phase driver: python -m gpu_epsilon.phases ${driver_args[*]}" >> "$coverage_session_log"
+    # each special-test phase's console output goes to the temp log; the session log carries every phase's outcome
+    python -m gpu_epsilon.phases "${driver_args[@]}" > "${temp_special_log}" 2>&1 || phase_status=$?
 }
 
 env_rebuild_collect(){
@@ -378,20 +304,25 @@ case ${target_env_name} in
         echo "No env-specific additional coverage currently required for ${target_env_name}" >> $coverage_session_log
         ;;
 esac
-echo "Writing collected coverage stats for IT env ${target_env_name}" >> $coverage_session_log
-# Reactivate the environment for coverage report (in case it was deactivated)
-source ${venv_path}/bin/activate
-python -m coverage report -m >> $coverage_session_log
-if [[ ${resource_debug:-0} -eq 1 ]]; then
+if [[ ${resource_debug:-0} -eq 1 && ${dry_run:-0} -ne 1 && ${self_test_only:-0} -ne 1 ]]; then
+    # the session log carries the main-suite phases' output; each special-test phase keeps its own log
+    summary_logs=("--log-file" "$coverage_session_log")
+    if [[ -f "$phase_record_json" ]]; then
+        while IFS= read -r phase_log; do
+            [[ -f "$phase_log" ]] && summary_logs+=("--log-file" "$phase_log")
+        done < <(python -c 'import json, sys; [print(p["log"]) for p in json.load(open(sys.argv[1]))["phases"] if p.get("log")]' "$phase_record_json")
+    fi
     printf "\n" >> "$coverage_session_log"
     python "${repo_home}/scripts/resource_debug_summary.py" \
-        --log-file "$coverage_session_log" \
+        "${summary_logs[@]}" \
         --json-output "$resource_summary_json" \
         >> "$coverage_session_log"
     echo "Resource summary JSON: ${resource_summary_json}" >> "$coverage_session_log"
 fi
 show_elapsed_time $coverage_session_log "IT coverage collection"
-if [[ ${#failed_phases[@]} -gt 0 ]]; then
-    printf 'Coverage phases that failed: %s\n' "${failed_phases[*]}" | tee -a "$coverage_session_log" >&2
-    exit 1
+if [[ ${dry_run:-0} -eq 1 ]]; then
+    echo "Dry run: the phase plan is in ${coverage_session_log}; nothing was executed." | tee -a "$coverage_session_log"
+elif [[ ${phase_status:-0} -ne 0 ]]; then
+    echo "Coverage phases failed (exit ${phase_status}); the phase summary in ${coverage_session_log} names each failed phase." | tee -a "$coverage_session_log" >&2
 fi
+exit ${phase_status:-0}

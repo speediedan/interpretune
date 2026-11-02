@@ -600,6 +600,63 @@ clears = ["reruns", "reruns-delay"]
 help = "opt-in per-test and fixture resource diagnostics (IT_RESOURCE_DEBUG=1)"
 env = { IT_RESOURCE_DEBUG = "1" }
 
+[tool.gpu-epsilon.phases]
+# scripts/gen_it_coverage.sh builds or activates the environment, then runs these phases through gpu-epsilon's phase
+# driver (python -m gpu_epsilon.phases), in this order: the default ones, plus the optional ones --run-all-and-examples
+# adds. Its rerun and resource-debug flags reach the `run` phases through PYTEST_ADDOPTS and the special-test phases as
+# runner options.
+name = "IT"
+# sys.monitoring measurement core (coverage>=7.4, py>=3.12): nnsight's Tracer calls sys.settrace(None) on trace
+# teardown, which wipes the default settrace-based core for the rest of the process
+env = { COVERAGE_CORE = "sysmon", PYTHONFAULTHANDLER = "1" }
+setup = [["-m", "coverage", "erase"]]
+report = [["-m", "coverage", "report", "-m"]]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "main"
+description = "the main suite with no GPU visible, under coverage"
+env = { CUDA_VISIBLE_DEVICES = "" }
+# pytest-cov rather than `coverage run`, so coverage starts before collection imports
+run = [
+    "-X", "faulthandler", "-m", "pytest", "--cov=src/interpretune", "--cov-append", "--cov-report=",
+    "tests", "src/it_examples/tests", "-v",
+]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "cuda"
+description = "the cuda-marked tests (IT_RUN_CUDA_TESTS=1) on every visible device, under coverage"
+env = { IT_RUN_CUDA_TESTS = "1" }
+unset = ["CUDA_VISIBLE_DEVICES"]
+skip-unless = ["-c", "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)"]
+run = [
+    "-X", "faulthandler", "-m", "pytest", "--cov=src/interpretune", "--cov-append", "--cov-report=",
+    "tests", "src/it_examples/tests", "-v",
+]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "standalone"
+special-tests = ["--mark_type=standalone"]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "profile_ci"
+special-tests = ["--mark_type=profile_ci"]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "profile"
+optional = true
+special-tests = ["--mark_type=profile"]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "optional"
+optional = true
+special-tests = ["--mark_type=optional"]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "benchmark"
+optional = true
+skip-unless = ["-c", "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)"]
+special-tests = ["--mark_type=benchmark"]
+
 [tool.notebook-publishing]
 # interpretune's own example notebooks, read by the publisher (src/interpretune/utils/notebook_publishing.py) and the
 # docs-artifact renderer (src/interpretune/utils/notebook_docs.py). Both are repository-neutral, so another
