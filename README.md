@@ -201,8 +201,8 @@ interfaces, and multimodal world-model support — see the
 python -m pytest src/interpretune tests -v
 
 # Special phases (standalone GPU, profiling)
-./tests/special_tests.sh --mark_type=standalone
-./tests/special_tests.sh --mark_type=profile_ci
+python -m gpu_epsilon.special_tests --lease --mark_type=standalone
+python -m gpu_epsilon.special_tests --lease --mark_type=profile_ci
 ```
 
 CI runs the full matrix (Linux/macOS/Windows CPU + a self-hosted GPU pipeline with

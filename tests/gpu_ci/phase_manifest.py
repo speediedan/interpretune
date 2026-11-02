@@ -6,7 +6,7 @@ and environment pins the collection ran under. It never executes a selected test
 is evidence about selection only: it is not a pass on any hardware, NVIDIA or AMD.
 
 The phases and their selectors mirror the ones CI actually runs
-(``.azure-pipelines/scripts/gpu_phase.sh`` and ``tests/special_tests.sh``), and collection reuses
+(``.azure-pipelines/scripts/gpu_phase.sh`` and the special-test runner), and collection reuses
 the same collect-only shape as ``tests/gpu_ci/calibrate.py``: a CPU-only
 ``pytest --collect-only`` subprocess with ``CUDA_VISIBLE_DEVICES`` emptied, so producing a
 manifest needs no GPU and no lease.

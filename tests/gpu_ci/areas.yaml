@@ -29,7 +29,6 @@ run_all:
   - tests/test_module_registry.yaml
   - tests/configuration.py
   - tests/core/cfg_aliases.py
-  - tests/special_tests.sh
   - tests/.experiments
   # library surface every registry-backed session is built through
   - src/interpretune/__init__.py

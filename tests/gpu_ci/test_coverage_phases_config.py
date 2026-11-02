@@ -32,9 +32,9 @@ def _with_phases() -> list[str]:
 
 
 def test_the_default_and_full_selections():
-    assert [p.name for p in CONFIG.select([], [], [])] == ["main", "cuda", "standalone", "profile_ci"]
+    assert [p.name for p in CONFIG.select([], [], [])] == ["main", "cuda", "standalone", "standalone_cpu", "profile_ci"]
     full = [p.name for p in CONFIG.select([], _with_phases(), [])]
-    assert full == ["main", "cuda", "standalone", "profile_ci", "profile", "optional", "benchmark"]
+    assert full == ["main", "cuda", "standalone", "standalone_cpu", "profile_ci", "profile", "optional", "benchmark"]
     assert all(PHASES[name].optional for name in _with_phases())
 
 
@@ -67,7 +67,10 @@ def test_every_special_test_phase_runs_a_configured_mark():
     marks = {
         p.name: re.findall(r"--mark_type=(\w+)", " ".join(p.special_tests)) for p in CONFIG.phases if p.special_tests
     }
-    assert marks == {name: [name] for name in ("standalone", "profile_ci", "profile", "optional", "benchmark")}
+    assert marks == {
+        name: [name] for name in ("standalone", "standalone_cpu", "profile_ci", "profile", "optional", "benchmark")
+    }
+    assert PHASES["standalone_cpu"].env == {"CUDA_VISIBLE_DEVICES": ""}
     for (mark,) in marks.values():
         assert mark in RUNNER.marks and not RUNNER.marks[mark].get("refused")
 

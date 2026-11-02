@@ -170,10 +170,10 @@ Rules that must not be missed:
 Basic run (mirrors `ci_test-full.yml`): `python -m pytest tests src/it_examples/tests -v`; add
 `--cov=src/interpretune --cov-append --cov-report=` for coverage. Standalone tests take inline variables, never
 `export` (marker conflicts): `IT_RUN_STANDALONE_TESTS=1 python -m pytest <node>`; the harness is
-`./tests/special_tests.sh --mark_type=standalone [--filter_pattern=...]`. Profiling tests use `IT_RUN_PROFILING_TESTS=1`.
-`special_tests.sh` is an entry script for gpu-epsilon's shared runner (`gpu_epsilon.special_tests`, pinned in
-`requirements/ci/gpu_epsilon.txt`), configured by `[tool.gpu-epsilon.special-tests]` in `pyproject.toml`: change a mark,
-a selection variable or the coverage command there, not in the script. Node outcomes come from per-rank records.
+`python -m gpu_epsilon.special_tests --lease --mark_type=standalone [--filter_pattern=...]`. Profiling tests use `IT_RUN_PROFILING_TESTS=1`.
+That is gpu-epsilon's shared runner (pinned in `requirements/ci/gpu_epsilon.txt`; no entry script), configured by
+`[tool.gpu-epsilon.special-tests]` in `pyproject.toml`: change a mark, a selection variable or the coverage command
+there. Node outcomes come from per-rank records. `--lease` takes the GPU lease once (CI runs without it).
 
 - **Phase marks** (`standalone`, `min_cuda_gpus`, `bf16_cuda`, `profiling`, ...) may sit on a test or on its class:
   collection reads `item.iter_markers()`, so a class-level `@RunIf(...)` selects every test the class collects,
@@ -215,7 +215,7 @@ The GPU host is shared by agent sessions in this repo, sessions in `finetuning-s
 agent. Two GPU suites at once contend silently (OOM, flaky timing), which is easily misdiagnosed as a test failure.
 
 - `scripts/gpu_lease_wrap.sh` is an **opt-in** `flock` lease and a complete no-op unless `GPU_LEASE_CMD` points at a
-  lease implementation. `export GPU_LEASE_CMD=/path/to/gpu_lease.sh`, then `tests/special_tests.sh` and
+  lease implementation. `export GPU_LEASE_CMD=/path/to/gpu_lease.sh`, then the special-test runner (`--lease`) and
   `scripts/gen_it_coverage.sh` re-exec under it, so one acquisition covers a suite.
 - Two keys: `gpu` and `cpu-heavy` (host memory). The two self-wrapping scripts take both by default
   (`GPU_LEASE_ARGS=--cpu-heavy`); GPU-only work wrapped with the plain lease (`$GPU_LEASE_CMD -- <cmd>`) may overlap CI's

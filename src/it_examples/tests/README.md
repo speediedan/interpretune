@@ -19,11 +19,11 @@ Tests use `papermill` to execute notebooks with different parameter configuratio
 
 Notebook tests are marked as `standalone` and most require `bf16_cuda` capabilities.
 
-### Via special_tests.sh (Recommended for GPU tests)
+### Via the special-test runner (Recommended for GPU tests)
 
 ```bash
 # Run all standalone tests (includes notebook tests)
-./tests/special_tests.sh --mark_type=standalone
+python -m gpu_epsilon.special_tests --lease --mark_type=standalone
 ```
 
 ### Via pytest directly (for development)

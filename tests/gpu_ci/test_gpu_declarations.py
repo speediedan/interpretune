@@ -75,10 +75,18 @@ def test_recommended_declaration_rounds_up_with_margin():
 def _special_tests(*args: str) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if k != "GPU_LEASE_CMD"}
     env["CUDA_VISIBLE_DEVICES"] = ""
-    # the harness runs `python` from PATH; make it this interpreter rather than whatever the shell finds first
+    # the runner starts each pytest process with `python` from PATH; make it this interpreter
     env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
     return subprocess.run(
-        ["bash", "tests/special_tests.sh", "--mark_type=standalone", *args],
+        [
+            sys.executable,
+            "-m",
+            "gpu_epsilon.special_tests",
+            "--config",
+            "pyproject.toml",
+            "--mark_type=standalone",
+            *args,
+        ],
         cwd=ROOT,
         env=env,
         capture_output=True,
@@ -125,7 +133,7 @@ def test_the_special_phases_collect_the_example_tests():
         timeout=600,
     )
     assert "test_sae_lens_notebooks" in proc.stdout, proc.stdout[-2000:]
-    # the special-test runner collects both roots (tests/special_tests.sh, configured in pyproject.toml)
+    # the special-test runner collects both roots (configured in pyproject.toml)
     runner = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["gpu-epsilon"]["special-tests"]
     assert runner["collect-dirs"] == ["tests", "src/it_examples/tests"]
 
