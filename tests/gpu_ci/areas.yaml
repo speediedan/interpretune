@@ -180,6 +180,7 @@ areas:
     paths:
       - src/interpretune/analysis/*.py
       - src/interpretune/analysis/points/**
+      - src/interpretune/analysis/venngram/**
       - src/interpretune/analysis/backends/**
       - src/interpretune/analysis/ops/*.py
       - src/interpretune/analysis/ops/compiler/**
