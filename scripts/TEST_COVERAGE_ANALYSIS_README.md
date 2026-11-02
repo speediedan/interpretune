@@ -174,7 +174,8 @@ The main local coverage harness supports structured resource logging via:
 
 - `IT_RESOURCE_DEBUG=1` for canonical shell / test / fixture / analysis / serialization resource lines
 - `IT_RESOURCE_DEBUG=1` also adds per-GPU allocated/reserved/peak VRAM fields when CUDA is available
-- `./scripts/gen_it_coverage.sh --resource-debug` to enable both flags automatically
+- `./scripts/gen_it_coverage.sh --resource-debug` to enable both flags automatically; its summary reads the session
+  log and each special-test phase's `phases_<time>_<name>.log`
 
 Representative lines from the latest clean run (`/tmp/gen_it_coverage_it_latest_20260317150318.log`):
 
