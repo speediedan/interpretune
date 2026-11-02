@@ -1799,7 +1799,7 @@ class TestOpWrapper:
         # Create a wrapper and patch its dispatcher property
         OpWrapper.initialize(current_module)
         wrapper = OpWrapper("mock_op")
-        monkeypatch.setattr(wrapper, "_dispatcher", mock_dispatcher)
+        monkeypatch.setattr(OpWrapper, "dispatcher", property(lambda self: mock_dispatcher))
 
         setattr(current_module, wrapper._op_name, wrapper)
         setattr(current_module, "mock_alias", wrapper)
