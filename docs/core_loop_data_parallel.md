@@ -206,6 +206,11 @@ model's safetensors files mapped into memory (about 8.5 GiB, released after the 
 loaded eagerly into memory (about 5.8 GiB). When each card can hold half the model with room to spare, drop
 `fsdp_default_kwargs`, and the shards stay on the accelerators.
 
+The same run with the composition switched to gemma-3-27b-it and all 62 of its Gemma Scope 2 transcoders fits two
+32 GB cards on a 123 GiB host, with the allocator's rounding off: each rank's pinned shards take 37.6 GiB, each card
+peaks at about 10 GiB, and the host keeps about 15 GiB available at the peak, while rank 0 still holds the CPU source.
+With the rounding on, the pinned shards are projected at 49.2 GiB per rank, which would not fit.
+
 ### Comparing with one process
 
 The same configuration runs in one process when the run drops the plan and the offload policy, places nnsight's model
