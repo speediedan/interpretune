@@ -11,7 +11,7 @@
 # limitations under the License.
 # initially based on https://bit.ly/3pdAf1G
 
-ARG CUDA_VERSION=13.0.3
+ARG CUDA_VERSION=13.2.1
 ARG OS_VER=ubuntu22.04
 
 FROM nvidia/cuda:${CUDA_VERSION}-devel-${OS_VER}
@@ -83,12 +83,14 @@ RUN \
     else \
         # or target a specific cuda build, by specifying a particular index url w/...
         # ... default channel, or the channel named by TORCH_CHANNEL ("test" for a release candidate,
-        # whose wheels and their paired triton are published only on that index)
-        uv pip install "torch==${PYTORCH_VERSION}" --index-url "https://download.pytorch.org/whl/${TORCH_CHANNEL:+${TORCH_CHANNEL}/}cu130"; \
+        # whose wheels and their paired triton are published only on that index). The CUDA tag follows the
+        # image's CUDA_VERSION: torch 2.15.0's stable CUDA wheels are published for cu132 only.
+        CUDA_VERSION_MM=${CUDA_VERSION%.*}; \
+        uv pip install "torch==${PYTORCH_VERSION}" --index-url "https://download.pytorch.org/whl/${TORCH_CHANNEL:+${TORCH_CHANNEL}/}cu${CUDA_VERSION_MM//'.'/''}"; \
         # ... pytorch nightly dev version
-        # uv pip install --pre torch==2.9.0.dev20250811 --index-url https://download.pytorch.org/whl/nightly/cu130; \
+        # uv pip install --pre torch==2.9.0.dev20250811 --index-url https://download.pytorch.org/whl/nightly/cu132; \
         # ... test channel
-        # uv pip install --pre torch==2.9.0 --index-url https://download.pytorch.org/whl/test/cu130; \
+        # uv pip install --pre torch==2.9.0 --index-url https://download.pytorch.org/whl/test/cu132; \
     fi && \
     rm -rf requirements/
 
