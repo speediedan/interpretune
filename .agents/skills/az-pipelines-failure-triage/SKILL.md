@@ -110,8 +110,8 @@ Useful commands:
 ```bash
 CUDA_VISIBLE_DEVICES='' python -m pytest --cov=src/interpretune --cov-append --cov-report= tests src/it_examples/tests -v --reruns 2 --reruns-delay 5
 IT_RUN_CUDA_TESTS=1 python -m pytest --cov=src/interpretune --cov-append --cov-report= tests -v --durations=50 --reruns 2 --reruns-delay 5
-bash ./tests/special_tests.sh --mark_type=standalone
-bash ./tests/special_tests.sh --mark_type=profile_ci
+python -m gpu_epsilon.special_tests --lease --mark_type=standalone
+python -m gpu_epsilon.special_tests --lease --mark_type=profile_ci
 ```
 
 Fast-iteration guidance (validated 2026-07; local runs are for DEBUG ONLY — the
@@ -119,7 +119,7 @@ gated pipeline must still pass on push/merge so coverage stays updated):
 
 - **Run the failing phase, not the pipeline.** A single phase locally gives minutes-scale signal vs
   the ~50-minute full-pipeline round trip; narrow further with `-k`/node ids once the phase-level
-  failure set is known. `special_tests.sh` accepts `--filter_pattern` for the standalone/profile
+  failure set is known. The runner accepts `--filter_pattern` for the standalone/profile
   phases.
 - **Cuda-marked tests hide inside the "skipped" count** without `IT_RUN_CUDA_TESTS=1` — a locally
   "green" standard run does NOT imply the `standard gpu cuda-marked` phase is green (this exact gap

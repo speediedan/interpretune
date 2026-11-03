@@ -35,8 +35,8 @@ CPU-only pass that in CI runs on the GitHub-hosted matrix instead:
 1. Base pytest runs with `CUDA_VISIBLE_DEVICES=''` so the normal suite remains CPU-only and avoids GPU OOM churn.
 2. A second `IT_RUN_CUDA_TESTS=1` pytest pass re-enables regular CUDA/bf16-marked tests that should contribute to
    coverage but do not require standalone isolation.
-3. `tests/special_tests.sh --mark_type=standalone` handles the standalone-only slice.
-4. `tests/special_tests.sh --mark_type=profile_ci` handles the CI profiling slice.
+3. `python -m gpu_epsilon.special_tests --mark_type=standalone` handles the standalone-only slice.
+4. `python -m gpu_epsilon.special_tests --mark_type=profile_ci` handles the CI profiling slice.
 
 This split is deliberate: regular CUDA tests still append to the same coverage file, but they run after the CPU-only
 baseline has released its fixture state.
@@ -193,7 +193,7 @@ The `pytest-rerunfailures` plugin is included in our test dependencies (`pyproje
 
 **Configurable Rerun Options:**
 
-Local coverage and test scripts (`gen_it_coverage.sh`, `special_tests.sh`, `analyze_test_coverage.py`) support configurable rerun behavior:
+Local coverage and test scripts (`gen_it_coverage.sh`, the special-test runner, `analyze_test_coverage.py`) support configurable rerun behavior:
 
 - `--no-reruns`: Disable test reruns entirely
 - `--reruns=N`: Set number of reruns (default: 2)
@@ -201,7 +201,7 @@ Local coverage and test scripts (`gen_it_coverage.sh`, `special_tests.sh`, `anal
 
 Example: Run special tests without reruns for faster debugging:
 ```bash
-./tests/special_tests.sh --mark_type=standalone --no-reruns
+python -m gpu_epsilon.special_tests --lease --mark_type=standalone --no-reruns
 ```
 
 CI scripts use hard-coded rerun values for consistent behavior.

@@ -10,7 +10,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# GPU_EPSILON_EVENT_CMD for `tests/special_tests.sh --resource-debug`: the runner calls it with a boundary label
+# GPU_EPSILON_EVENT_CMD for the special-test runner and the coverage phase driver: export
+# GPU_EPSILON_EVENT_CMD="bash scripts/resource_snapshot.sh" with --resource-debug, and the runner calls it with a boundary label
 # (special-tests:collect:start, special-tests:test:end:<node id>, ...) and logs what it prints.
 source "$(dirname "$0")/infra_utils.sh"
 log_shell_resource_snapshot "$1"

@@ -25,8 +25,8 @@ IT_RUN_BENCHMARK_TESTS=1 python -m pytest tests/benchmarks/test_benchmarks.py -v
 # Run a single benchmark via the CLI runner
 python tests/benchmarks/run_benchmarks.py --benchmark rte_boolq/gemma2_2b_it_l
 
-# Run via special_tests.sh harness
-./tests/special_tests.sh --mark_type=benchmark
+# Run via the special-test runner
+python -m gpu_epsilon.special_tests --lease --mark_type=benchmark
 ```
 
 ## Structure
@@ -123,14 +123,14 @@ python tests/benchmarks/run_benchmarks.py --all --force-update-registry
 python tests/benchmarks/run_benchmarks.py --benchmark rte_boolq/gemma2_2b_it_l --limit-batches 5
 ```
 
-### Via special_tests.sh harness
+### Via the special-test runner
 
 ```bash
 # All benchmarks
-./tests/special_tests.sh --mark_type=benchmark
+python -m gpu_epsilon.special_tests --lease --mark_type=benchmark
 
 # Filtered
-./tests/special_tests.sh --mark_type=benchmark --filter_pattern='gemma2_2b_it_l'
+python -m gpu_epsilon.special_tests --lease --mark_type=benchmark --filter_pattern='gemma2_2b_it_l'
 ```
 
 ## Adding a New Experiment

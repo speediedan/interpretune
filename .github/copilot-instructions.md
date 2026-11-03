@@ -269,7 +269,7 @@ pytest --collect-only
 
 All CI and local coverage scripts include `--reruns 2 --reruns-delay 5` by default to handle transient `httpx` read timeouts with HuggingFace `transformers` v5. The `pytest-rerunfailures` plugin is included in our test dependencies.
 
-Local scripts (`gen_it_coverage.sh`, `special_tests.sh`, `analyze_test_coverage.py`) support configurable rerun behavior via `--no-reruns`, `--reruns=N`, and `--reruns-delay=N` flags. Use `--allow-failures` with `gen_it_coverage.sh` and `special_tests.sh` to continue collecting coverage past test failures — preferred for faster debugging iterations.
+Local scripts (`gen_it_coverage.sh`, the special-test runner, `analyze_test_coverage.py`) support configurable rerun behavior via `--no-reruns`, `--reruns=N`, and `--reruns-delay=N` flags. Use `--allow-failures` with `gen_it_coverage.sh` and the special-test runner to continue collecting coverage past test failures — preferred for faster debugging iterations.
 
 **⚠️ Dependency Note:** Full test suite requires ML dependencies. Tests will fail without proper environment setup.
 
@@ -330,7 +330,7 @@ that in CI runs on the GitHub-hosted matrix instead:
 - `Testing: standalone gpu` and `Testing: CI Profiling` remain separate special-test phases
 
 When debugging fixture or CUDA memory growth locally, add `--resource-debug` to `gen_it_coverage.sh` or
-`special_tests.sh`. That exports the canonical `IT_RESOURCE_DEBUG=1`
+the special-test runner. That exports the canonical `IT_RESOURCE_DEBUG=1`
 flags used by `tests/conftest.py`, `tests/analysis_resource_utils.py`, and the coverage harness summary
 parser for per-test / per-fixture / per-GPU logging.
 
@@ -618,7 +618,7 @@ Every module under /src is type checked with no exclusion list, while all files 
 
 #### Running Special Tests (Standalone and Profiling)
 
-Some tests require special environment setup and are marked with `@pytest.mark.standalone` or involve profiling. These tests can be run using the `special_tests.sh` harness or manually with environment variables.
+Some tests require special environment setup and are marked with `@pytest.mark.standalone` or involve profiling. These tests can be run using the special-test runner (`python -m gpu_epsilon.special_tests`) or manually with environment variables.
 
 Set environment context variables (developer-specific paths):
 
@@ -634,20 +634,20 @@ export IT_REPO_DIR=${HOME}/repos/interpretune  # Example: adjust to your local r
 # Run all standalone tests
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
- ./tests/special_tests.sh --mark_type=standalone
+ python -m gpu_epsilon.special_tests --lease --mark_type=standalone
 
 # Run specific standalone test by filter pattern
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
-./tests/special_tests.sh --mark_type=standalone --filter_pattern='test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]'
+python -m gpu_epsilon.special_tests --lease --mark_type=standalone --filter_pattern='test_attribution_analysis_notebook[analysis_inj_salient_logits_SLT]'
 # another example, filtering by partial test class name
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
-./tests/special_tests.sh --mark_type=standalone --filter_pattern='ParameterMapping'
+python -m gpu_epsilon.special_tests --lease --mark_type=standalone --filter_pattern='ParameterMapping'
 # Run profiling tests
 cd ${IT_REPO_DIR} && \
 source ${IT_VENV_BASE}/${IT_TARGET_VENV}/bin/activate && \
-./tests/special_tests.sh --mark_type=profiling
+python -m gpu_epsilon.special_tests --lease --mark_type=profiling
 ```
 
 **Manual execution (without harness):**
@@ -700,7 +700,7 @@ IT_RUN_OPTIONAL_TESTS=1 python -m pytest tests/parity_acceptance/test_it_fts.py:
 - Using `export` can cause marker filtering conflicts when multiple test environment variables are set
 - Environment variables like `IT_VENV_BASE`, `IT_TARGET_VENV`, and `IT_REPO_DIR` are developer-specific
 - Adjust these paths to match your local development environment
-- The `special_tests.sh` harness handles environment setup automatically
+- The special-test runner handles environment setup automatically
 - Standalone tests may take longer and require more resources than regular tests
 - `@RunIf(standalone=True)` must be applied at the **test method** level, never at the class level.
   `pytest_collection_modifyitems` uses `item.own_markers` (method-level only); class-level markers are

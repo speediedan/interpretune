@@ -192,7 +192,7 @@ These flags drive all structured prefixes emitted by the shared helpers:
 - `op_serialization_resource_debug` for serialization-path snapshots layered on the same helper surface
 
 Preferred workflow:
-- Start with `IT_RESOURCE_DEBUG=1` when running a narrow repro under `pytest` or `special_tests.sh`.
+- Start with `IT_RESOURCE_DEBUG=1` when running a narrow repro under `pytest` or the special-test runner (`python -m gpu_epsilon.special_tests`).
 - Use fixture snapshots to identify which generated fixture retains memory across tests.
 - Use per-test snapshots to confirm whether memory growth is happening during fixture setup, test execution, or teardown.
 - Remove the env flag after debugging; these logs are intentionally opt-in and should not be enabled by default.
