@@ -11,9 +11,14 @@ schedule = {
 ```
 
 A schedule can name parameters, as finetuning-scheduler always has, or say **what** to tune: the role a tensor plays
-(the model's own weights, an adapter, an intervention, a latent model, an instrument). That is the
-[venngram](https://github.com/speediedan/venngram) protocol, which finetuning-scheduler uses to address a model through
-its **tunable view**. Its addresses share and compose references to any subset of a model, so:
+(the model's own weights, an adapter, an intervention, a latent model, an instrument), addressed through the model's
+**tunable view**.
+
+To enable this model addressing abstraction, Fine-Tuning Scheduler and Interpretune use the
+[venngram](https://github.com/speediedan/venngram) protocol. Its addresses can share and compose references to any
+subset of a model: from groups of layers to intersecting sets of individual neurons, and from latent-space features to
+activation sites and attribution graphs. Schedules use the part of it that selects tensors to tune. Addressing by
+role means:
 
 - **interpretability experiments** tune, freeze and promote adapters, interventions, latent models and instruments by
   role, however many wrappers (TransformerLens, nnsight, SAE Lens) sit around the model;
@@ -32,6 +37,20 @@ addresses pay off.
 Today an interpretune composition is addressed by role and by name. Addressing it by layer and architecture-neutral
 component (`layers:-4: & component:mlp.*`), as a bare model already is through `venngram.view(model)`, follows in
 [#900](https://github.com/speediedan/interpretune/issues/900).
+
+## venngram elsewhere in interpretune
+
+Tuning is one of several places interpretune consumes venngram:
+
+- **Tuning** (this page): the tunable view protocol and role vocabulary come from `venngram.tuning` and `venngram.roles`,
+  and `TuningConformance` runs finetuning-scheduler's view conformance cases against a composition's view.
+- **Interventions**: `interpretune.analysis.venngram` applies a venngram recipe's treatments through the model
+  backends' native intervention modes, refusing by name, through a derived support record, whatever a backend cannot
+  express. [Interpretune Intervention APIs](interpretune_intervention_apis.md) describes the surfaces it runs on, and
+  [#905](https://github.com/speediedan/interpretune/issues/905) tracks interventions on venngram-addressed unit sets.
+- **Recipes by reference**: `load_recipe` reads a recipe from a venngram document reference (fetched, hash-checked and
+  returned with its pinned reference for provenance), a local file or an inline mapping, so an experiment's treatment is
+  shared as data rather than code.
 
 ## Running a schedule on the core loop
 
@@ -77,6 +96,15 @@ A model-owned module the view must reach (a dictionary spliced into the model, f
 
 A composition's view is what `build_tunable_view()` returns. The default is the identity view: physical names, the
 roles above, trainable. So **a composition that does not override it can be tuned**, and most never need to.
+
+```{note}
+The default is moving to venngram's automatic view resolution, `venngram.view(self, roles=self.tunable_roles())`: the
+architecture's published component map then gives every composition layers and components with no code, and a
+composition overrides `build_tunable_view()` only to refuse or to offer names of its own. That needs venngram to place a
+base map under a wrapper root (the interpretune module holds the model under `model.`), tracked in
+[venngram#46](https://github.com/speediedan/venngram/issues/46), and then
+[#900](https://github.com/speediedan/interpretune/issues/900).
+```
 
 A composition that cannot be tuned in some configuration declares why, and the refusal is reported by name rather than
 the composition being treated as trainable. nnsight's, for instance:

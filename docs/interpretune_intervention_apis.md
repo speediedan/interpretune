@@ -1,13 +1,11 @@
 # Interpretune Intervention APIs
 
-Interpretune intervenes on two different objects, at two levels, and every name in this area says which.
-
-## Two levels, one rule
+Interpretune enables interventions at multiple levels of abstraction.
 
 | Level | Capability member | Object acted on | Entry op | Executed by | Support record |
 |---|---|---|---|---|---|
-| Model backend | `ModelBackendCapability.ACTIVATION_INTERVENTION` | a residual-stream tensor at a vocabulary point (the **embed path**) | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (modes, position scopes) |
-| Analysis backend | `AnalysisBackendCapability.FEATURE_INTERVENTION` | latent feature activations `(layer, position, feature_id) -> value` (the **store path**) | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `FeatureInterventionSupport` (value sources, constrainable layers, returned activations) |
+| Model backend | `ModelBackendCapability`<br>`.ACTIVATION_INTERVENTION` | a residual-stream tensor at a vocabulary point (the **embed path**) | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (modes, position scopes) |
+| Analysis backend | `AnalysisBackendCapability`<br>`.FEATURE_INTERVENTION` | latent feature activations `(layer, position, feature_id) -> value` (the **store path**) | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `FeatureInterventionSupport` (value sources, constrainable layers, returned activations) |
 
 The two enums cite a shared two-path table (residual-stream tensor vs latent feature activations,
 above); this note is the API contract beneath it.
@@ -42,6 +40,14 @@ exactly the failure the results' non-interchangeability names.
   activation capture and optional activation return. `CircuitTracerAnalysisBackend` resolves the settings and
   refuses, through `FeatureInterventionSupport`, a value source it does not honour, a constant source without a
   value, a layer constraint or an activation return it cannot provide.
+
+- `interpretune.analysis.venngram` applies a [venngram](https://github.com/speediedan/venngram) recipe through the
+  model-backend surface above: a recipe's treatments (ordered ops at a site under a token scope, on the whole activation
+  or on a set's units) become `InterventionSpec`s in the native modes (`recipe_interventions`). `venngram_support()`
+  derives what interpretune honours of a recipe from the backend's own records, and `check_recipe` /
+  `require_supported` refuse by name, before anything runs, whatever that record cannot express. Interventions on
+  venngram-addressed unit sets (neuron and feature sets composed with set algebra) as a surface of their own, with
+  registered examples for supported models, are tracked in [#905](https://github.com/speediedan/interpretune/issues/905).
 
 At this layer interpretune delegates to backend-native steering surfaces rather than inventing a second execution
 mechanism. The closest analogs are TransformerLens hook-driven flows such as `run_with_hooks(...)` and NNsight
