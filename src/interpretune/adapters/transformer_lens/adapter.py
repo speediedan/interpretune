@@ -205,7 +205,7 @@ class BaseITLensModule(BaseITModule):
 
     def hf_configured_model_init(
         self, cust_config: HFPretrainedConfig, access_token: str | None = None
-    ) -> torch.nn.Module:
+    ) -> PreTrainedModel:
         """Instantiate the HF model that TL conversion will consume.
 
         Kept on CPU rather than the target device: both the HF weights and the TL model would otherwise

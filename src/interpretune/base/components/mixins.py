@@ -341,9 +341,21 @@ class ClassificationMixin:
     if TYPE_CHECKING:
         it_cfg: ITConfig
         datamodule: ITDataModule
-        device: torch.device | None
-        output_device: torch.device | None
         metric: _Metric
+
+        # Properties on the host and its adapters, so declared in that shape rather than as variables.
+        @property
+        def device(self) -> torch.device | None:
+            """The device the model is on, as resolved by the host."""
+            ...
+
+        @device.setter
+        def device(self, value: str | torch.device | None) -> None: ...
+
+        @property
+        def output_device(self) -> torch.device | None:
+            """The device model outputs land on, where an adapter distinguishes it."""
+            ...
 
         def log_dict(self, metric_dict: dict[str, Any], *args: Any, **kwargs: Any) -> None:
             """Host logging entry point for a dict of metrics."""
