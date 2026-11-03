@@ -740,6 +740,11 @@ class LatentAnalysisModuleProtocol(ITModuleBase, LatentAnalysisProtocol, Protoco
 
     model_backend: ModelBackend
 
+    @property
+    def core_log_dir(self) -> StrOrPath | None:
+        """The run's log directory, or None until a run owns one."""
+        ...
+
 
 class RunnerCfgProtocol(Protocol):
     """Protocol representing the base Session/Runner configuration object."""
@@ -762,8 +767,11 @@ class AnalysisRunnerCfgProtocol(RunnerCfgProtocol, Protocol):
     latent_analysis_targets: Any
     artifact_cfg: Any
     ignore_manual: bool
-    # The processed, canonicalized list of AnalysisCfg that the runner exposes
-    _processed_analysis_cfgs: list[Any]
+
+    @property
+    def _processed_analysis_cfgs(self) -> list[Any]:
+        """The processed, canonicalized list of AnalysisCfg that the runner exposes."""
+        ...
 
 
 class AnalysisRunnerProtocol(Protocol):

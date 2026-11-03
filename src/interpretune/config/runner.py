@@ -1,6 +1,6 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from collections.abc import Mapping
-from typing import Any, TYPE_CHECKING, Iterable, Literal, Sequence
+from typing import Any, TYPE_CHECKING, Iterable, Literal, Sequence, cast
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -12,7 +12,12 @@ from interpretune.protocol import StrOrPath
 
 if TYPE_CHECKING:
     from interpretune.session import ITSession
-    from interpretune.protocol import ITModuleProtocol, ITDataModuleProtocol, LatentAnalysisModuleProtocol
+    from interpretune.protocol import (
+        AnalysisRunnerProtocol,
+        ITModuleProtocol,
+        ITDataModuleProtocol,
+        LatentAnalysisModuleProtocol,
+    )
 
 
 # Standalone functions for analysis initialization
@@ -101,7 +106,7 @@ def init_analysis_dirs(
     # Setup output dataset path
     if op_output_dataset_path is None:
         # `core_log_dir` is a str OR a Path (a Lightning Trainer supplies a str), and absent until a run owns a log dir
-        log_dir = module.core_log_dir  # type: ignore[attr-defined]  # protocol provides core_log_dir
+        log_dir = module.core_log_dir
         if log_dir is None:
             raise MisconfigurationException(
                 f"{type(module).__name__} has no log directory to write analysis outputs under: pass "
@@ -119,10 +124,11 @@ def init_analysis_dirs(
                 # Accept either AnalysisOp instances or OpWrapper-like objects / simple objects providing a `name`
                 if not (isinstance(cfg.op, AnalysisOp) or hasattr(cfg.op, "name")):
                     raise AssertionError("cfg.op must be an AnalysisOp instance or provide a `name` attribute")
-                op_dir = op_output_dataset_path / cfg.op.name  # type: ignore[attr-defined]  # validated above to have name
+                op_name: str = getattr(cfg.op, "name")
+                op_dir = op_output_dataset_path / op_name
                 if op_dir.exists() and any(op_dir.iterdir()):
                     raise Exception(
-                        f"Analysis dataset directory for op '{cfg.op.name}' ({op_dir}) is not empty. "  # type: ignore[attr-defined]  # validated above to have name
+                        f"Analysis dataset directory for op '{op_name}' ({op_dir}) is not empty. "
                         "Please delete it or specify a different path."
                     )
 
@@ -300,9 +306,9 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
                 " analysis ops read activations and weights in ways not yet designed for data-parallel placement."
             )
         assert self.it_session is not None and self.it_session.module is not None
-        self.it_session.module.analysis_run_cfg = self  # type: ignore[attr-defined]
-
-        # No need to call _process_analysis_cfgs() as it's now a property
+        # Adapters read this back through AnalysisRunnerProtocol; the module surface that carries it
+        # is that protocol, not the general module protocol every module satisfies.
+        cast("AnalysisRunnerProtocol", self.it_session.module).analysis_run_cfg = self
         if self.analysis_cfgs is None:
             rank_zero_debug(
                 "No analysis_cfgs provided on runner initialization, expecting one to be passed with"
