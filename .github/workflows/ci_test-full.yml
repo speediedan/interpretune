@@ -178,7 +178,9 @@ jobs:
         id: hf-cache
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/huggingface
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/venngram
           key: hf-cache-${{ runner.os }}-${{ hashFiles('tests/hf_warm_manifest.yaml') }}
 
       # Skipped entirely on an exact cache hit: re-validating a warm cache is itself a burst of metadata
@@ -192,7 +194,9 @@ jobs:
         if: steps.hf-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ~/.cache/huggingface
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/venngram
           key: hf-cache-${{ runner.os }}-${{ hashFiles('tests/hf_warm_manifest.yaml') }}
 
       - name: Run pytest coverage w/ configured instrumentation

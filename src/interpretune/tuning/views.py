@@ -15,12 +15,14 @@ A composition declares how it can be tuned by returning a view from ``build_tuna
 ``support()`` is the record. :func:`attach_tunable_view` attaches it to the module as ``tunable_view`` (the tunable view
 protocol's ``VIEW_ATTR``) once the model is initialized, where finetuning-scheduler discovers it. Every view's root is
 the interpretune module itself, so physical names are the module's own (``model.<...>``) and modules registered beside
-the model (spliced SAEs, interventions) are reachable.
+the model (spliced SAEs, interventions) are reachable. Views come from venngram, so they attach whether or not
+finetuning-scheduler is installed.
 
-``BaseITModule.build_tunable_view()`` is itself a declaration (the identity view), so a composition that does not
-override it is trainable; one whose ``build_tunable_view()`` returns ``None`` declares nothing and gets a view refusing
-it, so it is never assumed trainable. Nothing is attached when the installed finetuning-scheduler predates views, and an
-attached view is never replaced.
+``BaseITModule.build_tunable_view()`` is itself a declaration: venngram's composed view (:func:`default_view`), which
+places the model's tensors by layer and component wherever a published component map describes it and falls back to
+the identity view where none does, so a composition that does not override it is trainable; one whose
+``build_tunable_view()`` returns ``None`` declares nothing and gets a view refusing it, so it is never assumed
+trainable. An attached view is never replaced.
 
 A run can choose the view in its configuration instead (``it_cfg.tunable_view``, #841): a ``class_path`` and
 ``init_args``, instantiated with the module as the view's root by :func:`configured_view`. It takes precedence over
@@ -36,8 +38,20 @@ from typing import Any
 
 from torch import nn
 
+from interpretune.utils import rank_zero_info, rank_zero_warn
+
 # `venngram.tuning.VIEW_ATTR`, kept here so attaching imports neither venngram nor finetuning-scheduler
 VIEW_ATTR = "tunable_view"
+
+
+def views_available() -> bool:
+    """Whether venngram's tunable view protocol is importable: views attach whenever it is, whether or not
+    finetuning-scheduler is installed (#874)."""
+    try:
+        import venngram.tuning  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 def fts_views_available() -> bool:
@@ -54,42 +68,74 @@ def fts_views_available() -> bool:
     return True
 
 
-def peft_adapter_roles(root: nn.Module) -> dict[str, str]:
-    """``adapter:<name>`` roles for every PEFT adapter tensor under ``root``, keyed by ``root``'s parameter names.
+def adapter_roles(root: nn.Module) -> dict[str, str]:
+    """The roles venngram's overlay maps give ``root``'s tensors: PEFT adapter tensors as ``adapter:<name>``, for
+    every tuner family a seed overlay describes, and whatever else a known overlay covers.
 
-    Adapter tensors are found through PEFT's tuner-layer API (each layer's ``adapter_layer_names``), not by name, so
-    every tuner whose layers hold their adapters in module or parameter dicts there (LoRA and its variants, IA3 and
-    similar) is covered and a base weight PEFT renames (``base_layer.weight``) stays ``base``. Prompt-learning methods
-    (prompt and prefix tuning), whose tensors live outside tuner layers, are not found and stay ``base``.
+    An unreadable registry gives no roles, with a warning: the view then still schedules by name.
     """
-    name_of = {id(p): n for n, p in root.named_parameters()}
-    roles: dict[str, str] = {}
-    for module in root.modules():
-        for layer_name in getattr(module, "adapter_layer_names", ()) or ():
-            container = getattr(module, layer_name, None)
-            if not isinstance(container, (nn.ModuleDict, nn.ParameterDict)):
-                continue
-            for adapter, entry in container.items():
-                params = entry.parameters() if isinstance(entry, nn.Module) else (entry,)
-                for p in params:
-                    if id(p) in name_of:
-                        roles[name_of[id(p)]] = f"adapter:{adapter}"
-    return roles
+    from venngram.maps import overlay_roles, overlays_for
+    from venngram.registry import RegistryError
+
+    try:
+        return overlay_roles(root, overlays_for(root))
+    except RegistryError as err:
+        rank_zero_warn(
+            f"venngram's overlay maps could not be read ({err}), so the adapter and other library tensors of "
+            f"{type(root).__name__} have no roles in its view. Warm venngram's registry cache (`VENNGRAM_CACHE`) or "
+            "register the overlays in this process."
+        )
+        return {}
 
 
 def identity_view(root: nn.Module, roles: Mapping[str, str] | None = None) -> Any:
-    """Finetuning-scheduler's identity view over ``root``, with PEFT adapter roles and any further ``roles``."""
+    """The identity view over ``root`` (physical names, no layers or components), with the roles venngram's
+    overlays give its tensors (:func:`adapter_roles`) and any further ``roles``."""
     from venngram.tuning import CanonicalView
 
-    return CanonicalView(root, roles={**peft_adapter_roles(root), **(roles or {})})
+    return CanonicalView(root, roles={**adapter_roles(root), **(roles or {})})
+
+
+_REMINDED: set[str] = set()
+
+
+def default_view(root: nn.Module, roles: Mapping[str, str] | None = None) -> Any:
+    """``root``'s view through venngram (``venngram.view``): the base map of the model it carries, mounted where
+    the model sits (``model.``), the roles of every overlay that applies, and ``roles`` over them.
+
+    Where no published component map describes the model, this is the identity view (:func:`identity_view`), with an
+    info-level reminder that registering a map adds layers and components; where venngram's registry cannot be read,
+    it is the identity view with a warning. Either way the composition stays trainable.
+    """
+    import venngram
+    from venngram.registry import RegistryError
+
+    try:
+        return venngram.view(root, roles=dict(roles or {}))
+    except KeyError as err:
+        model = getattr(root, "model", None)
+        named = f"{type(root).__name__}" + (f" ({type(model).__name__})" if isinstance(model, nn.Module) else "")
+        if named not in _REMINDED:
+            _REMINDED.add(named)
+            rank_zero_info(
+                f"No venngram component map describes {named}, so its tunable view addresses tensors by name and role "
+                "only. Registering a map (`venngram.maps.register`) or publishing one to a registry adds layers and "
+                f"components ({err.args[0] if err.args else err})."
+            )
+    except RegistryError as err:
+        rank_zero_warn(
+            f"venngram's registry could not be read ({err}), so {type(root).__name__} gets the identity view: no "
+            "layers or components. Warm venngram's registry cache (`VENNGRAM_CACHE`) to address it by structure."
+        )
+    return identity_view(root, roles)
 
 
 def configured_view(module: nn.Module) -> Any | None:
     """The view ``module.it_cfg.tunable_view`` configures (#841), or ``None`` when none is configured.
 
     The view class is instantiated with ``module`` as its root and the configured ``init_args``. A class taking
-    ``roles`` receives the composition's roles (PEFT adapter roles and the module's ``tunable_roles()``) unless
-    ``init_args`` sets them.
+    ``roles`` receives the composition's roles (the overlays' roles, :func:`adapter_roles`, and the module's
+    ``tunable_roles()``) unless ``init_args`` sets them.
     """
     cfg = getattr(getattr(module, "it_cfg", None), "tunable_view", None)
     if not cfg:
@@ -101,7 +147,7 @@ def configured_view(module: nn.Module) -> Any | None:
     if "roles" not in init_args and "roles" in inspect.signature(view_cls).parameters:
         tunable_roles = getattr(module, "tunable_roles", None)
         declared = tunable_roles() if callable(tunable_roles) else None
-        init_args["roles"] = {**peft_adapter_roles(module), **(declared if isinstance(declared, Mapping) else {})}
+        init_args["roles"] = {**adapter_roles(module), **(declared if isinstance(declared, Mapping) else {})}
     return view_cls(module, **init_args)
 
 
@@ -146,13 +192,13 @@ def attach_tunable_view(module: nn.Module) -> Any | None:
     """Attach ``module``'s view as ``tunable_view``: the one its configuration names (:func:`configured_view`),
     else the one ``build_tunable_view()`` declares, or a :class:`RefusingView` when it declares none.
 
-    Does nothing when finetuning-scheduler predates views, or when a view is already attached (an explicit attachment,
-    for example by a hub adapter's ``post_auto_model_init``, is never replaced).
+    Does nothing when venngram's view protocol is unavailable, or when a view is already attached (an explicit
+    attachment, for example by a hub adapter's ``post_auto_model_init``, is never replaced).
 
     Returns:
         The attached view, or ``None`` when nothing was attached.
     """
-    if not fts_views_available() or getattr(module, VIEW_ATTR, None) is not None:
+    if not views_available() or getattr(module, VIEW_ATTR, None) is not None:
         return None
     view = configured_view(module)
     if view is None:

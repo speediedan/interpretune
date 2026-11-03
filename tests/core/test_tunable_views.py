@@ -24,8 +24,9 @@ from interpretune.tuning.views import (  # noqa: E402
     VIEW_ATTR,
     RefusingView,
     attach_tunable_view,
+    adapter_roles,
+    default_view,
     identity_view,
-    peft_adapter_roles,
 )
 
 
@@ -55,6 +56,20 @@ class TestAttachment:
         support = as_view(view).support()
         assert view.root is module
         assert (support.trainable, support.naming_scheme) == (True, "physical")
+
+    def test_core_composition_is_addressed_by_layer_and_component(self, request):
+        """The default view is venngram's (#900): the model's base map, mounted where the module holds the
+        model."""
+        from venngram.maps import MappedView
+
+        module = request.getfixturevalue("get_it_session__core_cust__initonly").it_session.module
+        view = getattr(module, VIEW_ATTR)
+        structure = view.structure()
+        assert isinstance(view, MappedView) and structure.mount == "model"
+        top = structure.depth() - 1
+        thawed = compile_schedule({0: {"params": ["layers:-1: & component:attn.*"]}}, view).physical_for(0)
+        assert thawed and all(n.startswith("model.") and structure.locate(n).layer == top for n in thawed)
+        assert all(structure.locate(n).component.startswith("attn.") for n in thawed)
 
     def test_tl_composition_attaches_the_bridge_view_without_building_it(self, request):
         from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
@@ -182,7 +197,7 @@ class TestAttachRules:
         assert attach_tunable_view(module) is None and getattr(module, VIEW_ATTR) is sentinel
 
     def test_nothing_is_attached_without_view_support(self, monkeypatch):
-        monkeypatch.setattr(tuning_views, "fts_views_available", lambda: False)
+        monkeypatch.setattr(tuning_views, "views_available", lambda: False)
         module = nn.Linear(2, 2)
         assert attach_tunable_view(module) is None and getattr(module, VIEW_ATTR, None) is None
 
@@ -218,7 +233,7 @@ class TestConfiguredView:
         overrides = {"add_saes_on_init": True, "sae_cfgs": _SPLICEABLE_SAES, "tunable_view": _CANONICAL}
         module = _fresh_module(request, "get_it_session_cfg__sl_cust", **overrides)
         roles = as_view(getattr(module, VIEW_ATTR)).roles()
-        assert roles and roles == {**peft_adapter_roles(module), **module.tunable_roles()}
+        assert roles and roles == {**adapter_roles(module), **module.tunable_roles()}
         assert any(r.startswith("latent") for r in roles.values())
 
     def test_init_args_roles_are_used_as_given(self, request):
@@ -348,7 +363,51 @@ class TestBridgeView:
         assert {n for g in groups for n in g} == set(view._table)
 
 
-def test_peft_adapter_tensors_take_the_adapter_role():
+class _Unmapped(nn.Module):
+    """A model no venngram component map describes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.proj = nn.Linear(4, 4)
+
+
+class _Holder(nn.Module):
+    def __init__(self, model: nn.Module) -> None:
+        super().__init__()
+        self.model = model
+
+
+def test_an_unmapped_model_gets_the_identity_view_and_a_reminder(caplog):
+    from venngram.maps import MappedView
+    from venngram.tuning import CanonicalView
+
+    tuning_views._REMINDED.clear()
+    with caplog.at_level("INFO"):
+        view = default_view(_Holder(_Unmapped()), roles={"model.proj.weight": "instrument"})
+        default_view(_Holder(_Unmapped()))  # reminded once per composition and model class
+    assert isinstance(view, CanonicalView) and not isinstance(view, MappedView)
+    assert as_view(view).roles() == {"model.proj.weight": "instrument"}
+    assert caplog.text.count("Registering a map") == 1 and "_Holder (_Unmapped)" in caplog.text
+
+
+def test_an_unreadable_registry_falls_back_with_a_warning(monkeypatch):
+    import venngram
+    from venngram.registry import RegistryError
+    from venngram.tuning import CanonicalView
+
+    def unreadable(*args, **kwargs):
+        raise RegistryError("hub-dataset:example/registry: unreachable and never fetched")
+
+    monkeypatch.setattr(venngram, "view", unreadable)
+    monkeypatch.setattr("venngram.maps.overlays_for", unreadable)
+    with pytest.warns(UserWarning) as record:
+        view = default_view(_Holder(_Unmapped()))
+    assert isinstance(view, CanonicalView)
+    assert any("registry could not be read" in str(w.message) for w in record)
+    assert any("have no roles in its view" in str(w.message) for w in record)
+
+
+def test_peft_adapter_tensors_take_their_adapters_roles():
     peft = pytest.importorskip("peft")
 
     class Tiny(nn.Module):
@@ -365,7 +424,7 @@ def test_peft_adapter_tensors_take_the_adapter_role():
             self.model = model
 
     holder = Holder(peft.get_peft_model(Tiny(), peft.LoraConfig(r=2, target_modules=["proj"])))
-    roles = peft_adapter_roles(holder)
+    roles = adapter_roles(holder)  # from venngram's peft.lora overlay
     lora = {n for n, _ in holder.named_parameters() if ".lora_" in n}
     assert lora and set(roles) == lora and set(roles.values()) == {"adapter:default"}
     # the base weight PEFT renames stays `base`

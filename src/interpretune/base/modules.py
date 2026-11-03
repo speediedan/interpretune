@@ -120,14 +120,17 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         """This composition's finetuning-scheduler ``TunableView``, whose ``support()`` declares how it can be
         tuned (#758, #759).
 
-        This default is itself a declaration: finetuning-scheduler's identity view over this module, with PEFT adapter
-        tensors as ``adapter:<name>`` and the roles :meth:`tunable_roles` adds, so a composition that does not
-        override it is trainable. Backends whose parameters are not identity-named, or cannot be tuned, override it;
-        returning ``None`` declares nothing, and the composition is then refused rather than assumed trainable.
+        This default is itself a declaration: venngram's composed view of this module
+        (:func:`~interpretune.tuning.views.default_view`), placing the model's tensors by layer and component where a
+        published component map describes it, with the overlays' roles (PEFT adapter tensors as ``adapter:<name>``) and
+        the roles :meth:`tunable_roles` adds, so a composition that does not override it is trainable. Where no map
+        describes the model, it is the identity view. Backends whose parameters are not identity-named, or cannot be
+        tuned, override it; returning ``None`` declares nothing, and the composition is then refused rather than
+        assumed trainable.
         """
-        from interpretune.tuning.views import identity_view
+        from interpretune.tuning.views import default_view
 
-        return identity_view(self, roles=self.tunable_roles())
+        return default_view(self, roles=self.tunable_roles())
 
     def tunable_roles(self) -> dict[str, str]:
         """Roles for this module's parameters and buffers, by name.
