@@ -52,7 +52,7 @@ EXAMPLE_CONFIGS = example_configuration_files()
 
 
 def test_all_example_configurations_discovered():
-    assert len(EXAMPLE_CONFIGS) == 10, sorted(str(c) for c in EXAMPLE_CONFIGS)
+    assert len(EXAMPLE_CONFIGS) == 12, sorted(str(c) for c in EXAMPLE_CONFIGS)
 
 
 @pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
@@ -197,8 +197,8 @@ def test_materialized_defaults_present_and_declarative():
         loaded = load_session_cfg(body, expected_key=key)
         assert isinstance(loaded.module_cfg.optimizer_init, dict), key
         assert loaded.module_cfg.optimizer_init["class_path"] == "torch.optim.AdamW", key
-        if key.startswith("rte_ft."):
-            # the fine-tuning variant sets its own: no lr scheduler, so both interfaces step the same learning rates
+        if key.startswith(("rte_ft.", "rte_sparse.")):
+            # the fine-tuning variants set their own: no lr scheduler, so a phase's learning rate is what it declares
             assert not loaded.module_cfg.lr_scheduler_init, key
             assert loaded.datamodule_cfg.prepare_data_map_cfg["batched"] is True, key
             continue
