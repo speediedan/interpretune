@@ -796,8 +796,13 @@ class BaseAnalysisBatchProtocol(Protocol):
     """Base protocol defining methods all analysis batches should implement.
 
     Subclasses should define which dataset columns will have attribute-based access enabled for associated AnalysisStore
-    objects.
+    objects. The two fields declared here are the exception: prompts and tokens are attached by the persistence
+    path (`wrap_summary`) to batches of every protocol family, so they belong on the base rather than being
+    redeclared per family.
     """
+
+    prompts: list[str] | None
+    tokens: torch.Tensor | None
 
     def update(self, **kwargs) -> None:
         """Set fields from keyword arguments."""
@@ -805,6 +810,10 @@ class BaseAnalysisBatchProtocol(Protocol):
 
     def to_cpu(self) -> None:
         """Detach and move all field tensors to CPU."""
+        ...
+
+    def keys(self) -> Iterable[str]:
+        """The field names currently set on the batch."""
         ...
 
 
