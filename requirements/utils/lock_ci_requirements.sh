@@ -205,6 +205,8 @@ generate_lockfile() {
         # finetuning-scheduler is installed by git SHA (pyproject `git-deps` and `override-dependencies`) until
         # 2.15.0 is published, and a git URL cannot go in the universal lock
         --no-emit-package finetuning-scheduler
+        # venngram likewise, until 0.1.0 is published
+        --no-emit-package venngram
     )
 
     if [[ "${UPGRADE_PINS}" == "true" ]]; then

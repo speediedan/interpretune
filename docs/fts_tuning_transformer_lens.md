@@ -56,7 +56,7 @@ identity view:
 
 ```yaml
 tunable_view:
-  class_path: finetuning_scheduler.tunable_view.CanonicalView
+  class_path: venngram.tuning.CanonicalView
 ```
 
 To keep TransformerLens names but thaw only the norms a schedule names, turn the implicit norm thaw off:
