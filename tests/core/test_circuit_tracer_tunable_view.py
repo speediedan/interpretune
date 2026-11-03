@@ -11,14 +11,14 @@ import pytest
 import torch
 from torch import nn
 
-pytest.importorskip("finetuning_scheduler.tunable_view", reason="finetuning-scheduler predates the tunable view")
+pytest.importorskip("venngram.tuning", reason="venngram, which holds the tunable view protocol, is not installed")
 pytest.importorskip("circuit_tracer", reason="circuit-tracer is not installed")
 
 from circuit_tracer.transcoder import SingleLayerTranscoder, TranscoderSet  # noqa: E402
 from circuit_tracer.transcoder.activation_functions import JumpReLU  # noqa: E402
 from circuit_tracer.transcoder.cross_layer_transcoder import CrossLayerTranscoder  # noqa: E402
 from finetuning_scheduler.testing import TunableViewConformance  # noqa: E402
-from finetuning_scheduler.tunable_view import Unresolvable, as_view  # noqa: E402
+from venngram.tuning import Unresolvable, as_view  # noqa: E402
 
 from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule, CircuitTracerAttributeMixin  # noqa: E402
 from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig  # noqa: E402

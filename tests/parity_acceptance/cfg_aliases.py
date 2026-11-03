@@ -136,7 +136,7 @@ l_tl_bridge_gpt2_fts_multiphase = {
     ),
     # schedules here name the module's own parameters, so the configuration selects finetuning-scheduler's identity view
     # in place of the TransformerLens composition's TransformerLens-names view (#841)
-    "tunable_view": {"class_path": "finetuning_scheduler.tunable_view.CanonicalView"},
+    "tunable_view": {"class_path": "venngram.tuning.CanonicalView"},
     "module_cls": "tests.modules.DivergeTestITModule",
     "model_cfg": {"diverge_on_epoch": 2},
     "logging_level": "DEBUG",

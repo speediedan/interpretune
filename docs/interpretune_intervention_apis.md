@@ -58,7 +58,7 @@ precedence. Concept-direction notebook experiments use this surface for direct-p
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
 such as `blocks.0.hook_in` in `project` mode.
 
-`model_fwd_intervention` dispatches six modes: `replace`, `add`, `project`, `patch`, `reject`, and `clamp`. The `patch` mode (the
+`model_fwd_intervention` dispatches seven modes: `replace`, `add`, `project`, `patch`, `reject`, `clamp`, and `scale`. The `patch` mode (the
 J-space write) takes exactly two direction vectors stacked on a leading axis and swaps the activation's
 coordinates along that pair, leaving the component orthogonal to the pair untouched. Mechanically it is
 basis-agnostic: any pair of directions can serve as the patch pair, so embed-basis concept poles are as valid a
@@ -82,6 +82,9 @@ What each mode preserves and what it moves, in one place:
   neither bound is the identity and is refused rather than run. Bound-into-range and
   assign-to-value are different operations sharing an English word: no choice of bounds swaps
   two coordinates, so `patch` is a special case of assignment, never of clamping.
+- `scale`: preserves every component's direction and multiplies it elementwise by the target
+  tensor times `scale_factor` (a scalar, or a per-unit multiplier with ones where units are left
+  alone), so a tensor of ones is the identity.
 
 > **The pair and the model must share a residual basis, and TransformerLens weight processing changes it.**
 > A `TransformerBridge` with `enable_compatibility_mode()` folds LayerNorm and centers weights by default, which

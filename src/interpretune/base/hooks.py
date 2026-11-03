@@ -61,8 +61,8 @@ class BaseITHooks:
         view = getattr(self, VIEW_ATTR, None)
         if view is None:
             return self.model.parameters()
-        from finetuning_scheduler.tunable_view import as_view
-        from finetuning_scheduler.tunable_view.roles import FROZEN_ROLE_KINDS, role_kind
+        from venngram.tuning import as_view
+        from venngram.roles import FROZEN_ROLE_KINDS, role_kind
 
         bound = as_view(view)
         if not bound.support().trainable:

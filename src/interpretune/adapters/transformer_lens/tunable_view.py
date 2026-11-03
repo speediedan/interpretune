@@ -44,7 +44,7 @@ import torch
 from torch import nn, Tensor
 
 if TYPE_CHECKING:
-    from finetuning_scheduler.tunable_view import TunableSupport
+    from venngram.tuning import TunableSupport
 
 _BLOCK = re.compile(r"^blocks\.(\d+)\.")
 # the TransformerLens name prefixes `depth_groups` orders; a traced name matching none is grouped last
@@ -131,7 +131,7 @@ class TransformerBridgeView:
         implicit_norm_thaw: bool = True,
         roles: Mapping[str, str] | None = None,
     ) -> None:
-        from finetuning_scheduler.tunable_view.roles import validate_roles
+        from venngram.roles import validate_roles
 
         self._roles = validate_roles(
             roles or {}, (n for n, _ in root.named_parameters()), (n for n, _ in root.named_buffers())
@@ -219,8 +219,8 @@ class TransformerBridgeView:
     def support(self) -> TunableSupport:
         """Trainable, in TransformerLens names that are reshaped views of the physical tensors; refused, naming the
         tensors, when the bridge holds quantized or packed (non-floating-point) parameters."""
-        from finetuning_scheduler.tunable_view import TunableSupport
-        from finetuning_scheduler.tunable_view.roles import declared_kinds
+        from venngram.tuning import TunableSupport
+        from venngram.roles import declared_kinds
 
         if packed := packed_parameters(self.bridge):
             shown = ", ".join(packed[:3]) + (f" and {len(packed) - 3} more" if len(packed) > 3 else "")
@@ -245,7 +245,7 @@ class TransformerBridgeView:
         ``implicit_norm_thaw`` off, that is how such a norm is thawed. A parameter a TransformerLens name reaches is
         scheduled by that name.
         """
-        from finetuning_scheduler.tunable_view import Unresolvable
+        from venngram.tuning import Unresolvable
 
         self._build()
         unresolved = [n for n in logical if n not in self._table and n not in self._unreached]

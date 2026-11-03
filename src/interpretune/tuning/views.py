@@ -36,14 +36,19 @@ from typing import Any
 
 from torch import nn
 
-# `finetuning_scheduler.tunable_view.VIEW_ATTR`, kept here so attaching imports nothing from finetuning-scheduler
+# `venngram.tuning.VIEW_ATTR`, kept here so attaching imports neither venngram nor finetuning-scheduler
 VIEW_ATTR = "tunable_view"
 
 
 def fts_views_available() -> bool:
-    """Whether the installed finetuning-scheduler provides the tunable view protocol."""
+    """Whether the installed finetuning-scheduler schedules through tunable views.
+
+    The view protocol itself lives in venngram (``venngram.tuning``, where finetuning-scheduler #162 moved it);
+    finetuning-scheduler's ``core.views`` is the consumer that attaches and binds a view, so both must import.
+    """
     try:
-        import finetuning_scheduler.tunable_view  # noqa: F401
+        import finetuning_scheduler.core.views  # noqa: F401
+        import venngram.tuning  # noqa: F401
     except ImportError:
         return False
     return True
@@ -74,7 +79,7 @@ def peft_adapter_roles(root: nn.Module) -> dict[str, str]:
 
 def identity_view(root: nn.Module, roles: Mapping[str, str] | None = None) -> Any:
     """Finetuning-scheduler's identity view over ``root``, with PEFT adapter roles and any further ``roles``."""
-    from finetuning_scheduler.tunable_view import CanonicalView
+    from venngram.tuning import CanonicalView
 
     return CanonicalView(root, roles={**peft_adapter_roles(root), **(roles or {})})
 
@@ -114,13 +119,13 @@ class RefusingView:
 
     def support(self) -> Any:
         """Not trainable, with :attr:`reason`."""
-        from finetuning_scheduler.tunable_view import TunableSupport
+        from venngram.tuning import TunableSupport
 
         return TunableSupport(trainable=False, reason=self.reason)
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Nothing resolves."""
-        from finetuning_scheduler.tunable_view import Unresolvable
+        from venngram.tuning import Unresolvable
 
         raise Unresolvable(list(logical), self.reason)
 
