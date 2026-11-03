@@ -18,7 +18,7 @@ on top of interpretune's locked CI requirements. The builder is `scripts/build_i
     with `brew install bash`; the script resolves bash via `/usr/bin/env bash`, which picks up the Homebrew
     bash from `PATH`.
 - **Torch backend**
-  - *Linux + NVIDIA GPU*: the default (`--torch-backend=cu130`) installs stable torch CUDA 13.0 wheels
+  - *Linux + NVIDIA GPU*: the default (`--torch-backend=cu132`) installs stable torch CUDA 13.2 wheels
     at the version pinned in `requirements/ci/overrides.txt`. torch >= 2.11 ships CUDA 13 wheels and the
     cu128 index stops at 2.11.0, so cu128 can no longer serve the pin. CUDA 13 drops sm_50-sm_70
     (Maxwell/Pascal/Volta); those hosts need `--torch-backend=cu128` and an older torch pin.

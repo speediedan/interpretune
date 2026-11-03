@@ -544,7 +544,7 @@ test_op:
         # Create a wrapper and patch its dispatcher property
         OpWrapper.initialize(current_module)
         wrapper = OpWrapper("test_op")
-        monkeypatch.setattr(wrapper, "_dispatcher", test_dispatcher)
+        monkeypatch.setattr(OpWrapper, "dispatcher", property(lambda self: test_dispatcher))
 
         setattr(current_module, wrapper._op_name, wrapper)
         setattr(current_module, "test_alias", wrapper)
@@ -729,7 +729,7 @@ test_op:
         current_module = target_module
         OpWrapper.initialize(current_module)
         test_op_wrapper = OpWrapper("test_op")
-        monkeypatch.setattr(test_op_wrapper, "_dispatcher", test_dispatcher)
+        monkeypatch.setattr(OpWrapper, "dispatcher", property(lambda self: test_dispatcher))
 
         # test building a composition with the wrapper
         op = test_dispatcher.compile_ops([test_op_wrapper, "another_test_op"], name="custom_composition")
