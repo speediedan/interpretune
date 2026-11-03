@@ -128,7 +128,7 @@ An AnalysisStore published to the Hub travels as a dataset repo: parquet files (
 format; the local store stays Arrow) plus an `it_artifact.json` envelope at the repo root. The
 envelope is **descriptive, not authoritative** — the dataset files are the truth, and the envelope
 restates identity and provenance so a reader can decide whether this is the artifact they want, and
-so the interpretune formatter can be re-attached from the serialized `col_cfg` without re-running
+so the Interpretune formatter can be re-attached from the serialized `col_cfg` without re-running
 the pipeline.
 
 Two blocks with opposite rules:
@@ -161,7 +161,7 @@ silently serving the default is exactly the failure recording it is meant to pre
 ### Schema versioning policy
 
 Hub artifacts outlive the code that wrote them, and the publisher is usually not the reader. That
-makes the envelope the one interpretune surface where the alpha's otherwise-liberal
+makes the envelope the one Interpretune surface where the alpha's otherwise-liberal
 breaking-change posture does not apply.
 
 **`schema` is a single integer major version.** There is no minor component, deliberately: readers
@@ -190,7 +190,7 @@ three different actions:
 | within `[MIN_READABLE, VERSION]` | read it; unknown keys ignored |
 | newer than `VERSION` | refuse, naming the upgrade — an older reader cannot safely guess |
 | older than `MIN_READABLE` | refuse, pointing at a re-publish |
-| `schema` missing or not an integer | refuse: this is not an interpretune artifact envelope |
+| `schema` missing or not an integer | refuse: this is not an Interpretune artifact envelope |
 
 **Raising the floor retires published artifacts**, so it is a deliberate, documented act rather
 than a side effect of a refactor. The floor is currently `1`, the schema is currently `1`, and
@@ -210,7 +210,7 @@ take a distinct `artifact_kind` under the rules above.
 
 ### Op-collection provenance: what the envelope does and does not record
 
-The envelope records the interpretune version, a content fingerprint, the analysis backend, and the
+The envelope records the Interpretune version, a content fingerprint, the analysis backend, and the
 `ColCfg` needed to re-attach the formatter. It does **not** record which op collections produced the
 store.
 

@@ -91,9 +91,9 @@ rather than a reach into package internals:
 - your own collection's modules, plus the standard library and the op-level third-party
   dependencies (torch, transformers, jaxtyping, transformer_lens)
 
-Anything else inside interpretune is private and may change without notice. The bundled families
+Anything else inside Interpretune is private and may change without notice. The bundled families
 are held to exactly this rule by CI (`tests/core/test_bundled_op_publishability.py`), so no bundled
-family depends on interpretune internals that a hub op collection could not import.
+family depends on Interpretune internals that a hub op collection could not import.
 
 Two mechanical gaps remain before a bundled family is literally publishable as-is, and both are
 tracked in [#266](https://github.com/speediedan/interpretune/issues/266): implementation paths must
@@ -374,17 +374,17 @@ hand-push; declare what you want kept.
 Resolution is cache-only and reads whichever revision `refs/main` names, and a `local_publish` snapshot (the
 in-tree seeds use it) is written there like any other. If you `local_publish` a component and later pull it from
 the Hub, or the reverse, the last writer wins and the loader serves it without consulting the Hub. When a local
-snapshot resolves for a repo whose cache also holds a Hub revision, interpretune says so (a `LocalSnapshotWarning`
+snapshot resolves for a repo whose cache also holds a Hub revision, Interpretune says so (a `LocalSnapshotWarning`
 naming both). A verification of what the Hub serves should refuse the local one instead: `it.hub.load(...,
 require_hub=True)`, `load_hub_adapter(..., require_hub=True)` or `resolve_component_manifest(...,
 require_hub=True)` raise `LocalSnapshotShadowsHubError` with the fetch command, and `interpretune.hub.pull` moves
-`refs/main` back to the Hub revision. `HF_HUB_CACHE` does not redirect this cache; it is interpretune's own
+`refs/main` back to the Hub revision. `HF_HUB_CACHE` does not redirect this cache; it is Interpretune's own
 (`IT_COMPONENTS_HUB_CACHE`).
 
 ### What a cached revision means
 
 A component's presence in `IT_COMPONENTS_HUB_CACHE` is not evidence that it exists on the Hub. Revisions written
-by `local_publish` are prefixed `local` and every place interpretune renders a revision for a person (`op_info`,
+by `local_publish` are prefixed `local` and every place Interpretune renders a revision for a person (`op_info`,
 `adapter_info`, load messages) says `local publish ...` for them. A cached Hub snapshot outlives the repo being
 deleted, renamed, transferred, or simply invisible to the token in use, and loading never consults the Hub
 (correctly). To ask, ask explicitly: `it.hub.hub_presence("<org>/<repo>", revision=...)` reports whether the repo
@@ -406,7 +406,7 @@ collection:
 ```
 
 The same `requires` vocabulary serves every kind, component-wide and per adapter composition: `interpretune`
-(a version specifier), `adapters` (adapter names this interpretune must provide), `pip` (distributions, with an
+(a version specifier), `adapters` (adapter names this Interpretune must provide), `pip` (distributions, with an
 optional specifier) and `modules` (importable dotted names, evaluated with `importlib.util.find_spec` so nothing
 is imported). Declare `modules` when a composition depends on one module of a package that moves faster than its
 releases, or on a git-pinned package no specifier can express: a distribution can be installed at a checkout that

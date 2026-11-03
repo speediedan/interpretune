@@ -21,7 +21,7 @@ The root composition object is `ITSession`.
 
 Its job is to:
 
-- combine a datamodule and a module into one interpretune session
+- combine a datamodule and a module into one Interpretune session
 - enrich those components with the adapters listed in `adapter_ctx`
 - make the resulting objects conform as closely as possible to the framework protocols
 

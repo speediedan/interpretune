@@ -1,8 +1,8 @@
 # Publishing a Non-Bundled Op Collection
 
-This walkthrough shows how a third-party author publishes an interpretune op
+This walkthrough shows how a third-party author publishes an Interpretune op
 collection of their own: a standalone Hub repo with op definitions, an
-implementation module, and tests — depending on interpretune's seams rather
+implementation module, and tests — depending on Interpretune's seams rather
 than vendoring its code. It is written against the one collection built that
 way in practice, `speediedan/jlens_steering_ops` (private until the Hub
 registration flip): every pattern below names the file that demonstrates it.
@@ -17,7 +17,7 @@ shape, manifest, tests, upload, and versioning.
 The seed collections (`speediedan/trivial_op_repo`,
 `speediedan/concept_direction_ops`) mirror bundled ops: every op in them also
 exists in the wheel. A mirror proves the machinery runs; it cannot show the
-distinction a reviewer weighs — "a collection interpretune ships" versus "a
+distinction a reviewer weighs — "a collection Interpretune ships" versus "a
 collection someone published". A genuinely non-bundled collection, whose ops
 exist nowhere else, is the only exhibit that carries that claim.
 
@@ -35,7 +35,7 @@ jlens_steering_ops/
 ```
 
 Nothing else ships. In particular there is no packaging metadata, no
-notebooks, and no vendored copy of anything interpretune already provides.
+notebooks, and no vendored copy of anything Interpretune already provides.
 
 ## The manifest
 
