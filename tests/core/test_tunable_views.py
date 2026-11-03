@@ -57,19 +57,28 @@ class TestAttachment:
         assert view.root is module
         assert (support.trainable, support.naming_scheme) == (True, "physical")
 
-    def test_core_composition_is_addressed_by_layer_and_component(self, request):
-        """The default view is venngram's (#900): the model's base map, mounted where the module holds the
-        model."""
+    def test_nnsight_composition_is_addressed_by_layer_and_component(self, request):
+        """The default view is venngram's (#900): GPT-2's base map, mounted at the HF module the composition
+        holds."""
+        from venngram.maps import MappedView
+
+        module = request.getfixturevalue("get_it_session__ns_gpt2__setup").it_session.module
+        view = getattr(module, VIEW_ATTR)
+        assert isinstance(view, MappedView)
+        structure = view.structure()
+        assert (structure.mount, structure.cmap.architecture) == ("hf_model", "GPT2LMHeadModel")
+        top = structure.depth() - 1
+        thawed = compile_schedule({0: {"params": ["layers:-1: & component:attn.*"]}}, view).physical_for(0)
+        assert thawed and all(n.startswith("hf_model.") and structure.locate(n).layer == top for n in thawed)
+        assert all(structure.locate(n).component.startswith("attn.") for n in thawed)
+
+    def test_an_unmapped_core_model_keeps_the_identity_view(self, request):
+        """Interpretune's own test `Transformer` has no published map, so the default falls back (#900)."""
         from venngram.maps import MappedView
 
         module = request.getfixturevalue("get_it_session__core_cust__initonly").it_session.module
         view = getattr(module, VIEW_ATTR)
-        structure = view.structure()
-        assert isinstance(view, MappedView) and structure.mount == "model"
-        top = structure.depth() - 1
-        thawed = compile_schedule({0: {"params": ["layers:-1: & component:attn.*"]}}, view).physical_for(0)
-        assert thawed and all(n.startswith("model.") and structure.locate(n).layer == top for n in thawed)
-        assert all(structure.locate(n).component.startswith("attn.") for n in thawed)
+        assert not isinstance(view, MappedView) and as_view(view).support().trainable
 
     def test_tl_composition_attaches_the_bridge_view_without_building_it(self, request):
         from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
@@ -375,6 +384,25 @@ class _Holder(nn.Module):
     def __init__(self, model: nn.Module) -> None:
         super().__init__()
         self.model = model
+
+
+def test_a_wrapped_peft_model_is_addressed_by_structure_and_adapter():
+    """GPT-2 with LoRA under a module of its own: the base map mounts through PEFT's wrappers, and each adapter tensor
+    takes its adapter's name from venngram's overlay (#900)."""
+    peft = pytest.importorskip("peft")
+    transformers = pytest.importorskip("transformers")
+    from venngram.maps import MappedView
+
+    config = transformers.GPT2Config(vocab_size=64, n_embd=16, n_layer=3, n_head=4, n_positions=32)
+    model = peft.get_peft_model(transformers.GPT2LMHeadModel(config), peft.LoraConfig(r=2, target_modules=["c_attn"]))
+    model.add_adapter("probe", peft.LoraConfig(r=2, target_modules=["c_attn"]))
+    holder = _Holder(model)
+    view = default_view(holder)
+    assert isinstance(view, MappedView) and view.structure().cmap.architecture == "GPT2LMHeadModel"
+    roles = as_view(view).roles()
+    assert {r for n, r in roles.items() if ".lora_" in n} == {"adapter:default", "adapter:probe"}
+    top = compile_schedule({0: {"params": ["role:adapter:probe & layers:-1:"]}}, view).physical_for(0)
+    assert top and all(".h.2." in n and ".probe." in n for n in top)
 
 
 def test_an_unmapped_model_gets_the_identity_view_and_a_reminder(caplog):

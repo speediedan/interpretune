@@ -2,8 +2,8 @@
 
 [Tuning](fts_tunable_views.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
 
-The interp-engine hub adapter declares no view of its own yet, so its compositions receive Interpretune's default
-identity view over the Interpretune module. That fits only where its model is reachable there under its own names, which
+The interp-engine hub adapter declares no view of its own yet, so its compositions receive Interpretune's default view
+over the Interpretune module. That fits only where its model is reachable there under its own names, which
 is still to be checked per composition. Its base weights are frozen by default, so roles must be declared through
 `tunable_roles()`, not inferred from `requires_grad`. Its circuit-tracer composition already takes Interpretune's
 circuit-tracer refusal, because it places `BaseCircuitTracerModule` ahead of its own base; it also registers the
