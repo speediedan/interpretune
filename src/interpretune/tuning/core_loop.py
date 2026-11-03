@@ -30,10 +30,12 @@ A run's callback can come from its configuration alone: ``SessionRunnerCfg.callb
 the run dumps, reloads and reproduces the tuning scheduler's ``config_hash``. Configuration expresses ``schedule`` (a
 mapping or a YAML path), ``tuning_scheduler_kwargs`` values that are plain data (``max_depth``, ``restore_best``, lr
 scheduler step settings and so on), and ``tuning_scheduler_kwargs`` values that are objects given as ``class_path``
-mappings (a transition policy, a checkpoint policy, a list of gates). Those are instantiated when the tuning scheduler
-is built, not when the callback is, so the callback's arguments stay plain configuration. The optimizer and lr scheduler
-come from the module's ``optimizer_init`` and ``lr_scheduler_init``. ``tuning_scheduler_factory`` and optimizer
-factories stay Python-only.
+mappings (a transition policy, a checkpoint policy). ``gates`` and ``phase_hooks`` (finetuning-scheduler's constructor
+arguments, #899) take ``class_path`` mappings too, wherever finetuning-scheduler takes a callable: a gate or hook entry
+itself, or the ``gate``/``hook`` value of an entry that also carries registration options. All of them are instantiated
+when the tuning scheduler is built, not when the callback is, so the callback's arguments stay plain configuration.
+The optimizer and lr scheduler come from the module's ``optimizer_init`` and ``lr_scheduler_init``.
+``tuning_scheduler_factory`` and optimizer factories stay Python-only.
 
 A run resumes from the core loop's own checkpoint (#809). The callback's ``state_dict`` is the tuning scheduler's
 ``resume_state`` (its phase, pending decision, gate records, RNG forks, lr schedulers and registered state; the random
@@ -66,6 +68,36 @@ def _instantiate_config_value(value: Any) -> Any:
     return value
 
 
+def _instantiate_entries(entries: Any, key: str) -> Any:
+    """Configured gate or hook entries, each instantiated where it is a ``class_path`` mapping or holds one under
+    ``key`` (``gate`` or ``hook``); anything else is passed on for finetuning-scheduler to validate."""
+    if not isinstance(entries, (list, tuple)):
+        return entries
+
+    def build(entry: Any) -> Any:
+        if isinstance(entry, Mapping) and "class_path" not in entry and key in entry:
+            return {**entry, key: _instantiate_config_value(entry[key])}
+        return _instantiate_config_value(entry)
+
+    return type(entries)(build(entry) for entry in entries)
+
+
+def _instantiate_tuning_scheduler_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """``tuning_scheduler_kwargs`` with its ``class_path`` mappings instantiated: top-level values, and the entries
+    of ``gates`` and of each ``phase_hooks`` list."""
+    built = {k: _instantiate_config_value(v) for k, v in kwargs.items() if k not in ("gates", "phase_hooks")}
+    if "gates" in kwargs:
+        built["gates"] = _instantiate_entries(kwargs["gates"], "gate")
+    if "phase_hooks" in kwargs:
+        hooks = kwargs["phase_hooks"]
+        built["phase_hooks"] = (
+            {when: _instantiate_entries(entries, "hook") for when, entries in hooks.items()}
+            if isinstance(hooks, Mapping)
+            else hooks
+        )
+    return built
+
+
 class FTSCoreCallback:
     """Drive finetuning-scheduler's ``TuningScheduler`` from the core training loop.
 
@@ -73,8 +105,9 @@ class FTSCoreCallback:
         schedule: The fine-tuning schedule: a mapping, a path to a schedule YAML file, or ``None`` for the default
             schedule.
         tuning_scheduler_kwargs: Further ``TuningScheduler`` keyword arguments (transition policies, a checkpoint
-            policy, ``max_depth`` and so on). A value given as a ``class_path`` mapping, or a list of them, is
-            instantiated when the tuning scheduler is built. Without ``optimizer``, the tuning scheduler's optimizer
+            policy, gates, phase hooks, ``max_depth`` and so on). A value given as a ``class_path`` mapping, or a list
+            of them, is instantiated when the tuning scheduler is built, as are the ``class_path`` entries of
+            ``gates`` and ``phase_hooks``. Without ``optimizer``, the tuning scheduler's optimizer
             factory is the
             module's ``optimizer_init``; without ``lr_scheduler``, the module's ``lr_scheduler_init`` (stepped as its
             ``pl_lrs_cfg`` says), when it has one.
@@ -110,7 +143,7 @@ class FTSCoreCallback:
             return self.tuning_scheduler_factory(module)
         from finetuning_scheduler.core.tuning_scheduler import TuningScheduler
 
-        kwargs = {k: _instantiate_config_value(v) for k, v in self.tuning_scheduler_kwargs.items()}
+        kwargs = _instantiate_tuning_scheduler_kwargs(self.tuning_scheduler_kwargs)
         it_cfg = getattr(module, "it_cfg", None)
         if "optimizer" not in kwargs:
             optimizer_init = getattr(it_cfg, "optimizer_init", None)
