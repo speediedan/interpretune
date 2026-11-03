@@ -73,12 +73,6 @@ BASE_UNREACHABLE_REASON = (
     " interpretune module, or leave `tune_base` unset."
 )
 
-DISK_OFFLOAD_REASON = (
-    "circuit-tracer's disk offload reloads every offloaded module with `load_state_dict(assign=True)`, replacing its"
-    " Parameter objects, so an optimizer built over this view would keep stepping the replaced tensors after an"
-    " attribution; set `CircuitTracerConfig.offload` to None or 'cpu' to tune."
-)
-
 
 class LowRankDelta(nn.Module):
     """A trainable rank-``rank`` correction $\\Delta = A B$ to a ``rows`` by ``cols`` weight, zero at
@@ -260,6 +254,29 @@ def attribution_frozen(replacement_model: Any) -> Iterator[list[nn.Parameter]]:
             p.requires_grad_(True)
 
 
+@contextmanager
+def offload_keeps_parameters(offload: str | None) -> Iterator[None]:
+    """Keep every parameter's identity through circuit-tracer's ``offload='disk'`` (#855).
+
+    Disk offload moves each offloaded module to the meta device and later reloads it with
+    ``load_state_dict(assign=True)``. By default both steps replace the module's ``Parameter`` objects, so an optimizer
+    built before an attribution would keep stepping tensors the module no longer holds. Under torch's
+    ``swap_module_params_on_conversion`` both steps swap the new tensor into the existing ``Parameter`` instead
+    (``torch.utils.swap_tensors``), so the parameter, its ``requires_grad`` and the optimizer's state for it survive.
+    The flag is process-wide, so it is set only while ``offload='disk'`` attributes, and restored afterwards. The tuned
+    values are not at risk either way: the offload saves each module's current state.
+    """
+    if offload != "disk":
+        yield
+        return
+    prior = torch.__future__.get_swap_module_params_on_conversion()
+    torch.__future__.set_swap_module_params_on_conversion(True)
+    try:
+        yield
+    finally:
+        torch.__future__.set_swap_module_params_on_conversion(prior)
+
+
 class CircuitTracerView:
     """A ``TunableView`` over a circuit-tracer composition: its transcoders, as ``instrument`` tensors.
 
@@ -269,7 +286,7 @@ class CircuitTracerView:
     Args:
         root: The interpretune module.
         transcoders: The replacement model's transcoders, registered on ``root``.
-        refusal: A reason to refuse the whole composition (disk offload), or ``None``.
+        refusal: A reason to refuse the whole composition, or ``None``.
         tune_base: Whether the base model's parameters (every parameter of ``root`` outside the transcoders) join
             the view as ``base``. With none outside the transcoders (the nnsight backend's replacement model is not a
             torch module), the whole composition is refused, naming why.
@@ -301,7 +318,7 @@ class CircuitTracerView:
         )
 
     def support(self) -> TunableSupport:
-        """Trainable through the transcoders (``instrument`` until promoted); refused under disk offload."""
+        """Trainable through the transcoders (``instrument`` until promoted)."""
         from venngram.tuning import TunableSupport
         from venngram.roles import declared_kinds
 

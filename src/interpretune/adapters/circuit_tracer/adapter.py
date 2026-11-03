@@ -198,17 +198,12 @@ class BaseCircuitTracerModule(BaseITModule):
 
     def build_tunable_view(self) -> Any | None:
         """The transcoders' view (:class:`~interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`):
-        every transcoder tensor ``instrument`` until promoted, base-model tensors refused by name unless
-        ``CircuitTracerConfig.tune_base`` makes them ``base``, and the whole composition refused while
-        ``offload='disk'``.
+        every transcoder tensor ``instrument`` until promoted, and base-model tensors refused by name unless
+        ``CircuitTracerConfig.tune_base`` makes them ``base``.
 
         A composition with no replacement model loaded is refused.
         """
-        from interpretune.adapters.circuit_tracer.tunable_view import (
-            DISK_OFFLOAD_REASON,
-            CircuitTracerView,
-            lazy_weights,
-        )
+        from interpretune.adapters.circuit_tracer.tunable_view import CircuitTracerView, lazy_weights
         from interpretune.tuning.views import RefusingView
 
         transcoders = _replacement_transcoders(self)
@@ -222,8 +217,7 @@ class BaseCircuitTracerModule(BaseITModule):
                 " composition's tunable view; set `CircuitTracerConfig.lazy_delta_rank` to tune them through low-rank"
                 " corrections, or load them eagerly (`lazy_encoder=False`, `lazy_decoder=False`)."
             )
-        refusal = DISK_OFFLOAD_REASON if cfg is not None and cfg.offload == "disk" else None
-        return CircuitTracerView(self, transcoders, refusal=refusal, tune_base=cfg is not None and cfg.tune_base)
+        return CircuitTracerView(self, transcoders, tune_base=cfg is not None and cfg.tune_base)
 
     def fsdp_direct_calls(self) -> list[tuple[str, nn.Module, tuple[str, ...]]]:
         """Add the transcoder methods circuit-tracer calls outside ``forward`` (see
@@ -484,9 +478,16 @@ class BaseCircuitTracerModule(BaseITModule):
         # Override with any provided kwargs
         attribution_kwargs.update(kwargs)
 
-        from interpretune.adapters.circuit_tracer.tunable_view import REFIT_SUGGESTION, attribution_frozen
+        from interpretune.adapters.circuit_tracer.tunable_view import (
+            REFIT_SUGGESTION,
+            attribution_frozen,
+            offload_keeps_parameters,
+        )
 
-        with attribution_frozen(self.replacement_model) as thawed:
+        with (
+            attribution_frozen(self.replacement_model) as thawed,
+            offload_keeps_parameters(attribution_kwargs["offload"]),
+        ):
             graph = attribute(prompt=prompt, model=self.replacement_model, **attribution_kwargs)
         transcoders = _replacement_transcoders(self)
         tc_ids = {id(p) for p in transcoders.parameters()} if transcoders is not None else set()

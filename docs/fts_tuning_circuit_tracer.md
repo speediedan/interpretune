@@ -12,8 +12,15 @@ transcoders, whichever backend it runs over:
 - **The base model is refused by name.** The transcoders were trained on the base model's activations, so a schedule
   naming a base-model parameter is refused, saying why. Tuning the base model under a frozen replacement is a separate
   path ([interpretune#813](https://github.com/speediedan/interpretune/issues/813)).
-- **Disk offload is refused.** circuit-tracer's `offload='disk'` reloads offloaded modules with new parameter objects
-  after an attribution, which an optimizer built beforehand would not see. `offload=None` and `offload='cpu'` keep them.
+- **Every offload mode keeps the parameters.** circuit-tracer's `offload='disk'` moves each offloaded module to the
+  meta device and reloads it with `load_state_dict(assign=True)`, and by default both steps replace its parameter
+  objects, which an optimizer built before an attribution would not see. The composition attributes under torch's
+  `swap_module_params_on_conversion` instead, set only while `offload='disk'` attributes, so each new tensor is swapped
+  into the existing parameter and the optimizer keeps stepping the module's own tensors (and a tied unembedding stays
+  tied). Disk offload holds the offloaded weights on disk rather than in host memory, so an attribution needs less host
+  memory than under `offload='cpu'`, at the cost of the reads. `offload=None` and `offload='cpu'` never replace a
+  parameter. circuit-tracer's disk offload does not run on Windows yet
+  ([interpretune#909](https://github.com/speediedan/interpretune/issues/909)).
 - **Each transcoder layer is one depth group**, from the last layer; a cross-layer transcoder is one group.
 
 The transcoders are registered on the Interpretune module once: under `model` when the replacement model is a torch
