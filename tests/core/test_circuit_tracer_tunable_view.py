@@ -333,11 +333,14 @@ class TestDiskOffload:
             return attribute(TOY_PROMPT, model, max_n_logits=3, batch_size=8, verbose=False, offload="disk", **kwargs)
 
     def test_unguarded_disk_offload_replaces_parameters(self):
-        """The positive control: without the guard, an attribution leaves new parameter objects behind."""
+        """The positive control: without the guard, an attribution leaves new parameter objects behind, and unties
+        the tied unembedding from the embedding."""
         model = tiny_gemma2_replacement_model()
         before = {n: id(p) for n, p in model.named_parameters()}
         self._attribute(model)
-        assert any(id(p) != before[n] for n, p in model.named_parameters())
+        after = dict(model.named_parameters())
+        assert any(id(p) != before[n] for n, p in after.items() if n in before)
+        assert set(after) - set(before) == {"lm_head.weight"}
 
     def test_guarded_disk_offload_keeps_parameters_and_restores_the_flag(self):
         model = tiny_gemma2_replacement_model()
@@ -347,6 +350,7 @@ class TestDiskOffload:
             assert torch.__future__.get_swap_module_params_on_conversion()
             self._attribute(model)
         assert torch.__future__.get_swap_module_params_on_conversion() == prior
+        assert {n for n, _ in model.named_parameters()} == set(before)  # the tied unembedding stays tied
         for n, p in model.named_parameters():
             assert id(p) == before[n][0] and p.device.type == "cpu" and torch.equal(p, before[n][1])
 
