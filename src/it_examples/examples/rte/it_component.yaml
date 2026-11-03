@@ -45,6 +45,7 @@ module:
     rte_demo.gpt2.sae_lens: configs/rte_demo.gpt2.sae_lens.yaml
     rte_ft.gemma3.core: configs/rte_ft.gemma3.core.yaml
     rte_ft.gpt2.core: configs/rte_ft.gpt2.core.yaml
+    rte_sparse.gemma3.core: configs/rte_sparse.gemma3.core.yaml
     rte_sparse.gpt2.core: configs/rte_sparse.gpt2.core.yaml
 datamodules:
   rte_boolq:
@@ -53,5 +54,6 @@ datamodules:
 # files the component ships for its users (#765, #847): finetuning-scheduler schedules, and CLI run configurations for
 # the `rte_ft` variant on each training-loop interface (`interpretune --config hub://speediedan/rte/runs/<file>`)
 extra_files:
+- chain
 - ft_schedules
 - runs

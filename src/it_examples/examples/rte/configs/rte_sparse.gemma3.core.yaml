@@ -1,0 +1,86 @@
+# Derived key: rte_sparse.gemma3.core
+# The sparsity chain (interpretune#698 to #700) as one phased run of gemma-3-1b-it (#899), on one 24 GB GPU: the
+# published Gemma Scope 2 transcoders (`mwhanna/gemma-scope-2-1b-it`, width 16k) as instruments at layers 17-25, the
+# chain's row partition and prompt rendering. `runs/rte_sparse.gemma3.core.yaml` runs it on the core loop.
+task_variant: rte_sparse
+model: gemma3
+composition: []
+extensions: []
+descriptor: null
+reg_info:
+  model_src_key: gemma3
+  model_cfg_key: rte_sparse
+  adapter_combinations:
+    - core
+  description: The sparsity chain as one phased run of Gemma3-1b-it with its published transcoders on the core loop (one GPU)
+shared_config:
+  task_name: rte
+  os_env_model_auth_key: HF_GATED_PUBLIC_REPO_AUTH_KEY
+  model_name_or_path: google/gemma-3-1b-it
+  tokenizer_kwargs:
+    model_input_names: ['input_ids', 'attention_mask']
+    padding_side: left
+    add_bos_token: true
+registered_cfg:
+  datamodule_cfg:
+    prompt_cfg:
+      class_path: rte_boolq.RTEBoolqChatTemplatePromptConfig
+    signature_columns: ['input_ids', 'attention_mask', 'labels']
+    text_fields: ["premise", "hypothesis"]
+    enable_datasets_cache: True
+    train_batch_size: 8
+    eval_batch_size: 8
+    # tokenize (and pad) in chunks of one batch: unshuffled batches are then padded to their own longest prompt, not
+    # to the longest of 1,000
+    prepare_data_map_cfg:
+      batched: true
+      batch_size: 8
+  module_cfg:
+    class_path: interpretune.config.module.ITConfig
+    init_args:
+      auto_comp_cfg:
+        class_path: interpretune.config.shared.AutoCompConfig
+        init_args:
+          module_cfg_name: RTEBoolqConfig
+          module_cfg_mixin:
+            - class_path: rte_boolq.RTEBoolqEntailmentMapping
+              import_only: true
+            - class_path: rte_boolq.RTEBoolqSparseChainCfg
+              import_only: true
+      # the chain's settings; the transcoders and hook sites are the component's defaults (Gemma Scope 2 width 16k at
+      # each block's pre- and post-feedforward norms)
+      sparse_chain:
+        reg_layers: [17, 18, 19, 20, 21, 22, 23, 24, 25]
+        loss_temperature: 4.0
+      generative_step_cfg:
+        class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
+        init_args:
+          enabled: true
+          lm_generation_cfg:
+            class_path: interpretune.config.mixins.HFGenerationConfig
+            init_args:
+              model_config:
+                max_new_tokens: 1
+                output_logits: true
+                return_dict_in_generate: true
+      hf_from_pretrained_cfg:
+        class_path: interpretune.config.mixins.HFFromPretrainedConfig
+        init_args:
+          pretrained_kwargs:
+            device_map: cuda
+            dtype: float32
+            attn_implementation: eager
+          model_head: transformers.Gemma3ForCausalLM
+      # the loss reads only the answer position (the last, with left padding): skip the other positions' logits,
+      # which at a 262k vocabulary are most of the activation memory
+      cust_fwd_kwargs:
+        logits_to_keep: 1
+      optimizer_init:
+        class_path: torch.optim.AdamW
+        init_args:
+          weight_decay: 0.0
+          lr: 1.0e-05
+  datamodule_cls:
+    class_path: rte_boolq.RTEBoolqChainDataModule
+  module_cls:
+    class_path: rte_boolq.RTEBoolqSparseModule
