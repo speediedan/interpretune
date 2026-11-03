@@ -1,0 +1,88 @@
+# Derived key: rte_sparse.gpt2.core
+# The sparsity chain (interpretune#698 to #700) as one phased run (#899), small enough for a CPU: GPT-2 with random
+# JumpReLU transcoders on its last two MLPs, the chain's row partition and prompt rendering. `runs/rte_sparse.gpt2.core.yaml`
+# runs it on the core loop; `rte_sparse.gemma3.core` is the research-scale configuration.
+task_variant: rte_sparse
+model: gpt2
+composition: []
+extensions: []
+descriptor: null
+reg_info:
+  model_src_key: gpt2
+  model_cfg_key: rte_sparse
+  adapter_combinations:
+    - core
+  description: The sparsity chain as one phased run of GPT2 with random transcoders on the core loop (CPU-sized)
+shared_config:
+  task_name: rte
+  model_name_or_path: gpt2
+  tokenizer_id_overrides:
+    pad_token_id: 50256
+  tokenizer_kwargs:
+    model_input_names: ['input_ids', 'attention_mask']
+    padding_side: left
+    add_bos_token: true
+registered_cfg:
+  datamodule_cfg:
+    prompt_cfg:
+      class_path: rte_boolq.RTEBoolqChatTemplatePromptConfig
+    signature_columns: ['input_ids', 'attention_mask', 'labels']
+    text_fields: ["premise", "hypothesis"]
+    enable_datasets_cache: True
+    train_batch_size: 4
+    eval_batch_size: 4
+    # tokenize (and pad) in chunks of one batch: unshuffled batches are then padded to their own longest prompt, not
+    # to the longest of 1,000, which keeps the CPU run short
+    prepare_data_map_cfg:
+      batched: true
+      batch_size: 4
+  module_cfg:
+    class_path: interpretune.config.module.ITConfig
+    init_args:
+      auto_comp_cfg:
+        class_path: interpretune.config.shared.AutoCompConfig
+        init_args:
+          module_cfg_name: RTEBoolqConfig
+          module_cfg_mixin:
+            - class_path: rte_boolq.RTEBoolqEntailmentMapping
+              import_only: true
+            - class_path: rte_boolq.RTEBoolqSparseChainCfg
+              import_only: true
+      sparse_chain:
+        reg_layers: [10, 11]
+        loss_temperature: 4.0
+        transcoders:
+          random: {d_transcoder: 64, seed: 0, threshold: 0.0}
+        sites:
+          x: transformer.h.{layer}.ln_2
+          out: transformer.h.{layer}.mlp
+      generative_step_cfg:
+        class_path: rte_boolq.RTEBoolqGenerativeClassificationConfig
+        init_args:
+          enabled: true
+          lm_generation_cfg:
+            class_path: interpretune.config.mixins.HFGenerationConfig
+            init_args:
+              model_config:
+                max_new_tokens: 1
+                output_logits: true
+                return_dict_in_generate: true
+      hf_from_pretrained_cfg:
+        class_path: interpretune.config.mixins.HFFromPretrainedConfig
+        init_args:
+          pretrained_kwargs:
+            device_map: cpu
+            dtype: float32
+          model_head: transformers.GPT2LMHeadModel
+      # the loss reads only the answer position (the last, with left padding)
+      cust_fwd_kwargs:
+        logits_to_keep: 1
+      optimizer_init:
+        class_path: torch.optim.AdamW
+        init_args:
+          weight_decay: 0.0
+          lr: 3.0e-05
+  datamodule_cls:
+    class_path: rte_boolq.RTEBoolqChainDataModule
+  module_cls:
+    class_path: rte_boolq.RTEBoolqSparseModule
