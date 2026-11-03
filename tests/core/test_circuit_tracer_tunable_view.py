@@ -25,7 +25,6 @@ from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig  # n
 from interpretune.adapters.circuit_tracer.tunable_view import (  # noqa: E402
     BASE_MODEL_REASON,
     BASE_UNREACHABLE_REASON,
-    DISK_OFFLOAD_REASON,
     PROMOTE_BASE_REASON,
     CircuitTracerView,
     CrossLayerTranscoderWithDeltas,
@@ -33,6 +32,7 @@ from interpretune.adapters.circuit_tracer.tunable_view import (  # noqa: E402
     attach_lazy_deltas,
     attribution_frozen,
     lazy_weights,
+    offload_keeps_parameters,
 )
 from interpretune.tuning.views import VIEW_ATTR  # noqa: E402
 from tests.core.circuit_tracer_toy import TOY_PROMPT, only_token_zero_special, tiny_gemma2_replacement_model  # noqa: E402
@@ -173,9 +173,9 @@ class TestTranscoderView:
             report.ran
         )
 
-    def test_disk_offload_refuses_by_name(self):
-        support = as_view(_toy_module(offload="disk").build_tunable_view()).support()
-        assert not support.trainable and support.reason == DISK_OFFLOAD_REASON
+    def test_disk_offload_is_not_refused(self):
+        view = _promoted_view(_toy_module(offload="disk"))
+        assert view.support().trainable
 
     def test_an_unknown_transcoder_layout_is_refused_by_name(self):
         with pytest.raises(TypeError, match="not a transcoder layout this view knows"):
@@ -319,6 +319,66 @@ class TestAttributionAfterThawing:
         with only_token_zero_special(module.replacement_model):
             module.generate_attribution_graph(TOY_PROMPT, max_n_logits=3, batch_size=8, verbose=False)
         assert not [w for w in recwarn if "consider re-fitting" in str(w.message)]
+
+
+class TestDiskOffload:
+    """Circuit-tracer's ``offload='disk'`` replaces the offloaded modules' parameters unless the attribution runs
+    under :func:`offload_keeps_parameters` (#855)."""
+
+    @staticmethod
+    def _attribute(model, **kwargs):
+        from circuit_tracer import attribute
+
+        with only_token_zero_special(model):
+            return attribute(TOY_PROMPT, model, max_n_logits=3, batch_size=8, verbose=False, offload="disk", **kwargs)
+
+    def test_unguarded_disk_offload_replaces_parameters(self):
+        """The positive control: without the guard, an attribution leaves new parameter objects behind."""
+        model = tiny_gemma2_replacement_model()
+        before = {n: id(p) for n, p in model.named_parameters()}
+        self._attribute(model)
+        assert any(id(p) != before[n] for n, p in model.named_parameters())
+
+    def test_guarded_disk_offload_keeps_parameters_and_restores_the_flag(self):
+        model = tiny_gemma2_replacement_model()
+        before = {n: (id(p), p.detach().clone()) for n, p in model.named_parameters()}
+        prior = torch.__future__.get_swap_module_params_on_conversion()
+        with offload_keeps_parameters("disk"):
+            assert torch.__future__.get_swap_module_params_on_conversion()
+            self._attribute(model)
+        assert torch.__future__.get_swap_module_params_on_conversion() == prior
+        for n, p in model.named_parameters():
+            assert id(p) == before[n][0] and p.device.type == "cpu" and torch.equal(p, before[n][1])
+
+    @pytest.mark.parametrize("offload", [None, "cpu"])
+    def test_other_offloads_leave_the_flag_alone(self, offload):
+        prior = torch.__future__.get_swap_module_params_on_conversion()
+        with offload_keeps_parameters(offload):
+            assert torch.__future__.get_swap_module_params_on_conversion() == prior
+
+    def test_an_optimizer_step_after_attribution_moves_exactly_the_thawed_tensors(self):
+        """#855's acceptance: an optimizer built before a disk-offloaded attribution still steps the module's own
+        thawed tensors after it, and only those."""
+        module = _ct_module(tiny_gemma2_replacement_model(), offload="disk")
+        module.attribution_graphs = []
+        module.it_cfg.optimizer_init = {"class_path": "torch.optim.AdamW", "init_args": {"lr": 1e-2}}
+        module.it_cfg.lr_scheduler_init, module.it_cfg.pl_lrs_cfg = None, {}
+        view = _promoted_view(module)
+        object.__setattr__(module, VIEW_ATTR, view)
+        thawed = {n for n in view.roles() if ".transcoders.2." in n}
+        for n, p in module.named_parameters():
+            p.requires_grad_(n in thawed)
+        optimizers, _ = module.configure_optimizers()
+        before = {n: (id(p), p.detach().clone()) for n, p in module.named_parameters()}
+        with only_token_zero_special(module.replacement_model):
+            module.generate_attribution_graph(TOY_PROMPT, max_n_logits=3, batch_size=8, verbose=False)
+        params = dict(module.named_parameters())
+        assert all(id(p) == before[n][0] and torch.equal(p, before[n][1]) for n, p in params.items())
+        assert all(p.requires_grad == (n in thawed) for n, p in params.items())
+        sum((params[n] ** 2).sum() for n in thawed).backward()
+        optimizers[0].step()
+        moved = {n for n, p in params.items() if not torch.equal(p, before[n][1])}
+        assert moved == thawed
 
 
 class TestLazyCorrections:
