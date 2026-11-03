@@ -507,7 +507,7 @@ class AnalysisStore:
 
         load_dataset_kwargs = dict(split=split, streaming=streaming)
 
-        if isinstance(dataset, (str, os.PathLike)):
+        if isinstance(dataset, (str, Path)):
             dataset_path = os.path.abspath(str(dataset))
             if self.op_output_dataset_path is not None:
                 # Only consider conflict if raw paths match
@@ -582,7 +582,7 @@ class AnalysisStore:
             streaming=self.streaming,
         )
 
-        if isinstance(dataset, (str, os.PathLike)):
+        if isinstance(dataset, (str, Path)):
             dataset_path = os.path.abspath(str(dataset))
             if self.op_output_dataset_path:
                 # Compare raw paths to detect overlap
