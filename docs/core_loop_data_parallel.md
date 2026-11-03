@@ -35,8 +35,8 @@ runner.train()
 ## The FSDP2 plan
 
 `fsdp2` needs `fsdp_plan`: the modules to shard as their own units, each with its `fully_shard` keyword arguments. It
-is finetuning-scheduler's FSDP2 plan (`finetuning_scheduler.strategies.plan.shard_model`), so the core loop takes the
-same grammar as finetuning-scheduler's own interfaces:
+is Fine-Tuning Scheduler's FSDP2 plan (`finetuning_scheduler.strategies.plan.shard_model`), so the core loop takes the
+same grammar as Fine-Tuning Scheduler's own interfaces:
 
 | key | selects |
 | --- | --- |
@@ -68,17 +68,17 @@ allocations reuse memory less well without the rounding has not been measured.
 
 A plan is usually the model's block class, plus each spliced instrument's class, so that an instrument is gathered on
 its own rather than with the block around it. Units are sharded deepest first whatever the plan's key order, so an
-instrument spliced inside a block can be listed after the block, and then the interpretune module itself is sharded as
+instrument spliced inside a block can be listed after the block, and then the Interpretune module itself is sharded as
 the root unit. An empty plan (`{}`) shards the whole module as one unit, which gathers every parameter for the entire
 forward pass. Under `ddp` a plan is optional; without one the module is the only unit.
 
 A `class:` key matches subclasses too, and a regex matches every module name it is a prefix of (anchor it with `$` to
 select the blocks but not their children). A plan under the `single` placement, a key that selects no module, and a plan
-without finetuning-scheduler installed are each refused by name.
+without Fine-Tuning Scheduler installed are each refused by name.
 
 FSDP2 gathers a unit's parameters in hooks on its `forward`, so a module called some other way computes with sharded
 parameters. Some compositions do exactly that: nnsight calls the Hugging Face model directly rather than through the
-interpretune module, and circuit-tracer reads transcoders through methods such as `encode` and calls their activation
+Interpretune module, and circuit-tracer reads transcoders through methods such as `encode` and calls their activation
 functions directly. Such a composition declares these calls (`fsdp_direct_calls`), the placement registers the methods
 as FSDP2 forward methods, and each called module must be its own unit. A circuit-tracer composition over nnsight with
 Gemma 2 transcoders, for one, needs:
@@ -164,7 +164,7 @@ FSDP2 across two ranks with CPU offload. The configuration it runs is
 
 The model is gated, so the launching account needs access to `google/gemma-3-4b-it` (through
 `HF_GATED_PUBLIC_REPO_AUTH_KEY` or a cached Hugging Face login). The component ships its own module code, which
-interpretune runs only when you opt in (see [the Hub trust posture](hub_trust_posture.md)), and loading a component
+Interpretune runs only when you opt in (see [the Hub trust posture](hub_trust_posture.md)), and loading a component
 never downloads, so fetch it first:
 
 ```bash
@@ -185,11 +185,11 @@ also loads the model and its transcoders on the CPU, and the placement loads eac
 | `class:Gemma3DecoderLayer` | the transformer blocks, so that one block is gathered at a time |
 | `class:SingleLayerTranscoder` | circuit-tracer calls each transcoder's `encode` and `decode` directly, outside the module's forward, so each transcoder must be its own unit with those methods registered |
 | `class:JumpReLU` | circuit-tracer calls the transcoders' activation functions directly too |
-| `class:Gemma3ForConditionalGeneration` | nnsight calls the Hugging Face model directly rather than through the interpretune module, so the parameters left outside the other units (the embeddings among them) would otherwise never be gathered |
+| `class:Gemma3ForConditionalGeneration` | nnsight calls the Hugging Face model directly rather than through the Interpretune module, so the parameters left outside the other units (the embeddings among them) would otherwise never be gathered |
 | `class:SiglipEncoderLayer` | the vision tower's layers; the RTE task never calls the tower, and as units they stay sharded and offloaded instead of being gathered with the Hugging Face model's unit |
 
 Leaving out a transcoder, `JumpReLU` or the Hugging Face model, the modules called outside the forward, is refused
-by name, with the `class:` keys to add. The interpretune module itself is
+by name, with the `class:` keys to add. The Interpretune module itself is
 sharded last, as the root unit.
 
 ### Memory

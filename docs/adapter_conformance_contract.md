@@ -195,10 +195,10 @@ row's own activation" is not expressible through the op path and is deliberately
 
 ## Tuning cases
 
-`TuningConformance` runs finetuning-scheduler's `TunableView` cases against the view a composition declares, with the
+`TuningConformance` runs Fine-Tuning Scheduler's `TunableView` cases against the view a composition declares, with the
 same `target` as the model-backend cases. A trainable view runs every case that applies to it, a refused composition
 runs the refusal case, and a run in which no case applies fails. See
-[tuning compositions through finetuning-scheduler views](fts_tunable_views.md).
+[tuning compositions through Fine-Tuning Scheduler views](fts_tunable_views.md).
 
 ## Op collections
 
@@ -248,7 +248,7 @@ through untouched, and a `fixture` key beside siblings is refused rather than ha
 ## Adapter example notebooks
 
 An adapter repository ships a notebook per declared capability group under its own examples tree, a dev copy and
-a published copy, and publishes them with the engine interpretune uses for its own: the console script
+a published copy, and publishes them with the engine Interpretune uses for its own: the console script
 `interpretune-publish-notebooks`, parameterized from the repository's `pyproject.toml`:
 
 ```toml

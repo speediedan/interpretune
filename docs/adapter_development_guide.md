@@ -1,6 +1,6 @@
 # Interpretune Adapter Development Guide
 
-This guide documents the patterns and best practices for developing adapters within the interpretune framework.
+This guide documents the patterns and best practices for developing adapters within the Interpretune framework.
 
 ## Overview
 
@@ -582,7 +582,7 @@ The way to put a capability section on the card is therefore to publish a **meas
 1. In the adapter's CI, run the conformance suite with `IT_CONFORMANCE_REPORT=conformance_report.json` and
    `IT_CONFORMANCE_COMPONENT_DIR=<the component's source directory>` set. At session finish the suite writes the
    selection report as JSON: per target, the declared surfaces and every support record field by field; the
-   outcome lists; and provenance (interpretune version, the repository head, the component directory and its own
+   outcome lists; and provenance (Interpretune version, the repository head, the component directory and its own
    revision, the time, the exit status). It holds what the suite measured on a composed session, never a claim.
 2. Declare `conformance_report.json` in the manifest's `extra_files`, so the builder stages it and the published
    tree carries it.
@@ -595,6 +595,6 @@ The way to put a capability section on the card is therefore to publish a **meas
    measurement of a revision the component has moved past would read as a measurement of this one, which is worse
    than no measurement.
 
-The block distinguishes a **vocabulary gap** (a point the backend declares it cannot capture because interpretune
+The block distinguishes a **vocabulary gap** (a point the backend declares it cannot capture because Interpretune
 has no spelling the engine can address) from a **capability gap** (a surface not declared at all), using the
 record's own reason. Write those reasons for the reader who is deciding whether to build on your adapter.

@@ -1,7 +1,8 @@
 # Tuning
 
-interpretune fine-tunes any composition with [finetuning-scheduler](https://finetuning-scheduler.readthedocs.io):
-a schedule thaws parameters phase by phase, on interpretune's core loop or on Lightning.
+Interpretune fine-tunes any composition with [finetuning-scheduler](https://finetuning-scheduler.readthedocs.io):
+a schedule thaws parameters phase by phase, on Interpretune's core loop or on a framework adapter loop like
+Lightning.
 
 ```python
 schedule = {
@@ -10,32 +11,51 @@ schedule = {
 }
 ```
 
-A schedule can name parameters, as finetuning-scheduler always has, or say **what** to tune: the role a tensor plays
-(the model's own weights, an adapter, an intervention, a latent model, an instrument). That is the
-[venngram](https://github.com/speediedan/venngram) protocol, which finetuning-scheduler uses to address a model through
-its **tunable view**. Its addresses share and compose references to any subset of a model, so:
+A schedule can name parameters, as Fine-Tuning Scheduler always has, or say **what** to tune: the role a tensor plays
+(the model's own weights, an adapter, an intervention, a latent model, an instrument), addressed through the model's
+**tunable view**.
+
+To enable this model addressing abstraction, Fine-Tuning Scheduler and Interpretune use the
+[venngram](https://github.com/speediedan/venngram) protocol. Its addresses can share and compose references to any
+subset of a model: from groups of layers to intersecting sets of individual neurons, and from latent-space features to
+activation sites and attribution graphs. Schedules use the part of it that selects tensors to tune. Addressing by
+role means:
 
 - **interpretability experiments** tune, freeze and promote adapters, interventions, latent models and instruments by
   role, however many wrappers (TransformerLens, nnsight, SAE Lens) sit around the model;
-- **one schedule runs across backends**: each interpretune adapter gives its composition a view reporting the same
+- **one schedule runs across backends**: each Interpretune adapter gives its composition a view reporting the same
   roles, so a schedule written by role runs unchanged on the core/HF, TransformerLens and nnsight compositions;
 - **experiments are defined once and shared**: conditions written as addresses depend far less on one model's
   parameter names, so they can be compared and orchestrated over several models, and composed by agents.
 
 ```{tip}
 **You may not need any of this.** A schedule of parameter names and regexes needs no view and stays the simplest choice
-for many uses, above all a schedule you write by hand. finetuning-scheduler's
+for many uses, above all a schedule you write by hand. Fine-Tuning Scheduler's
 [tunable views guide](https://finetuning-scheduler.readthedocs.io/en/latest/pytorch/tunable_views.html) explains when
 addresses pay off.
 ```
 
-Today an interpretune composition is addressed by role and by name. Addressing it by layer and architecture-neutral
+Today an Interpretune composition is addressed by role and by name. Addressing it by layer and architecture-neutral
 component (`layers:-4: & component:mlp.*`), as a bare model already is through `venngram.view(model)`, follows in
 [#900](https://github.com/speediedan/interpretune/issues/900).
 
+## venngram elsewhere in Interpretune
+
+Tuning is one of several places Interpretune consumes venngram:
+
+- **Tuning** (this page): the tunable view protocol and role vocabulary come from `venngram.tuning` and `venngram.roles`,
+  and `TuningConformance` runs Fine-Tuning Scheduler's view conformance cases against a composition's view.
+- **Interventions**: `interpretune.analysis.venngram` applies a venngram recipe's treatments through the model
+  backends' native intervention modes, and a support record derived from each backend's own refuses what it cannot
+  express. [Interpretune Intervention APIs](interpretune_intervention_apis.md) describes the surfaces it runs on, and
+  [#905](https://github.com/speediedan/interpretune/issues/905) tracks interventions on venngram-addressed unit sets.
+- **Recipes by reference**: `load_recipe` reads a recipe from a venngram document reference (fetched, hash-checked and
+  returned with its pinned reference for provenance), a local file or an inline mapping, so an experiment's treatment is
+  shared as data rather than code.
+
 ## Running a schedule on the core loop
 
-`FTSCoreCallback` drives finetuning-scheduler's `TuningScheduler` at the core loop's boundaries:
+`FTSCoreCallback` drives Fine-Tuning Scheduler's `TuningScheduler` at the core loop's boundaries:
 
 ```python
 from interpretune.config import SessionRunnerCfg
@@ -44,9 +64,9 @@ from interpretune.tuning.core_loop import FTSCoreCallback
 runner_cfg = SessionRunnerCfg(it_session=session, max_epochs=4, callbacks=[FTSCoreCallback(schedule)])
 ```
 
-Lightning compositions use finetuning-scheduler's own `FinetuningScheduler` callback with the same schedule. Both
-interfaces see the same view, so a schedule thaws the same tensors on either (the RTE example's tests check this phase
-by phase). [Phased fine-tuning on the core loop](#phased-fine-tuning-on-the-core-loop) below has the details.
+A composition on Lightning, today's framework adapter loop, uses Fine-Tuning Scheduler's own `FinetuningScheduler`
+callback with the same schedule. Both interfaces see the same view, so a schedule thaws the same tensors on either (the
+RTE example's tests check this phase by phase). [Phased fine-tuning on the core loop](#phased-fine-tuning-on-the-core-loop) below has the details.
 
 ## Roles
 
@@ -78,8 +98,16 @@ A model-owned module the view must reach (a dictionary spliced into the model, f
 A composition's view is what `build_tunable_view()` returns. The default is the identity view: physical names, the
 roles above, trainable. So **a composition that does not override it can be tuned**, and most never need to.
 
-A composition that cannot be tuned in some configuration declares why, and the refusal is reported by name rather than
-the composition being treated as trainable. nnsight's, for instance:
+```{note}
+The default is moving to venngram's automatic view resolution, `venngram.view(self, roles=self.tunable_roles())`: the
+architecture's published component map then gives every composition layers and components with no code, and a
+composition overrides `build_tunable_view()` only to refuse or to offer names of its own. That needs venngram to place a
+base map under a wrapper root (the Interpretune module holds the model under `model.`), tracked in
+[venngram#46](https://github.com/speediedan/venngram/issues/46), and then
+[#900](https://github.com/speediedan/interpretune/issues/900).
+```
+
+A composition that cannot be tuned in some configuration declares why, rather than being treated as trainable. nnsight's, for instance:
 
 ```python
 from interpretune.tuning.views import RefusingView, identity_view
@@ -95,10 +123,10 @@ A view with names of its own goes here too: TransformerLens's `TransformerBridge
 `blocks.3.attn.W_Q` where the model stores a fused projection. Returning `None` declares nothing, and the composition is
 refused.
 
-Whatever is returned, every view's root is the interpretune module. Physical names are therefore the module's own
+Whatever is returned, every view's root is the Interpretune module. Physical names are therefore the module's own
 (`model.<...>`), the same names the Lightning callback sees through `pl_module`, and modules registered beside the model
 (steering vectors, spliced SAEs) are in the view. It is attached as the module's `tunable_view` after model
-initialization, where finetuning-scheduler finds it; an attached view is never replaced, so a hub adapter may attach
+initialization, where Fine-Tuning Scheduler finds it; an attached view is never replaced, so a hub adapter may attach
 its own in `post_auto_model_init`.
 
 ## Choosing the view in configuration
@@ -124,7 +152,7 @@ parameters through the module's view, roles included. The optimizer comes from t
 schedulers from its `lr_scheduler_init`, unless `tuning_scheduler_kwargs` passes `optimizer` or `lr_scheduler`; each is
 installed as the module's own, so the loop steps the phase's optimizer and nothing twice. Further `TuningScheduler`
 arguments go in `tuning_scheduler_kwargs` (transition and checkpoint policies, `max_depth`); phase hooks, gates and RNG
-forking are finetuning-scheduler's, unchanged. The core loop keeps its own `max_epochs`, and the callback warns when the
+forking are Fine-Tuning Scheduler's, unchanged. The core loop keeps its own `max_epochs`, and the callback warns when the
 final phase asks for more. A `tuning_scheduler_factory` builds the tuning scheduler instead, for anything
 `tuning_scheduler_kwargs` cannot express; it must be rooted at the module it is given.
 
@@ -133,7 +161,7 @@ final phase asks for more. A `tuning_scheduler_factory` builds the tuning schedu
   Log them under distinct names when a policy monitors one.
 - **Metric-stepped lr schedulers** (`ReduceLROnPlateau`) use the epoch interval: step-interval schedulers are stepped
   without metrics. Only `interval`, `frequency` and `monitor` are taken from `pl_lrs_cfg`, so a missing monitored metric
-  fails in finetuning-scheduler rather than being skipped as the core loop's `strict=False` would.
+  fails in Fine-Tuning Scheduler rather than being skipped as the core loop's `strict=False` would.
 - **Resume** from the core loop's own checkpoint. The callback's `state_dict` is the tuning scheduler's `resume_state`
   (phase, pending decision, gate records, RNG forks, lr schedulers and registered state; the random streams stay with
   the loop's checkpoint), and taking it marks the resume point with the tuning scheduler's checkpoint policy, so the
@@ -145,7 +173,7 @@ final phase asks for more. A `tuning_scheduler_factory` builds the tuning schedu
 
 ## Conformance
 
-finetuning-scheduler ships the view contract's cases; `interpretune.testing.conformance.TuningConformance` runs them against a
+Fine-Tuning Scheduler ships the view contract's cases; `interpretune.testing.conformance.TuningConformance` runs them against a
 composition, selected by what its view declares:
 
 ```python
@@ -171,5 +199,5 @@ a fresh session, because cases change parameters and `requires_grad`.
 | [nnsight](fts_tuning_nnsight.md), local and dispatched | the identity view over the HF module, registered as `hf_model` | PEFT adapter tensors as `adapter:<name>` |
 | [nnsight](fts_tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; tuning paths tracked in [#814](https://github.com/speediedan/interpretune/issues/814) and [#775](https://github.com/speediedan/interpretune/issues/775) | |
 | [circuit-tracer](fts_tuning_circuit_tracer.md) | refused, with the reason; tuning paths tracked in [#813](https://github.com/speediedan/interpretune/issues/813), [#787](https://github.com/speediedan/interpretune/issues/787) and [#709](https://github.com/speediedan/interpretune/issues/709) | |
-| [interp-engine (hub adapter)](fts_tuning_interp_engine.md) | interpretune's default identity view until the adapter declares its own; its circuit-tracer composition takes the circuit-tracer refusal | none declared yet |
+| [interp-engine (hub adapter)](fts_tuning_interp_engine.md) | Interpretune's default identity view until the adapter declares its own; its circuit-tracer composition takes the circuit-tracer refusal | none declared yet |
 | a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |

@@ -1,6 +1,6 @@
 # Tuning: TransformerLens
 
-[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its finetuning-scheduler view.
+[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
 
 `TransformerBridgeView` names parameters as `tl_named_parameters()` does (`blocks.9.attn.W_Q`). Each name maps to the
 parameters its TransformerLens tensor is computed from, found by walking that tensor's autograd graph, so the mapping
@@ -10,7 +10,7 @@ TransformerLens synthesizes for a bias-free projection) is left out, and a sched
 - **Built on first use.** Constructing the view traces nothing, so a session that never tunes pays nothing.
 - **Fused projections.** GPT-2's `q`, `k` and `v` weights are strided views of the fused `qkv` weight. A step through a
   split changes the fused parameter's values, so the fused parameter is thawed with its splits (`coupled`), and the
-  default schedule keeps each block whole. finetuning-scheduler refuses a schedule that thaws a block's `W_Q` and `W_K`
+  default schedule keeps each block whole. Fine-Tuning Scheduler refuses a schedule that thaws a block's `W_Q` and `W_K`
   in different phases, because their storage overlaps.
 - **Norms.** With `implicit_norm_thaw` (the default), thawing any of a block's parameters thaws the block's norms, and
   thawing an embedding thaws the final norm. Turned off (see [Choosing the naming](#choosing-the-naming)), norms thaw
@@ -43,7 +43,7 @@ architectures:
   lr: 1.0e-06
 ```
 
-finetuning-scheduler reports what it thaws in physical parameters, so a GPT-2 block thawed by name counts 18: its 16
+Fine-Tuning Scheduler reports what it thaws in physical parameters, so a GPT-2 block thawed by name counts 18: its 16
 named tensors and the fused `qkv` weight and bias they are views of. Its norms are thawed with it.
 
 ## Choosing the naming
@@ -51,7 +51,7 @@ named tensors and the fused `qkv` weight and bias they are views of. Its norms a
 The module configuration's `tunable_view` (see [Choosing the view in configuration](fts_tunable_views.md)) selects either
 alternative to the default, with no subclass.
 
-To name the module's own parameters (`model.blocks.9._original_component.attn.q.<...>`), select finetuning-scheduler's
+To name the module's own parameters (`model.blocks.9._original_component.attn.q.<...>`), select Fine-Tuning Scheduler's
 identity view:
 
 ```yaml

@@ -53,7 +53,7 @@ Unresolvable(reason, alternatives)                        a value, never an exce
 ```
 
 Refusal as a value is deliberate: two implementations grew a sentinel for "does not translate" independently
-(interp-engine's unmapped-hook marker, interpretune's unmappable-hook reasons), which is the signal that it belongs
+(interp-engine's unmapped-hook marker, Interpretune's unmappable-hook reasons), which is the signal that it belongs
 in the schema. A consumer enumerating support renders it; a consumer that needs the tensor raises with the reason.
 
 ## The component-map schema
@@ -88,7 +88,7 @@ evolution policy below.
 Kinds: `block`, `attn`, `mlp`, `norm`, `linear`, `embed`, `unembed`. A sandwich-norm architecture adds
 `ln1_post` and `ln2_post` rows and sets `facts.sandwich_norms`, which is what routes the contribution points.
 
-Sources, in precedence order: a bundled document (five architectures ship with interpretune), a document pulled
+Sources, in precedence order: a bundled document (five architectures ship with Interpretune), a document pulled
 as a `hookmaps` hub component (data, no trust gate; `it.hub.pull_hookmaps("<org>/<repo>")` fetches and registers,
 `it.hub.load_hookmaps` registers from the cache), and a map derived from TransformerLens' own per-architecture
 component mapping. Two sources for one architecture must agree, and a test says so. The TransformerLens-derived
@@ -173,7 +173,7 @@ version protects:
 | document | reader behaviour |
 | --- | --- |
 | version inside the window | read; unknown top-level and row keys ignored |
-| version newer than the reader | refused: "written by a newer interpretune, upgrade" |
+| version newer than the reader | refused: "written by a newer Interpretune, upgrade" |
 | version older than the floor | refused: "re-publish against a current schema" |
 | no integer version | refused as malformed (told apart from unsupported) |
 | unknown `facts` key | ignored; a known fact of the wrong type is refused |
@@ -215,7 +215,7 @@ refused the architecture the day before.
 TransformerLens spellings that are neither the semantic names above nor component points (`attn.hook_z`,
 `hook_q`, `hook_embed`) are served through an explicit alias table (alias, canonical, level, an optional
 deprecated-since, replacement, optional caution). They are accepted, not deprecated: TransformerLens's own bridge
-carries them as current vocabulary, so the only thing interpretune expresses about them is a preference for
+carries them as current vocabulary, so the only thing Interpretune expresses about them is a preference for
 canonical names. A parse reports the canonical spelling and the alias it came from; a strict mode refuses aliases
 as a matter of style; adapters may register aliases for their own vocabulary rather than carrying private tables,
 and mark one deprecated only when they are actually retiring it.
