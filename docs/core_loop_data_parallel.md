@@ -58,6 +58,14 @@ run_cfg:
     cpu_offload_policy: {pin_memory: true}
 ```
 
+Pinned offload lets the copies between host and accelerator run asynchronously, but PyTorch's pinned host allocator
+rounds every allocation up to a power of two by default, so offloaded shards can take up to twice their size in host
+memory. Setting `PYTORCH_ALLOC_CONF=pinned_max_round_threshold_mb:0` in the launch environment turns the rounding off
+and keeps the shards pinned. On the circuit-tracer walkthrough below, it brings each rank's pinned shards from about
+10.3 to about 7.0 GiB, about the host memory the same shards take unpinned, on both CUDA and ROCm. That was measured
+for a forward-only run, whose offloaded shards are allocated once; whether a training run's repeated pinned
+allocations reuse memory less well without the rounding has not been measured.
+
 A plan is usually the model's block class, plus each spliced instrument's class, so that an instrument is gathered on
 its own rather than with the block around it. Units are sharded deepest first whatever the plan's key order, so an
 instrument spliced inside a block can be listed after the block, and then the interpretune module itself is sharded as
@@ -143,6 +151,92 @@ transcoders are registered inside it). The transcoders must be loaded eagerly (`
 `lazy_decoder: false`), since a lazily loaded weight is read from disk rather than held as a parameter, and the
 composition needs an `nnsight_cfg` without `device_map` or remote execution; `meta_init_load: dcp` is refused, since the
 transcoders are not in the model's checkpoint. Each of these is refused by name.
+
+## Walkthrough: a sharded circuit-tracer composition from the CLI
+
+The `rte` component ships a run that puts the pieces above together: the RTE test loop of circuit-tracer over nnsight
+on gemma-3-4b-it, with every layer's Gemma Scope 2 transcoder (16k features), built on the meta device and sharded with
+FSDP2 across two ranks with CPU offload. The configuration it runs is
+`rte_demo.gemma3.circuit_tracer+nnsight.fsdp2`, and the run itself is
+`runs/rte_test.gemma3_4b.circuit_tracer.fsdp2.yaml` in the same component.
+
+### Running it
+
+The model is gated, so the launching account needs access to `google/gemma-3-4b-it` (through
+`HF_GATED_PUBLIC_REPO_AUTH_KEY` or a cached Hugging Face login). The component ships its own module code, which
+interpretune runs only when you opt in (see [the Hub trust posture](hub_trust_posture.md)), and loading a component
+never downloads, so fetch it first:
+
+```bash
+python -c "import interpretune.hub; interpretune.hub.pull('speediedan/rte')"
+IT_TRUST_REMOTE_CODE=1 torchrun --standalone --nproc-per-node 2 --no-python interpretune --run_command test \
+  --config hub://speediedan/rte/runs/rte_test.gemma3_4b.circuit_tracer.fsdp2.yaml
+```
+
+The run configuration names the composition by `session_ref` and adds only the sharding: `meta_init: true` under
+`hf_from_pretrained_cfg`, `placement: fsdp2`, the plan, `cpu_offload_policy: {pin_memory: true}` for every unit, and
+`limit_test_batches: 16`. Every rank builds the replacement model, transcoders included, on the meta device; rank 0
+also loads the model and its transcoders on the CPU, and the placement loads each rank's shards from that copy.
+
+### The plan's units, and why each is there
+
+| plan key | why it is a unit |
+| --- | --- |
+| `class:Gemma3DecoderLayer` | the transformer blocks, so that one block is gathered at a time |
+| `class:SingleLayerTranscoder` | circuit-tracer calls each transcoder's `encode` and `decode` directly, outside the module's forward, so each transcoder must be its own unit with those methods registered |
+| `class:JumpReLU` | circuit-tracer calls the transcoders' activation functions directly too |
+| `class:Gemma3ForConditionalGeneration` | nnsight calls the Hugging Face model directly rather than through the interpretune module, so the parameters left outside the other units (the embeddings among them) would otherwise never be gathered |
+| `class:SiglipEncoderLayer` | the vision tower's layers; the RTE task never calls the tower, and as units they stay sharded and offloaded instead of being gathered with the Hugging Face model's unit |
+
+Leaving out a transcoder, `JumpReLU` or the Hugging Face model, the modules called outside the forward, is refused
+by name, with the `class:` keys to add. The interpretune module itself is
+sharded last, as the root unit.
+
+### Memory
+
+Measured with this plan and offload policy at 4B in bf16, against the same composition in one process on one GPU:
+
+| | accelerator peak | host |
+| --- | --- | --- |
+| one process, one GPU | 14.0 GiB | |
+| two ranks, sharded and offloaded | 2.80 GiB per rank | each rank's pinned shards: about 10.3 GiB (about 7.0 GiB without the allocator's rounding, see above); rank 0 also holds the CPU source while loading |
+
+So the run fits two cards of unequal size (a 24 GB and an 8 GB card were used). Rank 0's CPU source is mostly the
+model's safetensors files mapped into memory (about 8.5 GiB, released after the load), plus the transcoders, which are
+loaded eagerly into memory (about 5.8 GiB). When each card can hold half the model with room to spare, drop
+`fsdp_default_kwargs`, and the shards stay on the accelerators.
+
+The same run with the composition switched to gemma-3-27b-it and all 62 of its Gemma Scope 2 transcoders fits two
+32 GB cards on a 123 GiB host, with the allocator's rounding off: each rank's pinned shards take 37.6 GiB, each card
+peaks at about 10 GiB, and the host keeps about 15 GiB available at the peak, while rank 0 still holds the CPU source.
+With the rounding on, the pinned shards are projected at 49.2 GiB per rank, which would not fit.
+
+### Comparing with one process
+
+The same configuration runs in one process when the run drops the plan and the offload policy, places nnsight's model
+on the GPU, and uses the `single` placement:
+
+```yaml
+session_ref: speediedan/rte:rte_demo.gemma3.circuit_tracer+nnsight.fsdp2
+seed_everything: 0
+registered_cfg:
+  module_cfg:
+    init_args:
+      nnsight_cfg:
+        init_args:
+          device_map: cuda
+run_cfg:
+  placement: single
+  limit_test_batches: 32
+```
+
+`limit_test_batches` counts each rank's batches, so the one-process run takes twice the sharded run's limit to see the
+same samples. With the sharded run at `limit_test_batches: 8` (64 samples across the two ranks) and the one-process
+run at 16, both report an accuracy of 0.7812 (50 of 64). Below the predictions, the sharded
+readings were compared with one process directly: plain logits, an nnsight trace of `lm_head`, the transcoder
+activations, and the logits and activations of a feature intervention are bitwise equal on both ranks, with an
+intervention that moves the logits by up to 4.86, so the comparison could fail. Pin the component revision in both
+runs (`speediedan/rte:<config>@<revision>`) so that both read the same configuration.
 
 ## What the runner does
 
