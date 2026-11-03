@@ -55,7 +55,7 @@ mechanism produces `ITDataModuleProtocol` from the loader protocols.
      adapters override this to construct their own model types
    - `post_auto_model_init()` — if `auto_model_init` produced a model, adjust it here
    - `model_init()` — if it did **not**, load a custom model here
-   - `register_tunable_modules()` then the finetuning-scheduler view's attachment, after whichever init path ran
+   - `register_tunable_modules()` then the Fine-Tuning Scheduler view's attachment, after whichever init path ran
    - `_capture_hyperparameters()` then `load_metric()`
 
 Methods by contract role:
@@ -64,7 +64,7 @@ Methods by contract role:
 | --- | --- | --- |
 | **Required by protocol** | at least one `*_step` | define it yourself or inherit it from a mixin/adapter; there is no default |
 | **Template hooks** (override freely, defaults are no-ops or config-driven) | `_before_it_cfg_init`, `auto_model_init`, `post_auto_model_init`, `model_init`, `load_metric` | no `super()` call needed unless you want the default behavior too |
-| **Cooperative hooks** (override, but call `super()`) | `setup`, `configure_optimizers`, `on_session_end`, `on_train_end`, `on_test_end`, `on_predict_end`, `register_tunable_modules`, `tunable_roles` | the base implementations do real work (datamodule wiring, optimizer instantiation from `it_cfg`, memprofiler dump, session-completion state, registering model-owned modules and roles for the finetuning-scheduler view); skipping `super()` silently drops it |
+| **Cooperative hooks** (override, but call `super()`) | `setup`, `configure_optimizers`, `on_session_end`, `on_train_end`, `on_test_end`, `on_predict_end`, `register_tunable_modules`, `tunable_roles` | the base implementations do real work (datamodule wiring, optimizer instantiation from `it_cfg`, memprofiler dump, session-completion state, registering model-owned modules and roles for the Fine-Tuning Scheduler view); skipping `super()` silently drops it |
 | **Internal** (do not override) | `_dispatch_model_init`, `_capture_hyperparameters`, `_make_init_dirs`, `_connect_extensions` | these define the lifecycle other components rely on |
 
 `forward()` delegates to `self.model(*args, **kwargs, **it_cfg.cust_fwd_kwargs)`; override it only
@@ -107,7 +107,7 @@ pre-MVP flexibility bias recorded in the
    intact. See the [adapter development guide](adapter_development_guide.md) for the
    composition rules.
 
-5. **`configure_optimizers` is optional in core context.** Core interpretune sessions only need it
+5. **`configure_optimizers` is optional in core context.** Core Interpretune sessions only need it
    when a phase actually optimizes; some adapter contexts (Lightning) require it. The base
    implementation instantiates optimizer and scheduler from `it_cfg` if configured, so most modules
    never override it.
@@ -116,5 +116,5 @@ pre-MVP flexibility bias recorded in the
    notebook-first workflows work but are not yet first-class; the open design questions are tracked
    in the working design document rather than silently absorbed here.
 
-Pre-MVP caveat: interpretune is pre-MVP, and this contract can change without deprecation shims.
+Pre-MVP caveat: Interpretune is pre-MVP, and this contract can change without deprecation shims.
 When it does, this page and the protocol definitions change together.

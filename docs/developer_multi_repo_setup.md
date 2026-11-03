@@ -18,7 +18,7 @@ on top of interpretune's locked CI requirements. The builder is `scripts/build_i
     with `brew install bash`; the script resolves bash via `/usr/bin/env bash`, which picks up the Homebrew
     bash from `PATH`.
 - **Torch backend**
-  - *Linux + NVIDIA GPU*: the default (`--torch-backend=cu130`) installs stable torch CUDA 13.0 wheels
+  - *Linux + NVIDIA GPU*: the default (`--torch-backend=cu132`) installs stable torch CUDA 13.2 wheels
     at the version pinned in `requirements/ci/overrides.txt`. torch >= 2.11 ships CUDA 13 wheels and the
     cu128 index stops at 2.11.0, so cu128 can no longer serve the pin. CUDA 13 drops sm_50-sm_70
     (Maxwell/Pascal/Volta); those hosts need `--torch-backend=cu128` and an older torch pin.
@@ -38,7 +38,7 @@ Recommended repo layout is sibling checkouts under a common directory (defaults 
 
 ## Canonical full build (one command)
 
-With `IT_REPO_DIR` pointing at your interpretune checkout and `IT_VENV_BASE` at your venv base directory
+With `IT_REPO_DIR` pointing at your Interpretune checkout and `IT_VENV_BASE` at your venv base directory
 (place it on the same filesystem as the uv cache to keep hardlinking fast):
 
 ```bash
@@ -80,7 +80,7 @@ duration of that package's install. Three keywords matter in practice:
 - **`UV_EXCLUDE=<file>`** — uv excludes file (packages removed from resolution entirely). **Required** on the
   sae_dashboard and circuit-tracer directives: their own transformer-lens caps (`^2.2.0`, `>=2.16.0`) would
   otherwise pull the v2 line over the v3 install. Excluding leaves the already-installed transformer-lens
-  untouched, so exactly one directive controls it even when interpretune, circuit-tracer and
+  untouched, so exactly one directive controls it even when Interpretune, circuit-tracer and
   transformer-lens are all from source.
 - **`FLAGS=<extra uv pip install flags>`** — appended to that package's `uv pip install ... -e .[extras]`
   invocation. Needed for SAELens, which is Poetry-legacy (not PEP 621): its dev/test dependency groups are
@@ -166,7 +166,7 @@ full-dependency install would drag in its unused autointerp/cloud chain
 Update that pin alongside the `git-deps` group pins.
 
 `syrupy` (SAEDashboard snapshot tests) and `pgpq` (the columnar local-DB import encoder) are no
-longer post-build extras: both live in interpretune's `test` dependency-group and the CI lock, so
+longer post-build extras: both live in Interpretune's `test` dependency-group and the CI lock, so
 every `build_it_env.sh` run installs them. They previously had to be added by hand after each
 rebuild, which meant they silently vanished on the next one.
 

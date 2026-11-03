@@ -69,7 +69,7 @@ narrower opt-in. It does not, for three reasons:
   data you can read after a `pull` that executes nothing. The loader checks afterwards that the
   entrypoint registered exactly what it declared, so a component cannot quietly register more.
 - **Inspection works to the same degree.** The code that runs is the entrypoint the manifest names
-  and whatever it imports. Inherited behaviour comes from interpretune itself or from declared
+  and whatever it imports. Inherited behaviour comes from Interpretune itself or from declared
   dependencies, not from anything the component can hide, so reading the entrypoint tells you what
   the adapter adds.
 
@@ -253,4 +253,4 @@ ops:
 Op discovery is **manifest-routed**: the files listed there are the op definitions, and nothing else
 in the repo is read as one. That is what lets a collection carry a card, a config sample or a
 notebook without any of them reaching the op compiler. A repo with no manifest publishes fine and
-then contributes no ops, and interpretune says so rather than guessing.
+then contributes no ops, and Interpretune says so rather than guessing.

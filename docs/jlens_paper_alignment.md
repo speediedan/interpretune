@@ -1,6 +1,6 @@
-# The Jacobian lens: the paper's method and interpretune's implementation
+# The Jacobian lens: the paper's method and Interpretune's implementation
 
-This page states, operation by operation, how interpretune's Jacobian-lens surface relates to the method of the
+This page states, operation by operation, how Interpretune's Jacobian-lens surface relates to the method of the
 [workspace paper](https://transformer-circuits.pub/2026/workspace/index.html): what is implemented, where, in which
 basis, and what remains. It is the single place to look before claiming that a result reproduces the paper or
 extends it.
@@ -12,7 +12,7 @@ nothing on the page would show it. This page therefore degrades into *incomplete
 named issue carries a checklist item to update its row, and a scheduled check in the docs link-check workflow fails
 by name when a row cites an issue that has closed.
 
-## Paper capability against interpretune status
+## Paper capability against Interpretune status
 
 | Paper capability | Interpretune today | Where |
 |---|---|---|
@@ -31,7 +31,7 @@ by name when a row cites an issue that has closed.
 
 ## Three places normalization can appear
 
-The paper and interpretune agree on where the lens lives and disagree only on a shorthand.
+The paper and Interpretune agree on where the lens lives and disagree only on a shorthand.
 
 | Stage | Object | Paper | Interpretune |
 |---|---|---|---|
@@ -70,7 +70,7 @@ patching and only its anisotropy can matter.
 ## Per-operation comparison
 
 Each row gives the paper's explicit construction, what the unfolded and folded implementations compute, the claim
-each can honestly support, and what interpretune does today. The bases are not interchangeable: a folded and an
+each can honestly support, and what Interpretune does today. The bases are not interchangeable: a folded and an
 unfolded result differ by a direction, not by a coefficient, so a result must state which produced it.
 
 | Operation | Paper's explicit form | Unfolded | Folded | Honest claim | Interpretune today |

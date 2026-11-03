@@ -342,7 +342,7 @@ override-dependencies = [
 # second, mismatched CUDA runtime stack into the env and breaks `import torch`
 # (libtorch_cuda.so: undefined symbol: ncclCommResume).
 # torchvision: the same path (`decode-clt` declares it; neither decode-clt, sae_dashboard nor interpretune
-# imports it), and while torch is on the 2.15 release candidate no torchvision release pairs with it, so a
+# imports it), and no torchvision release pairs with torch 2.15 yet (the latest, 0.29.2, pairs with 2.14), so a
 # resolved torchvision would be an extension built for another libtorch (`operator torchvision::nms does not
 # exist` at import). Worse, resolving it can pull torch itself back to the release torchvision pairs with.
 exclude-dependencies = ["torchaudio", "torchvision"]

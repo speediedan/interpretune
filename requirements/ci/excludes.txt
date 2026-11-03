@@ -19,6 +19,6 @@ transformer-lens
 # `if is_torchaudio_available(): import torchaudio` finds the broken install and tries to load it.
 torchaudio
 # torchvision: the same transitive path (sae-dashboard -> decode-clt) and the same reason: imported nowhere,
-# and on the torch 2.15 release candidate no paired torchvision release exists. Resolving one would also be
-# free to move torch to whatever release that torchvision pairs with.
+# and no torchvision release pairs with torch 2.15 yet (the latest, 0.29.2, pairs with 2.14). Resolving one would
+# also be free to move torch to whatever release that torchvision pairs with.
 torchvision
