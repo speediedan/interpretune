@@ -19,7 +19,6 @@ from pathlib import Path
 from types import UnionType
 from enum import auto, Enum, EnumMeta
 from dataclasses import dataclass
-from os import PathLike
 import inspect
 
 import torch
@@ -32,7 +31,8 @@ from transformers import BatchEncoding, PreTrainedTokenizerBase
 # Heavy, optional runtime deps (sae_lens, transformer_lens) are only required for
 # type-checking and should not be imported at top-level to avoid slowing down package import.
 if TYPE_CHECKING:
-    from sae_lens.config import HfDataset
+    from datasets import Dataset
+
     from interpretune.analysis.backends import ModelBackend
     from interpretune.base.datamodules import ITDataModule
     from interpretune.config import ITDataModuleConfig, ITConfig
@@ -667,7 +667,9 @@ class LatentDictProtocol(Protocol):
 class AnalysisStoreProtocol(Protocol):
     """Protocol verifying core analysis store functionality."""
 
-    dataset: HfDataset | StrOrPath | PathLike | None
+    # The loaded single-split dataset the store holds; paths and broader dataset containers are
+    # constructor inputs, resolved to this by the time anything reads the field.
+    dataset: Dataset | None
     streaming: bool
     cache_dir: str | None
 
