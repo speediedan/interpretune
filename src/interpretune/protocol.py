@@ -34,6 +34,7 @@ from transformers import BatchEncoding, PreTrainedTokenizerBase
 if TYPE_CHECKING:
     from sae_lens.config import HfDataset
     from interpretune.analysis.backends import ModelBackend
+    from interpretune.base.datamodules import ITDataModule
     from interpretune.config import ITDataModuleConfig, ITConfig
 else:
     # Provide light-weight stand-ins for typing at runtime without importing heavy packages.
@@ -594,10 +595,19 @@ class ITModuleGenDebuggable(ITModuleBase, GenerativeStepProtocol, Protocol):
     Requires both module-like surface and generative-step helpers.
 
     Use this as an annotation for attributes that must behave like a given module composition
-    that also supports generation helper methods (e.g., `it_generate`).
+    that also supports generation helper methods (e.g., `it_generate`). The debug generation
+    extension also reads the module's datamodule (tokenizer, collator, prompt config), its model,
+    and its device, so a debuggable module exposes those too: its datamodule in particular is
+    connected, where a module in general may not have one yet.
     """
 
-    ...
+    datamodule: ITDataModule
+    model: torch.nn.Module
+
+    @property
+    def device(self) -> torch.device | None:
+        """The device the model is on, or None when it cannot be determined yet."""
+        ...
 
 
 ################################################################################
