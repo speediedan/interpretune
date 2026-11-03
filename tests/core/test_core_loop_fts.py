@@ -274,6 +274,59 @@ def test_object_valued_tuning_scheduler_kwargs_are_built_from_configuration(tmp_
     assert fts.tuning_scheduler_kwargs == kwargs and fts.tuning_scheduler_kwargs["transition"] is transition
 
 
+class RecordingGate:
+    """A gate built from configuration: it records what it saw and accepts every phase but ``veto_depth``."""
+
+    seen: list = []
+
+    def __init__(self, veto_depth: int = -1) -> None:
+        self.veto_depth = veto_depth
+
+    def __call__(self, event):
+        RecordingGate.seen.append(("gate", event.depth, event.tuning_scheduler.model is not None))
+        return event.depth != self.veto_depth
+
+
+class RecordingHook:
+    """A phase hook built from configuration, recording each phase it sees."""
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    def __call__(self, event):
+        RecordingGate.seen.append((self.label, event.depth))
+
+
+def test_gates_and_phase_hooks_are_built_from_configuration():
+    """Gates and phase hooks given as `class_path` configuration reach finetuning-scheduler's constructor (#899):
+
+    a bare entry or one carrying registration options; a phase-0 start hook runs at setup and a gate reaches the tuning
+    scheduler and its module.
+    """
+    gate = {"class_path": f"{__name__}.RecordingGate", "init_args": {"veto_depth": 1}}
+    hook = {"class_path": f"{__name__}.RecordingHook", "init_args": {"label": "start"}}
+    kwargs = {
+        "gates": [{"gate": gate, "rank_zero_only": True}],
+        "phase_hooks": {"start": [hook], "end": [{"hook": {**hook, "init_args": {"label": "end"}}}]},
+    }
+    RecordingGate.seen = []
+    fts = FTSCoreCallback(TWO_PHASES, tuning_scheduler_kwargs=kwargs)
+    module = core_loop.TinyModule()
+    module.it_cfg.optimizer_init = {"class_path": "torch.optim.SGD", "init_args": {"lr": 0.05}}
+    core_loop._train(module, max_epochs=3, callbacks=[fts])
+    assert RecordingGate.seen == [
+        ("start", 0),
+        ("end", 0),
+        ("gate", 0, True),
+        ("start", 1),
+        ("end", 1),
+        ("gate", 1, True),
+    ]
+    ts = fts.tuning_scheduler
+    assert ts.should_stop and "veto: phase 1" in ts.stop_reason
+    assert fts.tuning_scheduler_kwargs == kwargs  # the callback's own arguments stay plain configuration
+
+
 def test_a_list_of_class_path_mappings_is_built_element_by_element():
     from interpretune.tuning.core_loop import _instantiate_config_value
 
