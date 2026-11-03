@@ -4,6 +4,7 @@ and two-rank CPU runs of ``ddp`` and ``fsdp2`` against one process training on t
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -34,6 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKER = Path(__file__).with_name("distributed_core_loop_worker.py")
 META_WORKER = Path(__file__).with_name("distributed_meta_init_worker.py")
 CT_WORKER = Path(__file__).with_name("distributed_ct_worker.py")
+LATENT_WORKER = Path(__file__).with_name("distributed_latent_worker.py")
 
 
 def _run(rank: int, world_size: int = 2, placement: str = "ddp") -> DistributedRun:
@@ -441,6 +443,51 @@ def _edited_checkpoint(checkpoint: Path, out: Path, drop: str | None = None, add
         tensors[add] = torch.zeros(2)
     save_file(tensors, out / "model.safetensors", metadata={"format": "pt"})
     return out
+
+
+def launch_latent_worker(out_dir: Path, *, devices: str = "") -> list[dict]:
+    """Run ``distributed_latent_worker.py`` on two ranks (``devices`` is ``CUDA_VISIBLE_DEVICES``) and read their
+    records."""
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["PYTHONPATH"] = os.pathsep.join(
+        p for p in (str(REPO_ROOT), str(REPO_ROOT / "tests"), env.get("PYTHONPATH")) if p
+    )
+    env["CUDA_VISIBLE_DEVICES"] = devices
+    env["IT_TRUST_REMOTE_CODE"] = "1"
+    # one unit per transformer block; the spliced SAEs stay in the root unit, which is gathered whenever the blocks
+    # run, because the bridge calls an SAE's encode and decode directly rather than through its forward
+    plan = json.dumps({"class:BlockBridge": {}})
+    worker = [str(LATENT_WORKER), "--out-dir", str(out_dir), "--fsdp-plan", plan]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, f"latent run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    return [json.loads((out_dir / f"rank{rank}.json").read_text()) for rank in range(2)]
+
+
+def check_latent_phases(records: list[dict]) -> None:
+    """Phase 0 trains the last block alone; phase 1 adds the spliced SAEs, selected by ``role:latent:sae``."""
+    for record in records:
+        epochs = record["trainable_by_epoch"]
+        assert record["depth"] == 1 and len(epochs) == 4
+        saes = set(record["sae_params"])
+        assert saes and not saes & set(epochs[0]) and epochs[0] == epochs[1]
+        assert set(epochs[2]) == set(epochs[0]) | saes and epochs[2] == epochs[3]
+        assert all(".blocks.1." in n for n in epochs[0])
+        losses = record["losses"]
+        assert all(math.isfinite(x) for x in losses)
+        # the same batches each epoch, so each batch's loss falls from its first epoch to its last
+        per_epoch = len(losses) // 4
+        assert all(losses[-per_epoch + i] < losses[i] for i in range(per_epoch))
+    assert records[0]["trainable_by_epoch"] == records[1]["trainable_by_epoch"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning is finetuning-scheduler's")
+def test_two_rank_fsdp2_tuning_thaws_spliced_saes_by_latent_role(tmp_path):
+    """A phased schedule thaws a latent role after a first phase, on two FSDP2 ranks through the core loop
+    (#834)."""
+    check_latent_phases(launch_latent_worker(tmp_path))
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
