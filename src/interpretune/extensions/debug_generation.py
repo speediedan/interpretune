@@ -51,8 +51,9 @@ class DebugGeneration:
         """
         if self.phandle is None:
             raise RuntimeError("Extension not connected to module - call connect() first")
-        # Help static type checkers: cast to the protocol we've defined
-        assert isinstance(self.phandle, ITModuleGenDebuggable)
+        # No isinstance check against the protocol here: typing's runtime protocol check resolves members
+        # with getattr_static, which cannot see `model` registered as an nn.Module submodule, so it would
+        # reject every real module. The cast states the contract for the static checker instead.
         return cast(ITModuleGenDebuggable, self.phandle)
 
     def debug_sequences(self, sequences: List | str | None = None) -> List:
