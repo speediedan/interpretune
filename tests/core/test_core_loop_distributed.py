@@ -458,6 +458,7 @@ def launch_latent_worker(out_dir: Path, *, devices: str = "") -> list[dict]:
     # run, because the bridge calls an SAE's encode and decode directly rather than through its forward
     plan = json.dumps({"class:BlockBridge": {}})
     worker = [str(LATENT_WORKER), "--out-dir", str(out_dir), "--fsdp-plan", plan]
+    worker += ["--device-type", "cuda"] if devices else []
     cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
     assert proc.returncode == 0, f"latent run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"

@@ -44,6 +44,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=4)
     parser.add_argument("--train-batches", type=int, default=4)
     parser.add_argument("--fsdp-plan", type=json.loads, required=True, help="the FSDP2 plan, as JSON")
+    parser.add_argument("--device-type", default="cpu", help="cuda places each rank on its own device (LOCAL_RANK)")
     args = parser.parse_args()
 
     from interpretune.config import SessionRunnerCfg
@@ -57,6 +58,7 @@ def main() -> None:
     rank = int(os.environ.get("RANK", "0"))
     out_dir = Path(args.out_dir)
     test_cfg = CoreSLCust(
+        device_type=args.device_type,
         phase="train",
         force_prepare_data=False,
         max_epochs=args.epochs,
@@ -65,9 +67,15 @@ def main() -> None:
         dm_override_cfg={"train_batch_size": PER_RANK_BATCH, "eval_batch_size": PER_RANK_BATCH},
     )
     torch.manual_seed(1 + rank)  # ranks initialize differently; placement must broadcast rank 0's weights
+    if args.device_type == "cuda":
+        # the session is built here, before the runner would make this rank's device current
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     cfg = config_modules(test_cfg, "dist_latent", {}, out_dir / f"rank{rank}", cfg_only=True)
     cfg.module_cfg.add_saes_on_init = True
-    cfg.module_cfg.sae_cfgs = [deepcopy(TestClassSAELens.test_sl_cust_config)]
+    sae_cfg = deepcopy(TestClassSAELens.test_sl_cust_config)
+    if args.device_type != "cpu":
+        sae_cfg.cfg.device = args.device_type  # "cuda" is each rank's current device (LOCAL_RANK), as the model's is
+    cfg.module_cfg.sae_cfgs = [sae_cfg]
     it_session = ITSession(cfg)
     module = it_session.module
     recorder = PhaseRecorder()
