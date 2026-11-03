@@ -16,9 +16,10 @@ transcoders, whichever backend it runs over:
   meta device and reloads it with `load_state_dict(assign=True)`, and by default both steps replace its parameter
   objects, which an optimizer built before an attribution would not see. The composition attributes under torch's
   `swap_module_params_on_conversion` instead, set only while `offload='disk'` attributes, so each new tensor is swapped
-  into the existing parameter and the optimizer keeps stepping the module's own tensors. Disk offload keeps the
-  offloaded weights out of host memory as well as the accelerator's, so it fits where `offload='cpu'` does not.
-  `offload=None` and `offload='cpu'` never replace a parameter.
+  into the existing parameter and the optimizer keeps stepping the module's own tensors (and a tied unembedding stays
+  tied). Disk offload holds the offloaded weights on disk rather than in host memory, so an attribution needs less host
+  memory than under `offload='cpu'`, at the cost of the reads. `offload=None` and `offload='cpu'` never replace a
+  parameter.
 - **Each transcoder layer is one depth group**, from the last layer; a cross-layer transcoder is one group.
 
 The transcoders are registered on the interpretune module once: under `model` when the replacement model is a torch
