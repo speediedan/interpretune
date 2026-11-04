@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from interpretune.utils import MisconfigurationException
 
 
@@ -40,29 +42,60 @@ class FetchedRecipe:
     source: str  #: where the document was read from, for provenance (a path, or ``"<inline>"``)
 
 
-def load_recipe(source: str | Path | Mapping[str, Any] | Any) -> FetchedRecipe:
+def _treatment(book: Any, name: str | None, source: str) -> Any:
+    """The treatment ``name`` of ``book``, or its only one when no name is given."""
+    treatments = book.treatments
+    if name is None and len(treatments) == 1:
+        name = next(iter(treatments))
+    if name not in treatments:
+        raise MisconfigurationException(
+            f"{source}: name one of the book's treatments {sorted(treatments)}, not {name!r}"
+        )
+    return treatments[name]
+
+
+def _read_local(path: str | Path, treatment: str | None, recipe_mod: Any) -> Any:
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    if isinstance(doc, Mapping) and "treatments" in doc:
+        book = _require("venngram.book").AddressBook.from_mapping(doc, source=str(path), base_dir=Path(path).parent)
+        return _treatment(book, treatment, str(path))
+    return recipe_mod.Recipe.from_mapping(doc, source=str(path), base_dir=Path(path).parent)
+
+
+def load_recipe(source: str | Path | Mapping[str, Any] | Any, *, treatment: str | None = None) -> FetchedRecipe:
     """Read a recipe from a document reference, a local path, a mapping, or a recipe already in hand.
+
+    Each document may be a recipe or a book carrying treatments (the form
+    :func:`~interpretune.analysis.venngram.export.export_book` writes). A book's treatment is read by name, and a book
+    with one treatment needs none.
 
     A string that parses as a venngram document reference (``venngram.store.is_reference``) is fetched
     manifest-first and hash-checked by venngram, and the returned reference is pinned. Any other string (or a
     ``Path``) is a local file. A mapping is an inline document. A ``venngram.recipe.Recipe`` passes through.
 
     Raises:
-        MisconfigurationException: If venngram is not installed, the fetched document is not a recipe, or the
-            source is none of these. A fetch or parse failure from venngram itself propagates unchanged.
+        MisconfigurationException: If venngram is not installed, the fetched document is not a recipe or a book with
+            the named treatment, or the source is none of these. A fetch or parse failure from venngram itself
+            propagates unchanged.
     """
     recipe_mod, store = _require("venngram.recipe"), _require("venngram.store")
     if isinstance(source, recipe_mod.Recipe):
         return FetchedRecipe(source, None, "<inline>")
     if isinstance(source, Mapping):
+        if "treatments" in source:
+            book = _require("venngram.book").AddressBook.from_mapping(source)
+            return FetchedRecipe(_treatment(book, treatment, "<inline>"), None, "<inline>")
         return FetchedRecipe(recipe_mod.Recipe.from_mapping(source), None, "<inline>")
     if isinstance(source, Path) or (isinstance(source, str) and not store.is_reference(source)):
-        return FetchedRecipe(recipe_mod.Recipe.from_file(source), None, str(source))
+        return FetchedRecipe(_read_local(source, treatment, recipe_mod), None, str(source))
     if isinstance(source, str):
         loaded = store.load(source)
+        if isinstance(loaded, _require("venngram.book").AddressBook) and loaded.treatments:
+            loaded = _treatment(loaded, treatment, source)
         if not isinstance(loaded, recipe_mod.Recipe):
             raise MisconfigurationException(
-                f"{source}: the fetched document is a {type(loaded).__name__}, not a recipe."
+                f"{source}: the fetched document is a {type(loaded).__name__} with no treatments, not a recipe."
             )
         return FetchedRecipe(loaded, str(store.pin(source)), source)
     raise MisconfigurationException(
