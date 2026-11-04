@@ -140,7 +140,7 @@ class TransformerBridgeView:
         if bridge is None:
             model = root._modules.get("model")
             resolved = model if model is not None and hasattr(model, "tl_named_parameters") else root
-            bridge = cast(TransformerBridge, resolved)
+            bridge = cast("TransformerBridge", resolved)  # quoted: TransformerBridge is TYPE_CHECKING-only here
         self.root = root
         self.bridge = bridge
         self.implicit_norm_thaw = implicit_norm_thaw

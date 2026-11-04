@@ -93,6 +93,9 @@ directive is the whole-line blanket returning under a new spelling, and
 means, and narrowing at a boundary where the guarantee comes from something the checker cannot
 see (for example, that an HF model's base model is itself a `PreTrainedModel` where the stub
 types it as `nn.Module`). A cast is never a substitute for a declaration: if the same cast would
-be needed at a second site, declare instead. Dynamic attribute attachment (a tracking attribute
+be needed at a second site, declare instead. When the cast target is imported only under
+`TYPE_CHECKING`, the target must be a string literal (`cast("TransformerBridge", ...)`):
+`cast` evaluates its first argument at runtime, so the unquoted form raises `NameError` on the
+first execution, which a type check cannot see. Dynamic attribute attachment (a tracking attribute
 set on a class, function, or third-party object that does not declare it) is spelled `setattr`,
 which is both honest and unchecked, rather than an assignment carrying a suppression.

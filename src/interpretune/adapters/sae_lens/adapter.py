@@ -510,7 +510,7 @@ class SAELensAdapter(SAELensAttributeMixin):
             analysis_run_cfg = runner_holder.analysis_run_cfg
 
             init_analysis_cfgs(
-                module=cast(LatentAnalysisProtocol, self),  # pyright: ignore[reportArgumentType]  # protocol compatibility
+                module=cast("LatentAnalysisProtocol", self),  # pyright: ignore[reportArgumentType]  # protocol compatibility; quoted: protocol is TYPE_CHECKING-only here
                 analysis_cfgs=analysis_run_cfg._processed_analysis_cfgs,
                 cache_dir=analysis_run_cfg.cache_dir,
                 op_output_dataset_path=analysis_run_cfg.op_output_dataset_path,
