@@ -208,6 +208,7 @@ usage/developer_multi_repo_setup
 :hidden:
 
 design/protocol_architecture_working_design
+design/typing_conventions
 design/activation_point_vocabulary
 design/intervention_hook_pattern_support
 design/resource_management
