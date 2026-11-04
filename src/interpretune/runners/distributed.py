@@ -163,7 +163,7 @@ def init_process_group(run: DistributedRun) -> None:
             backend = "cpu:gloo,cuda:nccl"
         dist.init_process_group(backend)
         atexit.register(_destroy_process_group)
-    rank_zero_only.rank = run.rank  # type: ignore[attr-defined]  # rank-zero printing and warnings follow the group
+    setattr(rank_zero_only, "rank", run.rank)  # rank-zero printing and warnings follow the group
 
 
 def _check_devices(per_rank: Sequence[Sequence[str]], placement: str) -> tuple[str, ...]:

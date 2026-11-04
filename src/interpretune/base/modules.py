@@ -29,6 +29,10 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
     limitations.
     """
 
+    # The hook currently being dispatched, maintained by the hook-name context manager in
+    # interpretune.base.call; None outside a hook dispatch.
+    _current_fx_name: str | None = None
+
     def __init__(self, it_cfg: ITConfig, *args, **kwargs):
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__(*args, **kwargs)

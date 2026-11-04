@@ -1,7 +1,14 @@
+from typing import TYPE_CHECKING
+
+import torch
+
 from interpretune.base import ITDataModule, BaseITModule
 from interpretune.utils import _LIGHTNING_AVAILABLE, MisconfigurationException
 from interpretune.protocol import Adapter
 from interpretune.adapters import CompositionRegistry
+
+if TYPE_CHECKING:
+    from interpretune.config import ITConfig
 
 
 if _LIGHTNING_AVAILABLE:
@@ -10,6 +17,11 @@ if _LIGHTNING_AVAILABLE:
 
     class LightningAdapter:
         """Adapter composing interpretune modules with Lightning's ``LightningModule``/``DataModule``."""
+
+        # Host-provided attributes: supplied by BaseITModule and LightningModule through the MRO.
+        if TYPE_CHECKING:
+            it_cfg: ITConfig
+            model: torch.nn.Module
 
         from interpretune.metadata import ITClassMetadata  # local import to avoid cycles
 
@@ -46,9 +58,9 @@ if _LIGHTNING_AVAILABLE:
             The Trainer runs its own loops, so ``it_cfg.profiler_cfg`` would profile nothing here; Lightning's native
             ``--trainer.profiler`` is the supported route.
             """
-            if self.it_cfg.profiler_cfg.which != "none":  # type: ignore[attr-defined]  # provided by BaseITModule
+            if self.it_cfg.profiler_cfg.which != "none":
                 raise MisconfigurationException(
-                    f"it_cfg.profiler_cfg.which={self.it_cfg.profiler_cfg.which!r} selects a core-runner profiler, "  # type: ignore[attr-defined]
+                    f"it_cfg.profiler_cfg.which={self.it_cfg.profiler_cfg.which!r} selects a core-runner profiler, "
                     "which a Lightning Trainer never runs. Configure Lightning's profiler instead "
                     "(--trainer.profiler, or Trainer(profiler=...)) and leave profiler_cfg at its default."
                 )
@@ -61,7 +73,7 @@ if _LIGHTNING_AVAILABLE:
             still in eval mode; setting it explicitly closes that edge case.
             """
             # ensure model is in training mode (e.g. needed for some edge cases w/ skipped sanity checking)
-            self.model.train()  # type: ignore[attr-defined]  # provided by LightningModule when mixed in
+            self.model.train()
             return super().on_train_start()  # type: ignore[misc]  # LightningModule method when mixed in
 
         def _analysis_cfg_of(self):

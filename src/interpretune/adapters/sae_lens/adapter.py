@@ -57,6 +57,10 @@ class SAELensAttributeMixin:
     Provides consistent attribute access patterns for SAE-related state.
     """
 
+    # Host-provided: the base SAE Lens module owns the instantiated SAE records.
+    if TYPE_CHECKING:
+        saes: list[InstantiatedSAE]
+
     @property
     def sae_cfgs(self) -> SAEConfig | None:
         """The configured SAE definitions, or None (with a warning) before config is attached."""
@@ -72,7 +76,7 @@ class SAELensAttributeMixin:
     @property
     def sae_handles(self) -> list[SAE]:
         """The live SAE objects, unwrapped from their :class:`InstantiatedSAE` records."""
-        return [sae.handle for sae in self.saes]  # type: ignore[attr-defined]  # provided by mixing class
+        return [sae.handle for sae in self.saes]
 
 
 class BaseSAELensModule(BaseITModule):
@@ -490,10 +494,10 @@ class SAELensAdapter(SAELensAttributeMixin):
 
     def _make_setup_dirs(self) -> None:
         # Call the parent implementation to perform core directory and hook setup.
-        # BaseITModule is always present in the composition hierarchy for SAE-enabled modules.
-        # TODO: standardize and document how we handle these static type checker challenges. We currently use a mix of,
-        #       assertions, type checker directives and casting, e.g. cast(BaseITModule, self)._make_setup_dirs()
-        super()._make_setup_dirs()  # type: ignore[attr-defined]
+        # BaseITModule is always present in the composition hierarchy for SAE-enabled modules. A
+        # cooperative super() call inside a mixin resolves only in the composed MRO, which the
+        # checker cannot see from this class alone, hence the scoped directive.
+        super()._make_setup_dirs()  # pyright: ignore[reportAttributeAccessIssue]
 
         # SAE-specific analysis initialization: only run when the light-weight structural checks pass
         if self.has_sae_analysis_cfg:
@@ -703,6 +707,14 @@ class SAELensAdapter(SAELensAttributeMixin):
 class SAELensAnalysisMixin:
     """Analysis helpers shared by every SAE module composition, regardless of execution backend."""
 
+    # Host-provided, as a property on the attribute mixin in the composition, so declared in that shape.
+    if TYPE_CHECKING:
+
+        @property
+        def sae_handles(self) -> list[SAE]:
+            """The live SAE objects, from the attribute mixin."""
+            ...
+
     def construct_names_filter(
         self, target_layers: int | list[int] | None, sae_hook_match_fn: Callable[[str, int | list[int] | None], bool]
     ) -> NamesFilter:
@@ -712,9 +724,7 @@ class SAELensAnalysisMixin:
         silently select nothing when an SAE names its hooks unexpectedly.
         """
         available_hooks = {
-            f"{handle.cfg.metadata.hook_name}.{key}"
-            for handle in self.sae_handles  # type: ignore[attr-defined]  # provided by mixing class
-            for key in handle.hook_dict.keys()
+            f"{handle.cfg.metadata.hook_name}.{key}" for handle in self.sae_handles for key in handle.hook_dict.keys()
         }
         layers_arg = [target_layers] if isinstance(target_layers, int) else target_layers
         names_filter = [hook for hook in available_hooks if sae_hook_match_fn(hook, layers_arg)]

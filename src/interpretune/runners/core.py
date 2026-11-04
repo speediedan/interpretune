@@ -9,8 +9,8 @@ from pathlib import Path
 import torch
 
 from interpretune.config import SessionRunnerCfg
-from interpretune.base import _call_itmodule_hook, it_configure_optimizers, it_init, it_session_end, ITDataModule
-from interpretune.protocol import Optimizable, CorePhases
+from interpretune.base import _call_itmodule_hook, it_configure_optimizers, it_init, it_session_end
+from interpretune.protocol import Optimizable, CorePhases, TestLoadable, TrainLoadable
 from interpretune.runners.distributed import (
     DistributedRun,
     distributed_dataloader,
@@ -220,7 +220,7 @@ def _optimizer_step_done(ctx: CoreLoopContext, output: Any) -> None:
 
 def core_train_loop(
     module: ITModule,
-    datamodule: ITDataModule,
+    datamodule: TrainLoadable,
     limit_train_batches: int,
     limit_val_batches: int,
     max_epochs: int,
@@ -273,8 +273,9 @@ def core_train_loop(
         The loop's final context.
     """
     assert hasattr(datamodule, "train_dataloader"), "Datamodule is expected to have a train dataloader"
-    train_dataloader = datamodule.train_dataloader()  # type: ignore[attr-defined]
-    val_dataloader = datamodule.val_dataloader() if hasattr(datamodule, "val_dataloader") else None  # type: ignore[attr-defined]  # duck typing
+    train_dataloader = datamodule.train_dataloader()
+    val_loader_fn = getattr(datamodule, "val_dataloader", None)
+    val_dataloader = val_loader_fn() if val_loader_fn is not None else None
     if dist_run is not None:
         train_dataloader = distributed_dataloader(train_dataloader, dist_run)
         if val_dataloader is not None:
@@ -295,7 +296,11 @@ def core_train_loop(
             module.model.train()
             module.current_epoch = ctx.epoch = epoch_idx
             if dist_run is not None:
-                train_dataloader.sampler.set_epoch(epoch_idx)
+                # The distributed sampler's epoch setter is what reshuffles shards per epoch; the base
+                # sampler type does not declare it, so reach it dynamically.
+                set_epoch = getattr(train_dataloader.sampler, "set_epoch", None)
+                if set_epoch is not None:
+                    set_epoch(epoch_idx)
             _call_itmodule_hook(
                 module, hook_name="on_train_epoch_start", hook_msg="Running train epoch start hooks", optional=True
             )
@@ -469,7 +474,7 @@ def load_checkpoint_state(module: Any, checkpoint: Mapping[str, Any], ctx: CoreL
 
 def core_test_loop(
     module: ITModule,
-    datamodule: ITDataModule,
+    datamodule: TestLoadable,
     limit_test_batches: int,
     *args,
     dist_run: DistributedRun | None = None,
@@ -486,7 +491,7 @@ def core_test_loop(
     """
     if not hasattr(datamodule, "test_dataloader"):
         raise AssertionError("Datamodule is expected to have a test dataloader")
-    dataloader = datamodule.test_dataloader()  # type: ignore[attr-defined]  # duck typing, checked above
+    dataloader = datamodule.test_dataloader()
     if dist_run is not None:
         dataloader = distributed_dataloader(dataloader, dist_run)
     test_ctx = {}

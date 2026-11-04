@@ -15,7 +15,7 @@ from __future__ import annotations
 import itertools
 import json
 import pathlib
-from typing import Any, Callable, Literal, NamedTuple
+from typing import Any, Callable, Literal, NamedTuple, Protocol
 
 import torch
 from jaxtyping import Float
@@ -23,6 +23,17 @@ from jaxtyping import Float
 from interpretune.analysis.backends import get_analysis_backend, get_model_backend
 from interpretune.analysis.inputs import _resolve_attr_path
 from interpretune.protocol import DefaultAnalysisBatchProtocol
+
+
+class ClassificationModuleProtocol(Protocol):
+    """The module surface `get_loss_preds_diffs` uses: a loss callable and logit standardization."""
+
+    loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+
+    def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        """Map answer logits to their standardized form."""
+        ...
+
 
 FEATURE_SCORE_SOURCE_ALIASES: dict[str, str] = {
     "influence": "node_influence_scores",
@@ -146,7 +157,7 @@ def boolean_logits_to_avg_logit_diff(
 
 
 def get_loss_preds_diffs(
-    module: torch.nn.Module,
+    module: ClassificationModuleProtocol,
     analysis_batch: DefaultAnalysisBatchProtocol,
     answer_logits: torch.Tensor,
     logit_diff_fn: Callable = boolean_logits_to_avg_logit_diff,
@@ -162,8 +173,10 @@ def get_loss_preds_diffs(
     Returns:
         Tuple of (loss, logit_diffs, preds, answer_logits)
     """
-    loss = module.loss_fn(answer_logits, analysis_batch.label_ids)  # type: ignore[attr-defined]
-    answer_logits = module.standardize_logits(answer_logits)  # type: ignore[attr-defined]
+    label_ids = analysis_batch.label_ids
+    assert label_ids is not None, "label_ids should be populated by the analysis dispatcher before this op runs"
+    loss = module.loss_fn(answer_logits, label_ids)
+    answer_logits = module.standardize_logits(answer_logits)
     per_example_answers, _ = torch.max(answer_logits, dim=-2)
     preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
     logit_diffs = logit_diff_fn(answer_logits, target_indices=analysis_batch.orig_labels)
@@ -1097,6 +1110,7 @@ __all__ = [
     "resolve_jlens_fold_choice",
     "FEATURE_SCORE_SOURCE_ALIASES",
     "get_loss_preds_diffs",
+    "ClassificationModuleProtocol",
     "last_token_logits",
     "load_json_field",
     "mean_target_logit_delta",

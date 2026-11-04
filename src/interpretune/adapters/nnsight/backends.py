@@ -40,7 +40,7 @@ from interpretune.analysis.backends.positions import accepts_position_ids, mask_
 
 # Disable PYMOUNT C extension — this backend uses nnsight.save() exclusively.
 # Must be set before the first trace context is entered.
-_nnsight.CONFIG.APP.PYMOUNT = False  # type: ignore[attr-defined]  # nnsight CONFIG attrs are dynamic
+setattr(getattr(_nnsight.CONFIG, "APP"), "PYMOUNT", False)  # nnsight CONFIG attrs are dynamic
 
 
 # ==============================================================================
@@ -429,7 +429,7 @@ def _install_mask_derived_positions(hf_model: torch.nn.Module) -> None:
         return args, kwargs
 
     hf_model.register_forward_pre_hook(pre_hook, with_kwargs=True)
-    hf_model._it_mask_derived_positions = True  # type: ignore[attr-defined]
+    setattr(hf_model, "_it_mask_derived_positions", True)
 
 
 def _invoke_trace(tracer: Any, batch: dict[str, Any]) -> Any:

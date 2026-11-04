@@ -39,7 +39,7 @@ def it_configure_optimizers(module, *args, **kwargs):
         )
 
 
-def it_session_end(module, datamodule, session_type: AllPhases | CorePhases = CorePhases.train, *args, **kwargs):  # type: ignore[attr-defined]  # enum metaclass pattern
+def it_session_end(module, datamodule, session_type: AllPhases | CorePhases = CorePhases["train"], *args, **kwargs):
     """Dispatch the phase-appropriate ``on_<phase>_end`` hook to the module and datamodule."""
     # dispatch the appropriate stage-specific `end` hook upon completion of the session
     hook_name = f"on_{session_type.name}_end"
@@ -64,11 +64,11 @@ class _hookNameContextManager:
         self.previous_fx_name = None
 
     def __enter__(self) -> None:
-        self.previous_fx_name = self._module_ref._current_fx_name  # type: ignore[attr-defined]  # dynamic runtime attribute
-        self._module_ref._current_fx_name = self._hook_name  # type: ignore[assignment]
+        self.previous_fx_name = self._module_ref._current_fx_name
+        self._module_ref._current_fx_name = self._hook_name
 
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
-        self._module_ref._current_fx_name = self.previous_fx_name  # type: ignore[assignment]
+        self._module_ref._current_fx_name = self.previous_fx_name
 
 
 def _call_itmodule_hook(

@@ -263,6 +263,12 @@ class PropertyDispatcher:
     it_cfg: "ITConfig"
     model: torch.nn.Module
 
+    if TYPE_CHECKING:
+
+        def _it_init_optimizers_and_schedulers(self, optim_conf: dict[str, Any] | list | Optimizable | tuple) -> None:
+            """Build optimizers and schedulers from a hook output, from the optimizer component."""
+            ...
+
     # Consolidated class-level metadata to reduce attribute clutter
     _it_cls_metadata = ITClassMetadata(
         core_to_framework_attrs_map={},
@@ -398,7 +404,7 @@ class PropertyDispatcher:
 
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         if hook_name == "configure_optimizers":
-            self._it_init_optimizers_and_schedulers(output)  # type: ignore[attr-defined]  # provided by mixing class
+            self._it_init_optimizers_and_schedulers(output)
         else:
             rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
@@ -451,7 +457,7 @@ class CoreHelperAttributes:
             if name in _helper_attrs:
                 return _helper_attrs[name]()
         # the unresolved attribute wasn't ours, pass it to the next __getattr__ in __mro__
-        return super().__getattr__(name)  # type: ignore[attr-defined]
+        return super().__getattr__(name)  # pyright: ignore[reportAttributeAccessIssue]  # cooperative super in mixin
 
     @property
     def current_epoch(self) -> int:

@@ -125,7 +125,7 @@ def conformance_case(gate: Gate | None = None, **kw: Any) -> Callable:
     resolved = gate if gate is not None else Gate(**kw)
 
     def mark(fn: Callable) -> Callable:
-        fn.__conformance_gate__ = resolved  # type: ignore[attr-defined]
+        setattr(fn, "__conformance_gate__", resolved)
         _CASE_GATES[fn.__qualname__] = resolved
         return fn
 

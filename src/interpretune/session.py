@@ -55,8 +55,9 @@ class ITMeta(type):
         composition_classes = mcs._map_composition_target(component, ctx)
         new_bases: tuple[type, ...] = (NamedWrapper, input_cls, *composition_classes)  # type: ignore[misc]
         built_class = super().__new__(mcs, name, new_bases, classdict)
-        built_class._orig_module_name = input_cls.__qualname__  # type: ignore[attr-defined]  # dynamic attribute for session tracking
-        built_class._composed_classes = composition_classes  # type: ignore[attr-defined]  # dynamic attribute for session tracking
+        # Session-tracking attributes attached to the dynamically built class.
+        setattr(built_class, "_orig_module_name", input_cls.__qualname__)
+        setattr(built_class, "_composed_classes", composition_classes)
         return built_class
 
     @staticmethod

@@ -107,7 +107,7 @@ class ITExtensionsConfigMixin:
             and (ext_attrs := self.__dict__.get("_it_state", None)) is not None
         ):
             return ext_attrs._extensions[name]
-        return super().__getattr__(name)  # type: ignore[attr-defined]  # MRO pattern for mixins
+        return super().__getattr__(name)  # pyright: ignore[reportAttributeAccessIssue]  # cooperative super in mixin
 
 
 # TODO: rather than load extensions from DEFAULT_EXTENSIONS, use a registry and the entry_point API to potentially load

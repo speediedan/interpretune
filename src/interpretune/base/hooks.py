@@ -34,6 +34,17 @@ class BaseITHooks:
     session_complete: bool
     _it_state: ITState
 
+    # Host-provided methods: supplied by sibling components of the composed module through the MRO.
+    if TYPE_CHECKING:
+
+        def _make_setup_dirs(self) -> None:
+            """Create the session's output directories, from the base components."""
+            ...
+
+        def set_input_require_grads(self) -> None:
+            """Enable input gradients when configured, from the HF pretrained mixin."""
+            ...
+
     def setup(self, *args, **kwargs) -> None:
         """Attach the datamodule if provided and create the session's output directories.
 
@@ -43,7 +54,7 @@ class BaseITHooks:
         # for some adapters, datamodule access is not provided in setup and will be accessed via Trainer
         if datamodule := kwargs.get("datamodule", None):
             self._it_state._datamodule = datamodule
-        self._make_setup_dirs()  # type: ignore[attr-defined]  # provided by mixin composition
+        self._make_setup_dirs()
 
     def optimizer_parameters(self) -> Iterator[torch.nn.Parameter]:
         """The parameters the default optimizer is built over.
@@ -83,7 +94,7 @@ class BaseITHooks:
         (a circuit-tracer composition's transcoders are all ``instrument`` until promoted) still serves sessions that
         do not train, analysis among them, whose configuration sets ``optimizer_init`` (#859).
         """
-        self.set_input_require_grads()  # type: ignore[attr-defined]  # provided by mixin composition
+        self.set_input_require_grads()
         optimizer, scheduler = None, None
         if self.it_cfg.optimizer_init:  # in case this hook is manually invoked by the user
             if params := list(self.optimizer_parameters()):
