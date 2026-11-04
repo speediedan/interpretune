@@ -1,5 +1,5 @@
 # The sparsity chain (interpretune#698 to #700) as one phased run of gemma-3-1b-it on interpretune's core loop (#899),
-# about 1.5 to 2 h on one 24 GB GPU (research-class: a reserved window, not the CI pool):
+# about 20 to 25 minutes per seed on one 24 GB GPU, 18.2 GiB at peak (research-class: a reserved window, not CI):
 #
 #   interpretune --run_command train --config hub://speediedan/rte/runs/rte_sparse.gemma3.core.yaml
 #
@@ -8,8 +8,9 @@
 # `ChainBuildGraphs` graphs the restored weights (the 100 #667 pilot items fit the enforcement; the 40 gate items are
 # measured), `ChainGraphGate` judges the phase against the pinned untuned reference (#709: error share up at most 5
 # points, replacement down at most 0.10), and phase 1 tunes with the simplified graph enforced and a fresh optimizer.
-# The final gate judges phase 1 the same way; on the chain's evidence (error share up 5.1 to 6.3 points) it vetoes,
-# and the run ends on phase 0's best. Every phase is judged on `val_task`, the phase-invariant task loss.
+# The final gate judges the global best, whichever phase holds it. When recovery's best wins (seeds 0 and 2 of 0 to 2,
+# #899) it vetoes on error share up 5.6 to 6.4 points, as the chain's evidence predicted, and the run ends on phase 0's
+# best. Every phase is judged on `val_task`, the phase-invariant task loss.
 session_ref: speediedan/rte:rte_sparse.gemma3.core
 seed_everything: 0
 run_cfg:
