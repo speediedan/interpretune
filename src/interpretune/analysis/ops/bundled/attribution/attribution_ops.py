@@ -114,6 +114,7 @@ def gradient_attribution_impl(
             raise ValueError(f"Missing required input '{key}' for gradient attribution")
 
     # Type checker assistance after validation
+    assert analysis_batch.answer_indices is not None, "answer_indices validated above"
     assert analysis_batch.logit_diffs is not None, "logit_diffs validated above"
     assert isinstance(analysis_batch.logit_diffs, torch.Tensor), "logit_diffs should be tensor after validation"
 

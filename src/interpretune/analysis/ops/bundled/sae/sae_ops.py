@@ -56,6 +56,7 @@ def get_alive_latents_impl(
         cache = analysis_batch.cache
         names_filter = module.analysis_cfg.names_filter
         answer_indices = analysis_batch.answer_indices
+        assert answer_indices is not None, "answer_indices should be populated by the analysis dispatcher"
 
         filtered_acts = {name: acts for name, acts in cache.items() if names_filter(name)}
         alive_latents = {}
