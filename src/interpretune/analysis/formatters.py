@@ -157,13 +157,13 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
     def format_column(self, pa_table: "pa.Table") -> torch.Tensor:
         """Format a column with enhanced tensorization."""
         column = self.numpy_arrow_extractor().extract_column(pa_table)
-        column = self.python_features_decoder.decode_column(column, pa_table.column_names[0])  # type: ignore[arg-type]
+        column = self.python_features_decoder.decode_column(column, pa_table.column_names[0])  # pyright: ignore[reportArgumentType]
         col_name = pa_table.column_names[0]
         dyn_dim = self.dyn_dims.get(col_name, None)
         col_dict = {"dyn_dim": dyn_dim} if dyn_dim is not None else {}
         with self.field_context((col_name, col_dict)):
             column = self._recursive_tensorize(column)
-        return self._consolidate(column)  # type: ignore[return-value]
+        return self._consolidate(column)  # pyright: ignore[reportReturnType]
 
     def format_row(self, pa_table: pa.Table) -> Mapping:
         """Format a row with enhanced tensorization that respects field contexts."""

@@ -52,14 +52,14 @@ def to_analysis_cfgs(
 
     # Handle single AnalysisOp
     if hasattr(analysis_cfgs, "name") and hasattr(analysis_cfgs, "alias"):
-        processed_cfgs.append(AnalysisCfg(target_op=analysis_cfgs))  # type: ignore[arg-type]
+        processed_cfgs.append(AnalysisCfg(target_op=analysis_cfgs))  # pyright: ignore[reportArgumentType]
         return processed_cfgs
 
     # Handle iterable of AnalysisCfg or AnalysisOp
     try:
         # Check if it's iterable first
-        iter(analysis_cfgs)  # type: ignore[call-overload]
-        for cfg in analysis_cfgs:  # type: ignore[union-attr]
+        iter(analysis_cfgs)  # pyright: ignore[reportArgumentType, reportCallIssue]
+        for cfg in analysis_cfgs:  # pyright: ignore[reportGeneralTypeIssues]
             if isinstance(cfg, AnalysisCfg):
                 processed_cfgs.append(cfg)
             elif hasattr(cfg, "name") and hasattr(cfg, "alias"):  # Check if it's an AnalysisOp

@@ -143,7 +143,7 @@ def gradient_attribution_impl(
     # TODO: refactor this to use the GetAliveLatentsOp? (which should then dispatch alive_latents implementation)
     import interpretune as it
 
-    temp_batch = it.get_alive_latents(module, temp_batch, batch, batch_idx)  # type: ignore[arg-type]
+    temp_batch = it.get_alive_latents(module, temp_batch, batch, batch_idx)  # pyright: ignore[reportCallIssue]
     analysis_batch.alive_latents = temp_batch.alive_latents
     assert analysis_batch.alive_latents is not None, "alive_latents should be set after get_alive_latents call"
 

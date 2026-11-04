@@ -476,14 +476,14 @@ class ITCLI(ITSessionMixin):
         # object-valued params (run_cfg / it_session) are constructed after the loader builds the
         # session, so they are skipped from the parse surface rather than link-supplied
         parser.add_class_arguments(
-            self.runner_class,  # type: ignore[arg-type]
+            self.runner_class,  # pyright: ignore[reportArgumentType]
             "runner",
             instantiate=False,
             sub_configs=True,
             skip={"run_cfg"},
         )
         parser.add_class_arguments(
-            self.run_cfg,  # type: ignore[arg-type]
+            self.run_cfg,  # pyright: ignore[reportArgumentType]
             "run_cfg",
             instantiate=False,
             sub_configs=True,
@@ -503,7 +503,7 @@ class ITCLI(ITSessionMixin):
         # e.g. self.config = parser.parse_object(args)
         args = self._resolve_hub_args(args)
         self._load_hub_adapters_from_args(args)
-        self.config = parser.parse_args(args)  # type: ignore[arg-type]
+        self.config = parser.parse_args(args)  # pyright: ignore[reportArgumentType]
 
     def _set_seed(self) -> None:
         """Sets the seed."""
@@ -540,7 +540,7 @@ class ITCLI(ITSessionMixin):
         run_cfg_ns = self._get(self.config_init, "run_cfg")
         run_cfg_kwargs = run_cfg_ns.as_dict() if hasattr(run_cfg_ns, "as_dict") else dict(run_cfg_ns or {})
         run_cfg_kwargs.pop("it_session", None)
-        run_cfg = self.run_cfg(it_session=self.it_session, **run_cfg_kwargs)  # type: ignore[operator]
+        run_cfg = self.run_cfg(it_session=self.it_session, **run_cfg_kwargs)  # pyright: ignore[reportCallIssue]
         runner_ns = self._get(self.config_init, "runner")
         runner_kwargs = runner_ns.as_dict() if hasattr(runner_ns, "as_dict") else dict(runner_ns or {})
         runner_kwargs.pop("run_cfg", None)
@@ -718,7 +718,7 @@ if _LIGHTNING_AVAILABLE:
             )
             session_mapping = self._merge_parsed_session_overrides(self.config, session_mapping)
             self.it_session = self.build_it_session(session_mapping)
-            super().instantiate_classes()  # type: ignore[misc]  # mixin provides instantiate_classes
+            super().instantiate_classes()  # pyright: ignore[reportAttributeAccessIssue]  # mixin provides instantiate_classes
             # create a convenient alias for the lightning model attribute that uses a standard `module` reference
             self.module = weakref.proxy(self.model)
 
@@ -727,7 +727,7 @@ if _LIGHTNING_AVAILABLE:
             parse as Lightning does."""
             args = self._resolve_hub_args(args)
             self._load_hub_adapters_from_args(args)
-            super().parse_arguments(parser, args)  # type: ignore[misc,attr-defined]
+            super().parse_arguments(parser, args)  # pyright: ignore[reportAttributeAccessIssue]
 
         def _it_session_object_attr(self, key) -> InterpretunableType | None:
             try:
@@ -772,9 +772,9 @@ if _LIGHTNING_AVAILABLE:
             }
         )
         cli = LightningITCLI(
-            datamodule_class=ITDataModule,  # type: ignore[arg-type]  # ITDataModule is Lightning-compatible
+            datamodule_class=ITDataModule,  # pyright: ignore[reportArgumentType]  # ITDataModule is Lightning-compatible
             # N.B. we can provide a regular PyTorch module as we're wrapping it as necessary
-            model_class=torch.nn.Module,  # type: ignore[arg-type]  # Lightning accepts PyTorch modules
+            model_class=torch.nn.Module,  # pyright: ignore[reportArgumentType]  # Lightning accepts PyTorch modules
             subclass_mode_model=True,
             subclass_mode_data=True,
             save_config_kwargs={"overwrite": True},
@@ -786,9 +786,9 @@ if _LIGHTNING_AVAILABLE:
             return cli
 
 else:
-    l_cli_main = object  # type: ignore[assignment]  # fallback when Lightning unavailable
-    LightningCLIAdapter = object  # type: ignore[assignment]  # fallback when Lightning unavailable
-    LightningITCLI = object  # type: ignore[assignment]  # fallback when Lightning unavailable
+    l_cli_main = object  # pyright: ignore[reportAssignmentType]  # fallback when Lightning unavailable
+    LightningCLIAdapter = object  # pyright: ignore[reportAssignmentType]  # fallback when Lightning unavailable
+    LightningITCLI = object  # pyright: ignore[reportAssignmentType]  # fallback when Lightning unavailable
 
 
 def _parse_run_option(lightning_cli: bool = False) -> bool | str | None:
@@ -828,4 +828,4 @@ def bootstrap_cli() -> Callable:
     else:
         cli_main = core_cli_main
         run_mode = _parse_run_option()
-    return cli_main(run_mode=run_mode)  # type: ignore[operator]  # dynamic CLI selection
+    return cli_main(run_mode=run_mode)  # pyright: ignore[reportArgumentType, reportReturnType]  # dynamic CLI selection

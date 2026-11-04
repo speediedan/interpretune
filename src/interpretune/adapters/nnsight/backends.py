@@ -1089,7 +1089,7 @@ class NNsightModelBackend:
                 logits_proxy = model.output.logits
                 scalar = backward_fn(logits_proxy)
 
-                with scalar.backward():  # type: ignore[union-attr]  # nnsight patches Tensor.backward() to return BackwardsTracer context manager
+                with scalar.backward():  # pyright: ignore[reportOptionalContextManager]  # nnsight patches Tensor.backward() to return BackwardsTracer context manager
                     # Capture gradients for each proxy we stored above.
                     # IMPORTANT: NNsight's BackwardsMediator processes .grad
                     # requests sequentially. During backward(), gradient hooks

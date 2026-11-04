@@ -597,7 +597,7 @@ class OptimizerScheduler:
         return optimizers, lr_schedulers
 
 
-class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler):  # type: ignore[misc]
+class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler):  # pyright: ignore[reportIncompatibleVariableOverride]
     """The composed base component surface: configuration, property dispatch, and optimization."""
 
     ...

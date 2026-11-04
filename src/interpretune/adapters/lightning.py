@@ -64,7 +64,7 @@ if _LIGHTNING_AVAILABLE:
                     "which a Lightning Trainer never runs. Configure Lightning's profiler instead "
                     "(--trainer.profiler, or Trainer(profiler=...)) and leave profiler_cfg at its default."
                 )
-            return super().setup(*args, **kwargs)  # type: ignore[misc]  # cooperative MRO call
+            return super().setup(*args, **kwargs)  # pyright: ignore[reportAttributeAccessIssue]  # cooperative MRO call
 
         def on_train_start(self) -> None:
             """Force the model into training mode before training starts, then defer to Lightning.
@@ -74,7 +74,7 @@ if _LIGHTNING_AVAILABLE:
             """
             # ensure model is in training mode (e.g. needed for some edge cases w/ skipped sanity checking)
             self.model.train()
-            return super().on_train_start()  # type: ignore[misc]  # LightningModule method when mixed in
+            return super().on_train_start()  # pyright: ignore[reportAttributeAccessIssue]  # LightningModule method when mixed in
 
         def _analysis_cfg_of(self):
             """Read the bound analysis config without tripping the unset warning.
@@ -107,7 +107,7 @@ if _LIGHTNING_AVAILABLE:
             if not analysis_cfg.applied_to(self):
                 from interpretune.config.runner import init_analysis_cfgs
 
-                init_analysis_cfgs(self, analysis_cfg)  # type: ignore[arg-type]  # a mixin; the composed module satisfies it
+                init_analysis_cfgs(self, analysis_cfg)  # pyright: ignore[reportArgumentType]  # a mixin; the composed module satisfies it
             if getattr(self, "_it_predict_wrapped", False):
                 return
             original = self.predict_step
@@ -138,12 +138,12 @@ if _LIGHTNING_AVAILABLE:
         def on_predict_start(self) -> None:
             """Ensure analysis setup ran before a Trainer predict loop, then defer to Lightning."""
             self._ensure_analysis_setup()
-            return super().on_predict_start()  # type: ignore[misc]  # LightningModule method when mixed in
+            return super().on_predict_start()  # pyright: ignore[reportAttributeAccessIssue]  # LightningModule method when mixed in
 
         def on_test_start(self) -> None:
             """Ensure analysis setup ran before a Trainer test loop, then defer to Lightning."""
             self._ensure_analysis_setup()
-            return super().on_test_start()  # type: ignore[misc]  # LightningModule method when mixed in
+            return super().on_test_start()  # pyright: ignore[reportAttributeAccessIssue]  # LightningModule method when mixed in
 
         def predict_step(self, batch, batch_idx: int, dataloader_idx: int = 0):
             """Route predict batches through analysis_step when analysis is configured.
@@ -159,7 +159,7 @@ if _LIGHTNING_AVAILABLE:
                 ran, result = self._run_configured_step(analysis_cfg, batch, batch_idx, dataloader_idx)
                 if ran:
                     return result
-            return super().predict_step(batch, batch_idx, dataloader_idx)  # type: ignore[misc]
+            return super().predict_step(batch, batch_idx, dataloader_idx)  # pyright: ignore[reportAttributeAccessIssue]
 
         @classmethod
         def register_adapter_ctx(cls, adapter_ctx_registry: CompositionRegistry) -> None:
@@ -181,4 +181,4 @@ if _LIGHTNING_AVAILABLE:
 else:
     LightningDataModule = object
     LightningModule = object
-    LightningAdapter = object  # type: ignore[assignment]
+    LightningAdapter = object  # pyright: ignore[reportAssignmentType]

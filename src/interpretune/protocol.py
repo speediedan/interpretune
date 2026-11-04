@@ -38,9 +38,9 @@ if TYPE_CHECKING:
     from interpretune.config import ITDataModuleConfig, ITConfig
 else:
     # Provide light-weight stand-ins for typing at runtime without importing heavy packages.
-    HfDataset = None  # type: ignore
-    ITDataModuleConfig = None  # type: ignore
-    ITConfig = None  # type: ignore
+    HfDataset = None
+    ITDataModuleConfig = None
+    ITConfig = None
 
 
 ################################################################################
@@ -86,7 +86,7 @@ class AutoStrEnum(Enum):
     """Enum whose auto() members take their own name as value, so members serialize as their names."""
 
     @staticmethod
-    def _generate_next_value_(name, _start, _count, _last_values) -> str:  # type: ignore
+    def _generate_next_value_(name, _start, _count, _last_values) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
         return name
 
 
@@ -141,7 +141,7 @@ class DerivedEnumMeta(EnumMeta):  # change EnumMeta alias to EnumType when 3.11 
         ``_transform`` off the class body and removes them so they do not become members themselves.
         """
         enum_dict = super().__prepare__(clsname, bases, **kwargs)
-        enum_dict._ignore = list(metacls._derived_enum_internal)  # type: ignore
+        enum_dict._ignore = list(metacls._derived_enum_internal)  # pyright: ignore[reportAttributeAccessIssue]
 
         return enum_dict
 
@@ -506,7 +506,7 @@ def gen_protocol_variants(
     if not isinstance(base_protocols, tuple):
         base_protocols = (base_protocols,)
     for sub_proto in get_args(supported_sub_protocols):
-        supported_cls = _ProtocolMeta(f"Built{sub_proto.__name__}", (*base_protocols, sub_proto, Protocol), {})  # type: ignore[arg-type]
+        supported_cls = _ProtocolMeta(f"Built{sub_proto.__name__}", (*base_protocols, sub_proto, Protocol), {})  # pyright: ignore[reportArgumentType]
         supported_cls._is_runtime_protocol = True
         frame = inspect.currentframe()
         if frame and frame.f_back:
@@ -520,8 +520,8 @@ def gen_protocol_variants(
 
 # We generate valid datamodule/module protocol variants by composing their respective base protocols with the set of
 # valid subprotocols over which `any` semantics apply.
-ITDataModuleProtocol: TypeAlias = gen_protocol_variants(DataModuleInitable, DataModuleInvariants)  # type: ignore
-ITModuleProtocol: TypeAlias = gen_protocol_variants(ModuleSteppable, ModuleInvariants)  # type: ignore
+ITDataModuleProtocol: TypeAlias = gen_protocol_variants(DataModuleInitable, DataModuleInvariants)  # pyright: ignore[reportArgumentType, reportInvalidTypeForm]
+ITModuleProtocol: TypeAlias = gen_protocol_variants(ModuleSteppable, ModuleInvariants)  # pyright: ignore[reportArgumentType, reportInvalidTypeForm]
 # TODO: ensure protocol variants are explicitly documented and possibly add a section describing the approach to
 #       supported protocol variant generation. Also add an issue tracker for this approach to solicit ideas for a
 #       cleaner/more pythonic approach. As Python structural subtyping features are still evolving, if a cleaner and

@@ -102,7 +102,7 @@ class TLensAttributeMixin:
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a TransformerLens config reference (has it been set yet?): {ae}")
             cfg = None
-        return cfg  # type: ignore[return-value]
+        return cfg  # pyright: ignore[reportReturnType]
 
     # TODO: we aren't using IT's Property Composition feature for TLens yet, but might be worth enabling it
     @property
@@ -462,9 +462,9 @@ class BaseITLensModule(BaseITModule):
         """
         # Override unsupported from pretrained options
         if self.hf_cfg:
-            self.hf_cfg.lora_cfg = None  # type: ignore[assignment]  # config flexibility
+            self.hf_cfg.lora_cfg = None  # pyright: ignore[reportAttributeAccessIssue]  # config flexibility
             # TODO NEXT: enable bnb now that it's supported by TransformerLens
-            self.hf_cfg.bitsandbytesconfig = None  # type: ignore[assignment]  # config flexibility
+            self.hf_cfg.bitsandbytesconfig = None  # pyright: ignore[reportAttributeAccessIssue]  # config flexibility
         # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
         # Serialize the actual TransformerLens config from the initialized model
         tl_model_cfg = self._make_config_serializable(self.model.cfg, ["device", "dtype"])

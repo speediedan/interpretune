@@ -312,7 +312,7 @@ class GenerativeStepMixin:
                 outputs = self.model.generate(batch, **kwargs)
             else:
                 if self._should_inspect_inputs:
-                    batch = self.map_gen_inputs(batch)  # type: ignore[assignment]  # BatchEncoding can be dict[str, Any] for generation
+                    batch = self.map_gen_inputs(batch)  # pyright: ignore[reportAssignmentType]  # BatchEncoding can be dict[str, Any] for generation
                 # BatchEncoding keys are str at runtime; its stub keys them Unknown, hence the directive.
                 outputs = self.model.generate(**batch, **kwargs)  # pyright: ignore[reportCallIssue]
         except (TypeError, AttributeError, ValueError) as ge:
@@ -366,7 +366,7 @@ class ClassificationMixin:
     def setup(self, *args, **kwargs) -> None:
         """Initialize classification mapping if configured. Cooperative super() ensures all mixins in the MRO chain
         contribute their setup logic."""
-        super().setup(*args, **kwargs)  # type: ignore[misc]  # MRO cooperative call
+        super().setup(*args, **kwargs)  # pyright: ignore[reportAttributeAccessIssue]  # MRO cooperative call
         if self.it_cfg.classification_mapping is not None:
             self.init_classification_mapping()
 
@@ -412,7 +412,7 @@ class ClassificationMixin:
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Run a forward pass and return standardized logits alongside label ids and the original labels."""
         label_ids, labels = self.labels_to_ids(batch.pop("labels"))
-        logits = self(**batch)  # type: ignore[misc]  # mixin provides __call__ through composition
+        logits = self(**batch)  # pyright: ignore[reportCallIssue]  # mixin provides __call__ through composition
         # TODO: add another layer of abstraction here to handle different model output types? Tradeoffs to consider...
         if not isinstance(logits, torch.Tensor):
             logits = logits.logits
@@ -434,9 +434,9 @@ class ClassificationMixin:
                     f"tensor), got {type(logits).__name__}"
                 )
             logits = inner
-        logits = self.standardize_logits(logits)  # type: ignore[arg-type]  # standardize_logits handles tuple case
+        logits = self.standardize_logits(logits)  # pyright: ignore[reportArgumentType]  # standardize_logits handles tuple case
         per_example_answers, _ = torch.max(logits, dim=-2)
-        preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
+        preds = torch.argmax(per_example_answers, dim=-1)
         metric_dict = self.metric.compute(predictions=preds, references=labels)
         # TODO: check if this type casting is still required for lightning torchmetrics, bug should be fixed now...
         metric_dict = dict(
@@ -539,7 +539,7 @@ class HFFromPretrainedMixin:
             )
         unused_kwargs: dict = {}
         if self.hf_cfg.pretrained_kwargs.pop("return_unused_kwargs", False):
-            cust_config, unused_kwargs = cust_config  # type: ignore[misc]  # HF API can return tuple when return_unused_kwargs=True
+            cust_config, unused_kwargs = cust_config  # pyright: ignore[reportAssignmentType]  # HF API can return tuple when return_unused_kwargs=True
         assert isinstance(cust_config, PretrainedConfig), "Config should be PretrainedConfig instance"
         cust_config.update(self.it_cfg.model_cfg)  # apply pre-init model config overrides    # mixin provides it_cfg
         return cust_config, unused_kwargs

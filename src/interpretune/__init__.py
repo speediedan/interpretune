@@ -46,7 +46,7 @@ class _AnalysisImportHook(MetaPathFinder):
 
     def find_spec(self, fullname, path, target=None):
         if fullname == "interpretune.analysis":
-            return ModuleSpec(fullname, self, is_package=True)  # type: ignore[arg-type]
+            return ModuleSpec(fullname, self, is_package=True)  # pyright: ignore[reportArgumentType]
         return None
 
     def load_module(self, fullname):

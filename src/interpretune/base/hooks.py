@@ -120,12 +120,13 @@ class BaseITHooks:
             return None
         # no lr scheduler is an empty list, not `[None]`: Lightning refuses a `None` scheduler, and the core loop would
         # otherwise carry an `LRSchedulerConfig` wrapping `None`
-        return [optimizer], [scheduler] if scheduler is not None else []  # type: ignore[return-value]
+        return [optimizer], [scheduler] if scheduler is not None else []  # pyright: ignore[reportReturnType]
 
     def on_session_end(self) -> Any | None:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
-        if getattr(self, "memprofiler", None):
-            self.memprofiler.dump_memory_stats()  # type: ignore[union-attr]  # validated by getattr guard
+        memprofiler = getattr(self, "memprofiler", None)
+        if memprofiler is not None:
+            memprofiler.dump_memory_stats()
         self._it_state._session_complete = True
 
     # N.B. we call `on_session_end` at the end of train, test, analysis and predict session types only. This is because

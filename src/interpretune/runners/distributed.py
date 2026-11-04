@@ -371,7 +371,7 @@ def _register_direct_calls(module: torch.nn.Module) -> None:
     from torch.distributed.fsdp import FSDPModule, register_fsdp_forward_method
 
     declare = getattr(module, "fsdp_direct_calls", None)
-    entries: list[tuple[str, torch.nn.Module, tuple[str, ...]]] = list(declare()) if callable(declare) else []  # type: ignore[arg-type]
+    entries: list[tuple[str, torch.nn.Module, tuple[str, ...]]] = list(declare()) if callable(declare) else []  # pyright: ignore[reportArgumentType]
     missing: dict[str, list[str]] = {}
     for name, submodule, methods in entries:
         sharded = isinstance(submodule, FSDPModule)  # a flag, not a narrowing: the module stays a torch module

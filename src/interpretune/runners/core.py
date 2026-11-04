@@ -10,7 +10,7 @@ import torch
 
 from interpretune.config import SessionRunnerCfg
 from interpretune.base import _call_itmodule_hook, it_configure_optimizers, it_init, it_session_end
-from interpretune.protocol import Optimizable, CorePhases, TestLoadable, TrainLoadable
+from interpretune.protocol import AllPhases, Optimizable, CorePhases, TestLoadable, TrainLoadable
 from interpretune.runners.distributed import (
     DistributedRun,
     distributed_dataloader,
@@ -206,7 +206,7 @@ def step_lr_schedulers(module: Any, interval: str, counter: int, metrics: Mappin
                     )
                 rank_zero_warn(f"Skipping a `ReduceLROnPlateau` step: '{monitor}' was not logged this {interval}.")
                 continue
-            scheduler.step(metrics[monitor])  # type: ignore[index]  # membership checked above
+            scheduler.step((metrics or {})[monitor])  # membership checked above
         else:
             scheduler.step()
 
@@ -611,13 +611,17 @@ class SessionRunner:
         self.dist_run: DistributedRun | None = None
         self.it_init()
 
+    # Subclass runners extend the phase set (the analysis runner adds its phase), so the stored
+    # phase spans both enums even though this runner only ever sets core phases.
+    _current_phase: AllPhases | CorePhases | None = None
+
     @property
-    def phase(self) -> CorePhases | None:
+    def phase(self) -> AllPhases | CorePhases | None:
         """The phase currently executing, or None before a phase starts."""
         return self._current_phase
 
     @phase.setter
-    def phase(self, phase: CorePhases):
+    def phase(self, phase: AllPhases | CorePhases):
         self._current_phase = phase
 
     def it_init(self):

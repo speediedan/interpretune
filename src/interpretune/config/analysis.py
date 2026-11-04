@@ -64,7 +64,7 @@ def _extend_names_for_bridge(module, names_list: list[str]) -> tuple[list[str], 
     # dynamic aliases including the critical hook_z→o.hook_in mappings.
     alias_to_canonical: dict[str, str] = {}
     if hasattr(model, "hook_aliases"):
-        alias_to_canonical.update(model.hook_aliases)  # type: ignore[arg-type]  # TL hook_aliases is Dict[str, str | List[str]]
+        alias_to_canonical.update(model.hook_aliases)  # pyright: ignore[reportArgumentType, reportCallIssue]  # TL hook_aliases is Dict[str, str | List[str]]
     if hasattr(model, "_collect_hook_aliases_from_registry"):
         alias_to_canonical.update(model._collect_hook_aliases_from_registry())
 
@@ -540,9 +540,9 @@ class AnalysisCfg(ITSerializableCfg):
         from interpretune.analysis.ops.base import AnalysisOpLike, OpSchema
 
         schema = output_schema
-        if schema is None and self.op is not None and hasattr(self.op, "output_schema"):
-            schema = self.op.output_schema  # type: ignore[union-attr]  # guarded by hasattr
-        elif schema is None and hasattr(self, "output_schema") and self.output_schema is not None:
+        if schema is None and self.op is not None:
+            schema = getattr(self.op, "output_schema", None)
+        if schema is None and hasattr(self, "output_schema") and self.output_schema is not None:
             schema = self.output_schema
         if isinstance(schema, AnalysisOpLike):
             schema = schema.output_schema

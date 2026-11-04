@@ -93,7 +93,7 @@ def model_fwd_w_cache_latent_models_impl(
 
     analysis_batch = it.get_answer_indices(module, analysis_batch, batch, batch_idx)
     analysis_batch.update(cache=cache)
-    analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)  # type: ignore[call-arg]
+    analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)  # pyright: ignore[reportCallIssue]
     analysis_batch.update(answer_logits=answer_logits)
     return analysis_batch
 
@@ -126,7 +126,7 @@ def model_ablation_impl(
         assert module.analysis_cfg.input_store and getattr(module.analysis_cfg.input_store, "alive_latents", None), (
             "alive_latents required for ablation op"
         )
-        analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)  # type: ignore[call-arg]
+        analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)  # pyright: ignore[reportCallIssue]
 
     answer_indices = analysis_batch.answer_indices
     alive_latents = analysis_batch.alive_latents
@@ -187,7 +187,7 @@ def latent_correct_acts_impl(
         # (see NOTE [Op-Driven Transitive Dependency Atomicity])
         import interpretune as it
 
-        analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)  # type: ignore[call-arg]
+        analysis_batch = it.get_alive_latents(module, analysis_batch, batch, batch_idx)  # pyright: ignore[reportCallIssue]
 
     assert isinstance(logit_diffs, torch.Tensor), "expected logit_diffs to be a Tensor"
     # Extract correct activations for examples with positive logit differences

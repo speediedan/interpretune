@@ -219,7 +219,7 @@ def generate_analysis_dataset(
                 else module.analysis_cfg.output_store.cache_dir  # protocol provides output_store
             ),
             gen_kwargs=gen_kwargs,
-            split=split,  # type: ignore[arg-type]  # str acceptable for NamedSplit at runtime
+            split=split,  # pyright: ignore[reportArgumentType]  # str acceptable for NamedSplit at runtime
             fingerprint=resolved_fingerprint,
         ).with_format("interpretune", **it_format_kwargs)
         return dataset  # datasets compatibility
@@ -580,7 +580,7 @@ class AnalysisRunner(SessionRunner):
         self.analysis_results = {}
 
     def _run(self, phase, loop_fn, step_fn: str | None = None, *args: Any, **kwargs: Any) -> Any | None:
-        self.phase = AllPhases[phase]  # type: ignore[assignment]  # phase attribute assignment
+        self.phase = AllPhases[phase]
         phase_artifacts = loop_fn(step_fn=step_fn, **self.run_cfg.__dict__)
         self.it_session_end()
         return phase_artifacts
@@ -626,7 +626,7 @@ class AnalysisRunner(SessionRunner):
 
         # Initialize analysis configurations
         init_analysis_cfgs(
-            module=self.run_cfg.module,  # type: ignore[arg-type]  # protocol compatibility
+            module=self.run_cfg.module,  # pyright: ignore[reportArgumentType]  # protocol compatibility
             analysis_cfgs=self.run_cfg._processed_analysis_cfgs,
             cache_dir=self.run_cfg.cache_dir,
             op_output_dataset_path=self.run_cfg.op_output_dataset_path,

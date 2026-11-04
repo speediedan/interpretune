@@ -71,7 +71,7 @@ class SAELensAttributeMixin:
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a `SAEConfig` reference (has it been set yet?): {ae}")
             cfg = None
-        return cfg  # type: ignore[return-value]
+        return cfg  # pyright: ignore[reportReturnType]
 
     @property
     def sae_handles(self) -> list[SAE]:
@@ -130,15 +130,15 @@ class BaseSAELensModule(BaseITModule):
                     handle.use_error_term = True
             else:
                 # TODO: enable configuration of SAE subclass to use
-                handle = StandardSAE(cfg=sae_cfg.cfg, use_error_term=sae_cfg.use_error_term)  # type: ignore[arg-type]
+                handle = StandardSAE(cfg=sae_cfg.cfg, use_error_term=sae_cfg.use_error_term)  # pyright: ignore[reportArgumentType]
                 original_cfg = original_cfg or {}
                 sparsity = sparsity or {}
-            self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))  # type: ignore[arg-type]
+            self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))  # pyright: ignore[reportArgumentType]
             # `getattr` with the field's own default: a module composition can carry the SAE mixin without
             # the SAE config mixin (the circuit-tracer + sae_lens composition attaches `sae_cfgs` onto a
             # pre-composed config), in which case there is no splice setting and splicing stays off.
             if getattr(self.it_cfg, "add_saes_on_init", False) and hasattr(self.model, "add_sae"):
-                self.model.add_sae(added_sae.handle)  # type: ignore[operator]
+                self.model.add_sae(added_sae.handle)  # pyright: ignore[reportCallIssue]
                 self._register_attached_sae(added_sae.handle)
 
     @staticmethod
@@ -510,7 +510,7 @@ class SAELensAdapter(SAELensAttributeMixin):
             analysis_run_cfg = runner_holder.analysis_run_cfg
 
             init_analysis_cfgs(
-                module=cast(LatentAnalysisProtocol, self),  # type: ignore[arg-type]  # protocol compatibility
+                module=cast(LatentAnalysisProtocol, self),  # pyright: ignore[reportArgumentType]  # protocol compatibility
                 analysis_cfgs=analysis_run_cfg._processed_analysis_cfgs,
                 cache_dir=analysis_run_cfg.cache_dir,
                 op_output_dataset_path=analysis_run_cfg.op_output_dataset_path,

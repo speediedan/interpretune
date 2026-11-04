@@ -209,8 +209,8 @@ def attach_lazy_deltas(transcoders: nn.Module, rank: int) -> list[str]:
         }
         deltas = transcoders._modules.setdefault(DELTAS_ATTR, nn.ModuleDict())
         for name, cols in shapes.items():
-            if cols is not None and name not in deltas:  # type: ignore[operator]
-                deltas[name] = nn.ModuleList(LowRankDelta(d_tc, c, rank, device) for c in cols)  # type: ignore[index]
+            if cols is not None and name not in deltas:  # pyright: ignore[reportOperatorIssue]
+                deltas[name] = nn.ModuleList(LowRankDelta(d_tc, c, rank, device) for c in cols)  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
         return lazy_weights(transcoders)
     if not isinstance(transcoders, TranscoderSet):
         raise TypeError(_unknown_layout(transcoders))
@@ -220,8 +220,8 @@ def attach_lazy_deltas(transcoders: nn.Module, rank: int) -> list[str]:
         _swap(tc, SingleLayerTranscoder, SingleLayerTranscoderWithDeltas)
         deltas = tc._modules.setdefault(DELTAS_ATTR, nn.ModuleDict())
         for name, lazy in (("W_enc", tc.lazy_encoder), ("W_dec", tc.lazy_decoder)):
-            if lazy and name not in deltas:  # type: ignore[operator]
-                deltas[name] = LowRankDelta(tc.d_transcoder, tc.d_model, rank, tc.b_enc.device)  # type: ignore[index]
+            if lazy and name not in deltas:  # pyright: ignore[reportOperatorIssue]
+                deltas[name] = LowRankDelta(tc.d_transcoder, tc.d_model, rank, tc.b_enc.device)  # pyright: ignore[reportArgumentType, reportIndexIssue, reportOptionalSubscript]
     return lazy_weights(transcoders)
 
 
@@ -365,7 +365,7 @@ class CircuitTracerView:
         groups = pair_groups(self._base_names) if self._base_names else []
         if isinstance(self.transcoders, CrossLayerTranscoder):
             return groups + ([list(self._names)] if self._names else [])
-        for tc in reversed(list(self.transcoders.transcoders)):  # type: ignore[union-attr]
+        for tc in reversed(list(self.transcoders.transcoders)):  # pyright: ignore[reportArgumentType]
             ids = {id(p) for p in tc.parameters()}
             group = [n for n, p in self.root.named_parameters() if id(p) in ids]
             if group:

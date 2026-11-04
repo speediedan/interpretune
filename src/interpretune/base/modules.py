@@ -8,7 +8,7 @@ from interpretune.tuning.views import attach_tunable_view
 from interpretune.utils import MisconfigurationException
 
 
-class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):  # type: ignore[misc]
+class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):  # pyright: ignore[reportIncompatibleMethodOverride, reportIncompatibleVariableOverride]
     """Base composition target for interpretune modules; supplies the ``ITModuleProtocol`` invariants.
 
     The module contract is structural, not inheritance-based: a composed module must expose the
@@ -36,7 +36,7 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
     def __init__(self, it_cfg: ITConfig, *args, **kwargs):
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__(*args, **kwargs)
-        self.model: torch.nn.Module = None  # type: ignore[assignment]  # initialized later in lifecycle
+        self.model: torch.nn.Module = None  # pyright: ignore[reportAttributeAccessIssue, reportIncompatibleVariableOverride]  # initialized later in lifecycle
         self.it_cfg: ITConfig = self._before_it_cfg_init(it_cfg)
         self._make_init_dirs()
         self._connect_extensions()

@@ -412,7 +412,7 @@ class NNsightAdapter(NNsightAttributeMixin):
         )
 
 
-class NNsightModule(NNsightAdapter, CoreHelperAttributes, BaseNNsightModule):  # type: ignore[misc]
+class NNsightModule(NNsightAdapter, CoreHelperAttributes, BaseNNsightModule):  # pyright: ignore[reportIncompatibleVariableOverride]
     """NNsight module combining adapter, core helpers, and base functionality.
 
     This is the composed module class for (core, nnsight) adapter combination.

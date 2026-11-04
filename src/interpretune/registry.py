@@ -50,7 +50,7 @@ class RegisteredCfg(NamedTuple):
 
     datamodule_cfg: ITDataModuleConfig
     module_cfg: ITConfig
-    datamodule_cls: Type[DataModuleInitable] = DEFAULT_DATAMODULE  # type: ignore[assignment]
+    datamodule_cls: Type[DataModuleInitable] = DEFAULT_DATAMODULE  # pyright: ignore[reportAssignmentType]
     module_cls: Type[ModuleSteppable] = DEFAULT_MODULE
 
 
@@ -64,7 +64,7 @@ class RegisteredDataModuleCfg(NamedTuple):
     """
 
     datamodule_cfg: ITDataModuleConfig
-    datamodule_cls: Type[DataModuleInitable] = DEFAULT_DATAMODULE  # type: ignore[assignment]
+    datamodule_cls: Type[DataModuleInitable] = DEFAULT_DATAMODULE  # pyright: ignore[reportAssignmentType]
 
 
 @runtime_checkable
@@ -112,7 +112,7 @@ class ModuleRegistry(dict):
         for a_combo in adapter_combinations:
             a_combo = (a_combo,) if not isinstance(a_combo, tuple) else a_combo
             composition_key = (model_src_key, model_cfg_key, self.canonicalize_composition(a_combo))
-            supported_composition[composition_key] = registered_cfg  # type: ignore[assignment]
+            supported_composition[composition_key] = registered_cfg  # pyright: ignore[reportArgumentType]
             self[composition_key] = supported_composition
 
     def canonicalize_composition(self, adapter_ctx: Sequence[Adapter]) -> Tuple:
@@ -226,8 +226,8 @@ def instantiate_and_register(
     registered_cfg = RegisteredCfg(
         datamodule_cfg=datamodule_cfg,
         module_cfg=module_cfg,
-        datamodule_cls=datamodule_cls,  # type: ignore[arg-type]
-        module_cls=module_cls,  # type: ignore[arg-type]
+        datamodule_cls=datamodule_cls,  # pyright: ignore[reportArgumentType]
+        module_cls=module_cls,  # pyright: ignore[reportArgumentType]
     )
     target_registry.register(**reg_info, reg_key=reg_key, registered_cfg=registered_cfg, cfg_dict=cfg_dict)
 
@@ -376,7 +376,7 @@ def instantiate_nested(c: Dict | List, skip_keys: Set | None = None, cache_dir=N
         for i, v in enumerate(c):
             c[i] = instantiate_nested(c[i], cache_dir=cache_dir)
     if "class_path" in c:  # if the dict directly contains a class_path key
-        c = instantiate_hub_aware_class(c, import_only=c.pop("import_only", False), cache_dir=cache_dir)  # type: ignore[arg-type]  # with instantiating the class
+        c = instantiate_hub_aware_class(c, import_only=c.pop("import_only", False), cache_dir=cache_dir)  # pyright: ignore[reportArgumentType, reportCallIssue]  # with instantiating the class
     return c
 
 

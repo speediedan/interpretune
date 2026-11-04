@@ -178,7 +178,7 @@ def get_loss_preds_diffs(
     loss = module.loss_fn(answer_logits, label_ids)
     answer_logits = module.standardize_logits(answer_logits)
     per_example_answers, _ = torch.max(answer_logits, dim=-2)
-    preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
+    preds = torch.argmax(per_example_answers, dim=-1)
     logit_diffs = logit_diff_fn(answer_logits, target_indices=analysis_batch.orig_labels)
     return loss, logit_diffs, preds, answer_logits
 

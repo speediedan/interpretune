@@ -323,7 +323,7 @@ class AnalysisBatch(AttrDict):
 
         return True
 
-    def update(self, **kwargs):  # type: ignore[override]
+    def update(self, **kwargs):  # pyright: ignore[reportIncompatibleMethodOverride]
         """Set fields from keyword arguments (keyword-only, unlike ``dict.update``).
 
         Narrowed deliberately: analysis fields are named, so accepting a positional mapping would invite
@@ -459,7 +459,7 @@ class OpSchema(dict):
             if not isinstance(val, ColCfg):
                 raise TypeError(f"Values must be ColCfg instances, got {type(val)}")
 
-    def __hash__(self):  # type: ignore[override]
+    def __hash__(self):  # pyright: ignore[reportIncompatibleVariableOverride]
         """Make OpSchema hashable by using a frozenset of items."""
         return hash(frozenset((k, hash(v)) for k, v in sorted(self.items())))
 
@@ -1055,7 +1055,7 @@ class CompositeAnalysisOp(AnalysisOp):
             output_schema = op_def.output_schema
         else:
             # Compile input and output schemas using the op definitions dictionary
-            input_schema, output_schema = jit_compile_composition_schema(ops, DISPATCHER._op_definitions)  # type: ignore[arg-type]
+            input_schema, output_schema = jit_compile_composition_schema(ops, DISPATCHER._op_definitions)  # pyright: ignore[reportArgumentType]
 
         # A composite needs every intervention configuration any part needs, plus whatever it declares itself.
         # The union is computed here rather than at validation so it is READABLE from the op: a conformance

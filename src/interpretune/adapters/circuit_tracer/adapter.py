@@ -866,7 +866,7 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         Deferred to setup because the log directory is not known at construction, and graphs must have somewhere to land
         before the first attribution runs.
         """
-        super().setup(*args, **kwargs)  # type: ignore[misc]  # mixin call to super
+        super().setup(*args, **kwargs)  # pyright: ignore[reportAttributeAccessIssue]  # mixin call to super
         # The cooperative setup above resolves the host's log directory, so it is set by this point.
         core_log_dir = self.core_log_dir
         assert core_log_dir is not None, "core_log_dir should be resolved by the host setup before graph output init"
