@@ -879,6 +879,16 @@ class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):
     prompts: list[str] | None
 
 
+class ClassificationModuleProtocol(Protocol):
+    """The module surface classification loss helpers use: a loss callable and logit standardization."""
+
+    loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+
+    def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        """Map answer logits to their standardized form."""
+        ...
+
+
 class CircuitAnalysisBatchProtocol(DefaultAnalysisBatchProtocol):
     """Circuit analysis batch protocol defining additional attributes for circuit tracer operations.
 

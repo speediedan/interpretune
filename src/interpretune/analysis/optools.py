@@ -15,24 +15,14 @@ from __future__ import annotations
 import itertools
 import json
 import pathlib
-from typing import Any, Callable, Literal, NamedTuple, Protocol
+from typing import Any, Callable, Literal, NamedTuple
 
 import torch
 from jaxtyping import Float
 
 from interpretune.analysis.backends import get_analysis_backend, get_model_backend
 from interpretune.analysis.inputs import _resolve_attr_path
-from interpretune.protocol import DefaultAnalysisBatchProtocol
-
-
-class ClassificationModuleProtocol(Protocol):
-    """The module surface `get_loss_preds_diffs` uses: a loss callable and logit standardization."""
-
-    loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
-
-    def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
-        """Map answer logits to their standardized form."""
-        ...
+from interpretune.protocol import ClassificationModuleProtocol, DefaultAnalysisBatchProtocol
 
 
 FEATURE_SCORE_SOURCE_ALIASES: dict[str, str] = {

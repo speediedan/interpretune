@@ -37,6 +37,7 @@ from interpretune.protocol import (
     DefaultAnalysisBatchProtocol,
     BaseAnalysisBatchProtocol,
     AnalysisOpProtocol,
+    ClassificationModuleProtocol,
 )
 
 
@@ -224,6 +225,7 @@ __all__ = [
     "DefaultAnalysisBatchProtocol",
     "BaseAnalysisBatchProtocol",
     "AnalysisOpProtocol",
+    "ClassificationModuleProtocol",
     # Adapters Module
     "ITModule",
     "LightningDataModule",

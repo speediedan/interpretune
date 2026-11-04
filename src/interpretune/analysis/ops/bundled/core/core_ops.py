@@ -128,7 +128,7 @@ def loss_preds_diffs_impl(
 
 
 def logit_diffs_impl(
-    module: torch.nn.Module,
+    module: ClassificationModuleProtocol,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
     batch_idx: int,
