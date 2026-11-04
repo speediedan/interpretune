@@ -2,11 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
+The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). Per the stability policy (`docs/source/stability.md`), every breaking change lands under a `### Breaking` heading naming the old and new form; a release check confirms the heading exists whenever such a change is in the release.
 
 ## [Unreleased]
 
 ### Added
+
+- The public stability policy (`docs/source/stability.md`): through the alpha line the promise is notice, not stability; a small named surface gets one release of notice; everything else is explicitly unstable; persisted artifacts are handled separately; the policy is re-evaluated at 0.1.0. `AGENTS.md`'s backwards-compatibility section now points at it ([#258](https://github.com/speediedan/interpretune/issues/258))
 
 - `FTSCoreCallback` builds gates and phase hooks from configuration: `tuning_scheduler_kwargs` passes `gates` and `phase_hooks` to finetuning-scheduler's `TuningScheduler`, which now takes them as constructor arguments, instantiating each `class_path` entry (or the `gate`/`hook` value of an entry that carries registration options). A phase-0 start hook given this way runs at setup, and a gate reaches the tuning scheduler and its module through `GateEvent.tuning_scheduler`. The callback's documented "list of gates" previously raised `TypeError`. finetuning-scheduler is pinned at `17042de9` (its main with #184) ([#899](https://github.com/speediedan/interpretune/issues/899))
 
