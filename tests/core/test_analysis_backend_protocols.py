@@ -22,6 +22,7 @@ from interpretune.analysis.backends import (
     ModuleCapabilities,
     SupportsAttributionGraph,
     SupportsFeatureInterventions,
+    SupportsHeadAttribution,
 )
 
 
@@ -54,18 +55,31 @@ class TestDecomposition:
         assert isinstance(backend, AnalysisBackendCore)
         assert not isinstance(backend, SupportsAttributionGraph)
         assert not isinstance(backend, SupportsFeatureInterventions)
+        assert not isinstance(backend, SupportsHeadAttribution)
         assert not isinstance(backend, AnalysisBackend)
 
     def test_the_bundled_backend_satisfies_every_group(self):
         from interpretune.adapters.circuit_tracer.backends import CircuitTracerAnalysisBackend
 
         backend = CircuitTracerAnalysisBackend()
-        for protocol in (AnalysisBackendCore, SupportsAttributionGraph, SupportsFeatureInterventions, AnalysisBackend):
+        for protocol in (
+            AnalysisBackendCore,
+            SupportsAttributionGraph,
+            SupportsFeatureInterventions,
+            SupportsHeadAttribution,
+            AnalysisBackend,
+        ):
             assert isinstance(backend, protocol), protocol.__name__
         assert backend.capabilities == {
             AnalysisBackendCapability.ATTRIBUTION_GRAPH,
             AnalysisBackendCapability.FEATURE_INTERVENTION,
+            AnalysisBackendCapability.HEAD_ATTRIBUTION,
         }
+
+    def test_head_attribution_is_not_required_of_every_full_backend(self):
+        """A backend can carry graphs and feature interventions without these reports, and stays an
+        ``AnalysisBackend``: the capability refuses the ops by name, so nothing else needs to change for it."""
+        assert SupportsHeadAttribution not in AnalysisBackend.__mro__
 
 
 class TestRecordsTravelWithTheirSurface:

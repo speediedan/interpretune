@@ -79,6 +79,17 @@ class CircuitTracerConfig(ITSerializableCfg):
     max_feature_nodes: int | None = None
     """Memory optimization option ('cpu', 'disk', or None)."""
     offload: str | None = None
+    """Hold attention patterns constant during attribution, so each edge is an exact direct effect.
+
+    ``False`` (nnsight backend only) also credits nodes for changing where attention looks, which makes each edge a
+    first-order derivative. The regime is recorded on the graph and survives storage and pruning.
+    """
+    freeze_attention: bool = True
+    """Hold every norm scale constant during attribution, query and key norms included.
+
+    ``False`` is nnsight backend only. Recorded on the graph like ``freeze_attention``.
+    """
+    freeze_norms: bool = True
     """Lazily load transcoder encoder weights from disk on access.
 
     When ``None`` (default), auto-enabled when ``offload='cpu'`` to avoid OOM during transcoder

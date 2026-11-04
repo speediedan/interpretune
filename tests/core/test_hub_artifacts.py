@@ -293,6 +293,7 @@ class TestGraphHydrationRoundTrip:
                 "graph_cfg_json": [decomposed.graph_cfg_json],
                 "graph_scan_json": [decomposed.graph_scan_json],
                 "graph_vocab_size": [decomposed.graph_vocab_size],
+                "graph_attribution_regime_json": [decomposed.graph_attribution_regime_json],
                 "graph_metadata": [decomposed.graph_metadata],
             },
             features=schema_to_features(module, schema=DISPATCHER.get_op("compute_attribution_graph").output_schema),

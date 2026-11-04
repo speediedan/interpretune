@@ -159,6 +159,46 @@ class SupportsAttributionGraph(Protocol):
 
 
 @runtime_checkable
+class SupportsHeadAttribution(Protocol):
+    """Methods gated by ``AnalysisBackendCapability.HEAD_ATTRIBUTION``: credit at the level of attention heads.
+
+    An attribution graph holds attention patterns constant by default, so it credits no node for changing where
+    attention looks, and its edges say nothing about which head carried them. These two reports answer that at
+    different scales: a head loading splits the edges into one target on one prompt, and a head conductance credits
+    each head for a measured change between two prompts. Each returns plain tensors and numbers, so a report can land
+    in an ``AnalysisStore``.
+    """
+
+    def head_loading_report(
+        self,
+        module: Any,
+        prompt: Any,
+        target: Any,
+        *,
+        layers: Any = None,
+        freeze_attention: bool = True,
+        freeze_norms: bool = True,
+    ) -> dict[str, Any]:
+        """Each head's share of the edges into ``target``, at each of ``layers`` (default every layer)."""
+        ...
+
+    def head_conductance_report(
+        self,
+        module: Any,
+        prompt_from: Any,
+        prompt_to: Any,
+        target_weights: Any,
+        *,
+        n_steps: int = 32,
+        points_per_batch: int = 17,
+        key_positions: Any = None,
+    ) -> dict[str, Any]:
+        """Each head's conductance along the path between two prompts of the same length, split into its attention
+        pattern and value parts."""
+        ...
+
+
+@runtime_checkable
 class SupportsFeatureInterventions(Protocol):
     """Methods gated by ``AnalysisBackendCapability.FEATURE_INTERVENTION``: interventions on latent feature
     activations.
