@@ -1100,7 +1100,6 @@ __all__ = [
     "resolve_jlens_fold_choice",
     "FEATURE_SCORE_SOURCE_ALIASES",
     "get_loss_preds_diffs",
-    "ClassificationModuleProtocol",
     "last_token_logits",
     "load_json_field",
     "mean_target_logit_delta",
