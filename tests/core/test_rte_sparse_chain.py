@@ -51,6 +51,32 @@ def test_the_chain_partition_holds_the_graph_items_out_of_training(rte_component
     assert not (idx["train"] & idx["graph"]) and not (idx["train"] & idx["validation"])
 
 
+def test_the_sparse_configurations_shuffle_training_as_the_chain_did(rte_component):
+    """Without shuffling the split is read in one fixed order, and with fixed weights and no dropout the seed
+    changes nothing (#899): three seeds gave one run."""
+    from types import SimpleNamespace
+
+    from torch.utils.data import RandomSampler, SequentialSampler
+
+    from interpretune.hub.components import resolve_component_file
+    from tests.rte_component import rte_entrypoint_module
+
+    for model in ("gemma3", "gpt2"):
+        shipped = resolve_component_file(f"hub://speediedan/rte@{rte_component}/configs/rte_sparse.{model}.core.yaml")
+        datamodule_cfg = yaml.safe_load(shipped.read_text(encoding="utf-8"))["registered_cfg"]["datamodule_cfg"]
+        assert datamodule_cfg["dataloader_kwargs"]["shuffle"] is True
+
+    # the setting reaches the training sampler, and the evaluation splits still score every example in order
+    data = SimpleNamespace(
+        dataset={"train": list(range(8)), "validation": list(range(8))},
+        data_collator=None,
+        itdm_cfg=SimpleNamespace(dataloader_kwargs={"shuffle": True}, train_batch_size=2, eval_batch_size=2),
+    )
+    factory = rte_entrypoint_module().RTEBoolqChainDataModule.dataloader_factory
+    assert isinstance(factory(data, "train", use_train_batch_size=True).sampler, RandomSampler)
+    assert isinstance(factory(data, "validation").sampler, SequentialSampler)
+
+
 def test_the_sparse_chain_runs_both_phases_from_the_cli(rte_component, clean_cli_env, tmp_path, monkeypatch):
     from finetuning_scheduler.core.checkpoint import load_payload
     from interpretune.base.components.cli import core_cli_main
