@@ -12,9 +12,17 @@ as venngram orders them. The stage's token scope is the spec's ``position_scope`
 
 **Unit-targeted ops** take their layers from the book set they target, so their stage names a layer-free site:
 
-- ``add``: the op's per-unit dose table (venngram's own ``Op.unit_doses``) scattered into a dense vector at the
-  site's width, applied as ``add``;
+- ``add``: the op's values per unit scattered into a dense vector at the site's width, applied as ``add``;
 - ``scale``: the same table as a multiplier, ones where no unit is named, applied as ``scale``.
+
+The values are a ``dose``, a ``doses`` table, or a column of evidence the caller supplies through a transform pipeline
+(:mod:`~interpretune.analysis.venngram.values`).
+
+**Feature-targeted ops** take the same path one level down, into a latent model's feature activations: ``add`` and
+``scale`` scatter at the latent sub-hook, ``blocks.<layer>.<site>.hook_sae_acts_post``, which the backend resolves to
+the attached latent model. The stage names the hooked site (``hook_resid_post``), and the width supplied is the
+latent's, keyed ``<site>.hook_sae_acts_post`` because the site's own width differs. A ``replace`` on features has no
+native mode here, since a spec replaces the whole tensor; circuit-tracer's feature tuples express it.
 
 **Whole-activation ops** (no ``target``) name no layer of their own, so their stage names a layered site,
 ``blocks.<layer>.<site>``. A layer-free one is refused by name rather than applied at a guessed layer or at every
@@ -36,6 +44,10 @@ The caller supplies each unit-targeted site's width (from the model's own config
 fact of the checkpoint the recipe pins, not of the recipe, and guessing it from the largest unit named would
 silently truncate a dose table that names a unit past the guess. A supplied width also checks an operand's.
 
+:func:`recipe_feature_interventions` is the analysis-backend path: a feature ``replace`` at explicit positions becomes
+circuit-tracer's ``(layer, position, feature_idx, value)`` tuples. Its values are computed here and passed as
+constants, so a backend must honour the ``constant`` value source.
+
 Anything the declaration does not cover is refused by
 :func:`~interpretune.analysis.venngram.support.require_supported`, which lists every refusal this module would
 raise (:func:`op_refusal`) at once; this module refuses again what it cannot translate, by name, so a caller that
@@ -52,8 +64,9 @@ from typing import Any
 
 import torch
 
-from interpretune.analysis.backends.capabilities import InterventionMode, PositionScope
+from interpretune.analysis.backends.capabilities import FeatureInterventionSupport, InterventionMode, PositionScope
 from interpretune.analysis.backends.interventions import InterventionSpec
+from interpretune.analysis.venngram.values import member_refusal, member_values, target_kind
 from interpretune.utils import MisconfigurationException
 
 #: Recipe token scopes by their interpretune position-scope names.
@@ -78,6 +91,9 @@ APPLIED_OPS = frozenset(_UNIT_OPS) | frozenset(_ACTIVATION_OPS)
 
 _LAYERED_SITE = re.compile(r"^blocks\.(\d+)\.(.+)$")
 
+#: The sub-hook a latent model's feature activations are written at.
+_LATENT_SUBHOOK = "hook_sae_acts_post"
+
 
 def split_site(site: str) -> tuple[int | None, str]:
     """A stage site's layer (``None`` when it names none) and its layer-free spelling."""
@@ -85,23 +101,41 @@ def split_site(site: str) -> tuple[int | None, str]:
     return (int(m.group(1)), m.group(2)) if m else (None, site)
 
 
+def _value_refusal(op: Any) -> str | None:
+    value = op.value
+    if value is not None and value.source != "from" and value.transform:
+        return "a transform applies to an evidence-sourced value; write a dose as its final value"
+    return None
+
+
+def _member_refusal(recipe: Any, stage: Any, op: Any, kind: str) -> str | None:
+    """Why a unit or feature target cannot take the unit path, or ``None`` when it can."""
+    layer, site = split_site(stage.site)
+    if op.op not in _UNIT_OPS:
+        if kind == "features" and op.op == "replace":
+            return (
+                "a feature-targeted `replace` has no native mode at a sub-hook: a spec replaces the whole tensor"
+                " (`recipe_feature_interventions` gives circuit-tracer's tuples)"
+            )
+        return f"a {kind[:-1]}-targeted `{op.op}` has no native mode (supported: {sorted(_UNIT_OPS)})"
+    if op.operand is not None:
+        return f"a {kind[:-1]}-targeted op takes a dose, not an operand"
+    if layer is not None:
+        return f"a {kind[:-1]} set names its own layers, so its stage names the layer-free site, not `{stage.site}`"
+    if kind == "features" and site.endswith(_LATENT_SUBHOOK):
+        return f"a feature target's stage names the hooked site; `{_LATENT_SUBHOOK}` is implied, not `{site}`"
+    return member_refusal(recipe, op)
+
+
 def op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     """Why ``op`` (at ``stage`` of ``recipe``) cannot be translated, or ``None`` when it can."""
     layer, _ = split_site(stage.site)
-    kind = op.target_kind(recipe.book)
+    kind = target_kind(recipe, op)
+    if (refusal := _value_refusal(op)) is not None:
+        return refusal
+    if kind in ("units", "features"):
+        return _member_refusal(recipe, stage, op, kind)
     value = op.value
-    if value is not None and (value.source not in ("dose", "doses") or value.transform):
-        return "the value is not a plain dose or doses (evidence-sourced values are not applied yet)"
-    if kind == "features":
-        return "feature targets are not applied yet"
-    if kind == "units":
-        if op.op not in _UNIT_OPS:
-            return f"a unit-targeted `{op.op}` has no native mode (unit-targeted: {sorted(_UNIT_OPS)})"
-        if op.operand is not None:
-            return "a unit-targeted op takes a dose, not an operand"
-        if layer is not None:
-            return f"a unit set names its own layers, so its stage names the layer-free site, not `{stage.site}`"
-        return None
     if op.op not in _ACTIVATION_OPS:
         return f"the op has no native mode (supported: {sorted(_ACTIVATION_OPS)})"
     if layer is None:
@@ -114,6 +148,19 @@ def op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
         if op.params.get("fraction", 1.0) != 1.0:
             return "a `project` fraction below 1 has no native mode yet (fraction 1 projects)"
     return None
+
+
+def feature_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
+    """Why ``op`` cannot become circuit-tracer feature tuples, or ``None`` when it can."""
+    if target_kind(recipe, op) != "features":
+        return "circuit-tracer's feature tuples act on a feature target only"
+    if op.op != "replace":
+        return f"circuit-tracer's feature tuples replace a feature's value, not `{op.op}`"
+    if (op.tokens or stage.tokens).kind != "positions":
+        return "circuit-tracer's feature tuples name their positions: write the stage's tokens as `{positions: [...]}`"
+    if op.value is None:
+        return "a feature-targeted op takes a value"
+    return _value_refusal(op) or member_refusal(recipe, op)
 
 
 def _scatter(doses: Mapping[int, float], width: int, fill: float, where: str, layer: int) -> torch.Tensor:
@@ -135,11 +182,13 @@ def _operand(recipe: Any, name: str, width: int | None, where: str) -> torch.Ten
     return tensor
 
 
-def _unit_specs(recipe: Any, op: Any, width: int, scope: PositionScope, where: str) -> dict[int, InterventionSpec]:
+def _member_specs(
+    op: Any, values: Mapping[tuple[int, int], float], width: int, scope: PositionScope, where: str
+) -> dict[int, InterventionSpec]:
     mode, fill = _UNIT_OPS[op.op]
     by_layer: dict[int, dict[int, float]] = {}
-    for (layer, unit), dose in op.unit_doses(recipe.book).items():
-        by_layer.setdefault(layer, {})[unit] = dose
+    for (layer, unit), value in values.items():
+        by_layer.setdefault(layer, {})[unit] = value
     return {
         layer: InterventionSpec(
             intervention_tensor=_scatter(by_layer[layer], width, fill, where, layer), mode=mode, position_scope=scope
@@ -164,13 +213,30 @@ def _activation_spec(recipe: Any, op: Any, width: int | None, scope: PositionSco
     return InterventionSpec(intervention_tensor=tensor, mode=mode, position_scope=scope, **fields)
 
 
-def recipe_interventions(recipe: Any, *, site_widths: Mapping[str, int]) -> dict[str, tuple[InterventionSpec, ...]]:
+def _require_width(site_widths: Mapping[str, int], site: str, i: int, stage: Any) -> int:
+    if site not in site_widths:
+        raise MisconfigurationException(
+            f"stage {i} ({stage.site}): no width was supplied for this site, `{site}` (supplied: {sorted(site_widths)})"
+        )
+    return site_widths[site]
+
+
+def recipe_interventions(
+    recipe: Any,
+    *,
+    site_widths: Mapping[str, int],
+    evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
+    statistics: Mapping[str, float | Mapping[int, float]] | None = None,
+) -> dict[str, tuple[InterventionSpec, ...]]:
     """Translate a supported ``venngram.recipe.Recipe`` into a backend intervention payload.
 
     Args:
         recipe: The recipe to translate.
         site_widths: The width of every unit-targeted site the recipe names, keyed by the recipe's own layer-free
-            site spelling. A width given for a whole-activation op's site also checks its operand's width.
+            site spelling, and of every feature-targeted one, keyed ``<site>.hook_sae_acts_post``. A width given for a
+            whole-activation op's site also checks its operand's width.
+        evidence: The tables evidence-sourced values read (:mod:`~interpretune.analysis.venngram.values`).
+        statistics: The statistics their transforms name.
 
     Returns:
         A mapping of hook patterns (``blocks.<layer>.<site>``) to the ordered specs to apply at each, in the raw
@@ -178,8 +244,9 @@ def recipe_interventions(recipe: Any, *, site_widths: Mapping[str, int]) -> dict
 
     Raises:
         MisconfigurationException: For anything this module cannot translate (see :func:`op_refusal`), an
-            unmapped token scope, a unit-targeted site whose width was not supplied, a unit outside its site's
-            width, or an operand whose width differs from a supplied site width, naming the stage and op. Run
+            unmapped token scope, a unit- or feature-targeted site whose width was not supplied, a unit outside its
+            site's width, an operand whose width differs from a supplied site width, or a value the supplied evidence
+            cannot give, naming the stage and op. Run
             :func:`~interpretune.analysis.venngram.support.require_supported` first for the full list at once.
     """
     payload: dict[str, list[InterventionSpec]] = {}
@@ -195,16 +262,57 @@ def recipe_interventions(recipe: Any, *, site_widths: Mapping[str, int]) -> dict
             where = f"stage {i} ({stage.site}) op {j} (`{op.op}`)"
             if (refusal := op_refusal(recipe, stage, op)) is not None:
                 raise MisconfigurationException(f"{where}: {refusal}")
-            if op.target_kind(recipe.book) == "units":
-                if site not in site_widths:
-                    raise MisconfigurationException(
-                        f"stage {i} ({stage.site}): no width was supplied for this site"
-                        f" (supplied: {sorted(site_widths)})"
-                    )
-                specs = _unit_specs(recipe, op, site_widths[site], scope, where)
-            else:
+            kind = target_kind(recipe, op)
+            if kind == "activation":
                 assert layer is not None  # op_refusal refuses a layer-free whole-activation op
                 specs = {layer: _activation_spec(recipe, op, site_widths.get(site), scope, where)}
+                hooked = site
+            else:
+                hooked = f"{site}.{_LATENT_SUBHOOK}" if kind == "features" else site
+                width = _require_width(site_widths, hooked, i, stage)
+                values = member_values(recipe, op, evidence=evidence, statistics=statistics, where=where)
+                specs = _member_specs(op, values, width, scope, where)
             for spec_layer, spec in specs.items():
-                payload.setdefault(f"blocks.{spec_layer}.{site}", []).append(spec)
+                payload.setdefault(f"blocks.{spec_layer}.{hooked}", []).append(spec)
     return {pattern: tuple(specs) for pattern, specs in payload.items()}
+
+
+def recipe_feature_interventions(
+    recipe: Any,
+    *,
+    support: FeatureInterventionSupport,
+    evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
+    statistics: Mapping[str, float | Mapping[int, float]] | None = None,
+) -> list[tuple[int, int, int, float]]:
+    """Translate a recipe's feature ``replace`` ops into circuit-tracer's feature intervention tuples.
+
+    Args:
+        recipe: The recipe to translate; every op must be one :func:`feature_op_refusal` admits.
+        support: The analysis backend's declaration. The tuples carry computed values, so it must honour ``constant``.
+        evidence: The tables evidence-sourced values read (:mod:`~interpretune.analysis.venngram.values`).
+        statistics: The statistics their transforms name.
+
+    Returns:
+        ``(layer, position, feature_idx, value)`` tuples, in recipe order, for
+        ``replacement_model.feature_intervention``.
+
+    Raises:
+        MisconfigurationException: For any op :func:`feature_op_refusal` refuses, a backend not honouring ``constant``,
+            or a value the supplied evidence cannot give, naming the stage and op.
+    """
+    if (why := support.refusal({"value_source": "constant", "value": 0.0})) is not None:
+        raise MisconfigurationException(f"this backend cannot take a recipe's computed values: {why}")
+    interventions: list[tuple[int, int, int, float]] = []
+    for i, stage in enumerate(recipe.stages):
+        for j, op in enumerate(stage.ops):
+            where = f"stage {i} ({stage.site}) op {j} (`{op.op}`)"
+            if (refusal := feature_op_refusal(recipe, stage, op)) is not None:
+                raise MisconfigurationException(f"{where}: {refusal}")
+            values = member_values(recipe, op, evidence=evidence, statistics=statistics, where=where)
+            positions = (op.tokens or stage.tokens).positions
+            interventions += [
+                (layer, position, feature, value)
+                for (layer, feature), value in values.items()
+                for position in positions
+            ]
+    return interventions
