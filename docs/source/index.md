@@ -117,6 +117,7 @@ concepts
 roadmap
 configuration
 design_rationale
+stability
 ```
 
 ```{toctree}
