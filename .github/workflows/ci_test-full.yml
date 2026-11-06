@@ -128,7 +128,7 @@ jobs:
           macos-15
           ]
         python-version: ["3.13"]
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       # TEMPORARY until the #261 flip: source the RW secret so CI can read the private
