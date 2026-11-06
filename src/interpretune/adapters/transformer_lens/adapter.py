@@ -1,5 +1,5 @@
 import os
-from typing import Type, cast, Any
+from typing import TYPE_CHECKING, Type, cast, Any
 import inspect
 from functools import reduce
 from copy import deepcopy
@@ -27,6 +27,9 @@ from interpretune.utils import (
 )
 from interpretune.utils.import_utils import _resolve_dtype
 from interpretune.protocol import Adapter
+
+if TYPE_CHECKING:
+    from interpretune.config import ITState
 
 
 ################################################################################
@@ -83,6 +86,10 @@ def _place_hf_model_before_wrap(hf_model: torch.nn.Module, pruned_cfg: dict) -> 
 class TLensAttributeMixin:
     """TransformerLens-aware attribute access: config and device resolution off the wrapped TL model."""
 
+    # Host-provided: the composing module class supplies its internal state through the MRO.
+    if TYPE_CHECKING:
+        _it_state: ITState
+
     @property
     def tl_cfg(self) -> TransformerBridgeConfig | None:
         """The wrapped model's TL config, or None (with a warning) before the model exists.
@@ -95,7 +102,7 @@ class TLensAttributeMixin:
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a TransformerLens config reference (has it been set yet?): {ae}")
             cfg = None
-        return cfg  # type: ignore[return-value]
+        return cfg  # pyright: ignore[reportReturnType]
 
     # TODO: we aren't using IT's Property Composition feature for TLens yet, but might be worth enabling it
     @property
@@ -104,7 +111,7 @@ class TLensAttributeMixin:
         device: torch.device | None = None
         try:
             device = (
-                getattr(self._it_state, "_device", None)  # type: ignore[attr-defined]  # provided by mixing class
+                getattr(self._it_state, "_device", None)
                 or getattr(self.tl_cfg, "device", None)
                 or reduce(getattr, "model.device".split("."), self)
             )
@@ -117,7 +124,7 @@ class TLensAttributeMixin:
     def device(self, value: str | torch.device | None) -> None:
         if value is not None and not isinstance(value, torch.device):
             value = torch.device(value)
-        self._it_state._device = value  # type: ignore[attr-defined]  # provided by mixing class
+        self._it_state._device = value
 
     def get_tl_device(self) -> torch.device | None:
         """Get the best available device based on TransformerLens config."""
@@ -205,7 +212,7 @@ class BaseITLensModule(BaseITModule):
 
     def hf_configured_model_init(
         self, cust_config: HFPretrainedConfig, access_token: str | None = None
-    ) -> torch.nn.Module:
+    ) -> PreTrainedModel:
         """Instantiate the HF model that TL conversion will consume.
 
         Kept on CPU rather than the target device: both the HF weights and the TL model would otherwise
@@ -455,9 +462,9 @@ class BaseITLensModule(BaseITModule):
         """
         # Override unsupported from pretrained options
         if self.hf_cfg:
-            self.hf_cfg.lora_cfg = None  # type: ignore[assignment]  # config flexibility
+            self.hf_cfg.lora_cfg = None  # pyright: ignore[reportAttributeAccessIssue]  # config flexibility
             # TODO NEXT: enable bnb now that it's supported by TransformerLens
-            self.hf_cfg.bitsandbytesconfig = None  # type: ignore[assignment]  # config flexibility
+            self.hf_cfg.bitsandbytesconfig = None  # pyright: ignore[reportAttributeAccessIssue]  # config flexibility
         # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
         # Serialize the actual TransformerLens config from the initialized model
         tl_model_cfg = self._make_config_serializable(self.model.cfg, ["device", "dtype"])

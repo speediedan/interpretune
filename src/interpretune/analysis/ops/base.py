@@ -141,6 +141,11 @@ class AnalysisBatch(AttrDict):
     lets ops compose without every op defending against every other op's optional outputs.
     """
 
+    # The persistence fields BaseAnalysisBatchProtocol declares; stored as dict entries like every
+    # other field, and absent (AttributeError on access) until wrap_summary sets them.
+    prompts: list[str] | None
+    tokens: torch.Tensor | None
+
     def _schema_default(self, key: str) -> Any:
         """Return a bound schema default for ``key`` when one is available."""
         input_schema = getattr(self, "_analysis_input_schema", None)
@@ -318,7 +323,7 @@ class AnalysisBatch(AttrDict):
 
         return True
 
-    def update(self, **kwargs):  # type: ignore[override]
+    def update(self, **kwargs):  # pyright: ignore[reportIncompatibleMethodOverride]
         """Set fields from keyword arguments (keyword-only, unlike ``dict.update``).
 
         Narrowed deliberately: analysis fields are named, so accepting a positional mapping would invite
@@ -454,7 +459,7 @@ class OpSchema(dict):
             if not isinstance(val, ColCfg):
                 raise TypeError(f"Values must be ColCfg instances, got {type(val)}")
 
-    def __hash__(self):  # type: ignore[override]
+    def __hash__(self):  # pyright: ignore[reportIncompatibleVariableOverride]
         """Make OpSchema hashable by using a frozenset of items."""
         return hash(frozenset((k, hash(v)) for k, v in sorted(self.items())))
 
@@ -482,16 +487,16 @@ def wrap_summary(
         batch_input = get_batch_input(batch)
         assert batch_input is not None, "Input batch must contain 'input' (or 'input_ids') field for decoding prompts"
         assert tokenizer is not None, "Tokenizer is required to decode prompts"
-        analysis_batch.prompts = tokenizer.batch_decode(batch_input, **decode_kwargs)  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
+        analysis_batch.prompts = tokenizer.batch_decode(batch_input, **decode_kwargs)
     elif hasattr(analysis_batch, "prompts"):
-        del analysis_batch.prompts  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
+        del analysis_batch.prompts
 
     if save_tokens:
         batch_input = get_batch_input(batch)
         assert batch_input is not None, "Input batch must contain 'input' (or 'input_ids') field for saving tokens"
-        analysis_batch.tokens = batch_input.detach().cpu()  # type: ignore[attr-defined]  # dynamic attribute for batch protocol, tensor-like object
+        analysis_batch.tokens = batch_input.detach().cpu()
     elif hasattr(analysis_batch, "tokens"):
-        del analysis_batch.tokens  # type: ignore[attr-defined]  # dynamic attribute for batch protocol
+        del analysis_batch.tokens
 
     # TODO: we need to remove this cache clearing hardcoding to refer to the relevant schema configuration
     #       and enable serialization of these fields based on the schema (on a non-default basis) in the future
@@ -813,7 +818,7 @@ class AnalysisOp:
         #       encapsulated at the same level of abstraction)
         # Process column configurations
         for col_name, col_cfg in output_schema.items():
-            if col_name not in analysis_batch.keys():  # type: ignore[attr-defined]  # dict-like protocol for batch objects
+            if col_name not in analysis_batch.keys():
                 continue
 
             # Handle dynamic dimension swapping
@@ -1050,7 +1055,7 @@ class CompositeAnalysisOp(AnalysisOp):
             output_schema = op_def.output_schema
         else:
             # Compile input and output schemas using the op definitions dictionary
-            input_schema, output_schema = jit_compile_composition_schema(ops, DISPATCHER._op_definitions)  # type: ignore[arg-type]
+            input_schema, output_schema = jit_compile_composition_schema(ops, DISPATCHER._op_definitions)  # pyright: ignore[reportArgumentType]
 
         # A composite needs every intervention configuration any part needs, plus whatever it declares itself.
         # The union is computed here rather than at validation so it is READABLE from the op: a conformance

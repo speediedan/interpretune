@@ -476,14 +476,14 @@ class ITCLI(ITSessionMixin):
         # object-valued params (run_cfg / it_session) are constructed after the loader builds the
         # session, so they are skipped from the parse surface rather than link-supplied
         parser.add_class_arguments(
-            self.runner_class,  # type: ignore[arg-type]
+            self.runner_class,  # pyright: ignore[reportArgumentType]
             "runner",
             instantiate=False,
             sub_configs=True,
             skip={"run_cfg"},
         )
         parser.add_class_arguments(
-            self.run_cfg,  # type: ignore[arg-type]
+            self.run_cfg,  # pyright: ignore[reportArgumentType]
             "run_cfg",
             instantiate=False,
             sub_configs=True,
@@ -503,7 +503,7 @@ class ITCLI(ITSessionMixin):
         # e.g. self.config = parser.parse_object(args)
         args = self._resolve_hub_args(args)
         self._load_hub_adapters_from_args(args)
-        self.config = parser.parse_args(args)  # type: ignore[arg-type]
+        self.config = parser.parse_args(args)  # pyright: ignore[reportArgumentType]
 
     def _set_seed(self) -> None:
         """Sets the seed."""
@@ -540,7 +540,7 @@ class ITCLI(ITSessionMixin):
         run_cfg_ns = self._get(self.config_init, "run_cfg")
         run_cfg_kwargs = run_cfg_ns.as_dict() if hasattr(run_cfg_ns, "as_dict") else dict(run_cfg_ns or {})
         run_cfg_kwargs.pop("it_session", None)
-        run_cfg = self.run_cfg(it_session=self.it_session, **run_cfg_kwargs)  # type: ignore[operator]
+        run_cfg = self.run_cfg(it_session=self.it_session, **run_cfg_kwargs)  # pyright: ignore[reportCallIssue]
         runner_ns = self._get(self.config_init, "runner")
         runner_kwargs = runner_ns.as_dict() if hasattr(runner_ns, "as_dict") else dict(runner_ns or {})
         runner_kwargs.pop("run_cfg", None)
@@ -652,6 +652,48 @@ if _LIGHTNING_AVAILABLE:
     class LightningCLIAdapter:
         """Adapts the Lightning CLI to build its data and model from an interpretune session."""
 
+        # Host-provided attributes: supplied through the MRO by ITSessionMixin and LightningCLI in the
+        # composed LightningITCLI. Declaring them here lets the checker verify every use in this adapter.
+        if TYPE_CHECKING:
+            config: Namespace
+            subcommand: str | None
+            model: torch.nn.Module
+            it_session: ITSession
+
+            @classmethod
+            def _resolve_hub_refs(cls, value: Any) -> Any:
+                """Resolve hub references in a parsed configuration, from ITSessionMixin."""
+                ...
+
+            @staticmethod
+            def _resolve_hub_args(args: ArgsType) -> ArgsType:
+                """Resolve hub references in raw arguments, from ITSessionMixin."""
+                ...
+
+            @staticmethod
+            def _load_hub_adapters_from_args(args: ArgsType) -> list[str]:
+                """Load hub adapters named in raw arguments, from ITSessionMixin."""
+                ...
+
+            def _session_mapping_from_sources(
+                self,
+                config_files: Sequence[Any],
+                default_config_files: Sequence[Any] | None,
+                session_ref: str | None = None,
+            ) -> dict[str, Any]:
+                """Assemble the session mapping from its sources, from ITSessionMixin."""
+                ...
+
+            def _merge_parsed_session_overrides(
+                self, config: Namespace, session_mapping: dict[str, Any]
+            ) -> dict[str, Any]:
+                """Overlay parsed session overrides on the mapping, from ITSessionMixin."""
+                ...
+
+            def build_it_session(self, session_mapping: dict[str, Any]) -> ITSession:
+                """Construct the session from a mapping, from ITSessionMixin."""
+                ...
+
         core_to_lightning_cli_map = {"data": "it_session.datamodule", "model": "it_session.module"}
 
         def instantiate_classes(self) -> None:
@@ -664,30 +706,28 @@ if _LIGHTNING_AVAILABLE:
             # the trainer and resolves data/model from the built session through `_get`'s mapping
             from interpretune.hub.adapters import load_run_hub_adapters
 
-            self._resolve_hub_refs(self.config)  # type: ignore[attr-defined]  # mixin provides hub resolution
-            sub_config = self.config.get(str(self.subcommand), self.config)  # type: ignore[attr-defined]
+            self._resolve_hub_refs(self.config)
+            sub_config = self.config.get(str(self.subcommand), self.config)
             load_run_hub_adapters(sub_config.get("hub_adapters"))
             parser_kwargs = getattr(self, "parser_kwargs", None) or {}
-            defaults = (
-                parser_kwargs.get(str(self.subcommand), parser_kwargs) or {}  # type: ignore[attr-defined]
-            ).get("default_config_files")
-            session_mapping = self._session_mapping_from_sources(  # type: ignore[attr-defined]
+            defaults = (parser_kwargs.get(str(self.subcommand), parser_kwargs) or {}).get("default_config_files")
+            session_mapping = self._session_mapping_from_sources(
                 sub_config.get("config") or [],
                 defaults if isinstance(defaults, (list, tuple)) else None,
                 sub_config.get("session_ref"),
             )
-            session_mapping = self._merge_parsed_session_overrides(self.config, session_mapping)  # type: ignore[attr-defined]  # mixin provides the overlay
-            self.it_session = self.build_it_session(session_mapping)  # type: ignore[attr-defined]  # mixin provides build_it_session
-            super().instantiate_classes()  # type: ignore[misc]  # mixin provides instantiate_classes
+            session_mapping = self._merge_parsed_session_overrides(self.config, session_mapping)
+            self.it_session = self.build_it_session(session_mapping)
+            super().instantiate_classes()  # pyright: ignore[reportAttributeAccessIssue]  # mixin provides instantiate_classes
             # create a convenient alias for the lightning model attribute that uses a standard `module` reference
-            self.module = weakref.proxy(self.model)  # type: ignore[attr-defined]  # mixin provides model
+            self.module = weakref.proxy(self.model)
 
         def parse_arguments(self, parser: LightningArgumentParser, args: ArgsType) -> None:
             """Resolve ``hub://`` file references in the arguments and load the ``hub_adapters`` they name, then
             parse as Lightning does."""
-            args = self._resolve_hub_args(args)  # type: ignore[attr-defined]  # mixin provides hub resolution
-            self._load_hub_adapters_from_args(args)  # type: ignore[attr-defined]
-            super().parse_arguments(parser, args)  # type: ignore[misc,attr-defined]
+            args = self._resolve_hub_args(args)
+            self._load_hub_adapters_from_args(args)
+            super().parse_arguments(parser, args)  # pyright: ignore[reportAttributeAccessIssue]
 
         def _it_session_object_attr(self, key) -> InterpretunableType | None:
             try:
@@ -700,7 +740,7 @@ if _LIGHTNING_AVAILABLE:
             """Utility to get a config value which might be inside a subcommand."""
             if target_key := self.core_to_lightning_cli_map.get(key, None):
                 return self._it_session_object_attr(target_key)
-            return config.get(str(self.subcommand), config).get(key, default)  # type: ignore[attr-defined]  # mixin provides subcommand
+            return config.get(str(self.subcommand), config).get(key, default)
 
     class LightningITCLI(LightningCLIAdapter, ITSessionMixin, LightningCLI):
         """Customize the :class:`~lightning.pytorch.cli.LightningCLI` to ensure the
@@ -732,9 +772,9 @@ if _LIGHTNING_AVAILABLE:
             }
         )
         cli = LightningITCLI(
-            datamodule_class=ITDataModule,  # type: ignore[arg-type]  # ITDataModule is Lightning-compatible
+            datamodule_class=ITDataModule,  # pyright: ignore[reportArgumentType]  # ITDataModule is Lightning-compatible
             # N.B. we can provide a regular PyTorch module as we're wrapping it as necessary
-            model_class=torch.nn.Module,  # type: ignore[arg-type]  # Lightning accepts PyTorch modules
+            model_class=torch.nn.Module,  # pyright: ignore[reportArgumentType]  # Lightning accepts PyTorch modules
             subclass_mode_model=True,
             subclass_mode_data=True,
             save_config_kwargs={"overwrite": True},
@@ -746,9 +786,9 @@ if _LIGHTNING_AVAILABLE:
             return cli
 
 else:
-    l_cli_main = object  # type: ignore[assignment]  # fallback when Lightning unavailable
-    LightningCLIAdapter = object  # type: ignore[assignment]  # fallback when Lightning unavailable
-    LightningITCLI = object  # type: ignore[assignment]  # fallback when Lightning unavailable
+    l_cli_main = object  # pyright: ignore[reportAssignmentType]  # fallback when Lightning unavailable
+    LightningCLIAdapter = object  # pyright: ignore[reportAssignmentType]  # fallback when Lightning unavailable
+    LightningITCLI = object  # pyright: ignore[reportAssignmentType]  # fallback when Lightning unavailable
 
 
 def _parse_run_option(lightning_cli: bool = False) -> bool | str | None:
@@ -788,4 +828,4 @@ def bootstrap_cli() -> Callable:
     else:
         cli_main = core_cli_main
         run_mode = _parse_run_option()
-    return cli_main(run_mode=run_mode)  # type: ignore[operator]  # dynamic CLI selection
+    return cli_main(run_mode=run_mode)  # pyright: ignore[reportArgumentType, reportReturnType]  # dynamic CLI selection

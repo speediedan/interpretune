@@ -15,7 +15,7 @@ from interpretune.analysis import schema_to_features
 from interpretune.analysis.execution import activated_analysis_cfg
 from interpretune.base import _call_itmodule_hook, ITDataModule
 from interpretune.runners.core import SessionRunner, profiling, run_step
-from interpretune.protocol import AllPhases, AnalysisStoreProtocol
+from interpretune.protocol import AllPhases, AnalysisStoreProtocol, TestLoadable
 from interpretune.config import AnalysisRunnerCfg, AnalysisCfg, init_analysis_cfgs
 from interpretune.utils.exceptions import handle_exception_with_debug_dump
 
@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 def analysis_store_generator(
     module: ITModule,
-    datamodule: ITDataModule,
+    datamodule: TestLoadable,
     limit_analysis_batches: int = -1,
     step_fn: str = "analysis_step",
     max_epochs: int = 1,
@@ -50,7 +50,7 @@ def analysis_store_generator(
         raise ValueError(
             f"analysis requires max_epochs >= 1 (got {max_epochs}); pass max_epochs=1 to the analysis runner config"
         )
-    dataloader = datamodule.test_dataloader()  # type: ignore[attr-defined]  # ITDataModule provides test_dataloader
+    dataloader = datamodule.test_dataloader()
     test_ctx = {"module": module, "as_generator": True}
     with profiling(module) as prof:
         for epoch_idx in range(max_epochs):
@@ -219,7 +219,7 @@ def generate_analysis_dataset(
                 else module.analysis_cfg.output_store.cache_dir  # protocol provides output_store
             ),
             gen_kwargs=gen_kwargs,
-            split=split,  # type: ignore[arg-type]  # str acceptable for NamedSplit at runtime
+            split=split,  # pyright: ignore[reportArgumentType]  # str acceptable for NamedSplit at runtime
             fingerprint=resolved_fingerprint,
         ).with_format("interpretune", **it_format_kwargs)
         return dataset  # datasets compatibility
@@ -569,6 +569,9 @@ def core_analysis_loop(
 class AnalysisRunner(SessionRunner):
     """Trainer subclass with analysis orchestration logic."""
 
+    # Narrowed from the base runner: __init__ only ever stores an AnalysisRunnerCfg here.
+    run_cfg: AnalysisRunnerCfg
+
     def __init__(self, run_cfg: AnalysisRunnerCfg | dict[str, Any], *args: Any, **kwargs: Any) -> None:
         run_cfg = run_cfg if isinstance(run_cfg, AnalysisRunnerCfg) else AnalysisRunnerCfg(**run_cfg)
         super().__init__(run_cfg, *args, **kwargs)
@@ -577,7 +580,7 @@ class AnalysisRunner(SessionRunner):
         self.analysis_results = {}
 
     def _run(self, phase, loop_fn, step_fn: str | None = None, *args: Any, **kwargs: Any) -> Any | None:
-        self.phase = AllPhases[phase]  # type: ignore[assignment]  # phase attribute assignment
+        self.phase = AllPhases[phase]
         phase_artifacts = loop_fn(step_fn=step_fn, **self.run_cfg.__dict__)
         self.it_session_end()
         return phase_artifacts
@@ -611,32 +614,32 @@ class AnalysisRunner(SessionRunner):
 
         # Update configuration parameters if provided
         if cache_dir is not None:
-            self.run_cfg.cache_dir = cache_dir  # type: ignore[assignment]  # dynamic config update
+            self.run_cfg.cache_dir = cache_dir
         if op_output_dataset_path is not None:
-            self.run_cfg.op_output_dataset_path = op_output_dataset_path  # type: ignore[assignment]  # dynamic config update
+            self.run_cfg.op_output_dataset_path = op_output_dataset_path
 
         # Update analysis_cfgs if provided
         if analysis_cfgs is not None:
-            self.run_cfg.analysis_cfgs = analysis_cfgs  # type: ignore[assignment]  # dynamic config update
+            self.run_cfg.analysis_cfgs = analysis_cfgs
             # # Process the new analysis_cfgs
             # self.run_cfg._process_analysis_cfgs()
 
         # Initialize analysis configurations
         init_analysis_cfgs(
-            module=self.run_cfg.module,  # type: ignore[arg-type]  # protocol compatibility
-            analysis_cfgs=self.run_cfg._processed_analysis_cfgs,  # type: ignore[attr-defined]  # dynamic config attribute
-            cache_dir=self.run_cfg.cache_dir,  # type: ignore[attr-defined]  # dynamic config attribute
-            op_output_dataset_path=self.run_cfg.op_output_dataset_path,  # type: ignore[attr-defined]  # dynamic config attribute
-            latent_analysis_targets=self.run_cfg.latent_analysis_targets,  # type: ignore[attr-defined]  # dynamic config attribute
-            ignore_manual=self.run_cfg.ignore_manual,  # type: ignore[attr-defined]  # dynamic config attribute
+            module=self.run_cfg.module,  # pyright: ignore[reportArgumentType]  # protocol compatibility
+            analysis_cfgs=self.run_cfg._processed_analysis_cfgs,
+            cache_dir=self.run_cfg.cache_dir,
+            op_output_dataset_path=self.run_cfg.op_output_dataset_path,
+            latent_analysis_targets=self.run_cfg.latent_analysis_targets,
+            ignore_manual=self.run_cfg.ignore_manual,
         )
 
         # Check if we have any analysis configurations to process
-        if not self.run_cfg._processed_analysis_cfgs:  # type: ignore[attr-defined]  # dynamic config attribute
+        if not self.run_cfg._processed_analysis_cfgs:
             raise ValueError("No analysis configurations provided. Please specify analysis_cfgs.")
 
         # Run each analysis configuration
-        for cfg in self.run_cfg._processed_analysis_cfgs:  # type: ignore[attr-defined]  # dynamic config attribute
+        for cfg in self.run_cfg._processed_analysis_cfgs:
             result = self._run_analysis_cfg(cfg)
             self.analysis_results[cfg.name] = result
 
@@ -673,6 +676,4 @@ class AnalysisRunner(SessionRunner):
         target_part = getattr(self.run_cfg, "case_key_target_part", None)
         if target_part is None:
             return
-        self.run_cfg.dataset_fingerprint = analysis_cfg_fingerprint(  # type: ignore[assignment]  # run_cfg statically typed as the base SessionRunnerCfg
-            analysis_cfg, target_part=target_part
-        )
+        self.run_cfg.dataset_fingerprint = analysis_cfg_fingerprint(analysis_cfg, target_part=target_part)

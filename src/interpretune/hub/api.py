@@ -25,8 +25,8 @@ def _hydrate_component_body(key: str, body: dict, cache_dir: Path | None = None)
     return RegisteredCfg(
         loaded.datamodule_cfg,
         loaded.module_cfg,
-        loaded.datamodule_cls,  # type: ignore[arg-type]  # loader resolves str/None to concrete classes
-        loaded.module_cls,  # type: ignore[arg-type]
+        loaded.datamodule_cls,  # pyright: ignore[reportArgumentType]  # loader resolves str/None to concrete classes
+        loaded.module_cls,  # pyright: ignore[reportArgumentType]
     )
 
 

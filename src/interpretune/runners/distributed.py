@@ -163,7 +163,7 @@ def init_process_group(run: DistributedRun) -> None:
             backend = "cpu:gloo,cuda:nccl"
         dist.init_process_group(backend)
         atexit.register(_destroy_process_group)
-    rank_zero_only.rank = run.rank  # type: ignore[attr-defined]  # rank-zero printing and warnings follow the group
+    setattr(rank_zero_only, "rank", run.rank)  # rank-zero printing and warnings follow the group
 
 
 def _check_devices(per_rank: Sequence[Sequence[str]], placement: str) -> tuple[str, ...]:
@@ -371,7 +371,7 @@ def _register_direct_calls(module: torch.nn.Module) -> None:
     from torch.distributed.fsdp import FSDPModule, register_fsdp_forward_method
 
     declare = getattr(module, "fsdp_direct_calls", None)
-    entries: list[tuple[str, torch.nn.Module, tuple[str, ...]]] = list(declare()) if callable(declare) else []  # type: ignore[arg-type]
+    entries: list[tuple[str, torch.nn.Module, tuple[str, ...]]] = list(declare()) if callable(declare) else []  # pyright: ignore[reportArgumentType]
     missing: dict[str, list[str]] = {}
     for name, submodule, methods in entries:
         sharded = isinstance(submodule, FSDPModule)  # a flag, not a narrowing: the module stays a torch module

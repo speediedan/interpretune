@@ -586,6 +586,11 @@ def generate_stubs(yaml_paths: Union[Path, List[Path]], output_path: Path) -> No
                 "from interpretune.protocol import DefaultAnalysisBatchProtocol",
                 1,
             )
+        # Same oscillation guard for the header's unconditional `import torch`: when no generated
+        # signature references torch, pre-commit strips the import on commit and CI's regeneration
+        # would add it back and report the stub stale.
+        if "torch." not in rendered:
+            rendered = rendered.replace("\nimport torch", "", 1)
         f.write(rendered)
 
     print(f"Stubs generated at {output_path}")

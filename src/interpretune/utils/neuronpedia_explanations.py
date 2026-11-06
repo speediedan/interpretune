@@ -1353,13 +1353,14 @@ def invoke_explanation_cli(
         if resolved_spec.kill_process_group_on_timeout:
             # CLIs that spawn servers (opencode run) outlive a plain child kill; the timeout must
             # take the whole group, or the retry loop piles up servers instead of failing fast.
+            extra_kwargs: dict[str, Any] = {"start_new_session": True} if os.name != "nt" else {}
             with subprocess.Popen(
                 argv,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 env=env,
-                **({"start_new_session": True} if os.name != "nt" else {}),  # type: ignore[arg-type]
+                **extra_kwargs,
             ) as proc:
                 try:
                     stdout, stderr = proc.communicate(timeout=timeout_seconds)

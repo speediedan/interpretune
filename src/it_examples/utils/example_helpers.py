@@ -156,7 +156,9 @@ class TargetTokenAnalysis:
         for token_id in matching_token_ids[sorted_indices]:
             sorted_token_indices.append(token_ids_list.index(int(token_id.item())))
 
-        self.tokens = [self.tokens[i] for i in sorted_token_indices]  # type: ignore
+        tokens = self.tokens
+        assert tokens is not None, "tokens should be populated before reordering"
+        self.tokens = [tokens[i] for i in sorted_token_indices]
         reordered_token_ids = [token_ids_list[i] for i in sorted_token_indices]
         self.token_ids = torch.tensor(reordered_token_ids, device=self.default_device)
 

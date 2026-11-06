@@ -26,10 +26,30 @@ from interpretune.config import CircuitTracerConfig, ITConfig
 from interpretune.adapters.circuit_tracer.config import require_hooked_transformer
 from interpretune.analysis.backends.capabilities import get_model_backend
 from interpretune.utils import _SL_AVAILABLE, MisconfigurationException, rank_zero_warn, rank_zero_info
-from interpretune.protocol import Adapter
+from interpretune.protocol import Adapter, StrOrPath
 
 if TYPE_CHECKING:
+    from typing import Protocol
+
     from interpretune.analysis.backends import AnalysisBackendCapability
+
+    class _NeuronpediaExtension(Protocol):
+        """The Neuronpedia extension surface the analysis mixin uses, present when that extension is enabled."""
+
+        def transform_circuit_tracer_graph(
+            self,
+            graph_path: str | Path,
+            output_path: str | Path | None = None,
+            slug: str | None = None,
+            custom_metadata: dict[str, Any] | None = None,
+        ) -> tuple[dict[str, Any], Path]:
+            """Transform a circuit-tracer graph for Neuronpedia."""
+            ...
+
+        def upload_graph_to_neuronpedia(self, graph_path: str | Path, api_key: str | None = None) -> Any:
+            """Upload a graph to Neuronpedia."""
+            ...
+
 
 #: What a circuit-tracer replacement model may be. `torch.nn.Module`, and it CANNOT be narrower:
 #:
@@ -78,7 +98,9 @@ class InstantiatedGraph:
 class CircuitTracerAttributeMixin:
     """Backend-agnostic mixin for circuit tracer attribute access."""
 
+    # Host-provided attributes: the composing module class supplies these through the MRO.
     it_cfg: ITConfig
+    _replacement_model: ReplacementModelType | None
 
     @property
     def circuit_tracer_cfg(self) -> CircuitTracerConfig | None:
@@ -91,7 +113,7 @@ class CircuitTracerAttributeMixin:
     def replacement_model(self) -> ReplacementModelType | None:
         """Get the replacement model handle."""
         if hasattr(self, "_replacement_model"):
-            return self._replacement_model  # type: ignore[attr-defined]  # dynamic mixin attribute
+            return self._replacement_model
         return None
 
 
@@ -640,6 +662,14 @@ class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
 class CircuitTracerAdapter(CircuitTracerAttributeMixin):
     """Adapter composing interpretune modules with circuit-tracer attribution."""
 
+    # Host-provided, as a property on the composed module, so declared in that shape.
+    if TYPE_CHECKING:
+
+        @property
+        def core_log_dir(self) -> StrOrPath | None:
+            """The run's log directory, as resolved by the host."""
+            ...
+
     def initialize_graph_output_dir(self, core_log_dir: Path) -> None:
         """Initialize graph_output_dir based on configuration or default to core_log_dir/graph_data."""
         if not self.it_cfg.circuit_tracer_cfg.graph_output_dir:
@@ -836,12 +866,41 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         Deferred to setup because the log directory is not known at construction, and graphs must have somewhere to land
         before the first attribution runs.
         """
-        super().setup(*args, **kwargs)  # type: ignore[misc]  # mixin call to super
-        self.initialize_graph_output_dir(self.core_log_dir)  # type: ignore[attr-defined]  # mixin provides core_log_dir
+        super().setup(*args, **kwargs)  # pyright: ignore[reportAttributeAccessIssue]  # mixin call to super
+        # The cooperative setup above resolves the host's log directory, so it is set by this point.
+        core_log_dir = self.core_log_dir
+        assert core_log_dir is not None, "core_log_dir should be resolved by the host setup before graph output init"
+        self.initialize_graph_output_dir(Path(core_log_dir))
 
 
 class CircuitTracerAnalysisMixin:
     """Mixin for circuit tracer analysis operations."""
+
+    # Host-provided attributes: supplied through the MRO by the attribute mixin, the base circuit-tracer
+    # module, and the Neuronpedia extension when it is enabled.
+    if TYPE_CHECKING:
+        it_cfg: ITConfig
+        neuronpedia: _NeuronpediaExtension | None
+
+        @property
+        def circuit_tracer_cfg(self) -> CircuitTracerConfig | None:
+            """The circuit-tracer configuration, from the attribute mixin."""
+            ...
+
+        def generate_attribution_graph(self, prompt: str, **kwargs: Any) -> Graph:
+            """Generate an attribution graph, from the base circuit-tracer module."""
+            ...
+
+        def create_graph_visualization_files(
+            self,
+            graph: Graph,
+            slug: str,
+            output_dir: str | Path,
+            node_threshold: float = 0.8,
+            edge_threshold: float = 0.98,
+        ) -> None:
+            """Create graph visualization files, from the base circuit-tracer module."""
+            ...
 
     def save_graph(
         self,
@@ -869,24 +928,24 @@ class CircuitTracerAnalysisMixin:
         graph.to_pt(str(pt_path))
 
         # Create graph visualization files
-        self.create_graph_visualization_files(  # type: ignore[attr-defined]  # mixin provides method
+        self.create_graph_visualization_files(
             graph=graph,
             slug=slug,
             output_dir=output_dir,
-            node_threshold=self.circuit_tracer_cfg.default_node_threshold if self.circuit_tracer_cfg else 0.8,  # type: ignore[attr-defined]  # mixin provides circuit_tracer_cfg
-            edge_threshold=self.circuit_tracer_cfg.default_edge_threshold if self.circuit_tracer_cfg else 0.98,  # type: ignore[attr-defined]  # mixin provides circuit_tracer_cfg
+            node_threshold=self.circuit_tracer_cfg.default_node_threshold if self.circuit_tracer_cfg else 0.8,
+            edge_threshold=self.circuit_tracer_cfg.default_edge_threshold if self.circuit_tracer_cfg else 0.98,
         )
         output_json_path = output_dir / f"{slug}.json"
 
         # Determine whether to use Neuronpedia
         if use_neuronpedia is None:
             use_neuronpedia = (
-                self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg else False  # type: ignore[attr-defined]  # mixin provides it_cfg
+                self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg else False
             )
 
-        if use_neuronpedia and hasattr(self, "neuronpedia") and self.neuronpedia:  # type: ignore[attr-defined]  # mixin provides neuronpedia
+        if use_neuronpedia and hasattr(self, "neuronpedia") and self.neuronpedia:
             try:
-                transformed_graph, graph_path = self.neuronpedia.transform_circuit_tracer_graph(  # type: ignore[attr-defined]  # mixin provides neuronpedia
+                transformed_graph, graph_path = self.neuronpedia.transform_circuit_tracer_graph(
                     graph_path=output_json_path, slug=slug, custom_metadata=custom_metadata
                 )
                 return graph_path
@@ -908,19 +967,19 @@ class CircuitTracerAnalysisMixin:
         """Generate attribution graph and optionally upload to Neuronpedia."""
         if use_neuronpedia is None:
             use_neuronpedia = (
-                self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg else False  # type: ignore[attr-defined]  # mixin provides it_cfg
+                self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg else False
             )
 
         if use_neuronpedia:
-            if not hasattr(self, "neuronpedia") or not self.neuronpedia:  # type: ignore[attr-defined]  # mixin provides neuronpedia
+            if not hasattr(self, "neuronpedia") or not self.neuronpedia:
                 raise RuntimeError("Neuronpedia extension not available. Enable it in your configuration.")
 
         # Generate the attribution graph
-        graph = self.generate_attribution_graph(prompt, **generation_kwargs)  # type: ignore[attr-defined]  # mixin provides method
+        graph = self.generate_attribution_graph(prompt, **generation_kwargs)
 
         # Default output_dir to graph_output_dir if not set
         if output_dir is None:
-            output_dir = self.it_cfg.circuit_tracer_cfg.graph_output_dir  # type: ignore[attr-defined]  # mixin provides it_cfg
+            output_dir = self.it_cfg.circuit_tracer_cfg.graph_output_dir
         if output_dir is not None:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -939,7 +998,9 @@ class CircuitTracerAnalysisMixin:
         )
 
         if upload_to_np and use_neuronpedia:
-            neuronpedia_metadata = self.neuronpedia.upload_graph_to_neuronpedia(graph_path)  # type: ignore[attr-defined]  # mixin provides neuronpedia
+            neuronpedia = self.neuronpedia
+            assert neuronpedia is not None, "neuronpedia availability is checked above when use_neuronpedia is set"
+            neuronpedia_metadata = neuronpedia.upload_graph_to_neuronpedia(graph_path)
         else:
             rank_zero_info("Neuronpedia upload not requested. Set upload_to_np to `True` to automatically upload.")
             neuronpedia_metadata = None

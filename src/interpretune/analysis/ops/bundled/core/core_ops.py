@@ -13,6 +13,7 @@ from transformers import BatchEncoding
 
 from interpretune.analysis.ops.base import get_batch_input
 from interpretune.analysis.optools import (
+    ClassificationModuleProtocol,
     boolean_logits_to_avg_logit_diff,
     extract_logits,
     get_loss_preds_diffs,
@@ -110,7 +111,7 @@ def model_fwd_w_cache_impl(
 
 
 def loss_preds_diffs_impl(
-    module: torch.nn.Module,
+    module: ClassificationModuleProtocol,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
     batch_idx: int,
@@ -127,7 +128,7 @@ def loss_preds_diffs_impl(
 
 
 def logit_diffs_impl(
-    module: torch.nn.Module,
+    module: ClassificationModuleProtocol,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
     batch_idx: int,

@@ -1,8 +1,11 @@
 from __future__ import annotations
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import torch
 import numpy as np
 from datasets.formatting import TorchFormatter
+
+if TYPE_CHECKING:
+    from datasets import Features
 import pyarrow as pa
 from collections.abc import Mapping
 from contextlib import contextmanager
@@ -12,6 +15,10 @@ from interpretune.analysis import ColCfg
 
 class OpSchemaExt:
     """Provides operation schema extensions for tensor processing."""
+
+    # Host-provided: the datasets formatter in the composition owns the feature schema.
+    if TYPE_CHECKING:
+        features: Features
 
     def __init__(self, col_cfg: dict | None = None, **kwargs):
         super().__init__(**kwargs)  # Allow proper multiple inheritance
@@ -64,7 +71,7 @@ class OpSchemaExt:
         curr_tensor_dim = tensor.dim()
         if dyn_dim is not None and curr_tensor_dim > dyn_dim:
             dims = None
-            if (tensor_shape := getattr(self.features[field_name], "shape", None)) is not None:  # type: ignore[attr-defined]  # provided by mixing class
+            if (tensor_shape := getattr(self.features[field_name], "shape", None)) is not None:
                 if len(tensor_shape) == curr_tensor_dim - 1:
                     # operating on all examples so dyn_dim += 1 and we swap dims[1] and dims[dyn_dim] instead of dims[0]
                     dyn_dim += 1
@@ -150,13 +157,13 @@ class ITAnalysisFormatter(OpSchemaExt, TorchFormatter):
     def format_column(self, pa_table: "pa.Table") -> torch.Tensor:
         """Format a column with enhanced tensorization."""
         column = self.numpy_arrow_extractor().extract_column(pa_table)
-        column = self.python_features_decoder.decode_column(column, pa_table.column_names[0])  # type: ignore[arg-type]
+        column = self.python_features_decoder.decode_column(column, pa_table.column_names[0])  # pyright: ignore[reportArgumentType]
         col_name = pa_table.column_names[0]
         dyn_dim = self.dyn_dims.get(col_name, None)
         col_dict = {"dyn_dim": dyn_dim} if dyn_dim is not None else {}
         with self.field_context((col_name, col_dict)):
             column = self._recursive_tensorize(column)
-        return self._consolidate(column)  # type: ignore[return-value]
+        return self._consolidate(column)  # pyright: ignore[reportReturnType]
 
     def format_row(self, pa_table: pa.Table) -> Mapping:
         """Format a row with enhanced tensorization that respects field contexts."""

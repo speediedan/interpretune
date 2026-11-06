@@ -1,13 +1,13 @@
 from __future__ import annotations
 import os
 import inspect
-from typing import Any, TYPE_CHECKING, Dict
+from typing import Any, TYPE_CHECKING, Dict, cast
 from contextlib import contextmanager
 from functools import wraps
 
 
 import torch
-from transformers import AutoConfig, PretrainedConfig
+from transformers import AutoConfig, PreTrainedModel, PretrainedConfig
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.tokenization_utils_base import BatchEncoding
 
@@ -22,7 +22,15 @@ from interpretune.config import (
 )
 
 if TYPE_CHECKING:
+    from typing import Protocol
+
+    from interpretune.base.datamodules import ITDataModule
     from interpretune.protocol import AnalysisCfgProtocol
+
+    class _Metric(Protocol):
+        """The ``evaluate`` metric surface classification steps use, loaded by the module's ``load_metric``."""
+
+        def compute(self, *, predictions: Any = ..., references: Any = ...) -> dict[str, Any]: ...
 
 
 class ITStateMixin:
@@ -95,17 +103,30 @@ class MemProfilerHooks:
 class AnalysisStepMixin:
     """Analysis-phase step logic: op dispatch, per-op grad mode, and analysis-store accumulation."""
 
+    # Host-provided attributes: the composing module class supplies these through the MRO. Declaring them here lets
+    # the checker verify every use in this mixin instead of suppressing each line.
+    if TYPE_CHECKING:
+        it_cfg: ITConfig
+        # `Any` because sibling mixins in the composition declare the same attribute with their own narrower
+        # model types, and a mutable attribute cannot be declared incompatibly across bases.
+        model: Any
+        session_complete: bool
+
+        def on_session_end(self) -> Any | None:
+            """Host hook dispatched when a session ends."""
+            ...
+
     @property
     def analysis_cfg(self) -> AnalysisCfgProtocol | None:
         """The analysis configuration, or None (with a warning) when none has been set."""
-        if not hasattr(self.it_cfg, "analysis_cfg") or self.it_cfg.analysis_cfg is None:  # type: ignore[attr-defined]  # mixin provides it_cfg
+        if not hasattr(self.it_cfg, "analysis_cfg") or self.it_cfg.analysis_cfg is None:
             rank_zero_warn("Analysis configuration has not been set.")
             return
-        return self.it_cfg.analysis_cfg  # type: ignore[attr-defined]  # mixin provides it_cfg
+        return self.it_cfg.analysis_cfg
 
     @analysis_cfg.setter
     def analysis_cfg(self, cfg: AnalysisCfgProtocol) -> None:
-        self.it_cfg.analysis_cfg = cfg  # type: ignore[attr-defined]  # mixin provides it_cfg
+        self.it_cfg.analysis_cfg = cfg
 
     def on_analysis_start(self) -> Any | None:
         """Optionally execute some post-interpretune session steps if the session is not complete."""
@@ -151,12 +172,12 @@ class AnalysisStepMixin:
                 delattr(self, "_prev_grad_enabled")
             except Exception:
                 pass
-        if not self.session_complete:  # type: ignore[attr-defined]  # mixin provides session_complete
-            self.on_session_end()  # type: ignore[attr-defined]  # mixin provides on_session_end
+        if not self.session_complete:
+            self.on_session_end()
 
     def model_sig_keys(self, target_method: str) -> list:
         """The parameter names a model method accepts, used to filter what may be passed to it."""
-        sig = inspect.signature(getattr(self.model, target_method))  # type: ignore[attr-defined]  # mixin provides model
+        sig = inspect.signature(getattr(self.model, target_method))
         params = list(sig.parameters.values())
         concrete = [
             p for p in params if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
@@ -169,7 +190,7 @@ class AnalysisStepMixin:
             # bare ``not concrete`` test miss the wrapper, emptying every pruned batch). Resolve through to
             # the underlying model whenever one exists and the visible signature still accepts arbitrary
             # kwargs; models without an underlying handle keep their own signature.
-            underlying = getattr(self.model, "_model", None) or getattr(self.model, "_module", None)  # type: ignore[attr-defined]
+            underlying = getattr(self.model, "_model", None) or getattr(self.model, "_module", None)
             if underlying is not None:
                 underlying_method = getattr(underlying, target_method, None)
                 if underlying_method is not None:
@@ -207,6 +228,12 @@ class AnalysisStepMixin:
 class GenerativeStepMixin:
     """Generation-based step logic, commonly used for n-shot classification."""
 
+    # Host-provided attributes, as on AnalysisStepMixin. The model's concrete type varies by backend (HF,
+    # TransformerLens bridge, NNsight wrapper), each with its own `generate` signature.
+    if TYPE_CHECKING:
+        it_cfg: ITConfig
+        model: Any
+
     # Often used for n-shot classification, those contexts are only a subset of generative classification use cases
 
     _gen_sig_keys: list | None = None
@@ -220,13 +247,13 @@ class GenerativeStepMixin:
     @property
     def generation_cfg(self) -> BaseGenerationConfig | None:
         """The configured generation settings."""
-        return self.it_cfg.generative_step_cfg.lm_generation_cfg  # type: ignore[attr-defined]  # mixin provides it_cfg
+        return self.it_cfg.generative_step_cfg.lm_generation_cfg
 
     @property
     def gen_sig_keys(self) -> list:
         """The parameter names the model's ``generate`` accepts, computed once and cached."""
         if not self._gen_sig_keys:
-            generate_signature = inspect.signature(self.model.generate)  # type: ignore[attr-defined]  # mixin provides model
+            generate_signature = inspect.signature(self.model.generate)
             self._gen_sig_keys = list(generate_signature.parameters.keys())
         return self._gen_sig_keys
 
@@ -236,7 +263,7 @@ class GenerativeStepMixin:
         We detect this by inspecting the signature for a VAR_KEYWORD parameter (the parameter kind associated with
         variadic keyword parameters).
         """
-        generate_signature = inspect.signature(getattr(self.model, "generate"))  # type: ignore[attr-defined]  # mixin provides model
+        generate_signature = inspect.signature(getattr(self.model, "generate"))
         for p in generate_signature.parameters.values():
             if p.kind == inspect.Parameter.VAR_KEYWORD:
                 return True
@@ -267,12 +294,12 @@ class GenerativeStepMixin:
     @property
     def _should_inspect_inputs(self) -> bool:
         # whether to filter inputs to include only those directly supported by the model's generate function
-        return self.it_cfg.generative_step_cfg.input_inspection_enabled and not self._generate_prepares_inputs()  # type: ignore[attr-defined]  # mixin provides it_cfg
+        return self.it_cfg.generative_step_cfg.input_inspection_enabled and not self._generate_prepares_inputs()
 
     def _generate_prepares_inputs(self) -> bool:
         # match sentinel methods indicating that a given model's generate function prepares inputs
         sigs = type(self)._it_cls_metadata.gen_prepares_inputs_sigs
-        return any(hasattr(self.model, prep_method) for prep_method in sigs)  # type: ignore[attr-defined]  # mixin provides model
+        return any(hasattr(self.model, prep_method) for prep_method in sigs)
 
     def it_generate(self, batch: BatchEncoding | torch.Tensor, **kwargs) -> Any:
         """Generate from a batch, filtering inputs and kwargs to what this model's ``generate`` supports."""
@@ -282,11 +309,12 @@ class GenerativeStepMixin:
                 kwargs = self.map_gen_kwargs(kwargs)
 
             if isinstance(batch, torch.Tensor):
-                outputs = self.model.generate(batch, **kwargs)  # type: ignore[attr-defined]  # mixin provides model
+                outputs = self.model.generate(batch, **kwargs)
             else:
                 if self._should_inspect_inputs:
-                    batch = self.map_gen_inputs(batch)  # type: ignore[assignment]  # BatchEncoding can be dict[str, Any] for generation
-                outputs = self.model.generate(**batch, **kwargs)  # type: ignore[attr-defined]  # mixin provides model
+                    batch = self.map_gen_inputs(batch)  # pyright: ignore[reportAssignmentType]  # BatchEncoding can be dict[str, Any] for generation
+                # BatchEncoding keys are str at runtime; its stub keys them Unknown, hence the directive.
+                outputs = self.model.generate(**batch, **kwargs)  # pyright: ignore[reportCallIssue]
         except (TypeError, AttributeError, ValueError) as ge:
             # TODO: consider further inspecting the possible generation errors encountered here to help narrow the
             # problem space for the user
@@ -298,7 +326,7 @@ class GenerativeStepMixin:
                 batch_keys = [str(type(batch))]
             gen_dataset_info_msg = (
                 f"The following keys were found in the provided data batch: {os.sep} {batch_keys}). The current"
-                f" generate method ({self.model.generate}) accepts: {os.sep} {[self._gen_sig_keys]}."  # type: ignore[attr-defined]  # mixin provides model
+                f" generate method ({self.model.generate}) accepts: {os.sep} {[self._gen_sig_keys]}."
             )
             rank_zero_warn(gen_dataset_info_msg)
             raise Exception(f"{gen_dataset_info_msg} Received the following error msg: {ge}")
@@ -308,20 +336,45 @@ class GenerativeStepMixin:
 class ClassificationMixin:
     """Classification helpers: label/token mapping, logit standardization, and metric accumulation."""
 
+    # Host-provided attributes, as on AnalysisStepMixin: supplied by the composing module class, its framework
+    # adapter, or (for `metric`) the module's own `load_metric`.
+    if TYPE_CHECKING:
+        it_cfg: ITConfig
+        datamodule: ITDataModule
+        metric: _Metric
+
+        # Properties on the host and its adapters, so declared in that shape rather than as variables.
+        @property
+        def device(self) -> torch.device | None:
+            """The device the model is on, as resolved by the host."""
+            ...
+
+        @device.setter
+        def device(self, value: str | torch.device | None) -> None: ...
+
+        @property
+        def output_device(self) -> torch.device | None:
+            """The device model outputs land on, where an adapter distinguishes it."""
+            ...
+
+        def log_dict(self, metric_dict: dict[str, Any], *args: Any, **kwargs: Any) -> None:
+            """Host logging entry point for a dict of metrics."""
+            ...
+
     # Default classification helper methods
 
     def setup(self, *args, **kwargs) -> None:
         """Initialize classification mapping if configured. Cooperative super() ensures all mixins in the MRO chain
         contribute their setup logic."""
-        super().setup(*args, **kwargs)  # type: ignore[misc]  # MRO cooperative call
-        if self.it_cfg.classification_mapping is not None:  # type: ignore[attr-defined]  # mixin provides it_cfg
+        super().setup(*args, **kwargs)  # pyright: ignore[reportAttributeAccessIssue]  # MRO cooperative call
+        if self.it_cfg.classification_mapping is not None:
             self.init_classification_mapping()
 
     def init_classification_mapping(self) -> None:
         """Resolve the configured label strings to token ids on the model's device."""
-        it_cfg, tokenizer = self.it_cfg, self.datamodule.tokenizer  # type: ignore[attr-defined]  # mixin provides it_cfg and datamodule
+        it_cfg, tokenizer = self.it_cfg, self.datamodule.tokenizer
         token_ids = tokenizer.convert_tokens_to_ids(it_cfg.classification_mapping)
-        device = self.device if isinstance(self.device, torch.device) else self.output_device  # type: ignore[attr-defined]  # mixin provides device/output_device
+        device = self.device if isinstance(self.device, torch.device) else self.output_device
         it_cfg.classification_mapping_indices = torch.tensor(token_ids, device=device)
 
     def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
@@ -334,30 +387,32 @@ class ClassificationMixin:
         # logical shape invariant: [batch size, positions to consider, answers to consider]
         if isinstance(logits, tuple):
             logits = torch.stack([out for out in logits], dim=1)
-        logits = logits.to(device=self.device)  # type: ignore[attr-defined]  # mixin provides device
+        logits = logits.to(device=self.device)
         if logits.ndim == 2:  # if answer logits have already been squeezed
             logits = logits.unsqueeze(1)
-        if logits.shape[-1] != self.it_cfg.num_labels:  # type: ignore[attr-defined]  # mixin provides it_cfg
+        if logits.shape[-1] != self.it_cfg.num_labels:
             # Only use custom mapping if generative_step_cfg is enabled and indices are set
-            if (mapping_indices := self.it_cfg.classification_mapping_indices) is not None:  # type: ignore[attr-defined]  # mixin provides it_cfg
+            if (mapping_indices := self.it_cfg.classification_mapping_indices) is not None:
                 map_indices = mapping_indices
             else:
                 raise ValueError("The logits shape does not match the expected number of labels.")
 
             logits = torch.index_select(logits, -1, map_indices)
             # for non-generative (standard classification), keep only the last position
-            if not self.it_cfg.generative_step_cfg.enabled:  # type: ignore[attr-defined]  # mixin provides it_cfg
+            if not self.it_cfg.generative_step_cfg.enabled:
                 logits = logits[:, -1:, :]
         return logits
 
-    def labels_to_ids(self, labels: list[str]) -> tuple[torch.Tensor, list[str]]:
-        """Map label strings to their token ids via the classification mapping."""
-        return torch.take(self.it_cfg.classification_mapping_indices, labels), labels  # type: ignore[attr-defined]  # mixin provides it_cfg
+    def labels_to_ids(self, labels: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Map label indices to their token ids via the classification mapping, returning the labels too."""
+        return torch.take(self.it_cfg.classification_mapping_indices, labels), labels
 
-    def logits_and_labels(self, batch: BatchEncoding, batch_idx: int) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
-        """Run a forward pass and return standardized logits alongside label ids and label strings."""
+    def logits_and_labels(
+        self, batch: BatchEncoding, batch_idx: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Run a forward pass and return standardized logits alongside label ids and the original labels."""
         label_ids, labels = self.labels_to_ids(batch.pop("labels"))
-        logits = self(**batch)  # type: ignore[misc]  # mixin provides __call__ through composition
+        logits = self(**batch)  # pyright: ignore[reportCallIssue]  # mixin provides __call__ through composition
         # TODO: add another layer of abstraction here to handle different model output types? Tradeoffs to consider...
         if not isinstance(logits, torch.Tensor):
             logits = logits.logits
@@ -379,16 +434,16 @@ class ClassificationMixin:
                     f"tensor), got {type(logits).__name__}"
                 )
             logits = inner
-        logits = self.standardize_logits(logits)  # type: ignore[arg-type]  # standardize_logits handles tuple case
+        logits = self.standardize_logits(logits)  # pyright: ignore[reportArgumentType]  # standardize_logits handles tuple case
         per_example_answers, _ = torch.max(logits, dim=-2)
-        preds = torch.argmax(per_example_answers, axis=-1)  # type: ignore[call-arg]
-        metric_dict = self.metric.compute(predictions=preds, references=labels)  # type: ignore[attr-defined]  # mixin provides metric
+        preds = torch.argmax(per_example_answers, dim=-1)
+        metric_dict = self.metric.compute(predictions=preds, references=labels)
         # TODO: check if this type casting is still required for lightning torchmetrics, bug should be fixed now...
         metric_dict = dict(
-            map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)), metric_dict.items())  # type: ignore[attr-defined]  # mixin provides device
+            map(lambda x: (x[0], torch.tensor(x[1], device=self.device).to(torch.float32)), metric_dict.items())
         )
         if mode == "log":
-            self.log_dict(metric_dict, prog_bar=True, sync_dist=True)  # type: ignore[attr-defined]  # mixin provides log_dict
+            self.log_dict(metric_dict, prog_bar=True, sync_dist=True)
         else:
             return metric_dict
 
@@ -396,9 +451,23 @@ class ClassificationMixin:
 class HFFromPretrainedMixin:
     """ " Barebones interface to setup optimizers and schedulers for manual optimization with core IT modules."""
 
-    # proper initialization of these variables should be done in the child class
+    # Host-provided attributes, as on AnalysisStepMixin: proper initialization is done by the composing
+    # module class. The model here is specifically the HF model this mixin initializes.
     it_cfg: ITConfig
-    model: torch.nn.Module
+    model: PreTrainedModel
+
+    # Also host-provided, as properties elsewhere in the composition, so declared in that shape.
+    if TYPE_CHECKING:
+
+        @property
+        def dtype(self) -> torch.dtype | str | None:
+            """The model's dtype, as resolved by the host."""
+            ...
+
+        @property
+        def generation_cfg(self) -> BaseGenerationConfig | None:
+            """The configured generation settings, from the generative step mixin."""
+            ...
 
     @property
     def hf_cfg(self) -> HFFromPretrainedConfig | None:
@@ -424,7 +493,7 @@ class HFFromPretrainedMixin:
     def set_input_require_grads(self) -> None:
         """Enable input gradients when configured -- required for gradient attribution through embeddings."""
         if self.hf_cfg and self.hf_cfg.enable_input_require_grads:
-            self.model.enable_input_require_grads()  # type: ignore[attr-defined]  # mixin provides model
+            self.model.enable_input_require_grads()
 
     def _hf_configure_quantization(self) -> Any | None:
         if self.hf_cfg and self.hf_cfg.bitsandbytesconfig and _BNB_AVAILABLE:
@@ -439,7 +508,7 @@ class HFFromPretrainedMixin:
         additional_from_pretrained_kwargs = {
             "pretrained_model_name_or_path": self.it_cfg.model_name_or_path,  # mixin provides it_cfg
             "quantization_config": quantization_config,
-            "dtype": self.dtype,  # type: ignore[attr-defined]  # mixin provides dtype
+            "dtype": self.dtype,
         }
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _update_hf_pretrained_cfg"
         self.hf_cfg.pretrained_kwargs.update(additional_from_pretrained_kwargs)
@@ -470,14 +539,14 @@ class HFFromPretrainedMixin:
             )
         unused_kwargs: dict = {}
         if self.hf_cfg.pretrained_kwargs.pop("return_unused_kwargs", False):
-            cust_config, unused_kwargs = cust_config  # type: ignore[misc]  # HF API can return tuple when return_unused_kwargs=True
+            cust_config, unused_kwargs = cust_config  # pyright: ignore[reportAssignmentType]  # HF API can return tuple when return_unused_kwargs=True
         assert isinstance(cust_config, PretrainedConfig), "Config should be PretrainedConfig instance"
         cust_config.update(self.it_cfg.model_cfg)  # apply pre-init model config overrides    # mixin provides it_cfg
         return cust_config, unused_kwargs
 
     def hf_configured_model_init(
         self, cust_config: PretrainedConfig, access_token: str | None = None
-    ) -> torch.nn.Module:
+    ) -> PreTrainedModel:
         """Instantiate the HF model from a customized config, applying the configured label count."""
         cust_config.num_labels = self.it_cfg.num_labels  # mixin provides it_cfg
         assert self.hf_cfg is not None, "hf_cfg should be set when calling hf_configured_model_init"
@@ -498,7 +567,7 @@ class HFFromPretrainedMixin:
                 model = self.it_cfg.model_class(config=cust_config)  # mixin provides it_cfg
         return model
 
-    def _hf_meta_model_init(self, cust_config: PretrainedConfig, access_token: str | None) -> torch.nn.Module:
+    def _hf_meta_model_init(self, cust_config: PretrainedConfig, access_token: str | None) -> PreTrainedModel:
         """The model built on the meta device, for a data-parallel placement to shard before loading it.
 
         With ``meta_init_load: rank0``, the process a launcher made rank 0 (``RANK`` unset counts as rank 0) also loads
@@ -550,14 +619,15 @@ class HFFromPretrainedMixin:
     def _hf_maybe_resize_token_embeddings(self) -> None:
         if not self.it_cfg.tokenizer_id_overrides:  # mixin provides it_cfg
             return
-        vocab_size = getattr(self.model.base_model, "vocab_size", None) or self.model.config.vocab_size  # type: ignore[attr-defined]  # mixin provides model
+        vocab_size = getattr(self.model.base_model, "vocab_size", None) or self.model.config.vocab_size
         max_override_id = max(self.it_cfg.tokenizer_id_overrides.values())  # mixin provides it_cfg
         if max_override_id >= vocab_size:
             new_num_tokens = max_override_id + 1
-            self.model.base_model.resize_token_embeddings(new_num_tokens)  # type: ignore[attr-defined]  # mixin provides model
+            # An HF model's base model is itself a PreTrainedModel; the stub types `base_model` as Module.
+            cast(PreTrainedModel, self.model.base_model).resize_token_embeddings(new_num_tokens)
 
     def _hf_post_init_cfg(self) -> None:
-        self.model.config.update(self.it_cfg.model_cfg)  # type: ignore[attr-defined]  # mixin provides model and it_cfg, HF config has update method
+        self.model.config.update(self.it_cfg.model_cfg)
         # TODO: right now, a default lm_generation_cfg is always loaded even when not needed which is wasteful
         #       this checks for the presence of `lm_generation_cfg` so it still works when lm_generation_cfg defaults
         #       to None
@@ -566,12 +636,12 @@ class HFFromPretrainedMixin:
         # (key assumption: generation arguments do not affect model init)
         # NOTE: transformers v5 no longer supports setting generation parameters on model.config;
         #       generation parameters must ONLY be set on model.generation_config
-        if self.generation_cfg and isinstance(self.generation_cfg, HFGenerationConfig):  # type: ignore[attr-defined]  # mixin provides generation_cfg
+        if self.generation_cfg and isinstance(self.generation_cfg, HFGenerationConfig):
             if getattr(self.model, "generation_config", None):  # mixin provides model
-                for k, v in self.generation_cfg.model_config.items():  # type: ignore[attr-defined]  # mixin provides generation_cfg
+                for k, v in self.generation_cfg.model_config.items():
                     setattr(self.model.generation_config, k, v)  # mixin provides model
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _hf_post_init_cfg"
-        self.model.config.use_cache = self.hf_cfg.use_model_cache  # type: ignore[attr-defined]  # mixin provides model
+        self.model.config.use_cache = self.hf_cfg.use_model_cache
         self._configure_gradient_checkpointing()
         # LoRA on an unquantized base, or QLoRA when bitsandbytes is configured and installed
         if self.hf_cfg.lora_cfg and not self.hf_cfg.bitsandbytesconfig:
@@ -582,17 +652,18 @@ class HFFromPretrainedMixin:
     def _configure_gradient_checkpointing(self) -> None:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _configure_gradient_checkpointing"
         if self.hf_cfg.activation_checkpointing:
-            self.model.gradient_checkpointing_enable()  # type: ignore[attr-defined]  # mixin provides model
+            self.model.gradient_checkpointing_enable()
 
     def _configure_peft(self, quantized: bool = True) -> None:
         assert self.hf_cfg is not None, "hf_cfg should be set when calling _configure_peft"
         if self.hf_cfg.activation_checkpointing:
-            self.model.gradient_checkpointing_enable()  # type: ignore[attr-defined]  # mixin provides model
+            self.model.gradient_checkpointing_enable()
         from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 
         if quantized:
             self.model = prepare_model_for_kbit_training(self.model)  # mixin provides model
-        self.model = get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg))  # mixin provides model
+        # peft wraps the HF model in a PeftModel; the mixin keeps using it through the HF surface it forwards.
+        self.model = cast(PreTrainedModel, get_peft_model(self.model, LoraConfig(**self.hf_cfg.lora_cfg)))
         from interpretune.runners.distributed import META_INIT_SOURCE
 
         # a meta-built model loads from rank 0's copy, so the copy takes the same adapters: its initial adapter values

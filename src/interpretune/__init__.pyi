@@ -2,7 +2,6 @@
 # This file is auto-generated. Do not modify directly.
 
 from typing import Callable, Optional
-import torch
 from transformers import BatchEncoding
 
 # The public surface, DERIVED from `interpretune.__all__` rather than listed here.
@@ -73,6 +72,7 @@ from interpretune.protocol import (
     AnalysisOpProtocol as AnalysisOpProtocol,
     AnalysisStoreProtocol as AnalysisStoreProtocol,
     BaseAnalysisBatchProtocol as BaseAnalysisBatchProtocol,
+    ClassificationModuleProtocol as ClassificationModuleProtocol,
     CorePhases as CorePhases,
     CoreSteps as CoreSteps,
     DefaultAnalysisBatchProtocol as DefaultAnalysisBatchProtocol,
@@ -589,7 +589,7 @@ def latent_correct_acts(
     ...
 
 def logit_diffs(
-    module: torch.nn.Module,
+    module: ClassificationModuleProtocol,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
     batch_idx: int,
@@ -614,7 +614,7 @@ def logit_diffs(
     ...
 
 def logit_diffs_cache(
-    module: torch.nn.Module,
+    module: ClassificationModuleProtocol,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
     batch_idx: int,
@@ -640,7 +640,7 @@ def logit_diffs_cache(
     ...
 
 def loss_preds_diffs(
-    module: torch.nn.Module,
+    module: ClassificationModuleProtocol,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
     batch_idx: int,

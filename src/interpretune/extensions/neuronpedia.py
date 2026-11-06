@@ -558,4 +558,4 @@ if _NEURONPEDIA_AVAILABLE:
                 )
                 return transformed_graph, None
 else:
-    NeuronpediaIntegration = object  # type: ignore[assignment]
+    NeuronpediaIntegration = object  # pyright: ignore[reportAssignmentType]

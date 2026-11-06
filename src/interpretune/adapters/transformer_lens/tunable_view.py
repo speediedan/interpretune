@@ -38,12 +38,13 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 
 import torch
 from torch import nn, Tensor
 
 if TYPE_CHECKING:
+    from transformer_lens.model_bridge.bridge import TransformerBridge
     from venngram.tuning import TunableSupport
 
 _BLOCK = re.compile(r"^blocks\.(\d+)\.")
@@ -75,7 +76,7 @@ def autograd_leaves(t: Tensor) -> list[Tensor]:
     return list(leaves.values())
 
 
-def _traced_by_autograd(bridge: nn.Module) -> dict[str, list[Tensor]]:
+def _traced_by_autograd(bridge: TransformerBridge) -> dict[str, list[Tensor]]:
     """Each TransformerLens name with the parameters its tensor is computed from.
 
     Every floating-point parameter is made to require grad while the TransformerLens tensors are built, so that each
@@ -88,7 +89,7 @@ def _traced_by_autograd(bridge: nn.Module) -> dict[str, list[Tensor]]:
         for p in params:
             p.requires_grad_(True)
         with torch.enable_grad():
-            return {n: autograd_leaves(t) for n, t in bridge.tl_named_parameters()}  # type: ignore[attr-defined]
+            return {n: autograd_leaves(t) for n, t in bridge.tl_named_parameters()}
     finally:
         for p, flag in zip(params, saved):
             p.requires_grad_(flag)
@@ -127,7 +128,7 @@ class TransformerBridgeView:
     def __init__(
         self,
         root: nn.Module,
-        bridge: nn.Module | None = None,
+        bridge: TransformerBridge | None = None,
         implicit_norm_thaw: bool = True,
         roles: Mapping[str, str] | None = None,
     ) -> None:
@@ -138,7 +139,8 @@ class TransformerBridgeView:
         )
         if bridge is None:
             model = root._modules.get("model")
-            bridge = model if model is not None and hasattr(model, "tl_named_parameters") else root
+            resolved = model if model is not None and hasattr(model, "tl_named_parameters") else root
+            bridge = cast("TransformerBridge", resolved)  # quoted: TransformerBridge is TYPE_CHECKING-only here
         self.root = root
         self.bridge = bridge
         self.implicit_norm_thaw = implicit_norm_thaw
@@ -201,7 +203,7 @@ class TransformerBridgeView:
                 )
             )
 
-        self._block_norms = {i: _norms(block) for i, block in enumerate(bridge.blocks)}  # type: ignore[attr-defined]
+        self._block_norms = {i: _norms(block) for i, block in enumerate(bridge.blocks)}
         final = getattr(bridge, "ln_final", None)
         self._final_norm = (
             [name_of[id(p)] for p in final.parameters() if id(p) in name_of]
@@ -271,7 +273,7 @@ class TransformerBridgeView:
         """
         self._build()
         with torch.no_grad():
-            for name, tensor in self.bridge.tl_named_parameters():  # type: ignore[attr-defined]
+            for name, tensor in self.bridge.tl_named_parameters():
                 if name in self._table:
                     yield name, tensor
 

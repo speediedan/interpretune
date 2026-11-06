@@ -145,7 +145,7 @@ def _derived_table(architecture: str) -> tuple[dict[str, HookMapping], dict[str,
             derived[base] = _DERIVED_REASONS[res.derivation or ""].replace("{norm}", base.split(".")[0])
             continue
         template = templates.get(res.module_path, res.module_path)
-        mappings[base] = HookMapping(envoy_path=template, io_type=res.io, tuple_output=res.tuple_output)  # type: ignore[arg-type]
+        mappings[base] = HookMapping(envoy_path=template, io_type=res.io, tuple_output=res.tuple_output)  # pyright: ignore[reportArgumentType]
     return mappings, derived
 
 

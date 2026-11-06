@@ -225,7 +225,7 @@ class ITHubResourceManager:
             repos = []
             models = self.api.list_models(filter=self.kind.discovery_filter, cardData=True)
             for model in models:
-                repo_id = model.modelId  # type: ignore[attr-defined]  # HuggingFace ModelInfo compatibility
+                repo_id = model.id
                 if username and not repo_id.startswith(f"{username}/"):
                     continue
                 repos.append(repo_id)

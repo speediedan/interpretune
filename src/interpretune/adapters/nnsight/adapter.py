@@ -26,6 +26,7 @@ from interpretune.protocol import Adapter
 if TYPE_CHECKING:
     from nnsight import LanguageModel
     from interpretune.adapters.nnsight.config import NNsightConfig, ITNNsightConfig
+    from interpretune.config import ITState
 
 
 ################################################################################
@@ -42,6 +43,7 @@ class NNsightAttributeMixin:
 
     it_cfg: ITNNsightConfig  # Provided by mixing class
     model: LanguageModel | None  # Provided by mixing class
+    _it_state: ITState  # Provided by mixing class
 
     @property
     def nnsight_cfg(self) -> NNsightConfig | None:
@@ -69,7 +71,7 @@ class NNsightAttributeMixin:
         device: torch.device | None = None
         try:
             # First check IT state
-            device = getattr(self._it_state, "_device", None)  # type: ignore[attr-defined]
+            device = getattr(self._it_state, "_device", None)
             if device is not None:
                 return device
 
@@ -94,7 +96,7 @@ class NNsightAttributeMixin:
         """Set the device for the NNsight model."""
         if value is not None and not isinstance(value, torch.device):
             value = torch.device(value)
-        self._it_state._device = value  # type: ignore[attr-defined]
+        self._it_state._device = value
 
     @property
     def output_device(self) -> torch.device | None:
@@ -410,7 +412,7 @@ class NNsightAdapter(NNsightAttributeMixin):
         )
 
 
-class NNsightModule(NNsightAdapter, CoreHelperAttributes, BaseNNsightModule):  # type: ignore[misc]
+class NNsightModule(NNsightAdapter, CoreHelperAttributes, BaseNNsightModule):  # pyright: ignore[reportIncompatibleVariableOverride]
     """NNsight module combining adapter, core helpers, and base functionality.
 
     This is the composed module class for (core, nnsight) adapter combination.
