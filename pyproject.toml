@@ -221,7 +221,7 @@ git-deps = [
     # shifting every position index in the feature-intervention path. The branch is rebased as the PRs
     # evolve, so VERIFY BY CONTENT, not by SHA:
     #   git log --grep="Canonicalize nnsight trace" <pin>   -> must return exactly one commit
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@c21e9209310a42ad3014549155ad993c9c424998",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6a278292747293bcc0ce863aaeb26620f198aacc",
     # sae-lens: pinned to the head of decoderesearch/SAELens#739 (transformer-lens 4.0 support), because
     # every sae-lens release through 6.51.2 fails `import sae_lens` under transformer-lens 4.0
     # (`No module named 'transformer_lens.HookedTransformer'`). RETIRE this pin for a released floor in

@@ -628,6 +628,7 @@ class CircuitTracerAnalysisBackend:
             for token_str, token_id in zip(components["logit_target_tokens"], components["logit_target_ids"].tolist())
         ]
         cfg = UnifiedConfig.from_dict(dict(components["graph_cfg"]))
+        regime = components["attribution_regime"]
         return Graph(
             input_string=components["input_string"],
             input_tokens=components["input_tokens"],
@@ -640,7 +641,7 @@ class CircuitTracerAnalysisBackend:
             logit_probabilities=components["logit_probabilities"],
             scan_name=components["scan"],
             vocab_size=components["vocab_size"],
-            attribution_regime=components["attribution_regime"],
+            attribution_regime=None if regime is None else dict(regime),
         )
 
     def hydrate_graph_from_batch(self, analysis_batch: AnalysisBatch | Mapping[str, Any]):

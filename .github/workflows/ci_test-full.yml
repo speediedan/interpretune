@@ -128,7 +128,9 @@ jobs:
           macos-15
           ]
         python-version: ["3.13"]
-    timeout-minutes: 90
+    # The macOS leg is the only one that runs the two-fit bf16 CLI comparison, which puts it within runner variance of 90
+    # minutes, and a job ended at the limit reads as cancelled with no test failing.
+    timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 120 || 90 }}
     env:
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       # TEMPORARY until the #261 flip: source the RW secret so CI can read the private
