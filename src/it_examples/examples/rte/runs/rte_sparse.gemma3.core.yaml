@@ -8,9 +8,9 @@
 # `ChainBuildGraphs` graphs the restored weights (the 100 #667 pilot items fit the enforcement; the 40 gate items are
 # measured), `ChainGraphGate` judges the phase against the pinned untuned reference (#709: error share up at most 5
 # points, replacement down at most 0.10), and phase 1 tunes with the simplified graph enforced and a fresh optimizer.
-# The final gate judges the global best, whichever phase holds it. When recovery's best wins (seeds 0 and 2 of 0 to 2,
-# #899) it vetoes on error share up 5.6 to 6.4 points, as the chain's evidence predicted, and the run ends on phase 0's
-# best. Every phase is judged on `val_task`, the phase-invariant task loss.
+# The final gate judges the global best, whichever phase holds it, and a veto ends the run on phase 0's best (#899 has
+# the outcome per seed). The reference is graphed at circuit-tracer bd6bc784, and graphs from another circuit-tracer are
+# not comparable with it. Every phase is judged on `val_task`, the phase-invariant task loss.
 session_ref: speediedan/rte:rte_sparse.gemma3.core
 seed_everything: 0
 run_cfg:
@@ -43,7 +43,7 @@ run_cfg:
                 class_path: rte_boolq.ChainGraphGate
                 init_args:
                   reference: hub://speediedan/rte/chain/untuned_reference.json
-                  sha256: 1aa17f74928b790bde0283ba6330b8ae376c6514ac3b8276c1734adab5006ed6
+                  sha256: 2f0ad55275106d84c69bda4d84d17aa48cb51bb0141628c457f07e7fdb054eb6
               rank_zero_only: true
           phase_hooks:
             start:

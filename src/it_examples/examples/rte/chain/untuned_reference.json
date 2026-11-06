@@ -1,165 +1,165 @@
 {
- "description": "Untuned gemma-3-1b-it Yes-minus-No graphs (mwhanna/gemma-scope-2-1b-it width_16k_l0_small_affine, max_feature_nodes 2048, zero positions [0, 1)) of the chain's 40 gate items: per row of the chain's seeded RTE train order, the error nodes' share of node influence and circuit-tracer's replacement score (interpretune#709).",
+ "description": "Untuned gemma-3-1b-it Yes-minus-No graphs (mwhanna/gemma-scope-2-1b-it width_16k_l0_small_affine, max_feature_nodes 2048, zero positions [0, 1)) of the chain's 40 gate items: per row of the chain's seeded RTE train order, the error nodes' share of node influence and circuit-tracer's replacement score (interpretune#709), at circuit-tracer bd6bc784 (token nodes carry the embedding the model adds, interpretune#791).",
  "rows": {
   "860": {
-   "errors_share": 0.19017166725130227,
-   "replacement": 0.3354964554309845
+   "errors_share": 0.16643711924552917,
+   "replacement": 0.5197508335113525
   },
   "861": {
-   "errors_share": 0.19366236796972752,
-   "replacement": 0.3162537217140198
+   "errors_share": 0.17123928666114807,
+   "replacement": 0.4923943877220154
   },
   "862": {
-   "errors_share": 0.19374849111862655,
-   "replacement": 0.3261038362979889
+   "errors_share": 0.16850103437900543,
+   "replacement": 0.5127721428871155
   },
   "863": {
-   "errors_share": 0.2013855154377646,
-   "replacement": 0.32393601536750793
+   "errors_share": 0.17999689280986786,
+   "replacement": 0.4952602982521057
   },
   "864": {
-   "errors_share": 0.1982769199997083,
-   "replacement": 0.3193342387676239
+   "errors_share": 0.17723913490772247,
+   "replacement": 0.49325308203697205
   },
   "865": {
-   "errors_share": 0.19425917093195674,
-   "replacement": 0.3501858413219452
+   "errors_share": 0.1734645962715149,
+   "replacement": 0.5212092995643616
   },
   "866": {
-   "errors_share": 0.19995804681696788,
-   "replacement": 0.3254024386405945
+   "errors_share": 0.17514754831790924,
+   "replacement": 0.512296736240387
   },
   "867": {
-   "errors_share": 0.20388323391596064,
-   "replacement": 0.3152983486652374
+   "errors_share": 0.18329022824764252,
+   "replacement": 0.4846336841583252
   },
   "868": {
-   "errors_share": 0.1975289509987352,
-   "replacement": 0.3200311064720154
+   "errors_share": 0.17467065155506134,
+   "replacement": 0.4993232786655426
   },
   "869": {
-   "errors_share": 0.19369240481779876,
-   "replacement": 0.3282758593559265
+   "errors_share": 0.17171533405780792,
+   "replacement": 0.5080444812774658
   },
   "870": {
-   "errors_share": 0.20240348408560083,
-   "replacement": 0.31084808707237244
+   "errors_share": 0.1800890564918518,
+   "replacement": 0.48618385195732117
   },
   "871": {
-   "errors_share": 0.20256932136717704,
-   "replacement": 0.33271825313568115
+   "errors_share": 0.1808687001466751,
+   "replacement": 0.5099266171455383
   },
   "872": {
-   "errors_share": 0.19443493525419128,
-   "replacement": 0.32427629828453064
+   "errors_share": 0.1702154129743576,
+   "replacement": 0.508506178855896
   },
   "873": {
-   "errors_share": 0.2002194654997769,
-   "replacement": 0.33391737937927246
+   "errors_share": 0.17619124054908752,
+   "replacement": 0.5176133513450623
   },
   "874": {
-   "errors_share": 0.19125541782800703,
-   "replacement": 0.33445870876312256
+   "errors_share": 0.16893921792507172,
+   "replacement": 0.5142064094543457
   },
   "875": {
-   "errors_share": 0.19909043764953532,
-   "replacement": 0.33145418763160706
+   "errors_share": 0.17695461213588715,
+   "replacement": 0.5095289945602417
   },
   "876": {
-   "errors_share": 0.19761647575661156,
-   "replacement": 0.3283252418041229
+   "errors_share": 0.1728733628988266,
+   "replacement": 0.5170084238052368
   },
   "877": {
-   "errors_share": 0.19677063480835463,
-   "replacement": 0.3162219226360321
+   "errors_share": 0.17443038523197174,
+   "replacement": 0.49187207221984863
   },
   "878": {
-   "errors_share": 0.19998972856760905,
-   "replacement": 0.3364078998565674
+   "errors_share": 0.17848621308803558,
+   "replacement": 0.5127692222595215
   },
   "879": {
-   "errors_share": 0.20573948162229097,
-   "replacement": 0.31641796231269836
+   "errors_share": 0.18427646160125732,
+   "replacement": 0.4883023500442505
   },
   "880": {
-   "errors_share": 0.19808224449101167,
-   "replacement": 0.329866886138916
+   "errors_share": 0.1750718504190445,
+   "replacement": 0.5097221732139587
   },
   "881": {
-   "errors_share": 0.200155287017271,
-   "replacement": 0.325476735830307
+   "errors_share": 0.1777740716934204,
+   "replacement": 0.5039755702018738
   },
   "882": {
-   "errors_share": 0.19715958819692453,
-   "replacement": 0.3210790157318115
+   "errors_share": 0.1763305366039276,
+   "replacement": 0.4934172034263611
   },
   "883": {
-   "errors_share": 0.2024146675034297,
-   "replacement": 0.3179091513156891
+   "errors_share": 0.180656298995018,
+   "replacement": 0.49081334471702576
   },
   "884": {
-   "errors_share": 0.19306016984258492,
-   "replacement": 0.3333134949207306
+   "errors_share": 0.17277143895626068,
+   "replacement": 0.5008277893066406
   },
   "885": {
-   "errors_share": 0.19527076974642132,
-   "replacement": 0.32271549105644226
+   "errors_share": 0.17229074239730835,
+   "replacement": 0.502469003200531
   },
   "886": {
-   "errors_share": 0.18827688586178287,
-   "replacement": 0.35288524627685547
+   "errors_share": 0.16665737330913544,
+   "replacement": 0.5284755825996399
   },
   "887": {
-   "errors_share": 0.19360263218154244,
-   "replacement": 0.3269321024417877
+   "errors_share": 0.1707162857055664,
+   "replacement": 0.5075740218162537
   },
   "1021": {
-   "errors_share": 0.20264147427084978,
-   "replacement": 0.3075643479824066
+   "errors_share": 0.1804807037115097,
+   "replacement": 0.4820099174976349
   },
   "1027": {
-   "errors_share": 0.19810637880424325,
-   "replacement": 0.33051690459251404
+   "errors_share": 0.1760057955980301,
+   "replacement": 0.5062217712402344
   },
   "1055": {
-   "errors_share": 0.19705770516122015,
-   "replacement": 0.3241390287876129
+   "errors_share": 0.17464949190616608,
+   "replacement": 0.5017407536506653
   },
   "1058": {
-   "errors_share": 0.19981857645975912,
-   "replacement": 0.31960925459861755
+   "errors_share": 0.1769561767578125,
+   "replacement": 0.49949708580970764
   },
   "1059": {
-   "errors_share": 0.19999166605064833,
-   "replacement": 0.3265925943851471
+   "errors_share": 0.17587949335575104,
+   "replacement": 0.5150859951972961
   },
   "1069": {
-   "errors_share": 0.2010740173374523,
-   "replacement": 0.3142106235027313
+   "errors_share": 0.17733341455459595,
+   "replacement": 0.49736467003822327
   },
   "1097": {
-   "errors_share": 0.195698803239032,
-   "replacement": 0.33246636390686035
+   "errors_share": 0.17350676655769348,
+   "replacement": 0.5088019967079163
   },
   "1121": {
-   "errors_share": 0.19698159473415314,
-   "replacement": 0.33015432953834534
+   "errors_share": 0.17392733693122864,
+   "replacement": 0.5118914246559143
   },
   "1136": {
-   "errors_share": 0.19908218719592566,
-   "replacement": 0.3121999502182007
+   "errors_share": 0.1753106415271759,
+   "replacement": 0.491545706987381
   },
   "1139": {
-   "errors_share": 0.19375957976151403,
-   "replacement": 0.32579049468040466
+   "errors_share": 0.1709420382976532,
+   "replacement": 0.5031402707099915
   },
   "1142": {
-   "errors_share": 0.18907764474425667,
-   "replacement": 0.33633267879486084
+   "errors_share": 0.16623112559318542,
+   "replacement": 0.5170422196388245
   },
   "1150": {
-   "errors_share": 0.19420572406435405,
-   "replacement": 0.33298128843307495
+   "errors_share": 0.16981613636016846,
+   "replacement": 0.5205020308494568
   }
  }
 }
