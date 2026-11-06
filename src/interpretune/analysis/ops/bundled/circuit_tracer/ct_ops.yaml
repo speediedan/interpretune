@@ -91,6 +91,85 @@ compute_attribution_graph:
       required: false
       non_tensor: true
       sequence_type: false
+    # what the graph held constant: a stored graph that lost this would read as frozen, which is the default
+    graph_attribution_regime_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+
+head_loadings:
+  description: Split the edges into one attribution target across the attention heads of each layer
+  implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.head_loadings_impl
+  required_capabilities: [head_attribution]
+  # `head_target` is a call-time kwarg because a target can be a token string, a tensor or a `CustomTarget`.
+  normal_params:
+    head_layers: null
+    freeze_attention: true
+    freeze_norms: true
+  input_schema: {}
+  output_schema:
+    head_loading_layers:
+      datasets_dtype: int64
+      sequence_type: true
+    head_loading_shares:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    head_loading_bypass_shares:
+      datasets_dtype: float32
+      sequence_type: true
+    head_loading_total:
+      datasets_dtype: float32
+      sequence_type: false
+    head_loading_partition_errors:
+      datasets_dtype: float32
+      sequence_type: true
+
+head_conductance:
+  description: Credit each attention head for the measured change of a target between two prompts of the same length
+  implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.head_conductance_impl
+  required_capabilities: [head_attribution]
+  # `counterfactual_prompt` and `target_weights` are required call-time kwargs, with no default to declare.
+  normal_params:
+    n_steps: 32
+    points_per_batch: 17
+    key_positions: null
+  input_schema: {}
+  output_schema:
+    head_conductance_qk:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    head_conductance_ov:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      sequence_type: false
+    head_conductance_resid:
+      datasets_dtype: float32
+      sequence_type: true
+    head_conductance_t_from:
+      datasets_dtype: float32
+      sequence_type: false
+    head_conductance_t_to:
+      datasets_dtype: float32
+      sequence_type: false
+    head_conductance_first_order:
+      datasets_dtype: float32
+      sequence_type: false
+    head_conductance_completeness_residual:
+      datasets_dtype: float32
+      sequence_type: true
+    head_conductance_qk_keys:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      required: false
+      sequence_type: false
+    head_conductance_ov_keys:
+      datasets_dtype: float32
+      array_shape: [null, null]
+      required: false
+      sequence_type: false
 
 extract_top_features:
   description: Extract top-N influential features from an attribution graph
@@ -192,6 +271,11 @@ graph_prune:
       datasets_dtype: int64
       required: false
       sequence_type: false
+    graph_attribution_regime_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
   output_schema:
     input_string:
       datasets_dtype: string
@@ -244,6 +328,11 @@ graph_prune:
       required: false
       sequence_type: false
     graph_metadata:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    graph_attribution_regime_json:
       datasets_dtype: string
       required: false
       non_tensor: true
@@ -305,6 +394,11 @@ graph_node_influence:
     graph_vocab_size:
       datasets_dtype: int64
       required: false
+      sequence_type: false
+    graph_attribution_regime_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
       sequence_type: false
   output_schema:
     node_influence_scores:

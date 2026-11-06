@@ -75,6 +75,7 @@ from interpretune.analysis.backends.interventions import (
 from interpretune.analysis.backends.protocols import (
     AnalysisBackend,
     SupportsFeatureInterventions,
+    SupportsHeadAttribution,
     SupportsAttributionGraph,
     AnalysisBackendCore,
     ModelBackend,
@@ -88,6 +89,7 @@ __all__ = [
     "ANALYSIS_BACKEND_REGISTRY",
     "AnalysisBackend",
     "SupportsFeatureInterventions",
+    "SupportsHeadAttribution",
     "SupportsAttributionGraph",
     "AnalysisBackendCore",
     "AnalysisBackendCapability",

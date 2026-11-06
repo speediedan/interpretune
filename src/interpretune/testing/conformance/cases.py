@@ -22,6 +22,7 @@ from interpretune.analysis.backends import (
     PositionScope,
     SupportsAttributionGraph,
     SupportsFeatureInterventions,
+    SupportsHeadAttribution,
     SupportsGradients,
     SupportsIntervention,
     SupportsLatentModels,
@@ -85,6 +86,7 @@ _PROTOCOL_FOR = {
 _ANALYSIS_PROTOCOL_FOR = {
     AnalysisBackendCapability.ATTRIBUTION_GRAPH: SupportsAttributionGraph,
     AnalysisBackendCapability.FEATURE_INTERVENTION: SupportsFeatureInterventions,
+    AnalysisBackendCapability.HEAD_ATTRIBUTION: SupportsHeadAttribution,
 }
 
 
@@ -1345,6 +1347,38 @@ class ModelBackendConformance:
         assert torch.equal(torch.as_tensor(graph.active_features).cpu(), active)
         selected = torch.as_tensor(graph.selected_features).cpu()
         assert selected.numel() > 0 and int(selected.max()) < int(active.shape[0])
+
+    @conformance_case(capability=AnalysisBackendCapability.HEAD_ATTRIBUTION)
+    def test_head_loadings_partition_the_edges(self, suite):
+        """At a reported layer the heads' shares and the bypass share sum to 1, and a head carries something, since
+        a report of zeros would also partition the edges.
+
+        A composition whose backend cannot split edges must refuse by name rather than report.
+        """
+        import interpretune as it
+        from interpretune.analysis.ops.base import AnalysisBatch
+
+        prompt = self._attribution_prompt(suite)
+        top_logit = torch.as_tensor(self._graph(suite).logit_target_ids)[:1]
+
+        def report():
+            return it.head_loadings(
+                suite.module,
+                AnalysisBatch(prompts=[prompt]),
+                batch=cast(Any, None),
+                batch_idx=0,
+                head_target=top_logit,
+                head_layers=[0],
+            )
+
+        if suite.module.replacement_model.backend != "nnsight":
+            with pytest.raises(ValueError, match="nnsight backend only"):
+                report()
+            return
+        shares = report()
+        partitioned = shares.head_loading_shares.sum(1) + shares.head_loading_bypass_shares
+        torch.testing.assert_close(partitioned, torch.ones_like(partitioned), atol=1e-3, rtol=0.0)
+        assert_non_degenerate(shares.head_loading_shares, what="head shares")
 
     @conformance_case(capability=AnalysisBackendCapability.ATTRIBUTION_GRAPH)
     def test_pruning_is_monotone(self, suite):

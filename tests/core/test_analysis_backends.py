@@ -794,6 +794,9 @@ class TestBackendCapability:
     def test_feature_intervention_value(self):
         assert AnalysisBackendCapability.FEATURE_INTERVENTION.value == "feature_intervention"
 
+    def test_head_attribution_value(self):
+        assert AnalysisBackendCapability.HEAD_ATTRIBUTION.value == "head_attribution"
+
     def test_scopes_and_modes_are_a_support_record_not_members(self):
         """Supporting interventions and being able to SCOPE or MODE one are different kinds of fact.
 
@@ -822,7 +825,7 @@ class TestBackendCapability:
         surface's support record instead.
         """
         assert len(ModelBackendCapability) == 3
-        assert len(AnalysisBackendCapability) == 2
+        assert len(AnalysisBackendCapability) == 3
 
     def test_membership_in_frozenset(self):
         caps = frozenset({ModelBackendCapability.LATENT_MODELS, ModelBackendCapability.GRADIENTS})

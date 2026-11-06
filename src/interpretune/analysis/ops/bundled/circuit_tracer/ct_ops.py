@@ -14,6 +14,7 @@ from transformers import BatchEncoding
 
 from interpretune.analysis.backends import (
     FeatureSelectionSpec,
+    SupportsHeadAttribution,
     apply_feature_selection_filter,
     apply_optional_feature_sign_filter,
     augment_feature_rows_for_selection,
@@ -94,7 +95,9 @@ def compute_attribution_graph_impl(
 ) -> AnalysisBatch:
     """Generate and decompose a circuit-tracer attribution graph."""
     analysis_backend = require_analysis_backend(module)
-    prompt = kwargs.pop("prompt", None) or analysis_backend.resolve_prompt(module, analysis_batch, batch)
+    prompt = kwargs.pop("prompt", None)
+    if prompt is None:  # never `or`: a prompt can be token ids, and a tensor has no single truth value
+        prompt = analysis_backend.resolve_prompt(module, analysis_batch, batch)
     concept_direction = analysis_batch.get("concept_direction")
     concept_label = analysis_batch.get("concept_label")
     concept_group_a_token_ids = analysis_batch.get("concept_group_a_token_ids")
@@ -131,6 +134,8 @@ def compute_attribution_graph_impl(
             "offload",
             "verbose",
             "update_interval",
+            "freeze_attention",
+            "freeze_norms",
         )
         if name in kwargs
     }
@@ -174,6 +179,78 @@ def compute_attribution_graph_impl(
                 )
             analysis_batch.update(logit_target_ids=torch.tensor(real_ids, dtype=torch.long))
 
+    return analysis_batch
+
+
+def _head_attribution_backend(module) -> Any:
+    """The module's analysis backend, refused by name unless it provides the head reports."""
+    analysis_backend = require_analysis_backend(module)
+    if not isinstance(analysis_backend, SupportsHeadAttribution):
+        raise ValueError(f"{type(analysis_backend).__name__} provides no head attribution reports")
+    return analysis_backend
+
+
+def head_loadings_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Split the edges into one attribution target across the attention heads of each layer."""
+    analysis_backend = _head_attribution_backend(module)
+    prompt = kwargs.pop("prompt", None)
+    if prompt is None:  # never `or`: a prompt can be token ids, and a tensor has no single truth value
+        prompt = analysis_backend.resolve_prompt(module, analysis_batch, batch)
+    target = kwargs.get("head_target")
+    if target is None:
+        raise ValueError(
+            "head_loadings needs `head_target`: a token string, a one-element tensor of token ids, a `CustomTarget`, "
+            "or a feature `(layer, position, feature)` active on the prompt"
+        )
+    analysis_batch.update(
+        **analysis_backend.head_loading_report(
+            module,
+            prompt,
+            target,
+            layers=kwargs.get("head_layers"),
+            freeze_attention=kwargs.get("freeze_attention", True),
+            freeze_norms=kwargs.get("freeze_norms", True),
+        )
+    )
+    return analysis_batch
+
+
+def head_conductance_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Credit each attention head for the measured change of a target between two prompts of the same length."""
+    analysis_backend = _head_attribution_backend(module)
+    prompt = kwargs.pop("prompt", None)
+    if prompt is None:  # never `or`: a prompt can be token ids, and a tensor has no single truth value
+        prompt = analysis_backend.resolve_prompt(module, analysis_batch, batch)
+    counterfactual_prompt = kwargs.get("counterfactual_prompt")
+    target_weights = kwargs.get("target_weights")
+    if counterfactual_prompt is None or target_weights is None:
+        raise ValueError(
+            "head_conductance needs `counterfactual_prompt`, the second prompt of the swap, and `target_weights`, a "
+            "`(d_vocab,)` tensor the last position's logits are dotted with (+1 and -1 for a logit difference)"
+        )
+    analysis_batch.update(
+        **analysis_backend.head_conductance_report(
+            module,
+            prompt,
+            counterfactual_prompt,
+            target_weights,
+            n_steps=kwargs.get("n_steps", 32),
+            points_per_batch=kwargs.get("points_per_batch", 17),
+            key_positions=kwargs.get("key_positions"),
+        )
+    )
     return analysis_batch
 
 

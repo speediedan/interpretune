@@ -264,6 +264,9 @@ class AnalysisBackendCapability(Enum):
     ATTRIBUTION_GRAPH = "attribution_graph"
     """Module exposes attribution graph analysis support via an attached analysis backend."""
 
+    HEAD_ATTRIBUTION = "head_attribution"
+    """Module exposes credit at the level of attention heads via an attached analysis backend."""
+
     FEATURE_INTERVENTION = "feature_intervention"
     """Module exposes feature intervention support via an attached analysis backend."""
 
