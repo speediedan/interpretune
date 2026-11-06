@@ -106,30 +106,19 @@ def support_mapping(support: Any) -> dict[str, Any]:
     """A derived ``venngram.ops.Support`` as its publishable ``support_record`` document.
 
     The document is what a recipe is checked against without this consumer installed (venngram's conformance command
-    takes it directly), so it must carry exactly what the in-process record declares: the same fields, sorted, with an
-    unbounded site set omitted rather than spelled as an empty list. A callable site predicate cannot be published and
-    is refused by name rather than dropped.
+    takes it directly). It is venngram's own schema 2 form, with the one contract interpretune offers as its
+    ``steering`` section: the same fields as the in-process record, sorted, with an unbounded site set omitted rather
+    than spelled as an empty list. A section it omits (``tuning`` is finetuning-scheduler's to declare) is a contract
+    interpretune does not offer. A callable site predicate cannot be published and is refused by name rather than
+    dropped.
     """
     if callable(support.sites):
         raise MisconfigurationException(
             "A support record with a callable site predicate cannot be published as a document; derive it from a "
             "CaptureSupport instead."
         )
-    doc: dict[str, Any] = {
-        "schema_version": 1,
-        "kind": "support_record",
-        "name": support.name,
-        "ops": sorted(support.ops),
-        "targets": sorted(support.targets),
-        "tokens": sorted(support.tokens),
-        "values": sorted(support.values),
-        "transforms": sorted(support.transforms),
-    }
-    if support.sites is not None:
-        doc["sites"] = sorted(support.sites)
-    if support.bases is not None:
-        doc["bases"] = sorted(support.bases)
-    return doc
+    _require_venngram()
+    return importlib.import_module("venngram.support").as_record(support).to_mapping()
 
 
 def check_recipe(recipe: Any, support: Any) -> list[str]:
