@@ -128,13 +128,13 @@ class BaseNNsightModule(BaseITModule):
     """
 
     def build_tunable_view(self) -> Any | None:
-        """The identity view over this module once the nnsight model's HF module is registered on it as
-        ``hf_model`` (#774); otherwise a refusal naming why it is not (remote execution, or weights not yet
-        dispatched)."""
-        from interpretune.tuning.views import RefusingView, identity_view
+        """The default view over this module (:func:`~interpretune.tuning.views.default_view`, its map mounted at
+        the HF module) once the nnsight model's HF module is registered on it as ``hf_model`` (#774); otherwise a
+        refusal naming why it is not (remote execution, or weights not yet dispatched)."""
+        from interpretune.tuning.views import RefusingView, default_view
 
         if "hf_model" in self._modules:
-            return identity_view(self, roles=self.tunable_roles())
+            return default_view(self, roles=self.tunable_roles())
         return RefusingView(self, self._hf_model_unregistered_reason())
 
     def _hf_model_unregistered_reason(self) -> str:

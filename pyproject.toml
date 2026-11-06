@@ -32,7 +32,12 @@ classifiers = [
 description = "A package to support LLM reasoning and interpretability experiments at a level of abstraction that is both powerfully flexible and convenient"
 readme = "README.md"
 dependencies = [
-    "torch >=2.7.1",
+    # FLOOR >=2.12.0: venngram (below) requires it, so this states what every install already gets.
+    "torch >=2.12.0",
+    # The model addressing protocol: tunable views and roles (`venngram.tuning`, `venngram.roles`, #874), recipes
+    # (`interpretune.analysis.venngram`, #887) and the default view (`venngram.view`, #900). The floor is the one
+    # finetuning-scheduler declares for the same pre-release line; both rise to 0.1.0 when it publishes.
+    "venngram>=0.1.0.dev0,<0.2.0",
     "transformers>=4.57.1",
     "tabulate >= 0.9.0",
     "datasets >= 4.0.0",
@@ -108,13 +113,6 @@ tune = [
 lightning = [
     "interpretune[tune]",
     "lightning >= 2.6.0,<2.7.0",
-]
-
-# The venngram consumer integration (`interpretune.analysis.venngram`, #887): venngram's core only. Its Hub
-# stores sit behind venngram's own `hf` extra, which a fetch-by-reference user adds themselves. The floor is
-# the one finetuning-scheduler declares for the same pre-release line; both rise to 0.1.0 when it publishes.
-venngram = [
-    "venngram>=0.1.0.dev0,<0.2.0",
 ]
 
 # Scope: what someone running the shipped notebooks needs. Test and maintainer tooling belongs in the
@@ -200,11 +198,15 @@ git-deps = [
     #   decoderesearch/circuit-tracer#79    transformers v5 compatibility
     #   decoderesearch/circuit-tracer#111   interp-engine support (supplies InterpEngineReplacementModel,
     #                                       which the adapter composition consumes rather than reimplements)
-    # plus two fork-only changes, not yet proposed upstream:
+    # plus four fork-only changes, not yet proposed upstream:
     #   layer-local custom targets          a CustomTarget read at a block's output rather than the final
     #                                       residual, which a J-lens-basis attribution target needs (#661)
     #   multi-device layer split            the nnsight backend's model split across GPUs by a device map,
     #                                       refusing any module left off an accelerator (#780)
+    #   token node vectors                  token nodes carry the embedding the model adds, so Gemma 2 and 3
+    #                                       edges are not sqrt(d_model) too small under transformers 5 (#791)
+    #   disk offload on Windows             the offload file is neither open during its write nor mapped at
+    #                                       its delete, the two things Windows refuses (#909)
     #
     # No release carries what we need: PyPI has only 0.5.0, and the correctness fix below is in no
     # upstream tag. RETIRE this pin once both PRs merge and the fork-only changes land upstream -- a
@@ -215,7 +217,7 @@ git-deps = [
     # shifting every position index in the feature-intervention path. The branch is rebased as the PRs
     # evolve, so VERIFY BY CONTENT, not by SHA:
     #   git log --grep="Canonicalize nnsight trace" <pin>   -> must return exactly one commit
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6bb3a1044dca6b8d73024763d28c72185e8ad83e",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@bd6bc784c2d0aa4a4d667b9d824e57968d9487e5",
     # sae-lens: pinned to the head of decoderesearch/SAELens#739 (transformer-lens 4.0 support), because
     # every sae-lens release through 6.51.2 fails `import sae_lens` under transformer-lens 4.0
     # (`No module named 'transformer_lens.HookedTransformer'`). RETIRE this pin for a released floor in
@@ -243,10 +245,10 @@ git-deps = [
     # install still gets it once a relock drops it from the lock (`--no-emit-package`). The SHA is finetuning-scheduler
     # main with #177 (venngram's address books, support record and registry lookup), which depends on venngram.
     "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@17042de9db132fd97be17959df316b623acd79e8",
-    # venngram by git SHA until 0.1.0 is published: finetuning-scheduler's base dependencies need it, and the
-    # `venngram` extra's floor admits this pre-release. The SHA is venngram main with #48 (one rules kind, a formats
-    # support section, treatments in the address book) over #45 (base and overlay maps composed by `venngram.view`).
-    "venngram @ git+https://github.com/speediedan/venngram@6e6d7fa68aa09bb5fb7468b8e31ee1241ad07738",
+    # venngram by git SHA until 0.1.0 is published: a base dependency (#874) whose floor admits this pre-release.
+    # The SHA is venngram main with #53 (overlay roles named by adapter, every PEFT tuner family) and #51 (a base map
+    # mounted under a wrapper root: the model sits under the module's `model.`), over #48 and #45 (base and overlay maps).
+    "venngram @ git+https://github.com/speediedan/venngram@bdd879e299ae575d3f9d766e7fed9645be96711a",
 ]
 
 dev = [
@@ -324,7 +326,7 @@ override-dependencies = [
     # handed requirements/ci/overrides.txt (hosted CI, the gated image, the README flow) silently replaced
     # an installed torch 2.15 with 2.13 to satisfy it. An override replaces every torch requirement, so
     # this keeps interpretune's floor and adds no ceiling and no pin of its own.
-    "torch>=2.7.1",
+    "torch>=2.12.0",
     # finetuning-scheduler by git SHA until 2.15.0 is on PyPI: the TunableView protocol, its role vocabulary and
     # the view conformance cases (`finetuning_scheduler.core.views`, `.core.roles`, `.testing`) are in no release
     # yet (#758). Here, not in requirements/ci/overrides.txt, because hosted CI and the gated install read only
@@ -332,9 +334,9 @@ override-dependencies = [
     # replaced by this at install. RETIRE it, and raise the `tune` extra's floor to 2.15.0, once 2.15.0
     # is published.
     "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@17042de9db132fd97be17959df316b623acd79e8",
-    # venngram by git SHA until 0.1.0 is on PyPI, for the same reason: finetuning-scheduler requires it and it is in
-    # no release. RETIRE it with the `git-deps` entry once 0.1.0 is published.
-    "venngram @ git+https://github.com/speediedan/venngram@6e6d7fa68aa09bb5fb7468b8e31ee1241ad07738",
+    # venngram by git SHA until 0.1.0 is on PyPI, for the same reason: interpretune and finetuning-scheduler both
+    # require it and it is in no release. RETIRE it with the `git-deps` entry once 0.1.0 is published.
+    "venngram @ git+https://github.com/speediedan/venngram@bdd879e299ae575d3f9d766e7fed9645be96711a",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.

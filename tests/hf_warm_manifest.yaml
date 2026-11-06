@@ -61,3 +61,10 @@ components:
   # seeds resolve its classes from the components cache, offline. Pinned revision; bump with intent.
   - repo_id: speediedan/rte
     revision: 93d32b8261340ab50b2af0702be92c431357b733
+venngram:
+  # venngram's registry at one pinned generation (#900): every module's default view looks its component map and
+  # overlay maps up there. tests/conftest.py sets VENNGRAM_REGISTRIES from this list unless the environment names one,
+  # and the warm step fetches every map and overlay it indexes into venngram's cache (VENNGRAM_CACHE, else
+  # ~/.cache/venngram, which the actions cache saves beside the Hub cache).
+  registries:
+    - hub-dataset:speediedan/venngram-registry/index@aaa1c0a47949a553a6e95471e0bad5ece9efc86e
