@@ -7,7 +7,7 @@ venngram recipe, declared as a ``venngram.ops.Support`` record derived from a ba
 the refuse-by-name check a recipe runs against it before anything is applied. Applying a recipe (translating its
 treatments into intervention specs) builds on this declaration; nothing here executes a treatment.
 
-Everything in this package needs the optional ``venngram`` extra; importing interpretune without it is unaffected.
+venngram is imported on first use, so importing interpretune does not import it.
 
 .. warning:: This is an experimental API and may change in a future release.
 """
