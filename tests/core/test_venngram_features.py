@@ -314,7 +314,9 @@ class TestAnalysisBackendPath:
             support=TRANSCODER,
             evidence=_table(score=SCORES, activation=activations),
         )
-        assert sorted(ours) == pytest.approx(sorted(theirs))
+        ours, theirs = sorted(ours), sorted(theirs)
+        assert [t[:3] for t in ours] == [t[:3] for t in theirs]
+        assert [t[3] for t in ours] == pytest.approx([t[3] for t in theirs])
 
     @pytest.mark.parametrize(
         "ops, tokens, match",
