@@ -155,7 +155,7 @@ class MemProfiler:
         pytorch_model = self._get_pytorch_model()
 
         for module in pytorch_model.modules():
-            module.mem_info_handle = self._curr_pid.memory_info  # type: ignore[assignment]
+            module.mem_info_handle = self._curr_pid.memory_info  # pyright: ignore[reportArgumentType]
             for hook_func in self._configured_hooks["pre_forward_hooks"]:
                 self._hook_handles[hook_func].append(module.register_forward_pre_hook(hook_func))
             for hook_func in self._configured_hooks["post_forward_hooks"]:

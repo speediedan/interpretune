@@ -1,6 +1,6 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from dataclasses import dataclass, field
-from typing import Literal, NamedTuple, Any, Callable, Sequence, List, Dict, Type, TypeGuard, TYPE_CHECKING
+from typing import Literal, NamedTuple, Any, Callable, Sequence, List, Dict, Type, TypeGuard, TYPE_CHECKING, cast
 from types import MappingProxyType
 import os
 from pathlib import Path
@@ -23,8 +23,8 @@ if TYPE_CHECKING:
     # protocol.py already uses for exactly this name.
     from sae_lens.config import HfDataset
 else:
-    HfDataset = None  # type: ignore[assignment,misc]
-from datasets import Features, Array2D, Value, Array3D, load_dataset, Column
+    HfDataset = None
+from datasets import Dataset, Features, Array2D, Value, Array3D, load_dataset, Column
 from datasets import Sequence as DatasetsSequence
 
 from interpretune.protocol import (
@@ -291,10 +291,10 @@ def schema_to_features(
     from interpretune.analysis.ops.base import AnalysisOpLike
 
     if isinstance(op, str):
-        op = DISPATCHER.get_op(op)  # type: ignore[assignment]  # DISPATCHER.get_op can return callable or AnalysisOp
-    if schema is None and op is not None and hasattr(op, "output_schema"):
-        schema = op.output_schema  # type: ignore[attr-defined]  # AnalysisOp has output_schema attribute
-    elif schema is None and module is not None and hasattr(module, "analysis_cfg"):
+        op = DISPATCHER.get_op(op)  # pyright: ignore[reportAssignmentType]  # DISPATCHER.get_op can return callable or AnalysisOp
+    if schema is None and op is not None:
+        schema = getattr(op, "output_schema", None)
+    if schema is None and module is not None and hasattr(module, "analysis_cfg"):
         has_output_schema = hasattr(module.analysis_cfg, "output_schema")
         if has_output_schema:
             schema = module.analysis_cfg.output_schema
@@ -476,6 +476,11 @@ class AnalysisStore:
         protocol_cls: the batch protocol describing the columns, which fixes how rows decode.
     """
 
+    # The loaded single-split dataset, or None while the store is built incrementally. A path or a
+    # broader HfDataset may be handed to the constructor, but what the store holds and every method
+    # below reads (column access, set_format, select_columns) is one split's Dataset.
+    dataset: Dataset | None
+
     def __init__(
         self,
         # dataset: can be a path or a loaded Hugging Face dataset
@@ -508,9 +513,10 @@ class AnalysisStore:
                 # Only consider conflict if raw paths match
                 if str(dataset) == self.op_output_dataset_path:
                     raise ValueError("The dataset path and op_output_dataset_path must not overlap.")
-            self.dataset = load_dataset(path=dataset_path, **load_dataset_kwargs)  # type: ignore[misc]  # load_dataset API compatible with these args
+            self.dataset = load_dataset(path=dataset_path, **load_dataset_kwargs)  # pyright: ignore[reportArgumentType, reportCallIssue]  # load_dataset API compatible with these args
         else:
-            self.dataset = dataset
+            # A loaded dataset the caller hands over is one split's Dataset, per the field declaration.
+            self.dataset = cast("Dataset | None", dataset)
 
         if self.dataset is not None:
             self._apply_interpretune_format()
@@ -521,7 +527,7 @@ class AnalysisStore:
         format_kwargs = dict(self.it_format_kwargs or {})
         if columns is not None:
             format_kwargs["columns"] = columns
-        self.dataset.set_format(type="interpretune", **format_kwargs)  # type: ignore[attr-defined]  # datasets API supports set_format
+        self.dataset.set_format(type="interpretune", **format_kwargs)
 
     def _format_columns(self, cols_to_fetch: list[str], indices: int | slice | list[int] | None = None) -> dict:
         """Internal helper to format specified columns into tensors with proper shape reconstruction.
@@ -535,17 +541,18 @@ class AnalysisStore:
         self._apply_interpretune_format(columns=cols_to_fetch)
 
         # Handle different types of indexing to get examples
+        examples: list[Any]
         if indices is None:
-            examples = list(self.dataset)  # type: ignore[arg-type]  # datasets are iterable
+            examples = list(self.dataset)
         elif isinstance(indices, int):
-            examples = [self.dataset[indices]]  # type: ignore[index]  # datasets support integer indexing
+            examples = [self.dataset[indices]]
         elif isinstance(indices, slice):
             start = indices.start or 0
-            stop = indices.stop or len(self.dataset)  # type: ignore[arg-type]  # datasets have len
+            stop = indices.stop or len(self.dataset)
             step = indices.step or 1
-            examples = [self.dataset[i] for i in range(start, stop, step)]  # type: ignore[index]  # datasets support integer indexing
+            examples = [self.dataset[i] for i in range(start, stop, step)]
         else:
-            examples = [self.dataset[idx] for idx in indices]  # type: ignore[index]  # datasets support integer indexing
+            examples = [self.dataset[idx] for idx in indices]
 
         # Extract requested columns
         result = {col: [ex[col] for ex in examples] for col in cols_to_fetch}
@@ -581,9 +588,9 @@ class AnalysisStore:
                 # Compare raw paths to detect overlap
                 if str(dataset) == self.op_output_dataset_path:
                     raise ValueError("The dataset path and op_output_dataset_path must not overlap.")
-            self.dataset = load_dataset(path=dataset_path, **load_dataset_kwargs)  # type: ignore[misc]  # load_dataset API compatible with these args
+            self.dataset = load_dataset(path=dataset_path, **load_dataset_kwargs)  # pyright: ignore[reportArgumentType, reportCallIssue]  # load_dataset API compatible with these args
         else:
-            self.dataset = dataset
+            self.dataset = cast("Dataset | None", dataset)
 
         # Set default tensor format
         if self.dataset is not None:
@@ -652,7 +659,7 @@ class AnalysisStore:
         if isinstance(key, str):
             # Single column access
             assert self.dataset is not None, "Dataset should be loaded before accessing columns"
-            data = self.dataset[key]  # type: ignore[index]  # datasets support string column indexing
+            data = self.dataset[key]
 
             # now that Datasets >= 4.0 has introduced the Column class, we need to refactor AnalysisStore
             # methods accordingly (since we are pre-MVP, we can start with the Datasets 4.0 API w/o bc concerns)
@@ -660,23 +667,23 @@ class AnalysisStore:
             # a future refactor (or subclass of Column) that allows our stacking behavior might make more sense
             if self._is_tensor_seq(data):
                 if self.stack_batches:
-                    return torch.stack([t for t in data])  # type: ignore[return-value]  # stacked tensor is valid return for tensor sequences
+                    return torch.stack([t for t in data])  # pyright: ignore[reportReturnType]  # stacked tensor is valid return for tensor sequences
                 first = self._first_element(data)
                 if first is not None and getattr(first, "dim", lambda: 0)() > 1:
                     return [t for t in data]  # list of tensors is valid return
                 # Split 1D tensors into scalar tensors
                 return [torch.tensor(x) for x in data]  # list of tensors is valid return
-            return data  # type: ignore[return-value]  # raw data return is valid
+            return data
         elif isinstance(key, list) and all(isinstance(k, str) for k in key):
             # Multiple column access
             result = {}
             for col in key:
                 assert self.dataset is not None, "Dataset should be loaded before accessing columns"
-                data = self.dataset[col]  # type: ignore[index]  # datasets support string column indexing
+                data = self.dataset[col]
                 # If tensor data, optionally stack individual tensors
                 if self._is_tensor_seq(data):
                     if self.stack_batches:
-                        result[col] = torch.stack([t for t in data])  # type: ignore[misc]  # torch.stack accepts tensor sequences
+                        result[col] = torch.stack([t for t in data])
                     elif (first := self._first_element(data)) is not None and getattr(first, "dim", lambda: 0)() > 1:
                         result[col] = [t for t in data]
                     else:
@@ -688,7 +695,7 @@ class AnalysisStore:
         else:
             # Row access delegates to dataset
             assert self.dataset is not None, "Dataset should be loaded before accessing rows"
-            return self.dataset[key]  # type: ignore[index]  # datasets support various indexing types
+            return self.dataset[key]  # pyright: ignore[reportArgumentType, reportCallIssue]  # datasets support various indexing types
 
     def select_columns(self, column_names: list[str]) -> "AnalysisStore":
         """Select a subset of columns.
@@ -700,7 +707,7 @@ class AnalysisStore:
             New AnalysisStore with only selected columns
         """
         assert self.dataset is not None, "Dataset should be loaded before selecting columns"
-        self.dataset = self.dataset.select_columns(column_names)  # type: ignore[attr-defined]  # datasets support select_columns
+        self.dataset = self.dataset.select_columns(column_names)
         return self
 
     def __getattr__(self, name: str) -> Any:
@@ -737,8 +744,9 @@ class AnalysisStore:
                 def _caller(*args, **kwargs):
                     result = attr(*args, **kwargs)
                     # If the result is a Dataset, ensure it maintains the interpretune format
-                    if hasattr(result, "set_format"):
-                        result.set_format(type="interpretune", **dict(self.it_format_kwargs or {}))  # type: ignore[attr-defined]  # datasets support set_format
+                    set_format = getattr(result, "set_format", None)
+                    if set_format is not None:
+                        set_format(type="interpretune", **dict(self.it_format_kwargs or {}))
                     return result
 
                 return _caller
@@ -778,7 +786,7 @@ class AnalysisStore:
                 result[sae] = batch_tensors  # LatentAnalysisDict accepts list of tensor batches
             else:
                 # Handle both non-nested and non-stacked nested cases
-                result[sae] = [  # type: ignore[assignment]  # LatentAnalysisDict handles mixed tensor/None lists
+                result[sae] = [  # pyright: ignore[reportArgumentType]  # LatentAnalysisDict handles mixed tensor/None lists
                     None if isinstance(batch[sae], list) and not batch[sae] else batch[sae] for batch in values
                 ]
         return result
@@ -971,7 +979,7 @@ class LatentAnalysisTargets:
     """Encapsulation of latent model FQNs and specific hooks involved in a latent-model-mediated analysis, along
     with helper functions for explicit or pattern based matching by name and/or layer."""
 
-    latent_model_fqns: list[LatentModelFqn] = field(default_factory=list)
+    latent_model_fqns: Sequence[LatentModelFqn] = field(default_factory=tuple)
     sae_release: str = "gpt2-small-hook-z-kk"
     target_sae_ids: Sequence[str] = field(default_factory=list)  # explicit sae_id list
     sae_id_factory_fn: Callable = default_sae_id_factory_fn  # function to generate sae_ids based on layer
@@ -998,20 +1006,20 @@ class LatentAnalysisTargets:
                     new_latent_model_fqns.append(LatentModelFqn(release=s[0], sae_id=s[1]))
                 else:
                     raise TypeError("All elements in latent_model_fqns must be instances of LatentModelFqn or 2-tuples")
-            self.latent_model_fqns = tuple(new_latent_model_fqns)  # type: ignore[misc]  # assignment to dataclass field with LatentModelFqn tuple
+            self.latent_model_fqns = tuple(new_latent_model_fqns)
         else:
             if self.target_sae_ids:
-                self.latent_model_fqns = tuple(  # type: ignore[misc]  # assignment to dataclass field
+                self.latent_model_fqns = tuple(
                     LatentModelFqn(release=self.sae_release, sae_id=s) for s in self.target_sae_ids
                 )
             elif self.target_layers:
-                self.latent_model_fqns = tuple(  # type: ignore[misc]  # assignment to dataclass field
+                self.latent_model_fqns = tuple(
                     LatentModelFqn(release=self.sae_release, sae_id=self.sae_id_factory_fn(layer))
                     for layer in self.target_layers
                 )
             else:
                 rank_zero_warn("LatentModelFqns could not be resolved based on provided configuration")
-                self.latent_model_fqns = tuple()  # type: ignore[misc]  # assignment to dataclass field
+                self.latent_model_fqns = tuple()
         return self.latent_model_fqns
 
 
@@ -1075,7 +1083,7 @@ class ActivationSumm(BaseMetrics):
         _default_field_repr = MappingProxyType(
             {"mean_activation": "Mean Activation", "num_samples_active": "Number Active"}
         )
-        self._set_field_repr(_default_field_repr)  # type: ignore[arg-type]  # MappingProxyType is compatible with dict
+        self._set_field_repr(_default_field_repr)  # pyright: ignore[reportArgumentType]  # MappingProxyType is compatible with dict
         super().__post_init__()
 
 
@@ -1098,7 +1106,7 @@ class LatentMetrics(ActivationSumm):
                 "proportion_samples_active": "Proportion Active",
             }
         )
-        self._set_field_repr(_default_field_repr)  # type: ignore[arg-type]  # MappingProxyType is compatible with dict
+        self._set_field_repr(_default_field_repr)  # pyright: ignore[reportArgumentType]  # MappingProxyType is compatible with dict
         super().__post_init__()
 
     # TODO: decompose this function into smaller, more testable parts
@@ -1273,7 +1281,7 @@ def base_vs_sae_logit_diffs(
     df = df.explode(["prompt", "correct_answer", "clean_logit_diff", "sae_logit_diff"])
     df["sample_id"] = range(len(df))
     df = df[["sample_id", "prompt", "correct_answer", "clean_logit_diff", "sae_logit_diff"]]
-    df = df[df.clean_logit_diff > 0].sort_values(by="clean_logit_diff", ascending=False)  # type: ignore[misc]  # pandas DataFrame sort_values method
+    df = df[df.clean_logit_diff > 0].sort_values(by="clean_logit_diff", ascending=False)  # pyright: ignore[reportAttributeAccessIssue, reportCallIssue]  # pandas DataFrame sort_values method
 
     max_samples = min(top_k, len(df))
     df = df.head(max_samples)
@@ -1298,34 +1306,33 @@ def compute_correct(
     """Compute correct prediction statistics for a given analysis mode."""
     # Handle input type and get op and analysis_store
     if hasattr(analysis_obj, "output_store") and hasattr(analysis_obj, "op"):
-        analysis_store = analysis_obj.output_store
-        op = analysis_obj.op  # type: ignore[assignment]  # analysis objects have op attribute
+        cfg_obj = cast(AnalysisCfgProtocol, analysis_obj)
+        analysis_store = cfg_obj.output_store
+        op = cfg_obj.op  # pyright: ignore[reportAssignmentType]  # the cfg protocol's op is an AnalysisOp at runtime
     else:
         # TODO: we can assume this is None if not provided, we should really change compute_correct to have a per-latent
         #       data structured overload
         # if op is None:
         #    raise ValueError("op argument required when passing AnalysisStore type objects")
-        analysis_store = analysis_obj
+        analysis_store = cast(AnalysisStoreProtocol, analysis_obj)
 
     if isinstance(op, str):
-        op = DISPATCHER.get_op(op)  # type: ignore[assignment]  # DISPATCHER.get_op can return AnalysisOp
+        op = DISPATCHER.get_op(op)  # pyright: ignore[reportAssignmentType]  # DISPATCHER.get_op can return AnalysisOp
 
     # Declared trait, not an op-name check: any op whose preds are emitted per latent model needs
     # them joined across SAEs before they can be compared against labels.
     per_latent_preds = bool(getattr(op, "per_latent_preds", False))
     if per_latent_preds:
-        batch_preds = [
-            b.mode(dim=0).values.cpu()
-            for b in analysis_store.by_latent_model("preds").batch_join(across_latent_models=True)  # type: ignore[attr-defined]  # analysis_store has by_latent_model method
-        ]
+        joined_preds = analysis_store.by_latent_model("preds").batch_join(across_latent_models=True)
+        assert isinstance(joined_preds, list), "batch_join(across_latent_models=True) returns per-batch tensors"
+        batch_preds = [b.mode(dim=0).values.cpu() for b in joined_preds]
     else:
-        batch_preds = analysis_store.preds  # type: ignore[attr-defined]  # analysis_store has preds attribute
+        batch_preds = analysis_store.preds
     correct_statuses = [
-        (labels == preds).nonzero().unique().size(0)
-        for labels, preds in zip(analysis_store.orig_labels, batch_preds)  # type: ignore[attr-defined]  # analysis_store has orig_labels
+        (labels == preds).nonzero().unique().size(0) for labels, preds in zip(analysis_store.orig_labels, batch_preds)
     ]
     total_correct = sum(correct_statuses)
-    percentage_correct = total_correct / (len(torch.cat(analysis_store.orig_labels))) * 100  # type: ignore[attr-defined]  # analysis_store has orig_labels
+    percentage_correct = total_correct / (len(torch.cat(analysis_store.orig_labels))) * 100
     return PredSumm(
         total_correct,
         percentage_correct,

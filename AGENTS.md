@@ -425,9 +425,9 @@ vocab sentinels, so the adapter resolves `d_vocab` / `d_vocab_out` first. Config
 - **Torch prerelease:** Configured via `requirements/ci/torch-pre.txt` (version, CUDA target, channel)
 - **Dependencies:** Locked in `requirements/ci/requirements.txt`; regenerate with `./requirements/utils/lock_ci_requirements.sh`
 
-## Pre-MVP Backwards Compatibility
+## Backwards Compatibility (alpha line)
 
-Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeline composition may change without deprecation notices. Do not add backwards-compatibility shims (fallback code paths, silent coercions, etc.) to preserve caller assumptions that predate the current design. If an op's contract changes, update all in-tree callers and tests to match the new contract directly.
+The public policy is `docs/source/stability.md`, and it is the single source of truth. In short: through the alpha line the promise is notice, not stability. Do not add backwards-compatibility shims (fallback code paths, silent coercions, etc.) to preserve caller assumptions that predate the current design. If a contract changes, update all in-tree callers and tests to match the new contract directly, and land a `Breaking` CHANGELOG entry naming the old and new form. The small stable surface named on the stability page gets one release of notice first; persisted artifacts are handled separately there.
 
 ## Anything publicly visible is written for a public reader
 

@@ -473,6 +473,10 @@ exclude = []
 # Stale suppressions fail loudly so the count cannot creep back (#176 step 1).
 reportUnnecessaryTypeIgnoreComment = "error"
 
+# mypy-style whole-line suppressions are retired: every remaining suppression names the exact
+# pyright rule it silences (#176 step 4). See docs/typing_conventions.md.
+enableTypeIgnoreComments = false
+
 # Custom directives removed for stricter type checking
 
 [tool.coverage.run]

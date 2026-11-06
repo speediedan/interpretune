@@ -37,6 +37,7 @@ from interpretune.protocol import (
     DefaultAnalysisBatchProtocol,
     BaseAnalysisBatchProtocol,
     AnalysisOpProtocol,
+    ClassificationModuleProtocol,
 )
 
 
@@ -46,7 +47,7 @@ class _AnalysisImportHook(MetaPathFinder):
 
     def find_spec(self, fullname, path, target=None):
         if fullname == "interpretune.analysis":
-            return ModuleSpec(fullname, self, is_package=True)  # type: ignore[arg-type]
+            return ModuleSpec(fullname, self, is_package=True)  # pyright: ignore[reportArgumentType]
         return None
 
     def load_module(self, fullname):
@@ -224,6 +225,7 @@ __all__ = [
     "DefaultAnalysisBatchProtocol",
     "BaseAnalysisBatchProtocol",
     "AnalysisOpProtocol",
+    "ClassificationModuleProtocol",
     # Adapters Module
     "ITModule",
     "LightningDataModule",

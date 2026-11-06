@@ -42,7 +42,7 @@ class AutoColumnCondition:
         if not isinstance(self.field_conditions, tuple):
             object.__setattr__(self, "field_conditions", tuple(self.field_conditions))
 
-    def matches_schema(self, input_schema: dict[str, Any], output_schema: dict[str, Any] = None) -> bool:  # type: ignore[assignment]
+    def matches_schema(self, input_schema: dict[str, Any], output_schema: dict[str, Any] | None = None) -> bool:
         """Check if schemas match all field conditions."""
         # Select the schema the condition should apply to based on condition_target
         condition_schema = input_schema if self.condition_target == "input_schema" else (output_schema or {})

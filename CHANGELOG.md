@@ -2,13 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
+The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). Per the stability policy (`docs/source/stability.md`), every breaking change lands under a `### Breaking` heading naming the old and new form; a release check confirms the heading exists whenever such a change is in the release.
 
 ## [Unreleased]
 
 ### Added
 
 - The sparsity chain as one phased run: the `speediedan/rte` component's `rte_sparse` variant, on the core loop, with configurations for gemma-3-1b-it (`rte_sparse.gemma3.core`, its published transcoders as `instrument`) and for a CPU (`rte_sparse.gpt2.core`, random transcoders). Training shuffles under the run's seed, as the chain did. The boundary restores the best checkpoint, builds attribution graphs in-process, gates the phase against a sha256-pinned untuned reference, and fills the `fitted` enforcement state for the recovery phase. CI and the conformance seeds pin the republished `speediedan/rte@914f4adb` ([#899](https://github.com/speediedan/interpretune/issues/899))
+
+- The public stability policy (`docs/source/stability.md`): through the alpha line the promise is notice, not stability; a small named surface gets one release of notice; everything else is explicitly unstable; persisted artifacts are handled separately; the policy is re-evaluated at 0.1.0. `AGENTS.md`'s backwards-compatibility section now points at it ([#258](https://github.com/speediedan/interpretune/issues/258))
 
 - `FTSCoreCallback` builds gates and phase hooks from configuration: `tuning_scheduler_kwargs` passes `gates` and `phase_hooks` to finetuning-scheduler's `TuningScheduler`, which now takes them as constructor arguments, instantiating each `class_path` entry (or the `gate`/`hook` value of an entry that carries registration options). A phase-0 start hook given this way runs at setup, and a gate reaches the tuning scheduler and its module through `GateEvent.tuning_scheduler`. The callback's documented "list of gates" previously raised `TypeError`. finetuning-scheduler is pinned at `17042de9` (its main with #184) ([#899](https://github.com/speediedan/interpretune/issues/899))
 

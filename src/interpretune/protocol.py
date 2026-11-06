@@ -19,7 +19,6 @@ from pathlib import Path
 from types import UnionType
 from enum import auto, Enum, EnumMeta
 from dataclasses import dataclass
-from os import PathLike
 import inspect
 
 import torch
@@ -32,14 +31,16 @@ from transformers import BatchEncoding, PreTrainedTokenizerBase
 # Heavy, optional runtime deps (sae_lens, transformer_lens) are only required for
 # type-checking and should not be imported at top-level to avoid slowing down package import.
 if TYPE_CHECKING:
-    from sae_lens.config import HfDataset
+    from datasets import Dataset
+
     from interpretune.analysis.backends import ModelBackend
+    from interpretune.base.datamodules import ITDataModule
     from interpretune.config import ITDataModuleConfig, ITConfig
 else:
     # Provide light-weight stand-ins for typing at runtime without importing heavy packages.
-    HfDataset = None  # type: ignore
-    ITDataModuleConfig = None  # type: ignore
-    ITConfig = None  # type: ignore
+    HfDataset = None
+    ITDataModuleConfig = None
+    ITConfig = None
 
 
 ################################################################################
@@ -85,7 +86,7 @@ class AutoStrEnum(Enum):
     """Enum whose auto() members take their own name as value, so members serialize as their names."""
 
     @staticmethod
-    def _generate_next_value_(name, _start, _count, _last_values) -> str:  # type: ignore
+    def _generate_next_value_(name, _start, _count, _last_values) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
         return name
 
 
@@ -140,7 +141,7 @@ class DerivedEnumMeta(EnumMeta):  # change EnumMeta alias to EnumType when 3.11 
         ``_transform`` off the class body and removes them so they do not become members themselves.
         """
         enum_dict = super().__prepare__(clsname, bases, **kwargs)
-        enum_dict._ignore = list(metacls._derived_enum_internal)  # type: ignore
+        enum_dict._ignore = list(metacls._derived_enum_internal)  # pyright: ignore[reportAttributeAccessIssue]
 
         return enum_dict
 
@@ -505,7 +506,7 @@ def gen_protocol_variants(
     if not isinstance(base_protocols, tuple):
         base_protocols = (base_protocols,)
     for sub_proto in get_args(supported_sub_protocols):
-        supported_cls = _ProtocolMeta(f"Built{sub_proto.__name__}", (*base_protocols, sub_proto, Protocol), {})  # type: ignore[arg-type]
+        supported_cls = _ProtocolMeta(f"Built{sub_proto.__name__}", (*base_protocols, sub_proto, Protocol), {})  # pyright: ignore[reportArgumentType]
         supported_cls._is_runtime_protocol = True
         frame = inspect.currentframe()
         if frame and frame.f_back:
@@ -519,8 +520,8 @@ def gen_protocol_variants(
 
 # We generate valid datamodule/module protocol variants by composing their respective base protocols with the set of
 # valid subprotocols over which `any` semantics apply.
-ITDataModuleProtocol: TypeAlias = gen_protocol_variants(DataModuleInitable, DataModuleInvariants)  # type: ignore
-ITModuleProtocol: TypeAlias = gen_protocol_variants(ModuleSteppable, ModuleInvariants)  # type: ignore
+ITDataModuleProtocol: TypeAlias = gen_protocol_variants(DataModuleInitable, DataModuleInvariants)  # pyright: ignore[reportArgumentType, reportInvalidTypeForm]
+ITModuleProtocol: TypeAlias = gen_protocol_variants(ModuleSteppable, ModuleInvariants)  # pyright: ignore[reportArgumentType, reportInvalidTypeForm]
 # TODO: ensure protocol variants are explicitly documented and possibly add a section describing the approach to
 #       supported protocol variant generation. Also add an issue tracker for this approach to solicit ideas for a
 #       cleaner/more pythonic approach. As Python structural subtyping features are still evolving, if a cleaner and
@@ -594,10 +595,19 @@ class ITModuleGenDebuggable(ITModuleBase, GenerativeStepProtocol, Protocol):
     Requires both module-like surface and generative-step helpers.
 
     Use this as an annotation for attributes that must behave like a given module composition
-    that also supports generation helper methods (e.g., `it_generate`).
+    that also supports generation helper methods (e.g., `it_generate`). The debug generation
+    extension also reads the module's datamodule (tokenizer, collator, prompt config), its model,
+    and its device, so a debuggable module exposes those too: its datamodule in particular is
+    connected, where a module in general may not have one yet.
     """
 
-    ...
+    datamodule: ITDataModule
+    model: torch.nn.Module
+
+    @property
+    def device(self) -> torch.device | None:
+        """The device the model is on, or None when it cannot be determined yet."""
+        ...
 
 
 ################################################################################
@@ -657,7 +667,9 @@ class LatentDictProtocol(Protocol):
 class AnalysisStoreProtocol(Protocol):
     """Protocol verifying core analysis store functionality."""
 
-    dataset: HfDataset | StrOrPath | PathLike | None
+    # The loaded single-split dataset the store holds; paths and broader dataset containers are
+    # constructor inputs, resolved to this by the time anything reads the field.
+    dataset: Dataset | None
     streaming: bool
     cache_dir: str | None
 
@@ -728,6 +740,11 @@ class LatentAnalysisModuleProtocol(ITModuleBase, LatentAnalysisProtocol, Protoco
 
     model_backend: ModelBackend
 
+    @property
+    def core_log_dir(self) -> StrOrPath | None:
+        """The run's log directory, or None until a run owns one."""
+        ...
+
 
 class RunnerCfgProtocol(Protocol):
     """Protocol representing the base Session/Runner configuration object."""
@@ -750,8 +767,11 @@ class AnalysisRunnerCfgProtocol(RunnerCfgProtocol, Protocol):
     latent_analysis_targets: Any
     artifact_cfg: Any
     ignore_manual: bool
-    # The processed, canonicalized list of AnalysisCfg that the runner exposes
-    _processed_analysis_cfgs: list[Any]
+
+    @property
+    def _processed_analysis_cfgs(self) -> list[Any]:
+        """The processed, canonicalized list of AnalysisCfg that the runner exposes."""
+        ...
 
 
 class AnalysisRunnerProtocol(Protocol):
@@ -786,8 +806,13 @@ class BaseAnalysisBatchProtocol(Protocol):
     """Base protocol defining methods all analysis batches should implement.
 
     Subclasses should define which dataset columns will have attribute-based access enabled for associated AnalysisStore
-    objects.
+    objects. The two fields declared here are the exception: prompts and tokens are attached by the persistence
+    path (`wrap_summary`) to batches of every protocol family, so they belong on the base rather than being
+    redeclared per family.
     """
+
+    prompts: list[str] | None
+    tokens: torch.Tensor | None
 
     def update(self, **kwargs) -> None:
         """Set fields from keyword arguments."""
@@ -795,6 +820,10 @@ class BaseAnalysisBatchProtocol(Protocol):
 
     def to_cpu(self) -> None:
         """Detach and move all field tensors to CPU."""
+        ...
+
+    def keys(self) -> Iterable[str]:
+        """The field names currently set on the batch."""
         ...
 
 
@@ -848,6 +877,16 @@ class DefaultAnalysisBatchProtocol(BaseAnalysisBatchProtocol):
     attribution_values: dict[str, torch.Tensor] | None
     tokens: torch.Tensor | None
     prompts: list[str] | None
+
+
+class ClassificationModuleProtocol(Protocol):
+    """The module surface classification loss helpers use: a loss callable and logit standardization."""
+
+    loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+
+    def standardize_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        """Map answer logits to their standardized form."""
+        ...
 
 
 class CircuitAnalysisBatchProtocol(DefaultAnalysisBatchProtocol):

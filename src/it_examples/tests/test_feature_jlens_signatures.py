@@ -112,7 +112,7 @@ class TestFeatureIOSignatures:
             transcoders,
             {1, 2},
             concept_token_ids=[5, 9],
-            **lens_kwargs,  # type: ignore[arg-type]
+            **lens_kwargs,  # pyright: ignore[reportArgumentType]
         )[0]
         without_concepts = feature_io_profiles(
             graph,
@@ -121,7 +121,7 @@ class TestFeatureIOSignatures:
             transcoders,
             {1, 2},
             concept_token_ids=[30, 31],
-            **lens_kwargs,  # type: ignore[arg-type]
+            **lens_kwargs,  # pyright: ignore[reportArgumentType]
         )[0]
         assert with_concepts.jlens_signature == without_concepts.jlens_signature
         assert with_concepts.jlens_concept_mass == pytest.approx(1.0)

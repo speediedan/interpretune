@@ -53,10 +53,11 @@ class ITMeta(type):
         component, input_cls, ctx = mcs._validate_build_ctx(kwargs)
         # TODO: add runtime checks for adherence to IT protocol here?
         composition_classes = mcs._map_composition_target(component, ctx)
-        new_bases: tuple[type, ...] = (NamedWrapper, input_cls, *composition_classes)  # type: ignore[misc]
+        new_bases: tuple[type, ...] = (NamedWrapper, input_cls, *composition_classes)  # pyright: ignore[reportAssignmentType]
         built_class = super().__new__(mcs, name, new_bases, classdict)
-        built_class._orig_module_name = input_cls.__qualname__  # type: ignore[attr-defined]  # dynamic attribute for session tracking
-        built_class._composed_classes = composition_classes  # type: ignore[attr-defined]  # dynamic attribute for session tracking
+        # Session-tracking attributes attached to the dynamically built class.
+        setattr(built_class, "_orig_module_name", input_cls.__qualname__)
+        setattr(built_class, "_composed_classes", composition_classes)
         return built_class
 
     @staticmethod
@@ -268,7 +269,7 @@ class ITSession(Mapping):
                 input=session_cfg.datamodule_cls,
                 ctx=session_cfg.adapter_ctx,
             )
-            self.datamodule = dm_cls(itdm_cfg=session_cfg.datamodule_cfg, *session_cfg.dm_args, **session_cfg.dm_kwargs)  # type: ignore[call-arg]
+            self.datamodule = dm_cls(itdm_cfg=session_cfg.datamodule_cfg, *session_cfg.dm_args, **session_cfg.dm_kwargs)  # pyright: ignore[reportCallIssue]
         self._set_dm_handles_for_instantiation(session_cfg)
         if session_cfg.module_cls:  # 2.2 Compose module if necessary
             m_cls = ITMeta(
@@ -279,7 +280,7 @@ class ITSession(Mapping):
                 input=session_cfg.module_cls,
                 ctx=session_cfg.adapter_ctx,
             )
-            self.module = m_cls(it_cfg=session_cfg.module_cfg, *session_cfg.module_args, **session_cfg.module_kwargs)  # type: ignore[call-arg]
+            self.module = m_cls(it_cfg=session_cfg.module_cfg, *session_cfg.module_args, **session_cfg.module_kwargs)  # pyright: ignore[reportCallIssue]
         self._set_model_handles_for_instantiation()
         self._validate_session(dm_cls, m_cls, session_cfg)
 

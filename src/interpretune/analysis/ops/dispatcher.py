@@ -1421,8 +1421,9 @@ class AnalysisOpDispatcher:
         """Create a composition of operations from a list of operation names."""
         # See NOTE [Composition and Compilation Limitations]
         # Support for dot-separated string format
+        names: list[str | AnalysisOp] = []
         if isinstance(op_names, str):
-            op_names = op_names.split(".")  # type: ignore[assignment]  # Converting str to list[str]
+            names.extend(op_names.split("."))
         # If op_names is a list, split any string elements containing '.' into multiple op names
         elif isinstance(op_names, list):
             split_names = []
@@ -1431,11 +1432,13 @@ class AnalysisOpDispatcher:
                     split_names.extend(op_name.split("."))
                 else:
                     split_names.append(op_name)
-            op_names = split_names
+            names = split_names
+        else:
+            names = list(op_names)
 
         # Convert all op references to AnalysisOp objects
         ops = []
-        for op_name in op_names:
+        for op_name in names:
             if isinstance(op_name, str):
                 op = self.get_op(op_name)
             else:

@@ -121,7 +121,7 @@ def rank_zero_only(fn: Callable[P, T], default: T | None = None) -> Callable[P, 
 
 
 # add the attribute to the function but don't overwrite if it already exists
-rank_zero_only.rank = getattr(rank_zero_only, "rank", _get_rank() or 0)  # type: ignore[attr-defined]
+setattr(rank_zero_only, "rank", getattr(rank_zero_only, "rank", _get_rank() or 0))
 
 
 def _debug(*args: Any, stacklevel: int = 2, **kwargs: Any) -> None:
