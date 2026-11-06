@@ -19,8 +19,7 @@ transcoders, whichever backend it runs over:
   into the existing parameter and the optimizer keeps stepping the module's own tensors (and a tied unembedding stays
   tied). Disk offload holds the offloaded weights on disk rather than in host memory, so an attribution needs less host
   memory than under `offload='cpu'`, at the cost of the reads. `offload=None` and `offload='cpu'` never replace a
-  parameter. circuit-tracer's disk offload does not run on Windows yet
-  ([interpretune#909](https://github.com/speediedan/interpretune/issues/909)).
+  parameter.
 - **Each transcoder layer is one depth group**, from the last layer; a cross-layer transcoder is one group.
 
 The transcoders are registered on the Interpretune module once: under `model` when the replacement model is a torch

@@ -5,7 +5,6 @@ rank corrections that let lazily loaded transcoder weights be tuned."""
 from __future__ import annotations
 
 import os
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -322,11 +321,6 @@ class TestAttributionAfterThawing:
         assert not [w for w in recwarn if "consider re-fitting" in str(w.message)]
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="circuit-tracer's disk offload writes each module to a NamedTemporaryFile it still holds open, which Windows"
-    " refuses (os error 5), so `offload='disk'` cannot run there at all (#909)",
-)
 class TestDiskOffload:
     """Circuit-tracer's ``offload='disk'`` replaces the offloaded modules' parameters unless the attribution runs
     under :func:`offload_keeps_parameters` (#855)."""
