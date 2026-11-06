@@ -38,6 +38,14 @@ import torch.distributed
 # monkeypatch this away per-test — see tests/core/test_hub_trust.py.
 os.environ["IT_TRUST_REMOTE_CODE"] = "1"
 
+# venngram's registry at the generation the hosted CI warms (`venngram.registries` in tests/hf_warm_manifest.yaml), so
+# every module's default view (#900) reads the same maps and overlays offline. A developer's own VENNGRAM_REGISTRIES
+# (a local registry under test, for instance) is honoured.
+with open(os.path.join(os.path.dirname(__file__), "hf_warm_manifest.yaml"), encoding="utf-8") as _manifest:
+    os.environ.setdefault(
+        "VENNGRAM_REGISTRIES", ",".join((yaml.safe_load(_manifest).get("venngram") or {}).get("registries") or [])
+    )
+
 from interpretune.base import _call_itmodule_hook, ITDataModule
 from interpretune.runners import AnalysisRunner
 from interpretune.config.runner import AnalysisRunnerCfg

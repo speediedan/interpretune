@@ -35,9 +35,9 @@ for many uses, above all a schedule you write by hand. Fine-Tuning Scheduler's
 addresses pay off.
 ```
 
-Today an Interpretune composition is addressed by role and by name. Addressing it by layer and architecture-neutral
-component (`layers:-4: & component:mlp.*`), as a bare model already is through `venngram.view(model)`, follows in
-[#900](https://github.com/speediedan/interpretune/issues/900).
+An Interpretune composition is addressed by role, by name and, wherever venngram has a component map for its model, by
+layer and architecture-neutral component (`layers:-4: & component:mlp.*`), as a bare model is through
+`venngram.view(model)`.
 
 ## venngram elsewhere in Interpretune
 
@@ -70,8 +70,8 @@ RTE example's tests check this phase by phase). [Phased fine-tuning on the core 
 
 ## Roles
 
-Every tensor has a role. Unlisted tensors are `base`; PEFT adapter tensors are found automatically and become
-`adapter:<name>`. A composition declares anything else with `tunable_roles()`:
+Every tensor has a role. Unlisted tensors are `base`; PEFT adapter tensors are found by venngram's overlay maps and
+become `adapter:<name>`. A composition declares anything else with `tunable_roles()`:
 
 ```python
 class MyInterventionMixin:
@@ -85,9 +85,9 @@ Overrides are cooperative: each calls `super()` and adds to its result, so a bac
 compose. The role kinds are venngram's (`base`, `adapter`, `intervention`, `latent`, `fitted`, `instrument`); the default
 optimizer never steps `fitted` or `instrument` tensors.
 
-PEFT adapters are found through PEFT's tuner-layer API rather than by name, so every tuner whose layers hold their
-adapters there (LoRA and its variants, IA3 and similar) is covered, and the base weight PEFT renames
-(`base_layer.weight`) stays `base`. Prompt-learning methods (prompt and prefix tuning) keep their tensors outside tuner
+venngram publishes an overlay map for each PEFT tuner family whose layers keep their adapters in named containers
+(LoRA and DoRA, AdaLoRA, IA3, LoHa, LoKr, OFT, BOFT, VeRA and FourierFT), so each adapter tensor takes the role of its
+adapter's name, and the base weight PEFT renames (`base_layer.weight`) stays `base`. Prompt-learning methods (prompt and prefix tuning) keep their tensors outside tuner
 layers; those stay `base`.
 
 A model-owned module the view must reach (a dictionary spliced into the model, for example) is registered with
@@ -95,17 +95,22 @@ A model-owned module the view must reach (a dictionary spliced into the model, f
 
 ## Declaring a view
 
-A composition's view is what `build_tunable_view()` returns. The default is the identity view: physical names, the
-roles above, trainable. So **a composition that does not override it can be tuned**, and most never need to.
+A composition's view is what `build_tunable_view()` returns. The default is venngram's composed view of the module,
+`venngram.view(self, roles=self.tunable_roles())`: the component map published for the model's architecture, mounted
+where the module holds the model (`model.`), places every tensor by layer and component, and the overlay maps and
+`tunable_roles()` give the roles above. So **a composition that does not override it can be tuned**, by structure as well
+as by name:
 
-```{note}
-The default is moving to venngram's automatic view resolution, `venngram.view(self, roles=self.tunable_roles())`: the
-architecture's published component map then gives every composition layers and components with no code, and a
-composition overrides `build_tunable_view()` only to refuse or to offer names of its own. That needs venngram to place a
-base map under a wrapper root (the Interpretune module holds the model under `model.`), tracked in
-[venngram#46](https://github.com/speediedan/venngram/issues/46), and then
-[#900](https://github.com/speediedan/interpretune/issues/900).
+```python
+schedule = {
+    0: {"params": ["role:adapter & layers:-4:"]},  # the adapters of the top four blocks
+    1: {"params": ["layers:-4: & component:mlp.*"]},  # then those blocks' MLPs
+}
 ```
+
+Where no published map describes the model, the default is the identity view (physical names and the roles above, no
+layers or components), and an info-level message says that registering a map (`venngram.maps.register`) or publishing
+one to a registry adds them. A composition overrides `build_tunable_view()` only to refuse, or to offer names of its own.
 
 A composition that cannot be tuned in some configuration declares why, rather than being treated as trainable. nnsight's, for instance:
 
@@ -193,11 +198,11 @@ a fresh session, because cases change parameters and `requires_grad`.
 
 | Composition | View | Roles |
 | --- | --- | --- |
-| [core / HF](fts_tuning_core_hf.md), and any composition not overriding `build_tunable_view()` (the default) | the identity view: trainable | PEFT adapter tensors as `adapter:<name>` |
+| [core / HF](fts_tuning_core_hf.md), and any composition not overriding `build_tunable_view()` (the default) | venngram's composed view (the identity view where no map describes the model): trainable | PEFT adapter tensors as `adapter:<name>` |
 | [TransformerLens](fts_tuning_transformer_lens.md) | `TransformerBridgeView`, in TransformerLens names (refused when the bridge holds quantized or packed parameters) | as on its page |
 | [sae_lens](fts_tuning_sae_lens.md) with `add_saes_on_init=True` | the backend's view | the spliced SAEs as `latent:sae` |
 | [nnsight](fts_tuning_nnsight.md), local and dispatched | the identity view over the HF module, registered as `hf_model` | PEFT adapter tensors as `adapter:<name>` |
 | [nnsight](fts_tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; tuning paths tracked in [#814](https://github.com/speediedan/interpretune/issues/814) and [#775](https://github.com/speediedan/interpretune/issues/775) | |
 | [circuit-tracer](fts_tuning_circuit_tracer.md) | refused, with the reason; tuning paths tracked in [#813](https://github.com/speediedan/interpretune/issues/813), [#787](https://github.com/speediedan/interpretune/issues/787) and [#709](https://github.com/speediedan/interpretune/issues/709) | |
-| [interp-engine (hub adapter)](fts_tuning_interp_engine.md) | Interpretune's default identity view until the adapter declares its own; its circuit-tracer composition takes the circuit-tracer refusal | none declared yet |
+| [interp-engine (hub adapter)](fts_tuning_interp_engine.md) | Interpretune's default view until the adapter declares its own; its circuit-tracer composition takes the circuit-tracer refusal | none declared yet |
 | a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |

@@ -54,7 +54,7 @@ def _require_venngram():
         return importlib.import_module("venngram.ops")
     except ImportError as e:
         raise MisconfigurationException(
-            "The venngram integration needs the optional `venngram` extra: install `interpretune[venngram]`."
+            "The venngram integration needs venngram, an interpretune dependency: reinstall interpretune."
         ) from e
 
 

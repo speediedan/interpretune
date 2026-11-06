@@ -400,7 +400,7 @@ Dev notebooks live in `src/it_examples/notebooks/dev/` and are auto-published to
 
 **Triggers:** Push/PR to main, changes to source/test files
 **Platforms:** Ubuntu 22.04, Windows 2022, macOS 15 (Python 3.13)
-**Timeout:** 90 minutes, 120 on macOS
+**Timeout:** 120 minutes
 
 **CI Process:**
 1. Check for torch prerelease configuration (torch-pre.txt)

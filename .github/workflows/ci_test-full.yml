@@ -128,9 +128,7 @@ jobs:
           macos-15
           ]
         python-version: ["3.13"]
-    # The macOS leg is the only one that runs the two-fit bf16 CLI comparison, which puts it within runner variance of 90
-    # minutes, and a job ended at the limit reads as cancelled with no test failing.
-    timeout-minutes: ${{ startsWith(matrix.os, 'macos') && 120 || 90 }}
+    timeout-minutes: 120
     env:
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       # TEMPORARY until the #261 flip: source the RW secret so CI can read the private
@@ -180,7 +178,9 @@ jobs:
         id: hf-cache
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/huggingface
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/venngram
           key: hf-cache-${{ runner.os }}-${{ hashFiles('tests/hf_warm_manifest.yaml') }}
 
       # Skipped entirely on an exact cache hit: re-validating a warm cache is itself a burst of metadata
@@ -194,7 +194,9 @@ jobs:
         if: steps.hf-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ~/.cache/huggingface
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/venngram
           key: hf-cache-${{ runner.os }}-${{ hashFiles('tests/hf_warm_manifest.yaml') }}
 
       - name: Run pytest coverage w/ configured instrumentation
