@@ -73,8 +73,11 @@ explained 94% of that read's response (measurements on #660).
 ### Attention in attribution: regimes and head reports
 
 An attribution graph holds attention patterns constant by default, so it credits no node for changing where attention
-looks, and an edge does not say which head carried it. Three things address that, each on the nnsight backend only
-(any other backend is refused by name).
+looks, and an edge does not say which head carried it. Three things address that, and only the nnsight model-level
+adapter, `(core, nnsight, circuit_tracer)`, currently supports them. Support for the
+[TransformerLens adapter](https://github.com/speediedan/interpretune/issues/932) and for
+[interp-engine](https://github.com/speediedan/interpretune/issues/933) are future follow-ups, to be taken up once the
+nnsight version has matured.
 
 **A graph with live patterns.** `compute_attribution_graph` takes `freeze_attention` and `freeze_norms`, both `True` by
 default, from a call or from `CircuitTracerConfig`. With either set to `False`, an edge is no longer an exact direct
