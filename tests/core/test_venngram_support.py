@@ -125,19 +125,21 @@ class TestCheckRecipe:
     def test_the_published_record_round_trips_and_conformance_agrees(self, tmp_path):
         import yaml
         from venngram import conformance, store
-        from venngram.ops import Support
+        from venngram.support import SupportRecord
 
         support = _support()
         document = support_mapping(support)
-        reread = Support.from_mapping(document)
-        assert (reread.ops, reread.targets, reread.tokens, reread.values, reread.sites, reread.bases, reread.name) == (
+        assert document["schema_version"] == 2 and set(document["sections"]) == {"steering"}
+        record = SupportRecord.from_mapping(document)
+        reread = record.steering
+        assert record.name == support.name
+        assert (reread.ops, reread.targets, reread.tokens, reread.values, reread.sites, reread.bases) == (
             support.ops,
             support.targets,
             support.tokens,
             support.values,
             support.sites,
             support.bases,
-            support.name,
         )
 
         root = tmp_path / "published"
@@ -157,5 +159,5 @@ class TestCheckRecipe:
         store.publish(
             "local", str(root), root, documents=[("recipe", "recipe.yaml"), ("support_record", "support.yaml")]
         )
-        report = conformance.check(f"local:{root}", supports=[reread])
+        report = conformance.check(f"local:{root}", supports=[record])
         assert report.ok, [(d.path, d.error, dict(d.refusals)) for d in report.documents]

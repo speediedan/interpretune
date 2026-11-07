@@ -79,3 +79,41 @@ def test_a_non_recipe_document_and_a_bare_number_refuse(tmp_path):
         load_recipe(f"local:{root}:book.yaml")
     with pytest.raises(MisconfigurationException, match="must be a document reference"):
         load_recipe(42)
+
+
+class TestBookTreatments:
+    BOOK = {
+        "schema_version": 1,
+        "name": "units",
+        "portability": "checkpoint",
+        "applies_to": {"models": [{"id": "m", "revision": "r1"}]},
+        "sets": {"chess": {"point": "mlp.hook_out", "layers": [15], "units": {15: [7]}}},
+    }
+    BODY = {
+        "model": {"id": "m", "revision": "r1"},
+        "stages": [{"site": "mlp.hook_out", "ops": [{"op": "add", "target": {"set": "chess"}, "value": {"dose": 1}}]}],
+    }
+
+    def _book(self, *names):
+        return {**self.BOOK, "treatments": {name: self.BODY for name in names}}
+
+    def test_a_book_with_one_treatment_reads_it_from_every_source(self, tmp_path):
+        from venngram import store
+
+        book = self._book("dose")
+        assert load_recipe(book).recipe.name == "dose"
+        root = tmp_path / "published"
+        root.mkdir()
+        (root / "book.yaml").write_text(yaml.safe_dump(book))
+        assert load_recipe(root / "book.yaml").recipe.name == "dose"
+        store.publish("local", str(root), root, documents=[("address_book", "book.yaml")])
+        fetched = load_recipe(f"local:{root}:book.yaml")
+        assert fetched.recipe.name == "dose" and "#" in fetched.reference
+
+    def test_a_book_with_several_treatments_needs_a_name(self):
+        book = self._book("first", "second")
+        assert load_recipe(book, treatment="second").recipe.name == "second"
+        with pytest.raises(MisconfigurationException, match=r"name one of the book's treatments \['first', 'second'\]"):
+            load_recipe(book)
+        with pytest.raises(MisconfigurationException, match="not 'third'"):
+            load_recipe(book, treatment="third")

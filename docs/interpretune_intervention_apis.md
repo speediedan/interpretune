@@ -37,8 +37,11 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
   model-backend surface above: `recipe_interventions` turns a recipe's treatments (ordered ops at a site, on the whole
   activation or on a set's units) into `InterventionSpec`s in the native modes. `venngram_support()` derives what
   Interpretune honours of a recipe from the backend's own records, and `check_recipe` / `require_supported` refuse,
-  before anything runs, whatever that record cannot express. Interventions on venngram-addressed unit sets, with
-  registered examples for supported models, are tracked in [#905](https://github.com/speediedan/interpretune/issues/905).
+  before anything runs, whatever that record cannot express. `export_book` goes the other way, writing an intervention
+  payload as a venngram book carrying it as a treatment, and `support_mapping` publishes the derived declaration as a
+  `support_record`, so venngram's conformance checker reads both without Interpretune installed. Interventions on
+  venngram-addressed unit sets, with registered examples for supported models, are tracked in
+  [#905](https://github.com/speediedan/interpretune/issues/905).
 
 At this layer Interpretune delegates to backend-native steering surfaces rather than inventing a second execution
 mechanism. The closest analogs are TransformerLens hook-driven flows such as `run_with_hooks(...)` and NNsight
