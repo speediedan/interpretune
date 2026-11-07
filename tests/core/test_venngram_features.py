@@ -186,15 +186,21 @@ class TestEvidenceValues:
         assert set(values.values()) == {0.0}
 
     @pytest.mark.parametrize(
-        "statistics, expected",
-        [
-            pytest.param({"median": 2.0}, 1.0, id="scalar"),
-            pytest.param({"median": {2: 2.0, 5: 4.0}}, 1.0, id="per-layer"),
-        ],
+        "statistics",
+        [pytest.param({"median": 4.0}, id="scalar"), pytest.param({"median": {2: 4.0, 5: 8.0}}, id="per-layer")],
     )
-    def test_a_supplied_statistic_divides_at_each_layer(self, statistics, expected):
-        for transform in ({"statistic": {"name": "median"}}, {"normalize": {"by": "median"}}):
-            assert self._values(transform, statistics=statistics)[(2, 3)] == expected
+    def test_statistic_multiplies_and_normalize_by_it_divides_at_each_layer(self, statistics):
+        """`statistic` is the inverse of `normalize` by that statistic (venngram#58's draft): a dose written in
+        units of a layer statistic becomes an activation-space dose by multiplying."""
+        scaled = self._values({"statistic": {"name": "median"}}, statistics=statistics)
+        normalized = self._values({"normalize": {"by": "median"}}, statistics=statistics)
+        at_5 = statistics["median"][5] if isinstance(statistics["median"], dict) else statistics["median"]
+        assert scaled[(2, 3)] == 8.0 and normalized[(2, 3)] == 0.5
+        assert scaled[(5, 3)] == at_5 and normalized[(5, 3)] == 1.0 / at_5
+        roundtrip = self._values(
+            {"statistic": {"name": "median"}}, {"normalize": {"by": "median"}}, statistics=statistics
+        )
+        assert roundtrip == SCORES
 
     @pytest.mark.parametrize(
         "value, tables, statistics, match",

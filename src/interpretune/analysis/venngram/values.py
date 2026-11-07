@@ -20,7 +20,9 @@ The transforms run in the order the recipe writes them, each over the values the
 - ``sign_aware_scale``: $\mathrm{sign}(s) \cdot \lvert v \rvert \cdot f$ for the ``factor`` $f$ and the score $s$, the
   value the op read from its ``from`` column. This is circuit-tracer's meaning of the name
   (``CircuitTracerAnalysisBackend._signed_feature_intervention_value``);
-- ``statistic``: $v / t$ for the named statistic $t$.
+- ``statistic``: $v \cdot t$ for the named statistic $t$, the inverse of ``normalize`` by that name. A dose written in
+  units of a statistic (neuronary's, in units of a layer's median residual norm, which ``venngram.recipe.migrate``
+  translates into this transform) becomes an activation-space dose this way, as venngram#58's draft defines it.
 
 The sign of zero is zero, as circuit-tracer takes it. A statistic is computed from the model, so the caller supplies it
 (``statistics`` maps a name to a value, or to a value per layer), and one it does not supply is refused by name.
@@ -130,23 +132,29 @@ class _Evaluation:
             )
         return {m: float(column[m]) for m in members}
 
-    def divide(self, values: Mapping[Member, float], name: str) -> dict[Member, float]:
-        """``values``, each over the named statistic at its layer."""
+    def statistic(self, name: str, layer: int) -> float:
+        """The named statistic at ``layer``."""
         if name not in self.statistics:
             raise MisconfigurationException(
                 f"{self.where}: no statistic `{name}` was supplied (supplied: {sorted(self.statistics)})"
             )
         statistic = self.statistics[name]
+        if isinstance(statistic, Mapping) and layer not in statistic:
+            raise MisconfigurationException(f"{self.where}: statistic `{name}` has no value at layer {layer}")
+        return float(statistic[layer] if isinstance(statistic, Mapping) else statistic)
+
+    def divide(self, values: Mapping[Member, float], name: str) -> dict[Member, float]:
+        """``values``, each over the named statistic at its layer."""
         out = {}
-        for member, value in values.items():
-            layer = member[0]
-            if isinstance(statistic, Mapping) and layer not in statistic:
-                raise MisconfigurationException(f"{self.where}: statistic `{name}` has no value at layer {layer}")
-            divisor = float(statistic[layer] if isinstance(statistic, Mapping) else statistic)
-            if divisor == 0.0:
+        for (layer, unit), value in values.items():
+            if (divisor := self.statistic(name, layer)) == 0.0:
                 raise MisconfigurationException(f"{self.where}: statistic `{name}` is zero at layer {layer}")
-            out[member] = value / divisor
+            out[(layer, unit)] = value / divisor
         return out
+
+    def multiply(self, values: Mapping[Member, float], name: str) -> dict[Member, float]:
+        """``values``, each times the named statistic at its layer."""
+        return {(layer, unit): value * self.statistic(name, layer) for (layer, unit), value in values.items()}
 
 
 def _normalize(values: Mapping[Member, float], params: Mapping[str, Any], ctx: _Evaluation) -> dict[Member, float]:
@@ -169,7 +177,7 @@ _TRANSFORMS: dict[str, Callable[[Mapping[Member, float], Mapping[str, Any], _Eva
     "sign_aware_scale": lambda values, params, ctx: {
         m: _sign(ctx.scores[m]) * abs(v) * params["factor"] for m, v in values.items()
     },
-    "statistic": lambda values, params, ctx: ctx.divide(values, params["name"]),
+    "statistic": lambda values, params, ctx: ctx.multiply(values, params["name"]),
 }
 
 
