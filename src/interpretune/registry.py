@@ -375,8 +375,8 @@ def instantiate_nested(c: Dict | List, skip_keys: Set | None = None, cache_dir=N
     elif isinstance(c, List):
         for i, v in enumerate(c):
             c[i] = instantiate_nested(c[i], cache_dir=cache_dir)
-    if "class_path" in c:  # if the dict directly contains a class_path key
-        c = instantiate_hub_aware_class(c, import_only=c.pop("import_only", False), cache_dir=cache_dir)  # pyright: ignore[reportArgumentType, reportCallIssue]  # with instantiating the class
+    if isinstance(c, dict) and "class_path" in c:  # a list's scalars (layer indices, say) pass through
+        c = instantiate_hub_aware_class(c, import_only=c.pop("import_only", False), cache_dir=cache_dir)
     return c
 
 

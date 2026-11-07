@@ -193,6 +193,6 @@ class TestComponentTreeRegistryLaziness:
                 assert it.hub.load(repo_id, key, cache_dir=cache) is not None
         rte_manifest, _, _ = resolve_component_manifest(SEED_REPO, revision=SEED_REVISION)
         rte_keys = sorted((rte_manifest.get("module") or {}).get("configs") or {})
-        assert len(rte_keys) == 9
+        assert len(rte_keys) == 12  # rte_demo (8), rte_ft (2), rte_sparse (2)
         for key in rte_keys:
             assert it.hub.load(SEED_REPO, key, revision=SEED_REVISION) is not None
