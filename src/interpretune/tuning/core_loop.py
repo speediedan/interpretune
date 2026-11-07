@@ -60,9 +60,15 @@ _LR_STEP_KEYS = ("interval", "frequency", "monitor")
 
 def _instantiate_config_value(value: Any) -> Any:
     """An object given as a ``class_path`` mapping (or a list or tuple of them), instantiated; any other value as
-    is."""
+    is.
+
+    A ``class_path`` may name a cached Hub component's entrypoint (``rte_boolq.ChainCalibrate``, say), as a
+    session configuration's may.
+    """
     if isinstance(value, Mapping) and "class_path" in value:
-        return instantiate_class(dict(value))
+        from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
+        return instantiate_hub_aware_class(dict(value))
     if isinstance(value, (list, tuple)) and any(isinstance(v, Mapping) and "class_path" in v for v in value):
         return type(value)(_instantiate_config_value(v) for v in value)
     return value

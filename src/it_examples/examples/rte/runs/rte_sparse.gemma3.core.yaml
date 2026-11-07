@@ -1,0 +1,65 @@
+# The sparsity chain (interpretune#698 to #700) as one phased run of gemma-3-1b-it on interpretune's core loop (#899),
+# about 20 to 25 minutes per seed on one 24 GB GPU, 18.2 GiB at peak (research-class: a reserved window, not CI):
+#
+#   interpretune --run_command train --config hub://speediedan/rte/runs/rte_sparse.gemma3.core.yaml
+#
+# The chain's training setup: bf16-mixed with two-step accumulation, batch 8, AdamW at 1e-5. Phase 0 calibrates the
+# penalty's normalizer on 8 dev batches and tunes with the penalty on. At each boundary the best checkpoint is restored,
+# `ChainBuildGraphs` graphs the restored weights (the 100 #667 pilot items fit the enforcement; the 40 gate items are
+# measured), `ChainGraphGate` judges the phase against the pinned untuned reference (#709: error share up at most 5
+# points, replacement down at most 0.10), and phase 1 tunes with the simplified graph enforced and a fresh optimizer.
+# The final gate judges the global best, whichever phase holds it, and a veto ends the run on phase 0's best (#899 has
+# the outcome per seed). The reference is graphed at circuit-tracer bd6bc784, and graphs from another circuit-tracer are
+# not comparable with it. Every phase is judged on `val_task`, the phase-invariant task loss.
+session_ref: speediedan/rte:rte_sparse.gemma3.core
+seed_everything: 0
+run_cfg:
+  max_epochs: 10
+  precision: bf16-mixed
+  accumulate_grad_batches: 2
+  # the attribution penalty needs the gap's gradient at validation too
+  validate_with_grad: true
+  callbacks:
+    - class_path: interpretune.tuning.core_loop.FTSCoreCallback
+      init_args:
+        schedule: hub://speediedan/rte/ft_schedules/rte_sparse.gemma3.yaml
+        tuning_scheduler_kwargs:
+          max_depth: 1
+          restore_best: true
+          transition:
+            class_path: finetuning_scheduler.core.transitions.PlateauTransition
+            init_args:
+              monitor: val_task
+              patience: 1
+              min_delta: 0.001
+          checkpoint:
+            class_path: finetuning_scheduler.core.checkpoint.BestCheckpoint
+            init_args:
+              dirpath: checkpoints/rte_sparse.gemma3.core
+              monitor: val_task
+              save_initial: true
+          gates:
+            - gate:
+                class_path: rte_boolq.ChainGraphGate
+                init_args:
+                  reference: hub://speediedan/rte/chain/untuned_reference.json
+                  sha256: 2f0ad55275106d84c69bda4d84d17aa48cb51bb0141628c457f07e7fdb054eb6
+              rank_zero_only: true
+          phase_hooks:
+            start:
+              - class_path: rte_boolq.ChainCalibrate
+                init_args: {n_batches: 8}
+              - class_path: rte_boolq.ChainFillEnforcement
+              - class_path: rte_boolq.ChainApplyPayload
+            end:
+              - class_path: rte_boolq.ChainBuildGraphs
+                init_args:
+                  mask_rows: [860, 861, 862, 863, 864, 865, 866, 867, 868, 869, 870, 871, 872, 873, 874, 875, 876, 877, 878,
+                    879, 880, 881, 882, 883, 884, 885, 886, 887, 888, 889, 890, 891, 892, 893, 894, 895, 896, 897,
+                    898, 899, 900, 901, 902, 903, 904, 905, 906, 907, 908, 909, 910, 911, 912, 913, 914, 915, 916,
+                    917, 918, 919, 920, 921, 922, 924, 925, 926, 928, 929, 933, 934, 936, 937, 938, 939, 943, 946,
+                    947, 951, 952, 955, 958, 962, 965, 973, 977, 980, 981, 982, 1021, 1027, 1055, 1058, 1059, 1069,
+                    1097, 1121, 1136, 1139, 1142, 1150]
+                  gate_rows: [860, 861, 862, 863, 864, 865, 866, 867, 868, 869, 870, 871, 872, 873, 874, 875, 876, 877, 878,
+                    879, 880, 881, 882, 883, 884, 885, 886, 887, 1021, 1027, 1055, 1058, 1059, 1069, 1097, 1121, 1136,
+                    1139, 1142, 1150]

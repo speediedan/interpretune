@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Added
 
+- The sparsity chain as one phased run: the `speediedan/rte` component's `rte_sparse` variant, on the core loop, with configurations for gemma-3-1b-it (`rte_sparse.gemma3.core`, its published transcoders as `instrument`) and for a CPU (`rte_sparse.gpt2.core`, random transcoders). Training shuffles under the run's seed, as the chain did. The boundary restores the best checkpoint, builds attribution graphs in-process, gates the phase against a sha256-pinned untuned reference, and fills the `fitted` enforcement state for the recovery phase. CI and the conformance seeds pin the republished `speediedan/rte@4db2f48c` ([#899](https://github.com/speediedan/interpretune/issues/899))
+
 - Attention-aware attribution through the analysis surface (#781). `compute_attribution_graph` takes `freeze_attention` and `freeze_norms` (nnsight backend only; with either `False` each edge is a first-order derivative rather than an exact direct effect), and the regime is recorded on the graph and carried through decomposition, hydration, pruning and storage. `head_loadings` splits a target's incoming edges across the heads of each attention layer, and `head_conductance` credits heads for a measured change between two prompts, split into pattern and value parts. Both are gated by a `HEAD_ATTRIBUTION` capability.
 
 - The public stability policy (`docs/source/stability.md`): through the alpha line the promise is notice, not stability; a small named surface gets one release of notice; everything else is explicitly unstable; persisted artifacts are handled separately; the policy is re-evaluated at 0.1.0. `AGENTS.md`'s backwards-compatibility section now points at it ([#258](https://github.com/speediedan/interpretune/issues/258))
@@ -204,6 +206,9 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 - SAE-Lens adapter expanded from TL-only to dual-backend with hook resolution (455+ lines added)
 
 ### Fixed
+
+- `FTSCoreCallback` resolves a `class_path` naming a Hub component's entrypoint (`rte_boolq.ChainCalibrate`, say) for its gates, hooks and other `tuning_scheduler_kwargs` objects, as session configurations do; it raised `ModuleNotFoundError`. Configuration loading also passes a list's scalars through `instantiate_nested`, which raised `TypeError` on `reg_layers: [17, 18]` ([#899](https://github.com/speediedan/interpretune/issues/899))
+
 - Moving a loaded circuit-tracer replacement model moves its attribution device too. It was recorded at load, so `safe_clean_cuda` on a CPU-loaded model sent activations to the CPU while the transcoders reading them were on the GPU, which failed two Gemma 3 session parity tests with a device error (#915).
 - The fresh-cache quickstart test sets `HF_TOKEN` from `IT_HF_TOKEN` for its kernel, since the notebook's pull reads only `HF_TOKEN` (#916).
 - The macOS `Test full` job has a 120-minute limit rather than 90. It is the only leg that runs the two-fit bf16 CLI comparison, which left it within runner variance of the limit, so a PR could be cancelled at the limit with no test failing (#921).

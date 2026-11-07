@@ -1,0 +1,165 @@
+{
+ "description": "Untuned gemma-3-1b-it Yes-minus-No graphs (mwhanna/gemma-scope-2-1b-it width_16k_l0_small_affine, max_feature_nodes 2048, zero positions [0, 1)) of the chain's 40 gate items: per row of the chain's seeded RTE train order, the error nodes' share of node influence and circuit-tracer's replacement score (interpretune#709), at circuit-tracer bd6bc784 (token nodes carry the embedding the model adds, interpretune#791).",
+ "rows": {
+  "860": {
+   "errors_share": 0.16643711924552917,
+   "replacement": 0.5197508335113525
+  },
+  "861": {
+   "errors_share": 0.17123928666114807,
+   "replacement": 0.4923943877220154
+  },
+  "862": {
+   "errors_share": 0.16850103437900543,
+   "replacement": 0.5127721428871155
+  },
+  "863": {
+   "errors_share": 0.17999689280986786,
+   "replacement": 0.4952602982521057
+  },
+  "864": {
+   "errors_share": 0.17723913490772247,
+   "replacement": 0.49325308203697205
+  },
+  "865": {
+   "errors_share": 0.1734645962715149,
+   "replacement": 0.5212092995643616
+  },
+  "866": {
+   "errors_share": 0.17514754831790924,
+   "replacement": 0.512296736240387
+  },
+  "867": {
+   "errors_share": 0.18329022824764252,
+   "replacement": 0.4846336841583252
+  },
+  "868": {
+   "errors_share": 0.17467065155506134,
+   "replacement": 0.4993232786655426
+  },
+  "869": {
+   "errors_share": 0.17171533405780792,
+   "replacement": 0.5080444812774658
+  },
+  "870": {
+   "errors_share": 0.1800890564918518,
+   "replacement": 0.48618385195732117
+  },
+  "871": {
+   "errors_share": 0.1808687001466751,
+   "replacement": 0.5099266171455383
+  },
+  "872": {
+   "errors_share": 0.1702154129743576,
+   "replacement": 0.508506178855896
+  },
+  "873": {
+   "errors_share": 0.17619124054908752,
+   "replacement": 0.5176133513450623
+  },
+  "874": {
+   "errors_share": 0.16893921792507172,
+   "replacement": 0.5142064094543457
+  },
+  "875": {
+   "errors_share": 0.17695461213588715,
+   "replacement": 0.5095289945602417
+  },
+  "876": {
+   "errors_share": 0.1728733628988266,
+   "replacement": 0.5170084238052368
+  },
+  "877": {
+   "errors_share": 0.17443038523197174,
+   "replacement": 0.49187207221984863
+  },
+  "878": {
+   "errors_share": 0.17848621308803558,
+   "replacement": 0.5127692222595215
+  },
+  "879": {
+   "errors_share": 0.18427646160125732,
+   "replacement": 0.4883023500442505
+  },
+  "880": {
+   "errors_share": 0.1750718504190445,
+   "replacement": 0.5097221732139587
+  },
+  "881": {
+   "errors_share": 0.1777740716934204,
+   "replacement": 0.5039755702018738
+  },
+  "882": {
+   "errors_share": 0.1763305366039276,
+   "replacement": 0.4934172034263611
+  },
+  "883": {
+   "errors_share": 0.180656298995018,
+   "replacement": 0.49081334471702576
+  },
+  "884": {
+   "errors_share": 0.17277143895626068,
+   "replacement": 0.5008277893066406
+  },
+  "885": {
+   "errors_share": 0.17229074239730835,
+   "replacement": 0.502469003200531
+  },
+  "886": {
+   "errors_share": 0.16665737330913544,
+   "replacement": 0.5284755825996399
+  },
+  "887": {
+   "errors_share": 0.1707162857055664,
+   "replacement": 0.5075740218162537
+  },
+  "1021": {
+   "errors_share": 0.1804807037115097,
+   "replacement": 0.4820099174976349
+  },
+  "1027": {
+   "errors_share": 0.1760057955980301,
+   "replacement": 0.5062217712402344
+  },
+  "1055": {
+   "errors_share": 0.17464949190616608,
+   "replacement": 0.5017407536506653
+  },
+  "1058": {
+   "errors_share": 0.1769561767578125,
+   "replacement": 0.49949708580970764
+  },
+  "1059": {
+   "errors_share": 0.17587949335575104,
+   "replacement": 0.5150859951972961
+  },
+  "1069": {
+   "errors_share": 0.17733341455459595,
+   "replacement": 0.49736467003822327
+  },
+  "1097": {
+   "errors_share": 0.17350676655769348,
+   "replacement": 0.5088019967079163
+  },
+  "1121": {
+   "errors_share": 0.17392733693122864,
+   "replacement": 0.5118914246559143
+  },
+  "1136": {
+   "errors_share": 0.1753106415271759,
+   "replacement": 0.491545706987381
+  },
+  "1139": {
+   "errors_share": 0.1709420382976532,
+   "replacement": 0.5031402707099915
+  },
+  "1142": {
+   "errors_share": 0.16623112559318542,
+   "replacement": 0.5170422196388245
+  },
+  "1150": {
+   "errors_share": 0.16981613636016846,
+   "replacement": 0.5205020308494568
+  }
+ }
+}
