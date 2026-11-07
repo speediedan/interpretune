@@ -747,6 +747,8 @@ def test_cpu_quickstart_default_path_on_a_fresh_cache(tmp_path: Path, monkeypatc
 
     # the kernel is a subprocess, so the cache location must reach it through the environment
     monkeypatch.setenv("IT_COMPONENTS_HUB_CACHE", str(tmp_path / "fresh_components"))
+    # the same goes for the token, and the notebook's pull reads `HF_TOKEN`: nothing in the library reads `IT_HF_TOKEN`
+    monkeypatch.setenv("HF_TOKEN", os.environ.get("IT_HF_TOKEN") or os.environ["HF_TOKEN"])
     output_dir = tmp_path / "notebook_outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_notebook = execute_notebook_with_params(

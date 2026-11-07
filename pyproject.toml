@@ -198,7 +198,7 @@ git-deps = [
     #   decoderesearch/circuit-tracer#79    transformers v5 compatibility
     #   decoderesearch/circuit-tracer#111   interp-engine support (supplies InterpEngineReplacementModel,
     #                                       which the adapter composition consumes rather than reimplements)
-    # plus four fork-only changes, not yet proposed upstream:
+    # plus six fork-only changes, not yet proposed upstream:
     #   layer-local custom targets          a CustomTarget read at a block's output rather than the final
     #                                       residual, which a J-lens-basis attribution target needs (#661)
     #   multi-device layer split            the nnsight backend's model split across GPUs by a device map,
@@ -207,6 +207,8 @@ git-deps = [
     #                                       edges are not sqrt(d_model) too small under transformers 5 (#791)
     #   disk offload on Windows             the offload file is neither open during its write nor mapped at
     #                                       its delete, the two things Windows refuses (#909)
+    #   attribution regimes                 `attribute(freeze_attention=, freeze_norms=)`, recorded on the graph
+    #   head reports                        `head_loadings` and `head_conductance` (#781)
     #
     # No release carries what we need: PyPI has only 0.5.0, and the correctness fix below is in no
     # upstream tag. RETIRE this pin once both PRs merge and the fork-only changes land upstream -- a
@@ -217,7 +219,7 @@ git-deps = [
     # shifting every position index in the feature-intervention path. The branch is rebased as the PRs
     # evolve, so VERIFY BY CONTENT, not by SHA:
     #   git log --grep="Canonicalize nnsight trace" <pin>   -> must return exactly one commit
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@bd6bc784c2d0aa4a4d667b9d824e57968d9487e5",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6a278292747293bcc0ce863aaeb26620f198aacc",
     # sae-lens: pinned to the head of decoderesearch/SAELens#739 (transformer-lens 4.0 support), because
     # every sae-lens release through 6.51.2 fails `import sae_lens` under transformer-lens 4.0
     # (`No module named 'transformer_lens.HookedTransformer'`). RETIRE this pin for a released floor in

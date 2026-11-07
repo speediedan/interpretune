@@ -46,8 +46,14 @@ class CircuitTracerAnalysisBackend:
 
     @property
     def capabilities(self) -> frozenset[AnalysisBackendCapability]:
-        """Attribution graphs and feature interventions; no other analysis capabilities."""
-        return frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH, AnalysisBackendCapability.FEATURE_INTERVENTION})
+        """Attribution graphs, head attribution and feature interventions."""
+        return frozenset(
+            {
+                AnalysisBackendCapability.ATTRIBUTION_GRAPH,
+                AnalysisBackendCapability.FEATURE_INTERVENTION,
+                AnalysisBackendCapability.HEAD_ATTRIBUTION,
+            }
+        )
 
     def supports(self, capability: AnalysisBackendCapability) -> bool:
         """Whether ``capability`` is in :attr:`capabilities`."""
@@ -553,6 +559,7 @@ class CircuitTracerAnalysisBackend:
             "graph_scan_json": self.graph_scan_json(graph),
             "graph_vocab_size": int(graph.vocab_size),
             "graph_metadata": self.graph_metadata(graph, extra_metadata),
+            "graph_attribution_regime_json": json.dumps(graph.attribution_regime),
         }
 
     def graph_components_from_batch(self, analysis_batch: AnalysisBatch | Mapping[str, Any]) -> GraphComponentPayload:
@@ -591,6 +598,7 @@ class CircuitTracerAnalysisBackend:
                 return value.decode()
             return json.dumps(value)
 
+        regime_json = _value("graph_attribution_regime_json", None)
         return {
             "input_string": str(_value("input_string", "")),
             "input_tokens": torch.as_tensor(_value("input_tokens", []), dtype=torch.long),
@@ -604,6 +612,9 @@ class CircuitTracerAnalysisBackend:
             "graph_cfg": json.loads(_json_text(graph_cfg_json)),
             "scan": json.loads(_json_text(graph_scan_json)),
             "vocab_size": int(_value("graph_vocab_size", 0)),
+            # a row stored before this field existed holds a frozen graph, the only kind that could be built then, and
+            # ``None`` is how ``Graph`` spells that
+            "attribution_regime": None if regime_json is None else json.loads(_json_text(regime_json)),
         }
 
     def hydrate_graph(self, components: GraphComponentPayload):
@@ -617,6 +628,7 @@ class CircuitTracerAnalysisBackend:
             for token_str, token_id in zip(components["logit_target_tokens"], components["logit_target_ids"].tolist())
         ]
         cfg = UnifiedConfig.from_dict(dict(components["graph_cfg"]))
+        regime = components["attribution_regime"]
         return Graph(
             input_string=components["input_string"],
             input_tokens=components["input_tokens"],
@@ -629,6 +641,7 @@ class CircuitTracerAnalysisBackend:
             logit_probabilities=components["logit_probabilities"],
             scan_name=components["scan"],
             vocab_size=components["vocab_size"],
+            attribution_regime=None if regime is None else dict(regime),
         )
 
     def hydrate_graph_from_batch(self, analysis_batch: AnalysisBatch | Mapping[str, Any]):
@@ -678,6 +691,95 @@ class CircuitTracerAnalysisBackend:
             ]
         return hydrated
 
+    def head_loading_report(
+        self,
+        module: Any,
+        prompt: Any,
+        target: Any,
+        *,
+        layers: Any = None,
+        freeze_attention: bool = True,
+        freeze_norms: bool = True,
+    ) -> dict[str, Any]:
+        """Each head's share of the edges into ``target``, the parts summed over sources at each attention layer.
+
+        A share is relative to the summed edges, which every layer's parts partition, so a positive share pushes the
+        same way as the edges together. The nnsight backend alone can do this, and circuit-tracer refuses others by
+        name, along with a layer no path into the target passes.
+        """
+        from circuit_tracer.attribution.head_loadings_nnsight import head_loadings
+
+        from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen
+
+        model = module.replacement_model
+        report_layers = range(model.cfg.n_layers) if layers is None else [int(layer) for layer in layers]
+        parts = []
+        with attribution_frozen(model):
+            for layer in report_layers:
+                parts.append(
+                    head_loadings(
+                        model, prompt, target, layer, freeze_attention=freeze_attention, freeze_norms=freeze_norms
+                    )
+                )
+        if not parts:
+            raise ValueError("head_loadings was given no layers to report")
+        total = float(parts[0].total.sum())
+        if total == 0.0:
+            raise ValueError("the edges into this target sum to zero, so no head has a share of them")
+        return {
+            "head_loading_layers": torch.tensor([part.layer for part in parts], dtype=torch.long),
+            "head_loading_shares": torch.stack([part.per_head.sum(1) / total for part in parts]).detach().cpu(),
+            "head_loading_bypass_shares": torch.stack([part.bypass.sum() / total for part in parts]).detach().cpu(),
+            "head_loading_total": total,
+            "head_loading_partition_errors": torch.tensor([part.partition_error for part in parts]),
+        }
+
+    def head_conductance_report(
+        self,
+        module: Any,
+        prompt_from: Any,
+        prompt_to: Any,
+        target_weights: Any,
+        *,
+        n_steps: int = 32,
+        points_per_batch: int = 17,
+        key_positions: Any = None,
+    ) -> dict[str, Any]:
+        """Each head's conductance along the path between two prompts of the same length, on the real model.
+
+        The target is ``logits[-1] @ target_weights``. At every layer the residual and the heads' pattern and value
+        parts sum to the measured change, up to the integral's discretization, which is reported per layer. Transcoders
+        play no part, so this works where a graph's first-order credit does not: across a discrete change.
+        """
+        from circuit_tracer.attribution.head_conductance import head_conductance
+
+        from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen
+
+        model = module.replacement_model
+        with attribution_frozen(model):
+            report = head_conductance(
+                model._model,  # the raw causal LM: conductance hooks its modules directly and reads its logits
+                model.ensure_tokenized(prompt_from),
+                model.ensure_tokenized(prompt_to),
+                torch.as_tensor(target_weights),
+                n_steps=n_steps,
+                points_per_batch=points_per_batch,
+                key_positions=key_positions,
+            )
+        keyed = {} if report.qk_keys is None else {"head_conductance_qk_keys": report.qk_keys.detach().cpu()}
+        if report.ov_keys is not None:
+            keyed["head_conductance_ov_keys"] = report.ov_keys.detach().cpu()
+        return {
+            "head_conductance_qk": report.qk.detach().cpu(),
+            "head_conductance_ov": report.ov.detach().cpu(),
+            "head_conductance_resid": report.resid.detach().cpu(),
+            "head_conductance_t_from": report.t_from,
+            "head_conductance_t_to": report.t_to,
+            "head_conductance_first_order": report.first_order,
+            "head_conductance_completeness_residual": report.completeness_residual.detach().cpu(),
+            **keyed,
+        }
+
     def build_pruned_graph(self, graph: Any, node_threshold: float, edge_threshold: float):
         """Return a pruned copy of the graph under the given node and edge thresholds."""
         from circuit_tracer.graph import Graph, prune_graph
@@ -712,6 +814,7 @@ class CircuitTracerAnalysisBackend:
             logit_probabilities=graph.logit_probabilities,
             scan_name=graph.scan_name,
             vocab_size=graph.vocab_size,
+            attribution_regime=graph.attribution_regime,
         )
 
     def compute_node_influence_scores(self, graph: Any) -> tuple[torch.Tensor, torch.Tensor]:

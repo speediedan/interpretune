@@ -65,6 +65,7 @@ class GraphComponentPayload(TypedDict):
     graph_cfg: Mapping[str, Any]
     scan: str | list[str] | None
     vocab_size: int
+    attribution_regime: Mapping[str, bool] | None
 
 
 @runtime_checkable
@@ -921,6 +922,21 @@ class CircuitAnalysisBatchProtocol(DefaultAnalysisBatchProtocol):
     graph_cfg_json: str | None
     graph_scan_json: str | None
     graph_vocab_size: int | None
+    graph_attribution_regime_json: str | None
+    head_loading_layers: torch.Tensor | None
+    head_loading_shares: torch.Tensor | None
+    head_loading_bypass_shares: torch.Tensor | None
+    head_loading_total: float | None
+    head_loading_partition_errors: torch.Tensor | None
+    head_conductance_qk: torch.Tensor | None
+    head_conductance_ov: torch.Tensor | None
+    head_conductance_resid: torch.Tensor | None
+    head_conductance_t_from: float | None
+    head_conductance_t_to: float | None
+    head_conductance_first_order: float | None
+    head_conductance_completeness_residual: torch.Tensor | None
+    head_conductance_qk_keys: torch.Tensor | None
+    head_conductance_ov_keys: torch.Tensor | None
     intervention_config: str | None
     intervention_specs_json: str | None
     feature_intervention_dict: Any | None

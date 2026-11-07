@@ -495,6 +495,8 @@ class BaseCircuitTracerModule(BaseITModule):
             "max_feature_nodes": cfg.max_feature_nodes if cfg else None,
             "offload": cfg.offload if cfg else None,
             "verbose": cfg.verbose if cfg else True,
+            "freeze_attention": cfg.freeze_attention if cfg else True,
+            "freeze_norms": cfg.freeze_norms if cfg else True,
         }
 
         # Override with any provided kwargs
