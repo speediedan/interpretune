@@ -1,8 +1,9 @@
-# The sparsity chain's two phases for gemma-3-1b-it (26 decoder layers), named as an interpretune module names them
+# The sparsity chain's three stages for gemma-3-1b-it (26 decoder layers), named as an interpretune module names them
 # (`model.` is the module's HF model). Phase 0 (sparsity, #698) thaws the final norm and blocks 14-25 with the penalty
-# on: 0.3 times the normalized attribution ratio plus 3 times the error share. Phase 1 (recovery, #700) keeps them
-# thawed with a fresh optimizer and the boundary's simplified graph enforced. #700 re-thawed in two steps (blocks 22-25,
-# then 14-21) from an export; one run cannot narrow a thawed set, so this keeps 14-25 thawed (decided on #899).
+# on: 0.3 times the normalized attribution ratio plus 3 times the error share. Recovery (#700) then re-thaws in two
+# steps, as the chain did: phase 1 refreezes blocks 14-21, so the norm and blocks 22-25 train with the boundary's
+# simplified graph enforced, and phase 2 thaws blocks 14-21 again under the same enforcement (#936). Each recovery phase
+# starts from the previous phase's best with a fresh optimizer.
 0:
   params:
   - model.model.norm.weight
@@ -10,6 +11,18 @@
   phase_config: {reg_weight: 0.3, err_weight: 3.0, enforce: false}
 1:
   params: []
+  refreeze:
+  - model.model.layers.(1[4-9]|2[01])\..*
+  restore: best
+  new_optimizer:
+    optimizer_init:
+      class_path: torch.optim.AdamW
+      init_args: {weight_decay: 0.0, lr: 1.0e-05}
+  phase_config: {reg_weight: 0.3, err_weight: 3.0, enforce: true}
+2:
+  params:
+  - model.model.layers.(1[4-9]|2[01])\..*
+  restore: best
   new_optimizer:
     optimizer_init:
       class_path: torch.optim.AdamW

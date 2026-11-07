@@ -3,14 +3,15 @@
 #   interpretune --run_command train --config hub://speediedan/rte/runs/rte_sparse.gpt2.core.yaml
 #
 # The session is the component's `rte_sparse.gpt2.core` configuration (GPT-2 with random transcoders) and the schedule
-# `ft_schedules/rte_sparse.gpt2.yaml`. Phase 0 calibrates the penalty's normalizer and tunes with the penalty on; at the
-# boundary the best checkpoint is restored, the graph hook builds the enforcement from it, the gate judges the phase,
-# and phase 1 tunes with the simplified graph enforced and a fresh optimizer. Every phase is judged on `val_task`, the
-# phase-invariant task loss, since the whole objective changes meaning once enforcement turns on.
+# `ft_schedules/rte_sparse.gpt2.yaml`. Phase 0 calibrates the penalty's normalizer and tunes with the penalty on; at its
+# boundary the best checkpoint is restored and the graph hook builds the enforcement from it. Recovery re-thaws in two
+# steps (#936), each from the previous phase's best with a fresh optimizer and the simplified graph enforced: phase 1
+# refreezes blocks 9 and 10, and phase 2 thaws them again. Every phase is judged on `val_task`, the phase-invariant task
+# loss, since the whole objective changes meaning once enforcement turns on.
 session_ref: speediedan/rte:rte_sparse.gpt2.core
 seed_everything: 0
 run_cfg:
-  max_epochs: 4
+  max_epochs: 5
   # the attribution penalty needs the gap's gradient at validation too
   validate_with_grad: true
   callbacks:
@@ -18,7 +19,7 @@ run_cfg:
       init_args:
         schedule: hub://speediedan/rte/ft_schedules/rte_sparse.gpt2.yaml
         tuning_scheduler_kwargs:
-          max_depth: 1
+          max_depth: 2
           restore_best: true
           transition:
             class_path: finetuning_scheduler.core.transitions.PlateauTransition
