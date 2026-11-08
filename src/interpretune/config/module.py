@@ -105,7 +105,7 @@ class CompatConf(ITSerializableCfg):
 class TuningConf(ITSerializableCfg):
     """Tunable modules the module attaches once its model is built (#812)."""
 
-    # interventions spliced in at a site and declared `intervention:<kind>` (`interpretune.tuning.interventions`)
+    # interventions spliced in at a site and declared `intervention:<name>` (`interpretune.tuning.interventions`)
     tuning_interventions: list[InterventionCfg] = field(default_factory=list)
 
 

@@ -23,8 +23,13 @@ attached at a site and scheduled by role, whichever backend the module wraps:
 - :func:`attach_latent_model` and :func:`detach_latent_model`, which register the model under the root's
   ``latent_models`` and splice it in with forward hooks;
 - :func:`latent_model_roles`, the roles to declare: ``latent:<name>`` for a tunable latent model, or ``instrument`` for
-  one held frozen until a schedule promotes it (finetuning-scheduler's ``promote`` phase key, core loop only);
-- :class:`LatentModelsMixin`, which declares those roles through ``tunable_roles()``.
+  one held frozen until a schedule promotes it (finetuning-scheduler's ``promote`` phase key, core loop only). Every
+  interpretune module declares them through its cooperative ``tunable_roles()``, which its venngram view reads.
+
+Attach latent models in a module's ``register_tunable_modules()`` override, which runs once the model exists and before
+the module's view is built. A circuit-tracer composition refuses them: its view assigns roles itself and would leave a
+spliced model's tensors without one. The analysis surface's feature ops (venngram feature targets at an SAE's
+``hook_sae_acts_post``) reach sae_lens SAEs only, not models attached here.
 
 Sites are module paths under the root, so the same latent model attaches wherever a module computes the activations: a
 core module's ``model.model.layers.N.mlp``, an nnsight module's ``hf_model.model.layers.N.mlp`` or a TransformerLens
@@ -105,7 +110,7 @@ def _with_first(value: Any, tensor: torch.Tensor) -> Any:
 class _Splice:
     """The forward hooks splicing one latent model in at its site."""
 
-    def __init__(self, latent: nn.Module, site: LatentSite) -> None:
+    def __init__(self, latent: LatentModel, site: LatentSite) -> None:
         self.latent, self.site = latent, site
         self.read_value: torch.Tensor | None = None
 
@@ -116,12 +121,12 @@ class _Splice:
         x, self.read_value = self.read_value, None
         if x is None:  # the read module did not run in this forward pass
             return output
-        latents = self.latent.encode(x)  # type: ignore[operator]
+        latents = self.latent.encode(x)
         if self.site.mode == "observe":
-            self.latent.last_latents = latents.detach()
+            setattr(self.latent, "last_latents", latents.detach())  # the protocol does not declare it
             return output
         target = _first(output)
-        recon = self.latent.decode(latents).to(target.dtype)  # type: ignore[operator]
+        recon = self.latent.decode(latents).to(target.dtype)
         if self.site.mode == "replace_with_error":
             recon = recon + (target - recon).detach()
         return _with_first(output, recon)
@@ -137,6 +142,16 @@ def _latent_models(root: nn.Module, create: bool = False) -> nn.ModuleDict | Non
         return None
     root.add_module(LATENT_MODELS_ATTR, held := nn.ModuleDict())
     return held
+
+
+def _refuse_circuit_tracer(root: nn.Module, what: str) -> None:
+    """Refuse a splice on a circuit-tracer composition, whose view assigns its roles itself and so would leave the
+    spliced tensors without one (matched by class name: circuit-tracer is an optional dependency)."""
+    if any(cls.__name__ == "BaseCircuitTracerModule" for cls in type(root).__mro__):
+        raise ValueError(
+            f"A circuit-tracer composition does not take {what}: its view (CircuitTracerView) assigns roles itself, so"
+            " the spliced tensors would have none. Tune its transcoders by promoting them instead."
+        )
 
 
 def attach_latent_model(
@@ -160,11 +175,13 @@ def attach_latent_model(
         ``latent``.
 
     Raises:
-        ValueError: ``name`` is not a valid name or is already attached, or ``latent`` is not a latent model.
+        ValueError: ``name`` is not a valid name or is already attached, ``latent`` is not a latent model, or ``root``
+            is a circuit-tracer composition.
         AttributeError: a site's module does not exist under ``root``.
     """
     if not _NAME_RE.fullmatch(name):
         raise ValueError(f"Latent model name {name!r} must be letters, digits, '_' and '-' only")
+    _refuse_circuit_tracer(root, "latent models")
     if not isinstance(latent, nn.Module) or not isinstance(latent, LatentModel):
         raise ValueError(f"{type(latent).__name__} is not an nn.Module with encode() and decode()")
     held = _latent_models(root, create=True)
@@ -223,25 +240,3 @@ def latent_model_roles(root: nn.Module) -> dict[str, str]:
         tensors = [*latent.named_parameters(), *latent.named_buffers()]
         roles.update({f"{LATENT_MODELS_ATTR}.{name}.{n}": role for n, _ in tensors})
     return roles
-
-
-class LatentModelsMixin:
-    """Declares the roles of the latent models attached to a module through its ``tunable_roles()``.
-
-    Compose it into an interpretune module (any backend) and attach latent models with :meth:`attach_latent_model` in a
-    ``register_tunable_modules()`` override, which runs once the model exists and before the module's view is built.
-    """
-
-    def attach_latent_model(self, name: str, latent: nn.Module, site: LatentSite, *, frozen: bool = False) -> nn.Module:
-        """:func:`attach_latent_model` on this module."""
-        return attach_latent_model(self, name, latent, site, frozen=frozen)  # type: ignore[arg-type]
-
-    def detach_latent_model(self, name: str) -> nn.Module:
-        """:func:`detach_latent_model` on this module."""
-        return detach_latent_model(self, name)  # type: ignore[arg-type]
-
-    def tunable_roles(self) -> dict[str, str]:
-        """The cooperative roles, plus ``latent:<name>`` (or ``instrument``) for each attached latent model."""
-        roles = super().tunable_roles()  # type: ignore[misc]
-        roles.update(latent_model_roles(self))  # type: ignore[arg-type]
-        return roles

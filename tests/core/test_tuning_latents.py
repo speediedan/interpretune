@@ -11,7 +11,6 @@ from torch import nn
 from interpretune.tuning.latents import (
     LATENT_MODELS_ATTR,
     LatentModel,
-    LatentModelsMixin,
     LatentSite,
     attach_latent_model,
     detach_latent_model,
@@ -161,24 +160,28 @@ class TestRefusals:
             attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.7"))
         assert "sae" not in getattr(root, LATENT_MODELS_ATTR)
 
+    def test_a_circuit_tracer_composition_is_refused(self):
+        class BaseCircuitTracerModule(Root):  # matched by name: circuit-tracer is optional
+            pass
+
+        with pytest.raises(ValueError, match="circuit-tracer composition"):
+            attach_latent_model(BaseCircuitTracerModule(), "sae", TinySAE(), LatentSite("model.blocks.0"))
+
     def test_detaching_an_unknown_name_raises(self):
         with pytest.raises(KeyError):
             detach_latent_model(Root(), "sae")
 
 
-class SteeredRoot(Root):
-    """A cooperative ``tunable_roles()`` below the mixin, as ``BaseITModule``'s is."""
+class LatentRoot(Root):
+    """Another role beside the attached latent models', which ``tunable_roles()`` declares together, as
+    ``BaseITModule``'s does."""
 
     def __init__(self) -> None:
         super().__init__()
         self.steer = nn.Parameter(torch.zeros(D))
 
     def tunable_roles(self) -> dict[str, str]:
-        return {"steer": "intervention:steer"}
-
-
-class LatentRoot(LatentModelsMixin, SteeredRoot):
-    pass
+        return {"steer": "intervention:steer", **latent_model_roles(self)}
 
 
 class TestRoles:
@@ -195,12 +198,12 @@ class TestRoles:
     def test_no_latent_models_no_roles(self):
         assert latent_model_roles(Root()) == {}
 
-    def test_the_mixin_adds_its_roles_to_the_cooperative_ones(self):
+    def test_latent_model_roles_join_the_modules_other_roles(self):
         root = LatentRoot()
-        root.attach_latent_model("sae", TinySAE(), LatentSite("model.blocks.0"))
+        attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0"))
         roles = root.tunable_roles()
         assert roles["steer"] == "intervention:steer" and roles["latent_models.sae.enc.weight"] == "latent:sae"
-        root.detach_latent_model("sae")
+        detach_latent_model(root, "sae")
         assert root.tunable_roles() == {"steer": "intervention:steer"}
 
 
@@ -209,12 +212,12 @@ class TestScheduling:
 
     @pytest.fixture(autouse=True)
     def _fts(self):
-        pytest.importorskip("finetuning_scheduler.tunable_view", reason="finetuning-scheduler predates the view")
+        pytest.importorskip("finetuning_scheduler.core.views", reason="finetuning-scheduler predates tunable views")
 
     @staticmethod
     def _root(frozen: bool = False):
         root = LatentRoot()
-        root.attach_latent_model("sae", TinySAE(), LatentSite("model.blocks.0"), frozen=frozen)
+        attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0"), frozen=frozen)
         from finetuning_scheduler import CanonicalView
 
         return root, CanonicalView(root, roles=root.tunable_roles())
@@ -269,18 +272,19 @@ class TestOnAnInterpretuneModule:
     """The seam on a real composition: a core module's model, a latent model beside it, its identity view."""
 
     def test_a_core_module_compiles_and_runs_a_latent_model_by_role(self, request):
-        pytest.importorskip("finetuning_scheduler.tunable_view", reason="finetuning-scheduler predates the view")
+        pytest.importorskip("finetuning_scheduler.core.views", reason="finetuning-scheduler predates tunable views")
         from copy import deepcopy
 
         from finetuning_scheduler.core.compile import compile_schedule
 
         from interpretune.session import ITSession
-        from interpretune.tuning.views import identity_view
+        from interpretune.tuning.views import default_view
 
         module = ITSession(deepcopy(request.getfixturevalue("get_it_session_cfg__core_cust"))).module
         width = module.model.tok_embeddings.embedding_dim
         attach_latent_model(module, "sae", TinySAE(width, 2 * width), LatentSite("model.layers.0"))
-        view = identity_view(module, roles={**module.tunable_roles(), **latent_model_roles(module)})
+        # the module's own `tunable_roles()` now declares the attached model, and its venngram view reads them
+        view = default_view(module, roles=module.tunable_roles())
         compiled = compile_schedule({0: {"params": ["role:latent:sae"]}, 1: {"params": ["model.layers.0.*"]}}, view)
         assert sorted(compiled.physical_for(0)) == sorted(
             f"latent_models.sae.{n}" for n in ("enc.weight", "enc.bias", "dec.weight", "dec.bias")

@@ -10,14 +10,13 @@ from torch import nn
 
 from interpretune.tuning.interventions import (
     INTERVENTIONS_ATTR,
-    InterventionsMixin,
     SteeringVector,
     attach_intervention,
     detach_intervention,
     intervention_roles,
     intervention_sites,
 )
-from interpretune.tuning.latents import LatentModelsMixin, LatentSite
+from interpretune.tuning.latents import LatentSite, latent_model_roles
 
 D = 8
 
@@ -134,9 +133,19 @@ class TestRefusals:
         with pytest.raises(ValueError, match="letters, digits"):
             attach_intervention(Root(), name, SteeringVector(D), "model.blocks.0")
 
-    def test_a_kind_is_required(self):
-        with pytest.raises(ValueError, match="kind None"):
-            attach_intervention(Root(), "edit", nn.Linear(D, D), "model.blocks.0")
+    def test_a_circuit_tracer_composition_is_refused(self):
+        class BaseCircuitTracerModule(Root):  # matched by name: circuit-tracer is optional
+            pass
+
+        with pytest.raises(ValueError, match="circuit-tracer composition"):
+            attach_intervention(BaseCircuitTracerModule(), "steer", SteeringVector(D), "model.blocks.0")
+
+    def test_a_configured_vector_cannot_be_frozen(self):
+        from interpretune.tuning.interventions import as_intervention_cfg
+
+        # it would start at zero and never train: hold a trained vector fixed with `refreeze` instead
+        with pytest.raises(TypeError, match="frozen"):
+            as_intervention_cfg({"name": "steer", "site": "model.blocks.0", "frozen": True})
 
     def test_a_name_is_attached_once(self):
         root = Root()
@@ -155,15 +164,18 @@ class TestRefusals:
             detach_intervention(Root(), "steer")
 
 
-class SteeredRoot(InterventionsMixin, LatentModelsMixin, Root):
-    pass
+class SteeredRoot(Root):
+    """Declares the attached latent models' and interventions' roles as ``BaseITModule.tunable_roles`` does."""
+
+    def tunable_roles(self) -> dict[str, str]:
+        return {**latent_model_roles(self), **intervention_roles(self)}
 
 
 class TestRoles:
     def test_tunable_and_frozen_interventions_take_their_roles(self):
         root = Root()
         attach_intervention(root, "steer", SteeringVector(D), "model.blocks.0")
-        attach_intervention(root, "edit", nn.Linear(D, D), "model.blocks.1", kind="edit")
+        attach_intervention(root, "edit", nn.Linear(D, D), "model.blocks.1")
         attach_intervention(root, "held", SteeringVector(D), "model.tuple_block", frozen=True)
         assert intervention_roles(root) == {
             "interventions.steer.vector": "intervention:steer",
@@ -175,14 +187,16 @@ class TestRoles:
     def test_no_interventions_no_roles(self):
         assert intervention_roles(Root()) == {}
 
-    def test_the_mixin_composes_with_the_latent_models_mixin(self):
+    def test_latent_model_and_intervention_roles_are_declared_together(self):
+        from interpretune.tuning.latents import attach_latent_model
+
         root = SteeredRoot()
-        root.attach_intervention("steer", SteeringVector(D), "model.blocks.1")
-        root.attach_latent_model("sae", TinySAE(), LatentSite("model.blocks.0"))
+        attach_intervention(root, "steer", SteeringVector(D), "model.blocks.1")
+        attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0"))
         roles = root.tunable_roles()
         assert roles["interventions.steer.vector"] == "intervention:steer"
         assert roles["latent_models.sae.enc.weight"] == "latent:sae"
-        root.detach_intervention("steer")
+        detach_intervention(root, "steer")
         assert "interventions.steer.vector" not in root.tunable_roles()
 
 
@@ -191,7 +205,7 @@ class TestScheduling:
 
     @pytest.fixture(autouse=True)
     def _fts(self):
-        pytest.importorskip("finetuning_scheduler.tunable_view", reason="finetuning-scheduler predates the view")
+        pytest.importorskip("finetuning_scheduler.core.views", reason="finetuning-scheduler predates tunable views")
 
     @staticmethod
     def _train(fts, root, epochs):
@@ -209,7 +223,7 @@ class TestScheduling:
         from finetuning_scheduler import CanonicalView, TuningScheduler
 
         root = SteeredRoot()
-        root.attach_intervention("steer", SteeringVector(D), "model.blocks.1")
+        attach_intervention(root, "steer", SteeringVector(D), "model.blocks.1")
         schedule = {
             0: {"params": ["role:intervention:steer"], "max_transition_epoch": 1},
             1: {"params": [r"model\.tuple_block\..*"]},
@@ -224,11 +238,42 @@ class TestScheduling:
         changed = {n for n, p in root.named_parameters() if not torch.equal(before[n], p)}
         assert changed == {"interventions.steer.vector", *block}
 
+    def test_a_stage_refreezes_a_trained_vector_and_trains_the_block(self):
+        """Phases as stages: steer first, then hold the trained vector fixed (finetuning-scheduler's ``refreeze``)
+        while the block trains from where the steering stage ended (``restore: none``)."""
+        from finetuning_scheduler import TuningScheduler
+
+        from interpretune.tuning.views import identity_view
+
+        root = SteeredRoot()
+        steer = attach_intervention(root, "steer", SteeringVector(D), "model.blocks.1")
+        schedule = {
+            0: {"params": ["role:intervention:steer"], "max_transition_epoch": 1},
+            1: {"params": [r"model\.tuple_block\..*"], "refreeze": ["role:intervention"], "restore": "none"},
+        }
+        view = identity_view(root, roles=root.tunable_roles())
+        fts = TuningScheduler(root, schedule, optimizer=partial(torch.optim.SGD, lr=0.1), view=view)
+        fts.setup()
+        seen, trained = [], None
+        x, y = _x(), torch.tensor([0, 1, 0, 1])
+        for _ in fts.epochs(2):
+            if fts.curr_depth == 1 and trained is None:
+                trained = steer.vector.detach().clone()
+            nn.functional.cross_entropy(root(x), y).backward()
+            fts.optimizer.step()
+            fts.optimizer.zero_grad()
+            seen.append((fts.curr_depth, sorted(n for n, p in root.named_parameters() if p.requires_grad)))
+            fts.epoch_end({})
+        block = ["model.tuple_block.proj.bias", "model.tuple_block.proj.weight"]
+        assert seen == [(0, ["interventions.steer.vector"]), (1, block)]
+        assert trained is not None and trained.abs().sum() > 0  # the steering stage moved it
+        assert torch.equal(steer.vector, trained)  # and the block stage held it fixed
+
     def test_a_frozen_intervention_steers_and_never_trains(self):
         from finetuning_scheduler import CanonicalView, TuningScheduler
 
         root = SteeredRoot()
-        steer = root.attach_intervention("steer", SteeringVector(D), "model.blocks.1", frozen=True)
+        steer = attach_intervention(root, "steer", SteeringVector(D), "model.blocks.1", frozen=True)
         with torch.no_grad():
             steer.vector.fill_(0.25)  # a precomputed direction, applied from the start
         schedule = {
@@ -248,7 +293,7 @@ class TestOnAnInterpretuneModule:
     """The seam on a real composition: a core module's model, a steering vector beside it, its identity view."""
 
     def test_a_core_module_compiles_and_trains_a_steering_vector_by_role(self, request):
-        pytest.importorskip("finetuning_scheduler.tunable_view", reason="finetuning-scheduler predates the view")
+        pytest.importorskip("finetuning_scheduler.core.views", reason="finetuning-scheduler predates tunable views")
         from copy import deepcopy
 
         from finetuning_scheduler.core.compile import compile_schedule
@@ -294,11 +339,11 @@ def _site(module, cfg_fixture: str) -> str:
 def test_a_configured_steering_vector_is_attached_and_scheduled_by_role(request, cfg_fixture, as_mapping):
     """``tuning_interventions`` attaches a steering vector on every composition, declared in its own view, whether
     an entry is an ``InterventionCfg`` or the mapping a YAML configuration gives."""
-    pytest.importorskip("finetuning_scheduler.tunable_view", reason="finetuning-scheduler predates the view")
+    pytest.importorskip("finetuning_scheduler.core.views", reason="finetuning-scheduler predates tunable views")
     from copy import deepcopy
 
     from finetuning_scheduler.core.compile import compile_schedule
-    from finetuning_scheduler.tunable_view import as_view
+    from finetuning_scheduler.core.views import as_view
 
     from interpretune.session import ITSession
     from interpretune.tuning.interventions import InterventionCfg
