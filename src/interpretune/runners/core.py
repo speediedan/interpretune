@@ -525,7 +525,7 @@ def save_checkpoint(
         torch.save(checkpoint_state(module, ctx), path)
         return
     import torch.distributed as dist
-    from torch.distributed.checkpoint import save as dcp_save
+    from torch.distributed.checkpoint.state_dict_saver import save as dcp_save
     from torch.distributed.checkpoint.state_dict import get_state_dict
 
     checkpoint_dir = Path(path)
@@ -581,7 +581,7 @@ def load_distributed_checkpoint(
         MisconfigurationException: If the checkpoint's lr scheduler count differs from the module's, or a
             sidecar is missing (a checkpoint taken by fewer ranks, or an incomplete save).
     """
-    from torch.distributed.checkpoint import load as dcp_load
+    from torch.distributed.checkpoint.state_dict_loader import load as dcp_load
     from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
 
     checkpoint_dir = Path(checkpoint_dir)
