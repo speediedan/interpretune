@@ -99,7 +99,7 @@ def _run_cli(rte_component, run_dir, recorder=None, resume_from=None):
     (run_dir / "run.yaml").write_text(yaml.safe_dump(cfg))
     EnforcementProbe.seen, StageRecorder.seen = [], []
     args = ["--config", str(run_dir / "run.yaml")]
-    args += ["--registered_cfg", json.dumps({"datamodule_cfg": {"dataset_path": str(run_dir.parent / "dataset")}})]
+    args += ["--registered_cfg", json.dumps({"datamodule_cfg": {"dataset_path": str(run_dir / "dataset")}})]
     args += ["--run_cfg.limit_train_batches=2", "--run_cfg.limit_val_batches=2"]
     core_cli_main(run_mode="train", args=args)
     return list(EnforcementProbe.seen), list(StageRecorder.seen)
