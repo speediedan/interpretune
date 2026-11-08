@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from interpretune.analysis.backends.hook_mapping_constants import SUBHOOK_SUFFIXES
+
+if TYPE_CHECKING:
+    from interpretune.analysis.points.component_map import LayerSet
 
 __all__ = [
     "ArchitectureMapping",
@@ -39,11 +42,19 @@ class HookMapping:
         tuple_output: Whether the target module returns a tuple (e.g., transformer blocks,
             attention) or a single tensor (e.g., MLP, LayerNorm). Only relevant when
             ``io_type="output"``. Defaults to ``True`` (tuple output).
+        layers: The layers the point exists on, from its component-map row; ``None`` is every layer. On a
+            hybrid stack the template formats to a path that does not exist on the other layers, so a
+            point there is refused instead.
     """
 
     envoy_path: str
     io_type: Literal["input", "output"]
     tuple_output: bool = True
+    layers: LayerSet | None = None
+
+    def covers(self, layer: int) -> bool:
+        """Whether the point exists at ``layer``."""
+        return self.layers is None or self.layers.covers(layer)
 
 
 @dataclass(frozen=True)
@@ -118,15 +129,21 @@ def _derived_table(architecture: str) -> tuple[dict[str, HookMapping], dict[str,
     mappings: dict[str, HookMapping] = {}
     derived: dict[str, str] = {}
     globals_ = set(cmap.global_components())
-    # concrete layer-0 path -> `{layer}` template, from the map's own rows, so the template is never
-    # reconstructed from a string (a block path ends in the index and a replace on ".0." would miss it)
-    templates = {e.module.replace("{i}", "0"): e.module.replace("{i}", "{layer}") for e in cmap.components.values()}
+    # A block-relative base is resolved at its row's first covered layer (layer 0 unless the row is restricted to
+    # some layers, as a hybrid stack's attention rows are) and the concrete index is turned back into the
+    # `{layer}` template; a global one resolves as itself.
+    first_layer = {c: (e.layers.first if e.layers is not None else 0) for c, e in cmap.components.items()}
+    # concrete path at that layer -> (`{layer}` template, the row's layers), from the map's own rows, so the template
+    # is never reconstructed from a string (a block path ends in the index and a replace on ".0." would miss it)
+    templates = {
+        e.module.replace("{i}", str(first_layer[c])): (e.module.replace("{i}", "{layer}"), e.layers)
+        for c, e in cmap.components.items()
+    }
     for base in dict.fromkeys(candidates):
         bare = parse(base)
-        # A block-relative base is resolved at layer 0 and the concrete index is turned back into the
-        # `{layer}` template below; a global one resolves as itself.
         is_global = bare.component in globals_ or base in ("hook_embed", "hook_pos_embed")
-        point_for_resolve = bare if is_global else parse(f"blocks.0.{base}")
+        layer = first_layer.get(f"blocks.{{i}}.{bare.contribution or bare.component}".rstrip("."), 0)
+        point_for_resolve = bare if is_global else parse(f"blocks.{layer}.{base}")
         if bare.caution is not None:
             # A precise name that callers routinely read as the OTHER tensor (`hook_mlp_in` meaning the
             # post-norm input the artifact was trained on). Resolving it either way is a silent substitution
@@ -144,8 +161,13 @@ def _derived_table(architecture: str) -> tuple[dict[str, HookMapping], dict[str,
         if res.derived:
             derived[base] = _DERIVED_REASONS[res.derivation or ""].replace("{norm}", base.split(".")[0])
             continue
-        template = templates.get(res.module_path, res.module_path)
-        mappings[base] = HookMapping(envoy_path=template, io_type=res.io, tuple_output=res.tuple_output)  # pyright: ignore[reportArgumentType]
+        template, layers = templates.get(res.module_path, (res.module_path, None))
+        mappings[base] = HookMapping(
+            envoy_path=template,
+            io_type=res.io,  # pyright: ignore[reportArgumentType]
+            tuple_output=res.tuple_output,
+            layers=layers,
+        )
     return mappings, derived
 
 
@@ -235,6 +257,13 @@ class HookNameResolver:
         if base_name in self._mapping.hook_mappings:
             if layer is not None:
                 self._require_layer_shape(base_name, layer)
+                mapping = self._mapping.hook_mappings[base_name]
+                if layer >= 0 and not mapping.covers(layer):
+                    assert mapping.layers is not None
+                    raise ValueError(
+                        f"Hook {base_name!r} on {self._architecture!r} covers {mapping.layers.describe()}, "
+                        f"not layer {layer}: its module does not exist there"
+                    )
             return
         reason = self._derived_reasons.get(base_name)
         if reason is not None:
@@ -266,6 +295,17 @@ class HookNameResolver:
     def supported_hooks(self) -> list[str]:
         """List of TL base hook names supported by this architecture."""
         return sorted(self._mapping.hook_mappings.keys())
+
+    def covered_layers(self, base_name: str, num_layers: int) -> list[int]:
+        """The layers of ``range(num_layers)`` a block-relative base hook exists on (every layer unless its row
+        says otherwise, as a hybrid stack's attention rows do)."""
+        mapping = self._mapping.hook_mappings[base_name]
+        return [layer for layer in range(num_layers) if mapping.covers(layer)]
+
+    def first_layer(self, base_name: str) -> int:
+        """The lowest layer a base hook exists on, where a probe of one layer must look."""
+        layers = self._mapping.hook_mappings[base_name].layers
+        return 0 if layers is None else layers.first
 
     def resolve(self, tl_hook_name: str) -> tuple[str, str]:
         """Resolve a TL hook name to an HF module path and input/output selector.
@@ -324,7 +364,7 @@ class HookNameResolver:
             if mapping.io_type != "output":
                 continue
             try:
-                module = hf_model.get_submodule(mapping.envoy_path.format(layer=0))
+                module = hf_model.get_submodule(mapping.envoy_path.format(layer=self.first_layer(base_name)))
             except AttributeError:
                 continue
 
