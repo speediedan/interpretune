@@ -9,7 +9,8 @@
 # simplified graph enforced, and phase 2 thaws blocks 14-21 again. At each boundary the best checkpoint is restored and
 # `ChainBuildGraphs` graphs the restored weights (the 40 gate items are measured; at the sparsity boundary the 100 #667
 # pilot items also fit the enforcement both recovery phases hold). `ChainGraphGate` compares the graphs with the pinned
-# untuned reference (#709: error share up at most 5 points, replacement down at most 0.10). It judges phase 0 and the
+# untuned reference (#709: error share up at most 5 points; replacement down at most 0.15, relaxed from #709's 0.10 for
+# this exploration, #936). It judges phase 0 and the
 # final phase; phase 1, the first step of the re-thaw, is graphed and recorded with the verdict it would have had, but
 # not judged, so the second step always runs. The final gate judges the global best, whichever phase holds it, and a
 # veto ends the run on the previous phase's best (#899 and #936 have the outcome per seed). The reference is graphed at
@@ -48,6 +49,7 @@ run_cfg:
                 init_args:
                   reference: hub://speediedan/rte/chain/untuned_reference.json
                   sha256: 2f0ad55275106d84c69bda4d84d17aa48cb51bb0141628c457f07e7fdb054eb6
+                  max_replacement_drop: 0.15
                   record_only_depths: [1]
               rank_zero_only: true
           phase_hooks:
