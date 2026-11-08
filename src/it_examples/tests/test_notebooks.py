@@ -390,6 +390,23 @@ def test_ct_analysis_backend_notebook_local(params: dict[str, Any], tmp_path: Pa
     _run_ct_analysis_backend_notebook(params, tmp_path)
 
 
+# measured with tests/gpu_ci/calibrate.py: need 11.69 GiB (AMD R9700, ROCm), declared at the
+# calibrator's recommendation (need plus margin, rounded up to the next half GiB)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=13.5)
+def test_ct_attention_attribution_notebook(tmp_path: Path):
+    """Test the attention-aware attribution notebook (regimes, head loadings, head conductance)."""
+    notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "attention_attribution_analysis.ipynb"
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=notebook_path,
+        parameters={},
+        output_dir=output_dir,
+    )
+    assert output_notebook.exists(), f"Output notebook not created at {output_notebook}"
+    _cleanup_notebook_artifacts()
+
+
 # Test parameters for the concept-direction steering demo notebooks (replaced the archived
 # RTE-focused cross-backend demo, 2026-07-11; rebuilt 2026-07-16 on the gemma-2-2b public-dashboard
 # default, a substrate that needs no local services). Split into two notebooks 2026-07-30: the
@@ -786,6 +803,7 @@ def test_notebook_discovery():
     roster = {
         "attribution_analysis/attribution_analysis.ipynb",
         "circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb",
+        "circuit_tracer_examples/attention_attribution_analysis.ipynb",
         "circuit_tracer_examples/ct_analysis_backend_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo_local_np.ipynb",

@@ -5,6 +5,7 @@
   "notebooks/dev/attribution_analysis/analysis_injection_config.yaml": "f3ef5c9c2bd7faf09d0d2c2e712b6dfbe721e1d38dafab74536a3666d4a12183",
   "notebooks/dev/attribution_analysis/analysis_points.py": "7ccd7198969660fb10b9759b6e418b2d8fcc562ffba9bccba99ae80b071e45c9",
   "notebooks/dev/attribution_analysis/attribution_analysis.ipynb": "13e5a9f76628b3e49a116a192cbfced5d1cb7476ea39605109bbf59a3cc7aa4b",
+  "notebooks/dev/circuit_tracer_examples/attention_attribution_analysis.ipynb": "d12ff214bb8d21e201b42f54e062f1e7dd8de023095ef656a9c52b8c4e205bfd",
   "notebooks/dev/circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb": "533395277ad5afc018eb7aa37cebd3108cbdfafc0eada50d88875639897eb450",
   "notebooks/dev/circuit_tracer_examples/ct_analysis_backend_demo.ipynb": "32b0208a188f3c817085637230b42c4427e43a6c5f846085937da2433230a1a2",
   "notebooks/dev/circuit_tracer_examples/ct_analysis_backend_demo_gemma2_ref.ipynb": "39989b9b096e4d71e41c6f5c0bb7ce699bbb730975a3cc20e32602b79d7424c7",
