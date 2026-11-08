@@ -130,15 +130,18 @@ class TestResolve:
         assert isinstance(n, TensorRef) and n.derivation == "pre_gain_normalized"
 
     def test_contribution_is_post_norm_only_on_sandwich_norm_models(self, cmap):
-        attn = resolve(parse("blocks.4.hook_attn_out"), cmap)
-        mlp = resolve(parse("blocks.4.hook_mlp_out"), cmap)
-        assert isinstance(attn, TensorRef) and isinstance(mlp, TensorRef)
+        # A hybrid stack restricts its attention row to some layers and refuses the others by name: probe a covered one.
+        attn_layers = cmap.components["blocks.{i}.attn"].layers
+        layer = 4 if attn_layers is None or attn_layers.covers(4) else attn_layers.first
+        attn = resolve(parse(f"blocks.{layer}.hook_attn_out"), cmap)
+        mlp = resolve(parse(f"blocks.{layer}.hook_mlp_out"), cmap)
+        assert isinstance(attn, TensorRef) and isinstance(mlp, TensorRef), (attn, mlp)
         if cmap.sandwich_norms:
             assert attn.module_path.endswith("post_attention_layernorm")
             assert mlp.module_path.endswith("post_feedforward_layernorm")
         else:
-            assert attn.module_path == cmap.module_for("attn", 4)
-            assert mlp.module_path == cmap.module_for("mlp", 4)
+            assert attn.module_path == cmap.module_for("attn", layer)
+            assert mlp.module_path == cmap.module_for("mlp", layer)
 
     def test_unknown_component_is_a_value_with_a_reason(self, cmap):
         res = resolve(parse("blocks.1.router.hook_out"), cmap)
