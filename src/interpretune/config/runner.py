@@ -207,8 +207,9 @@ class SessionRunnerCfg:
     # `fully_shard` kwargs every planned unit takes unless its entry overrides them; all but `act_ckpt` also apply to
     # the module itself
     fsdp_default_kwargs: Mapping[str, Any] | None = None
-    # resume training from a core-loop checkpoint (`interpretune.runners.core.checkpoint_state`, or a path to one saved
-    # with `torch.save`) taken at the end of an epoch; training continues at the next epoch
+    # resume training from a core-loop checkpoint taken at the end of an epoch (training continues at the next
+    # epoch): under 'single', a `interpretune.runners.core.checkpoint_state` or a path to one saved with
+    # `torch.save`; under 'ddp'/'fsdp2', the distributed checkpoint's directory (`save_checkpoint`)
     resume_from: str | Path | Mapping[str, Any] | None = None
     # the core loop's autocast precision, with Lightning's names: 'bf16-mixed' autocasts the step functions to
     # bfloat16 around fp32 master weights, 'bf16-true' autocasts a module whose weights are already bfloat16, and
@@ -244,12 +245,28 @@ class SessionRunnerCfg:
                 " Set `placement` to 'fsdp2' or 'ddp' (and launch with torchrun), or drop the plan."
             )
         if self.resume_from is not None and self.placement != "single":
-            # a core-loop checkpoint is one process's `state_dict()`; under 'ddp' and 'fsdp2' every rank holds
-            # DTensor shards, which need a distributed checkpoint format to save and restore
+            # under 'ddp'/'fsdp2' every rank holds DTensor shards, so only the distributed checkpoint form
+            # (a directory) can resume the run; a mapping or an existing file is one process's state. A path
+            # that does not exist yet is judged when the loop loads it, by the same names.
+            one_process_form = isinstance(self.resume_from, Mapping) or (
+                isinstance(self.resume_from, (str, Path)) and Path(self.resume_from).is_file()
+            )
+            if one_process_form:
+                raise MisconfigurationException(
+                    f"`resume_from` under placement '{self.placement}' must be a distributed checkpoint directory"
+                    " (saved with `save_checkpoint` in a data-parallel run): a mapping or a `torch.save` file is"
+                    " one process's state, and every rank here holds shards."
+                )
+        if (
+            self.resume_from is not None
+            and self.placement == "single"
+            and isinstance(self.resume_from, (str, Path))
+            and Path(self.resume_from).is_dir()
+        ):
             raise MisconfigurationException(
-                f"`resume_from` supports placement 'single' only, not '{self.placement}': a core-loop checkpoint is one"
-                " process's state, and resuming a sharded run needs distributed checkpointing, which the core loop"
-                " does not do yet."
+                f"`resume_from` is a directory ({self.resume_from!r}), which is a distributed checkpoint, but the"
+                " placement is 'single': resume it under the data-parallel placement that saved it, or pass a"
+                " `checkpoint_state` mapping or a path to one saved with `torch.save`."
             )
         if self.it_session is not None:
             self._session_validation()
