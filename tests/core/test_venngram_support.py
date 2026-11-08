@@ -53,7 +53,9 @@ class TestDerivedSupport:
         # every core venngram op has a native mode now, `scale` included
         assert support.ops == frozenset({"add", "replace", "scale", "project", "reject", "patch", "clamp"})
         assert support.tokens == frozenset({"all", "last"})
-        assert support.targets == frozenset({"units", "activation"}) and support.values == frozenset({"dose", "doses"})
+        assert support.targets == frozenset({"units", "activation"}) and support.values == frozenset(
+            {"dose", "doses", "from"}
+        )
         assert support.sites == frozenset(
             {"mlp.hook_out", "hook_resid_pre", "blocks.*.mlp.hook_out", "blocks.*.hook_resid_pre"}
         )
