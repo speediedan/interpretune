@@ -720,6 +720,50 @@ class TestBridgeTranscoderSupport:
             assert not torch.allclose(tinystories_original_logits, logits_with_transcoder)
         assert len(tinystories_bridge_model._acts_to_saes) == 0
 
+    def test_a_recipe_feature_target_steers_through_the_latent_sub_hook(self, tinystories_bridge_model):
+        """A venngram feature target reaches a real forward: the hook pattern resolves to the attached latent, and
+        writing a feature's activation changes the logits."""
+        from sae_lens.saes.standard_sae import StandardSAE, StandardSAEConfig
+
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
+        from interpretune.analysis.venngram import load_recipe, recipe_interventions
+
+        d_model = tinystories_bridge_model.cfg.d_model
+        sae = StandardSAE(
+            StandardSAEConfig(
+                d_in=d_model, d_sae=d_model * 2, metadata=SAEMetadata(hook_name="blocks.0.hook_resid_post")
+            )
+        )
+        recipe = load_recipe(
+            {
+                "schema_version": 2,
+                "kind": "recipe",
+                "name": "steer-a-feature",
+                "model": {"id": "m", "revision": "r1"},
+                "book": {
+                    "schema_version": 1,
+                    "name": "features",
+                    "portability": "checkpoint",
+                    "applies_to": {"models": [{"id": "m", "revision": "r1"}]},
+                    "sets": {"top": {"features": "sae", "layers": [0], "units": [5]}},
+                },
+                "stages": [
+                    {
+                        "site": "hook_resid_post",
+                        "tokens": "all",
+                        "ops": [{"op": "add", "target": {"set": "top"}, "value": {"dose": 50.0}}],
+                    }
+                ],
+            }
+        ).recipe
+        payload = recipe_interventions(recipe, site_widths={"hook_resid_post.hook_sae_acts_post": sae.cfg.d_sae})
+        batch = {"input": tinystories_bridge_model.to_tokens(TRANSCODER_PROMPT)}
+        pre, post = TLModelBackend().fwd_w_intervention(
+            tinystories_bridge_model, batch, payload, latent_model_handles=[sae]
+        )
+        assert not torch.allclose(pre, post)
+        tinystories_bridge_model.reset_saes()
+
     def test_transcoder_run_with_cache(
         self, tinystories_bridge_model, tinystories_transcoder, tinystories_original_logits
     ):

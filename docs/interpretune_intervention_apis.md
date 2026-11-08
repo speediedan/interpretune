@@ -35,9 +35,12 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
 
 - `interpretune.analysis.venngram` applies a [venngram](https://github.com/speediedan/venngram) recipe through the
   model-backend surface above: `recipe_interventions` turns a recipe's treatments (ordered ops at a site, on the whole
-  activation or on a set's units) into `InterventionSpec`s in the native modes. `venngram_support()` derives what
-  Interpretune honours of a recipe from the backend's own records, and `check_recipe` / `require_supported` refuse,
-  before anything runs, whatever that record cannot express. `export_book` goes the other way, writing an intervention
+  activation, on a set's units, or on a latent model's features at its `hook_sae_acts_post` sub-hook) into
+  `InterventionSpec`s in the native modes. `recipe_feature_interventions` turns a feature `replace` at explicit positions
+  into the circuit-tracer tuples above. A value is a dose, or a column of evidence the caller supplies, through venngram's
+  transforms; Interpretune evaluates the transforms, and the `interpretune.analysis.venngram.values` module states what
+  each one means. `venngram_support()` derives what Interpretune honours of a recipe from the backend's own records, and
+  `check_recipe` / `require_supported` refuse, before anything runs, whatever that record cannot express. `export_book` goes the other way, writing an intervention
   payload as a venngram book carrying it as a treatment, and `support_mapping` publishes the derived declaration as a
   `support_record`, so venngram's conformance checker reads both without Interpretune installed. Interventions on
   venngram-addressed unit sets, with registered examples for supported models, are tracked in
