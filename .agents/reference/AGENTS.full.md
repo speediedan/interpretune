@@ -304,8 +304,8 @@ IT_RUN_STANDALONE_TESTS=1 python -m pytest tests/core/test_adapters_transformer_
 unset IT_RUN_STANDALONE_TESTS
 
 # Standalone test harness
-./tests/special_tests.sh --mark_type=standalone
-./tests/special_tests.sh --mark_type=standalone --filter_pattern='ParameterMapping'
+python -m gpu_epsilon.special_tests --lease --mark_type=standalone
+python -m gpu_epsilon.special_tests --lease --mark_type=standalone --filter_pattern='ParameterMapping'
 
 # Profiling tests
 IT_RUN_PROFILING_TESTS=1 python -m pytest tests/parity_acceptance/test_it_l.py::test_l_profiling -v
@@ -378,6 +378,18 @@ ${IT_REPO_DIR}/scripts/manage_standalone_processes.sh --use-nohup \
 tail -f $(ls -rt /tmp/gen_it_coverage_it_* | tail -1)
 ```
 
+`gen_it_coverage.sh` keeps its environment half in shell (building or activating the venv, torch backend selection,
+the GPU lease), since that runs before a usable Python environment exists, then runs its test phases through
+gpu-epsilon's phase driver (`python -m gpu_epsilon.phases`), which reads them from `[tool.gpu-epsilon.phases]` in
+`pyproject.toml`: `main` (no GPU visible), `cuda` (the cuda-marked tests, skipped without CUDA), `standalone` and
+`profile_ci`, plus `profile`, `optional` and `benchmark` under `--run-all-and-examples`. The driver erases the coverage
+data first and writes the report last, even after a failed phase. Without `--allow-failures` it stops at the first
+failed phase; with it every phase runs and the run still exits 1, naming each failed phase. `--dry-run` prints the phase
+plan. The rerun flags reach the main-suite phases through `PYTEST_ADDOPTS` and the special-test phases as runner
+options. The session log carries every phase's outcome and the main-suite output, each special-test phase writes its
+own `phases_<time>_<name>.log` beside it, and the driver's JSON record of the run sits next to the session log. Change a
+phase in that table, not in the script.
+
 **Watching a background run: use `scripts/watch_run.sh`.** It prints exactly one terminal line and exits,
 so a watch cannot report nothing: `GREEN`, `RED`, `DEAD` (the subject went away without a verdict),
 `TIMEOUT` (the deadline passed first; the subject is not known to be done) or `QUERY-FAILED` (the probe
@@ -429,7 +441,7 @@ containing the pattern matches itself, and the same shell may be hosting the run
 
 `manage_standalone_processes.sh` exempts its own PID **and its whole ancestor chain** from that
 `pgrep -f` check, so a launcher whose command line spells out a configured pattern (`gen_it_coverage.sh`,
-`special_tests.sh`, `python -m pytest`, ...) no longer self-matches. A reported conflict is therefore a
+`gpu_epsilon.special_tests`, `python -m pytest`, ...) no longer self-matches. A reported conflict is therefore a
 genuine other run — including an Azure CI container's suite, which is visible on the host and *should*
 block a local run per the serial-execution rule in `CLAUDE.local.md`.
 
@@ -439,10 +451,23 @@ that in CI runs on the GitHub-hosted matrix instead:
 - `Testing: standard gpu cuda-marked` reruns only regular CUDA / bf16-marked tests with `IT_RUN_CUDA_TESTS=1`
 - `Testing: standalone gpu` and `Testing: CI Profiling` remain separate special-test phases
 
-When debugging fixture or CUDA memory growth locally, add `--resource-debug` to `gen_it_coverage.sh` or
-`special_tests.sh`. That exports the canonical `IT_RESOURCE_DEBUG=1`
+The special tests run through gpu-epsilon's shared special-test runner, `python -m gpu_epsilon.special_tests` from the
+repository root (pinned in `requirements/ci/gpu_epsilon.txt`; there is no entry script), configured by
+`[tool.gpu-epsilon.special-tests]` in `pyproject.toml`: the marks and the selection variables each sets, the collection
+roots, the coverage command, and the `--reruns`/`--reruns-delay`/`--no-reruns`/`--resource-debug` options. It runs each
+node in its own process and reads its outcome from per-rank records rather than the log: any rank's failure, a
+non-zero exit, or a session that never finished fails the node. A run writes a JSON results file beside its session
+log. Change a mark or the coverage command in that table. `--lease` takes the host's GPU lease once for the whole run
+(a no-op unless `GPU_LEASE_CMD` is set; `GPU_LEASE_ARGS=--cpu-heavy` takes the host-memory lease too, for a full
+suite); the GPU pipeline runs it without, under the job's own leases.
+
+When debugging fixture or CUDA memory growth locally, add `--resource-debug` to `gen_it_coverage.sh` or the
+special-test runner. That exports the canonical `IT_RESOURCE_DEBUG=1`
 flags used by `tests/conftest.py`, `tests/analysis_resource_utils.py`, and the coverage harness summary
-parser for per-test / per-fixture / per-GPU logging.
+parser for per-test / per-fixture / per-GPU logging. `gen_it_coverage.sh` summarizes the session log and every
+special-test phase's log. For the runner's per-boundary snapshots as well, also export
+`GPU_EPSILON_EVENT_CMD="bash scripts/resource_snapshot.sh"` (`gen_it_coverage.sh` does this itself): the runner reads
+that hook from its own environment, so the flag alone cannot set it.
 
 If semantic concept-direction intervention parity drifts unexpectedly, use the normal gate in
 `tests/core/test_analysis_backend_parity.py`. The manual upstream sanity-check workflow that used to
@@ -464,10 +489,10 @@ here is required to work on this project.
 
 ```bash
 export GPU_LEASE_CMD=/path/to/gpu_lease.sh        # opt in for this shell
-./tests/special_tests.sh --mark_type=standalone   # now serialized
+python -m gpu_epsilon.special_tests --lease --mark_type=standalone   # now serialized
 ```
 
-`tests/special_tests.sh` and ``scripts/gen_it_coverage.sh`` self re-exec under the lease, so one acquisition covers a
+The special-test runner (with `--lease`) and ``scripts/gen_it_coverage.sh`` self re-exec under the lease, so one acquisition covers a
 whole suite. The Azure GPU pipeline participates too, by bind-mounting the lease directory into the job
 container (`flock` works on the inode, so container and host processes interlock). A CI-held lease is
 identifiable by its holder metadata: project tag `azure-it-<buildId>` plus a `[container]` marker. Never
@@ -699,8 +724,8 @@ Serialization details matter here:
 
 ## CI/CD
 
-- **GitHub Actions** (`ci_test-full.yml`): Ubuntu 22.04, Windows 2022, macOS 14, Python 3.13, 90-min timeout
-- **Azure GPU pipeline** (`.azure-pipelines/gpu-tests.yml`): Self-hosted, requires admin approval, only for ready-for-review PRs. Use CPU CI as long as possible before requesting GPU runs. It runs on either GPU agent (NVIDIA or AMD) through the any-vendor template (`.azure-pipelines/templates/gpu-job.yml`), which picks the digest-pinned image from the agent's `GPU_VENDOR`; a manual run can pin one with the `vendor` parameter. Every step runs inside the job's container through `.azure-pipelines/scripts/ctr.sh`. The job's steps live in `.azure-pipelines/templates/it-gpu-steps.yml`, shared with the release pipeline. Each GPU phase is collected before the GPU work and reported after it (`tests/gpu_ci/phase_report.py`, ported from finetuning-scheduler): collected beside passed, skipped and failed, counted against the phase's manifest and published as the job's phase evidence; a failing phase fails the job. Releases run `.azure-pipelines/gpu-release.yml` by hand: one vendor-demanded leg per vendor, then `tests/gpu_ci/release_eligibility.py` over both legs' evidence, whose verdict is the release's GPU gate (a skip needs a reason in `tests/gpu_ci/reviewed_exclusions.json` there).
+- **GitHub Actions** (`ci_test-full.yml`): Ubuntu 22.04, Windows 2022, macOS 15, Python 3.13, 120-min timeout
+- **Azure GPU pipeline** (`.azure-pipelines/gpu-tests.yml`): Self-hosted, requires admin approval, only for ready-for-review PRs. Use CPU CI as long as possible before requesting GPU runs. It runs on either GPU agent (NVIDIA or AMD) through the any-vendor template (`.azure-pipelines/templates/gpu-job.yml`), which picks the digest-pinned image from the agent's `GPU_VENDOR`; a manual run can pin one with the `vendor` parameter. Every step runs inside the job's container through `.azure-pipelines/scripts/ctr.sh`. The job's steps live in `.azure-pipelines/templates/it-gpu-steps.yml`, shared with the release pipeline. Each GPU phase is collected before the GPU work and reported after it (`tests/gpu_ci/phase_report.py`, ported from finetuning-scheduler): collected beside passed, skipped and failed, counted against the phase's manifest and published as the job's phase evidence; a failing phase fails the job. Releases run `.azure-pipelines/gpu-release.yml` by hand: one vendor-demanded leg per vendor, then the release eligibility checker shared with finetuning-scheduler (`gpu_epsilon.release_eligibility`, configured by `tests/gpu_ci/release.json`, pinned in `requirements/ci/gpu_epsilon.txt`) over both legs' evidence, whose verdict is the release's GPU gate (a skip needs a reason in `tests/gpu_ci/reviewed_exclusions.json` there).
 - **A queued GPU build can sit in `notStarted` until its approval is granted, and that is normal.**
   Check the build's approval state before touching runner configuration: an ungranted gate looks
   identical to a dispatch problem from the outside, and the reflex it invites (inspecting the agent,
@@ -732,9 +757,9 @@ Serialization details matter here:
 - **Torch prerelease:** Configured via `requirements/ci/torch-pre.txt` (version, CUDA target, channel)
 - **Dependencies:** Locked in `requirements/ci/requirements.txt`; regenerate with `./requirements/utils/lock_ci_requirements.sh`
 
-## Pre-MVP Backwards Compatibility
+## Backwards Compatibility (alpha line)
 
-Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeline composition may change without deprecation notices. Do not add backwards-compatibility shims (fallback code paths, silent coercions, etc.) to preserve caller assumptions that predate the current design. If an op's contract changes, update all in-tree callers and tests to match the new contract directly.
+The public policy is `docs/source/stability.md`, and it is the single source of truth. In short: through the alpha line the promise is notice, not stability. Do not add backwards-compatibility shims (fallback code paths, silent coercions, etc.) to preserve caller assumptions that predate the current design. If a contract changes, update all in-tree callers and tests to match the new contract directly, and land a `Breaking` CHANGELOG entry naming the old and new form. The small stable surface named on the stability page gets one release of notice first; persisted artifacts are handled separately there.
 
 ## Anything publicly visible is written for a public reader
 

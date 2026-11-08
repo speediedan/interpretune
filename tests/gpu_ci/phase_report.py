@@ -48,10 +48,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-if __package__:
-    from tests.gpu_ci.phase_plugin import RECORD_DIR_ENV, RECORD_ROOT_ENV
-else:  # run as a script beside its siblings (release_eligibility.py on a host Python without the test dependencies)
-    from phase_plugin import RECORD_DIR_ENV, RECORD_ROOT_ENV
+from tests.gpu_ci.phase_plugin import RECORD_DIR_ENV, RECORD_ROOT_ENV
 
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = "speediedan/interpretune"
@@ -99,12 +96,18 @@ PHASES = {
         Phase(
             "standalone",
             {"IT_RUN_STANDALONE_TESTS": "1"},
-            command="bash ./tests/special_tests.sh --mark_type=standalone --allow-failures --allow-empty",
+            command=(
+                "python -m gpu_epsilon.special_tests --config pyproject.toml "
+                "--mark_type=standalone --allow-failures --allow-empty"
+            ),
         ),
         Phase(
             "profile_ci",
             {"IT_RUN_PROFILING_TESTS": "1"},
-            command="bash ./tests/special_tests.sh --mark_type=profile_ci --allow-failures --allow-empty",
+            command=(
+                "python -m gpu_epsilon.special_tests --config pyproject.toml "
+                "--mark_type=profile_ci --allow-failures --allow-empty"
+            ),
         ),
     )
 }
@@ -213,11 +216,12 @@ def build_report(
 ) -> dict:
     """Count one phase's per-node outcomes against its manifest and describe the run that produced them.
 
-    ``tests/special_tests.sh`` runs each node in its own pytest process, and a two-stage run runs a phase once per
-    memory class, so one phase has many sessions; a node's verdict is the one its sessions agree on, a failure or error
-    in any of them winning. A selected node with no verdict is ``unexecuted``. A session that started but never
-    finished is a missing completion, and fails every node it collected that it gave no verdict for. A node that ran but
-    is not in the manifest's selection is a collection error: the run and the manifest disagree about what the phase is.
+    The special-test runner (``gpu_epsilon.special_tests``) runs each node in its own pytest process, and a two-stage
+    run runs a phase once per memory class, so one phase has many sessions; a node's verdict is the one its sessions
+    agree on, a failure or error in any of them winning. A selected node with no verdict is ``unexecuted``. A session
+    that started but never finished is a missing completion, and fails every node it collected that it gave no verdict
+    for. A node that ran but is not in the manifest's selection is a collection error: the run and the manifest disagree
+    about what the phase is.
     """
     if vendor not in VENDORS:
         raise ValueError(f"vendor must be one of {sorted(VENDORS)}")

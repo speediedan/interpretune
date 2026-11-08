@@ -2,7 +2,6 @@
 # This file is auto-generated. Do not modify directly.
 
 from typing import Callable, Optional
-import torch
 from transformers import BatchEncoding
 
 # The public surface, DERIVED from `interpretune.__all__` rather than listed here.
@@ -73,6 +72,7 @@ from interpretune.protocol import (
     AnalysisOpProtocol as AnalysisOpProtocol,
     AnalysisStoreProtocol as AnalysisStoreProtocol,
     BaseAnalysisBatchProtocol as BaseAnalysisBatchProtocol,
+    ClassificationModuleProtocol as ClassificationModuleProtocol,
     CorePhases as CorePhases,
     CoreSteps as CoreSteps,
     DefaultAnalysisBatchProtocol as DefaultAnalysisBatchProtocol,
@@ -161,6 +161,7 @@ def compute_attribution_graph(
         graph_scan_json (string)
         graph_vocab_size (int64)
         graph_metadata (string)
+        graph_attribution_regime_json (string)
     """
     ...
 
@@ -383,6 +384,7 @@ def graph_node_influence(
         graph_cfg_json (string)
         graph_scan_json (string)
         graph_vocab_size (int64)
+        graph_attribution_regime_json (string)
 
     Output Schema:
         node_influence_scores (float32)
@@ -409,6 +411,7 @@ def graph_prune(module, analysis_batch: AnalysisBatch, batch: BatchEncoding, bat
         graph_cfg_json (string)
         graph_scan_json (string)
         graph_vocab_size (int64)
+        graph_attribution_regime_json (string)
 
     Output Schema:
         input_string (string)
@@ -424,10 +427,43 @@ def graph_prune(module, analysis_batch: AnalysisBatch, batch: BatchEncoding, bat
         graph_scan_json (string)
         graph_vocab_size (int64)
         graph_metadata (string)
+        graph_attribution_regime_json (string)
     """
     ...
 
 ct_graph_prune = graph_prune
+
+def head_conductance(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Credit each attention head for the measured change of a target between two prompts of the same length
+
+    Output Schema:
+        head_conductance_qk (float32)
+        head_conductance_ov (float32)
+        head_conductance_resid (float32)
+        head_conductance_t_from (float32)
+        head_conductance_t_to (float32)
+        head_conductance_first_order (float32)
+        head_conductance_completeness_residual (float32)
+        head_conductance_qk_keys (float32)
+        head_conductance_ov_keys (float32)
+    """
+    ...
+
+def head_loadings(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Split the edges into one attribution target across the attention heads of each layer
+
+    Output Schema:
+        head_loading_layers (int64)
+        head_loading_shares (float32)
+        head_loading_bypass_shares (float32)
+        head_loading_total (float32)
+        head_loading_partition_errors (float32)
+    """
+    ...
 
 def intervention_first_order_check(
     module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
@@ -589,7 +625,7 @@ def latent_correct_acts(
     ...
 
 def logit_diffs(
-    module: torch.nn.Module,
+    module: ClassificationModuleProtocol,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
     batch_idx: int,
@@ -614,7 +650,7 @@ def logit_diffs(
     ...
 
 def logit_diffs_cache(
-    module: torch.nn.Module,
+    module: ClassificationModuleProtocol,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
     batch_idx: int,
@@ -640,7 +676,7 @@ def logit_diffs_cache(
     ...
 
 def loss_preds_diffs(
-    module: torch.nn.Module,
+    module: ClassificationModuleProtocol,
     analysis_batch: DefaultAnalysisBatchProtocol,
     batch: BatchEncoding,
     batch_idx: int,

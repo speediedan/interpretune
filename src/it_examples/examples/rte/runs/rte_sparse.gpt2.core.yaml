@@ -1,0 +1,40 @@
+# The sparsity chain (interpretune#698 to #700) as one phased run (#899), CPU-sized, on interpretune's core loop:
+#
+#   interpretune --run_command train --config hub://speediedan/rte/runs/rte_sparse.gpt2.core.yaml
+#
+# The session is the component's `rte_sparse.gpt2.core` configuration (GPT-2 with random transcoders) and the schedule
+# `ft_schedules/rte_sparse.gpt2.yaml`. Phase 0 calibrates the penalty's normalizer and tunes with the penalty on; at the
+# boundary the best checkpoint is restored, the graph hook builds the enforcement from it, the gate judges the phase,
+# and phase 1 tunes with the simplified graph enforced and a fresh optimizer. Every phase is judged on `val_task`, the
+# phase-invariant task loss, since the whole objective changes meaning once enforcement turns on.
+session_ref: speediedan/rte:rte_sparse.gpt2.core
+seed_everything: 0
+run_cfg:
+  max_epochs: 4
+  # the attribution penalty needs the gap's gradient at validation too
+  validate_with_grad: true
+  callbacks:
+    - class_path: interpretune.tuning.core_loop.FTSCoreCallback
+      init_args:
+        schedule: hub://speediedan/rte/ft_schedules/rte_sparse.gpt2.yaml
+        tuning_scheduler_kwargs:
+          max_depth: 1
+          restore_best: true
+          transition:
+            class_path: finetuning_scheduler.core.transitions.PlateauTransition
+            init_args:
+              monitor: val_task
+              patience: 1
+              min_delta: 0.001
+          checkpoint:
+            class_path: finetuning_scheduler.core.checkpoint.BestCheckpoint
+            init_args:
+              dirpath: checkpoints/rte_sparse.gpt2.core
+              monitor: val_task
+              save_initial: true
+          phase_hooks:
+            start:
+              - class_path: rte_boolq.ChainCalibrate
+                init_args: {n_batches: 2}
+              - class_path: rte_boolq.ChainFillEnforcement
+              - class_path: rte_boolq.ChainApplyPayload

@@ -151,5 +151,15 @@ def test_release_pipeline_demands_each_vendor_and_checks_both():
     (check,) = [j for j in release["jobs"] if j.get("job") == "release_eligibility"]
     assert check["dependsOn"] == ["release_nvidia", "release_amd"]
     script = next(s["bash"] for s in check["steps"] if "bash" in s)
-    # the agent's own Python runs it: as a script, standard library only
-    assert "python3 tests/gpu_ci/release_eligibility.py" in script
+    # the agent's own Python runs the shared checker from source, at the commit its one pin names, on this config
+    assert "requirements/ci/gpu_epsilon.txt" in script and 'fetch -q --depth 1 "$url" "$commit"' in script
+    run = 'PYTHONPATH="$src/src" python3 -m gpu_epsilon.release_eligibility --config tests/gpu_ci/release.json'
+    assert run in script
+
+
+def test_the_gpu_epsilon_pin_is_one_commit_url():
+    """The release job reads the checker's commit from this file's one requirement line, so it keeps the ``gpu-
+    epsilon @ git+<url>@<commit>`` form (#877)."""
+    text = (ROOT / "requirements" / "ci" / "gpu_epsilon.txt").read_text()
+    (line,) = [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
+    assert re.fullmatch(r"gpu-epsilon @ git\+https://\S+@[0-9a-f]{40}", line)

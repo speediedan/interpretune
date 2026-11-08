@@ -50,7 +50,7 @@ from circuit_tracer.transcoder import SingleLayerTranscoder, TranscoderSet
 from circuit_tracer.transcoder.cross_layer_transcoder import CrossLayerTranscoder
 
 if TYPE_CHECKING:
-    from finetuning_scheduler.tunable_view import TunableSupport
+    from venngram.tuning import TunableSupport
 
 #: The attribute each transcoder carries its low-rank corrections under.
 DELTAS_ATTR = "lazy_deltas"
@@ -66,10 +66,11 @@ PROMOTE_BASE_REASON = (
     " model's own tensors are already `base` under `CircuitTracerConfig.tune_base`."
 )
 
-DISK_OFFLOAD_REASON = (
-    "circuit-tracer's disk offload reloads every offloaded module with `load_state_dict(assign=True)`, replacing its"
-    " Parameter objects, so an optimizer built over this view would keep stepping the replaced tensors after an"
-    " attribution; set `CircuitTracerConfig.offload` to None or 'cpu' to tune."
+BASE_UNREACHABLE_REASON = (
+    "`CircuitTracerConfig.tune_base` is set, but none of the base model's parameters are parameters of this module:"
+    " the nnsight backend's replacement model is not a torch module, so only its transcoders are registered here,"
+    " and tuning would silently leave the base model untouched. Register the base model's torch module on the"
+    " interpretune module, or leave `tune_base` unset."
 )
 
 
@@ -208,8 +209,8 @@ def attach_lazy_deltas(transcoders: nn.Module, rank: int) -> list[str]:
         }
         deltas = transcoders._modules.setdefault(DELTAS_ATTR, nn.ModuleDict())
         for name, cols in shapes.items():
-            if cols is not None and name not in deltas:  # type: ignore[operator]
-                deltas[name] = nn.ModuleList(LowRankDelta(d_tc, c, rank, device) for c in cols)  # type: ignore[index]
+            if cols is not None and name not in deltas:  # pyright: ignore[reportOperatorIssue]
+                deltas[name] = nn.ModuleList(LowRankDelta(d_tc, c, rank, device) for c in cols)  # pyright: ignore[reportIndexIssue, reportOptionalSubscript]
         return lazy_weights(transcoders)
     if not isinstance(transcoders, TranscoderSet):
         raise TypeError(_unknown_layout(transcoders))
@@ -219,8 +220,8 @@ def attach_lazy_deltas(transcoders: nn.Module, rank: int) -> list[str]:
         _swap(tc, SingleLayerTranscoder, SingleLayerTranscoderWithDeltas)
         deltas = tc._modules.setdefault(DELTAS_ATTR, nn.ModuleDict())
         for name, lazy in (("W_enc", tc.lazy_encoder), ("W_dec", tc.lazy_decoder)):
-            if lazy and name not in deltas:  # type: ignore[operator]
-                deltas[name] = LowRankDelta(tc.d_transcoder, tc.d_model, rank, tc.b_enc.device)  # type: ignore[index]
+            if lazy and name not in deltas:  # pyright: ignore[reportOperatorIssue]
+                deltas[name] = LowRankDelta(tc.d_transcoder, tc.d_model, rank, tc.b_enc.device)  # pyright: ignore[reportArgumentType, reportIndexIssue, reportOptionalSubscript]
     return lazy_weights(transcoders)
 
 
@@ -253,6 +254,29 @@ def attribution_frozen(replacement_model: Any) -> Iterator[list[nn.Parameter]]:
             p.requires_grad_(True)
 
 
+@contextmanager
+def offload_keeps_parameters(offload: str | None) -> Iterator[None]:
+    """Keep every parameter's identity through circuit-tracer's ``offload='disk'`` (#855).
+
+    Disk offload moves each offloaded module to the meta device and later reloads it with
+    ``load_state_dict(assign=True)``. By default both steps replace the module's ``Parameter`` objects, so an optimizer
+    built before an attribution would keep stepping tensors the module no longer holds. Under torch's
+    ``swap_module_params_on_conversion`` both steps swap the new tensor into the existing ``Parameter`` instead
+    (``torch.utils.swap_tensors``), so the parameter, its ``requires_grad`` and the optimizer's state for it survive.
+    The flag is process-wide, so it is set only while ``offload='disk'`` attributes, and restored afterwards. The tuned
+    values are not at risk either way: the offload saves each module's current state.
+    """
+    if offload != "disk":
+        yield
+        return
+    prior = torch.__future__.get_swap_module_params_on_conversion()
+    torch.__future__.set_swap_module_params_on_conversion(True)
+    try:
+        yield
+    finally:
+        torch.__future__.set_swap_module_params_on_conversion(prior)
+
+
 class CircuitTracerView:
     """A ``TunableView`` over a circuit-tracer composition: its transcoders, as ``instrument`` tensors.
 
@@ -262,24 +286,26 @@ class CircuitTracerView:
     Args:
         root: The interpretune module.
         transcoders: The replacement model's transcoders, registered on ``root``.
-        refusal: A reason to refuse the whole composition (disk offload), or ``None``.
+        refusal: A reason to refuse the whole composition, or ``None``.
         tune_base: Whether the base model's parameters (every parameter of ``root`` outside the transcoders) join
-            the view as ``base``.
+            the view as ``base``. With none outside the transcoders (the nnsight backend's replacement model is not a
+            torch module), the whole composition is refused, naming why.
     """
 
     def __init__(
         self, root: nn.Module, transcoders: nn.Module, refusal: str | None = None, tune_base: bool = False
     ) -> None:
-        from finetuning_scheduler.tunable_view.roles import validate_roles
+        from venngram.roles import validate_roles
 
         lazy_weights(transcoders)  # refuses an unknown layout by name
         self.root = root
         self.transcoders = transcoders
-        self.refusal = refusal
         self.tune_base = tune_base
         ids = {id(p) for p in transcoders.parameters()}
         self._names = [n for n, p in root.named_parameters() if id(p) in ids]
         self._base_names = [n for n, p in root.named_parameters() if id(p) not in ids] if tune_base else []
+        # an opt-in that reaches nothing is refused by name rather than tuning the transcoders alone (#859)
+        self.refusal = refusal or (BASE_UNREACHABLE_REASON if tune_base and not self._base_names else None)
         if len(self._names) != len(ids):
             raise ValueError(
                 f"{len(ids) - len(self._names)} of the transcoders' {len(ids)} parameters are not parameters of"
@@ -292,9 +318,9 @@ class CircuitTracerView:
         )
 
     def support(self) -> TunableSupport:
-        """Trainable through the transcoders (``instrument`` until promoted); refused under disk offload."""
-        from finetuning_scheduler.tunable_view import TunableSupport
-        from finetuning_scheduler.tunable_view.roles import declared_kinds
+        """Trainable through the transcoders (``instrument`` until promoted)."""
+        from venngram.tuning import TunableSupport
+        from venngram.roles import declared_kinds
 
         if self.refusal:
             return TunableSupport(trainable=False, reason=self.refusal)
@@ -315,7 +341,7 @@ class CircuitTracerView:
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Each name in the view maps to itself; a base-model name outside ``tune_base`` is refused, naming why."""
-        from finetuning_scheduler.tunable_view import Unresolvable
+        from venngram.tuning import Unresolvable
 
         if self.refusal:
             raise Unresolvable(list(logical), self.refusal)
@@ -334,12 +360,12 @@ class CircuitTracerView:
     def depth_groups(self) -> list[list[str]]:
         """Under ``tune_base``, the base model's parameters in pairs from the last; then one group per transcoder
         layer, from the last (a cross-layer transcoder is one group)."""
-        from finetuning_scheduler.tunable_view.views import pair_groups
+        from venngram.tuning.views import pair_groups
 
         groups = pair_groups(self._base_names) if self._base_names else []
         if isinstance(self.transcoders, CrossLayerTranscoder):
             return groups + ([list(self._names)] if self._names else [])
-        for tc in reversed(list(self.transcoders.transcoders)):  # type: ignore[union-attr]
+        for tc in reversed(list(self.transcoders.transcoders)):  # pyright: ignore[reportArgumentType]
             ids = {id(p) for p in tc.parameters()}
             group = [n for n, p in self.root.named_parameters() if id(p) in ids]
             if group:
@@ -348,7 +374,7 @@ class CircuitTracerView:
 
     def promote(self, physical: Sequence[str], role: str) -> Mapping[str, str]:
         """Promote transcoder tensors (only; a base-model name is refused) to ``role``, keeping their names."""
-        from finetuning_scheduler.tunable_view import CanonicalView, Unresolvable
+        from venngram.tuning import CanonicalView, Unresolvable
 
         self.to_physical(physical)  # refuses unknown names, and base-model names outside `tune_base`
         if base := [n for n in physical if n in set(self._base_names)]:

@@ -128,11 +128,11 @@ class TestHubAnalysisOpManager:
         """Test listing available collections."""
         mock_api = Mock()
         mock_model1 = Mock()
-        mock_model1.modelId = "user1/some_repo"
+        mock_model1.id = "user1/some_repo"
         mock_model2 = Mock()
-        mock_model2.modelId = "user2/nlp"
+        mock_model2.id = "user2/nlp"
         mock_model3 = Mock()
-        mock_model3.modelId = "user1/not-ops"  # Should be filtered out
+        mock_model3.id = "user1/not-ops"  # Should be filtered out
 
         mock_api.list_models.return_value = [mock_model1, mock_model2, mock_model3]
         mock_hf_api_class.return_value = mock_api
@@ -149,11 +149,11 @@ class TestHubAnalysisOpManager:
         """Test listing available collections with username filter."""
         mock_api = Mock()
         mock_model1 = Mock()
-        mock_model1.modelId = "user1/some_repo"
+        mock_model1.id = "user1/some_repo"
         mock_model2 = Mock()
-        mock_model2.modelId = "user2/nlp"
+        mock_model2.id = "user2/nlp"
         mock_model3 = Mock()
-        mock_model3.modelId = "user1/another_repo"
+        mock_model3.id = "user1/another_repo"
 
         mock_api.list_models.return_value = [mock_model1, mock_model2, mock_model3]
         mock_hf_api_class.return_value = mock_api

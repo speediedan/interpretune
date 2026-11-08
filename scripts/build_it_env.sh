@@ -4,7 +4,7 @@
 # Uses uv pip with traditional venv activation for maximum control
 #
 # Torch handling:
-# - By default, installs the pinned stable torch with CUDA 13.0 from PyTorch stable channel (--torch-backend=cu130)
+# - By default, installs the pinned stable torch with CUDA 13.2 from PyTorch stable channel (--torch-backend=cu132)
 # - If requirements/ci/torch-pre.txt exists, installs torch prerelease (nightly or test)
 # - Use --torch-backend=cpu for CPU-only environments (e.g., GitHub Actions runners)
 # - Use --torch-backend=auto for automatic backend detection
@@ -48,7 +48,7 @@ Usage: $0
    [ --target-env-name input ]
    [ --venv-dir input ]
    [ --python-version input ]  (uv --python spec, e.g. 3.12 or python3.12; default: 3.13)
-   [ --torch-backend input ]  (cpu, cu128, cu130, auto; default: cu130 for CUDA 13.0)
+   [ --torch-backend input ]  (cpu, cu130, cu132, auto; default: cu132 for CUDA 13.2)
    [ --from-source "package:path[:extras][:env_var=value...]" ] (can be specified multiple times)
    [ --uv-install-flags "flags" ]
    [ --help ]
@@ -77,7 +77,7 @@ Usage: $0
      --from-source="circuit_tracer:\${HOME}/repos/circuit-tracer:dev:UV_EXCLUDE=\${HOME}/repos/interpretune/requirements/ci/excludes.txt"
 
    Torch Handling:
-   - By default, uses stable torch with CUDA 13.0 (--torch-backend=cu130) to match Docker images
+   - By default, uses stable torch with CUDA 13.2 (--torch-backend=cu132) to match Docker images
    - If requirements/ci/torch-pre.txt exists, installs torch prerelease from nightly or test channel
    - torch-pre.txt format (3 lines): version, CUDA target (e.g., cu128), channel (nightly or test)
    - Use --torch-backend=cpu to force CPU-only torch (e.g., for CI environments)
@@ -207,9 +207,9 @@ venv_path=$(determine_venv_path "${venv_dir}" "${target_env_name}")
 python_version=${python_version:-"3.13"}  # uv version spec (resolves/downloads a managed interpreter); explicit binary names (python3.12) still accepted
 
 # Set default torch backend if not specified (auto = auto-detect CUDA/CPU).
-# cu130: torch >= 2.11 ships CUDA 13 wheels; the cu128 index stops at 2.11.0 so it cannot serve the
-# pinned torch. Keep this aligned with the CUDA version in dockers/docker_images_*.sh.
-torch_backend=${torch_backend:-"cu130"}
+# cu132: torch 2.15.0's stable CUDA wheels are published for cu132 only (cu130 carried the 2.15 release candidates,
+# on the test channel). Keep this aligned with the CUDA version in dockers/docker_images_*.sh.
+torch_backend=${torch_backend:-"cu132"}
 
 # Torch prerelease configuration file
 torch_pre_file="${repo_home}/requirements/ci/torch-pre.txt"
@@ -314,6 +314,10 @@ it_install(){
     # PyTorch's special index, which doesn't have all packages (e.g., torch-tb-profiler).
     echo "Installing locked dependencies..."
     uv pip install ${uv_install_flags} -r "${ci_reqs_file}"
+
+    # 2.5 The shared GPU release eligibility checker (CI only, never package metadata; no dependencies)
+    echo "Installing the gpu-epsilon pin..."
+    uv pip install ${uv_install_flags} -r "${repo_home}/requirements/ci/gpu_epsilon.txt"
 
     # from-source installs manage UV_OVERRIDE themselves (per-package, with filtering)
     unset UV_OVERRIDE

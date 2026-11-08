@@ -25,11 +25,31 @@ from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.config import CircuitTracerConfig, ITConfig
 from interpretune.adapters.circuit_tracer.config import require_hooked_transformer
 from interpretune.analysis.backends.capabilities import get_model_backend
-from interpretune.utils import _SL_AVAILABLE, rank_zero_warn, rank_zero_info
-from interpretune.protocol import Adapter
+from interpretune.utils import _SL_AVAILABLE, MisconfigurationException, rank_zero_warn, rank_zero_info
+from interpretune.protocol import Adapter, StrOrPath
 
 if TYPE_CHECKING:
+    from typing import Protocol
+
     from interpretune.analysis.backends import AnalysisBackendCapability
+
+    class _NeuronpediaExtension(Protocol):
+        """The Neuronpedia extension surface the analysis mixin uses, present when that extension is enabled."""
+
+        def transform_circuit_tracer_graph(
+            self,
+            graph_path: str | Path,
+            output_path: str | Path | None = None,
+            slug: str | None = None,
+            custom_metadata: dict[str, Any] | None = None,
+        ) -> tuple[dict[str, Any], Path]:
+            """Transform a circuit-tracer graph for Neuronpedia."""
+            ...
+
+        def upload_graph_to_neuronpedia(self, graph_path: str | Path, api_key: str | None = None) -> Any:
+            """Upload a graph to Neuronpedia."""
+            ...
+
 
 #: What a circuit-tracer replacement model may be. `torch.nn.Module`, and it CANNOT be narrower:
 #:
@@ -78,7 +98,9 @@ class InstantiatedGraph:
 class CircuitTracerAttributeMixin:
     """Backend-agnostic mixin for circuit tracer attribute access."""
 
+    # Host-provided attributes: the composing module class supplies these through the MRO.
     it_cfg: ITConfig
+    _replacement_model: ReplacementModelType | None
 
     @property
     def circuit_tracer_cfg(self) -> CircuitTracerConfig | None:
@@ -91,7 +113,7 @@ class CircuitTracerAttributeMixin:
     def replacement_model(self) -> ReplacementModelType | None:
         """Get the replacement model handle."""
         if hasattr(self, "_replacement_model"):
-            return self._replacement_model  # type: ignore[attr-defined]  # dynamic mixin attribute
+            return self._replacement_model
         return None
 
 
@@ -106,6 +128,87 @@ def _replacement_transcoders(module: Any) -> nn.Module | None:
     return transcoders if isinstance(transcoders, nn.Module) else None
 
 
+# The per-layer transcoder methods circuit-tracer calls outside `forward`, each reading the transcoder's parameters.
+# `TranscoderSet.apply_activation_function` also calls a transcoder's activation function directly, so that submodule
+# (a JumpReLU holds its threshold) is declared on its own.
+TRANSCODER_DIRECT_METHODS = (
+    "forward",
+    "encode",
+    "decode",
+    "compute_skip",
+    "_get_decoder_vectors",
+    "encode_sparse",
+    "decode_sparse",
+)
+
+
+def transcoder_direct_calls(transcoders: nn.Module) -> list[tuple[str, nn.Module, tuple[str, ...]]]:
+    """The direct calls circuit-tracer makes on a transcoder set's per-layer transcoders, for a data-parallel
+    placement to register (see ``BaseITModule.fsdp_direct_calls``).
+
+    Raises:
+        MisconfigurationException: For a transcoder type whose methods have not been enumerated (a cross-layer
+            transcoder, for one), since an unregistered method would compute with sharded parameters.
+    """
+    from circuit_tracer.transcoder import SingleLayerTranscoder
+
+    calls: list[tuple[str, nn.Module, tuple[str, ...]]] = []
+    for name, child in transcoders.named_modules():
+        if name and child is not transcoders and isinstance(child, SingleLayerTranscoder):
+            calls.append((f"transcoders.{name}", child, TRANSCODER_DIRECT_METHODS))
+            activation = getattr(child, "activation_function", None)
+            if isinstance(activation, nn.Module) and any(True for _ in activation.parameters()):
+                calls.append((f"transcoders.{name}.activation_function", activation, ("forward",)))
+    if not calls and any(True for _ in transcoders.parameters()):
+        raise MisconfigurationException(
+            f"A data-parallel placement shards {type(transcoders).__name__} only once the methods circuit-tracer calls"
+            " on it are enumerated; only `SingleLayerTranscoder` sets are, so place this composition with `single`."
+        )
+    return calls
+
+
+def meta_replacement_model(
+    model_name: str, transcoder_set: str, dtype: torch.dtype, load_source: bool
+) -> tuple[Any, nn.Module | None]:
+    """A circuit-tracer replacement model over nnsight built on the meta device and, with ``load_source``, the
+    Hugging Face module (transcoders included) of the same model loaded on the CPU, for a data-parallel placement
+    to load the meta build from.
+
+    Both builds load the transcoders eagerly: a lazily loaded weight is read from disk on access rather than held as a
+    parameter, so a placement could not shard it. The meta build moves each parameter to the meta device as it is
+    registered (``params_on_meta``), so it reads no Hugging Face checkpoint and holds one transcoder tensor at a time.
+    """
+    import os
+
+    from circuit_tracer.replacement_model.replacement_model_nnsight import NNSightReplacementModel
+    from circuit_tracer.utils.hf_utils import load_transcoder_from_hub
+    from transformers import AutoConfig
+
+    from interpretune.runners.distributed import params_on_meta
+
+    def transcoders() -> Any:
+        cpu = torch.device("cpu")
+        return load_transcoder_from_hub(transcoder_set, cpu, dtype, lazy_encoder=False, lazy_decoder=False)[0]
+
+    with params_on_meta():
+        # circuit-tracer annotates `from_config`'s config as the `AutoConfig` factory, which no config instance is
+        config: Any = AutoConfig.from_pretrained(model_name)
+        config.dtype = dtype  # `from_config` builds in the config's dtype
+        model = NNSightReplacementModel.from_config(config, transcoders())
+    # circuit-tracer keeps the transcoders and every attribution tensor on this device. The model is built before the
+    # process group is joined, so it is the device joining will make current: this rank's accelerator, else the CPU.
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    model.attribution_device = torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device("cpu")
+    source = None
+    if load_source:
+        loaded = NNSightReplacementModel.from_pretrained_and_transcoders(
+            model_name, transcoders(), device=torch.device("cpu"), dtype=dtype
+        )
+        source = loaded._model
+        assert isinstance(source, nn.Module)  # a locally loaded model, never a remote nnsight envoy
+    return model, source
+
+
 class BaseCircuitTracerModule(BaseITModule):
     """Backend-agnostic base module for Circuit Tracer.
 
@@ -117,17 +220,12 @@ class BaseCircuitTracerModule(BaseITModule):
 
     def build_tunable_view(self) -> Any | None:
         """The transcoders' view (:class:`~interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`):
-        every transcoder tensor ``instrument`` until promoted, base-model tensors refused by name unless
-        ``CircuitTracerConfig.tune_base`` makes them ``base``, and the whole composition refused while
-        ``offload='disk'``.
+        every transcoder tensor ``instrument`` until promoted, and base-model tensors refused by name unless
+        ``CircuitTracerConfig.tune_base`` makes them ``base``.
 
         A composition with no replacement model loaded is refused.
         """
-        from interpretune.adapters.circuit_tracer.tunable_view import (
-            DISK_OFFLOAD_REASON,
-            CircuitTracerView,
-            lazy_weights,
-        )
+        from interpretune.adapters.circuit_tracer.tunable_view import CircuitTracerView, lazy_weights
         from interpretune.tuning.views import RefusingView
 
         transcoders = _replacement_transcoders(self)
@@ -141,8 +239,15 @@ class BaseCircuitTracerModule(BaseITModule):
                 " composition's tunable view; set `CircuitTracerConfig.lazy_delta_rank` to tune them through low-rank"
                 " corrections, or load them eagerly (`lazy_encoder=False`, `lazy_decoder=False`)."
             )
-        refusal = DISK_OFFLOAD_REASON if cfg is not None and cfg.offload == "disk" else None
-        return CircuitTracerView(self, transcoders, refusal=refusal, tune_base=cfg is not None and cfg.tune_base)
+        return CircuitTracerView(self, transcoders, tune_base=cfg is not None and cfg.tune_base)
+
+    def fsdp_direct_calls(self) -> list[tuple[str, nn.Module, tuple[str, ...]]]:
+        """Add the transcoder methods circuit-tracer calls outside ``forward`` (see
+        :func:`transcoder_direct_calls`)."""
+        calls = super().fsdp_direct_calls()
+        if (transcoders := _replacement_transcoders(self)) is not None:
+            calls.extend(transcoder_direct_calls(transcoders))
+        return calls
 
     def register_tunable_modules(self) -> None:
         """Make the transcoders this module's parameters, once, and give lazily loaded transcoder weights their
@@ -217,15 +322,19 @@ class BaseCircuitTracerModule(BaseITModule):
         # Factory returns backend-specific implementation based on backend parameter
         # Determine lazy_encoder: explicit config takes precedence, otherwise auto-enable when offloading
         lazy_encoder = cfg.lazy_encoder if cfg.lazy_encoder is not None else (cfg.offload == "cpu")
-        replacement_model = ReplacementModel.from_pretrained(
-            model_name=cfg.model_name or self.it_cfg.model_name_or_path,
-            transcoder_set=cfg.transcoder_set,
-            dtype=cfg.dtype,
-            backend=backend,
-            lazy_encoder=lazy_encoder,
-            lazy_decoder=cfg.lazy_decoder,
-            **pretrained_kwargs,
-        )
+        hf_cfg = self.it_cfg.hf_from_pretrained_cfg
+        if hf_cfg is not None and hf_cfg.meta_init:
+            replacement_model = self._meta_replacement_model(cfg, lazy_encoder, pretrained_kwargs)
+        else:
+            replacement_model = ReplacementModel.from_pretrained(
+                model_name=cfg.model_name or self.it_cfg.model_name_or_path,
+                transcoder_set=cfg.transcoder_set,
+                dtype=cfg.dtype,
+                backend=backend,
+                lazy_encoder=lazy_encoder,
+                lazy_decoder=cfg.lazy_decoder,
+                **pretrained_kwargs,
+            )
 
         # NARROWED EXPLICITLY, and the reason is a real tension rather than a type-checker workaround.
         # circuit-tracer types `backend` as a CLOSED `Literal` of the backends IT ships, and overloads
@@ -273,6 +382,52 @@ class BaseCircuitTracerModule(BaseITModule):
                     f"No model-backend factory registered for circuit-tracer backend {backend!r}; "
                     "leaving the module's model backend unset for its own adapter to attach."
                 )
+
+    def _meta_replacement_model(self, cfg: CircuitTracerConfig, lazy_encoder: bool, pretrained_kwargs: dict) -> Any:
+        """The replacement model built on the meta device for ``hf_from_pretrained_cfg.meta_init`` (see
+        :func:`meta_replacement_model`), rank 0 (``RANK`` unset counts as rank 0) also keeping the CPU-loaded
+        Hugging Face module as the meta-init source a data-parallel placement loads every rank from.
+
+        Raises:
+            MisconfigurationException: For a backend other than nnsight, ``meta_init_load: dcp``, lazily loaded
+                transcoder weights, a composition without ``nnsight_cfg``, or remote execution or a device map, none of
+                which the meta build honors.
+        """
+        import os
+
+        from interpretune.runners.distributed import META_INIT_SOURCE
+
+        hf_cfg = self.it_cfg.hf_from_pretrained_cfg
+        assert hf_cfg is not None
+        refused = []
+        if cfg.backend != "nnsight":
+            refused.append(f"backend {cfg.backend!r} (only 'nnsight' builds on the meta device)")
+        if hf_cfg.meta_init_load != "rank0":
+            refused.append(
+                f"`meta_init_load: {hf_cfg.meta_init_load}` (the transcoders are not in the model's checkpoint; use"
+                " 'rank0')"
+            )
+        if lazy_encoder or cfg.lazy_decoder:
+            refused.append("lazily loaded transcoder weights (set `lazy_encoder: false` and `lazy_decoder: false`)")
+        if getattr(self.it_cfg, "nnsight_cfg", None) is None:
+            refused.append(
+                "no `nnsight_cfg` (without one the Hugging Face module is not registered on this module, so the"
+                " placement would neither shard nor load it)"
+            )
+        if placed := sorted(k for k in ("remote", "device_map", "max_memory") if k in pretrained_kwargs):
+            refused.append(f"{', '.join(placed)} (the data-parallel placement decides where the model runs)")
+        if refused:
+            raise MisconfigurationException(
+                "`hf_from_pretrained_cfg.meta_init` builds a circuit-tracer composition on the meta device for a"
+                f" data-parallel placement to shard and load, which this configuration cannot do: {'; '.join(refused)}."
+            )
+        model_name = cfg.model_name or self.it_cfg.model_name_or_path
+        rank0 = int(os.environ.get("RANK", "0")) == 0
+        model, source = meta_replacement_model(model_name, cfg.transcoder_set, cfg.dtype, load_source=rank0)
+        if source is not None:
+            object.__setattr__(self, META_INIT_SOURCE, source)
+        self._meta_init_built = True  # checked once init returns, since other init paths ignore `meta_init`
+        return model
 
     def _capture_hyperparameters(self) -> None:
         """Capture hyperparameters for logging."""
@@ -340,14 +495,23 @@ class BaseCircuitTracerModule(BaseITModule):
             "max_feature_nodes": cfg.max_feature_nodes if cfg else None,
             "offload": cfg.offload if cfg else None,
             "verbose": cfg.verbose if cfg else True,
+            "freeze_attention": cfg.freeze_attention if cfg else True,
+            "freeze_norms": cfg.freeze_norms if cfg else True,
         }
 
         # Override with any provided kwargs
         attribution_kwargs.update(kwargs)
 
-        from interpretune.adapters.circuit_tracer.tunable_view import REFIT_SUGGESTION, attribution_frozen
+        from interpretune.adapters.circuit_tracer.tunable_view import (
+            REFIT_SUGGESTION,
+            attribution_frozen,
+            offload_keeps_parameters,
+        )
 
-        with attribution_frozen(self.replacement_model) as thawed:
+        with (
+            attribution_frozen(self.replacement_model) as thawed,
+            offload_keeps_parameters(attribution_kwargs["offload"]),
+        ):
             graph = attribute(prompt=prompt, model=self.replacement_model, **attribution_kwargs)
         transcoders = _replacement_transcoders(self)
         tc_ids = {id(p) for p in transcoders.parameters()} if transcoders is not None else set()
@@ -499,6 +663,14 @@ class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
 
 class CircuitTracerAdapter(CircuitTracerAttributeMixin):
     """Adapter composing interpretune modules with circuit-tracer attribution."""
+
+    # Host-provided, as a property on the composed module, so declared in that shape.
+    if TYPE_CHECKING:
+
+        @property
+        def core_log_dir(self) -> StrOrPath | None:
+            """The run's log directory, as resolved by the host."""
+            ...
 
     def initialize_graph_output_dir(self, core_log_dir: Path) -> None:
         """Initialize graph_output_dir based on configuration or default to core_log_dir/graph_data."""
@@ -696,12 +868,41 @@ class CircuitTracerAdapter(CircuitTracerAttributeMixin):
         Deferred to setup because the log directory is not known at construction, and graphs must have somewhere to land
         before the first attribution runs.
         """
-        super().setup(*args, **kwargs)  # type: ignore[misc]  # mixin call to super
-        self.initialize_graph_output_dir(self.core_log_dir)  # type: ignore[attr-defined]  # mixin provides core_log_dir
+        super().setup(*args, **kwargs)  # pyright: ignore[reportAttributeAccessIssue]  # mixin call to super
+        # The cooperative setup above resolves the host's log directory, so it is set by this point.
+        core_log_dir = self.core_log_dir
+        assert core_log_dir is not None, "core_log_dir should be resolved by the host setup before graph output init"
+        self.initialize_graph_output_dir(Path(core_log_dir))
 
 
 class CircuitTracerAnalysisMixin:
     """Mixin for circuit tracer analysis operations."""
+
+    # Host-provided attributes: supplied through the MRO by the attribute mixin, the base circuit-tracer
+    # module, and the Neuronpedia extension when it is enabled.
+    if TYPE_CHECKING:
+        it_cfg: ITConfig
+        neuronpedia: _NeuronpediaExtension | None
+
+        @property
+        def circuit_tracer_cfg(self) -> CircuitTracerConfig | None:
+            """The circuit-tracer configuration, from the attribute mixin."""
+            ...
+
+        def generate_attribution_graph(self, prompt: str, **kwargs: Any) -> Graph:
+            """Generate an attribution graph, from the base circuit-tracer module."""
+            ...
+
+        def create_graph_visualization_files(
+            self,
+            graph: Graph,
+            slug: str,
+            output_dir: str | Path,
+            node_threshold: float = 0.8,
+            edge_threshold: float = 0.98,
+        ) -> None:
+            """Create graph visualization files, from the base circuit-tracer module."""
+            ...
 
     def save_graph(
         self,
@@ -729,24 +930,24 @@ class CircuitTracerAnalysisMixin:
         graph.to_pt(str(pt_path))
 
         # Create graph visualization files
-        self.create_graph_visualization_files(  # type: ignore[attr-defined]  # mixin provides method
+        self.create_graph_visualization_files(
             graph=graph,
             slug=slug,
             output_dir=output_dir,
-            node_threshold=self.circuit_tracer_cfg.default_node_threshold if self.circuit_tracer_cfg else 0.8,  # type: ignore[attr-defined]  # mixin provides circuit_tracer_cfg
-            edge_threshold=self.circuit_tracer_cfg.default_edge_threshold if self.circuit_tracer_cfg else 0.98,  # type: ignore[attr-defined]  # mixin provides circuit_tracer_cfg
+            node_threshold=self.circuit_tracer_cfg.default_node_threshold if self.circuit_tracer_cfg else 0.8,
+            edge_threshold=self.circuit_tracer_cfg.default_edge_threshold if self.circuit_tracer_cfg else 0.98,
         )
         output_json_path = output_dir / f"{slug}.json"
 
         # Determine whether to use Neuronpedia
         if use_neuronpedia is None:
             use_neuronpedia = (
-                self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg else False  # type: ignore[attr-defined]  # mixin provides it_cfg
+                self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg else False
             )
 
-        if use_neuronpedia and hasattr(self, "neuronpedia") and self.neuronpedia:  # type: ignore[attr-defined]  # mixin provides neuronpedia
+        if use_neuronpedia and hasattr(self, "neuronpedia") and self.neuronpedia:
             try:
-                transformed_graph, graph_path = self.neuronpedia.transform_circuit_tracer_graph(  # type: ignore[attr-defined]  # mixin provides neuronpedia
+                transformed_graph, graph_path = self.neuronpedia.transform_circuit_tracer_graph(
                     graph_path=output_json_path, slug=slug, custom_metadata=custom_metadata
                 )
                 return graph_path
@@ -768,19 +969,19 @@ class CircuitTracerAnalysisMixin:
         """Generate attribution graph and optionally upload to Neuronpedia."""
         if use_neuronpedia is None:
             use_neuronpedia = (
-                self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg else False  # type: ignore[attr-defined]  # mixin provides it_cfg
+                self.it_cfg.circuit_tracer_cfg.use_neuronpedia if self.it_cfg.circuit_tracer_cfg else False
             )
 
         if use_neuronpedia:
-            if not hasattr(self, "neuronpedia") or not self.neuronpedia:  # type: ignore[attr-defined]  # mixin provides neuronpedia
+            if not hasattr(self, "neuronpedia") or not self.neuronpedia:
                 raise RuntimeError("Neuronpedia extension not available. Enable it in your configuration.")
 
         # Generate the attribution graph
-        graph = self.generate_attribution_graph(prompt, **generation_kwargs)  # type: ignore[attr-defined]  # mixin provides method
+        graph = self.generate_attribution_graph(prompt, **generation_kwargs)
 
         # Default output_dir to graph_output_dir if not set
         if output_dir is None:
-            output_dir = self.it_cfg.circuit_tracer_cfg.graph_output_dir  # type: ignore[attr-defined]  # mixin provides it_cfg
+            output_dir = self.it_cfg.circuit_tracer_cfg.graph_output_dir
         if output_dir is not None:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -799,7 +1000,9 @@ class CircuitTracerAnalysisMixin:
         )
 
         if upload_to_np and use_neuronpedia:
-            neuronpedia_metadata = self.neuronpedia.upload_graph_to_neuronpedia(graph_path)  # type: ignore[attr-defined]  # mixin provides neuronpedia
+            neuronpedia = self.neuronpedia
+            assert neuronpedia is not None, "neuronpedia availability is checked above when use_neuronpedia is set"
+            neuronpedia_metadata = neuronpedia.upload_graph_to_neuronpedia(graph_path)
         else:
             rank_zero_info("Neuronpedia upload not requested. Set upload_to_np to `True` to automatically upload.")
             neuronpedia_metadata = None

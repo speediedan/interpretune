@@ -134,7 +134,7 @@ class ITConfig(
 
     # The finetuning-scheduler view to attach in place of the composition's own (interpretune#841): a `class_path`
     # and optional `init_args` mapping, instantiated with the module as the view's root. For example
-    # `finetuning_scheduler.tunable_view.CanonicalView` schedules a composition by its own (physical) parameter names,
+    # `venngram.tuning.CanonicalView` schedules a composition by its own (physical) parameter names,
     # and `interpretune.adapters.transformer_lens.tunable_view.TransformerBridgeView` with `implicit_norm_thaw: false`
     # thaws only the norms a schedule names. Unset, the composition's `build_tunable_view()` decides.
     tunable_view: dict[str, Any] | None = None

@@ -214,15 +214,15 @@ show_contexts = True
                 )
                 continue
 
-            # Set up environment variables needed by special_tests.sh
+            # Set up environment variables needed by the special-test runner
             for var, value in env_vars_config.get(mark_type, {}).items():
                 env[var] = value
 
             subset_cleaned = current_subset_str.strip("'\"") if current_subset_str else None
 
-            # Pass the coverage data file path as an environment variable for special_tests.sh
+            # Pass the coverage data file path as an environment variable for the special-test runner
             env["COVERAGE_ANALYSIS_CONFIG_FILE"] = str(self.coverage_config)
-            cmd = ["bash", "tests/special_tests.sh", f"--mark_type={mark_type}"]
+            cmd = [sys.executable, "-m", "gpu_epsilon.special_tests", "--lease", f"--mark_type={mark_type}"]
 
             # Add filter pattern if subset is specified
             if subset_cleaned:

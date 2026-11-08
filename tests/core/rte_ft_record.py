@@ -3,12 +3,14 @@ interface.
 
 Each writes the same JSON record when training ends: every epoch's schedule depth, thawed parameters and validation
 metrics, the final depth, and the best checkpoint's depth and score. A test adds one to a shipped run configuration,
-so both interfaces are compared through the CLI that runs them.
+so both interfaces are compared through the CLI that runs them. Under a launcher, ``{rank}`` in the output path is
+replaced by the process's rank, and the core recorder also records the parameter types (``DTensor`` once sharded).
 """
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -21,14 +23,17 @@ def _thawed(module: torch.nn.Module) -> list[str]:
     return sorted(n for n, p in module.named_parameters() if p.requires_grad)
 
 
-def _write(out: str, epochs: list[dict[str, Any]], final_depth: int, best_depth: Any, best_score: Any) -> None:
+def _write(
+    out: str, epochs: list[dict[str, Any]], final_depth: int, best_depth: Any, best_score: Any, **extra: Any
+) -> None:
     record = {
         "final_depth": final_depth,
         "best_depth": best_depth,
         "best_score": None if best_score is None else float(best_score),
         "epochs": epochs,
+        **extra,
     }
-    Path(out).write_text(json.dumps(record, indent=1))
+    Path(out.format(rank=os.environ.get("RANK", "0"))).write_text(json.dumps(record, indent=1))
 
 
 class CoreEpochRecorder:
@@ -59,7 +64,10 @@ class CoreEpochRecorder:
         # the checkpoint policy was built from configuration inside the callback; the tuning scheduler holds the only
         # reference to it and has no public accessor
         checkpoint = ts._checkpoint
-        _write(self.out, self.epochs, ts.curr_depth, checkpoint.best_depth, checkpoint.best_score)
+        param_types = sorted({type(p).__name__ for p in ctx.module.parameters()})
+        _write(
+            self.out, self.epochs, ts.curr_depth, checkpoint.best_depth, checkpoint.best_score, param_types=param_types
+        )
 
 
 try:

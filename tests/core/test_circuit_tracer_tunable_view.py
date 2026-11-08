@@ -11,20 +11,20 @@ import pytest
 import torch
 from torch import nn
 
-pytest.importorskip("finetuning_scheduler.tunable_view", reason="finetuning-scheduler predates the tunable view")
+pytest.importorskip("venngram.tuning", reason="venngram, which holds the tunable view protocol, is not installed")
 pytest.importorskip("circuit_tracer", reason="circuit-tracer is not installed")
 
 from circuit_tracer.transcoder import SingleLayerTranscoder, TranscoderSet  # noqa: E402
 from circuit_tracer.transcoder.activation_functions import JumpReLU  # noqa: E402
 from circuit_tracer.transcoder.cross_layer_transcoder import CrossLayerTranscoder  # noqa: E402
 from finetuning_scheduler.testing import TunableViewConformance  # noqa: E402
-from finetuning_scheduler.tunable_view import Unresolvable, as_view  # noqa: E402
+from venngram.tuning import Unresolvable, as_view  # noqa: E402
 
 from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule, CircuitTracerAttributeMixin  # noqa: E402
 from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig  # noqa: E402
 from interpretune.adapters.circuit_tracer.tunable_view import (  # noqa: E402
     BASE_MODEL_REASON,
-    DISK_OFFLOAD_REASON,
+    BASE_UNREACHABLE_REASON,
     PROMOTE_BASE_REASON,
     CircuitTracerView,
     CrossLayerTranscoderWithDeltas,
@@ -32,7 +32,9 @@ from interpretune.adapters.circuit_tracer.tunable_view import (  # noqa: E402
     attach_lazy_deltas,
     attribution_frozen,
     lazy_weights,
+    offload_keeps_parameters,
 )
+from interpretune.tuning.views import VIEW_ATTR  # noqa: E402
 from tests.core.circuit_tracer_toy import TOY_PROMPT, only_token_zero_special, tiny_gemma2_replacement_model  # noqa: E402
 
 D_MODEL, D_TC = 8, 32
@@ -171,9 +173,9 @@ class TestTranscoderView:
             report.ran
         )
 
-    def test_disk_offload_refuses_by_name(self):
-        support = as_view(_toy_module(offload="disk").build_tunable_view()).support()
-        assert not support.trainable and support.reason == DISK_OFFLOAD_REASON
+    def test_disk_offload_is_not_refused(self):
+        view = _promoted_view(_toy_module(offload="disk"))
+        assert view.support().trainable
 
     def test_an_unknown_transcoder_layout_is_refused_by_name(self):
         with pytest.raises(TypeError, match="not a transcoder layout this view knows"):
@@ -221,6 +223,45 @@ class TestBaseTuning:
         report = TunableViewConformance(lambda: _promoted_view(_toy_module(tune_base=True))).run()
         assert report.ok, report.failures
         assert {"step_changes_only_thawed", "checkpoint_round_trip", "frozen_roles_refuse"} <= set(report.ran)
+
+    def test_an_unreachable_base_is_refused_by_name(self):
+        """With no HF module registered, the nnsight backend's base model is not this module's: the opt-in would
+        tune nothing of it, so the composition is refused rather than tuning its transcoders alone (#859)."""
+        support = as_view(_ct_module(tiny_gemma2_replacement_model(), tune_base=True).build_tunable_view()).support()
+        assert not support.trainable and support.reason == BASE_UNREACHABLE_REASON
+
+
+class TestDefaultOptimizer:
+    """The default optimizer over a composition with no HF module registered (the circuit-tracer notebooks'), whose
+    parameters are all transcoder ``instrument`` tensors until a promotion (#859)."""
+
+    @staticmethod
+    def _bare_module_with_view(layer: int | None = None) -> _CTModule:
+        module = _ct_module(tiny_gemma2_replacement_model())
+        module.it_cfg.optimizer_init = {"class_path": "torch.optim.AdamW", "init_args": {"lr": 1e-3}}
+        module.it_cfg.lr_scheduler_init = {
+            "class_path": "torch.optim.lr_scheduler.StepLR",
+            "init_args": {"step_size": 1},
+        }
+        module.it_cfg.pl_lrs_cfg = {}
+        view = as_view(module.build_tunable_view())
+        if layer is not None:
+            view.promote([n for n in view.roles() if f".transcoders.{layer}." in n], "latent:transcoder")
+        object.__setattr__(module, VIEW_ATTR, view)
+        return module
+
+    def test_nothing_to_optimize_configures_no_optimizer(self):
+        module = self._bare_module_with_view()
+        assert all(".transcoders." in n for n, _ in module.named_parameters())
+        with pytest.warns(UserWarning, match="nothing to optimize"):
+            assert module.configure_optimizers() is None
+
+    def test_promoted_transcoders_are_optimized(self):
+        module = self._bare_module_with_view(layer=2)
+        optimizers, schedulers = module.configure_optimizers()
+        promoted = {id(p) for n, p in module.named_parameters() if ".transcoders.2." in n}
+        assert promoted and {id(p) for g in optimizers[0].param_groups for p in g["params"]} == promoted
+        assert len(schedulers) == 1
 
 
 class TestAttributionAfterThawing:
@@ -278,6 +319,70 @@ class TestAttributionAfterThawing:
         with only_token_zero_special(module.replacement_model):
             module.generate_attribution_graph(TOY_PROMPT, max_n_logits=3, batch_size=8, verbose=False)
         assert not [w for w in recwarn if "consider re-fitting" in str(w.message)]
+
+
+class TestDiskOffload:
+    """Circuit-tracer's ``offload='disk'`` replaces the offloaded modules' parameters unless the attribution runs
+    under :func:`offload_keeps_parameters` (#855)."""
+
+    @staticmethod
+    def _attribute(model, **kwargs):
+        from circuit_tracer import attribute
+
+        with only_token_zero_special(model):
+            return attribute(TOY_PROMPT, model, max_n_logits=3, batch_size=8, verbose=False, offload="disk", **kwargs)
+
+    def test_unguarded_disk_offload_replaces_parameters(self):
+        """The positive control: without the guard, an attribution leaves new parameter objects behind, and unties
+        the tied unembedding from the embedding."""
+        model = tiny_gemma2_replacement_model()
+        before = {n: id(p) for n, p in model.named_parameters()}
+        self._attribute(model)
+        after = dict(model.named_parameters())
+        assert any(id(p) != before[n] for n, p in after.items() if n in before)
+        assert set(after) - set(before) == {"lm_head.weight"}
+
+    def test_guarded_disk_offload_keeps_parameters_and_restores_the_flag(self):
+        model = tiny_gemma2_replacement_model()
+        before = {n: (id(p), p.detach().clone()) for n, p in model.named_parameters()}
+        prior = torch.__future__.get_swap_module_params_on_conversion()
+        with offload_keeps_parameters("disk"):
+            assert torch.__future__.get_swap_module_params_on_conversion()
+            self._attribute(model)
+        assert torch.__future__.get_swap_module_params_on_conversion() == prior
+        assert {n for n, _ in model.named_parameters()} == set(before)  # the tied unembedding stays tied
+        for n, p in model.named_parameters():
+            assert id(p) == before[n][0] and p.device.type == "cpu" and torch.equal(p, before[n][1])
+
+    @pytest.mark.parametrize("offload", [None, "cpu"])
+    def test_other_offloads_leave_the_flag_alone(self, offload):
+        prior = torch.__future__.get_swap_module_params_on_conversion()
+        with offload_keeps_parameters(offload):
+            assert torch.__future__.get_swap_module_params_on_conversion() == prior
+
+    def test_an_optimizer_step_after_attribution_moves_exactly_the_thawed_tensors(self):
+        """#855's acceptance: an optimizer built before a disk-offloaded attribution still steps the module's own
+        thawed tensors after it, and only those."""
+        module = _ct_module(tiny_gemma2_replacement_model(), offload="disk")
+        module.attribution_graphs = []
+        module.it_cfg.optimizer_init = {"class_path": "torch.optim.AdamW", "init_args": {"lr": 1e-2}}
+        module.it_cfg.lr_scheduler_init, module.it_cfg.pl_lrs_cfg = None, {}
+        view = _promoted_view(module)
+        object.__setattr__(module, VIEW_ATTR, view)
+        thawed = {n for n in view.roles() if ".transcoders.2." in n}
+        for n, p in module.named_parameters():
+            p.requires_grad_(n in thawed)
+        optimizers, _ = module.configure_optimizers()
+        before = {n: (id(p), p.detach().clone()) for n, p in module.named_parameters()}
+        with only_token_zero_special(module.replacement_model):
+            module.generate_attribution_graph(TOY_PROMPT, max_n_logits=3, batch_size=8, verbose=False)
+        params = dict(module.named_parameters())
+        assert all(id(p) == before[n][0] and torch.equal(p, before[n][1]) for n, p in params.items())
+        assert all(p.requires_grad == (n in thawed) for n, p in params.items())
+        sum((params[n] ** 2).sum() for n in thawed).backward()
+        optimizers[0].step()
+        moved = {n for n, p in params.items() if not torch.equal(p, before[n][1])}
+        assert moved == thawed
 
 
 class TestLazyCorrections:

@@ -32,7 +32,12 @@ classifiers = [
 description = "A package to support LLM reasoning and interpretability experiments at a level of abstraction that is both powerfully flexible and convenient"
 readme = "README.md"
 dependencies = [
-    "torch >=2.7.1",
+    # FLOOR >=2.12.0: venngram (below) requires it, so this states what every install already gets.
+    "torch >=2.12.0",
+    # The model addressing protocol: tunable views and roles (`venngram.tuning`, `venngram.roles`, #874), recipes
+    # (`interpretune.analysis.venngram`, #887) and the default view (`venngram.view`, #900). The floor is the one
+    # finetuning-scheduler declares for the same pre-release line; both rise to 0.1.0 when it publishes.
+    "venngram>=0.1.0.dev0,<0.2.0",
     "transformers>=4.57.1",
     "tabulate >= 0.9.0",
     "datasets >= 4.0.0",
@@ -193,11 +198,17 @@ git-deps = [
     #   decoderesearch/circuit-tracer#79    transformers v5 compatibility
     #   decoderesearch/circuit-tracer#111   interp-engine support (supplies InterpEngineReplacementModel,
     #                                       which the adapter composition consumes rather than reimplements)
-    # plus two fork-only changes, not yet proposed upstream:
+    # plus six fork-only changes, not yet proposed upstream:
     #   layer-local custom targets          a CustomTarget read at a block's output rather than the final
     #                                       residual, which a J-lens-basis attribution target needs (#661)
     #   multi-device layer split            the nnsight backend's model split across GPUs by a device map,
     #                                       refusing any module left off an accelerator (#780)
+    #   token node vectors                  token nodes carry the embedding the model adds, so Gemma 2 and 3
+    #                                       edges are not sqrt(d_model) too small under transformers 5 (#791)
+    #   disk offload on Windows             the offload file is neither open during its write nor mapped at
+    #                                       its delete, the two things Windows refuses (#909)
+    #   attribution regimes                 `attribute(freeze_attention=, freeze_norms=)`, recorded on the graph
+    #   head reports                        `head_loadings` and `head_conductance` (#781)
     #
     # No release carries what we need: PyPI has only 0.5.0, and the correctness fix below is in no
     # upstream tag. RETIRE this pin once both PRs merge and the fork-only changes land upstream -- a
@@ -208,7 +219,7 @@ git-deps = [
     # shifting every position index in the feature-intervention path. The branch is rebased as the PRs
     # evolve, so VERIFY BY CONTENT, not by SHA:
     #   git log --grep="Canonicalize nnsight trace" <pin>   -> must return exactly one commit
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6bb3a1044dca6b8d73024763d28c72185e8ad83e",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6a278292747293bcc0ce863aaeb26620f198aacc",
     # sae-lens: pinned to the head of decoderesearch/SAELens#739 (transformer-lens 4.0 support), because
     # every sae-lens release through 6.51.2 fails `import sae_lens` under transformer-lens 4.0
     # (`No module named 'transformer_lens.HookedTransformer'`). RETIRE this pin for a released floor in
@@ -234,8 +245,13 @@ git-deps = [
     # finetuning-scheduler by git SHA until 2.15.0 is published (#758): see its `override-dependencies` entry,
     # which carries the same URL and replaces the lock file's release pin at install. Kept here too so an
     # install still gets it once a relock drops it from the lock (`--no-emit-package`). The SHA is finetuning-scheduler
-    # main with #137 (views attach as `tunable_view`; protocol violations raise `TunableViewError`).
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@87e1d6d3f11533e5edc57bc58cf7d8954a2addcb",
+    # main with #177 (venngram's address books, support record and registry lookup), which depends on venngram.
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@17042de9db132fd97be17959df316b623acd79e8",
+    # venngram by git SHA until 0.1.0 is published: a base dependency (#874) whose floor admits this pre-release.
+    # The SHA is venngram main with #56 (a reader passes over registry documents newer than it reads, so the default
+    # view survives a registry schema change), over #53 (overlay roles named by adapter, every PEFT tuner family), #51
+    # (a base map mounted under a wrapper root), #48 and #45 (base and overlay maps).
+    "venngram @ git+https://github.com/speediedan/venngram@edbd6e0c6016dc6761295b47ae53c0b6294bed07",
 ]
 
 dev = [
@@ -313,14 +329,17 @@ override-dependencies = [
     # handed requirements/ci/overrides.txt (hosted CI, the gated image, the README flow) silently replaced
     # an installed torch 2.15 with 2.13 to satisfy it. An override replaces every torch requirement, so
     # this keeps interpretune's floor and adds no ceiling and no pin of its own.
-    "torch>=2.7.1",
+    "torch>=2.12.0",
     # finetuning-scheduler by git SHA until 2.15.0 is on PyPI: the TunableView protocol, its role vocabulary and
     # the view conformance cases (`finetuning_scheduler.core.views`, `.core.roles`, `.testing`) are in no release
     # yet (#758). Here, not in requirements/ci/overrides.txt, because hosted CI and the gated install read only
     # this. The lock script leaves it out of the universal lock (`--no-emit-package`), whose 2.13.0 pin is
     # replaced by this at install. RETIRE it, and raise the `tune` extra's floor to 2.15.0, once 2.15.0
     # is published.
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@87e1d6d3f11533e5edc57bc58cf7d8954a2addcb",
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@17042de9db132fd97be17959df316b623acd79e8",
+    # venngram by git SHA until 0.1.0 is on PyPI, for the same reason: interpretune and finetuning-scheduler both
+    # require it and it is in no release. RETIRE it with the `git-deps` entry once 0.1.0 is published.
+    "venngram @ git+https://github.com/speediedan/venngram@edbd6e0c6016dc6761295b47ae53c0b6294bed07",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.
@@ -330,7 +349,7 @@ override-dependencies = [
 # second, mismatched CUDA runtime stack into the env and breaks `import torch`
 # (libtorch_cuda.so: undefined symbol: ncclCommResume).
 # torchvision: the same path (`decode-clt` declares it; neither decode-clt, sae_dashboard nor interpretune
-# imports it), and while torch is on the 2.15 release candidate no torchvision release pairs with it, so a
+# imports it), and no torchvision release pairs with torch 2.15 yet (the latest, 0.29.2, pairs with 2.14), so a
 # resolved torchvision would be an extension built for another libtorch (`operator torchvision::nms does not
 # exist` at import). Worse, resolving it can pull torch itself back to the release torchvision pairs with.
 exclude-dependencies = ["torchaudio", "torchvision"]
@@ -459,6 +478,10 @@ exclude = []
 # Stale suppressions fail loudly so the count cannot creep back (#176 step 1).
 reportUnnecessaryTypeIgnoreComment = "error"
 
+# mypy-style whole-line suppressions are retired: every remaining suppression names the exact
+# pyright rule it silences (#176 step 4). See docs/typing_conventions.md.
+enableTypeIgnoreComments = false
+
 # Custom directives removed for stricter type checking
 
 [tool.coverage.run]
@@ -510,6 +533,158 @@ tmp_path_retention_count = 30  # allow retention of more successful runs during 
 # notebooks/ are helper modules the notebooks import, not paired sources (none carries a jupytext
 # header). The config was inert, but inert config for an uninstalled tool is a landmine, so it goes
 # with the dependency rather than after it.
+
+[tool.gpu-epsilon.special-tests]
+# gpu-epsilon's shared runner (python -m gpu_epsilon.special_tests) reads this table: one process per
+# node id, each outcome read from per-rank records. Change the marks, the selection variables or the coverage command
+# here.
+name = "IT"
+# Both roots: special-marked tests also live under src/it_examples/tests (the example notebooks).
+collect-dirs = ["tests", "src/it_examples/tests"]
+# Every selection variable tests/conftest.py reads, not only the ones a mark sets: conftest checks IT_RUN_CUDA_TESTS
+# before the profiling levels, so one inherited from the caller's shell would turn `--mark_type=profile_ci` into the
+# cuda-marked selection.
+unset = [
+    "IT_RUN_CUDA_TESTS",
+    "IT_RUN_OPTIONAL_TESTS",
+    "IT_RUN_PROFILING_TESTS",
+    "IT_RUN_STANDALONE_TESTS",
+    "IT_RUN_STANDALONE_CPU_TESTS",
+    "IT_RUN_BENCHMARK_TESTS",
+    "IT_EXPERIMENTAL_PATCH_TESTS",
+]
+# pytest-cov rather than `coverage run`, so import-time lines are measured
+exec = [
+    "-m", "pytest", "--cov=src/interpretune", "--cov-append", "--cov-report=",
+    "--capture=no", "--no-header", "-v", "-s", "-rA",
+]
+# scripts/analyze_test_coverage.py names its coverage rc file, and records each test's context
+exec-overrides = [
+    { env = "COVERAGE_ANALYSIS_CONFIG_FILE", exec = [
+        "-m", "pytest", "--cov", "--cov-config={value}", "--cov-append", "--cov-context=test", "--cov-report=",
+        "--capture=no", "--no-header", "-v", "-s", "-rA",
+    ] },
+]
+experiments-list = "tests/.experiments"
+raw-log-copy-dir = "lightning_logs"
+# the raw log is uploaded to the Azure build (a logging command, inert elsewhere)
+publish = "azure"
+
+[tool.gpu-epsilon.special-tests.marks.standalone]
+env = { IT_RUN_STANDALONE_TESTS = "1" }
+description = "Collecting and running standalone tests."
+
+# device-free standalone tests: a process of their own, no GPU; the hosted Linux job runs them with GPUs hidden (#731)
+[tool.gpu-epsilon.special-tests.marks.standalone_cpu]
+env = { IT_RUN_STANDALONE_CPU_TESTS = "1" }
+description = "Collecting and running device-free standalone tests."
+
+[tool.gpu-epsilon.special-tests.marks.profile]
+env = { IT_RUN_PROFILING_TESTS = "2" }
+description = "Collecting and running profile tests."
+
+[tool.gpu-epsilon.special-tests.marks.profile_ci]
+env = { IT_RUN_PROFILING_TESTS = "1" }
+description = "Collecting and running only profile tests marked for CI."
+
+[tool.gpu-epsilon.special-tests.marks.optional]
+env = { IT_RUN_OPTIONAL_TESTS = "1" }
+description = "Collecting and running optional tests."
+
+[tool.gpu-epsilon.special-tests.marks.benchmark]
+env = { IT_RUN_BENCHMARK_TESTS = "1" }
+description = "Collecting and running benchmark tests."
+
+[tool.gpu-epsilon.special-tests.marks.exp_patch]
+# nothing here reads IT_EXPERIMENTAL_PATCH_TESTS, so the mark would run the whole suite one process per test
+refused = "this repository defines no experimental-patch tests, so there is nothing to select."
+
+# Reruns default to 2 with a 5 s delay, for transient Hugging Face read timeouts (pytest-rerunfailures; the runner's
+# records ignore its `rerun` reports, so a node's verdict is its last attempt's).
+[tool.gpu-epsilon.special-tests.options.reruns]
+help = "pytest-rerunfailures reruns per test (default 2)"
+takes-value = true
+default = "2"
+args = ["--reruns", "{value}"]
+
+[tool.gpu-epsilon.special-tests.options.reruns-delay]
+help = "seconds between reruns (default 5)"
+takes-value = true
+default = "5"
+args = ["--reruns-delay", "{value}"]
+
+[tool.gpu-epsilon.special-tests.options.no-reruns]
+help = "run each test once"
+clears = ["reruns", "reruns-delay"]
+
+# The runner reads its per-boundary snapshot hook from its own environment, not from an option's: export
+# GPU_EPSILON_EVENT_CMD="bash scripts/resource_snapshot.sh" alongside this flag for those (gen_it_coverage.sh does).
+[tool.gpu-epsilon.special-tests.options.resource-debug]
+help = "opt-in per-test and fixture resource diagnostics (IT_RESOURCE_DEBUG=1)"
+env = { IT_RESOURCE_DEBUG = "1" }
+
+[tool.gpu-epsilon.phases]
+# scripts/gen_it_coverage.sh builds or activates the environment, then runs these phases through gpu-epsilon's phase
+# driver (python -m gpu_epsilon.phases), in this order: the default ones, plus the optional ones --run-all-and-examples
+# adds. Its rerun and resource-debug flags reach the `run` phases through PYTEST_ADDOPTS and the special-test phases as
+# runner options.
+name = "IT"
+# sys.monitoring measurement core (coverage>=7.4, py>=3.12): nnsight's Tracer calls sys.settrace(None) on trace
+# teardown, which wipes the default settrace-based core for the rest of the process
+env = { COVERAGE_CORE = "sysmon", PYTHONFAULTHANDLER = "1" }
+setup = [["-m", "coverage", "erase"]]
+report = [["-m", "coverage", "report", "-m"]]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "main"
+description = "the main suite with no GPU visible, under coverage"
+env = { CUDA_VISIBLE_DEVICES = "" }
+# pytest-cov rather than `coverage run`, so coverage starts before collection imports
+run = [
+    "-X", "faulthandler", "-m", "pytest", "--cov=src/interpretune", "--cov-append", "--cov-report=",
+    "tests", "src/it_examples/tests", "-v",
+]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "cuda"
+description = "the cuda-marked tests (IT_RUN_CUDA_TESTS=1) on every visible device, under coverage"
+env = { IT_RUN_CUDA_TESTS = "1" }
+unset = ["CUDA_VISIBLE_DEVICES"]
+skip-unless = ["-c", "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)"]
+run = [
+    "-X", "faulthandler", "-m", "pytest", "--cov=src/interpretune", "--cov-append", "--cov-report=",
+    "tests", "src/it_examples/tests", "-v",
+]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "standalone"
+special-tests = ["--mark_type=standalone"]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "standalone_cpu"
+description = "the device-free standalone tests, with no GPU visible (the hosted Linux job runs them in CI)"
+env = { CUDA_VISIBLE_DEVICES = "" }
+special-tests = ["--mark_type=standalone_cpu"]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "profile_ci"
+special-tests = ["--mark_type=profile_ci"]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "profile"
+optional = true
+special-tests = ["--mark_type=profile"]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "optional"
+optional = true
+special-tests = ["--mark_type=optional"]
+
+[[tool.gpu-epsilon.phases.phase]]
+name = "benchmark"
+optional = true
+skip-unless = ["-c", "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)"]
+special-tests = ["--mark_type=benchmark"]
 
 [tool.notebook-publishing]
 # interpretune's own example notebooks, read by the publisher (src/interpretune/utils/notebook_publishing.py) and the

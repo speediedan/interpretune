@@ -8,13 +8,13 @@ import pytest
 import torch
 from torch import nn
 
-pytest.importorskip("finetuning_scheduler.tunable_view", reason="finetuning-scheduler predates the tunable view")
+pytest.importorskip("venngram.tuning", reason="venngram, which holds the tunable view protocol, is not installed")
 
 from finetuning_scheduler.core.compile import compile_schedule  # noqa: E402
 from finetuning_scheduler.core.exceptions import FTSConfigurationError  # noqa: E402
-from finetuning_scheduler.tunable_view import as_view  # noqa: E402
+from venngram.tuning import as_view  # noqa: E402
 from finetuning_scheduler.testing import pytest_params, TunableViewConformance  # noqa: E402
-from finetuning_scheduler.tunable_view import TunableViewError, VIEW_ATTR as FTS_VIEW_ATTR  # noqa: E402
+from venngram.tuning import TunableViewError, VIEW_ATTR as FTS_VIEW_ATTR  # noqa: E402
 
 from interpretune.adapters.circuit_tracer.adapter import BaseCircuitTracerModule  # noqa: E402
 from interpretune.session import ITSession  # noqa: E402
@@ -24,8 +24,9 @@ from interpretune.tuning.views import (  # noqa: E402
     VIEW_ATTR,
     RefusingView,
     attach_tunable_view,
+    adapter_roles,
+    default_view,
     identity_view,
-    peft_adapter_roles,
 )
 
 
@@ -55,6 +56,29 @@ class TestAttachment:
         support = as_view(view).support()
         assert view.root is module
         assert (support.trainable, support.naming_scheme) == (True, "physical")
+
+    def test_nnsight_composition_is_addressed_by_layer_and_component(self, request):
+        """The default view is venngram's (#900): GPT-2's base map, mounted at the HF module the composition
+        holds."""
+        from venngram.maps import MappedView
+
+        module = request.getfixturevalue("get_it_session__ns_gpt2__setup").it_session.module
+        view = getattr(module, VIEW_ATTR)
+        assert isinstance(view, MappedView)
+        structure = view.structure()
+        assert (structure.mount, structure.cmap.architecture) == ("hf_model", "GPT2LMHeadModel")
+        top = structure.depth() - 1
+        thawed = compile_schedule({0: {"params": ["layers:-1: & component:attn.*"]}}, view).physical_for(0)
+        assert thawed and all(n.startswith("hf_model.") and structure.locate(n).layer == top for n in thawed)
+        assert all(structure.locate(n).component.startswith("attn.") for n in thawed)
+
+    def test_an_unmapped_core_model_keeps_the_identity_view(self, request):
+        """Interpretune's own test `Transformer` has no published map, so the default falls back (#900)."""
+        from venngram.maps import MappedView
+
+        module = request.getfixturevalue("get_it_session__core_cust__initonly").it_session.module
+        view = getattr(module, VIEW_ATTR)
+        assert not isinstance(view, MappedView) and as_view(view).support().trainable
 
     def test_tl_composition_attaches_the_bridge_view_without_building_it(self, request):
         from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
@@ -182,12 +206,12 @@ class TestAttachRules:
         assert attach_tunable_view(module) is None and getattr(module, VIEW_ATTR) is sentinel
 
     def test_nothing_is_attached_without_view_support(self, monkeypatch):
-        monkeypatch.setattr(tuning_views, "fts_views_available", lambda: False)
+        monkeypatch.setattr(tuning_views, "views_available", lambda: False)
         module = nn.Linear(2, 2)
         assert attach_tunable_view(module) is None and getattr(module, VIEW_ATTR, None) is None
 
 
-_CANONICAL = {"class_path": "finetuning_scheduler.tunable_view.CanonicalView"}
+_CANONICAL = {"class_path": "venngram.tuning.CanonicalView"}
 _BRIDGE = "interpretune.adapters.transformer_lens.tunable_view.TransformerBridgeView"
 
 
@@ -195,7 +219,7 @@ class TestConfiguredView:
     """``it_cfg.tunable_view`` chooses the view in configuration, ahead of ``build_tunable_view()`` (#841)."""
 
     def test_a_tl_composition_can_schedule_its_own_parameter_names(self, request):
-        from finetuning_scheduler.tunable_view import CanonicalView
+        from venngram.tuning import CanonicalView
 
         module = _fresh_module(request, "get_it_session_cfg__tl_cust", tunable_view=_CANONICAL)
         view = getattr(module, VIEW_ATTR)
@@ -218,7 +242,7 @@ class TestConfiguredView:
         overrides = {"add_saes_on_init": True, "sae_cfgs": _SPLICEABLE_SAES, "tunable_view": _CANONICAL}
         module = _fresh_module(request, "get_it_session_cfg__sl_cust", **overrides)
         roles = as_view(getattr(module, VIEW_ATTR)).roles()
-        assert roles and roles == {**peft_adapter_roles(module), **module.tunable_roles()}
+        assert roles and roles == {**adapter_roles(module), **module.tunable_roles()}
         assert any(r.startswith("latent") for r in roles.values())
 
     def test_init_args_roles_are_used_as_given(self, request):
@@ -231,7 +255,7 @@ class TestConfiguredView:
     @pytest.mark.parametrize(
         "bad, match",
         [
-            pytest.param("finetuning_scheduler.tunable_view.CanonicalView", "mapping with a `class_path`", id="str"),
+            pytest.param("venngram.tuning.CanonicalView", "mapping with a `class_path`", id="str"),
             pytest.param({"init_args": {}}, "mapping with a `class_path`", id="no_class_path"),
             pytest.param({**_CANONICAL, "args": [1]}, "not \\['args'\\]", id="extra_key"),
             pytest.param({**_CANONICAL, "init_args": [1]}, "must be a mapping", id="init_args"),
@@ -312,7 +336,7 @@ class TestBridgeView:
         """A parameter no TransformerLens name reaches (here one registered on a block, as an unnamed norm or a
         fused projection is on a real architecture) resolves to itself; a reached parameter is scheduled by its
         TransformerLens name (#841)."""
-        from finetuning_scheduler.tunable_view import Unresolvable
+        from venngram.tuning import Unresolvable
 
         module = _fresh_module(request, "get_it_session_cfg__tl_cust")
         module.model.blocks[0].register_parameter("extra", nn.Parameter(torch.zeros(2)))
@@ -348,7 +372,70 @@ class TestBridgeView:
         assert {n for g in groups for n in g} == set(view._table)
 
 
-def test_peft_adapter_tensors_take_the_adapter_role():
+class _Unmapped(nn.Module):
+    """A model no venngram component map describes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.proj = nn.Linear(4, 4)
+
+
+class _Holder(nn.Module):
+    def __init__(self, model: nn.Module) -> None:
+        super().__init__()
+        self.model = model
+
+
+def test_a_wrapped_peft_model_is_addressed_by_structure_and_adapter():
+    """GPT-2 with LoRA under a module of its own: the base map mounts through PEFT's wrappers, and each adapter tensor
+    takes its adapter's name from venngram's overlay (#900)."""
+    peft = pytest.importorskip("peft")
+    transformers = pytest.importorskip("transformers")
+    from venngram.maps import MappedView
+
+    config = transformers.GPT2Config(vocab_size=64, n_embd=16, n_layer=3, n_head=4, n_positions=32)
+    model = peft.get_peft_model(transformers.GPT2LMHeadModel(config), peft.LoraConfig(r=2, target_modules=["c_attn"]))
+    model.add_adapter("probe", peft.LoraConfig(r=2, target_modules=["c_attn"]))
+    holder = _Holder(model)
+    view = default_view(holder)
+    assert isinstance(view, MappedView) and view.structure().cmap.architecture == "GPT2LMHeadModel"
+    roles = as_view(view).roles()
+    assert {r for n, r in roles.items() if ".lora_" in n} == {"adapter:default", "adapter:probe"}
+    top = compile_schedule({0: {"params": ["role:adapter:probe & layers:-1:"]}}, view).physical_for(0)
+    assert top and all(".h.2." in n and ".probe." in n for n in top)
+
+
+def test_an_unmapped_model_gets_the_identity_view_and_a_reminder(caplog):
+    from venngram.maps import MappedView
+    from venngram.tuning import CanonicalView
+
+    tuning_views._REMINDED.clear()
+    with caplog.at_level("INFO"):
+        view = default_view(_Holder(_Unmapped()), roles={"model.proj.weight": "instrument"})
+        default_view(_Holder(_Unmapped()))  # reminded once per composition and model class
+    assert isinstance(view, CanonicalView) and not isinstance(view, MappedView)
+    assert as_view(view).roles() == {"model.proj.weight": "instrument"}
+    assert caplog.text.count("Registering a map") == 1 and "_Holder (_Unmapped)" in caplog.text
+
+
+def test_an_unreadable_registry_falls_back_with_a_warning(monkeypatch):
+    import venngram
+    from venngram.registry import RegistryError
+    from venngram.tuning import CanonicalView
+
+    def unreadable(*args, **kwargs):
+        raise RegistryError("hub-dataset:example/registry: unreachable and never fetched")
+
+    monkeypatch.setattr(venngram, "view", unreadable)
+    monkeypatch.setattr("venngram.maps.overlays_for", unreadable)
+    with pytest.warns(UserWarning) as record:
+        view = default_view(_Holder(_Unmapped()))
+    assert isinstance(view, CanonicalView)
+    assert any("registry could not be read" in str(w.message) for w in record)
+    assert any("have no roles in its view" in str(w.message) for w in record)
+
+
+def test_peft_adapter_tensors_take_their_adapters_roles():
     peft = pytest.importorskip("peft")
 
     class Tiny(nn.Module):
@@ -365,7 +452,7 @@ def test_peft_adapter_tensors_take_the_adapter_role():
             self.model = model
 
     holder = Holder(peft.get_peft_model(Tiny(), peft.LoraConfig(r=2, target_modules=["proj"])))
-    roles = peft_adapter_roles(holder)
+    roles = adapter_roles(holder)  # from venngram's peft.lora overlay
     lora = {n for n, _ in holder.named_parameters() if ".lora_" in n}
     assert lora and set(roles) == lora and set(roles.values()) == {"adapter:default"}
     # the base weight PEFT renames stays `base`

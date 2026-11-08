@@ -35,8 +35,8 @@ parameters:
   - name: images
     type: object
     default:
-      nvidia: "speediedan/interpretune:py3.13-pt2.15.0-azpl-init@sha256:e70fa08fe772ae6e48f892b03f64cbb8de4a1882fe369b6abb6cfa55b56cbda0"
-      amd: "speediedan/interpretune:py3.13-pt2.15.0-rocm10.0-azpl-init@sha256:1bc21baf182878047f1260e5d6d45d6ea8268d89b48a18717555aa233e3bf62b"
+      nvidia: "speediedan/interpretune:py3.13-pt2.15.0-azpl-init@sha256:fda1c1cd8373da860e38d9aaea5bd1a096dbc1ed886043a3c8054d2b0c7bd7e8"
+      amd: "speediedan/interpretune:py3.13-pt2.15.0-rocm10.0-azpl-init@sha256:bd6ef05d876cea67c58b6f108a4ea300227f6272843a8f246c172c7689307283"
 
 # The any-vendor template (#703), as a vendor-demanded release job: README.md documents a CUDA install (the default
 # index's torch), so the README flow can only pass on an NVIDIA agent until README.md documents a ROCm install too, and

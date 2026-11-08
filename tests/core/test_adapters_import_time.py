@@ -131,6 +131,53 @@ def test_import_config_does_not_pull_analysis_or_run_discovery():
     assert json.loads(ctrl.stdout.strip().splitlines()[-1]) is True
 
 
+def test_import_config_does_not_import_extensions():
+    """``ExtensionConf`` is built from the extension configuration classes alone (#624).
+
+    Those live in ``interpretune.config.extension_cfgs``; the extensions themselves (and what they import: ``datasets``
+    for the generation debugger, ``transformers.generation``) resolve only when a module connects its extensions. The
+    positive control imports the generation debugger and sees the same modules arrive.
+    """
+    watched = [
+        "interpretune.extensions.debug_generation",
+        "interpretune.extensions.memprofiler",
+        "interpretune.extensions.neuronpedia",
+        "datasets",
+        "transformers.generation.utils",
+    ]
+    probe = (
+        "import sys, json, warnings; warnings.filterwarnings('ignore');"
+        "import {};"
+        "print(json.dumps({{m: m in sys.modules for m in {}}}))"
+    )
+    seen = {}
+    for name, entry in (("config", "interpretune.config"), ("control", "interpretune.extensions.debug_generation")):
+        result = subprocess.run(
+            [sys.executable, "-c", probe.format(entry, json.dumps(watched))],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr[-2000:]
+        seen[name] = json.loads(result.stdout.strip().splitlines()[-1])
+    assert not any(seen["config"].values()), f"importing interpretune.config imported extensions: {seen['config']}"
+    assert seen["control"]["interpretune.extensions.debug_generation"] and seen["control"]["datasets"]
+
+
+@pytest.mark.parametrize("module", ["debug_generation", "memprofiler", "neuronpedia"])
+def test_extension_module_imports_first_in_fresh_process(module):
+    """Importing an extension module before ``interpretune.config`` resolves its configuration class (#624).
+
+    The configuration classes once lived in the extension modules, so importing one first re-entered it, partially
+    initialized, from the config package's extension detection, and failed as a circular import.
+    """
+    if module == "neuronpedia":
+        pytest.importorskip("neuronpedia")
+    script = f"import interpretune.extensions.{module} as m; print(m.__name__)"
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr[-2000:]
+
+
 def test_it_hub_resolves_in_fresh_process():
     """`it.hub` must resolve in a process that never imported interpretune.hub another way.
 

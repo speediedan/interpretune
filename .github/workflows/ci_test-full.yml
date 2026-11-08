@@ -125,10 +125,10 @@ jobs:
         os: [
           ubuntu-22.04,
           windows-2022,
-          macos-14
+          macos-15
           ]
         python-version: ["3.13"]
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       # TEMPORARY until the #261 flip: source the RW secret so CI can read the private
@@ -178,7 +178,9 @@ jobs:
         id: hf-cache
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/huggingface
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/venngram
           key: hf-cache-${{ runner.os }}-${{ hashFiles('tests/hf_warm_manifest.yaml') }}
 
       # Skipped entirely on an exact cache hit: re-validating a warm cache is itself a burst of metadata
@@ -192,7 +194,9 @@ jobs:
         if: steps.hf-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ~/.cache/huggingface
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/venngram
           key: hf-cache-${{ runner.os }}-${{ hashFiles('tests/hf_warm_manifest.yaml') }}
 
       - name: Run pytest coverage w/ configured instrumentation
@@ -208,6 +212,16 @@ jobs:
           enable_os_trace: ${{ needs.log-dispatch-inputs.outputs.enable_os_trace }}
           run_resource_monitor: ${{ needs.log-dispatch-inputs.outputs.run_resource_monitor }}
           run_w_grafana: ${{ needs.log-dispatch-inputs.outputs.run_w_grafana }}
+
+      # Device-free standalone tests (#731): each needs a process of its own, not a GPU, so they run here rather than
+      # in the GPU pipeline's standalone phase. Linux only, with GPUs hidden; appends to this job's coverage.
+      - name: Run the device-free standalone tests (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+          HF_HUB_OFFLINE: "1"
+        run: python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type=standalone_cpu
 
       - name: Upload pytest results
         uses: actions/upload-artifact@v4

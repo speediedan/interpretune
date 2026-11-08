@@ -1,32 +1,22 @@
 # Interpretune Intervention APIs
 
-Interpretune intervenes on two different objects, at two levels, and every name in this area says which.
-
-## Two levels, one rule
+Interpretune enables interventions at multiple levels of abstraction.
 
 | Level | Capability member | Object acted on | Entry op | Executed by | Support record |
 |---|---|---|---|---|---|
-| Model backend | `ModelBackendCapability.ACTIVATION_INTERVENTION` | a residual-stream tensor at a vocabulary point (the **embed path**) | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (modes, position scopes) |
-| Analysis backend | `AnalysisBackendCapability.FEATURE_INTERVENTION` | latent feature activations `(layer, position, feature_id) -> value` (the **store path**) | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `FeatureInterventionSupport` (value sources, constrainable layers, returned activations) |
+| Model backend | `ModelBackendCapability`<br>`.ACTIVATION_INTERVENTION` | a residual-stream tensor at a vocabulary point (the **embed path**) | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (modes, position scopes) |
+| Analysis backend | `AnalysisBackendCapability`<br>`.FEATURE_INTERVENTION` | latent feature activations `(layer, position, feature_id) -> value` (the **store path**) | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `FeatureInterventionSupport` (value sources, constrainable layers, returned activations) |
 
-The two enums cite a shared two-path table (residual-stream tensor vs latent feature activations,
-above); this note is the API contract beneath it.
+**Capabilities say what a backend implements; support records say how.** A capability member names a protocol
+surface and answers only whether the backend implements it. The configurations it honours are declared in a typed
+support record: a backend that implements `fwd_w_intervention` for `add` and `project` but not `patch` declares the
+surface and a record saying so, and a gate refuses `patch` before anything runs. Surfaces that are not interventions
+work the same way: `CaptureSupport` lists the vocabulary points a model backend can capture, and
+`AttributionGraphSupport` states what graph construction requires of the model.
 
-**The rule, stated once for both levels.** A capability member names a protocol surface (a `Supports*` group of
-methods) and answers only whether the backend implements it. Which configurations of that surface the backend
-honours is a typed support record on the protocol, never a member and never an implicit default: a backend that
-implements `fwd_w_intervention` for `add` and `project` but not `patch` declares the surface and a record that
-says so, and a gate refuses `patch` by name before anything runs. The same rule covers the surfaces that are not
-interventions: `CaptureSupport` says which vocabulary points a model backend can capture, and
-`AttributionGraphSupport` says what graph construction requires of the model (the modeling module's own eager
-attention bound at the attention call site, a fact the configured `eager` does not establish because another
-library can replace that function for the whole process).
-
-**Basis is a configuration, not a capability.** Where an intervention is defined in a basis (the J-lens work's
-`jlens_unfolded` basis, the paper's convention, versus the `jlens_folded` basis, which folds in the final norm's
-scale; the two are not interchangeable and are not related by a coefficient), the basis is a declared configuration of the intervention surface: stated on the op's spec, carried
-by the backend's record as honoured or not, and refused by name when unstated or unhonoured. A silent default is
-exactly the failure the results' non-interchangeability names.
+**Basis is a configuration, not a capability.** An intervention defined in a basis (for the Jacobian lens,
+`jlens_unfolded` or `jlens_folded`, which are not interchangeable) states that basis on its spec, and the backend's
+record says whether it honours it. An unstated or unhonoured basis is refused rather than defaulted.
 
 ## Current surfaces
 
@@ -43,7 +33,20 @@ exactly the failure the results' non-interchangeability names.
   refuses, through `FeatureInterventionSupport`, a value source it does not honour, a constant source without a
   value, a layer constraint or an activation return it cannot provide.
 
-At this layer interpretune delegates to backend-native steering surfaces rather than inventing a second execution
+- `interpretune.analysis.venngram` applies a [venngram](https://github.com/speediedan/venngram) recipe through the
+  model-backend surface above: `recipe_interventions` turns a recipe's treatments (ordered ops at a site, on the whole
+  activation, on a set's units, or on a latent model's features at its `hook_sae_acts_post` sub-hook) into
+  `InterventionSpec`s in the native modes. `recipe_feature_interventions` turns a feature `replace` at explicit positions
+  into the circuit-tracer tuples above. A value is a dose, or a column of evidence the caller supplies, through venngram's
+  transforms; Interpretune evaluates the transforms, and the `interpretune.analysis.venngram.values` module states what
+  each one means. `venngram_support()` derives what Interpretune honours of a recipe from the backend's own records, and
+  `check_recipe` / `require_supported` refuse, before anything runs, whatever that record cannot express. `export_book` goes the other way, writing an intervention
+  payload as a venngram book carrying it as a treatment, and `support_mapping` publishes the derived declaration as a
+  `support_record`, so venngram's conformance checker reads both without Interpretune installed. Interventions on
+  venngram-addressed unit sets, with registered examples for supported models, are tracked in
+  [#905](https://github.com/speediedan/interpretune/issues/905).
+
+At this layer Interpretune delegates to backend-native steering surfaces rather than inventing a second execution
 mechanism. The closest analogs are TransformerLens hook-driven flows such as `run_with_hooks(...)` and NNsight
 tracing that mutates activations inside a trace.
 
@@ -58,7 +61,7 @@ precedence. Concept-direction notebook experiments use this surface for direct-p
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
 such as `blocks.0.hook_in` in `project` mode.
 
-`model_fwd_intervention` dispatches six modes: `replace`, `add`, `project`, `patch`, `reject`, and `clamp`. The `patch` mode (the
+`model_fwd_intervention` dispatches seven modes: `replace`, `add`, `project`, `patch`, `reject`, `clamp`, and `scale`. The `patch` mode (the
 J-space write) takes exactly two direction vectors stacked on a leading axis and swaps the activation's
 coordinates along that pair, leaving the component orthogonal to the pair untouched. Mechanically it is
 basis-agnostic: any pair of directions can serve as the patch pair, so embed-basis concept poles are as valid a
@@ -82,6 +85,9 @@ What each mode preserves and what it moves, in one place:
   neither bound is the identity and is refused rather than run. Bound-into-range and
   assign-to-value are different operations sharing an English word: no choice of bounds swaps
   two coordinates, so `patch` is a special case of assignment, never of clamping.
+- `scale`: preserves every component's direction and multiplies it elementwise by the target
+  tensor times `scale_factor` (a scalar, or a per-unit multiplier with ones where units are left
+  alone), so a tensor of ones is the identity.
 
 > **The pair and the model must share a residual basis, and TransformerLens weight processing changes it.**
 > A `TransformerBridge` with `enable_compatibility_mode()` folds LayerNorm and centers weights by default, which
@@ -89,7 +95,7 @@ What each mode preserves and what it moves, in one place:
 > (which is what lens artifacts and the circuit-tracer `ReplacementModel` path use) then swaps in the wrong plane.
 > Measured on gpt2: the same pair's intervention delta disagrees between nnsight and TransformerLens by a **0.948
 > relative gap** under default processing, against 0.000 with processing off
-> (`enable_compatibility_mode(no_processing=True)`, or interpretune's `ITLensFromPretrainedNoProcessingConfig`).
+> (`enable_compatibility_mode(no_processing=True)`, or Interpretune's `ITLensFromPretrainedNoProcessingConfig`).
 > Load unprocessed when applying patch pairs on TL, or build the pair from the processed model's own weights; never
 > mix. (The unprocessed agreement is pinned by `tests/core/test_jlens_patch_validation.py`.)
 
@@ -233,7 +239,7 @@ construction.
 Interpretune currently exposes forward-only intervention analysis at the analysis-op layer.
 
 `ReplacementModel.feature_intervention_generate(...)` remains a model-level API and is not yet exposed as a first-class
-interpretune analysis op. That follow-up should land as a separate generation-oriented intervention task once the
+Interpretune analysis op. That follow-up should land as a separate generation-oriented intervention task once the
 forward-only storage, config, and validation story is stable.
 
 ## Testing guidance

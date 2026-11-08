@@ -243,6 +243,11 @@ class BaseConfigImpl:
             }
         )
         self._it_state._init_hparams["env_info"] = collect_env_info() if self.it_cfg.log_env_details else None
+        # the Hub adapter components this process executed, each at its full revision (#872)
+        from interpretune.hub.adapters import loaded_hub_adapters
+
+        if hub_adapters := loaded_hub_adapters():
+            self._it_state._init_hparams["hub_adapters"] = hub_adapters
 
 
 class PropertyDispatcher:
@@ -257,6 +262,12 @@ class PropertyDispatcher:
     # These attributes are provided by the composed BaseITModule at runtime.
     it_cfg: "ITConfig"
     model: torch.nn.Module
+
+    if TYPE_CHECKING:
+
+        def _it_init_optimizers_and_schedulers(self, optim_conf: dict[str, Any] | list | Optimizable | tuple) -> None:
+            """Build optimizers and schedulers from a hook output, from the optimizer component."""
+            ...
 
     # Consolidated class-level metadata to reduce attribute clutter
     _it_cls_metadata = ITClassMetadata(
@@ -393,7 +404,7 @@ class PropertyDispatcher:
 
     def _hook_output_handler(self, hook_name: str, output: Any) -> None:
         if hook_name == "configure_optimizers":
-            self._it_init_optimizers_and_schedulers(output)  # type: ignore[attr-defined]  # provided by mixing class
+            self._it_init_optimizers_and_schedulers(output)
         else:
             rank_zero_warn(f"Output received for hook `{hook_name}` which is not yet supported.")
 
@@ -446,7 +457,7 @@ class CoreHelperAttributes:
             if name in _helper_attrs:
                 return _helper_attrs[name]()
         # the unresolved attribute wasn't ours, pass it to the next __getattr__ in __mro__
-        return super().__getattr__(name)  # type: ignore[attr-defined]
+        return super().__getattr__(name)  # pyright: ignore[reportAttributeAccessIssue]  # cooperative super in mixin
 
     @property
     def current_epoch(self) -> int:
@@ -586,7 +597,7 @@ class OptimizerScheduler:
         return optimizers, lr_schedulers
 
 
-class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler):  # type: ignore[misc]
+class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler):  # pyright: ignore[reportIncompatibleVariableOverride]
     """The composed base component surface: configuration, property dispatch, and optimization."""
 
     ...

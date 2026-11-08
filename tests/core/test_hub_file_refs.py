@@ -87,10 +87,26 @@ def test_a_session_ref_seeds_the_session_and_files_merge_over_it(rte_cache, tmp_
     overlay = tmp_path / "overlay.yaml"
     overlay.write_text(yaml.safe_dump({"registered_cfg": {"datamodule_cfg": {"train_batch_size": 2}}}))
     mapping = ITSessionMixin()._session_mapping_from_sources([overlay], None, "speediedan/rte:rte_ft.gpt2.core")
-    assert set(mapping) == {"shared_config", "registered_cfg"}
+    assert set(mapping) == {"shared_config", "registered_cfg", "adapter_ctx"}
+    assert mapping["adapter_ctx"] == ["core"]
     assert mapping["shared_config"]["model_name_or_path"] == "gpt2"
     dm_cfg = mapping["registered_cfg"]["datamodule_cfg"]
     assert dm_cfg["train_batch_size"] == 2 and dm_cfg["eval_batch_size"] == 4
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("rte_demo.gemma2.circuit_tracer+nnsight", ["circuit_tracer", "core", "nnsight"]),
+        ("rte_demo.gpt2.nnsight+sae_lens", ["core", "nnsight", "sae_lens"]),
+        ("rte_demo.gemma3.circuit_tracer.neuronpedia", ["circuit_tracer", "core", "nnsight"]),
+    ],
+)
+def test_a_session_ref_composes_the_adapters_its_configuration_declares(rte_cache, key, expected):
+    """A published configuration declares its compositions in ``reg_info`` rather than ``adapter_ctx``; the CLI
+    session takes the first (in the registry's canonical order), as the library loader does, rather than running
+    the core composition alone."""
+    assert ITSessionMixin._hub_session_mapping(f"speediedan/rte:{key}")["adapter_ctx"] == expected
 
 
 @pytest.mark.parametrize("ref", ["speediedan/rte", ":rte_ft.gpt2.core", "speediedan/rte:"])

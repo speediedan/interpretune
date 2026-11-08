@@ -57,6 +57,10 @@ class SAELensAttributeMixin:
     Provides consistent attribute access patterns for SAE-related state.
     """
 
+    # Host-provided: the base SAE Lens module owns the instantiated SAE records.
+    if TYPE_CHECKING:
+        saes: list[InstantiatedSAE]
+
     @property
     def sae_cfgs(self) -> SAEConfig | None:
         """The configured SAE definitions, or None (with a warning) before config is attached."""
@@ -67,12 +71,12 @@ class SAELensAttributeMixin:
         except AttributeError as ae:
             rank_zero_warn(f"Could not find a `SAEConfig` reference (has it been set yet?): {ae}")
             cfg = None
-        return cfg  # type: ignore[return-value]
+        return cfg  # pyright: ignore[reportReturnType]
 
     @property
     def sae_handles(self) -> list[SAE]:
         """The live SAE objects, unwrapped from their :class:`InstantiatedSAE` records."""
-        return [sae.handle for sae in self.saes]  # type: ignore[attr-defined]  # provided by mixing class
+        return [sae.handle for sae in self.saes]
 
 
 class BaseSAELensModule(BaseITModule):
@@ -127,15 +131,15 @@ class BaseSAELensModule(BaseITModule):
                     handle.use_error_term = True
             else:
                 # TODO: enable configuration of SAE subclass to use
-                handle = StandardSAE(cfg=sae_cfg.cfg, use_error_term=sae_cfg.use_error_term)  # type: ignore[arg-type]
+                handle = StandardSAE(cfg=sae_cfg.cfg, use_error_term=sae_cfg.use_error_term)  # pyright: ignore[reportArgumentType]
                 original_cfg = original_cfg or {}
                 sparsity = sparsity or {}
-            self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))  # type: ignore[arg-type]
+            self.saes.append(added_sae := InstantiatedSAE(handle=handle, original_cfg=original_cfg, sparsity=sparsity))  # pyright: ignore[reportArgumentType]
             # `getattr` with the field's own default: a module composition can carry the SAE mixin without
             # the SAE config mixin (the circuit-tracer + sae_lens composition attaches `sae_cfgs` onto a
             # pre-composed config), in which case there is no splice setting and splicing stays off.
             if getattr(self.it_cfg, "add_saes_on_init", False) and hasattr(self.model, "add_sae"):
-                self.model.add_sae(added_sae.handle)  # type: ignore[operator]
+                self.model.add_sae(added_sae.handle)  # pyright: ignore[reportCallIssue]
                 self._register_attached_sae(added_sae.handle, frozen=sae_cfg.frozen)
 
     @staticmethod
@@ -498,10 +502,10 @@ class SAELensAdapter(SAELensAttributeMixin):
 
     def _make_setup_dirs(self) -> None:
         # Call the parent implementation to perform core directory and hook setup.
-        # BaseITModule is always present in the composition hierarchy for SAE-enabled modules.
-        # TODO: standardize and document how we handle these static type checker challenges. We currently use a mix of,
-        #       assertions, type checker directives and casting, e.g. cast(BaseITModule, self)._make_setup_dirs()
-        super()._make_setup_dirs()  # type: ignore[attr-defined]
+        # BaseITModule is always present in the composition hierarchy for SAE-enabled modules. A
+        # cooperative super() call inside a mixin resolves only in the composed MRO, which the
+        # checker cannot see from this class alone, hence the scoped directive.
+        super()._make_setup_dirs()  # pyright: ignore[reportAttributeAccessIssue]
 
         # SAE-specific analysis initialization: only run when the light-weight structural checks pass
         if self.has_sae_analysis_cfg:
@@ -514,7 +518,7 @@ class SAELensAdapter(SAELensAttributeMixin):
             analysis_run_cfg = runner_holder.analysis_run_cfg
 
             init_analysis_cfgs(
-                module=cast(LatentAnalysisProtocol, self),  # type: ignore[arg-type]  # protocol compatibility
+                module=cast("LatentAnalysisProtocol", self),  # pyright: ignore[reportArgumentType]  # protocol compatibility; quoted: protocol is TYPE_CHECKING-only here
                 analysis_cfgs=analysis_run_cfg._processed_analysis_cfgs,
                 cache_dir=analysis_run_cfg.cache_dir,
                 op_output_dataset_path=analysis_run_cfg.op_output_dataset_path,
@@ -711,6 +715,14 @@ class SAELensAdapter(SAELensAttributeMixin):
 class SAELensAnalysisMixin:
     """Analysis helpers shared by every SAE module composition, regardless of execution backend."""
 
+    # Host-provided, as a property on the attribute mixin in the composition, so declared in that shape.
+    if TYPE_CHECKING:
+
+        @property
+        def sae_handles(self) -> list[SAE]:
+            """The live SAE objects, from the attribute mixin."""
+            ...
+
     def construct_names_filter(
         self, target_layers: int | list[int] | None, sae_hook_match_fn: Callable[[str, int | list[int] | None], bool]
     ) -> NamesFilter:
@@ -720,9 +732,7 @@ class SAELensAnalysisMixin:
         silently select nothing when an SAE names its hooks unexpectedly.
         """
         available_hooks = {
-            f"{handle.cfg.metadata.hook_name}.{key}"
-            for handle in self.sae_handles  # type: ignore[attr-defined]  # provided by mixing class
-            for key in handle.hook_dict.keys()
+            f"{handle.cfg.metadata.hook_name}.{key}" for handle in self.sae_handles for key in handle.hook_dict.keys()
         }
         layers_arg = [target_layers] if isinstance(target_layers, int) else target_layers
         names_filter = [hook for hook in available_hooks if sae_hook_match_fn(hook, layers_arg)]

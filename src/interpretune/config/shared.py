@@ -28,7 +28,17 @@ def adapter_seq_to_list(adapter_seq: AdapterSeq):
     elif not isinstance(adapter_seq, list):
         # Handle Sequence types
         adapter_seq = list(adapter_seq)
-    return [Adapter[adp] if isinstance(adp, str) else adp for adp in adapter_seq]
+    return [adapter_member(adp) if isinstance(adp, str) else adp for adp in adapter_seq]
+
+
+def adapter_member(name: str) -> Adapter:
+    """The registered adapter ``name``; an unregistered one says how a Hub adapter component would provide it."""
+    try:
+        return Adapter[name]
+    except KeyError:
+        from interpretune.hub.adapters import hub_adapter_hint
+
+        raise KeyError(f"No adapter {name!r} is registered. {hub_adapter_hint(name)}") from None
 
 
 ################################################################################

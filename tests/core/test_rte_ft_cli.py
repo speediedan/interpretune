@@ -13,6 +13,9 @@ the same epochs, and keep the same best checkpoint. The run is long enough for o
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -67,7 +70,7 @@ def _run_config(interface: str, revision: str, tmp_path: Path, record: Path) -> 
     return path
 
 
-def _run(interface: str, revision: str, tmp_path: Path, monkeypatch) -> dict:
+def _run(interface: str, revision: str, tmp_path: Path, monkeypatch, bf16_mixed: bool = False) -> dict:
     from interpretune.base.components.cli import core_cli_main, l_cli_main
 
     work = tmp_path / interface
@@ -76,11 +79,17 @@ def _run(interface: str, revision: str, tmp_path: Path, monkeypatch) -> dict:
     record = work / "record.json"
     args = ["--config", str(_run_config(interface, revision, work, record))]
     args += ["--registered_cfg", json.dumps({"datamodule_cfg": {"dataset_path": str(work / "dataset")}})]
+    # the bf16-mixed run's transitions land by epoch 4 (below), so it needs one epoch fewer than the fp32 run's 6
+    limits = {**LIMITS, "max_epochs": 5} if bf16_mixed else LIMITS
     if interface == "core":
-        args += [f"--run_cfg.{k}={v}" for k, v in LIMITS.items()]
+        args += [f"--run_cfg.{k}={v}" for k, v in limits.items()]
+        if bf16_mixed:
+            args += ["--run_cfg.precision=bf16-mixed", "--run_cfg.accumulate_grad_batches=2"]
         core_cli_main(run_mode="train", args=args)
     else:
-        args += [f"--trainer.{k}={v}" for k, v in LIMITS.items()]
+        args += [f"--trainer.{k}={v}" for k, v in limits.items()]
+        if bf16_mixed:
+            args += ["--trainer.precision=bf16-mixed", "--trainer.accumulate_grad_batches=2"]
         l_cli_main(run_mode=True, args=["fit", *args])
     result = json.loads(record.read_text())
     epochs = result["epochs"]
@@ -101,3 +110,148 @@ def test_the_core_loop_and_lightning_agree_phase_by_phase(rte_component, clean_c
         [e["val_loss"] for e in lightning["epochs"]], rel=1e-5
     )
     assert core["best_score"] == pytest.approx(lightning["best_score"], rel=1e-5)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or (sys.platform == "linux" and os.environ.get("GITHUB_ACTIONS") == "true"),
+    reason="the bf16 CPU autocast path is the same torch code covered on the macOS leg and on local Linux runs, and "
+    "two full CLI comparisons exceed the Windows and ubuntu hosted legs' 90-minute job timeout",
+)
+def test_the_hosts_agree_in_bf16_mixed_with_accumulation(rte_component, clean_cli_env, tmp_path, monkeypatch):
+    """#697's configuration on both hosts (bf16-mixed, two-step accumulation), which the core loop could not
+    express before #836: the same thawed sets and transition epochs, and validation loss within bf16 tolerance
+    rather than exact.
+
+    With accumulation over the CPU-sized limit of 2 batches, each epoch is one optimizer step on the two batches' mean
+    loss rather than two steps, so the loss trajectory differs from the fp32 run's and the plateau transition lands an
+    epoch earlier (4, not 5).
+    """
+    core = _run("core", rte_component, tmp_path, monkeypatch, bf16_mixed=True)
+    lightning = _run("lightning", rte_component, tmp_path, monkeypatch, bf16_mixed=True)
+    assert core["transition_epochs"] == lightning["transition_epochs"] == [2, 4]
+    assert core["final_depth"] == lightning["final_depth"] == 2
+    assert core["best_depth"] == lightning["best_depth"] == 2
+    assert [e["thawed"] for e in core["epochs"]] == [e["thawed"] for e in lightning["epochs"]]
+    assert [len(e["thawed"]) for e in core["epochs"]] == [26, 26, 74, 74, 148]
+    assert [e["val_loss"] for e in core["epochs"]] == pytest.approx(
+        [e["val_loss"] for e in lightning["epochs"]], rel=1e-3
+    )
+
+
+def _torchrun(revision: str, work: Path, cli: Path, meta_init_load: str | None) -> list[dict]:
+    """Each rank's record of the shipped core run, launched through the CLI under ``torchrun`` on two ranks with
+    ``placement: fsdp2`` and a plan sharding each GPT-2 block, built on the meta device when ``meta_init_load`` is
+    given (and loaded that way)."""
+    work.mkdir()
+    cfg = _run_config("core", revision, work, work / "record_rank{rank}.json")
+    registered: dict = {"datamodule_cfg": {"dataset_path": str(work / "dataset")}}
+    if meta_init_load:
+        hf_cfg = {"meta_init": True, "meta_init_load": meta_init_load}
+        registered["module_cfg"] = {"init_args": {"hf_from_pretrained_cfg": {"init_args": hf_cfg}}}
+    args = [str(cli), "--run_command", "train", "--config", str(cfg), "--registered_cfg", json.dumps(registered)]
+    args += [f"--run_cfg.{k}={v}" for k, v in LIMITS.items()]
+    args += ["--run_cfg.placement=fsdp2", "--run_cfg.fsdp_plan", json.dumps({"class:GPT2Block": {}})]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", "--no-python", *args]
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    # each rank imports `tests.*` (the recorder), which a subprocess finds only through PYTHONPATH
+    repo_root = Path(__file__).resolve().parents[2]
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(repo_root), env.get("PYTHONPATH")) if p)
+    proc = subprocess.run(cmd, cwd=work, env=env, capture_output=True, text=True, timeout=1500)
+    assert proc.returncode == 0, f"torchrun failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    return [json.loads((work / f"record_rank{rank}.json").read_text()) for rank in range(2)]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+def test_the_cli_runs_the_phased_core_loop_under_torchrun_with_an_fsdp2_plan(rte_component, clean_cli_env, tmp_path):
+    """The shipped core run configuration, launched through the interpretune CLI under ``torchrun`` on two ranks
+    with ``placement: fsdp2`` and a plan sharding each GPT-2 block, runs every phase as one process does, and does
+    so identically when the model is built on the meta device (``meta_init``) and loaded either from rank 0's copy
+    or by each rank from its own slices of the checkpoint files (``meta_init_load: dcp``).
+
+    Each rank thaws the same parameters each epoch and transitions in the same epochs as the one-process run above
+    (whose thawed counts are asserted there), every parameter ends as a ``DTensor``, and the ranks agree on the
+    validation metrics and the best checkpoint, since the loop averages metrics across ranks. The meta-built run's
+    validation losses equal the plain run's exactly: its weights, its tied LM head and its buffers all came from the
+    checkpoint, through every phase including the last, which trains the embeddings.
+    """
+    # the console script installed beside this interpreter, launched as the docs show (`torchrun --no-python`)
+    cli = Path(sys.executable).with_name("interpretune")
+    if not cli.exists():
+        pytest.skip(f"no `interpretune` console script beside {sys.executable}")
+    plain = _torchrun(rte_component, tmp_path / "plain", cli, meta_init_load=None)
+    meta = _torchrun(rte_component, tmp_path / "meta", cli, meta_init_load="rank0")
+    streamed = _torchrun(rte_component, tmp_path / "dcp", cli, meta_init_load="dcp")
+    for record in (*plain, *meta, *streamed):
+        epochs = record["epochs"]
+        transitions = [e["epoch"] for prev, e in zip(epochs, epochs[1:]) if e["depth"] != prev["depth"]]
+        assert transitions == [2, 5]
+        assert [len(e["thawed"]) for e in epochs] == [26, 26, 74, 74, 74, 148]
+        assert record["final_depth"] == record["best_depth"] == 2
+        assert record["param_types"] == ["DTensor"]
+    for records in (plain, meta, streamed):
+        assert [e["thawed"] for e in records[0]["epochs"]] == [e["thawed"] for e in records[1]["epochs"]]
+        assert [e["val_loss"] for e in records[0]["epochs"]] == [e["val_loss"] for e in records[1]["epochs"]]
+        assert records[0]["best_score"] == records[1]["best_score"]
+    assert [e["val_loss"] for e in meta[0]["epochs"]] == [e["val_loss"] for e in plain[0]["epochs"]]
+    assert [e["val_loss"] for e in streamed[0]["epochs"]] == [e["val_loss"] for e in plain[0]["epochs"]]
+
+
+def _test_metrics(stdout: str) -> dict[str, float]:
+    """The metrics the core test loop printed at its epoch end (rank 0's, averaged across ranks)."""
+    lines = [line for line in stdout.splitlines() if line.startswith("Test epoch end: ")]
+    assert len(lines) == 1, f"expected one test epoch end report:\n{stdout[-3000:]}"
+    return yaml.safe_load(lines[0].removeprefix("Test epoch end: "))
+
+
+def _test_config(revision: str, work: Path) -> Path:
+    """The shipped core run configuration at ``revision``, without its tuning callbacks (a test run trains
+    nothing)."""
+    from interpretune.hub.components import resolve_component_file
+
+    shipped = resolve_component_file(f"hub://speediedan/rte@{revision}/runs/rte_ft.gpt2.core.yaml")
+    cfg = yaml.safe_load(shipped.read_text(encoding="utf-8"))
+    cfg["session_ref"] = f"{cfg['session_ref']}@{revision}"
+    cfg["run_cfg"].pop("callbacks")
+    path = work / "rte_test.gpt2.core.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+    return path
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+def test_the_cli_runs_the_test_loop_under_torchrun_with_an_fsdp2_plan(
+    rte_component, clean_cli_env, tmp_path, capsys, monkeypatch
+):
+    """``--run_command test`` launched through the CLI under ``torchrun`` on two ranks, sharded with FSDP2 and built on
+    the meta device, reports the metrics one process reports over the same samples.
+
+    The test step generates its answer, and generation calls the Hugging Face model directly rather than through the
+    interpretune module's forward, which is where FSDP2 gathers a unit's parameters. Each rank tests every other
+    sample (``DistributedSampler`` without shuffling), so two ranks of two batches cover the first four batches of the
+    one-process run, and the averaged accuracy over equal shares is the one-process accuracy.
+    """
+    from interpretune.base.components.cli import core_cli_main
+
+    cli = Path(sys.executable).with_name("interpretune")
+    if not cli.exists():
+        pytest.skip(f"no `interpretune` console script beside {sys.executable}")
+    single, sharded = tmp_path / "single", tmp_path / "sharded"
+    single.mkdir()
+    sharded.mkdir()
+    dataset = {"datamodule_cfg": {"dataset_path": str(tmp_path / "dataset")}}
+    monkeypatch.chdir(single)
+    args = ["--config", str(_test_config(rte_component, single)), "--registered_cfg", json.dumps(dataset)]
+    core_cli_main(run_mode="test", args=[*args, "--run_cfg.limit_test_batches=4"])
+    expected = _test_metrics(capsys.readouterr().out)
+
+    hf_cfg = {"meta_init": True, "meta_init_load": "rank0"}
+    registered = {**dataset, "module_cfg": {"init_args": {"hf_from_pretrained_cfg": {"init_args": hf_cfg}}}}
+    args = [str(cli), "--run_command", "test", "--config", str(_test_config(rte_component, sharded))]
+    args += ["--registered_cfg", json.dumps(registered), "--run_cfg.limit_test_batches=2"]
+    args += ["--run_cfg.placement=fsdp2", "--run_cfg.fsdp_plan", json.dumps({"class:GPT2Block": {}})]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", "--no-python", *args]
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    proc = subprocess.run(cmd, cwd=sharded, env=env, capture_output=True, text=True, timeout=1500)
+    assert proc.returncode == 0, f"torchrun failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    metrics = _test_metrics(proc.stdout)
+    assert metrics.keys() == expected.keys()
+    assert metrics["accuracy"] == pytest.approx(expected["accuracy"])

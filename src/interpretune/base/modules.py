@@ -6,9 +6,10 @@ from interpretune.config import ITConfig
 from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
 from interpretune.tuning.interventions import attach_configured_interventions, intervention_roles
 from interpretune.tuning.views import attach_tunable_view
+from interpretune.utils import MisconfigurationException
 
 
-class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):  # type: ignore[misc]
+class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module):  # pyright: ignore[reportIncompatibleMethodOverride, reportIncompatibleVariableOverride]
     """Base composition target for interpretune modules; supplies the ``ITModuleProtocol`` invariants.
 
     The module contract is structural, not inheritance-based: a composed module must expose the
@@ -29,10 +30,14 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
     limitations.
     """
 
+    # The hook currently being dispatched, maintained by the hook-name context manager in
+    # interpretune.base.call; None outside a hook dispatch.
+    _current_fx_name: str | None = None
+
     def __init__(self, it_cfg: ITConfig, *args, **kwargs):
         # See NOTE [Interpretune Dataclass-Oriented Configuration]
         super().__init__(*args, **kwargs)
-        self.model: torch.nn.Module = None  # type: ignore[assignment]  # initialized later in lifecycle
+        self.model: torch.nn.Module = None  # pyright: ignore[reportAttributeAccessIssue, reportIncompatibleVariableOverride]  # initialized later in lifecycle
         self.it_cfg: ITConfig = self._before_it_cfg_init(it_cfg)
         self._make_init_dirs()
         self._connect_extensions()
@@ -46,6 +51,7 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         if self.cuda_allocator_history:
             torch.cuda.memory._record_memory_history()
         self.auto_model_init()
+        self._refuse_unbuilt_meta_init()
         # Use `is not None` to avoid triggering __bool__/__len__ on special model wrappers
         # (e.g., NNsight's LanguageModel/Envoy which don't support truthiness checks)
         if self.model is not None:
@@ -68,8 +74,46 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         if self.it_cfg.hf_from_pretrained_cfg:
             self.hf_pretrained_model_init()
 
+    def _refuse_unbuilt_meta_init(self) -> None:
+        """Refuse ``meta_init`` when this composition's model init did not build on the meta device.
+
+        Interpretune's own Hugging Face ``from_pretrained`` path and the circuit-tracer composition over nnsight
+        honor it. Every other init path (a TransformerLens bridge, a plain nnsight model, a deferred init) builds the
+        model its own way, so the flag would be ignored and each rank would hold the whole model, which is what it was
+        set to avoid.
+        """
+        hf_cfg = self.it_cfg.hf_from_pretrained_cfg
+        if getattr(hf_cfg, "meta_init", False) and not getattr(self, "_meta_init_built", False):
+            raise MisconfigurationException(
+                f"`hf_from_pretrained_cfg.meta_init` is set, but {type(self).__name__} built its model without the"
+                " meta-device build: only interpretune's Hugging Face `from_pretrained` init (without"
+                " `defer_model_init`) and the circuit-tracer composition over nnsight build on the meta device and load"
+                " from rank 0. Unset `meta_init` for this composition."
+            )
+
     def post_auto_model_init(self) -> None:
         """Optionally modify init of an existing configuration-driven model."""
+
+    def fsdp_direct_calls(self) -> list[tuple[str, torch.nn.Module, tuple[str, ...]]]:
+        """Submodules this composition calls outside its own forward, each as ``(name, submodule, methods)``.
+
+        A data-parallel placement registers ``methods`` as FSDP2 forward methods, so the submodule's parameters are
+        gathered for them, and refuses a plan that does not make each submodule its own unit. Cooperative: an adapter
+        extends ``super()``'s list.
+
+        The core path calls its model through the module's forward, except to generate: ``it_generate`` calls the
+        model's ``generate``, which never runs this module's forward, so the root unit's parameters (the embeddings
+        and LM head, typically) would stay sharded and FSDP2 would not know this module is the root. ``it_generate``
+        is therefore declared on this module itself, the root unit.
+        """
+        return [(type(self).__name__, self, ("it_generate",))] if hasattr(self, "it_generate") else []
+
+    def meta_load_target(self) -> torch.nn.Module:
+        """The torch module a data-parallel placement loads a meta-built model's weights into: ``self.model`` here.
+
+        An adapter whose model wraps a torch module rather than being one (nnsight) returns the module it wraps.
+        """
+        return self.model
 
     def register_tunable_modules(self) -> None:
         """Register on this module any model-owned module its view must reach, once the model exists.
@@ -83,14 +127,17 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         """This composition's finetuning-scheduler ``TunableView``, whose ``support()`` declares how it can be
         tuned (#758, #759).
 
-        This default is itself a declaration: finetuning-scheduler's identity view over this module, with PEFT adapter
-        tensors as ``adapter:<name>`` and the roles :meth:`tunable_roles` adds, so a composition that does not
-        override it is trainable. Backends whose parameters are not identity-named, or cannot be tuned, override it;
-        returning ``None`` declares nothing, and the composition is then refused rather than assumed trainable.
+        This default is itself a declaration: venngram's composed view of this module
+        (:func:`~interpretune.tuning.views.default_view`), placing the model's tensors by layer and component where a
+        published component map describes it, with the overlays' roles (PEFT adapter tensors as ``adapter:<name>``) and
+        the roles :meth:`tunable_roles` adds, so a composition that does not override it is trainable. Where no map
+        describes the model, it is the identity view. Backends whose parameters are not identity-named, or cannot be
+        tuned, override it; returning ``None`` declares nothing, and the composition is then refused rather than
+        assumed trainable.
         """
-        from interpretune.tuning.views import identity_view
+        from interpretune.tuning.views import default_view
 
-        return identity_view(self, roles=self.tunable_roles())
+        return default_view(self, roles=self.tunable_roles())
 
     def tunable_roles(self) -> dict[str, str]:
         """Roles for this module's parameters and buffers, by name.

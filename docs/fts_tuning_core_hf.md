@@ -1,12 +1,13 @@
 # Tuning: core and HF
 
-[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its finetuning-scheduler view.
+[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
 
-The core (HF) composition, and any composition that does not override `build_tunable_view()`, takes
-finetuning-scheduler's identity view over the interpretune module: it is trainable, and its physical names are the
-module's own (`model.<...>`). PEFT adapter tensors take the `adapter:<name>` role, found through PEFT's tuner-layer API
-(see [declaring a view](fts_tunable_views.md#declaring-a-view)); every other parameter is `base` unless
-`tunable_roles()` says otherwise.
+The core (HF) composition, and any composition that does not override `build_tunable_view()`, takes venngram's
+composed view of the Interpretune module: it is trainable, its physical names are the module's own (`model.<...>`), and
+wherever a component map describes the model, a schedule can also address it by layer and component. PEFT adapter
+tensors take the `adapter:<name>` role from venngram's overlay maps (see
+[declaring a view](fts_tunable_views.md#declaring-a-view)); every other parameter is `base` unless `tunable_roles()`
+says otherwise.
 
 ## Example: a steered, phased fine-tune
 

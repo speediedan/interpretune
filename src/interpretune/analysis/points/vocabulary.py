@@ -139,6 +139,12 @@ _SEMANTIC: dict[str, tuple[str, Slot, str | None, str | None]] = {
     # without reading a sublayer's argument tuple. Component spellings, not aliases: nothing is deprecated here.
     "mlp.hook_in": ("ln2", Slot.OUT, None, None),
     "attn.hook_in": ("ln1", Slot.OUT, None, None),
+    # The MLP hidden activation: the post-activation tensor the down projection consumes (TransformerLens's
+    # `mlp.hook_post`). It is addressed at the down projection's input, because that module boundary is the one
+    # place every architecture exposes it: on a two-projection MLP the activation runs inline between the
+    # projections, and on a gated MLP the product of the activated gate and the up projection is likewise not a
+    # module output of its own. The down projection's argument IS that tensor on both shapes.
+    "hook_mlp_hidden_in": ("mlp.out", Slot.IN, None, None),
 }
 
 # An optional leading stack name (`encoder.blocks.3.attn.hook_out`, `vision.blocks.0.mlp.hook_in`) is the

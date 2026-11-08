@@ -112,7 +112,7 @@ def _unwrap_one(seq):
     return seq[0] if len(seq) == 1 else seq
 
 
-def kwargs_from_cfg_obj(cfg_obj, source_obj, base_kwargs=None):
+def kwargs_from_cfg_obj(cfg_obj, source_obj, base_kwargs=None, exclude=()):
     """Dynamically extract a subset of configuration parameters from a source object based on an object's
     signature.
 
@@ -120,6 +120,8 @@ def kwargs_from_cfg_obj(cfg_obj, source_obj, base_kwargs=None):
         cfg_obj: The object (class or function) whose signature will be used to extract parameter names
         source_obj: The object from which to extract attribute values
         base_kwargs: Optional base dictionary to update with extracted values
+        exclude: Parameter names never taken from the source object, for a name the source uses with a
+            different meaning than the target does
 
     Returns:
         Dictionary with extracted configuration parameters
@@ -143,7 +145,7 @@ def kwargs_from_cfg_obj(cfg_obj, source_obj, base_kwargs=None):
 
     # Extract matching attributes from the source object
     for attr in param_names:
-        if hasattr(source_obj, attr):
+        if attr not in exclude and hasattr(source_obj, attr):
             kwargs[attr] = getattr(source_obj, attr)
 
     return kwargs

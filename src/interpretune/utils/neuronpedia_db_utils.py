@@ -41,7 +41,7 @@ from interpretune.utils.import_utils import _NEURONPEDIA_UTILS_AVAILABLE
 # checks against the resolvable typed fallbacks above, while runtime uses the real package
 # whenever it is installed.
 if not TYPE_CHECKING and _NEURONPEDIA_UTILS_AVAILABLE:
-    from neuronpedia_utils.local_db_import import (  # type: ignore[import-untyped] # noqa: F811
+    from neuronpedia_utils.local_db_import import (
         DEFAULT_COLUMNAR_COPY_IMPORT_TABLES,
         DEFAULT_COLUMNAR_IMPORT_TABLES,
         DEFAULT_IMPORT_MODE_CONFIGS,
@@ -57,7 +57,7 @@ if not TYPE_CHECKING and _NEURONPEDIA_UTILS_AVAILABLE:
         summarize_neuronpedia_export_bundle_arrow,
         summarize_neuronpedia_export_bundle_parquet,
     )
-    from neuronpedia_utils.local_db_import import (  # type: ignore[import-untyped] # noqa: F811
+    from neuronpedia_utils.local_db_import import (
         import_saedashboard_columnar_bundle_local_db as _import_saedashboard_columnar_bundle_local_db,
         import_neuronpedia_export_bundle_local_db as _import_neuronpedia_export_bundle_local_db,
     )

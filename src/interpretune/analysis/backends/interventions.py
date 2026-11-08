@@ -61,6 +61,9 @@ class InterventionSpec(NamedTuple):
               (``h - scale_factor * V V^+ h``, so ``scale_factor`` is the removal fraction);
               ``"clamp"`` bounds the activation's pseudoinverse coordinates into
               ``[clamp_min, clamp_max]`` and leaves in-range coordinates exactly as they were.
+              ``"scale"`` multiplies the activation elementwise by ``intervention_tensor * scale_factor``
+              (a scalar, a per-unit multiplier with ones where units are left alone, or any
+              broadcast-compatible tensor), so ones are the identity.
         scale_factor: Scalar multiplier applied to *intervention_tensor* before the intervention
             (not used in ``"replace"`` mode and applied to the projected activation in
             ``"project"`` mode).
@@ -750,6 +753,9 @@ def _apply_mode_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> 
 
     if mode is InterventionMode.CLAMP:
         return _apply_span_clamp(spec, input_value=input_value, target=target)
+
+    if mode is InterventionMode.SCALE:
+        return input_value * (target * spec.scale_factor)
 
     assert mode is InterventionMode.PROJECT, f"unreachable: normalize_intervention_mode admitted {mode!r}"
 

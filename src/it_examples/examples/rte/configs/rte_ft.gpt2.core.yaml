@@ -32,8 +32,6 @@ registered_cfg:
     enable_datasets_cache: True
     train_batch_size: 4
     eval_batch_size: 4
-    dataloader_kwargs:
-      drop_last: true
     # tokenize (and pad) in chunks of one batch: unshuffled batches are then padded to their own longest prompt, not
     # to the longest of 1,000, which keeps the CPU run short
     prepare_data_map_cfg:

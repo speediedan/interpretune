@@ -38,6 +38,14 @@ import torch.distributed
 # monkeypatch this away per-test — see tests/core/test_hub_trust.py.
 os.environ["IT_TRUST_REMOTE_CODE"] = "1"
 
+# venngram's registry at the generation the hosted CI warms (`venngram.registries` in tests/hf_warm_manifest.yaml), so
+# every module's default view (#900) reads the same maps and overlays offline. A developer's own VENNGRAM_REGISTRIES
+# (a local registry under test, for instance) is honoured.
+with open(os.path.join(os.path.dirname(__file__), "hf_warm_manifest.yaml"), encoding="utf-8") as _manifest:
+    os.environ.setdefault(
+        "VENNGRAM_REGISTRIES", ",".join((yaml.safe_load(_manifest).get("venngram") or {}).get("registries") or [])
+    )
+
 from interpretune.base import _call_itmodule_hook, ITDataModule
 from interpretune.runners import AnalysisRunner
 from interpretune.config.runner import AnalysisRunnerCfg
@@ -625,7 +633,10 @@ def runner_fixture_init(sess_fixture, fixt_cfg, run_phase: RunPhase):
         Tuple of (result, runner, run_config)
     """
     # Extract configuration parameters
-    run_config = kwargs_from_cfg_obj(AnalysisRunnerCfg, fixt_cfg, base_kwargs={"it_session": sess_fixture})
+    # a fixture cfg's `precision` is its model dtype ("torch.float32"), not the runner's loop precision (#836)
+    run_config = kwargs_from_cfg_obj(
+        AnalysisRunnerCfg, fixt_cfg, base_kwargs={"it_session": sess_fixture}, exclude=("precision",)
+    )
 
     # If we're just configuring, return the config dictionary only
     if run_phase.value <= RunPhase.cfgonly.value:
@@ -1381,7 +1392,7 @@ def cuda_phase_selects(kw: dict) -> bool:
     Every other special tier runs in its own phase (or, for ``benchmark``, in none), so a CUDA mark alone does not
     select it here: a benchmark selected into this phase only reported as a skip.
     """
-    special = ("standalone", "profiling", "profiling_ci", "optional", "benchmark")
+    special = ("standalone", "standalone_cpu", "profiling", "profiling_ci", "optional", "benchmark")
     return not any(kw.get(k) for k in special) and bool(kw.get("min_cuda_gpus") or kw.get("bf16_cuda"))
 
 
@@ -1491,6 +1502,9 @@ def pytest_collection_modifyitems(items):
     if os.getenv("IT_RUN_STANDALONE_TESTS", "0") == "1":
         # has `@RunIf(standalone=True)`
         items[:] = [item for item in items if _marked(item, lambda kw: kw.get("standalone"))]
+    elif os.getenv("IT_RUN_STANDALONE_CPU_TESTS", "0") == "1":
+        # has `@RunIf(standalone_cpu=True)`: process isolation without a GPU, run in the hosted Linux job (#731)
+        items[:] = [item for item in items if _marked(item, lambda kw: kw.get("standalone_cpu"))]
     elif os.getenv("IT_RUN_CUDA_TESTS", "0") == "1":
         items[:] = [item for item in items if _marked(item, cuda_phase_selects)]
     elif os.getenv("IT_RUN_PROFILING_TESTS", "0") == "2":

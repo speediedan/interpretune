@@ -145,6 +145,33 @@ def warm_components(entries: list[dict[str, Any]], dry_run: bool) -> None:
         _retry(repo_id, _pull)
 
 
+def warm_venngram(section: dict[str, Any], dry_run: bool) -> None:
+    """Fetch every component map and overlay map the pinned venngram registries index into venngram's cache.
+
+    Offline, venngram serves a registry's last fetched revision from its cache (``VENNGRAM_CACHE``, else
+    ``~/.cache/venngram``), so a default view (#900) resolves the same maps the online lookup would.
+    """
+    locations = list(section.get("registries") or [])
+    print(f"venngram registries {locations or '(none)'}")
+    if dry_run or not locations:
+        return
+
+    def _fetch() -> None:
+        from venngram.maps import component_map_for, known_architectures, known_overlays, overlay_for
+        from venngram.registry import set_registries
+
+        set_registries(locations)
+        try:
+            for architecture in known_architectures():
+                component_map_for(architecture)
+            for name in known_overlays():
+                overlay_for(name)
+        finally:
+            set_registries(None)
+
+    _retry("venngram registries", _fetch)
+
+
 def _cache_size() -> str:
     from huggingface_hub.constants import HF_HOME
 
@@ -178,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         warm_models(manifest.get("models") or [], args.dry_run)
         warm_datasets(manifest.get("datasets") or [], args.dry_run)
     warm_components(manifest.get("components") or [], args.dry_run)
+    warm_venngram(manifest.get("venngram") or {}, args.dry_run)
     if not args.dry_run:
         print(f"Hub cache: {_cache_size()}")
     return 0

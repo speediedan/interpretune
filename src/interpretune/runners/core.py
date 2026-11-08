@@ -1,5 +1,5 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
-from typing import Any, Iterator, Mapping, Protocol, Sequence, TYPE_CHECKING, runtime_checkable
+from typing import Any, Iterator, Literal, Mapping, Protocol, Sequence, TYPE_CHECKING, runtime_checkable
 import logging
 import random
 from contextlib import contextmanager
@@ -9,13 +9,15 @@ from pathlib import Path
 import torch
 
 from interpretune.config import SessionRunnerCfg
-from interpretune.base import _call_itmodule_hook, it_configure_optimizers, it_init, it_session_end, ITDataModule
-from interpretune.protocol import Optimizable, CorePhases
+from interpretune.base import _call_itmodule_hook, it_configure_optimizers, it_init, it_session_end
+from interpretune.protocol import AllPhases, Optimizable, CorePhases, TestLoadable, TrainLoadable
 from interpretune.runners.distributed import (
     DistributedRun,
     distributed_dataloader,
     init_process_group,
+    meta_built,
     place_module,
+    rank_device,
     reduce_metrics,
     resolve_placement,
 )
@@ -26,6 +28,47 @@ if TYPE_CHECKING:
 
 
 log = logging.getLogger(__name__)
+
+#: The precisions the core loop understands, with Lightning's names (see :func:`autocast_dtype`).
+Precision = Literal["32", "bf16-mixed", "bf16-true"]
+
+
+def autocast_dtype(precision: Precision | None, module: Any) -> torch.dtype | None:
+    """The dtype a step function runs under for ``precision``, or ``None`` for no autocast.
+
+    ``"bf16-mixed"`` autocasts to bfloat16 around fp32 master weights, which is what the optimizer then steps;
+    ``"bf16-true"`` autocasts a module whose weights are already bfloat16; ``"32"`` never autocasts. ``None``
+    keeps the meaning a module's own dtype has always had here: autocast exactly when ``module.dtype`` is
+    bfloat16, so a run that names no precision is unchanged.
+
+    Raises:
+        MisconfigurationException: If ``precision`` is none of these, or contradicts the module's dtype
+            (``"bf16-mixed"`` on bfloat16 weights is ``"bf16-true"``, and ``"bf16-true"`` on fp32 weights is
+            ``"bf16-mixed"``; each refusal names the precision the run actually is).
+    """
+    if precision is None:
+        return torch.bfloat16 if module.dtype == torch.bfloat16 else None
+    if precision == "32":
+        return None
+    if precision == "bf16-mixed":
+        if module.dtype == torch.bfloat16:
+            raise MisconfigurationException(
+                "`precision='bf16-mixed'` keeps fp32 master weights, but the module's dtype is bfloat16, so its"
+                " weights are already bfloat16: that run is 'bf16-true'. Name 'bf16-true', or build the module"
+                " in fp32 for 'bf16-mixed'."
+            )
+        return torch.bfloat16
+    if precision == "bf16-true":
+        if module.dtype != torch.bfloat16:
+            raise MisconfigurationException(
+                "`precision='bf16-true'` needs bfloat16 weights, but the module's dtype is"
+                f" {module.dtype}: autocasting fp32 weights is 'bf16-mixed'. Name 'bf16-mixed', or build the"
+                " module in bfloat16 for 'bf16-true'."
+            )
+        return torch.bfloat16
+    raise MisconfigurationException(
+        f"Unknown precision '{precision}': expected one of '32', 'bf16-mixed', 'bf16-true' or None."
+    )
 
 
 @contextmanager
@@ -163,14 +206,21 @@ def step_lr_schedulers(module: Any, interval: str, counter: int, metrics: Mappin
                     )
                 rank_zero_warn(f"Skipping a `ReduceLROnPlateau` step: '{monitor}' was not logged this {interval}.")
                 continue
-            scheduler.step(metrics[monitor])  # type: ignore[index]  # membership checked above
+            scheduler.step((metrics or {})[monitor])  # membership checked above
         else:
             scheduler.step()
 
 
+def _optimizer_step_done(ctx: CoreLoopContext, output: Any) -> None:
+    """Count one taken optimizer step: step-interval lr schedulers, then the step-end callbacks."""
+    ctx.optimizer_step += 1
+    step_lr_schedulers(ctx.module, "step", ctx.optimizer_step)
+    _callbacks(ctx, "on_train_step_end", output)
+
+
 def core_train_loop(
     module: ITModule,
-    datamodule: ITDataModule,
+    datamodule: TrainLoadable,
     limit_train_batches: int,
     limit_val_batches: int,
     max_epochs: int,
@@ -178,6 +228,8 @@ def core_train_loop(
     max_steps: int = -1,
     callbacks: Sequence[Any] = (),
     validate_with_grad: bool = False,
+    precision: Precision | None = None,
+    accumulate_grad_batches: int = 1,
     dist_run: DistributedRun | None = None,
     resume_from: str | Path | Mapping[str, Any] | None = None,
     **kwargs,
@@ -200,6 +252,15 @@ def core_train_loop(
         callbacks: Objects with any of :class:`CoreCallback`'s methods.
         validate_with_grad: Validate with gradients enabled (for objectives that call ``torch.autograd.grad``)
             instead of under ``torch.inference_mode()``.
+        precision: The step functions' autocast precision (see :func:`autocast_dtype`), applied to training and
+            validation alike, as Lightning applies its precision to every phase.
+        accumulate_grad_batches: Training batches accumulated per optimizer step, each batch's loss scaled by the
+            reciprocal. The optimizer, the step-interval lr schedulers, ``on_train_step_end`` and the ``max_steps``
+            budget all count optimizer steps, and a partial window at an epoch's end steps before validation, so
+            validation sees the epoch's final weights. Its gradients keep the reciprocal scale, as in Lightning:
+            a short final window steps proportionally less rather than being rescaled to a full mean. Under a
+            data-parallel placement every batch's ``backward()`` still synchronizes gradients (no ``no_sync``
+            optimization), so accumulation there saves optimizer and scheduler steps, not communication.
         dist_run: This rank's place in a data-parallel run (set by the runner for placements other than
             ``single``): each loader is rebuilt over this rank's share of the data, and the epoch's metrics are
             averaged across ranks before callbacks and lr schedulers see them.
@@ -212,13 +273,17 @@ def core_train_loop(
         The loop's final context.
     """
     assert hasattr(datamodule, "train_dataloader"), "Datamodule is expected to have a train dataloader"
-    train_dataloader = datamodule.train_dataloader()  # type: ignore[attr-defined]
-    val_dataloader = datamodule.val_dataloader() if hasattr(datamodule, "val_dataloader") else None  # type: ignore[attr-defined]  # duck typing
+    train_dataloader = datamodule.train_dataloader()
+    val_loader_fn = getattr(datamodule, "val_dataloader", None)
+    val_dataloader = val_loader_fn() if val_loader_fn is not None else None
     if dist_run is not None:
         train_dataloader = distributed_dataloader(train_dataloader, dist_run)
         if val_dataloader is not None:
             val_dataloader = distributed_dataloader(val_dataloader, dist_run)
     assert module.optimizers, "Module has no optimizers configured"
+    if accumulate_grad_batches < 1:
+        raise MisconfigurationException(f"`accumulate_grad_batches` must be at least 1, got {accumulate_grad_batches}.")
+    autocast_dtype(precision, module)  # refuse a precision that contradicts the module before any batch runs
     ctx = CoreLoopContext(module=module, max_epochs=max_epochs, max_steps=max_steps, callbacks=tuple(callbacks))
     val_grad_ctx = torch.enable_grad if validate_with_grad else torch.inference_mode
     _callbacks(ctx, "on_train_start")
@@ -231,29 +296,55 @@ def core_train_loop(
             module.model.train()
             module.current_epoch = ctx.epoch = epoch_idx
             if dist_run is not None:
-                train_dataloader.sampler.set_epoch(epoch_idx)
+                # The distributed sampler's epoch setter is what reshuffles shards per epoch; the base
+                # sampler type does not declare it, so reach it dynamically.
+                set_epoch = getattr(train_dataloader.sampler, "set_epoch", None)
+                if set_epoch is not None:
+                    set_epoch(epoch_idx)
             _call_itmodule_hook(
                 module, hook_name="on_train_epoch_start", hook_msg="Running train epoch start hooks", optional=True
             )
             _callbacks(ctx, "on_train_epoch_start")
+            accumulated, output = 0, None
             for batch_idx, batch in enumerate(train_dataloader):
                 if batch_idx >= limit_train_batches >= 0 or ctx.should_stop or ctx.steps_exhausted:
                     break
+                accumulated += 1
+                boundary = accumulated == accumulate_grad_batches
                 output = run_step(
-                    step_fn="training_step", module=module, batch=batch, batch_idx=batch_idx, optimizer=ctx.optimizer
+                    step_fn="training_step",
+                    module=module,
+                    batch=batch,
+                    batch_idx=batch_idx,
+                    optimizer=ctx.optimizer,
+                    precision=precision,
+                    loss_scale=1.0 / accumulate_grad_batches,
+                    zero_grad=accumulated == 1,
+                    step_optimizer=boundary,
                 )
-                ctx.optimizer_step += 1
-                step_lr_schedulers(module, "step", ctx.optimizer_step)
-                _callbacks(ctx, "on_train_step_end", output)
+                if boundary:
+                    accumulated = 0
+                    _optimizer_step_done(ctx, output)
                 if prof is not None:
                     prof.step()
+            if accumulated:
+                # the epoch's partial window steps before validation, so validation sees the final weights
+                assert ctx.optimizer is not None
+                ctx.optimizer.step()
+                _optimizer_step_done(ctx, output)
             if val_dataloader is not None:
                 module.model.eval()
                 for batch_idx, batch in enumerate(val_dataloader):
                     if batch_idx >= limit_val_batches >= 0:
                         break
                     with val_grad_ctx():
-                        run_step(step_fn="validation_step", module=module, batch=batch, batch_idx=batch_idx)
+                        run_step(
+                            step_fn="validation_step",
+                            module=module,
+                            batch=batch,
+                            batch_idx=batch_idx,
+                            precision=precision,
+                        )
                     if prof is not None:
                         prof.step()
             ctx.epoch_metrics = epoch_metrics(module)
@@ -383,10 +474,11 @@ def load_checkpoint_state(module: Any, checkpoint: Mapping[str, Any], ctx: CoreL
 
 def core_test_loop(
     module: ITModule,
-    datamodule: ITDataModule,
+    datamodule: TestLoadable,
     limit_test_batches: int,
     *args,
     dist_run: DistributedRun | None = None,
+    precision: Precision | None = None,
     **kwargs,
 ):
     """Run the test loop over the datamodule's test dataloader.
@@ -399,7 +491,7 @@ def core_test_loop(
     """
     if not hasattr(datamodule, "test_dataloader"):
         raise AssertionError("Datamodule is expected to have a test dataloader")
-    dataloader = datamodule.test_dataloader()  # type: ignore[attr-defined]  # duck typing, checked above
+    dataloader = datamodule.test_dataloader()
     if dist_run is not None:
         dataloader = distributed_dataloader(dataloader, dist_run)
     test_ctx = {}
@@ -411,7 +503,14 @@ def core_test_loop(
             with torch.inference_mode():
                 if batch_idx >= limit_test_batches >= 0:
                     break
-                run_step(step_fn="test_step", module=module, batch=batch, batch_idx=batch_idx, **test_ctx)
+                run_step(
+                    step_fn="test_step",
+                    module=module,
+                    batch=batch,
+                    batch_idx=batch_idx,
+                    precision=precision,
+                    **test_ctx,
+                )
             if prof is not None:
                 prof.step()
     # Print accumulated metrics from log/log_dict calls (core framework epoch-end reporting)
@@ -423,11 +522,28 @@ def core_test_loop(
     _call_itmodule_hook(module, hook_name="on_test_epoch_end", hook_msg="Running test epoch end hooks", optional=True)
 
 
-def run_step(step_fn, module, batch, batch_idx, optimizer: Optimizable | None = None, as_generator: bool = False):
+def run_step(
+    step_fn,
+    module,
+    batch,
+    batch_idx,
+    optimizer: Optimizable | None = None,
+    as_generator: bool = False,
+    precision: Precision | None = None,
+    loss_scale: float = 1.0,
+    zero_grad: bool = True,
+    step_optimizer: bool = True,
+):
     """Run one step: move the batch to device, dispatch the step function, optionally optimize.
 
     ``as_generator`` yields the step output instead of returning it, which is what lets the analysis
     runner stream results rather than accumulate them.
+
+    ``precision`` selects the step function's autocast (see :func:`autocast_dtype`). The remaining three
+    arguments are the training loop's gradient-accumulation controls (#836) and default to the one-batch-per-step
+    behavior: ``zero_grad`` only at a window's first batch, the loss scaled by ``loss_scale`` (the reciprocal of
+    the window size) before ``backward()``, and ``optimizer.step()`` only at a window's last batch. The step
+    output the hooks and the caller see is the unscaled loss.
     """
     batch = module.batch_to_device(batch)
     step_func = getattr(module, step_fn)
@@ -449,10 +565,11 @@ def run_step(step_fn, module, batch, batch_idx, optimizer: Optimizable | None = 
             batch=batch,
             batch_idx=batch_idx,
         )
-    if step_fn == "training_step" and optimizer is not None:
+    if step_fn == "training_step" and optimizer is not None and zero_grad:
         optimizer.zero_grad()
-    if module.dtype == torch.bfloat16:
-        with torch.autocast(device_type=module.device.type, dtype=module.dtype):
+    dtype = autocast_dtype(precision, module)
+    if dtype is not None:
+        with torch.autocast(device_type=module.device.type, dtype=dtype):
             output = step_func(batch, batch_idx)
     else:
         output = step_func(batch, batch_idx)
@@ -466,8 +583,9 @@ def run_step(step_fn, module, batch, batch_idx, optimizer: Optimizable | None = 
             batch=batch,
             batch_idx=batch_idx,
         )
-        output.backward()
-        optimizer.step()
+        (output * loss_scale).backward() if loss_scale != 1.0 else output.backward()
+        if step_optimizer:
+            optimizer.step()
     module.global_step += 1
 
     if as_generator:
@@ -493,13 +611,17 @@ class SessionRunner:
         self.dist_run: DistributedRun | None = None
         self.it_init()
 
+    # Subclass runners extend the phase set (the analysis runner adds its phase), so the stored
+    # phase spans both enums even though this runner only ever sets core phases.
+    _current_phase: AllPhases | CorePhases | None = None
+
     @property
-    def phase(self) -> CorePhases | None:
+    def phase(self) -> AllPhases | CorePhases | None:
         """The phase currently executing, or None before a phase starts."""
         return self._current_phase
 
     @phase.setter
-    def phase(self, phase: CorePhases):
+    def phase(self, phase: AllPhases | CorePhases):
         self._current_phase = phase
 
     def it_init(self):
@@ -518,10 +640,14 @@ class SessionRunner:
             it_init(**self.run_cfg.it_session)
             return
         init_process_group(self.dist_run)
+        assert self.run_cfg.module is not None
+        if meta_built(self.run_cfg.module):
+            # setup builds tensors on the module's device (a classification mapping's token ids, for one), which for a
+            # meta-built model would otherwise be the meta device the placement is about to leave
+            self.run_cfg.module.device = rank_device(self.dist_run)
         with self.dist_run.rank_zero_first():
             it_init(**self.run_cfg.it_session, prepare_data=self.dist_run.local_rank == 0, configure_optimizers=False)
-        assert self.run_cfg.module is not None
-        place_module(self.run_cfg.module, self.dist_run, self.run_cfg.shard_units)
+        place_module(self.run_cfg.module, self.dist_run, self.run_cfg.fsdp_plan, self.run_cfg.fsdp_default_kwargs)
         it_configure_optimizers(self.run_cfg.module)
 
     def it_session_end(self):

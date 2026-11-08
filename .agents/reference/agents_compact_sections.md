@@ -61,11 +61,14 @@ Rules that must not be missed:
   validation). The CI lock is regenerated with `./requirements/utils/lock_ci_requirements.sh`. A rebuild that changes
   benchmark-relevant dependencies must end with the dashboard parity gates green and a fresh benchmark wave.
 
-<!-- section: Testing sha=9c8273c707bd -->
+<!-- section: Testing sha=3722ed5cdcb7 -->
 Basic run (mirrors `ci_test-full.yml`): `python -m pytest tests src/it_examples/tests -v`; add
 `--cov=src/interpretune --cov-append --cov-report=` for coverage. Standalone tests take inline variables, never
 `export` (marker conflicts): `IT_RUN_STANDALONE_TESTS=1 python -m pytest <node>`; the harness is
-`./tests/special_tests.sh --mark_type=standalone [--filter_pattern=...]`. Profiling tests use `IT_RUN_PROFILING_TESTS=1`.
+`python -m gpu_epsilon.special_tests --lease --mark_type=standalone [--filter_pattern=...]`. Profiling tests use `IT_RUN_PROFILING_TESTS=1`.
+That is gpu-epsilon's shared runner (pinned in `requirements/ci/gpu_epsilon.txt`; no entry script), configured by
+`[tool.gpu-epsilon.special-tests]` in `pyproject.toml`: change a mark, a selection variable or the coverage command
+there. Node outcomes come from per-rank records. `--lease` takes the GPU lease once (CI runs without it).
 
 - **Phase marks** (`standalone`, `min_cuda_gpus`, `bf16_cuda`, `profiling`, ...) may sit on a test or on its class:
   collection reads `item.iter_markers()`, so a class-level `@RunIf(...)` selects every test the class collects,
@@ -79,8 +82,9 @@ Basic run (mirrors `ci_test-full.yml`): `python -m pytest tests src/it_examples/
 - **Run long suites in the background**, never in the foreground or through `tee`: the basic suite takes about 30
   minutes and `gen_it_coverage.sh` about 50, and terminal lifecycle or OOM kills foreground runs. Use
   `nohup ... > log 2>&1 &` plus `disown`, or `scripts/manage_standalone_processes.sh --use-nohup scripts/gen_it_coverage.sh --repo-home=... --target-env-name=... --venv-dir=... --no-rebuild-base`
-  (`--allow-failures --no-reruns` while debugging, `--resource-debug` for per-test and per-GPU logging). Kill any
-  earlier run first, by exact PID.
+  (`--allow-failures --no-reruns` while debugging, `--resource-debug` for per-test and per-GPU logging, `--dry-run`
+  for the phase plan). Its test phases run through gpu-epsilon's phase driver from `[tool.gpu-epsilon.phases]` in
+  `pyproject.toml`; change a phase there, not in the script. Kill any earlier run first, by exact PID.
 - **Watch a background run with `scripts/watch_run.sh`**, which prints exactly one terminal line (`GREEN`, `RED`,
   `DEAD`, `TIMEOUT`, `QUERY-FAILED`) and exits. Subjects: `--pid PID --log FILE`, `-- CMD`, `--azure-build ID`,
   `--pr-checks N`, `--find PATTERN`. The rules behind it: never `pgrep -f` a pattern your own watcher command
@@ -98,12 +102,12 @@ Basic run (mirrors `ci_test-full.yml`): `python -m pytest tests src/it_examples/
   cuda-marked` (`IT_RUN_CUDA_TESTS=1`), `standalone gpu` and `CI Profiling`. For semantic concept-direction parity
   drift use the gate in `tests/core/test_analysis_backend_parity.py`.
 
-<!-- section: Serializing GPU work on a shared host sha=714651a2e571 -->
+<!-- section: Serializing GPU work on a shared host sha=b67009181aee -->
 The GPU host is shared by agent sessions in this repo, sessions in `finetuning-scheduler`, and the self-hosted Azure
 agent. Two GPU suites at once contend silently (OOM, flaky timing), which is easily misdiagnosed as a test failure.
 
 - `scripts/gpu_lease_wrap.sh` is an **opt-in** `flock` lease and a complete no-op unless `GPU_LEASE_CMD` points at a
-  lease implementation. `export GPU_LEASE_CMD=/path/to/gpu_lease.sh`, then `tests/special_tests.sh` and
+  lease implementation. `export GPU_LEASE_CMD=/path/to/gpu_lease.sh`, then the special-test runner (`--lease`) and
   `scripts/gen_it_coverage.sh` re-exec under it, so one acquisition covers a suite.
 - Two keys: `gpu` and `cpu-heavy` (host memory). The two self-wrapping scripts take both by default
   (`GPU_LEASE_ARGS=--cpu-heavy`); GPU-only work wrapped with the plain lease (`$GPU_LEASE_CMD -- <cmd>`) may overlap CI's

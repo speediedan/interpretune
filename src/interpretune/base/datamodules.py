@@ -27,6 +27,10 @@ log = logging.getLogger(__name__)
 class ITDataModule:
     """Base datamodule: owns the dataset, the tokenizer, and the dataloaders a session runs over."""
 
+    # The hook currently being dispatched, maintained by the hook-name context manager in
+    # interpretune.base.call; None outside a hook dispatch.
+    _current_fx_name: str | None = None
+
     def __init__(self, itdm_cfg: ITDataModuleConfig, *args, **kwargs):
         r"""
 

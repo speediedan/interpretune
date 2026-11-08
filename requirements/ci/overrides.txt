@@ -1,16 +1,14 @@
 transformer-lens==4.0.0  # overrides sae-dashboard's ^2.2.0 cap; sae-lens (>=2.16.1,<5) and circuit-tracer admit it as declared
 jaxtyping>=0.3  # required by transformer-lens 4.0; overrides sae-dashboard's ^0.2.28 cap (annotation-only use)
 nnsight==0.7.0  # released pin (0.7.0 validated: sig-key VAR_KEYWORD resolve-through fix + remote-init gating; nnsight slice + parity 34/0 green on 0.6.3 AND 0.7.0)
-# triton is NOT pinned while torch is on the 2.15 release candidate: torch 2.15.0 requires
-# `triton~=3.9.0; platform_system == "Linux"`, and 3.9.0 is published only on the PyTorch test index, not on
-# PyPI. An override here would replace torch's own requirement and force every resolve (including the ones
-# that see only PyPI) to find a wheel that does not exist there. torch's requirement installs the matching
-# triton from the test index with torch itself. When 2.15.0 reaches PyPI, restore the pin, keeping torch's
-# marker: a uv override replaces the target requirement *including its markers*, and an unmarked pin drags
-# triton onto macOS, where it has no wheels.
-#
+# Exactly what torch 2.15.0 requires on Linux. The marker is load-bearing, not decoration: a uv
+# override replaces the target requirement *including its markers*, so an unmarked `triton==3.9.0`
+# overwrites torch's own `triton~=3.9.0; platform_system == "Linux" and python_version < "3.16"` with an
+# unconditional one and drags triton onto macOS, where it has no wheels at all. Keep this marker in sync with
+# torch's own.
+triton==3.9.0 ; platform_system == "Linux" and python_version < "3.16"
 # torchvision is excluded (pyproject `exclude-dependencies`, requirements/ci/excludes.txt), not pinned: no
-# torchvision release pairs with torch 2.15 yet, and nothing here imports it (see the excludes entry).
+# torchvision release pairs with torch 2.15 yet (the latest, 0.29.2, pairs with 2.14), and nothing here imports it.
 # torchaudio intentionally NOT pinned: nothing in interpretune imports it, and no torchaudio release
 # is paired with the pinned torch. The pin existed only to stop an unpinned transitive
 # pull from installing a torchaudio built against a different torch (CUDA-ABI import failure); no

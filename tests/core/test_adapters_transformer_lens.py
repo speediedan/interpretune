@@ -549,7 +549,7 @@ class TestBridgeViewArchitectures:
 
     @staticmethod
     def _view(request, session_fixture: str):
-        pytest.importorskip("finetuning_scheduler.tunable_view")
+        pytest.importorskip("venngram.tuning")
         from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
         from interpretune.tuning.views import VIEW_ATTR
 

@@ -1,6 +1,6 @@
 from __future__ import annotations  # see PEP 749, no longer needed when 3.13 reaches EOL
 from collections.abc import Mapping
-from typing import Any, TYPE_CHECKING, Iterable, Literal, Sequence
+from typing import Any, TYPE_CHECKING, Iterable, Literal, Sequence, cast
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -12,7 +12,12 @@ from interpretune.protocol import StrOrPath
 
 if TYPE_CHECKING:
     from interpretune.session import ITSession
-    from interpretune.protocol import ITModuleProtocol, ITDataModuleProtocol, LatentAnalysisModuleProtocol
+    from interpretune.protocol import (
+        AnalysisRunnerProtocol,
+        ITModuleProtocol,
+        ITDataModuleProtocol,
+        LatentAnalysisModuleProtocol,
+    )
 
 
 # Standalone functions for analysis initialization
@@ -47,14 +52,14 @@ def to_analysis_cfgs(
 
     # Handle single AnalysisOp
     if hasattr(analysis_cfgs, "name") and hasattr(analysis_cfgs, "alias"):
-        processed_cfgs.append(AnalysisCfg(target_op=analysis_cfgs))  # type: ignore[arg-type]
+        processed_cfgs.append(AnalysisCfg(target_op=analysis_cfgs))  # pyright: ignore[reportArgumentType]
         return processed_cfgs
 
     # Handle iterable of AnalysisCfg or AnalysisOp
     try:
         # Check if it's iterable first
-        iter(analysis_cfgs)  # type: ignore[call-overload]
-        for cfg in analysis_cfgs:  # type: ignore[union-attr]
+        iter(analysis_cfgs)  # pyright: ignore[reportArgumentType, reportCallIssue]
+        for cfg in analysis_cfgs:  # pyright: ignore[reportGeneralTypeIssues]
             if isinstance(cfg, AnalysisCfg):
                 processed_cfgs.append(cfg)
             elif hasattr(cfg, "name") and hasattr(cfg, "alias"):  # Check if it's an AnalysisOp
@@ -101,7 +106,7 @@ def init_analysis_dirs(
     # Setup output dataset path
     if op_output_dataset_path is None:
         # `core_log_dir` is a str OR a Path (a Lightning Trainer supplies a str), and absent until a run owns a log dir
-        log_dir = module.core_log_dir  # type: ignore[attr-defined]  # protocol provides core_log_dir
+        log_dir = module.core_log_dir
         if log_dir is None:
             raise MisconfigurationException(
                 f"{type(module).__name__} has no log directory to write analysis outputs under: pass "
@@ -119,10 +124,11 @@ def init_analysis_dirs(
                 # Accept either AnalysisOp instances or OpWrapper-like objects / simple objects providing a `name`
                 if not (isinstance(cfg.op, AnalysisOp) or hasattr(cfg.op, "name")):
                     raise AssertionError("cfg.op must be an AnalysisOp instance or provide a `name` attribute")
-                op_dir = op_output_dataset_path / cfg.op.name  # type: ignore[attr-defined]  # validated above to have name
+                op_name: str = getattr(cfg.op, "name")
+                op_dir = op_output_dataset_path / op_name
                 if op_dir.exists() and any(op_dir.iterdir()):
                     raise Exception(
-                        f"Analysis dataset directory for op '{cfg.op.name}' ({op_dir}) is not empty. "  # type: ignore[attr-defined]  # validated above to have name
+                        f"Analysis dataset directory for op '{op_name}' ({op_dir}) is not empty. "
                         "Please delete it or specify a different path."
                     )
 
@@ -192,21 +198,50 @@ class SessionRunnerCfg:
     # rank holds the model, gradients averaged) or 'fsdp2' (parameters, gradients and optimizer state sharded); see
     # `interpretune.runners.distributed`
     placement: Literal["single", "ddp", "fsdp2"] = "single"
-    # the class names of the modules `fsdp2` shards as their own units (a transformer's block class, each spliced
-    # instrument's class), deepest first and before the module itself; `[]` shards the module as one unit
-    shard_units: Sequence[str] | None = None
+    # the modules a data-parallel placement shards as their own units, in finetuning-scheduler's FSDP2 plan grammar
+    # (`finetuning_scheduler.strategies.plan`): each key (a module name, a regex matched from the start of module
+    # names, or `class:<name>` for every instance of a class or its subclasses) maps to its `fully_shard` kwargs, plus
+    # the aliases `act_ckpt` and `cpu_offload_policy`. Applied deepest first, then to the module itself. 'fsdp2' needs
+    # one (`{}` shards the module as one unit); under 'ddp' it is optional
+    fsdp_plan: Mapping[str, Mapping[str, Any] | None] | None = None
+    # `fully_shard` kwargs every planned unit takes unless its entry overrides them; all but `act_ckpt` also apply to
+    # the module itself
+    fsdp_default_kwargs: Mapping[str, Any] | None = None
     # resume training from a core-loop checkpoint (`interpretune.runners.core.checkpoint_state`, or a path to one saved
     # with `torch.save`) taken at the end of an epoch; training continues at the next epoch
     resume_from: str | Path | Mapping[str, Any] | None = None
+    # the core loop's autocast precision, with Lightning's names: 'bf16-mixed' autocasts the step functions to
+    # bfloat16 around fp32 master weights, 'bf16-true' autocasts a module whose weights are already bfloat16, and
+    # '32' never autocasts. None (the default) keeps the module dtype's meaning: autocast exactly when the module's
+    # dtype is bfloat16, as runs did before this setting existed; see
+    # `interpretune.runners.core.autocast_dtype`
+    precision: Literal["32", "bf16-mixed", "bf16-true"] | None = None
+    # accumulate gradients over this many training batches per optimizer step (the loss is scaled by its
+    # reciprocal); a partial window at an epoch's end still steps. `max_steps` and step-interval lr schedulers
+    # count optimizer steps, not batches
+    accumulate_grad_batches: int = 1
 
     def __post_init__(self):
         self.callbacks = tuple(
             instantiate_class(dict(cb)) if isinstance(cb, Mapping) and "class_path" in cb else cb
             for cb in self.callbacks
         )
+        if self.precision not in (None, "32", "bf16-mixed", "bf16-true"):
+            raise MisconfigurationException(
+                f"Unknown precision '{self.precision}': expected one of '32', 'bf16-mixed', 'bf16-true' or None."
+            )
+        if self.accumulate_grad_batches < 1:
+            raise MisconfigurationException(
+                f"`accumulate_grad_batches` must be at least 1, got {self.accumulate_grad_batches}."
+            )
         if self.placement not in ("single", "ddp", "fsdp2"):
             raise MisconfigurationException(
                 f"Unknown placement '{self.placement}': expected one of 'single', 'ddp', 'fsdp2'."
+            )
+        if self.placement == "single" and (self.fsdp_plan is not None or self.fsdp_default_kwargs):
+            raise MisconfigurationException(
+                "`fsdp_plan` and `fsdp_default_kwargs` shard the module across ranks, but the placement is 'single'."
+                " Set `placement` to 'fsdp2' or 'ddp' (and launch with torchrun), or drop the plan."
             )
         if self.resume_from is not None and self.placement != "single":
             # a core-loop checkpoint is one process's `state_dict()`; under 'ddp' and 'fsdp2' every rank holds
@@ -271,9 +306,9 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
                 " analysis ops read activations and weights in ways not yet designed for data-parallel placement."
             )
         assert self.it_session is not None and self.it_session.module is not None
-        self.it_session.module.analysis_run_cfg = self  # type: ignore[attr-defined]
-
-        # No need to call _process_analysis_cfgs() as it's now a property
+        # Adapters read this back through AnalysisRunnerProtocol; the module surface that carries it
+        # is that protocol, not the general module protocol every module satisfies.
+        cast("AnalysisRunnerProtocol", self.it_session.module).analysis_run_cfg = self
         if self.analysis_cfgs is None:
             rank_zero_debug(
                 "No analysis_cfgs provided on runner initialization, expecting one to be passed with"

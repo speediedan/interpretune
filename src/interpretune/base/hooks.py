@@ -3,7 +3,7 @@ from typing import Any, TYPE_CHECKING
 from collections.abc import Iterator
 import torch
 
-from interpretune.utils import MisconfigurationException, instantiate_class
+from interpretune.utils import MisconfigurationException, instantiate_class, rank_zero_warn
 from interpretune.protocol import OptimizerLRScheduler, STEP_OUTPUT
 from interpretune.tuning.views import VIEW_ATTR
 
@@ -34,6 +34,17 @@ class BaseITHooks:
     session_complete: bool
     _it_state: ITState
 
+    # Host-provided methods: supplied by sibling components of the composed module through the MRO.
+    if TYPE_CHECKING:
+
+        def _make_setup_dirs(self) -> None:
+            """Create the session's output directories, from the base components."""
+            ...
+
+        def set_input_require_grads(self) -> None:
+            """Enable input gradients when configured, from the HF pretrained mixin."""
+            ...
+
     def setup(self, *args, **kwargs) -> None:
         """Attach the datamodule if provided and create the session's output directories.
 
@@ -43,7 +54,7 @@ class BaseITHooks:
         # for some adapters, datamodule access is not provided in setup and will be accessed via Trainer
         if datamodule := kwargs.get("datamodule", None):
             self._it_state._datamodule = datamodule
-        self._make_setup_dirs()  # type: ignore[attr-defined]  # provided by mixin composition
+        self._make_setup_dirs()
 
     def optimizer_parameters(self) -> Iterator[torch.nn.Parameter]:
         """The parameters the default optimizer is built over.
@@ -61,8 +72,8 @@ class BaseITHooks:
         view = getattr(self, VIEW_ATTR, None)
         if view is None:
             return self.model.parameters()
-        from finetuning_scheduler.tunable_view import as_view
-        from finetuning_scheduler.tunable_view.roles import FROZEN_ROLE_KINDS, role_kind
+        from venngram.tuning import as_view
+        from venngram.roles import FROZEN_ROLE_KINDS, role_kind
 
         bound = as_view(view)
         if not bound.support().trainable:
@@ -76,12 +87,31 @@ class BaseITHooks:
 
     def configure_optimizers(self) -> OptimizerLRScheduler | None:
         """Optional because it is not mandatory in the context of core IT modules (required for some adapter
-        modules)."""
-        self.set_input_require_grads()  # type: ignore[attr-defined]  # provided by mixin composition
+        modules).
+
+        A module with nothing to optimize gets no optimizer (or lr scheduler), with a warning, rather than torch's
+        empty-parameter-list error: an attached view whose every tensor has a role finetuning-scheduler never optimizes
+        (a circuit-tracer composition's transcoders are all ``instrument`` until promoted) still serves sessions that
+        do not train, analysis among them, whose configuration sets ``optimizer_init`` (#859).
+        """
+        self.set_input_require_grads()
         optimizer, scheduler = None, None
         if self.it_cfg.optimizer_init:  # in case this hook is manually invoked by the user
-            optimizer = instantiate_class(args=self.optimizer_parameters(), init=self.it_cfg.optimizer_init)
-        if self.it_cfg.lr_scheduler_init:
+            if params := list(self.optimizer_parameters()):
+                optimizer = instantiate_class(args=params, init=self.it_cfg.optimizer_init)
+            else:
+                why = (
+                    "every parameter of its tunable view has a role finetuning-scheduler never optimizes"
+                    " (`instrument` or `fitted`) until a schedule promotes it"
+                    if getattr(self, VIEW_ATTR, None) is not None
+                    else "it has no parameters"
+                )
+                rank_zero_warn(
+                    f"`optimizer_init` is set but {type(self).__name__} has nothing to optimize: {why}. No optimizer"
+                    " is configured; promote the tensors to tune, or leave `optimizer_init` unset for a session that"
+                    " does not train."
+                )
+        if optimizer is not None and self.it_cfg.lr_scheduler_init:
             scheduler = {
                 "scheduler": instantiate_class(args=optimizer, init=self.it_cfg.lr_scheduler_init),
                 **self.it_cfg.pl_lrs_cfg,
@@ -90,12 +120,13 @@ class BaseITHooks:
             return None
         # no lr scheduler is an empty list, not `[None]`: Lightning refuses a `None` scheduler, and the core loop would
         # otherwise carry an `LRSchedulerConfig` wrapping `None`
-        return [optimizer], [scheduler] if scheduler is not None else []  # type: ignore[return-value]
+        return [optimizer], [scheduler] if scheduler is not None else []  # pyright: ignore[reportReturnType]
 
     def on_session_end(self) -> Any | None:
         """Optionally execute some post-interpretune session (train, test, iterative exploration) steps."""
-        if getattr(self, "memprofiler", None):
-            self.memprofiler.dump_memory_stats()  # type: ignore[union-attr]  # validated by getattr guard
+        memprofiler = getattr(self, "memprofiler", None)
+        if memprofiler is not None:
+            memprofiler.dump_memory_stats()
         self._it_state._session_complete = True
 
     # N.B. we call `on_session_end` at the end of train, test, analysis and predict session types only. This is because

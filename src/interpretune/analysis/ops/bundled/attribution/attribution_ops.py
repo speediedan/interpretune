@@ -114,6 +114,7 @@ def gradient_attribution_impl(
             raise ValueError(f"Missing required input '{key}' for gradient attribution")
 
     # Type checker assistance after validation
+    assert analysis_batch.answer_indices is not None, "answer_indices validated above"
     assert analysis_batch.logit_diffs is not None, "logit_diffs validated above"
     assert isinstance(analysis_batch.logit_diffs, torch.Tensor), "logit_diffs should be tensor after validation"
 
@@ -143,7 +144,7 @@ def gradient_attribution_impl(
     # TODO: refactor this to use the GetAliveLatentsOp? (which should then dispatch alive_latents implementation)
     import interpretune as it
 
-    temp_batch = it.get_alive_latents(module, temp_batch, batch, batch_idx)  # type: ignore[arg-type]
+    temp_batch = it.get_alive_latents(module, temp_batch, batch, batch_idx)  # pyright: ignore[reportCallIssue]
     analysis_batch.alive_latents = temp_batch.alive_latents
     assert analysis_batch.alive_latents is not None, "alive_latents should be set after get_alive_latents call"
 

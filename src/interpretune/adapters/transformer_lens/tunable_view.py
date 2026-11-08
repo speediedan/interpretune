@@ -38,13 +38,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 
 import torch
 from torch import nn, Tensor
 
 if TYPE_CHECKING:
-    from finetuning_scheduler.tunable_view import TunableSupport
+    from transformer_lens.model_bridge.bridge import TransformerBridge
+    from venngram.tuning import TunableSupport
 
 _BLOCK = re.compile(r"^blocks\.(\d+)\.")
 # the TransformerLens name prefixes `depth_groups` orders; a traced name matching none is grouped last
@@ -75,7 +76,7 @@ def autograd_leaves(t: Tensor) -> list[Tensor]:
     return list(leaves.values())
 
 
-def _traced_by_autograd(bridge: nn.Module) -> dict[str, list[Tensor]]:
+def _traced_by_autograd(bridge: TransformerBridge) -> dict[str, list[Tensor]]:
     """Each TransformerLens name with the parameters its tensor is computed from.
 
     Every floating-point parameter is made to require grad while the TransformerLens tensors are built, so that each
@@ -88,7 +89,7 @@ def _traced_by_autograd(bridge: nn.Module) -> dict[str, list[Tensor]]:
         for p in params:
             p.requires_grad_(True)
         with torch.enable_grad():
-            return {n: autograd_leaves(t) for n, t in bridge.tl_named_parameters()}  # type: ignore[attr-defined]
+            return {n: autograd_leaves(t) for n, t in bridge.tl_named_parameters()}
     finally:
         for p, flag in zip(params, saved):
             p.requires_grad_(flag)
@@ -127,18 +128,19 @@ class TransformerBridgeView:
     def __init__(
         self,
         root: nn.Module,
-        bridge: nn.Module | None = None,
+        bridge: TransformerBridge | None = None,
         implicit_norm_thaw: bool = True,
         roles: Mapping[str, str] | None = None,
     ) -> None:
-        from finetuning_scheduler.tunable_view.roles import validate_roles
+        from venngram.roles import validate_roles
 
         self._roles = validate_roles(
             roles or {}, (n for n, _ in root.named_parameters()), (n for n, _ in root.named_buffers())
         )
         if bridge is None:
             model = root._modules.get("model")
-            bridge = model if model is not None and hasattr(model, "tl_named_parameters") else root
+            resolved = model if model is not None and hasattr(model, "tl_named_parameters") else root
+            bridge = cast("TransformerBridge", resolved)  # quoted: TransformerBridge is TYPE_CHECKING-only here
         self.root = root
         self.bridge = bridge
         self.implicit_norm_thaw = implicit_norm_thaw
@@ -201,7 +203,7 @@ class TransformerBridgeView:
                 )
             )
 
-        self._block_norms = {i: _norms(block) for i, block in enumerate(bridge.blocks)}  # type: ignore[attr-defined]
+        self._block_norms = {i: _norms(block) for i, block in enumerate(bridge.blocks)}
         final = getattr(bridge, "ln_final", None)
         self._final_norm = (
             [name_of[id(p)] for p in final.parameters() if id(p) in name_of]
@@ -219,8 +221,8 @@ class TransformerBridgeView:
     def support(self) -> TunableSupport:
         """Trainable, in TransformerLens names that are reshaped views of the physical tensors; refused, naming the
         tensors, when the bridge holds quantized or packed (non-floating-point) parameters."""
-        from finetuning_scheduler.tunable_view import TunableSupport
-        from finetuning_scheduler.tunable_view.roles import declared_kinds
+        from venngram.tuning import TunableSupport
+        from venngram.roles import declared_kinds
 
         if packed := packed_parameters(self.bridge):
             shown = ", ".join(packed[:3]) + (f" and {len(packed) - 3} more" if len(packed) > 3 else "")
@@ -245,7 +247,7 @@ class TransformerBridgeView:
         ``implicit_norm_thaw`` off, that is how such a norm is thawed. A parameter a TransformerLens name reaches is
         scheduled by that name.
         """
-        from finetuning_scheduler.tunable_view import Unresolvable
+        from venngram.tuning import Unresolvable
 
         self._build()
         unresolved = [n for n in logical if n not in self._table and n not in self._unreached]
@@ -271,7 +273,7 @@ class TransformerBridgeView:
         """
         self._build()
         with torch.no_grad():
-            for name, tensor in self.bridge.tl_named_parameters():  # type: ignore[attr-defined]
+            for name, tensor in self.bridge.tl_named_parameters():
                 if name in self._table:
                     yield name, tensor
 

@@ -1,8 +1,8 @@
 # Tuning: nnsight
 
-[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its finetuning-scheduler view.
+[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
 
-A local, dispatched nnsight composition registers the nnsight model's HF module on the interpretune module as `hf_model`
+A local, dispatched nnsight composition registers the nnsight model's HF module on the Interpretune module as `hf_model`
 (in `register_tunable_modules()`), so the optimizer, checkpoints and the identity view reach its parameters. A composition
 executing remotely (NDIF) has no local weights to tune, and one built with `dispatch=False` keeps its weights on the
 meta device; both are refused, each with its reason.

@@ -1,7 +1,7 @@
 # Documentation build requirements (source of truth for RTD + the docs-build CI smoke; keep the
 # pyproject [dependency-groups] docs list in sync — used by `make docs` via `uv pip install --group docs`).
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch>=2.7.1  # REAL torch (CPU wheel): interpretune.protocol builds runtime type unions from torch classes, which autodoc mocks cannot represent
+torch>=2.12.0  # REAL torch (CPU wheel): interpretune.protocol builds runtime type unions from torch classes, which autodoc mocks cannot represent
 sphinx>=8.1,<9.0
 pydata-sphinx-theme>=0.16.1
 myst-nb>=1.2.0  # supersedes myst-parser (pulls it in): renders the example notebooks; execution stays OFF (nb_execution_mode)
@@ -21,3 +21,7 @@ huggingface_hub>=0.20
 pyyaml>=6.0
 jsonschema>=4.0
 jaxtyping>=0.2
+# venngram, an interpretune base dependency, is not on PyPI yet: Read the Docs and the docs-build CI install this file
+# before `pip install .` and without UV_OVERRIDE, so it takes the same commit pin as pyproject.toml's git-deps and
+# override-dependencies (keep the three in step). Remove once venngram 0.1.0 is published.
+venngram @ git+https://github.com/speediedan/venngram.git@edbd6e0c6016dc6761295b47ae53c0b6294bed07

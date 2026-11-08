@@ -170,7 +170,10 @@ Rules that must not be missed:
 Basic run (mirrors `ci_test-full.yml`): `python -m pytest tests src/it_examples/tests -v`; add
 `--cov=src/interpretune --cov-append --cov-report=` for coverage. Standalone tests take inline variables, never
 `export` (marker conflicts): `IT_RUN_STANDALONE_TESTS=1 python -m pytest <node>`; the harness is
-`./tests/special_tests.sh --mark_type=standalone [--filter_pattern=...]`. Profiling tests use `IT_RUN_PROFILING_TESTS=1`.
+`python -m gpu_epsilon.special_tests --lease --mark_type=standalone [--filter_pattern=...]`. Profiling tests use `IT_RUN_PROFILING_TESTS=1`.
+That is gpu-epsilon's shared runner (pinned in `requirements/ci/gpu_epsilon.txt`; no entry script), configured by
+`[tool.gpu-epsilon.special-tests]` in `pyproject.toml`: change a mark, a selection variable or the coverage command
+there. Node outcomes come from per-rank records. `--lease` takes the GPU lease once (CI runs without it).
 
 - **Phase marks** (`standalone`, `min_cuda_gpus`, `bf16_cuda`, `profiling`, ...) may sit on a test or on its class:
   collection reads `item.iter_markers()`, so a class-level `@RunIf(...)` selects every test the class collects,
@@ -184,8 +187,9 @@ Basic run (mirrors `ci_test-full.yml`): `python -m pytest tests src/it_examples/
 - **Run long suites in the background**, never in the foreground or through `tee`: the basic suite takes about 30
   minutes and `gen_it_coverage.sh` about 50, and terminal lifecycle or OOM kills foreground runs. Use
   `nohup ... > log 2>&1 &` plus `disown`, or `scripts/manage_standalone_processes.sh --use-nohup scripts/gen_it_coverage.sh --repo-home=... --target-env-name=... --venv-dir=... --no-rebuild-base`
-  (`--allow-failures --no-reruns` while debugging, `--resource-debug` for per-test and per-GPU logging). Kill any
-  earlier run first, by exact PID.
+  (`--allow-failures --no-reruns` while debugging, `--resource-debug` for per-test and per-GPU logging, `--dry-run`
+  for the phase plan). Its test phases run through gpu-epsilon's phase driver from `[tool.gpu-epsilon.phases]` in
+  `pyproject.toml`; change a phase there, not in the script. Kill any earlier run first, by exact PID.
 - **Watch a background run with `scripts/watch_run.sh`**, which prints exactly one terminal line (`GREEN`, `RED`,
   `DEAD`, `TIMEOUT`, `QUERY-FAILED`) and exits. Subjects: `--pid PID --log FILE`, `-- CMD`, `--azure-build ID`,
   `--pr-checks N`, `--find PATTERN`. The rules behind it: never `pgrep -f` a pattern your own watcher command
@@ -211,7 +215,7 @@ The GPU host is shared by agent sessions in this repo, sessions in `finetuning-s
 agent. Two GPU suites at once contend silently (OOM, flaky timing), which is easily misdiagnosed as a test failure.
 
 - `scripts/gpu_lease_wrap.sh` is an **opt-in** `flock` lease and a complete no-op unless `GPU_LEASE_CMD` points at a
-  lease implementation. `export GPU_LEASE_CMD=/path/to/gpu_lease.sh`, then `tests/special_tests.sh` and
+  lease implementation. `export GPU_LEASE_CMD=/path/to/gpu_lease.sh`, then the special-test runner (`--lease`) and
   `scripts/gen_it_coverage.sh` re-exec under it, so one acquisition covers a suite.
 - Two keys: `gpu` and `cpu-heavy` (host memory). The two self-wrapping scripts take both by default
   (`GPU_LEASE_ARGS=--cpu-heavy`); GPU-only work wrapped with the plain lease (`$GPU_LEASE_CMD -- <cmd>`) may overlap CI's
@@ -388,8 +392,8 @@ vocab sentinels, so the adapter resolves `d_vocab` / `d_vocab_out` first. Config
 
 ## CI/CD
 
-- **GitHub Actions** (`ci_test-full.yml`): Ubuntu 22.04, Windows 2022, macOS 14, Python 3.13, 90-min timeout
-- **Azure GPU pipeline** (`.azure-pipelines/gpu-tests.yml`): Self-hosted, requires admin approval, only for ready-for-review PRs. Use CPU CI as long as possible before requesting GPU runs. It runs on either GPU agent (NVIDIA or AMD) through the any-vendor template (`.azure-pipelines/templates/gpu-job.yml`), which picks the digest-pinned image from the agent's `GPU_VENDOR`; a manual run can pin one with the `vendor` parameter. Every step runs inside the job's container through `.azure-pipelines/scripts/ctr.sh`. The job's steps live in `.azure-pipelines/templates/it-gpu-steps.yml`, shared with the release pipeline. Each GPU phase is collected before the GPU work and reported after it (`tests/gpu_ci/phase_report.py`, ported from finetuning-scheduler): collected beside passed, skipped and failed, counted against the phase's manifest and published as the job's phase evidence; a failing phase fails the job. Releases run `.azure-pipelines/gpu-release.yml` by hand: one vendor-demanded leg per vendor, then `tests/gpu_ci/release_eligibility.py` over both legs' evidence, whose verdict is the release's GPU gate (a skip needs a reason in `tests/gpu_ci/reviewed_exclusions.json` there).
+- **GitHub Actions** (`ci_test-full.yml`): Ubuntu 22.04, Windows 2022, macOS 15, Python 3.13, 120-min timeout
+- **Azure GPU pipeline** (`.azure-pipelines/gpu-tests.yml`): Self-hosted, requires admin approval, only for ready-for-review PRs. Use CPU CI as long as possible before requesting GPU runs. It runs on either GPU agent (NVIDIA or AMD) through the any-vendor template (`.azure-pipelines/templates/gpu-job.yml`), which picks the digest-pinned image from the agent's `GPU_VENDOR`; a manual run can pin one with the `vendor` parameter. Every step runs inside the job's container through `.azure-pipelines/scripts/ctr.sh`. The job's steps live in `.azure-pipelines/templates/it-gpu-steps.yml`, shared with the release pipeline. Each GPU phase is collected before the GPU work and reported after it (`tests/gpu_ci/phase_report.py`, ported from finetuning-scheduler): collected beside passed, skipped and failed, counted against the phase's manifest and published as the job's phase evidence; a failing phase fails the job. Releases run `.azure-pipelines/gpu-release.yml` by hand: one vendor-demanded leg per vendor, then the release eligibility checker shared with finetuning-scheduler (`gpu_epsilon.release_eligibility`, configured by `tests/gpu_ci/release.json`, pinned in `requirements/ci/gpu_epsilon.txt`) over both legs' evidence, whose verdict is the release's GPU gate (a skip needs a reason in `tests/gpu_ci/reviewed_exclusions.json` there).
 - **A queued GPU build can sit in `notStarted` until its approval is granted, and that is normal.**
   Check the build's approval state before touching runner configuration: an ungranted gate looks
   identical to a dispatch problem from the outside, and the reflex it invites (inspecting the agent,
@@ -421,9 +425,9 @@ vocab sentinels, so the adapter resolves `d_vocab` / `d_vocab_out` first. Config
 - **Torch prerelease:** Configured via `requirements/ci/torch-pre.txt` (version, CUDA target, channel)
 - **Dependencies:** Locked in `requirements/ci/requirements.txt`; regenerate with `./requirements/utils/lock_ci_requirements.sh`
 
-## Pre-MVP Backwards Compatibility
+## Backwards Compatibility (alpha line)
 
-Interpretune is **pre-MVP**. Internal op signatures, batch protocols, and pipeline composition may change without deprecation notices. Do not add backwards-compatibility shims (fallback code paths, silent coercions, etc.) to preserve caller assumptions that predate the current design. If an op's contract changes, update all in-tree callers and tests to match the new contract directly.
+The public policy is `docs/source/stability.md`, and it is the single source of truth. In short: through the alpha line the promise is notice, not stability. Do not add backwards-compatibility shims (fallback code paths, silent coercions, etc.) to preserve caller assumptions that predate the current design. If a contract changes, update all in-tree callers and tests to match the new contract directly, and land a `Breaking` CHANGELOG entry naming the old and new form. The small stable surface named on the stability page gets one release of notice first; persisted artifacts are handled separately there.
 
 ## Anything publicly visible is written for a public reader
 

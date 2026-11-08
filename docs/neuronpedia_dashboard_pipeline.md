@@ -17,7 +17,7 @@ This working document provides an overview of the supported Interpretune paths f
 For building the unified multi-repo editable dev environment itself (and the full env-var contract), see
 [`docs/developer_multi_repo_setup.md`](./developer_multi_repo_setup.md).
 
-Run the commands below from the interpretune repo root with the interpretune environment's python active
+Run the commands below from the Interpretune repo root with the Interpretune environment's python active
 (`source <your-venv>/bin/activate`). All host-specific locations are resolved from the environment with portable
 defaults:
 
@@ -839,8 +839,8 @@ Two invocations produce all four artifacts — each run writes both a SAELens-co
 
 Prerequisites:
 
-1. The interpretune environment active with the editable SAEDashboard install (provides
-   `sae_dashboard.neuronpedia.prompt_pretokenization`) and interpretune importable (provides the RTE custom module
+1. The Interpretune environment active with the editable SAEDashboard install (provides
+   `sae_dashboard.neuronpedia.prompt_pretokenization`) and Interpretune importable (provides the RTE custom module
    `it_examples.utils.dashboard_pretokenization_rte`).
 2. `google/gemma-3-1b-it` is a **gated** HuggingFace model: accept the license on the model page and authenticate
    (`hf auth login`, or export `HF_TOKEN`). Only the tokenizer is downloaded. The source datasets (`aps/super_glue`
@@ -1164,7 +1164,7 @@ this is easy to hit — and it otherwise looks exactly like success.
 Two things make it visible rather than silent. The importer logs a warning naming the layer and
 the declined row counts (`neuronpedia_utils.local_db_import`, counted on `Neuron`/`Activation` —
 metadata rows are re-offered per layer by design, so their conflicts are routine and stay quiet).
-And every interpretune path that imports resolves a collision policy up front, before anything is
+And every Interpretune path that imports resolves a collision policy up front, before anything is
 downloaded or generated:
 
 Local generation, `--import-only-local-db`, and `scripts/fetch_dashboards_from_hub.py` share that one
@@ -1454,7 +1454,7 @@ If you want to validate an already-converted bundle directly, use the Python hel
 
 The helper is now a handoff boundary rather than the owner of Neuronpedia table mechanics. Interpretune requires
 `neuronpedia_utils.local_db_import` for local dashboard import and import-mode benchmark functionality, then adds only
-Interpretune-local URL resolution for localhost Docker Postgres URLs. The current interpretune environment has been
+Interpretune-local URL resolution for localhost Docker Postgres URLs. The current Interpretune environment has been
 validated with an editable no-deps install of the local Neuronpedia utility package.
 
 ```bash
@@ -1615,7 +1615,7 @@ WHERE "modelId" = 'gemma-3-1b-it'
 
 ## Current operational caution
 
-The pipeline currently runs from the shared interpretune development environment rather than a dedicated Neuronpedia-specific environment. That is acceptable for active recovery, but long-running dashboard jobs should eventually move into a dedicated environment with the Neuronpedia and SAEDashboard dependencies pinned independently from the main Interpretune dev environment.
+The pipeline currently runs from the shared Interpretune development environment rather than a dedicated Neuronpedia-specific environment. That is acceptable for active recovery, but long-running dashboard jobs should eventually move into a dedicated environment with the Neuronpedia and SAEDashboard dependencies pinned independently from the main Interpretune dev environment.
 
 ## Publishing generated dashboards to the Hub
 

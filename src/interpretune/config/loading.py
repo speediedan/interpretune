@@ -42,7 +42,9 @@ def resolve_adapter_ctx(body: dict[str, Any], adapter_ctx: Sequence[Adapter | st
         # session-shaped bodies may omit adapter_ctx entirely — the session default is core, exactly
         # as ITSessionConfig's own field default provided on the retired parser path
         ctx = (Adapter.core,)
-    resolved = tuple(Adapter[a] if not isinstance(a, Adapter) else a for a in ctx)
+    from interpretune.config.shared import adapter_member
+
+    resolved = tuple(adapter_member(a) if not isinstance(a, Adapter) else a for a in ctx)
     return ADAPTER_REGISTRY.canonicalize_composition(resolved)
 
 

@@ -65,7 +65,10 @@ def parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode
 
 def init_it_runner(it_session: ITSession, test_cfg: BaseCfg, *args, **kwargs):
     # we allow passing unused args for parity testing, e.g. the IT module configured tmp_path is needed by some trainers
-    test_cfg_overrides = {k: v for k, v in test_cfg.__dict__.items() if k in SessionRunnerCfg.__dict__.keys()}
+    # a test cfg's `precision` is its model dtype ("torch.float32"), not the runner's loop precision (#836)
+    test_cfg_overrides = {
+        k: v for k, v in test_cfg.__dict__.items() if k in SessionRunnerCfg.__dict__.keys() and k != "precision"
+    }
     runner_config = SessionRunnerCfg(it_session=it_session, **test_cfg_overrides)
     runner = SessionRunner(run_cfg=runner_config)
     return runner
@@ -113,7 +116,10 @@ def init_analysis_runner(it_session: ITSession, test_cfg: BaseCfg, *args, **kwar
     Returns:
         An initialized AnalysisRunner instance
     """
-    run_cfg_kwargs = kwargs_from_cfg_obj(AnalysisRunnerCfg, test_cfg, base_kwargs={"it_session": it_session})
+    # a test cfg's `precision` is its model dtype ("torch.float32"), not the runner's loop precision (#836)
+    run_cfg_kwargs = kwargs_from_cfg_obj(
+        AnalysisRunnerCfg, test_cfg, base_kwargs={"it_session": it_session}, exclude=("precision",)
+    )
     analysis_cfg = AnalysisRunnerCfg(**run_cfg_kwargs)
     runner = AnalysisRunner(run_cfg=analysis_cfg)
     return runner

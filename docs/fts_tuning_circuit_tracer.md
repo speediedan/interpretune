@@ -1,23 +1,35 @@
 # Tuning: circuit-tracer
 
-[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its finetuning-scheduler view.
+[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
 
 A circuit-tracer composition's view (`interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`) covers its
 transcoders, whichever backend it runs over:
 
 - **Transcoders start as `instrument`.** Every transcoder tensor is a published artifact: never thawed, optimized or
   checkpointed, so a fresh view's default schedule is empty. Promote the tensors you want to adapt to
-  `latent:transcoder` through finetuning-scheduler's promotion, and a schedule can then thaw them. Adapting transcoders
+  `latent:transcoder` through Fine-Tuning Scheduler's promotion, and a schedule can then thaw them. Adapting transcoders
   that drift after fine-tuning ([interpretune#709](https://github.com/speediedan/interpretune/issues/709)) works this way.
 - **The base model is refused by name.** The transcoders were trained on the base model's activations, so a schedule
   naming a base-model parameter is refused, saying why. Tuning the base model under a frozen replacement is a separate
   path ([interpretune#813](https://github.com/speediedan/interpretune/issues/813)).
-- **Disk offload is refused.** circuit-tracer's `offload='disk'` reloads offloaded modules with new parameter objects
-  after an attribution, which an optimizer built beforehand would not see. `offload=None` and `offload='cpu'` keep them.
+- **Every offload mode keeps the parameters.** circuit-tracer's `offload='disk'` moves each offloaded module to the
+  meta device and reloads it with `load_state_dict(assign=True)`, and by default both steps replace its parameter
+  objects, which an optimizer built before an attribution would not see. The composition attributes under torch's
+  `swap_module_params_on_conversion` instead, set only while `offload='disk'` attributes, so each new tensor is swapped
+  into the existing parameter and the optimizer keeps stepping the module's own tensors (and a tied unembedding stays
+  tied). Disk offload holds the offloaded weights on disk rather than in host memory, so an attribution needs less host
+  memory than under `offload='cpu'`, at the cost of the reads. `offload=None` and `offload='cpu'` never replace a
+  parameter.
 - **Each transcoder layer is one depth group**, from the last layer; a cross-layer transcoder is one group.
 
-The transcoders are registered on the interpretune module once: under `model` when the replacement model is a torch
+The transcoders are registered on the Interpretune module once: under `model` when the replacement model is a torch
 module, under the nnsight model's registered HF module (`hf_model`) when there is one, and as `transcoders` otherwise.
+In that last case the base model's parameters are not the module's, so `CircuitTracerConfig.tune_base` refuses the
+composition, naming why, rather than tuning nothing of the base.
+
+With the transcoders registered as `transcoders`, every parameter of the module is a transcoder tensor, `instrument`
+until a promotion, so there is nothing to optimize: a session whose configuration sets `optimizer_init` gets no
+optimizer, with a warning, and analysis sessions run as before.
 
 ## Lazily loaded weights
 
