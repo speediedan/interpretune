@@ -7,7 +7,7 @@ the component's KIND, from which the slot rules follow. Per-row io flags are not
 always the module's first input and ``hook_out`` its output, and the two derived norm tensors are a property
 of every norm rather than of any row.
 
-Sources, in precedence order: a bundled YAML under ``data/`` (five architectures today), a registration at
+Sources, in precedence order: a bundled YAML under ``data/`` (six architectures today), a registration at
 runtime (``register``), and, later, a map derived from TransformerLens' own per-architecture component
 mapping when it is installed. Two sources for one architecture must agree, and a test says so.
 """
@@ -134,6 +134,13 @@ class LayerSet:
             lo, hi = self.spec[0], self.spec[1]
             return lo <= layer <= hi
         return layer in self.spec
+
+    @property
+    def first(self) -> int:
+        """The lowest layer the row covers, where a consumer that probes one layer must look."""
+        if isinstance(self.spec, str):
+            return 1 if self.spec == "odd" else 0
+        return min(self.spec)
 
     def describe(self) -> str:
         """The predicate in words, for a refusal message."""
@@ -518,6 +525,8 @@ _TL_KINDS: dict[str, str] = {
     "GatedMLPBridge": "mlp",
     "LinearBridge": "linear",
     "UnembeddingBridge": "unembed",
+    # a gated delta net (Qwen3.5's linear attention): a document declares the kind, as the Qwen3.5 map does
+    "GatedDeltaNetBridge": "linear_attn",
 }
 
 #: Bridge classes that wrap a module the vocabulary has no point for, left out of a derived map on purpose: a
@@ -530,6 +539,7 @@ _TL_UNADDRESSED: frozenset[str] = frozenset(
         "RotaryEmbeddingBridge",
         "SiglipVisionEncoderBridge",
         "SiglipVisionEncoderLayerBridge",
+        "Qwen3_5VisionEncoderBridge",
         "VisionProjectionBridge",
         "GeneralizedComponent",
     }

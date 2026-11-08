@@ -363,7 +363,7 @@ def _iter_requested_hook_names(
 
     for base_name in resolver.supported_hooks:
         if "{layer}" in resolver._mapping.hook_mappings[base_name].envoy_path:
-            candidates = [f"blocks.{layer}.{base_name}" for layer in range(num_layers)]
+            candidates = [f"blocks.{layer}.{base_name}" for layer in resolver.covered_layers(base_name, num_layers)]
         else:
             candidates = [base_name]
 
@@ -391,7 +391,7 @@ def _iter_available_hook_names(
 
     for base_name in resolver.supported_hooks:
         if "{layer}" in resolver._mapping.hook_mappings[base_name].envoy_path:
-            candidates = [f"blocks.{layer}.{base_name}" for layer in range(num_layers)]
+            candidates = [f"blocks.{layer}.{base_name}" for layer in resolver.covered_layers(base_name, num_layers)]
         else:
             candidates = [base_name]
 
