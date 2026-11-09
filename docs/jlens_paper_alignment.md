@@ -18,14 +18,15 @@ by name when a row cites an issue that has closed.
 |---|---|---|
 | Fit a Jacobian lens $J_\ell$ | Not implemented; pre-fitted lenses are consumed from the `neuronpedia/jacobian-lens` artifacts. Fitting is out of scope for #225 as written. | `resolve_jlens`, `jlens_layer_for_percentile` in `analysis/optools.py` |
 | Read J-lens tokens from an activation | Implemented: the readout calls the model's own final-norm module and unembedding, so it is the paper's formula rather than a reconstruction. | `jlens_read` in `analysis/ops/bundled/jlens/` |
+| Read through a J++ lens | Implemented for pre-fitted lenses: `jlens_kind="jpp"` resolves a J++ artifact through the same seam, checked against its sidecar's declared fit method, and `jlens_read` defaults to the J++ readout's semantic-token mask and RMS divisor. Fitting J++ lenses is not implemented. See "The J++ lens" below. | `resolve_jlens`, `jlens_read` |
 | Probe one concept | Implemented as a cosine against the concept tokens' directions in the norm-aware basis; the paper's unfolded convention is available through `jlens_apply_final_norm=False`. | `jlens_concept_probe` |
 | Decompose an activation into sparse J-space concepts | Implemented: nonnegative sparse decomposition by gradient pursuit over the J-lens dictionary, with its residual. | `jlens_sparse_inventory` |
-| Add a J-lens direction | The model-level `add` mode exists and takes any direction; a single-vector J-lens source for it is the collection's concern (#420 introduces the `basis=` selector that names which basis produced the direction). | `model_fwd_intervention`, mode `add` |
+| Add a J-lens direction | Implemented: the model-level `add` mode takes any direction, and `concept_direction` builds a single J-lens direction in the basis its `concept_basis` names (`jlens_folded` or `jlens_unfolded`, with no default). | `model_fwd_intervention`, mode `add`; `concept_direction` |
 | Patch one J-lens coordinate into another | Implemented: the `patch` mode swaps the activation's coordinates along a pair of directions through the pseudoinverse; the pair is built in a stated basis. On a backend with activation capture and `add` but no `patch` (its steering parameters are static), the swap has an exact two-pass form: capture $h$, compute the static update $V(\sigma(c) - c)$ with $c = V^{+} h$, and add it at scale 1. | `model_fwd_intervention`, mode `patch`; `jlens_direction_rows` |
 | Clamp coordinates to a clean-pass value | Implemented as bound-into-range: the `clamp` mode bounds the activation's pseudoinverse coordinates along a stacked basis into `[lo, hi]`, leaving in-range coordinates untouched; a bandless or inverted band is refused by name. A clean-pass-value hold is a two-pass construction over it. | `model_fwd_intervention`, mode `clamp` |
 | Ablate J-space directions | Implemented: the `reject` mode removes the activation's component in the span (`alpha = 1` full removal), the complement of `project`. | `model_fwd_intervention`, mode `reject` |
-| Reproduce the paper's rates | Reproduced in shape on the paper's own two-hop swap prompts on gemma-3-1b-it and gemma-3-4b-it: intermediate swaps peak at mid depth and collapse late, answer swaps peak late, and an unrelated-entity control swap stays near zero. On gemma-3-4b-it the same holds through the chat template, with the control less specific at mid-to-late layers. The polysemy probe (the paper's Finding 4) finds cancellation at the shared word in both gemma-2-2b and the gemma-3 models, across three wordings; its strength depends on whether it is read through the lens readout or through fixed-direction coordinates, whose conditioning differs by basis. The remaining coverage is open: #668. | an experiment component outside this repository; the steering demo notebooks for single prompts |
-| Attribute toward what the lens reads | Implemented for token targets: `attribution_target_source='jlens_readout'` attributes the top-k tokens a preceding `jlens_read` returns as ordinary final-layer logit targets, and records the lens layer and token ids with the graph. The lens read itself is attributed at the lens layer: a `concept_direction` built with a J-lens `concept_basis` becomes a target read at the output of the lens layer, whose edges match fully frozen interventions (#661). | `compute_attribution_graph` in `analysis/ops/bundled/circuit_tracer/` |
+| Reproduce the paper's rates | Reproduced in shape on the paper's own two-hop swap prompts on gemma-3-1b-it and gemma-3-4b-it: intermediate swaps peak at mid depth and collapse late, answer swaps peak late, and an unrelated-entity control swap stays near zero. On gemma-3-4b-it the same holds through the chat template, with the control less specific at mid-to-late layers. The polysemy probe (the paper's Finding 4) finds cancellation at the shared word in the lens readout on gemma-2-2b and on gemma-3 from 1b to 12b, across three wordings. Read through fixed-direction coordinates instead, it depends on the basis. gemma-3-27b is not measured, and on gemma-3 why the coordinate statistic changes with the basis is not established. | an experiment component outside this repository; the steering demo notebooks for single prompts |
+| Attribute toward what the lens reads | Implemented for token targets: `attribution_target_source='jlens_readout'` attributes the top-k tokens a preceding `jlens_read` returns as ordinary final-layer logit targets, and records the lens layer and token ids with the graph. The lens read itself is attributed at the lens layer: a `concept_direction` built with a J-lens `concept_basis` becomes a target read at the output of the lens layer, whose edges match fully frozen interventions. | `compute_attribution_graph` in `analysis/ops/bundled/circuit_tracer/` |
 | Validate an intervention to first order | Implemented: `intervention_first_order_check` runs downstream of `model_fwd_intervention`, predicts the metric change from the applied edit and the metric gradient at the clean site, and reports predicted, measured and residual per named basis for every write mode. | `intervention_first_order_check`; `tests/core/test_intervention_first_order_check.py` |
 | Record which basis produced a result | Implemented: bundled J-lens ops stamp `jlens_basis` on their outputs, and the steering demos build patch pairs with the basis-recording collection revision, so a result names the basis that produced it. | `jlens_basis_name` in `analysis/optools.py` |
 
@@ -77,7 +78,7 @@ unfolded result differ by a direction, not by a coefficient, so a result must st
 |---|---|---|---|---|---|
 | Read | $\mathrm{softmax}(W_U \mathrm{norm}(J_\ell h))$ | Bare $W_U J_\ell h$ omits the learned scale and, for LayerNorm, centering | Folded dot products divided by $\mathrm{rms}(J_\ell h)$ are an exact rewrite for RMSNorm | Call the actual norm module; treat unfolded scores as a labelled approximation | `jlens_read` calls the real modules |
 | Probe | Score or cosine against $v_t$ | Literal paper convention | Norm-aware fixed direction | Offer both, labelled | `jlens_concept_probe`, both bases by `jlens_apply_final_norm` |
-| Add | $h + \alpha v_t$ | The paper's written operation | A different direction, readout-aligned; no scalar $\alpha$ repairs an anisotropic rotation | Folded for "the readout direction", unfolded for replication | `add` mode takes either; the source op states the basis (#420) |
+| Add | $h + \alpha v_t$ | The paper's written operation | A different direction, readout-aligned; no scalar $\alpha$ repairs an anisotropic rotation | Folded for "the readout direction", unfolded for replication | `add` mode takes either; the source op states the basis (`concept_basis`) |
 | Ablate | Project out $P_V = V V^{+}$ | Paper-basis subspace | Norm-aware subspace; a different column span | Must state the basis | `reject` mode (`model_fwd_intervention`); the pair-building op records the basis |
 | Patch | $c = V^{+} h$, $h' = h + V(\sigma(c) - c)$ | The paper's literal coordinate swap | A different plane and pseudoinverse; uniform scale cancels, anisotropic scale does not | Make the basis explicit in the API and the result | `patch` mode, pair built in the stated basis; result basis recorded |
 | Clamp | Hold coordinates at a clean-pass value | Clamp paper-basis coordinates | Clamp norm-aware coordinates | One basis across the clean and intervened passes | `clamp` mode bounds into `[lo, hi]`; a clean-pass hold is a two-pass construction over it |
@@ -104,10 +105,40 @@ two one-vector operations in sequence cannot reproduce a coordinate swap when th
    predicted, measured and residual under the basis the run names, so a large residual is a finding about that
    basis rather than a coefficient to be explained away.
 
+## The J++ lens
+
+The [J++ lens](https://github.com/safety-research/jpp_lens) (Ayonrinde and Lindsey, "J++ Lens: Jacobian
+filtering enables more faithful workspace readouts") is a later method built on the paper's lens. Interpretune
+reads J++ lenses but does not fit them.
+
+**What changes at fit time.** Three things, in the post's terms. *Jacobian filtering:* a router assigns
+fitting activations to $K$ clusters, each cluster's Jacobians are averaged into an expert, and per-layer weights
+combine the experts, down-weighting Jacobians from activations whose readouts are poor. *Layer-wise relevance
+propagation* in the backward pass when the Jacobians are computed, which detaches each RMSNorm's
+$1/\mathrm{rms}$ factor. *Readout filtering:* non-semantic tokens are dropped from the readout.
+
+**What is unchanged at read time.** A J++ lens is still one map $J_\ell$ per layer with the paper's shape, read
+as $W_U \mathrm{norm}(J_\ell h)$, at the same cost. Everything on this page about the readout, the two bases and
+folding applies to it unchanged. The folding page's J++ section covers the one difference that matters there.
+
+**The supervised component.** The per-layer weights are fitted to maximize readout recall on graded items. A
+J++ lens's readout score on items like those it was weighted on is therefore not a held-out measurement. Score
+it with the task held out of the weight fit, as the measurements in [J-Space Usage](jlens_usage.md) do.
+
+**The arbitrary per-layer scale.** Each layer's J++ map carries an arbitrary scale, so raw J++ readout
+magnitudes do not compare across layers or against a J-lens. `jlens_read` divides by the final norm's RMS by
+default for a J++ lens. The divisor leaves the ranking within a position unchanged.
+
+**The post's claims against what was measured here.** The post reports a large readout gain and swaps at least
+as strong as the J-lens's, on models from 9B to 284B parameters, with the swap claim measured on one model. On
+two smaller models, gemma-3-1b-it and Qwen3.5-4B, the readout gain reproduces in direction and is smaller, and
+the swap claim does not hold on our two-hop battery: the J-lens swaps better on both. The numbers, and the
+resulting choice of kind per use, are in [J-Space Usage](jlens_usage.md).
+
 ## Maintenance
 
-The rows above that name an issue are #225, #420, #661 and #668. Each carries a checklist item to update
-its row when it closes. The docs link-check workflow, which runs weekly and on demand against the live web, reads
+The one row above that names an issue cites #225, which carries a checklist item to update its row when it
+closes. The docs link-check workflow, which runs weekly and on demand against the live web, reads
 this page's issue citations and fails by name on any that has closed, so a stale row cannot survive a week unnoticed.
 The page states current behaviour in every row for the reason given at the top: it must be true between those runs
 as well.
