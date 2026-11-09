@@ -108,7 +108,7 @@ def venngram_support(
         MisconfigurationException: If venngram is not installed.
     """
     vg_ops = _require_venngram()
-    declared = {getattr(m, "value", m) for m in intervention.ops}
+    declared = intervention.declared_ops
     return vg_ops.Support(
         ops=frozenset(ops & declared & set(vg_ops.OPS)),
         targets=frozenset(t for t in intervention.targets if t != "features" or latent_models),
@@ -148,7 +148,7 @@ def venngram_feature_support(
     detail = intervention.target_detail("features")
     constant = detail is not None and "constant" in detail.value_sources
     return vg_ops.Support(
-        ops=frozenset({getattr(m, "value", m) for m in intervention.ops} & {"replace"}),
+        ops=frozenset(intervention.declared_ops & {"replace"}),
         targets=frozenset({"features"}),
         tokens=frozenset(_TOKEN_SCOPES[s] for s in intervention.position_scopes),
         values=frozenset(intervention.values) if constant else frozenset(),
@@ -185,7 +185,7 @@ def check_recipe(recipe: Any, support: Any, *, analysis_backend: bool = False) -
     transforms, bases, reachable sites). This adds the refusals the record cannot express, the ones the apply path
     would raise (:func:`~interpretune.analysis.venngram.apply.op_refusal`): an op on a target kind it has no native
     mode for, a whole-activation op at a layer-free site, a unit set at a layered one, or an operand shape or
-    parameter no native mode expresses yet. With ``analysis_backend``, the refusals are those of
+    parameter no native translation expresses yet. With ``analysis_backend``, the refusals are those of
     :func:`~interpretune.analysis.venngram.apply.recipe_feature_interventions` instead.
 
     Evidence is supplied when the recipe is applied, so whether it has what a value reads is decided then.

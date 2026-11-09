@@ -9,7 +9,7 @@ collection:
 
 # These ops declare NO `required_capabilities`, and the absence is deliberate rather than an
 # oversight. They read a populated activation cache and the model's unembed, both ordinary parts of
-# the analysis flow; they perform no intervention, so neither `required_intervention_modes` nor
+# the analysis flow; they perform no intervention, so neither a tensor op in `required_ops` nor
 # `required_position_scopes` applies. Declaring an intervention axis here would refuse backends that
 # can in fact serve these ops.
 

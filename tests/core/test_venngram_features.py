@@ -8,7 +8,6 @@ pytest.importorskip("venngram", reason="the venngram extra is not installed")
 
 from interpretune.analysis.backends.capabilities import (
     FeatureTargetSupport,
-    InterventionMode,
     InterventionSupport,
     PositionScope,
 )
@@ -35,7 +34,7 @@ TRANSCODER = FeatureTargetSupport(
 def _feature_record(detail: FeatureTargetSupport) -> InterventionSupport:
     """An analysis backend's intervention record whose ``features`` target carries ``detail``."""
     return InterventionSupport(
-        ops=frozenset({InterventionMode.REPLACE}),
+        ops=frozenset({"replace"}),
         position_scopes=frozenset({PositionScope.POSITIONS}),
         targets={"features": detail},
     )
@@ -83,7 +82,7 @@ class TestModelBackendPath:
         payload = recipe_interventions(_recipe([_op(dose=0.5)]), site_widths={HOOKED: 16})
         assert sorted(payload) == [f"blocks.2.{HOOKED}", f"blocks.5.{HOOKED}"]
         (spec,) = payload[f"blocks.2.{HOOKED}"]
-        assert spec.mode is InterventionMode.ADD and spec.position_scope is PositionScope.LAST_TOKEN
+        assert spec.op == "add" and spec.position_scope is PositionScope.LAST_TOKEN
         assert spec.intervention_tensor.shape == (16,) and torch.count_nonzero(spec.intervention_tensor) == 2
         out = apply_intervention(torch.zeros(1, 3, 16), spec, last_pos=2)
         assert out[0, 2, 3] == 0.5 and out[0, 2, 7] == 0.5 and out[0, 0, 3] == 0.0
@@ -92,7 +91,7 @@ class TestModelBackendPath:
         (spec,) = recipe_interventions(_recipe([_op("scale", dose=0.0)]), site_widths={HOOKED: 16})[
             f"blocks.2.{HOOKED}"
         ]
-        assert spec.mode is InterventionMode.SCALE
+        assert spec.op == "scale"
         assert spec.intervention_tensor[3] == 0.0 and spec.intervention_tensor.sum() == 14.0
 
     def test_a_latent_name_lists_its_features_in_units(self):
@@ -111,7 +110,7 @@ class TestModelBackendPath:
     @pytest.mark.parametrize(
         "ops, kwargs, match",
         [
-            pytest.param([_op("replace", dose=1.0)], {}, "has no native mode at a sub-hook", id="replace"),
+            pytest.param([_op("replace", dose=1.0)], {}, "has no native translation at a sub-hook", id="replace"),
             pytest.param([_op(dose=0.5)], {"site": f"blocks.2.{SITE}"}, "stage names the layer-free", id="layered"),
             pytest.param([_op(dose=0.5)], {"site": HOOKED}, "`hook_sae_acts_post` is implied", id="sub-hook-site"),
             pytest.param(
@@ -380,7 +379,7 @@ class TestSupport:
         support = venngram_feature_support(_feature_record(TRANSCODER))
         assert check_recipe(recipe, support, analysis_backend=True) == []
         require_supported(recipe, support, analysis_backend=True)
-        assert any("no native mode at a sub-hook" in r for r in check_recipe(recipe, support))
+        assert any("no native translation at a sub-hook" in r for r in check_recipe(recipe, support))
 
     @pytest.mark.parametrize(
         "support",

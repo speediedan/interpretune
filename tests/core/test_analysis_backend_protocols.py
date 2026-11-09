@@ -18,7 +18,6 @@ from interpretune.analysis.backends import (
     AnalysisBackendCore,
     AttributionGraphSupport,
     FeatureTargetSupport,
-    InterventionMode,
     InterventionSupport,
     ModuleCapabilities,
     PositionScope,
@@ -89,7 +88,7 @@ class TestDecomposition:
 
 
 _FEATURES = InterventionSupport(
-    ops=frozenset({InterventionMode.REPLACE}),
+    ops=frozenset({"replace"}),
     position_scopes=frozenset({PositionScope.POSITIONS}),
     targets={"features": FeatureTargetSupport(value_sources=frozenset({"constant"}))},
 )

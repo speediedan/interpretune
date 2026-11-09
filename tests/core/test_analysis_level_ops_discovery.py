@@ -10,7 +10,6 @@ from interpretune.analysis.backends import (
     Capability,
     AttributionGraphSupport,
     FeatureTargetSupport,
-    InterventionMode,
     InterventionSupport,
     PositionScope,
     get_module_capabilities,
@@ -31,7 +30,7 @@ class _DummyAnalysisBackend:
         self.capabilities = capabilities
         self.attribution_graph_support = AttributionGraphSupport(requires_own_eager_attention=False)
         self.intervention_support = InterventionSupport(
-            ops=frozenset({InterventionMode.REPLACE}),
+            ops=frozenset({"replace"}),
             position_scopes=frozenset({PositionScope.POSITIONS}),
             targets={"features": FeatureTargetSupport(value_sources=frozenset({"constant"}))},
         )
@@ -189,7 +188,7 @@ def _op(name="probe", modes=None, scopes=None, capabilities=None) -> AnalysisOp:
         description="",
         output_schema=OpSchema({}),
         required_capabilities=capabilities,
-        required_intervention_modes=modes,
+        required_tensor_ops=modes,
         required_position_scopes=scopes,
     )
     op._impl = lambda module, analysis_batch, batch, batch_idx, **kw: analysis_batch
@@ -197,13 +196,13 @@ def _op(name="probe", modes=None, scopes=None, capabilities=None) -> AnalysisOp:
 
 
 class TestInterventionRequirementAxes:
-    """`required_intervention_modes` / `required_position_scopes`: the INTERVENTION configurations an op needs."""
+    """`required_tensor_ops` / `required_position_scopes`: the INTERVENTION configurations an op needs."""
 
     def test_axes_normalize_to_the_vocabulary_and_refuse_unknown_values(self):
-        from interpretune.analysis.backends import InterventionMode, PositionScope
+        from interpretune.analysis.backends import PositionScope
 
-        op = _op(modes=["patch", InterventionMode.ADD], scopes=["all_positions"])
-        assert op.required_intervention_modes == frozenset({InterventionMode.PATCH, InterventionMode.ADD})
+        op = _op(modes=["patch", "add"], scopes=["all_positions"])
+        assert op.required_tensor_ops == frozenset({"patch", "add"})
         assert op.required_position_scopes == frozenset({PositionScope.ALL_POSITIONS})
         with pytest.raises(ValueError, match="sorcery"):
             _op(modes=["sorcery"])
@@ -211,7 +210,7 @@ class TestInterventionRequirementAxes:
     def test_a_missing_mode_is_refused_by_axis_before_execution(self):
         op = _op(modes=["patch"])
         module = _intervening_module(modes=("add",), scopes=("last_token",))
-        with pytest.raises(ValueError, match=r"requires intervention modes \['patch'\].*declares \['add'\].*mode axis"):
+        with pytest.raises(ValueError, match=r"requires intervention ops \['patch'\].*declares \['add'\].*op axis"):
             op(module=module, analysis_batch=AnalysisBatch(), batch=None, batch_idx=0)
 
     def test_a_missing_scope_is_refused_by_axis(self):
@@ -233,12 +232,12 @@ class TestInterventionRequirementAxes:
         assert cast(AnalysisBatch, result).ok is True
 
     def test_composites_carry_the_union_of_their_parts_plus_their_own(self):
-        from interpretune.analysis.backends import InterventionMode, PositionScope
+        from interpretune.analysis.backends import PositionScope
 
         a = _op("a", modes=["add"])
         b = _op("b", scopes=["all_positions"])
-        composite = CompositeAnalysisOp([a, b], name="a_then_b", required_intervention_modes=["patch"])
-        assert composite.required_intervention_modes == frozenset({InterventionMode.ADD, InterventionMode.PATCH})
+        composite = CompositeAnalysisOp([a, b], name="a_then_b", required_tensor_ops=["patch"])
+        assert composite.required_tensor_ops == frozenset({"add", "patch"})
         assert composite.required_position_scopes == frozenset({PositionScope.ALL_POSITIONS})
         # and the composite refuses BEFORE its first part runs, on the union
         ran = []

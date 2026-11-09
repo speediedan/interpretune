@@ -532,7 +532,7 @@ class AnalysisOp:
         requires_grad: bool = False,
         per_latent_preds: bool = False,
         protocol_cls: Any = None,
-        required_intervention_modes: Sequence[str | Any] | None = None,
+        required_tensor_ops: Sequence[str | Any] | None = None,
         required_position_scopes: Sequence[str | Any] | None = None,
     ) -> None:
         self.name = name
@@ -548,11 +548,12 @@ class AnalysisOp:
         self._impl: Callable | None = None
         self.impl_params = impl_params or {}
         self.required_capabilities = self._normalize_required_capabilities(required_capabilities)
-        # The INTERVENTION configurations this op will ask a backend for. Declared so the refusal a backend
-        # would issue at execution ("cannot apply mode=patch") moves to validation, before anything runs,
-        # and so a conformance suite can read what an op needs without running it. Declaring either axis
-        # implies requiring the INTERVENTION surface; that implication is enforced in _validate_capabilities.
-        self.required_intervention_modes = self._normalize_intervention_modes(required_intervention_modes)
+        # The INTERVENTION configurations this op will ask a backend for: the tensor ops a definition's
+        # `required_ops` names, and the position scopes. Declared so the refusal a backend would issue at
+        # execution ("cannot apply op='patch'") moves to validation, before anything runs, and so a conformance
+        # suite can read what an op needs without running it. Declaring either axis implies requiring the
+        # INTERVENTION surface; that implication is enforced in _validate_capabilities.
+        self.required_tensor_ops = self._normalize_tensor_ops(required_tensor_ops)
         self.required_position_scopes = self._normalize_position_scopes(required_position_scopes)
         # Declared cross-batch state (OpStateSpec | None). The SPEC lives on the op; the state
         # itself does not -- ops are process-global singletons, so per-run state is owned by the
@@ -575,12 +576,12 @@ class AnalysisOp:
         return frozenset(normalize_backend_capability(capability) for capability in required_capabilities)
 
     @staticmethod
-    def _normalize_intervention_modes(modes: Sequence[str | Any] | None) -> frozenset[Any]:
-        if not modes:
+    def _normalize_tensor_ops(ops: Sequence[str | Any] | None) -> frozenset[str]:
+        if not ops:
             return frozenset()
-        from interpretune.analysis.backends.interventions import normalize_intervention_mode
+        from interpretune.analysis.backends.ops import normalize_op
 
-        return frozenset(normalize_intervention_mode(mode) for mode in modes)
+        return frozenset(normalize_op(op) for op in ops)
 
     @staticmethod
     def _normalize_position_scopes(scopes: Sequence[str | Any] | None) -> frozenset[Any]:
@@ -592,8 +593,8 @@ class AnalysisOp:
 
     @property
     def requires_intervention_axes(self) -> bool:
-        """Whether the op declares any intervention mode or position scope."""
-        return bool(self.required_intervention_modes or self.required_position_scopes)
+        """Whether the op declares any tensor op or position scope."""
+        return bool(self.required_tensor_ops or self.required_position_scopes)
 
     @property
     def ctx_key(self) -> str:
@@ -687,7 +688,7 @@ class AnalysisOp:
         yield
 
     def _validate_capabilities(self, module: torch.nn.Module | None) -> None:
-        """Validate that the target module exposes all required capabilities, modes and position scopes."""
+        """Validate that the target module exposes all required capabilities, tensor ops and position scopes."""
         if not self.required_capabilities and not self.requires_intervention_axes:
             return
 
@@ -718,11 +719,11 @@ class AnalysisOp:
             )
 
     def _validate_intervention_axes(self, module: torch.nn.Module) -> None:
-        """Refuse, naming the axis, when the module's backend cannot honour a declared mode or scope.
+        """Refuse, naming the axis, when the module's backend cannot honour a declared tensor op or scope.
 
         Compared by VALUE against the ``InterventionSupport`` record of the component providing the ``activation``
         target (the same reading the payload gates in :mod:`interpretune.analysis.backends.interventions` use), so an
-        undeclared mode is refused here, before execution, instead of at the backend after every earlier op in a
+        undeclared op is refused here, before execution, instead of at the backend after every earlier op in a
         composition has run. A module providing no ``INTERVENTION`` surface fails the same way: the axes are
         configurations of that surface, so requiring one requires it.
         """
@@ -733,8 +734,8 @@ class AnalysisOp:
         available = get_module_capabilities(module)
         if Capability.INTERVENTION.value not in available.values:
             raise ValueError(
-                f"Operation '{self.name}' requires intervention modes "
-                f"{sorted(m.value for m in self.required_intervention_modes)} and position scopes "
+                f"Operation '{self.name}' requires intervention ops "
+                f"{sorted(self.required_tensor_ops)} and position scopes "
                 f"{sorted(s.value for s in self.required_position_scopes)}, but the module declares no "
                 f"{Capability.INTERVENTION.value} surface"
                 f" (capabilities: {sorted(available.values) or 'none'})"
@@ -743,10 +744,10 @@ class AnalysisOp:
             record = available.intervention_for("activation")
         except ValueError as exc:
             raise ValueError(f"Operation '{self.name}' requires intervention axes on activations: {exc}") from None
-        declared_modes = {getattr(m, "value", m) for m in record.ops}
+        declared_ops = set(record.declared_ops)
         declared_scopes = {getattr(s, "value", s) for s in record.position_scopes}
         for axis, required, declared in (
-            ("mode", {m.value for m in self.required_intervention_modes}, declared_modes),
+            ("op", set(self.required_tensor_ops), declared_ops),
             ("position_scope", {s.value for s in self.required_position_scopes}, declared_scopes),
         ):
             if missing := required - declared:
@@ -884,7 +885,7 @@ class AnalysisOp:
                 self.output_schema,
                 self.input_schema,
                 self.required_capabilities,
-                self.required_intervention_modes,
+                self.required_tensor_ops,
                 self.required_position_scopes,
             )
         )
@@ -1054,7 +1055,7 @@ class CompositeAnalysisOp(AnalysisOp):
         # A composite needs every intervention configuration any part needs, plus whatever it declares itself.
         # The union is computed here rather than at validation so it is READABLE from the op: a conformance
         # suite asks a composite what it needs and gets one answer that already accounts for its parts.
-        for axis in ("required_intervention_modes", "required_position_scopes"):
+        for axis in ("required_tensor_ops", "required_position_scopes"):
             declared = set(kwargs.pop(axis, None) or ())
             declared.update(value for op in ops for value in getattr(op, axis, ()))
             kwargs[axis] = list(declared) or None  # normalized to a frozenset by AnalysisOp.__init__

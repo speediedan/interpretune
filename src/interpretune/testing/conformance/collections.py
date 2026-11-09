@@ -108,7 +108,7 @@ class OpCollectionConformance:
         return ops
 
     def test_every_declared_requirement_is_a_known_axis(self, collection_ops):
-        """Each op's declared capabilities, modes and scopes are members of the vocabulary.
+        """Each op's declared capabilities, tensor ops and scopes are members of the vocabulary.
 
         Instantiation normalizes every axis and raises naming the stray value, so instantiating is the check.
         """
@@ -119,7 +119,7 @@ class OpCollectionConformance:
 
     def test_requirements_are_satisfied_or_refused_by_name(self, suite, collection_ops):
         """For each op: the target's live declarations satisfy its requirements, or validation refuses naming
-        the missing capability, mode or scope. Nothing executes either way."""
+        the missing capability, op or scope. Nothing executes either way."""
         from interpretune.analysis.ops.dispatcher import DISPATCHER
 
         caps = suite.capabilities
@@ -131,9 +131,9 @@ class OpCollectionConformance:
                 if record is None:
                     missing.append(Capability.INTERVENTION.value)
                 else:
-                    declared_modes = {m.value for m in record.ops}
+                    declared_ops = record.declared_ops
                     declared_scopes = {s.value for s in record.position_scopes}
-                    missing += [m.value for m in op.required_intervention_modes if m.value not in declared_modes]
+                    missing += [m for m in op.required_tensor_ops if m not in declared_ops]
                     missing += [s.value for s in op.required_position_scopes if s.value not in declared_scopes]
             if not missing:
                 op._validate_capabilities(suite.module)  # the runner's pre-execution check, no execution

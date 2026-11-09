@@ -559,8 +559,8 @@ class SupportsIntervention(Protocol):
         2. **Intervention**: for each key in *interventions*, matches the key (which may
            contain ``*`` wildcards) against available hook names, then applies each
            ``InterventionSpec`` at the positions its ``position_scope`` names (the last token by default)
-           according to its ``mode`` (``"replace"``, ``"add"``, ``"patch"``, ``"project"``, ``"reject"`` or
-           ``"clamp"``).
+           through the executor its ``op`` names (a core op such as ``"replace"``, ``"add"``, ``"patch"``,
+           ``"project"``, ``"reject"`` or ``"clamp"``, or any op registered with an executor).
 
         Args:
             model: The model to run.

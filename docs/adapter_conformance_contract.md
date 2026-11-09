@@ -140,7 +140,7 @@ Gate `INTERVENTION` (with `intervention_support`):
 | last-token scope moves exactly the final position | causal | the changed-position **set** from `intervention_position_effect` is `{seq_len - 1}` |
 | all-positions scope moves every real position | causal | every real position is in the changed set |
 | an undeclared scope is refused | negative | `NotImplementedError` naming the scope, before the backend is reached |
-| undeclared modes are refused on the mode axis | negative | each mode not in the record's `ops` raises, naming the axis |
+| undeclared ops are refused on the op axis | negative | each registered op not in the record's declared ops raises, naming the axis |
 | zero intervention is identity | causal | scale 0 leaves the logits unchanged |
 | the baseline is an unsteered forward | HF reference, `hf_native` | the pre-intervention half equals the plain forward |
 | steered logits converge on the forward | HF reference, `hf_native` | adding a vector at the last token matches an HF hook doing the same |
@@ -180,12 +180,12 @@ Gate `INTERVENTION` on the `features` target through the analysis backend (the `
 | feature-intervention settings are decided by the declaration | negative, with positive control | a value source outside `value_sources` is refused by name before any forward and a declared one runs through the same path; a layer constraint, returned activations and frozen norm denominators are each honoured when declared (a frozen run records `freeze_norms` in its intervention config) and refused by name when not |
 | the edge predicts the measured feature intervention | causal | scaling a top feature's activation moves the other active features and the target logits by the graph's edge weights into it, times the scale; skips by name when the record says layers cannot be constrained, since the graph is a linear model of the intervention only with every layer constrained |
 
-## Per-mode invariants and distinguishability
+## Per-op invariants and distinguishability
 
-Each intervention mode a backend declares is held to one algebraic property a caller can state without a reference
+Each core op a backend declares is held to one algebraic property a caller can state without a reference
 implementation, paired with a positive control so an identity cannot pass because the payload was ignored:
 
-| mode | invariant | positive control |
+| op | invariant | positive control |
 | --- | --- | --- |
 | `add` | a zero-scale intervention is the identity | (`STEER_SCALE` moves the logits, checked by the scope cases) |
 | `replace` | the result is independent of `scale_factor` | replace moves the logits |
@@ -193,9 +193,10 @@ implementation, paired with a positive control so an identity cannot pass becaus
 | `project` | projecting onto $v$ and onto $-2v$ is the same projection | project moves the logits |
 
 The pair-order symmetry of `patch` follows from the update $h + V(\sigma(c) - c)$: both orders exchange the same two
-coordinates, so the pair is unordered. Every declared mode must also be distinguishable, for the same vector and
-point, from every other declared mode and from the baseline. That case is the one a backend that ignored `mode` and
-applied the one it has would fail.
+coordinates, so the pair is unordered. Every declared core op must also be distinguishable, for the same vector and
+point, from every other declared core op and from the baseline. That case is the one a backend that ignored `op` and
+applied the one it has would fail. `replace_with_error` is outside it by construction (its value is the activation's,
+and only its gradient differs), as is an op a user or a collection registers, for which the case has no payload.
 
 The invariants are batch-safe by construction: an intervention tensor broadcasts to every row, so "replace with the
 row's own activation" is not expressible through the op path and is deliberately not a case.
@@ -209,8 +210,9 @@ runs the refusal case, and a run in which no case applies fails. See
 
 ## Op collections
 
-Ops declare what they need beside `required_capabilities`: `required_intervention_modes` and
-`required_position_scopes`, the configurations of the `intervention` surface the op will ask a backend for. A
+Ops declare what they need beside `required_capabilities`: the tensor ops named in `required_ops` (the loader
+partitions them from the composition ops the same key names) and `required_position_scopes`, the configurations of
+the `intervention` surface the op will ask a backend for. A
 composite carries the union of its parts' axes plus its own. `OpCollectionConformance` validates a collection against
 a target through the dispatcher's own definitions:
 
@@ -224,7 +226,7 @@ class TestMyOpsOnMyAdapter(OpCollectionConformance):
 ```
 
 Three cases: every declared requirement is a member of the vocabulary; for each op the target's live declarations
-satisfy its requirements or validation refuses naming the missing capability, mode or scope (nothing executes either
+satisfy its requirements or validation refuses naming the missing capability, op or scope (nothing executes either
 way); and each op declaring a `conformance: {run_inputs: ...}` block in its definition runs through the runner and
 yields its output columns. A collection with no sampled op skips that last case naming every op, so the absence is
 reported rather than silently passed.

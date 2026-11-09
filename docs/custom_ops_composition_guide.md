@@ -46,12 +46,17 @@ An op should define:
   `uses_default_hooks` (install the default activation-cache forward/backward hooks), and
   `per_latent_preds` (predictions are emitted per latent model and must be joined across them before
   scoring). All default to `false`, and hub and local ops declare them exactly as bundled ops do.
-- optional `required_intervention_modes` and `required_position_scopes`: the configurations of the
-  `intervention` capability the op will ask a backend for (`replace`, `add`, `patch`, `project`;
-  `last_token`, `all_positions`). Checked at validation, before anything runs, against the backend's
-  declared `InterventionSupport`, so a backend that cannot honour a mode refuses by name up front rather
-  than after every earlier op in a composition has executed. A composite needs the union of its parts'
-  axes plus whatever it declares itself. Declaring an axis implies requiring the `intervention` surface.
+- optional `required_ops` and `required_position_scopes`. `required_ops` names the ops this one needs, of
+  either kind: a composition op whose schema it inherits (`get_answer_indices`), or a tensor op it will ask a
+  backend to apply (`patch`, `add`, a tensor op a hub collection registers). The loader partitions the two,
+  since there is one op namespace. The tensor ops and the scopes (`last_token`, `all_positions`) are the
+  configurations of the `intervention` capability the op needs, checked at validation, before anything runs,
+  against the backend's declared `InterventionSupport`, so a backend that cannot honour an op refuses by name
+  up front rather than after every earlier op in a composition has executed. A composite needs the union of
+  its parts' axes plus whatever it declares itself. Declaring an axis implies requiring the `intervention`
+  surface.
+- or, instead of schemas, an `op_spec` block: the definition is then a tensor op, applied inside a hook during a
+  pass rather than as a step of a composition (see "Tensor ops" below).
 - one implementation function
 
 Relevant code:
@@ -316,6 +321,62 @@ Good test targets include:
 ### Add round-trip tests when serialization matters
 
 If an op output is meant to survive storage and reload, add a round-trip test through `AnalysisStore`.
+
+## Tensor ops
+
+There is one op namespace and one distribution mechanism. What differs between the two kinds of op is where each
+runs, and so the contract its implementation satisfies:
+
+| | composition op | tensor op |
+| --- | --- | --- |
+| runs | between passes, as a step of a composition | inside a forward hook, during a pass |
+| reads and writes | store columns and the module | one region of an activation and an operand |
+| must be | schema-declared | shape-preserving, out of place, differentiable |
+| declared by | input and output schemas, traits | an `op_spec` block: venngram's `OpSpec` fields |
+
+A tensor op's name is a venngram op name: venngram validates and composes it in recipes, and interpretune applies it
+through the executor registered under that name (`interpretune.analysis.backends.ops`). Its implementation takes
+`(region, operand, spec)` and returns the edited region: `region` is what the spec's position scope selected,
+flattened so its leading axis indexes independent rows, `operand` is the spec's tensor on the region's device and
+dtype, and `spec` carries the scalar parameters (`scale_factor`, `clamp_min`, `clamp_max`). In user code:
+
+```python
+from venngram.ops import OpSpec, register_op
+
+from interpretune.analysis.backends import register_executor
+
+
+def soft_add(region, operand, spec):
+    return region + 0.5 * operand * spec.scale_factor
+
+
+register_op(OpSpec("soft_add", ("vector",), composition="sum"))
+register_executor("soft_add", soft_add)
+```
+
+Every backend whose hook computes its edit during the pass (both bundled model backends) declares every registered
+op, so `soft_add` is applied wherever `add` is; a backend whose steering surface takes only parameters fixed before
+the pass lists the ops it can express, and refuses `soft_add` by name.
+
+In an op collection the same op is a definition with an `op_spec` block in place of schemas:
+
+```yaml
+soft_add:
+  description: add half the operand
+  implementation: soft_ops.soft_add
+  op_spec:
+    operand: [vector]
+    composition: sum
+```
+
+`op_spec` takes `OpSpec`'s fields by name (`operand`, `params`, `requires`, `targets`, `value`, `token_override`,
+`composition`, `at_least_one_of`), and an unknown key is refused by name. Loading the collection registers the
+`OpSpec` with venngram and the executor here, records the collection, its version and the revision it was loaded
+from as the executor's provenance (`interpretune.analysis.backends.ops.executor_record("soft_add")`), and first holds
+the implementation to the contract on a seeded probe: a result of another shape, a write to the region or the
+operand, or a result with no gradient to either is refused by name, and nothing registers. A hub collection's tensor
+op loads only under the same trust opt-in as any hub implementation, since it runs inside every forward pass it is
+attached to. A tensor op cannot take a name another source holds (a core op, another collection's op).
 
 ## Hub-Oriented Guidance
 

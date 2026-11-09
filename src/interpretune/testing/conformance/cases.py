@@ -19,7 +19,6 @@ from interpretune.analysis.backends import (
     COMPONENTS,
     get_analysis_backend,
     get_model_backend,
-    InterventionMode,
     PositionScope,
     SupportsAttributionGraph,
     SupportsFeatureInterventions,
@@ -28,6 +27,7 @@ from interpretune.analysis.backends import (
     SupportsIntervention,
     SupportsLatentModels,
 )
+from interpretune.analysis.backends.ops import registered_ops
 from interpretune.analysis.optools import require_backend_capability
 
 from .gates import UNDECLARED, conformance_case, describe_capabilities, gate_of
@@ -552,7 +552,7 @@ class ModelBackendConformance:
         suite,
         *,
         scope: str,
-        mode: str = "add",
+        op: str = "add",
         scale: float = STEER_SCALE,
         vector=None,
         basis: bool = True,
@@ -560,7 +560,7 @@ class ModelBackendConformance:
     ):
         """The caller's path: a raw payload in run_inputs, through model_fwd_intervention.
 
-        ``extra`` carries spec fields a mode needs beyond ``(tensor, scale)``. ``clamp`` is the first:
+        ``extra`` carries spec fields an op needs beyond ``(tensor, scale)``. ``clamp`` is the first:
         its band is two independent bounds rather than a magnitude, and a clamp with no band is the
         identity for every input, so the parameters cannot be flattened onto ``scale_factor``.
         """
@@ -572,7 +572,7 @@ class ModelBackendConformance:
         payload = {
             suite.inputs.intervention_point: {
                 "intervention_tensor": vector,
-                "mode": mode,
+                "op": op,
                 "scale_factor": scale,
                 "position_scope": scope,
                 "use_intervention_tensor_as_basis": basis,
@@ -593,7 +593,7 @@ class ModelBackendConformance:
     @conformance_case(
         capability=Capability.INTERVENTION,
         scope=PositionScope.LAST_TOKEN,
-        mode=InterventionMode.ADD,
+        op="add",
     )
     def test_last_token_scope_moves_exactly_the_final_position(self, suite):
         """The changed-position SET under `last_token` is exactly the final position."""
@@ -609,7 +609,7 @@ class ModelBackendConformance:
     @conformance_case(
         capability=Capability.INTERVENTION,
         scope=PositionScope.ALL_POSITIONS,
-        mode=InterventionMode.ADD,
+        op="add",
     )
     def test_all_positions_scope_moves_every_real_position(self, suite):
         """Every real position is in the changed set under `all_positions`."""
@@ -637,16 +637,17 @@ class ModelBackendConformance:
 
     @conformance_case(capability=Capability.INTERVENTION)
     def test_undeclared_modes_are_refused_on_the_mode_axis(self, suite):
-        """Each undeclared mode is refused naming the mode axis, never applied as another mode."""
-        declared = {m.value for m in suite.capabilities.intervention_for("activation").ops}
-        undeclared = [m for m in InterventionMode if m.value not in declared]
-        # Every mode declared means nothing to refuse: a pass, since the declaration itself is checked elsewhere.
+        """Each registered op the target does not declare is refused naming the op axis, never applied as another
+        op."""
+        declared = suite.capabilities.intervention_for("activation").declared_ops
+        undeclared = sorted(registered_ops() - set(declared))
+        # Every op declared means nothing to refuse: a pass, since the declaration itself is checked elsewhere.
         scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
-        for mode in undeclared:
-            with expect_refusal(NotImplementedError, match=f"mode='{mode.value}'"):
-                self._intervene(suite, scope=scope, mode=mode.value)
+        for op in undeclared:
+            with expect_refusal(NotImplementedError, match=f"op='{op}'"):
+                self._intervene(suite, scope=scope, op=op)
 
-    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.ADD)
+    @conformance_case(capability=Capability.INTERVENTION, op="add")
     def test_zero_intervention_is_identity(self, suite):
         """A zero-scale intervention leaves the logits unchanged."""
         scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
@@ -656,10 +657,10 @@ class ModelBackendConformance:
                 post, pre, rtol=0, atol=CONVERGENCE_ATOL, msg="a zero-scale intervention changed the logits"
             )
 
-    # -- per-mode invariants -----------------------------------------------------------------------
+    # -- per-op invariants -------------------------------------------------------------------------
     #
-    # Each declared mode has one algebraic property a caller can state without a reference implementation,
-    # and each case pairs it with a positive control (the mode does SOMETHING), so an identity cannot pass
+    # Each declared core op has one algebraic property a caller can state without a reference implementation,
+    # and each case pairs it with a positive control (the op does SOMETHING), so an identity cannot pass
     # because the backend ignored the payload. The invariants are batch-safe by construction: an intervention
     # tensor broadcasts to every row, so "replace with the row's own activation" is not expressible here and
     # the replace invariant is scale-independence instead.
@@ -691,24 +692,24 @@ class ModelBackendConformance:
                 y, x, rtol=PADDED_RTOL, atol=PADDED_ATOL, msg=lambda detail, i=i: f"{what} (batch {i})\n{detail}"
             )
 
-    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.REPLACE)
+    @conformance_case(capability=Capability.INTERVENTION, op="replace")
     def test_replace_ignores_the_scale_factor(self, suite):
         """`replace` installs the tensor as-is: the result is independent of `scale_factor`, and it moves."""
         scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         vector = self._vector(suite)
-        unit = self._intervene(suite, scope=scope, mode="replace", scale=1.0, vector=vector)
-        scaled = self._intervene(suite, scope=scope, mode="replace", scale=STEER_SCALE * 3, vector=vector)
+        unit = self._intervene(suite, scope=scope, op="replace", scale=1.0, vector=vector)
+        scaled = self._intervene(suite, scope=scope, op="replace", scale=STEER_SCALE * 3, vector=vector)
         self._assert_moved(unit, what="replace")
         self._assert_same_logits(unit, scaled, what="replace changed with scale_factor, which it must ignore")
 
-    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.PATCH)
+    @conformance_case(capability=Capability.INTERVENTION, op="patch")
     def test_patch_of_a_pair_with_itself_is_identity(self, suite):
         """Swapping a concept's coordinates with its own leaves the activation, and the logits, unchanged."""
         scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         vector = self._vector(suite)
         # scale_factor=1.0 is the pure exchange; the paper's alpha scales the swapped coordinates, so any other
         # value is a deliberate over- or under-steer and not an identity
-        store = self._intervene(suite, scope=scope, mode="patch", scale=1.0, vector=torch.stack([vector, vector]))
+        store = self._intervene(suite, scope=scope, op="patch", scale=1.0, vector=torch.stack([vector, vector]))
         for i, (pre, post) in enumerate(zip(store["pre_intervention_logits"], store["post_intervention_logits"])):
             torch.testing.assert_close(
                 post,
@@ -718,7 +719,7 @@ class ModelBackendConformance:
                 msg=lambda detail, i=i: f"patch (v, v) changed the logits (batch {i})\n{detail}",
             )
 
-    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.PATCH)
+    @conformance_case(capability=Capability.INTERVENTION, op="patch")
     def test_patch_is_symmetric_in_pair_order(self, suite):
         r"""$h + V(\sigma(c) - c)$ is the same update for $(s, t)$ and $(t, s)$, and it moves the logits.
 
@@ -728,17 +729,17 @@ class ModelBackendConformance:
         scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         source = self._vector(suite)
         target = self._second_vector(source)
-        forward = self._intervene(suite, scope=scope, mode="patch", scale=1.0, vector=torch.stack([source, target]))
-        reverse = self._intervene(suite, scope=scope, mode="patch", scale=1.0, vector=torch.stack([target, source]))
+        forward = self._intervene(suite, scope=scope, op="patch", scale=1.0, vector=torch.stack([source, target]))
+        reverse = self._intervene(suite, scope=scope, op="patch", scale=1.0, vector=torch.stack([target, source]))
         self._assert_moved(forward, what="patch (s, t)")
         self._assert_same_logits(forward, reverse, what="patch (s, t) and patch (t, s) differ")
 
-    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.SCALE)
+    @conformance_case(capability=Capability.INTERVENTION, op="scale")
     def test_scale_by_ones_is_identity(self, suite):
         """Multiplying the activation by ones leaves the logits unchanged, and a non-unit multiplier moves them."""
         scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         ones = torch.ones_like(self._vector(suite))
-        store = self._intervene(suite, scope=scope, mode="scale", scale=1.0, vector=ones)
+        store = self._intervene(suite, scope=scope, op="scale", scale=1.0, vector=ones)
         for i, (pre, post) in enumerate(zip(store["pre_intervention_logits"], store["post_intervention_logits"])):
             torch.testing.assert_close(
                 post,
@@ -747,26 +748,28 @@ class ModelBackendConformance:
                 atol=CONVERGENCE_ATOL,
                 msg=lambda detail, i=i: f"scale by ones changed the logits (batch {i})\n{detail}",
             )
-        tripled = self._intervene(suite, scope=scope, mode="scale", scale=1.0, vector=ones * 3.0)
+        tripled = self._intervene(suite, scope=scope, op="scale", scale=1.0, vector=ones * 3.0)
         self._assert_moved(tripled, what="scale")
 
-    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.PROJECT)
+    @conformance_case(capability=Capability.INTERVENTION, op="project")
     def test_project_depends_only_on_the_basis_span(self, suite):
         """Projecting onto ``v`` and onto ``-2v`` is the same projection, and it moves the logits."""
         scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         vector = self._vector(suite)
-        onto_v = self._intervene(suite, scope=scope, mode="project", scale=1.0, vector=vector)
-        onto_span = self._intervene(suite, scope=scope, mode="project", scale=1.0, vector=vector * -2.0)
+        onto_v = self._intervene(suite, scope=scope, op="project", scale=1.0, vector=vector)
+        onto_span = self._intervene(suite, scope=scope, op="project", scale=1.0, vector=vector * -2.0)
         self._assert_moved(onto_v, what="project")
         self._assert_same_logits(onto_v, onto_span, what="project onto v and onto -2v differ")
 
     @conformance_case(capability=Capability.INTERVENTION)
     def test_declared_modes_are_distinguishable(self, suite):
-        """Every declared mode, given the same vector and point, yields logits distinguishable from every other
-        declared mode and from the baseline.
+        """Every declared core op, given the same vector and point, yields logits distinguishable from every other
+        declared core op and from the baseline.
 
-        This is the case a backend that ignored ``mode`` and applied the one it has would fail, which is how the
-        first hub adapter's backend once behaved: plausible logits for an intervention nobody requested.
+        This is the case a backend that ignored ``op`` and applied the one it has would fail, which is how the
+        first hub adapter's backend once behaved: plausible logits for an intervention nobody requested. It covers
+        the ops it has a payload for: ``replace_with_error`` keeps the activation's value by construction (only its
+        gradient differs), and an op a user or a collection registers has no payload this case can choose.
         """
         scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         vector = self._vector(suite)
@@ -780,36 +783,36 @@ class ModelBackendConformance:
             "reject": (vector, 1.0),
             "clamp": (vector, 1.0),
             # `scale` multiplies elementwise, so the same vector moves the activation differently from every
-            # additive, replacing and span mode
+            # additive, replacing and span op
             "scale": (vector, 1.0),
         }
-        # Modes whose parameters are not exhausted by (tensor, scale). A clamp needs a BAND: with neither
-        # bound it is the identity for every input, so an entry here is what makes the mode exercisable
+        # Ops whose parameters are not exhausted by (tensor, scale). A clamp needs a BAND: with neither
+        # bound it is the identity for every input, so an entry here is what makes the op exercisable
         # rather than merely declared.
         extras: dict[str, dict] = {"clamp": {"clamp_min": -1.0, "clamp_max": 1.0}}
-        declared = sorted(m.value for m in suite.capabilities.intervention_for("activation").ops)
+        declared = sorted(suite.capabilities.intervention_for("activation").declared_ops & set(payloads))
         results = {
-            mode: self._intervene(
+            op: self._intervene(
                 suite,
                 scope=scope,
-                mode=mode,
-                vector=payloads[mode][0],
-                scale=payloads[mode][1],
-                extra=extras.get(mode),
+                op=op,
+                vector=payloads[op][0],
+                scale=payloads[op][1],
+                extra=extras.get(op),
             )
-            for mode in declared
+            for op in declared
         }
-        for mode, store in results.items():
-            self._assert_moved(store, what=f"mode {mode!r}")
+        for op, store in results.items():
+            self._assert_moved(store, what=f"op {op!r}")
         for i, a in enumerate(declared):
             for b in declared[i + 1 :]:
                 same = all(
                     torch.allclose(x, y, rtol=0, atol=CONVERGENCE_ATOL)
                     for x, y in zip(results[a]["post_intervention_logits"], results[b]["post_intervention_logits"])
                 )
-                assert not same, f"modes {a!r} and {b!r} produced the same logits for the same vector and point"
+                assert not same, f"ops {a!r} and {b!r} produced the same logits for the same vector and point"
 
-    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.ADD, family="hf_native")
+    @conformance_case(capability=Capability.INTERVENTION, op="add", family="hf_native")
     def test_baseline_is_an_unsteered_forward(self, suite, hf):
         """The pre-intervention half equals the plain forward."""
         scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
@@ -823,7 +826,7 @@ class ModelBackendConformance:
     @conformance_case(
         capability=Capability.INTERVENTION,
         scope=PositionScope.LAST_TOKEN,
-        mode=InterventionMode.ADD,
+        op="add",
         family="hf_native",
     )
     def test_steered_logits_converge_on_the_forward(self, suite, hf):
@@ -850,7 +853,7 @@ class ModelBackendConformance:
     @conformance_case(
         capability=Capability.INTERVENTION,
         scopes=(PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS),
-        mode=InterventionMode.ADD,
+        op="add",
         family="hf_native",
     )
     def test_mixed_scopes_produce_the_per_scope_result(self, suite, hf):
@@ -858,7 +861,7 @@ class ModelBackendConformance:
         hooks, one per point, and differs from either point's single-scope payload.
 
         The two edits are additive at different points, so their order does not matter and the reference applies
-        them in any order. A non-commutative mode (``replace``, ``project``) at two points on one path would make
+        them in any order. A non-commutative op (``replace``, ``project``) at two points on one path would make
         the backend's application order part of the result, and this case does not claim anything about it.
         """
         import interpretune as it
@@ -870,14 +873,14 @@ class ModelBackendConformance:
         payload = {
             first: {
                 "intervention_tensor": vector,
-                "mode": "add",
+                "op": "add",
                 "scale_factor": STEER_SCALE,
                 "position_scope": "last_token",
                 "use_intervention_tensor_as_basis": True,
             },
             second: {
                 "intervention_tensor": vector,
-                "mode": "add",
+                "op": "add",
                 "scale_factor": STEER_SCALE,
                 "position_scope": "all_positions",
                 "use_intervention_tensor_as_basis": True,
@@ -908,7 +911,7 @@ class ModelBackendConformance:
 
     @conformance_case(
         capability=Capability.INTERVENTION,
-        modes=(InterventionMode.ADD, InterventionMode.REJECT),
+        ops=("add", "reject"),
         family="hf_native",
     )
     def test_mixed_modes_apply_in_declaration_order(self, suite, hf):
@@ -917,7 +920,7 @@ class ModelBackendConformance:
         adds in either order agree.
 
         The reference composes the two updates on the activation in the same order, under one HF hook per spec
-        (hooks fire in registration order). A backend that groups by mode fails the ordered references; a backend
+        (hooks fire in registration order). A backend that groups by op fails the ordered references; a backend
         that ignores order fails the positive control.
 
         The reject legs steer along a direction whose projection onto the activation is BOUNDED, not along
@@ -936,7 +939,7 @@ class ModelBackendConformance:
         def add_spec(scale=STEER_SCALE):
             return {
                 "intervention_tensor": vector,
-                "mode": "add",
+                "op": "add",
                 "scale_factor": scale,
                 "position_scope": "last_token",
                 "use_intervention_tensor_as_basis": True,
@@ -945,7 +948,7 @@ class ModelBackendConformance:
         def reject_spec():
             return {
                 "intervention_tensor": reject_vector,
-                "mode": "reject",
+                "op": "reject",
                 "scale_factor": 1.0,
                 "position_scope": "last_token",
                 "use_intervention_tensor_as_basis": True,

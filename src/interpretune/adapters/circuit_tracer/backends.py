@@ -16,7 +16,6 @@ from transformers import BatchEncoding
 from interpretune.analysis.backends import (
     Capability,
     InterventionDict,
-    InterventionMode,
     InterventionSpec,
     InterventionSupport,
     AttributionGraphSupport,
@@ -42,7 +41,7 @@ class CircuitTracerAnalysisBackend:
         sources circuit-tracer's feature intervention accepts, layer constraints, returns and norm-denominator
         freezing as the ``features`` target's detail."""
         return InterventionSupport(
-            ops=frozenset({InterventionMode.REPLACE}),
+            ops=frozenset({"replace"}),
             targets={
                 "features": FeatureTargetSupport(
                     value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"}),
@@ -300,7 +299,7 @@ class CircuitTracerAnalysisBackend:
             payload[target] = [
                 {
                     "intervention_tensor": torch.as_tensor(spec.intervention_tensor).detach().cpu().tolist(),
-                    "mode": spec.mode,
+                    "op": spec.op,
                     "scale_factor": float(spec.scale_factor),
                     "use_intervention_tensor_as_basis": bool(spec.use_intervention_tensor_as_basis),
                 }
@@ -318,7 +317,7 @@ class CircuitTracerAnalysisBackend:
                     spec["layer"],
                     spec["position"],
                     spec["feature_id"],
-                ): InterventionSpec(torch.tensor(float(spec["value"]), dtype=torch.float32), mode="replace")
+                ): InterventionSpec(torch.tensor(float(spec["value"]), dtype=torch.float32), op="replace")
                 for spec in intervention_specs
             }
         )
@@ -473,12 +472,19 @@ class CircuitTracerAnalysisBackend:
         if isinstance(interventions_json, list):
             interventions_json = "".join(str(part) for part in interventions_json)
         raw_interventions = json.loads(interventions_json)
+        if retired := sorted(
+            {"mode"} & {key for specs in raw_interventions.values() for spec in specs for key in spec}
+        ):
+            raise ValueError(
+                f"stored feature interventions carry the retired key(s) {retired} (now `op`); re-run the op to"
+                " write them under the current spelling"
+            )
         return InterventionDict.from_mapping(
             {
                 target: tuple(
                     InterventionSpec(
                         torch.as_tensor(spec["intervention_tensor"], dtype=torch.float32),
-                        mode=str(spec.get("mode", "replace")),
+                        op=str(spec.get("op", "replace")),
                         scale_factor=float(spec.get("scale_factor", 1.0)),
                         use_intervention_tensor_as_basis=bool(spec.get("use_intervention_tensor_as_basis", True)),
                     )

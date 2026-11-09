@@ -30,7 +30,6 @@ from interpretune.hub.manager import HubAnalysisOpManager
 from interpretune.analysis.backends import (
     AnalysisBackend,
     Capability,
-    InterventionMode,
     InterventionSupport,
     LatentModelSupport,
     ModuleCapabilities,
@@ -101,7 +100,6 @@ __all__ = [
     "Capability",
     "AnalysisBackend",
     "ModuleCapabilities",
-    "InterventionMode",
     "InterventionSupport",
     "LatentModelSupport",
     # Protocol Definitions

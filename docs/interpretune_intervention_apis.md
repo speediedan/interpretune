@@ -32,8 +32,9 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
   implemented with the same maths by both the TransformerLens and NNsight model backends at either position
   scope, `last_token` or `all_positions` (including
   SAE/latent sub-hook targets via `use_latent_models`/`sae_handles`). Its record, `InterventionSupport`, declares
-  the ops, targets and position scopes; an op declares what it needs through `required_intervention_modes` and
-  `required_position_scopes`, and the gate compares the two before the op runs.
+  the ops, targets and position scopes; an op declares the tensor ops it needs in `required_ops` (beside any
+  composition ops it depends on) and the scopes in `required_position_scopes`, and the gate compares the two before
+  the op runs.
 - `ReplacementModel.feature_intervention(...)` is the model-level primitive the analysis-level feature-intervention
   op executes on. Both circuit-tracer backend implementations consume canonical intervention tuples of the form
   `(layer, position, feature_idx, value)` and support passthrough controls such as constrained layers, sparse
@@ -44,7 +45,7 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
 - `interpretune.analysis.venngram` applies a [venngram](https://github.com/speediedan/venngram) recipe through the
   model-backend surface above: `recipe_interventions` turns a recipe's treatments (ordered ops at a site, on the whole
   activation, on a set's units, or on a latent model's features at its `hook_sae_acts_post` sub-hook) into
-  `InterventionSpec`s in the native modes. `recipe_feature_interventions` turns a feature `replace` at explicit positions
+  `InterventionSpec`s carrying the same ops. `recipe_feature_interventions` turns a feature `replace` at explicit positions
   into the circuit-tracer tuples above. A value is a dose, or a column of evidence the caller supplies, through venngram's
   transforms; Interpretune evaluates the transforms, and the `interpretune.analysis.venngram.values` module states what
   each one means. `venngram_support()` derives what Interpretune honours of a recipe from the backend's own records, and
@@ -63,31 +64,46 @@ tracing that mutates activations inside a trace.
 through `module.replacement_model`, and stores Arrow-safe intervention summaries back into `AnalysisStore`.
 
 `model_fwd_intervention` is the model-level op for direct tensor interventions. It accepts either explicit
-`interventions` / `interventions_json` mappings or the shorthand `intervention_hook_pattern`, `intervention_mode`,
+`interventions` / `interventions_json` mappings or the shorthand `intervention_hook_pattern`, `intervention_op`,
 `intervention_scale_factor` and `intervention_use_intervention_tensor_as_basis` fields; explicit mappings take
 precedence. Concept-direction notebook experiments use this surface for direct-projection phases, including
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
-such as `blocks.0.hook_in` in `project` mode.
+such as `blocks.0.hook_in` under the `project` op.
 
-`model_fwd_intervention` dispatches seven modes: `replace`, `add`, `project`, `patch`, `reject`, `clamp`, and `scale`. The `patch` mode (the
+## Ops, not modes
+
+An intervention applies an op, and an op is a name in venngram's registry (`venngram.ops.OPS`), applied through the
+executor registered for that name in `interpretune.analysis.backends.ops`. `InterventionSpec.op` names it, the payload
+key is `op`, and the shorthand field is `intervention_op`; the retired spellings (`mode`, `intervention_mode`) are
+refused by name rather than read. The core ops are `replace`, `add`, `project`, `patch`, `reject`, `clamp`, `scale`
+and `replace_with_error`, registered from the shared op math, and a backend whose hook computes its edit during the
+pass (both bundled model backends) declares every registered op, including one registered after it was built. A user
+registers another op with venngram's `register_op` and its executor with `register_executor(name, fn)`, where
+`fn(region, operand, spec)` returns the edited region; a hub op collection can carry one as a tensor op (see
+[publishing an op collection](hub_op_collection_authoring.md)).
+
+`replace_with_error` substitutes the operand $o$ for the activation $x$ while keeping the activation's value:
+$o + \mathrm{sg}(x - o)$, whose value is $x$ and whose gradient reaches $o$ and not $x$ through the substitution.
+
+`model_fwd_intervention` dispatches the op the payload names through that registry. The `patch` op (the
 J-space write) takes exactly two direction vectors stacked on a leading axis and swaps the activation's
 coordinates along that pair, leaving the component orthogonal to the pair untouched. Mechanically it is
 basis-agnostic: any pair of directions can serve as the patch pair, so embed-basis concept poles are as valid a
 source as Jacobian lens rows; which basis produced the pair is the configuration the paragraph above requires the
 op to state.
 
-What each mode preserves and what it moves, in one place:
+What each core op preserves and what it moves, in one place:
 
 - `replace`: preserves nothing — the region becomes the target tensor (broadcast to shape).
 - `add`: preserves everything except the shift — `h + target · scale_factor`, perturbing every
   component the added vector overlaps.
 - `project`: preserves the component parallel to the basis and discards the rest (the opposite of
-  `reject`; at full strength the two modes sum to the input).
+  `reject`; at full strength the two ops sum to the input).
 - `patch`: preserves the component orthogonal to the pair and swaps the two in-pair coordinates
   (`V(σ(c) − c)` with `c = V⁺h`), exact by pseudoinverse rather than transpose.
 - `reject`: preserves the component orthogonal to `span(V)` and removes the in-span part
   (`h − α·VV⁺h`); `scale_factor` is the removal fraction (1.0 removes, 0.0 is the identity),
-  which is what makes graded ablation bands one mode with a parameter instead of three.
+  which is what makes graded ablation bands one op with a parameter instead of three.
 - `clamp`: preserves in-range coordinates exactly and bounds the out-of-range ones into
   `[clamp_min, clamp_max]` measured in `V⁺` coordinates (`h + (c′ − c)V`); a clamp with
   neither bound is the identity and is refused rather than run. Bound-into-range and
@@ -162,7 +178,7 @@ is the split of the `CircuitTracerConfig` fields themselves, which keep both lev
 `intervention_` prefixes:
 
 - a shared model-level intervention config dataclass reusable by `model_fwd_intervention`,
-  `resolve_interventions(...)` and both model backends: `hook_pattern(s)`, `interventions`, `mode`, `scale_factor`,
+  `resolve_interventions(...)` and both model backends: `hook_pattern(s)`, `interventions`, `op`, `scale_factor`,
   `use_intervention_tensor_as_basis`, `intervention_tensor`, and the basis where one applies, with the
   non-prefixed spellings canonical and legacy prefixed spellings normalized at the op boundary;
 - a circuit-tracer analysis-level intervention config dataclass for `value`, `value_source`, `sign_aware_scale`,
@@ -186,7 +202,7 @@ tries supported canonical and legacy spellings in both directions before backend
 A payload may name several specs at one hook point, given as a list in declaration order. They apply sequentially,
 each seeing the previous spec's output: `[add(v), reject(v)]` differs from `[reject(v), add(v)]`, while two `add`
 specs commute. Backends fold the spec tuple left to right, and adapters preserve the declaration order rather than
-grouping by mode.
+grouping by op.
 
 ## Direct projection config pattern
 
@@ -202,7 +218,7 @@ ANALYSIS:
     direct_projection:
         interventions:
             blocks.0.hook_in:
-                mode: project
+                op: project
                 scale_factor: 10.0
                 use_intervention_tensor_as_basis: true
 ```

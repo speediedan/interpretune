@@ -12,7 +12,6 @@ import pytest
 from interpretune.analysis.backends import (
     Capability,
     FeatureTargetSupport,
-    InterventionMode,
     InterventionSupport,
     LatentModelSupport,
     PositionScope,
@@ -20,7 +19,7 @@ from interpretune.analysis.backends import (
 )
 
 _FEATURE_TUPLES = InterventionSupport(
-    ops=frozenset({InterventionMode.REPLACE}),
+    ops=frozenset({"replace"}),
     position_scopes=frozenset({PositionScope.POSITIONS}),
     targets={"features": FeatureTargetSupport(value_sources=frozenset({"constant"}))},
 )

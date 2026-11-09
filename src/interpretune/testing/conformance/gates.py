@@ -13,7 +13,6 @@ from typing import Any
 
 from interpretune.analysis.backends import (
     Capability,
-    InterventionMode,
     ModuleCapabilities,
     PositionScope,
 )
@@ -39,32 +38,32 @@ class Gate:
     scope: PositionScope | None = None
     scopes: tuple[PositionScope, ...] = ()
     """Every scope a case needs declared at once (a mixed-scope payload); ``scope`` is the one-scope form."""
-    mode: InterventionMode | None = None
-    modes: tuple[InterventionMode, ...] = ()
-    """Every mode a case needs declared at once (a mixed-mode payload); ``mode`` is the one-mode form."""
+    op: str | None = None
+    ops: tuple[str, ...] = ()
+    """Every op a case needs declared at once (a mixed-op payload); ``op`` is the one-op form."""
     batched_hooks: bool | None = None
     family: str | None = None
     single_prompt: bool | None = None
     """Select on whether the TARGET declared it takes one prompt at a time (a property of the target, not of the
     backend's capability set)."""
     negative: bool = False
-    """A negative case runs when its capability/scope/mode is ABSENT and is skipped when present."""
+    """A negative case runs when its capability/scope/op is ABSENT and is skipped when present."""
 
     def describe(self) -> str:
         """A one-line rendering for skip reasons and the report."""
         parts = []
         if self.capability is not None:
             parts.append(self.capability.name)
-        if self.capability is Capability.INTERVENTION or self.scope or self.scopes or self.mode or self.modes:
+        if self.capability is Capability.INTERVENTION or self.scope or self.scopes or self.op or self.ops:
             parts.append(f"target={self.target}" + (f"@{self.provider}" if self.provider else ""))
         if self.scope is not None:
             parts.append(f"scope={self.scope.value}")
         if self.scopes:
             parts.append("scopes=" + "+".join(s.value for s in self.scopes))
-        if self.mode is not None:
-            parts.append(f"mode={self.mode.value}")
-        if self.modes:
-            parts.append("modes=" + "+".join(m.value for m in self.modes))
+        if self.op is not None:
+            parts.append(f"op={self.op}")
+        if self.ops:
+            parts.append("ops=" + "+".join(self.ops))
         if self.batched_hooks is not None:
             parts.append(f"batched_hooks={self.batched_hooks}")
         if self.family is not None:
@@ -84,8 +83,8 @@ class Gate:
         # Compare by VALUE: the capabilities module can be loaded twice under a test runner, leaving
         # value-equal, identity-distinct members on either side.
         needed = tuple(self.scopes) + ((self.scope,) if self.scope is not None else ())
-        modes = tuple(self.modes) + ((self.mode,) if self.mode is not None else ())
-        if self.capability is Capability.INTERVENTION or needed or modes:
+        ops = tuple(self.ops) + ((self.op,) if self.op is not None else ())
+        if self.capability is Capability.INTERVENTION or needed or ops:
             providers = caps.target_providers(self.target)
             if (self.provider not in providers) if self.provider is not None else not providers:
                 return False
@@ -93,7 +92,7 @@ class Gate:
             record = caps.intervention_for(self.target, provider=self.provider)
             if any(s.value not in {d.value for d in record.position_scopes} for s in needed):
                 return False
-            if any(m.value not in {d.value for d in record.ops} for m in modes):
+            if any(op not in record.declared_ops for op in ops):
                 return False
         if self.batched_hooks is not None:
             if caps.latent_models is None or caps.latent_models.batched_hooks is not self.batched_hooks:
@@ -233,7 +232,10 @@ def describe_capabilities(caps: Any, *, composition: tuple[str, ...] = (), model
     if caps.requires:
         out["requires"] = {name: sorted(c.value for c in needed) for name, needed in caps.requires.items()}
     if caps.intervention:
-        out["intervention"] = {name: plain(record) for name, record in caps.intervention.items()}
+        # the ops a provider honours NOW: a record declaring every registered op lists the registry's current set
+        out["intervention"] = {
+            name: {**plain(record), "ops": sorted(record.declared_ops)} for name, record in caps.intervention.items()
+        }
     for name in ("latent_models", "capture", "attribution_graph"):
         record = getattr(caps, name, None)
         if record is not None:

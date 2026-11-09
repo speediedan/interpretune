@@ -102,46 +102,6 @@ class PositionScope(str, Enum):
         return frozenset({cls.LAST_TOKEN, cls.ALL_POSITIONS})
 
 
-class InterventionMode(str, Enum):
-    """How an intervention combines its tensor with the activation it targets.
-
-    A ``str`` enum for the same reason as :class:`PositionScope`. The mode is the second axis of the
-    intervention contract (scope is the first): a backend can implement ``fwd_w_intervention`` and still
-    be unable to express most modes. Every mode but ``add`` reads the CURRENT activation, and the
-    additional thing they need is that the READ HAPPENS DURING THE FORWARD PASS: ``patch`` and ``reject``
-    compute coordinates from the activation itself, so no parameter fixed when the spec was built can
-    stand in for them.
-
-    The requirement is therefore sharper than "can observe the activation": **a steering surface whose
-    parameters are all static scalars satisfies that and still expresses none of these modes.** What a
-    backend must support is a parameter COMPUTED AT FORWARD TIME. Stated as a capability rather than by
-    naming a backend, because core must not know which adapters exist, and because a rule about what an
-    implementation needs stays true when the next one appears.
-
-    Such a backend declares ``InterventionSupport(ops={ADD}, ...)``; the declaration, not the
-    implementation, is what the dispatcher consults, so the refusal is by name rather than by trial.
-
-    A mode a backend has not declared is refused by
-    :func:`~interpretune.analysis.backends.interventions.require_intervention_mode` rather than applied
-    as a different mode, since every mode returns plausible logits and the substitution is undetectable
-    from the result.
-
-    A payload naming several specs at one hook point applies them SEQUENTIALLY IN DECLARATION ORDER,
-    each seeing the previous spec's output: ``[add(v), reject(v)]`` is not ``[reject(v), add(v)]``,
-    while two ``add`` specs commute. Backends implement this by folding the spec tuple left to right,
-    and adapters must preserve the declaration order rather than grouping by mode.
-    A backend that cannot apply that order refuses the payload by name rather than reordering it.
-    """
-
-    REPLACE = "replace"
-    ADD = "add"
-    PATCH = "patch"
-    PROJECT = "project"
-    REJECT = "reject"
-    CLAMP = "clamp"
-    SCALE = "scale"
-
-
 @dataclass(frozen=True)
 class FeatureTargetSupport:
     """The configurations of the ``features`` target a feature-tuple provider honours (circuit-tracer's replacement
@@ -202,19 +162,37 @@ _TARGET_DETAIL_TYPES: dict[str, type] = {"features": FeatureTargetSupport}
 class InterventionSupport:
     """Which configurations of ``INTERVENTION`` a provider can honour, on the axes venngram's ``Support`` names.
 
-    ``ops`` are the ops it executes, ``targets`` what they may act on (``activation``, ``units``, ``features``, each
-    with its detail record or ``None``), ``position_scopes`` which positions a payload may edit, ``values`` the value
-    sources a recipe may draw from, ``bases`` the operand bases it honours (``None``: any) and ``of`` whether ops act on
-    the forward value, the gradient, or both. :func:`~interpretune.analysis.venngram.venngram_support` derives
-    venngram's record from this one directly.
+    ``ops`` are the ops it executes, by venngram name (``every_registered_op`` instead declares every op with an
+    executor in :mod:`~interpretune.analysis.backends.ops`, including ops registered after the record was built),
+    ``targets`` what they may act on (``activation``, ``units``, ``features``, each with its detail record or ``None``),
+    ``position_scopes`` which positions a payload may edit, ``values`` the value sources a recipe may draw from,
+    ``bases`` the operand bases it honours (``None``: any) and ``of`` whether ops act on the forward value, the
+    gradient, or both. :func:`~interpretune.analysis.venngram.venngram_support` derives venngram's record from this one
+    directly.
+
+    **Which ops a provider can declare depends on when its edit is computed.** Every op but ``add`` reads the CURRENT
+    activation, and what they need is that the READ HAPPENS DURING THE FORWARD PASS: ``patch`` and ``reject`` compute
+    coordinates from the activation itself, so no parameter fixed when the spec was built can stand in for them. A
+    steering surface whose parameters are all static scalars can observe the activation and still express none of
+    them; it declares ``ops={"add"}``, and the declaration, not the implementation, is what the dispatcher consults,
+    so the refusal is by name rather than by trial. Stated as a capability rather than by naming a backend, because
+    core must not know which adapters exist. A provider whose hook computes its edit during the pass hands any op's
+    executor the region and the operand, so it declares ``every_registered_op``.
+
+    A payload naming several specs at one hook point applies them SEQUENTIALLY IN DECLARATION ORDER, each seeing the
+    previous spec's output: ``[add(v), reject(v)]`` is not ``[reject(v), add(v)]``, while two ``add`` specs commute.
+    Backends implement this by folding the spec tuple left to right, and adapters must preserve the declaration order
+    rather than grouping by op. A backend that cannot apply that order refuses the payload by name rather than
+    reordering it.
 
     Declaring the capability without one of these is a contract violation, not a legacy default: the absence of a
     declaration used to mean "assume last-token", which is exactly the silent narrowing the scope field was introduced
     to remove.
     """
 
-    ops: frozenset[InterventionMode]
     position_scopes: frozenset[PositionScope]
+    ops: frozenset[str] = frozenset()
+    every_registered_op: bool = False
     targets: Mapping[str, Any] = field(default_factory=lambda: dict.fromkeys(INTERVENTION_TARGETS))
     """Every target with no detail by default, as venngram's ``Support`` defaults to every target."""
     values: frozenset[str] = frozenset(VALUE_SOURCES)
@@ -223,7 +201,9 @@ class InterventionSupport:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "position_scopes", frozenset(PositionScope(s) for s in self.position_scopes))
-        object.__setattr__(self, "ops", frozenset(InterventionMode(m) for m in self.ops))
+        from interpretune.analysis.backends.ops import normalize_op
+
+        object.__setattr__(self, "ops", frozenset(normalize_op(m) for m in self.ops))
         object.__setattr__(self, "targets", dict(self.targets))
         object.__setattr__(self, "values", frozenset(self.values))
         object.__setattr__(self, "of", frozenset(self.of))
@@ -231,8 +211,13 @@ class InterventionSupport:
             object.__setattr__(self, "bases", frozenset(self.bases))
         if not self.position_scopes:
             raise ValueError("InterventionSupport must declare at least one position scope")
-        if not self.ops:
-            raise ValueError("InterventionSupport must declare at least one op")
+        if self.every_registered_op and self.ops:
+            raise ValueError(
+                "InterventionSupport either lists its ops or declares every registered op, not both; listing some"
+                f" ({sorted(self.ops)}) beside every_registered_op would read as a narrowing it is not"
+            )
+        if not self.ops and not self.every_registered_op:
+            raise ValueError("InterventionSupport must declare at least one op (or every_registered_op)")
         if not self.targets:
             raise ValueError("InterventionSupport must declare at least one target")
         for axis, declared, known in (
@@ -252,6 +237,16 @@ class InterventionSupport:
                     + (f"its detail is a {expected.__name__} or None" if expected else "it takes no detail record")
                 )
 
+    @property
+    def declared_ops(self) -> frozenset[str]:
+        """The ops this provider honours now: its list, or every op registered with venngram that has an executor
+        here when it declares ``every_registered_op`` (read at each call, so a later registration is included)."""
+        if self.every_registered_op:
+            from interpretune.analysis.backends.ops import registered_ops
+
+            return registered_ops()
+        return self.ops
+
     def target_detail(self, target: str) -> Any:
         """The detail record of ``target``, or ``None`` when it carries none; a target not declared is refused."""
         if target not in self.targets:
@@ -265,12 +260,12 @@ class InterventionSupport:
 
         Seeing the activation is not the criterion, which is worth stating because it reads like one: a
         steering surface can receive the activation and still express only ``add``, if every parameter it
-        takes was fixed before the pass began. See :class:`InterventionMode`. ``targets`` defaults to every target with
-        no detail: a hook reaches a whole activation, any of its units, and an attached latent model's features at its
-        sub-hook.
+        takes was fixed before the pass began. Such a provider declares every registered op, including ops registered
+        after it was built. ``targets`` defaults to every target with no detail: a hook reaches a whole activation, any
+        of its units, and an attached latent model's features at its sub-hook.
         """
         return cls(
-            ops=frozenset(InterventionMode),
+            every_registered_op=True,
             position_scopes=PositionScope.hook_scopes(),
             targets=dict.fromkeys(INTERVENTION_TARGETS) if targets is None else targets,
         )

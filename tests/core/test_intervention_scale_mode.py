@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import torch
 
-from interpretune.analysis.backends.capabilities import InterventionMode, InterventionSupport, PositionScope
+from interpretune.analysis.backends.capabilities import InterventionSupport, PositionScope
 from interpretune.analysis.backends.interventions import InterventionSpec, apply_intervention, build_intervention_dict
 
 
 def _scale(value: torch.Tensor, multiplier, *, scale_factor: float = 1.0, scope=PositionScope.ALL_POSITIONS):
     spec = InterventionSpec(
         intervention_tensor=torch.as_tensor(multiplier),
-        mode=InterventionMode.SCALE,
+        op="scale",
         scale_factor=scale_factor,
         position_scope=scope,
     )
@@ -40,9 +40,9 @@ def test_the_scale_factor_multiplies_the_tensor_and_the_scope_is_honoured():
 
 
 def test_every_declares_scale_and_a_payload_canonicalizes_it():
-    assert InterventionMode.SCALE in InterventionSupport.every().ops
-    spec = InterventionSpec(intervention_tensor=torch.ones(4), mode="scale")
+    assert "scale" in InterventionSupport.every().declared_ops
+    spec = InterventionSpec(intervention_tensor=torch.ones(4), op="scale")
     hook = "blocks.0.hook_resid_post"
     canonical = build_intervention_dict({hook: spec}, {hook: [hook]}, {hook: (1, 3, 4)})
     (only,) = canonical[hook]
-    assert only.mode is InterventionMode.SCALE
+    assert only.op == "scale"

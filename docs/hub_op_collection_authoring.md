@@ -62,9 +62,37 @@ file avoids double quotes by convention), an `implementation` naming a
 `module.function` pair resolved repo-relatively by the Hub loader, an input
 schema with dtypes and required flags, and the traits a consumer checks
 WITHOUT executing anything. The worked example is
-`required_intervention_modes: [patch]`: the op stages a patch-mode
-intervention, and a backend that cannot express the mode refuses at staging
-time rather than after every earlier op in a composition has already run.
+`required_ops: [patch]`: the op stages a `patch` intervention, and a backend
+that does not declare the op refuses at staging time rather than after every
+earlier op in a composition has already run. `required_ops` names composition
+ops and tensor ops alike; the loader tells them apart.
+
+## Tensor ops
+
+A definition may instead carry an `op_spec` block, which makes it a tensor op:
+an op applied inside a forward hook (like `add` or `patch`) rather than a step
+of a composition. Its `implementation` takes `(region, operand, spec)` and
+returns the edited region, and the block declares the op to venngram with
+`OpSpec`'s fields:
+
+```yaml
+soft_add:
+  description: add half the operand
+  implementation: soft_ops.soft_add
+  op_spec:
+    operand: [vector]
+    composition: sum
+```
+
+Loading the collection, under the same trust opt-in as any hub
+implementation, registers the `OpSpec` with venngram and the executor with
+Interpretune, and records the collection, version and revision as the
+executor's provenance. The implementation is first checked on a probe against
+the tensor-op contract (shape-preserving, out of place, differentiable in the
+activation and the operand); one that breaks a clause is refused by name and
+nothing registers. A recipe or another collection's `required_ops` then names
+it like a core op. See the custom ops composition guide's tensor-op section for
+the full contract.
 
 ## Implementation conventions
 
@@ -78,7 +106,7 @@ Two rules earned the hard way travel with that dependency:
   own history records a private norm-folding copy that chose the wrong
   convention for two model lines, fixed once in the seam.
 - Anything the module cannot vouch for is refused by name (unknown lens
-  layouts, backends lacking a mode, empty token groups), never defaulted.
+  layouts, backends lacking an op, empty token groups), never defaulted.
 
 ## Offline tests
 

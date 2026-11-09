@@ -342,7 +342,7 @@ model_fwd_intervention:
       required: false
       non_tensor: true
       sequence_type: false
-    intervention_mode:
+    intervention_op:
       datasets_dtype: string
       required: false
       non_tensor: true
@@ -430,7 +430,7 @@ intervention_first_order_check:
       required: false
       non_tensor: true
       sequence_type: false
-    intervention_mode:
+    intervention_op:
       datasets_dtype: string
       required: false
       non_tensor: true

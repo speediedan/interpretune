@@ -11,7 +11,6 @@ import pytest
 
 from interpretune.analysis.backends import (
     Capability,
-    InterventionMode,
     InterventionSupport,
     LatentModelSupport,
     ModuleCapabilities,
@@ -35,7 +34,7 @@ def _caps(*, intervention=None, latent=None):
     )
 
 
-ADD_LAST = InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, ops={InterventionMode.ADD})
+ADD_LAST = InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, ops={"add"})
 
 
 class TestGateSelection:
@@ -54,7 +53,7 @@ class TestGateSelection:
         assert not Gate(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS).selects(
             _caps(intervention=ADD_LAST), family="x"
         )
-        assert not Gate(capability=Capability.INTERVENTION, mode=InterventionMode.REPLACE).selects(
+        assert not Gate(capability=Capability.INTERVENTION, op="replace").selects(
             _caps(intervention=ADD_LAST), family="x"
         )
 
@@ -83,9 +82,7 @@ class TestGateSelection:
 
     def test_a_scopes_gate_needs_every_scope_declared(self):
         """A mixed-scope case selects only when the target declared BOTH scopes; one of two is undeclared."""
-        both = InterventionSupport(
-            position_scopes={PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS}, ops={InterventionMode.ADD}
-        )
+        both = InterventionSupport(position_scopes={PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS}, ops={"add"})
         g = Gate(
             capability=Capability.INTERVENTION,
             scopes=(PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS),
@@ -105,10 +102,10 @@ class TestGateSelection:
         g = Gate(
             capability=Capability.INTERVENTION,
             scope=PositionScope.LAST_TOKEN,
-            mode=InterventionMode.ADD,
+            op="add",
             negative=True,
         )
-        assert g.describe() == "NOT INTERVENTION, target=activation, scope=last_token, mode=add"
+        assert g.describe() == "NOT INTERVENTION, target=activation, scope=last_token, op=add"
 
 
 class TestDecorator:
@@ -184,9 +181,9 @@ class TestExpectRefusal:
     def test_finds_a_wrapped_refusal(self):
         from interpretune.testing.conformance.oracles import expect_refusal
 
-        with expect_refusal(NotImplementedError, match="mode='replace'"):
+        with expect_refusal(NotImplementedError, match="op='replace'"):
             try:
-                raise NotImplementedError("backend cannot apply mode='replace'")
+                raise NotImplementedError("backend cannot apply op='replace'")
             except NotImplementedError as inner:
                 raise RuntimeError("An error occurred while generating the dataset") from inner
 
@@ -405,7 +402,6 @@ class TestReportArtifact:
         from interpretune.analysis.backends import (
             Capability,
             FeatureTargetSupport,
-            InterventionMode,
             InterventionSupport,
             ModuleCapabilities,
             PositionScope,
@@ -415,12 +411,12 @@ class TestReportArtifact:
             providers={Capability.INTERVENTION: ("model_backend", "analysis_backend")},
             intervention={
                 "model_backend": InterventionSupport(
-                    ops=frozenset({InterventionMode.ADD}),
+                    ops=frozenset({"add"}),
                     position_scopes=frozenset({PositionScope.LAST_TOKEN}),
                     targets={"activation": None},
                 ),
                 "analysis_backend": InterventionSupport(
-                    ops=frozenset({InterventionMode.REPLACE}),
+                    ops=frozenset({"replace"}),
                     position_scopes=frozenset({PositionScope.POSITIONS}),
                     targets={"features": FeatureTargetSupport(value_sources=frozenset({"constant"}))},
                 ),

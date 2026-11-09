@@ -68,11 +68,9 @@ class TestDerivedSupport:
         assert DEFAULT_BASES == frozenset(JLENS_BASIS_NAMES.values())
 
     def test_ops_are_bounded_by_the_backend_modes(self):
-        from interpretune.analysis.backends.capabilities import InterventionMode, PositionScope
+        from interpretune.analysis.backends.capabilities import PositionScope
 
-        support = venngram_support(
-            InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, ops={InterventionMode.REPLACE})
-        )
+        support = venngram_support(InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, ops={"replace"}))
         assert support.ops == frozenset({"replace"}) and support.tokens == frozenset({"last"})
 
     def test_no_capture_record_declares_no_site_bound(self):
@@ -111,7 +109,9 @@ class TestCheckRecipe:
         unit_replace = _recipe(
             site="mlp.hook_out", ops=[{"op": "replace", "target": {"set": "chess"}, "value": {"dose": 2.0}}]
         )
-        assert any("a unit-targeted `replace` has no native mode" in r for r in check_recipe(unit_replace, _support()))
+        assert any(
+            "a unit-targeted `replace` has no native translation" in r for r in check_recipe(unit_replace, _support())
+        )
         layer_free = _recipe(
             operands={"concept": CONCEPT}, site="mlp.hook_out", ops=[{"op": "reject", "operand": "concept"}]
         )

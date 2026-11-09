@@ -56,7 +56,6 @@ from typing import Any
 import torch
 from torch import nn
 
-from interpretune.analysis.backends.interventions import InterventionSpec, PositionScope, apply_op
 from interpretune.tuning.latents import _first, _refuse_circuit_tracer, _with_first
 
 # the `nn.ModuleDict` on the root that holds attached interventions, by name
@@ -129,8 +128,12 @@ class OpIntervention(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """``x`` with the op applied."""
+        # imported here: this module is imported with the module configuration, and the op seam imports the analysis
+        # package, which a configuration import must not pull in
+        from interpretune.analysis.backends.interventions import InterventionSpec, PositionScope, apply_op
+
         spec = InterventionSpec(
-            self.operand(), mode=self.op, scale_factor=self.scale_factor, position_scope=PositionScope.ALL_POSITIONS
+            self.operand(), op=self.op, scale_factor=self.scale_factor, position_scope=PositionScope.ALL_POSITIONS
         )
         return apply_op(x, spec)
 

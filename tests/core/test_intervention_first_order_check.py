@@ -17,7 +17,6 @@ import pytest
 import torch
 
 from interpretune.analysis.backends import (
-    InterventionMode,
     InterventionSupport,
     Capability,
     PositionScope,
@@ -48,7 +47,7 @@ class _GradBackend:
     capabilities = frozenset({Capability.INTERVENTION, Capability.GRADIENTS})
     intervention_support = InterventionSupport(
         position_scopes=frozenset(PositionScope),
-        ops=frozenset(InterventionMode),
+        every_registered_op=True,
     )
 
     def _site_module(self, model):
@@ -163,7 +162,7 @@ def _run_check(module, batch_fields, raw_batch, basis="embed"):
 def _add_fields(scale, direction):
     return {
         "intervention_tensor": direction,
-        "intervention_mode": "add",
+        "intervention_op": "add",
         "intervention_scale_factor": scale,
         "intervention_hook_pattern": SITE,
         "intervention_position_scope": "last_token",
@@ -212,7 +211,7 @@ class TestAllModesReport:
                 "interventions": {
                     SITE: {
                         "intervention_tensor": torch.randn(D),
-                        "mode": "clamp",
+                        "op": "clamp",
                         "clamp_min": -1.0,
                         "clamp_max": 1.0,
                     }
@@ -222,7 +221,7 @@ class TestAllModesReport:
             fields = {
                 **base,
                 "intervention_tensor": torch.randn(2, D) if mode == "patch" else torch.randn(D),
-                "intervention_mode": mode,
+                "intervention_op": mode,
                 "intervention_scale_factor": 1.0,
             }
         batch = AnalysisBatch(**fields)
@@ -252,7 +251,7 @@ class TestRefusals:
                 AnalysisBatch(
                     concept_basis="embed",
                     intervention_tensor=torch.randn(D),
-                    intervention_mode="add",
+                    intervention_op="add",
                     intervention_hook_pattern=SITE,
                 ),
                 {"input_ids": _ids()},
@@ -267,7 +266,7 @@ class TestRefusals:
             concept_basis="embed",
             pre_intervention_logits=torch.randn(1, SEQ, VOCAB),
             post_intervention_logits=torch.randn(1, SEQ, VOCAB),
-            interventions={"a": {"mode": "add"}, "b": {"mode": "add"}},
+            interventions={"a": {"op": "add"}, "b": {"op": "add"}},
         )
         with pytest.raises(ValueError, match="one site"):
             concept_ops.intervention_first_order_check_impl(module, batch, raw, 0)
