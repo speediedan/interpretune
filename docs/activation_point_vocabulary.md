@@ -88,7 +88,7 @@ evolution policy below.
 Kinds: `block`, `attn`, `mlp`, `norm`, `linear`, `embed`, `unembed`. A sandwich-norm architecture adds
 `ln1_post` and `ln2_post` rows and sets `facts.sandwich_norms`, which is what routes the contribution points.
 
-Sources, in precedence order: a bundled document (five architectures ship with Interpretune), a document pulled
+Sources, in precedence order: a bundled document (six architectures ship with Interpretune), a document pulled
 as a `hookmaps` hub component (data, no trust gate; `it.hub.pull_hookmaps("<org>/<repo>")` fetches and registers,
 `it.hub.load_hookmaps` registers from the cache), and a map derived from TransformerLens' own per-architecture
 component mapping. Two sources for one architecture must agree, and a test says so. The TransformerLens-derived
@@ -193,8 +193,9 @@ against the class on every run (rows exist for the layers they cover and not for
 derived property agrees with the model), and the oracle comparison against TransformerLens' adapter for the
 architecture, built from the same tiny config with no weights and no Hub call, so it runs for every bundled map.
 A document added without the builder, or without a row in the oracle's table of rows expected to have no
-TransformerLens counterpart (today: the multimodal document's vision stack and projector, which TransformerLens
-bridges as one opaque component), fails the suite by name. The derivation itself refuses a bridge class it does
+TransformerLens counterpart (today: the Gemma 3 multimodal document's vision stack and projector, which
+TransformerLens bridges as one opaque component, and Qwen3.5's linear-attention output projection, which its gated delta
+net bridge does not expose), fails the suite by name. The derivation itself refuses a bridge class it does
 not know rather than skipping it: skipping once dropped two RMSNorm-era classes, so four documents were compared
 on seven rows of fourteen while the oracle reported agreement over the whole.
 
