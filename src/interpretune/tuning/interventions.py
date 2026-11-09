@@ -9,15 +9,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Learned interventions spliced into a module's forward pass, as tunable ``intervention:<name>`` tensors (#812).
+"""Trainable interventions spliced into a module's forward pass, as tunable ``intervention:<name>`` tensors (#812,
+#950).
 
-An *intervention* rewrites one site's activations with parameters of its own: a steering vector adds a learned
-direction to a residual stream, and other kinds (a learned ablation, a low-rank edit) rewrite a site in other ways. This
-module is the seam they share, the counterpart of :mod:`interpretune.tuning.latents` for modules that rewrite a site
-rather than model it through latents:
+An *intervention* applies an op (``add``, ``scale``, ``reject``, ...: venngram's registry, :data:`venngram.ops.OPS`) to
+a site's activations. What distinguishes kinds of intervention is the op and where its operand comes from: a constant
+or a dose (zero ablation), a value computed from the model or the store (a concept direction, another run's
+activation), the output of a latent model (:mod:`interpretune.tuning.latents`), or parameters of its own. This module is
+the seam for the last kind, *trainable* interventions, whose operand is tuned by a schedule:
 
-- :class:`SteeringVector`, the first kind: ``x + scale * vector``, starting at zero so the steered model starts out
-  identical to the unsteered one;
+- :class:`OpIntervention`, an op applied at every position with an operand module's output, through the op math every
+  model backend shares (:func:`~interpretune.analysis.backends.interventions.apply_op`). A steering vector
+  (:class:`SteeringVector`) is the ``add`` op with a learned vector; a learned per-unit gain is ``scale``;
+- :class:`LearnedOperand`, a trainable operand, initialized to its op's identity so attaching it changes nothing until
+  it trains;
 - :func:`attach_intervention` and :func:`detach_intervention`, which register an intervention under the root's
   ``interventions`` and splice it in with a forward hook on the module whose output it rewrites;
 - :func:`intervention_roles`, the roles to declare: ``intervention:<name>`` (venngram's role vocabulary, as PEFT
@@ -28,6 +33,9 @@ rather than model it through latents:
 - :class:`InterventionCfg`, an intervention declared in a module's configuration (``tuning_interventions``), which
   every interpretune module attaches once its model is built (:func:`attach_configured_interventions`), so an example
   needs no module code to steer.
+
+Interventions without parameters (an ablation, a patch, a dose of a concept direction) need no role and no seam: they
+are applied by the analysis ops (``model_fwd_intervention``, ``feature_intervention_forward``) during a pass.
 
 Sites are module paths under the root, as latent models' are, so the same intervention attaches to a core module's
 ``model.model.layers.N``, an nnsight module's ``hf_model.model.layers.N`` or a TransformerLens bridge's
@@ -48,18 +56,87 @@ from typing import Any
 import torch
 from torch import nn
 
+from interpretune.analysis.backends.interventions import InterventionSpec, PositionScope, apply_op
 from interpretune.tuning.latents import _first, _refuse_circuit_tracer, _with_first
 
 # the `nn.ModuleDict` on the root that holds attached interventions, by name
 INTERVENTIONS_ATTR = "interventions"
+
+#: The ops a trainable intervention applies. Other registered ops are refused by name until a test covers them.
+TRAINABLE_OPS = frozenset({"add", "scale"})
 
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 _HOOKS_ATTR = "_intervention_hooks"
 _SITES_ATTR = "_intervention_sites"
 
 
-class SteeringVector(nn.Module):
-    """A learned direction added to every position of a site's activations: ``x + scale * vector``.
+def _require_trainable_op(op: str) -> None:
+    from venngram.ops import OPS
+
+    if op not in OPS:
+        raise ValueError(f"{op!r} is not a registered op; venngram's registry holds {', '.join(sorted(OPS))}")
+    if op not in TRAINABLE_OPS:
+        raise ValueError(
+            f"A trainable intervention applies {', '.join(sorted(TRAINABLE_OPS))}; {op!r} is a registered op that this"
+            " seam does not yet apply with a trainable operand"
+        )
+
+
+class LearnedOperand(nn.Module):
+    """A trainable operand: one tensor, starting at ``init`` everywhere.
+
+    Args:
+        shape: The operand's shape (an ``int`` for a vector over a site's width).
+        init: The starting value, by default ``0.0``; :class:`OpIntervention` passes the value at which its op is the
+            identity.
+    """
+
+    def __init__(self, shape: int | Sequence[int], init: float = 0.0) -> None:
+        super().__init__()
+        self.value = nn.Parameter(torch.full((shape,) if isinstance(shape, int) else tuple(shape), float(init)))
+
+    def forward(self) -> torch.Tensor:
+        """The operand."""
+        return self.value
+
+
+class OpIntervention(nn.Module):
+    """An op applied at every position of a site's activations with a trainable operand.
+
+    The op is a name from venngram's registry (:data:`TRAINABLE_OPS` lists those applied here); the operand is a
+    module whose output is the op's tensor, so its parameters are what a schedule tunes. The op math is the one every
+    model backend shares, so ``add`` here is the same ``add`` an analysis op applies.
+
+    Args:
+        op: The op: ``add`` (``x + scale_factor * operand``) or ``scale`` (``x * (scale_factor * operand)``).
+        operand: A module returning the operand, or the operand's width for a :class:`LearnedOperand` starting where
+            the op is the identity (``0`` for ``add``, ``1 / scale_factor`` for ``scale``).
+        scale_factor: A fixed multiplier on the operand (nonzero).
+    """
+
+    def __init__(self, op: str, operand: nn.Module | int, scale_factor: float = 1.0) -> None:
+        super().__init__()
+        _require_trainable_op(op)
+        if not scale_factor:
+            raise ValueError(
+                "A trainable intervention's scale_factor must be nonzero: at zero its operand has no effect"
+            )
+        self.op = op
+        self.scale_factor = scale_factor
+        if isinstance(operand, int):
+            operand = LearnedOperand(operand, 0.0 if op == "add" else 1.0 / scale_factor)
+        self.operand = operand
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """``x`` with the op applied."""
+        spec = InterventionSpec(
+            self.operand(), mode=self.op, scale_factor=self.scale_factor, position_scope=PositionScope.ALL_POSITIONS
+        )
+        return apply_op(x, spec)
+
+
+class SteeringVector(OpIntervention):
+    """A learned direction added to every position of a site's activations: the ``add`` op with a learned vector.
 
     The vector starts at zero, so attaching it changes nothing until it trains.
 
@@ -68,16 +145,15 @@ class SteeringVector(nn.Module):
         scale: A fixed multiplier on the vector.
     """
 
-    kind = "steer"
-
     def __init__(self, width: int, scale: float = 1.0) -> None:
-        super().__init__()
-        self.scale = scale
-        self.vector = nn.Parameter(torch.zeros(width))
+        super().__init__("add", width, scale_factor=scale)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """``x`` steered by the vector."""
-        return x + self.scale * self.vector.to(x.dtype)
+    @property
+    def vector(self) -> nn.Parameter:
+        """The learned direction (the operand's tensor, ``operand.value``)."""
+        operand = self.operand
+        assert isinstance(operand, LearnedOperand)
+        return operand.value
 
 
 def _interventions(root: nn.Module, create: bool = False) -> nn.ModuleDict | None:
@@ -193,26 +269,26 @@ def intervention_roles(root: nn.Module) -> dict[str, str]:
 
 @dataclass(frozen=True, kw_only=True)
 class InterventionCfg:
-    """An intervention declared in a module's configuration, attached once the module's model is built.
+    """A trainable intervention declared in a module's configuration, attached once the module's model is built.
 
     Args:
         name: The intervention's name (``interventions.<name>``).
         site: Path, under the module, of the module whose output it rewrites.
-        kind: Which intervention to build: ``steer``, a :class:`SteeringVector`.
+        op: The op it applies (:data:`TRAINABLE_OPS`): ``add`` (a steering vector, the default) or ``scale``.
         width: The site's activation width. Defaults to the model's (``config.hidden_size`` of an HF or nnsight model,
             ``cfg.d_model`` of a TransformerLens one).
-        scale: The steering vector's fixed multiplier.
+        scale_factor: A fixed multiplier on the operand.
 
-    A configured steering vector starts at zero and is tunable (``intervention:<name>``). A frozen one would be a no-op,
-    so there is no ``frozen`` setting: a later stage holds a trained vector fixed with ``refreeze``, and a precomputed
-    vector is attached in code (``attach_intervention(..., frozen=True)``).
+    A configured intervention's operand starts where its op is the identity and is tunable (``intervention:<name>``).
+    A frozen one would be a no-op, so there is no ``frozen`` setting: a later stage holds a trained operand fixed with
+    ``refreeze``, and a precomputed one is attached in code (``attach_intervention(..., frozen=True)``).
     """
 
     name: str
     site: str
-    kind: str = "steer"
+    op: str = "add"
     width: int | None = None
-    scale: float = 1.0
+    scale_factor: float = 1.0
 
 
 def as_intervention_cfg(entry: InterventionCfg | Mapping[str, Any]) -> InterventionCfg:
@@ -246,19 +322,15 @@ def attach_configured_interventions(
         The attached interventions.
 
     Raises:
-        ValueError: a kind is not one this module builds, or no width is given and the model's cannot be read.
+        ValueError: an op is not one a trainable intervention applies, or no width is given and the model's cannot be
+            read.
         TypeError: an entry is neither an :class:`InterventionCfg` nor a mapping.
     """
     attached = []
     for cfg in map(as_intervention_cfg, cfgs):
-        if cfg.kind != SteeringVector.kind:
-            raise ValueError(
-                f"Intervention {cfg.name!r} has kind {cfg.kind!r}; a configuration builds only {SteeringVector.kind!r}"
-                " (attach other kinds with `attach_intervention`)"
-            )
         width = cfg.width if cfg.width is not None else _model_width(root)
         if width is None:
             raise ValueError(f"Intervention {cfg.name!r} needs a `width`: the model's activation width is not readable")
-        steer = SteeringVector(width, scale=cfg.scale)
-        attached.append(attach_intervention(root, cfg.name, steer, cfg.site))
+        intervention = OpIntervention(cfg.op, width, scale_factor=cfg.scale_factor)
+        attached.append(attach_intervention(root, cfg.name, intervention, cfg.site))
     return attached

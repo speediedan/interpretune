@@ -82,7 +82,7 @@ def _x():
 class TestSplicing:
     def test_replace_runs_the_model_on_the_reconstruction(self):
         root, x = Root(), _x()
-        sae = attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0", mode="replace"))
+        sae = attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0", op="replace"))
         block_out = {}
         root.model["blocks"][1].register_forward_pre_hook(lambda m, a: block_out.setdefault("x", a[0]))
         root(x)
@@ -101,13 +101,13 @@ class TestSplicing:
     def test_observe_records_latents_and_changes_nothing(self):
         root, x = Root(), _x()
         expected = root(x)
-        sae = attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.1", mode="observe"))
+        sae = attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.1", op=None))
         assert torch.allclose(root(x), expected)
         assert sae.last_latents.shape == (4, K) and not sae.last_latents.requires_grad
 
     def test_a_transcoder_reads_an_mlp_input_and_writes_its_output(self):
         root, x = Root(), _x()
-        site = LatentSite("model.blocks.0.mlp", read_from="input", mode="replace")
+        site = LatentSite("model.blocks.0.mlp", read_from="input", op="replace")
         tc = attach_latent_model(root, "mlp0", TinyTranscoder(), site)
         mlp_out = {}
         root.model["blocks"][0].mlp.register_forward_hook(lambda m, a, o: mlp_out.setdefault("o", o))
@@ -116,7 +116,7 @@ class TestSplicing:
 
     def test_a_tuple_output_has_its_first_element_rewritten(self):
         root, x = Root(), _x()
-        attach_latent_model(root, "tb", TinySAE(), LatentSite("model.tuple_block", mode="replace"))
+        attach_latent_model(root, "tb", TinySAE(), LatentSite("model.tuple_block", op="replace"))
         hidden, extra = root.model["tuple_block"](x)
         assert torch.allclose(extra, x.sum())
         assert not torch.allclose(hidden, root.model["tuple_block"].proj(x))
@@ -124,7 +124,7 @@ class TestSplicing:
     def test_detaching_restores_the_forward_pass(self):
         root, x = Root(), _x()
         expected = root(x)
-        attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0", mode="replace"))
+        attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0", op="replace"))
         assert not torch.allclose(root(x), expected)
         detach_latent_model(root, "sae")
         assert torch.allclose(root(x), expected)
@@ -292,3 +292,11 @@ class TestOnAnInterpretuneModule:
         ids = torch.randint(0, module.model.tok_embeddings.num_embeddings, (2, 5))
         module.model(ids).float().sum().backward()  # replace_with_error: the spliced forward trains the latent model
         assert all(p.grad is not None for p in module.latent_models["sae"].parameters())
+
+
+def test_a_latent_site_applies_a_registered_latent_op_or_none():
+    with pytest.raises(ValueError, match="'observe' is not a registered op"):
+        LatentSite("model.blocks.0", op="observe")  # pyright: ignore[reportArgumentType]  # a capture is `op=None`
+    with pytest.raises(ValueError, match="applies `replace` or `replace_with_error`, not 'add'"):
+        LatentSite("model.blocks.0", op="add")  # pyright: ignore[reportArgumentType]
+    assert LatentSite("model.blocks.0", op=None).op is None

@@ -1,4 +1,4 @@
-"""Learned interventions spliced into a module's forward pass and scheduled by role (#812)."""
+"""Trainable interventions: an op with a trainable operand, spliced in and scheduled by role (#812, #950)."""
 
 from __future__ import annotations
 
@@ -112,7 +112,7 @@ class TestSplicing:
     def test_the_intervention_is_part_of_the_root(self):
         root = Root()
         attach_intervention(root, "steer", SteeringVector(D), "model.blocks.0")
-        assert f"{INTERVENTIONS_ATTR}.steer.vector" in root.state_dict()
+        assert f"{INTERVENTIONS_ATTR}.steer.operand.value" in root.state_dict()
         assert intervention_sites(root) == {"steer": "model.blocks.0"}
 
     def test_the_intervention_moves_to_the_sites_device_and_keeps_its_dtype(self):
@@ -178,10 +178,10 @@ class TestRoles:
         attach_intervention(root, "edit", nn.Linear(D, D), "model.blocks.1")
         attach_intervention(root, "held", SteeringVector(D), "model.tuple_block", frozen=True)
         assert intervention_roles(root) == {
-            "interventions.steer.vector": "intervention:steer",
+            "interventions.steer.operand.value": "intervention:steer",
             "interventions.edit.weight": "intervention:edit",
             "interventions.edit.bias": "intervention:edit",
-            "interventions.held.vector": "instrument",
+            "interventions.held.operand.value": "instrument",
         }
 
     def test_no_interventions_no_roles(self):
@@ -194,10 +194,10 @@ class TestRoles:
         attach_intervention(root, "steer", SteeringVector(D), "model.blocks.1")
         attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0"))
         roles = root.tunable_roles()
-        assert roles["interventions.steer.vector"] == "intervention:steer"
+        assert roles["interventions.steer.operand.value"] == "intervention:steer"
         assert roles["latent_models.sae.enc.weight"] == "latent:sae"
         detach_intervention(root, "steer")
-        assert "interventions.steer.vector" not in root.tunable_roles()
+        assert "interventions.steer.operand.value" not in root.tunable_roles()
 
 
 class TestScheduling:
@@ -234,9 +234,12 @@ class TestScheduling:
         before = {n: p.detach().clone() for n, p in root.named_parameters()}
         seen = self._train(fts, root, 2)
         block = ["model.tuple_block.proj.bias", "model.tuple_block.proj.weight"]
-        assert seen == [(0, ["interventions.steer.vector"]), (1, sorted(["interventions.steer.vector", *block]))]
+        assert seen == [
+            (0, ["interventions.steer.operand.value"]),
+            (1, sorted(["interventions.steer.operand.value", *block])),
+        ]
         changed = {n for n, p in root.named_parameters() if not torch.equal(before[n], p)}
-        assert changed == {"interventions.steer.vector", *block}
+        assert changed == {"interventions.steer.operand.value", *block}
 
     def test_a_stage_refreezes_a_trained_vector_and_trains_the_block(self):
         """Phases as stages: steer first, then hold the trained vector fixed (finetuning-scheduler's ``refreeze``)
@@ -265,7 +268,7 @@ class TestScheduling:
             seen.append((fts.curr_depth, sorted(n for n, p in root.named_parameters() if p.requires_grad)))
             fts.epoch_end({})
         block = ["model.tuple_block.proj.bias", "model.tuple_block.proj.weight"]
-        assert seen == [(0, ["interventions.steer.vector"]), (1, block)]
+        assert seen == [(0, ["interventions.steer.operand.value"]), (1, block)]
         assert trained is not None and trained.abs().sum() > 0  # the steering stage moved it
         assert torch.equal(steer.vector, trained)  # and the block stage held it fixed
 
@@ -284,8 +287,8 @@ class TestScheduling:
         fts = TuningScheduler(root, schedule, optimizer=partial(torch.optim.SGD, lr=0.1), view=view)
         fts.setup()
         seen = self._train(fts, root, 2)
-        assert all("interventions.steer.vector" not in trainable for _, trainable in seen)
-        assert fts.roles["interventions.steer.vector"] == "instrument"
+        assert all("interventions.steer.operand.value" not in trainable for _, trainable in seen)
+        assert fts.roles["interventions.steer.operand.value"] == "instrument"
         assert torch.equal(steer.vector, torch.full((D,), 0.25))
 
 
@@ -308,7 +311,7 @@ class TestOnAnInterpretuneModule:
         compiled = compile_schedule(
             {0: {"params": ["role:intervention:steer"]}, 1: {"params": ["model.layers.0.*"]}}, view
         )
-        assert compiled.physical_for(0) == ("interventions.steer.vector",)
+        assert compiled.physical_for(0) == ("interventions.steer.operand.value",)
         ids = torch.randint(0, module.model.tok_embeddings.num_embeddings, (2, 5))
         module.model(ids).float().sum().backward()
         assert module.interventions["steer"].vector.grad is not None
@@ -359,21 +362,81 @@ def test_a_configured_steering_vector_is_attached_and_scheduled_by_role(request,
     assert intervention_sites(module) == {"steer": site}
     view = getattr(module, VIEW_ATTR)
     roles = as_view(view).roles()
-    assert {n for n, r in roles.items() if r == "intervention:steer"} == {"interventions.steer.vector"}
+    assert {n for n, r in roles.items() if r == "intervention:steer"} == {"interventions.steer.operand.value"}
     compiled = compile_schedule({0: {"params": ["role:intervention:steer"]}}, view)
-    assert compiled.physical_for(0) == ("interventions.steer.vector",)
+    assert compiled.physical_for(0) == ("interventions.steer.operand.value",)
 
 
-def test_a_configured_kind_must_be_one_a_configuration_builds():
-    from interpretune.tuning.interventions import InterventionCfg, attach_configured_interventions
+def test_a_configured_op_must_be_one_a_trainable_intervention_applies():
+    from interpretune.tuning.interventions import InterventionCfg, OpIntervention, attach_configured_interventions
 
-    with pytest.raises(ValueError, match="builds only 'steer'"):
-        attach_configured_interventions(Root(), [InterventionCfg(name="edit", site="model.blocks.0", kind="edit")])
+    with pytest.raises(ValueError, match="'reject' is a registered op that this seam does not yet apply"):
+        attach_configured_interventions(
+            Root(), [InterventionCfg(name="edit", site="model.blocks.0", op="reject", width=D)]
+        )
+    with pytest.raises(ValueError, match="'steer' is not a registered op"):
+        attach_configured_interventions(
+            Root(), [InterventionCfg(name="edit", site="model.blocks.0", op="steer", width=D)]
+        )
     with pytest.raises(ValueError, match="needs a `width`"):
         attach_configured_interventions(Root(), [InterventionCfg(name="steer", site="model.blocks.0")])
     with pytest.raises(TypeError, match="InterventionCfg or a mapping"):
         attach_configured_interventions(Root(), ["model.blocks.0"])
-    (steer,) = attach_configured_interventions(
-        root := Root(), [InterventionCfg(name="s", site="model.blocks.0", width=D)]
+    (steer, gain) = attach_configured_interventions(
+        root := Root(),
+        [
+            InterventionCfg(name="s", site="model.blocks.0", width=D),
+            InterventionCfg(name="g", site="model.blocks.1", op="scale", width=D),
+        ],
     )
-    assert root.interventions["s"] is steer and isinstance(steer, SteeringVector)
+    assert root.interventions["s"] is steer and isinstance(steer, OpIntervention) and steer.op == "add"
+    assert gain.op == "scale"
+
+
+class TestOps:
+    """A trainable intervention is an op applied with a trainable operand, through the shared op math."""
+
+    def test_each_op_starts_at_its_identity_and_trains(self):
+        from interpretune.tuning.interventions import OpIntervention
+
+        x = _x()
+        for op in ("add", "scale"):
+            intervention = OpIntervention(op, D, scale_factor=2.0)
+            assert torch.equal(intervention(x), x)  # attaching it changes nothing until it trains
+            intervention(x).sum().backward()
+            assert intervention.operand.value.grad is not None
+
+    def test_the_ops_match_the_analysis_op_math(self):
+        from interpretune.analysis.backends.interventions import InterventionSpec, apply_intervention
+        from interpretune.tuning.interventions import OpIntervention
+
+        x = torch.randn(2, 3, D, generator=torch.Generator().manual_seed(2))
+        for op in ("add", "scale"):
+            intervention = OpIntervention(op, D, scale_factor=0.5)
+            with torch.no_grad():
+                intervention.operand.value.uniform_(0.5, 1.5)
+            spec = InterventionSpec(
+                intervention.operand.value.detach(), mode=op, scale_factor=0.5, position_scope="all_positions"
+            )
+            assert torch.allclose(intervention(x), apply_intervention(x.clone(), spec, last_pos=-1))
+
+    def test_an_operand_module_supplies_the_ops_tensor(self):
+        from interpretune.tuning.interventions import LearnedOperand, OpIntervention
+
+        heads = OpIntervention("scale", LearnedOperand((2, D // 2), init=1.0))
+        x = torch.randn(4, 3, 2, D // 2)
+        with torch.no_grad():
+            heads.operand.value[0].zero_()  # a learned per-head gain: the first head ablated
+        assert torch.equal(heads(x)[..., 0, :], torch.zeros(4, 3, D // 2)) and torch.equal(
+            heads(x)[..., 1, :], x[..., 1, :]
+        )
+
+    def test_apply_op_is_out_of_place_and_every_position_only(self):
+        from interpretune.analysis.backends.interventions import InterventionSpec, apply_op
+
+        x = _x()
+        before = x.clone()
+        apply_op(x, InterventionSpec(torch.ones(D), mode="add", position_scope="all_positions"))
+        assert torch.equal(x, before)
+        with pytest.raises(ValueError, match="edits every position"):
+            apply_op(x, InterventionSpec(torch.ones(D), mode="add"))

@@ -18,8 +18,9 @@ attached at a site and scheduled by role, whichever backend the module wraps:
 
 - :class:`LatentModel`, the protocol: ``encode`` activations to latents and ``decode`` latents back. sae_lens SAEs and
   circuit-tracer transcoders already satisfy it;
-- :class:`LatentSite`, where the model reads (a module's input or output) and which module's output it rewrites, and
-  how (:data:`LatentMode`);
+- :class:`LatentSite`, where the model reads (a module's input or output), which module's output it rewrites, and
+  with which op (:data:`LatentOp`): the reconstruction is the operand of venngram's ``replace`` op, or of its
+  straight-through substitution ``replace_with_error``; with no op the latents are only captured;
 - :func:`attach_latent_model` and :func:`detach_latent_model`, which register the model under the root's
   ``latent_models`` and splice it in with forward hooks;
 - :func:`latent_model_roles`, the roles to declare: ``latent:<name>`` for a tunable latent model, or ``instrument`` for
@@ -27,9 +28,9 @@ attached at a site and scheduled by role, whichever backend the module wraps:
   interpretune module declares them through its cooperative ``tunable_roles()``, which its venngram view reads.
 
 Attach latent models in a module's ``register_tunable_modules()`` override, which runs once the model exists and before
-the module's view is built. A circuit-tracer composition refuses them: its view assigns roles itself and would leave a
-spliced model's tensors without one. The analysis surface's feature ops (venngram feature targets at an SAE's
-``hook_sae_acts_post``) reach sae_lens SAEs only, not models attached here.
+the module's view is built. A circuit-tracer composition refuses them for now: its view assigns roles itself and would
+leave a spliced model's tensors without one (#953 lifts this where nothing conflicts). The analysis surface's feature
+ops (venngram feature targets at an SAE's ``hook_sae_acts_post``) reach sae_lens SAEs only, not models attached here.
 
 Sites are module paths under the root, so the same latent model attaches wherever a module computes the activations: a
 core module's ``model.model.layers.N.mlp``, an nnsight module's ``hf_model.model.layers.N.mlp`` or a TransformerLens
@@ -50,12 +51,13 @@ from torch import nn
 # the `nn.ModuleDict` on the root that holds attached latent models, by name
 LATENT_MODELS_ATTR = "latent_models"
 
-# How a latent model rewrites its site's output:
+# The op a latent model applies at its site, with its reconstruction as the operand (venngram's registry):
 # - "replace": the output becomes the reconstruction, so the model runs on what the latents capture;
-# - "replace_with_error": the output keeps its value (the reconstruction plus its detached error), while gradients reach
-#   the latent model through the reconstruction, as sae_lens's error term does;
-# - "observe": the output is unchanged and the latents are recorded (`last_latents`), for analysis.
-LatentMode = Literal["replace", "replace_with_error", "observe"]
+# - "replace_with_error": the straight-through substitution; the output keeps its value (the reconstruction plus its
+#   detached error) while gradients reach the latent model through the reconstruction, as sae_lens's error term does.
+# `None` applies no op: the output is unchanged and the latents are captured (`last_latents`), a read rather than an
+# intervention.
+LatentOp = Literal["replace", "replace_with_error"]
 
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 _HOOKS_ATTR = "_latent_model_hooks"
@@ -85,13 +87,25 @@ class LatentSite:
             input and writes that MLP's output.
         read_from: Whether the ``read`` module's ``"output"`` (the default) or its first positional ``"input"`` is
             encoded.
-        mode: How the output is rewritten (:data:`LatentMode`).
+        op: The op applied to the output with the reconstruction as its operand (:data:`LatentOp`), or ``None`` to
+            capture the latents (``last_latents``) and leave the output unchanged.
     """
 
     read: str
     write: str | None = None
     read_from: Literal["input", "output"] = "output"
-    mode: LatentMode = "replace_with_error"
+    op: LatentOp | None = "replace_with_error"
+
+    def __post_init__(self) -> None:
+        if self.op is not None:
+            from venngram.ops import OPS
+
+            if self.op not in OPS:
+                raise ValueError(
+                    f"{self.op!r} is not a registered op; venngram's registry holds {', '.join(sorted(OPS))}"
+                )
+            if self.op not in ("replace", "replace_with_error"):
+                raise ValueError(f"A latent model applies `replace` or `replace_with_error`, not {self.op!r}")
 
     @property
     def write_path(self) -> str:
@@ -122,12 +136,12 @@ class _Splice:
         if x is None:  # the read module did not run in this forward pass
             return output
         latents = self.latent.encode(x)
-        if self.site.mode == "observe":
+        if self.site.op is None:
             setattr(self.latent, "last_latents", latents.detach())  # the protocol does not declare it
             return output
         target = _first(output)
         recon = self.latent.decode(latents).to(target.dtype)
-        if self.site.mode == "replace_with_error":
+        if self.site.op == "replace_with_error":
             recon = recon + (target - recon).detach()
         return _with_first(output, recon)
 
@@ -149,8 +163,9 @@ def _refuse_circuit_tracer(root: nn.Module, what: str) -> None:
     spliced tensors without one (matched by class name: circuit-tracer is an optional dependency)."""
     if any(cls.__name__ == "BaseCircuitTracerModule" for cls in type(root).__mro__):
         raise ValueError(
-            f"A circuit-tracer composition does not take {what}: its view (CircuitTracerView) assigns roles itself, so"
-            " the spliced tensors would have none. Tune its transcoders by promoting them instead."
+            f"A circuit-tracer composition does not take {what} yet: its view (CircuitTracerView) assigns roles itself,"
+            " so the spliced tensors would have none (interpretune#953 tracks merging declared roles where they do not"
+            " conflict). Tune its transcoders by promoting them instead."
         )
 
 

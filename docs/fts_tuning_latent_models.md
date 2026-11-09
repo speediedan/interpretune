@@ -13,15 +13,15 @@ A *latent model* models a site's activations through latents. Examples:
 ## The seam
 
 - **`LatentModel`**: the protocol, an `nn.Module` with `encode(x)` (activations to latents) and `decode(z)` (latents to activations). sae_lens SAEs and circuit-tracer transcoders already satisfy it.
-- **`LatentSite(read, write=None, read_from="output", mode="replace_with_error")`**: where the latent model reads (the `read` module's output, or its first input) and which module's output it rewrites (`write`, by default the `read` module). Paths are module names under the interpretune module, so a site is `model.layers.0.mlp` on a core module, `hf_model.model.layers.0.mlp` on an nnsight module, or a TransformerLens bridge's hook point. Venngram site addresses replace these once interpretune resolves them ([#864](https://github.com/speediedan/interpretune/issues/864), [#876](https://github.com/speediedan/interpretune/issues/876)).
-- **Modes:**
-  - `"replace"`: runs the model on the reconstruction.
-  - `"replace_with_error"`: keeps each output's value (the reconstruction plus its detached error, as sae_lens's error term does) while gradients reach the latent model through the reconstruction.
-  - `"observe"`: records the latents (`last_latents`) and changes nothing.
+- **`LatentSite(read, write=None, read_from="output", op="replace_with_error")`**: where the latent model reads (the `read` module's output, or its first input), which module's output it rewrites (`write`, by default the `read` module), and the op applied there with the reconstruction as the operand. Paths are module names under the interpretune module, so a site is `model.layers.0.mlp` on a core module, `hf_model.model.layers.0.mlp` on an nnsight module, or a TransformerLens bridge's hook point. Venngram site addresses replace these once interpretune resolves them ([#864](https://github.com/speediedan/interpretune/issues/864), [#876](https://github.com/speediedan/interpretune/issues/876)).
+- **Ops** (venngram's registry, as every [intervention](fts_tuning_interventions.md) uses):
+  - `"replace"`: the output becomes the reconstruction, so the model runs on what the latents capture.
+  - `"replace_with_error"`: the straight-through substitution. The output keeps its value (the reconstruction plus its detached error, as sae_lens's error term does) while gradients reach the latent model through the reconstruction.
+  - `None`: no op. The latents are captured (`last_latents`) and the output is unchanged, a read rather than an intervention.
 - **`attach_latent_model(root, name, latent, site, frozen=False)`**: registers the latent model as `latent_models.<name>` on the module (so it is in the module's state dict and reachable by its view) and splices it in with forward hooks. `detach_latent_model(root, name)` removes it.
 - **Roles:** an attached latent model's tensors take venngram's role `latent:<name>`, so a schedule selects them with `role:latent:<name>`. Every interpretune module declares these roles in its cooperative `tunable_roles()`, which its venngram view reads, so no mixin is needed. A `frozen` latent model is an `instrument`: never thawed or checkpointed until a schedule promotes it.
 
-A circuit-tracer composition refuses latent models attached this way: its view assigns its roles itself, and its transcoders are tuned by promoting them. The analysis surface's feature ops (venngram feature targets at an SAE's `hook_sae_acts_post`) reach sae_lens SAEs only, not latent models attached here.
+A circuit-tracer composition refuses latent models attached this way for now: its view assigns its roles itself, and its transcoders are tuned by promoting them ([#953](https://github.com/speediedan/interpretune/issues/953) tracks lifting the refusal where nothing conflicts). The analysis surface's feature ops (venngram feature targets at an SAE's `hook_sae_acts_post`) reach sae_lens SAEs only, not latent models attached here.
 
 ## Attaching them
 

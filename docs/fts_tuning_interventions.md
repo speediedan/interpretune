@@ -2,16 +2,19 @@
 
 [Tuning](fts_tunable_views.md) describes how every composition declares and attaches its finetuning-scheduler view.
 
-An *intervention* rewrites one site's activations with parameters of its own. A steering vector adds a learned direction to a residual stream; other kinds (a learned ablation, a low-rank edit) rewrite a site in other ways. `interpretune.tuning.interventions` is the seam they share, the counterpart of [latent models](fts_tuning_latent_models.md) for modules that rewrite a site rather than model it through latents. Any intervention can be attached at a site, on any backend but circuit-tracer, and scheduled by role.
+An *intervention* applies an op (`add`, `scale`, `reject`, `patch`, ...: venngram's op registry) to a site's activations, as [Interpretune Intervention APIs](interpretune_intervention_apis.md) describes. Kinds of intervention differ in the op and in where its operand comes from: a constant or a dose (a zero ablation), a value computed from the model (a concept direction, another run's activation), a [latent model](fts_tuning_latent_models.md)'s reconstruction, or parameters of its own. `interpretune.tuning.interventions` is the seam for the last kind, *trainable* interventions, whose operand a schedule tunes. A steering vector is the `add` op with a learned vector; a learned per-unit gain is `scale`. Any trainable intervention can be attached at a site, on any backend but circuit-tracer (below), and scheduled by role.
 
 ## The seam
 
-- **`SteeringVector(width, scale=1.0)`**: the first kind, `x + scale * vector` at every position. The vector starts at zero, so attaching it changes nothing until it trains.
+- **`OpIntervention(op, operand, scale_factor=1.0)`**: applies `op` at every position with the operand's tensor (times `scale_factor`), through the same op math the analysis ops use (`apply_op`, its out-of-place form, so gradients reach the operand). `operand` is a module returning the tensor, or a width, for a `LearnedOperand` that starts where the op is the identity (`0` for `add`, `1 / scale_factor` for `scale`), so attaching it changes nothing until it trains. The ops applied so far are `add` and `scale`; other registered ops are refused by name.
+- **`SteeringVector(width, scale=1.0)`**: `OpIntervention("add", width)`, with its learned direction as `vector`.
 - **`attach_intervention(root, name, intervention, site, frozen=False)`**: registers the intervention as `interventions.<name>` on the module (so it is in the module's state dict and reachable by its view) and splices it in with a forward hook on the module at `site`, whose output (the first element of a tuple output) becomes `intervention(output)`. `detach_intervention(root, name)` removes it.
 - **Sites** are module names under the interpretune module: `model.model.layers.12` on a core module, `hf_model.model.layers.12` on an nnsight module, or a TransformerLens bridge's hook point such as `model.blocks.12.hook_out`. Venngram site addresses (`point:resid_post & layers:12`), one spelling for every backend, replace these once interpretune resolves them ([#864](https://github.com/speediedan/interpretune/issues/864), [#876](https://github.com/speediedan/interpretune/issues/876)).
 - **Roles:** an attached intervention's tensors take venngram's role `intervention:<name>`, as a PEFT adapter's take `adapter:<name>`. A schedule selects one intervention with `role:intervention:<name>` and every intervention with `role:intervention`. Every interpretune module declares these roles in its cooperative `tunable_roles()`, which its venngram view reads, so no mixin is needed. A `frozen` intervention is an `instrument` instead: applied in every forward pass and never trained, as a precomputed steering vector is.
 
-A circuit-tracer composition refuses interventions: its view assigns its roles itself, so the intervention's tensors would have none.
+Interventions without parameters (an ablation, a patch, a dose of a concept direction) need no role and no seam: the analysis ops apply them during a pass.
+
+**Circuit-tracer compositions refuse trainable interventions for now.** Their view assigns its transcoders' roles itself and admits no other tensors, so an intervention's tensors would have no role. circuit-tracer's own interventions are unaffected: `feature_intervention_forward` and `model_fwd_intervention` on concept directions ([circuit-tracer backend support](circuit_tracer_backend_support.md)) carry no parameters, so they never need one. Lifting the refusal where nothing conflicts needs the view to merge declared roles, site resolution that reaches circuit-tracer's forward on every backend, and attribution that never treats the intervention's tensors as gradient leaves ([#953](https://github.com/speediedan/interpretune/issues/953)).
 
 ## From a configuration
 
@@ -26,7 +29,7 @@ module_cfg:
         site: model.model.layers.12  # hf_model.model.layers.12 with nnsight, model.blocks.12.hook_out with TransformerLens
 ```
 
-`kind` is `steer` (the only kind a configuration builds), `width` defaults to the model's (`config.hidden_size`, or a TransformerLens model's `cfg.d_model`), and `scale` is the vector's fixed multiplier. A configured vector is always tunable: one attached frozen would start at zero and never change. To hold a trained vector fixed, refreeze it in a later stage (below). To apply a precomputed one, attach it in code with `frozen=True`.
+`op` is `add` (the default, a steering vector) or `scale`, `width` defaults to the model's (`config.hidden_size`, or a TransformerLens model's `cfg.d_model`), and `scale_factor` is a fixed multiplier on the operand. A configured intervention is always tunable: one attached frozen would start at the identity and never change. To hold a trained operand fixed, refreeze it in a later stage (below). To apply a precomputed one, attach it in code with `frozen=True`.
 
 ## Attaching them in code
 
