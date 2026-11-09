@@ -13,12 +13,10 @@ from typing import Any, Callable, Protocol, runtime_checkable
 import torch
 
 from interpretune.analysis.backends.capabilities import (
-    AnalysisBackendCapability,
     AttributionGraphSupport,
-    FeatureInterventionSupport,
+    Capability,
     InterventionSupport,
     LatentModelSupport,
-    ModelBackendCapability,
 )
 from interpretune.analysis.backends.interventions import InterventionDict, InterventionValue
 from interpretune.protocol import NamesFilter
@@ -30,20 +28,26 @@ class AnalysisBackendCore(Protocol):
 
     Same rule as :class:`ModelBackendCore`: every analysis backend implements this much, and the optional method
     groups live in the ``Supports*`` protocols below, each tied to the
-    :class:`~interpretune.analysis.backends.capabilities.AnalysisBackendCapability` member of the same name. A
-    member answers whether the backend implements a group; which configurations of the group it honours is the
-    typed support record on that protocol, never a member. An op reaches a gated method only after the gate says
-    the group is declared, and never through a default: a method looked up with a fallback is a method whose
-    absence produces a plausible partial result instead of a refusal.
+    :class:`~interpretune.analysis.backends.capabilities.Capability` member it implements. A member answers whether
+    the backend implements a group; which configurations of the group it honours is the typed support record on that
+    protocol, never a member. ``requires`` names what it needs the model backend (or another component) to provide.
+    An op reaches a gated method only after the gate says the group is declared, and never through a default: a
+    method looked up with a fallback is a method whose absence produces a plausible partial result instead of a
+    refusal.
     """
 
     @property
-    def capabilities(self) -> frozenset[AnalysisBackendCapability]:
-        """Return the set of analysis capabilities this backend supports."""
+    def capabilities(self) -> frozenset[Capability]:
+        """Return the set of capabilities this backend provides."""
         ...
 
-    def supports(self, capability: AnalysisBackendCapability) -> bool:
-        """Check whether this backend supports a given analysis capability."""
+    @property
+    def requires(self) -> frozenset[Capability]:
+        """The capabilities this backend needs another component of the composition to provide."""
+        ...
+
+    def supports(self, capability: Capability) -> bool:
+        """Check whether this backend provides a given capability."""
         ...
 
     def get_tokenizer(self, module: Any) -> Any:
@@ -78,7 +82,7 @@ class AnalysisBackendCore(Protocol):
 
 @runtime_checkable
 class SupportsAttributionGraph(Protocol):
-    """Methods gated by ``AnalysisBackendCapability.ATTRIBUTION_GRAPH``: graph construction, storage and scoring.
+    """Methods gated by ``Capability.ATTRIBUTION_GRAPH``: graph construction, storage and scoring.
 
     The record says what the construction needs of the model it runs on. Its first measured requirement is the
     attention implementation: circuit-tracer resolves gemma's attention-pattern location through nnsight's source
@@ -160,7 +164,7 @@ class SupportsAttributionGraph(Protocol):
 
 @runtime_checkable
 class SupportsHeadAttribution(Protocol):
-    """Methods gated by ``AnalysisBackendCapability.HEAD_ATTRIBUTION``: credit at the level of attention heads.
+    """Methods gated by ``Capability.HEAD_ATTRIBUTION``: credit at the level of attention heads.
 
     An attribution graph holds attention patterns constant by default, so it credits no node for changing where
     attention looks, and its edges say nothing about which head carried them. These two reports answer that at
@@ -200,18 +204,19 @@ class SupportsHeadAttribution(Protocol):
 
 @runtime_checkable
 class SupportsFeatureInterventions(Protocol):
-    """Methods gated by ``AnalysisBackendCapability.FEATURE_INTERVENTION``: interventions on latent feature
-    activations.
+    """Methods behind ``Capability.INTERVENTION`` on the ``features`` target for a provider that applies feature
+    tuples: interventions on the activations of features an attribution graph named.
 
-    Distinct from the model-level ``ACTIVATION_INTERVENTION`` surface, which edits an activation at any vocabulary
-    point or latent sub-hook; this group edits the activations of features an attribution graph named. The record
-    carries the configuration space: which value sources exist, whether layers can be constrained, whether the
-    intervened activations can be returned.
+    The same surface as :class:`SupportsIntervention`, reached through a different execution interface: a provider
+    that applies hook specs implements ``fwd_w_intervention``, and one that applies canonical
+    ``(layer, position, feature_id, value)`` tuples implements this group. The ``features`` target's detail record
+    (:class:`~interpretune.analysis.backends.capabilities.FeatureTargetSupport`) carries the configuration space:
+    which value sources exist, whether layers can be constrained, whether the intervened activations can be returned.
     """
 
     @property
-    def feature_intervention_support(self) -> FeatureInterventionSupport:
-        """Which configurations of the feature-intervention surface this backend honours."""
+    def intervention_support(self) -> InterventionSupport:
+        """The ops, targets and scopes this provider honours, with the ``features`` target's detail."""
         ...
 
     def resolve_feature_intervention_settings(
@@ -276,7 +281,7 @@ class ModelBackendCore(Protocol):
     Every model backend implements this much: plain forward, cached forward, and cache wrapping,
     plus the capability introspection ops use to gate everything beyond it. The optional method
     groups live in the ``Supports*`` protocols below, each tied to the
-    :class:`~interpretune.analysis.backends.capabilities.ModelBackendCapability` member of the same name;
+    :class:`~interpretune.analysis.backends.capabilities.Capability` member it implements;
     ops call an optional method only after ``backend.supports(...)`` says so (see
     ``require_backend_capability``). A partial backend (e.g. a hub-delivered adapter's) implements
     this core plus whichever groups it truthfully claims.
@@ -291,15 +296,20 @@ class ModelBackendCore(Protocol):
     """
 
     @property
-    def capabilities(self) -> frozenset[ModelBackendCapability]:
-        """Return the set of capabilities this backend supports.
+    def capabilities(self) -> frozenset[Capability]:
+        """Return the set of capabilities this backend provides.
 
         Backends must override this property to declare their capabilities. Analysis ops can check capabilities before
         calling optional methods.
         """
         ...
 
-    def supports(self, capability: ModelBackendCapability) -> bool:
+    @property
+    def requires(self) -> frozenset[Capability]:
+        """The capabilities this backend needs another component of the composition to provide (usually none)."""
+        ...
+
+    def supports(self, capability: Capability) -> bool:
         """Check whether this backend supports a given capability.
 
         Default implementation checks ``capability in self.capabilities``.
@@ -367,7 +377,7 @@ class ModelBackendCore(Protocol):
 
 @runtime_checkable
 class SupportsLatentModels(Protocol):
-    """Methods gated by ``ModelBackendCapability.LATENT_MODELS``: execution with latent-model handles attached.
+    """Methods gated by ``Capability.LATENT_MODELS``: execution with latent-model handles attached.
 
     ``fwd_w_hooks_batched`` is part of this group: every latent-models backend implements it, and a
     sequential loop is a valid implementation. Whether the backend FUSES the configs into one execution
@@ -439,7 +449,7 @@ class SupportsLatentModels(Protocol):
 
         Each element of ``hook_configs`` is a ``fwd_hooks`` list (as passed to
         ``fwd_w_hooks_and_latent_models``).  Backends that support
-        :attr:`ModelBackendCapability.BATCHED_HOOKS` may batch all configs into a single
+        :attr:`LatentModelSupport.batched_hooks` may batch all configs into a single
         execution context (e.g., NNsight multi-invoke within one trace) for efficiency.
         Other backends loop over configs sequentially.
 
@@ -470,7 +480,7 @@ class SupportsLatentModels(Protocol):
 
 @runtime_checkable
 class SupportsGradients(Protocol):
-    """Methods gated by ``ModelBackendCapability.GRADIENTS``: forward + backward with gradient caching."""
+    """Methods gated by ``Capability.GRADIENTS``: forward + backward with gradient caching."""
 
     def fwd_w_grads_and_latent_models(
         self,
@@ -515,10 +525,10 @@ class SupportsGradients(Protocol):
 
 @runtime_checkable
 class SupportsIntervention(Protocol):
-    """Methods gated by ``ModelBackendCapability.ACTIVATION_INTERVENTION``: baseline-vs-intervention paired
-    execution.
+    """Methods behind ``Capability.INTERVENTION`` for a provider that applies hook specs: baseline-vs-intervention
+    paired execution.
 
-    Claiming the surface is not the whole contract. Which position scopes and which modes a backend can
+    Claiming the surface is not the whole contract. Which ops, targets and position scopes a backend can
     honour are declared on :attr:`intervention_support`, and ``require_intervention_support`` refuses a
     request outside that declaration BEFORE ``fwd_w_intervention`` is reached, naming the axis. A backend
     is expected to keep its own refusals for the same cases as the second line of defence: the
@@ -528,7 +538,7 @@ class SupportsIntervention(Protocol):
 
     @property
     def intervention_support(self) -> InterventionSupport:
-        """The scopes and modes this backend can honour.
+        """The ops, targets and scopes this backend can honour.
 
         Required whenever ``INTERVENTION`` is declared.
         """

@@ -19,7 +19,7 @@ import torch
 from interpretune.analysis.backends import (
     InterventionMode,
     InterventionSupport,
-    ModelBackendCapability,
+    Capability,
     PositionScope,
 )
 from interpretune.analysis.ops.base import AnalysisBatch
@@ -45,10 +45,10 @@ class _Tiny(torch.nn.Module):
 class _GradBackend:
     """Declares the intervention + gradients surfaces and executes both for real."""
 
-    capabilities = frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION, ModelBackendCapability.GRADIENTS})
+    capabilities = frozenset({Capability.INTERVENTION, Capability.GRADIENTS})
     intervention_support = InterventionSupport(
         position_scopes=frozenset(PositionScope),
-        modes=frozenset(InterventionMode),
+        ops=frozenset(InterventionMode),
     )
 
     def _site_module(self, model):

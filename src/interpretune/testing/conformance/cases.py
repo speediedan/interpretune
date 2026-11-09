@@ -15,10 +15,11 @@ import torch
 
 from interpretune.analysis.backends.capabilities import _unwrap_execution_handle
 from interpretune.analysis.backends import (
-    AnalysisBackendCapability,
+    Capability,
+    COMPONENTS,
     get_analysis_backend,
+    get_model_backend,
     InterventionMode,
-    ModelBackendCapability,
     PositionScope,
     SupportsAttributionGraph,
     SupportsFeatureInterventions,
@@ -78,15 +79,15 @@ def _bounded_reject_direction(captured_direction: torch.Tensor) -> torch.Tensor:
     return (mixed / mixed.norm()).to(captured_direction.dtype)
 
 
-_PROTOCOL_FOR = {
-    ModelBackendCapability.LATENT_MODELS: SupportsLatentModels,
-    ModelBackendCapability.GRADIENTS: SupportsGradients,
-    ModelBackendCapability.ACTIVATION_INTERVENTION: SupportsIntervention,
-}
-_ANALYSIS_PROTOCOL_FOR = {
-    AnalysisBackendCapability.ATTRIBUTION_GRAPH: SupportsAttributionGraph,
-    AnalysisBackendCapability.FEATURE_INTERVENTION: SupportsFeatureInterventions,
-    AnalysisBackendCapability.HEAD_ATTRIBUTION: SupportsHeadAttribution,
+#: The protocol(s) a component declaring each capability satisfies; INTERVENTION has two execution interfaces (hook
+#: specs through ``fwd_w_intervention``, feature tuples through the feature-intervention group), and a provider
+#: satisfies at least one. CAPTURE is a method rather than a protocol (``capture_support(model)``).
+_PROTOCOLS_FOR: dict[Capability, tuple[type, ...]] = {
+    Capability.LATENT_MODELS: (SupportsLatentModels,),
+    Capability.GRADIENTS: (SupportsGradients,),
+    Capability.INTERVENTION: (SupportsIntervention, SupportsFeatureInterventions),
+    Capability.ATTRIBUTION_GRAPH: (SupportsAttributionGraph,),
+    Capability.HEAD_ATTRIBUTION: (SupportsHeadAttribution,),
 }
 
 
@@ -305,9 +306,7 @@ class ModelBackendConformance:
             return
         report = request.config.stash.get(_REPORT_KEY, None)
         if report is not None and not report.declared:
-            report.declared = sorted(c.name for c in suite.capabilities.model) + sorted(
-                c.name for c in suite.capabilities.analysis
-            )
+            report.declared = sorted(c.name for c in suite.capabilities.declared)
         if report is not None:
             report.capture.setdefault(
                 type(self).__name__,
@@ -326,38 +325,39 @@ class ModelBackendConformance:
 
     @conformance_case()
     def test_session_composes_and_declarations_are_coherent(self, suite):
-        """A backend is attached, each declared surface satisfies its protocol, and records match declarations."""
+        """A model backend is attached, every component's declared surfaces satisfy their protocols, its
+        requirements are met elsewhere, and records match declarations."""
         backend = suite.backend
         assert backend is not None, "the composed module attaches no model backend"
-        assert isinstance(backend.capabilities, frozenset)
-        for cap in backend.capabilities:
-            assert isinstance(cap, ModelBackendCapability), f"{cap!r} is not a ModelBackendCapability member"
-            protocol = _PROTOCOL_FOR[cap]
-            assert isinstance(backend, protocol), (
-                f"{suite.backend_name} declares {cap.name} but is not a {protocol.__name__}"
+        components = {
+            name: component
+            for name, component in zip(
+                COMPONENTS, (get_model_backend(suite.module), get_analysis_backend(suite.module))
             )
-        # the present-iff-declared invariant, from the live objects rather than the enum
-        assert (suite.capabilities.intervention is not None) == (
-            ModelBackendCapability.ACTIVATION_INTERVENTION in backend.capabilities
-        )
-        assert (suite.capabilities.latent_models is not None) == (
-            ModelBackendCapability.LATENT_MODELS in backend.capabilities
-        )
-        # the analysis level under the same rule: each declared group satisfies its protocol and carries its record
-        analysis_backend = get_analysis_backend(suite.module)
-        declared_analysis = frozenset(analysis_backend.capabilities) if analysis_backend is not None else frozenset()
-        for cap in declared_analysis:
-            assert isinstance(cap, AnalysisBackendCapability), f"{cap!r} is not an AnalysisBackendCapability member"
-            protocol = _ANALYSIS_PROTOCOL_FOR[cap]
-            assert isinstance(analysis_backend, protocol), (
-                f"{type(analysis_backend).__name__} declares {cap.name} but is not a {protocol.__name__}"
-            )
-        assert (suite.capabilities.attribution_graph is not None) == (
-            AnalysisBackendCapability.ATTRIBUTION_GRAPH in declared_analysis
-        )
-        assert (suite.capabilities.feature_intervention is not None) == (
-            AnalysisBackendCapability.FEATURE_INTERVENTION in declared_analysis
-        )
+            if component is not None
+        }
+        for name, component in components.items():
+            assert isinstance(component.capabilities, frozenset)
+            for cap in component.capabilities:
+                assert isinstance(cap, Capability), f"{cap!r} is not a Capability member"
+                if cap is Capability.CAPTURE:
+                    assert callable(getattr(component, "capture_support", None)), (
+                        f"the {name} declares CAPTURE but has no capture_support(model)"
+                    )
+                    continue
+                protocols = _PROTOCOLS_FOR[cap]
+                assert isinstance(component, protocols), (
+                    f"the {name} declares {cap.name} but is none of {[p.__name__ for p in protocols]}"
+                )
+            # the present-iff-declared invariant, from the live objects rather than the enum
+            assert (name in suite.capabilities.intervention) == (Capability.INTERVENTION in component.capabilities)
+            for need in getattr(component, "requires", frozenset()):
+                assert any(need in other.capabilities for o, other in components.items() if o != name), (
+                    f"the {name} requires {need.name} and no other component provides it"
+                )
+        declared = suite.capabilities.declared
+        assert (suite.capabilities.latent_models is not None) == (Capability.LATENT_MODELS in declared)
+        assert (suite.capabilities.attribution_graph is not None) == (Capability.ATTRIBUTION_GRAPH in declared)
 
     @conformance_case()
     def test_supplied_settings_survive_composition(self, suite):
@@ -392,7 +392,7 @@ class ModelBackendConformance:
         latent models configured, which would fail first.
         """
         backend = suite.backend
-        undeclared = [c for c in ModelBackendCapability if c not in backend.capabilities]
+        undeclared = [c for c in Capability if c not in backend.capabilities]
         # A backend declaring every surface has nothing to refuse; that is a pass, not a skip, because the
         # claim "every surface is declared" is itself checked above and a skip here would count as "other".
         for cap in undeclared:
@@ -591,7 +591,7 @@ class ModelBackendConformance:
         return steering_vector(captured_points(store, 0)[point])
 
     @conformance_case(
-        capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
+        capability=Capability.INTERVENTION,
         scope=PositionScope.LAST_TOKEN,
         mode=InterventionMode.ADD,
     )
@@ -607,7 +607,7 @@ class ModelBackendConformance:
             assert got == expected_positions("last_token", seq), f"batch {i}: changed {sorted(got)}"
 
     @conformance_case(
-        capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
+        capability=Capability.INTERVENTION,
         scope=PositionScope.ALL_POSITIONS,
         mode=InterventionMode.ADD,
     )
@@ -623,37 +623,33 @@ class ModelBackendConformance:
             expected = {int(p) for p in torch.nonzero(real.any(dim=0)).flatten().tolist()}
             assert got == expected, f"batch {i}: changed {sorted(got)} but the real positions are {sorted(expected)}"
 
-    @conformance_case(
-        capability=ModelBackendCapability.ACTIVATION_INTERVENTION, scope=PositionScope.ALL_POSITIONS, negative=True
-    )
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, negative=True)
     def test_undeclared_all_positions_is_refused(self, suite):
         """A scope the backend did not declare is refused by name, never narrowed."""
         with expect_refusal(NotImplementedError, match="position_scope='all_positions'"):
             self._intervene(suite, scope="all_positions")
 
-    @conformance_case(
-        capability=ModelBackendCapability.ACTIVATION_INTERVENTION, scope=PositionScope.LAST_TOKEN, negative=True
-    )
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.LAST_TOKEN, negative=True)
     def test_undeclared_last_token_is_refused(self, suite):
         """A scope the backend did not declare is refused by name, never widened."""
         with expect_refusal(NotImplementedError, match="position_scope='last_token'"):
             self._intervene(suite, scope="last_token")
 
-    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION)
+    @conformance_case(capability=Capability.INTERVENTION)
     def test_undeclared_modes_are_refused_on_the_mode_axis(self, suite):
         """Each undeclared mode is refused naming the mode axis, never applied as another mode."""
-        declared = {m.value for m in suite.capabilities.intervention.modes}
+        declared = {m.value for m in suite.capabilities.intervention_for("activation").ops}
         undeclared = [m for m in InterventionMode if m.value not in declared]
         # Every mode declared means nothing to refuse: a pass, since the declaration itself is checked elsewhere.
-        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         for mode in undeclared:
             with expect_refusal(NotImplementedError, match=f"mode='{mode.value}'"):
                 self._intervene(suite, scope=scope, mode=mode.value)
 
-    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.ADD)
+    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.ADD)
     def test_zero_intervention_is_identity(self, suite):
         """A zero-scale intervention leaves the logits unchanged."""
-        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         store = self._intervene(suite, scope=scope, scale=0.0)
         for pre, post in zip(store["pre_intervention_logits"], store["post_intervention_logits"]):
             torch.testing.assert_close(
@@ -695,20 +691,20 @@ class ModelBackendConformance:
                 y, x, rtol=PADDED_RTOL, atol=PADDED_ATOL, msg=lambda detail, i=i: f"{what} (batch {i})\n{detail}"
             )
 
-    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.REPLACE)
+    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.REPLACE)
     def test_replace_ignores_the_scale_factor(self, suite):
         """`replace` installs the tensor as-is: the result is independent of `scale_factor`, and it moves."""
-        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         vector = self._vector(suite)
         unit = self._intervene(suite, scope=scope, mode="replace", scale=1.0, vector=vector)
         scaled = self._intervene(suite, scope=scope, mode="replace", scale=STEER_SCALE * 3, vector=vector)
         self._assert_moved(unit, what="replace")
         self._assert_same_logits(unit, scaled, what="replace changed with scale_factor, which it must ignore")
 
-    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.PATCH)
+    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.PATCH)
     def test_patch_of_a_pair_with_itself_is_identity(self, suite):
         """Swapping a concept's coordinates with its own leaves the activation, and the logits, unchanged."""
-        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         vector = self._vector(suite)
         # scale_factor=1.0 is the pure exchange; the paper's alpha scales the swapped coordinates, so any other
         # value is a deliberate over- or under-steer and not an identity
@@ -722,14 +718,14 @@ class ModelBackendConformance:
                 msg=lambda detail, i=i: f"patch (v, v) changed the logits (batch {i})\n{detail}",
             )
 
-    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.PATCH)
+    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.PATCH)
     def test_patch_is_symmetric_in_pair_order(self, suite):
         r"""$h + V(\sigma(c) - c)$ is the same update for $(s, t)$ and $(t, s)$, and it moves the logits.
 
         Both orders exchange the same two coordinates, so the pair is unordered; a backend that treated index 0
         as "from" and index 1 as "to" in some other sense would break this without breaking the identity case.
         """
-        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         source = self._vector(suite)
         target = self._second_vector(source)
         forward = self._intervene(suite, scope=scope, mode="patch", scale=1.0, vector=torch.stack([source, target]))
@@ -737,10 +733,10 @@ class ModelBackendConformance:
         self._assert_moved(forward, what="patch (s, t)")
         self._assert_same_logits(forward, reverse, what="patch (s, t) and patch (t, s) differ")
 
-    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.SCALE)
+    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.SCALE)
     def test_scale_by_ones_is_identity(self, suite):
         """Multiplying the activation by ones leaves the logits unchanged, and a non-unit multiplier moves them."""
-        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         ones = torch.ones_like(self._vector(suite))
         store = self._intervene(suite, scope=scope, mode="scale", scale=1.0, vector=ones)
         for i, (pre, post) in enumerate(zip(store["pre_intervention_logits"], store["post_intervention_logits"])):
@@ -754,17 +750,17 @@ class ModelBackendConformance:
         tripled = self._intervene(suite, scope=scope, mode="scale", scale=1.0, vector=ones * 3.0)
         self._assert_moved(tripled, what="scale")
 
-    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.PROJECT)
+    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.PROJECT)
     def test_project_depends_only_on_the_basis_span(self, suite):
         """Projecting onto ``v`` and onto ``-2v`` is the same projection, and it moves the logits."""
-        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         vector = self._vector(suite)
         onto_v = self._intervene(suite, scope=scope, mode="project", scale=1.0, vector=vector)
         onto_span = self._intervene(suite, scope=scope, mode="project", scale=1.0, vector=vector * -2.0)
         self._assert_moved(onto_v, what="project")
         self._assert_same_logits(onto_v, onto_span, what="project onto v and onto -2v differ")
 
-    @conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION)
+    @conformance_case(capability=Capability.INTERVENTION)
     def test_declared_modes_are_distinguishable(self, suite):
         """Every declared mode, given the same vector and point, yields logits distinguishable from every other
         declared mode and from the baseline.
@@ -772,7 +768,7 @@ class ModelBackendConformance:
         This is the case a backend that ignored ``mode`` and applied the one it has would fail, which is how the
         first hub adapter's backend once behaved: plausible logits for an intervention nobody requested.
         """
-        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         vector = self._vector(suite)
         payloads: dict[str, tuple[torch.Tensor, float]] = {
             "add": (vector, STEER_SCALE),
@@ -791,7 +787,7 @@ class ModelBackendConformance:
         # bound it is the identity for every input, so an entry here is what makes the mode exercisable
         # rather than merely declared.
         extras: dict[str, dict] = {"clamp": {"clamp_min": -1.0, "clamp_max": 1.0}}
-        declared = sorted(m.value for m in suite.capabilities.intervention.modes)
+        declared = sorted(m.value for m in suite.capabilities.intervention_for("activation").ops)
         results = {
             mode: self._intervene(
                 suite,
@@ -813,12 +809,10 @@ class ModelBackendConformance:
                 )
                 assert not same, f"modes {a!r} and {b!r} produced the same logits for the same vector and point"
 
-    @conformance_case(
-        capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.ADD, family="hf_native"
-    )
+    @conformance_case(capability=Capability.INTERVENTION, mode=InterventionMode.ADD, family="hf_native")
     def test_baseline_is_an_unsteered_forward(self, suite, hf):
         """The pre-intervention half equals the plain forward."""
-        scope = next(iter(suite.capabilities.intervention.position_scopes)).value
+        scope = next(iter(suite.capabilities.intervention_for("activation").position_scopes)).value
         store = self._intervene(suite, scope=scope)
         for i, pre in enumerate(store["pre_intervention_logits"]):
             ids, mask = suite.batch_inputs(i)
@@ -827,7 +821,7 @@ class ModelBackendConformance:
             _assert_close_padded(pre, ref, what=f"batch {i}: the baseline half against the plain forward")
 
     @conformance_case(
-        capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
+        capability=Capability.INTERVENTION,
         scope=PositionScope.LAST_TOKEN,
         mode=InterventionMode.ADD,
         family="hf_native",
@@ -854,7 +848,7 @@ class ModelBackendConformance:
     # -- INTERVENTION: mixed scopes -------------------------------------------------------------------
 
     @conformance_case(
-        capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
+        capability=Capability.INTERVENTION,
         scopes=(PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS),
         mode=InterventionMode.ADD,
         family="hf_native",
@@ -913,7 +907,7 @@ class ModelBackendConformance:
             assert not same, f"the mixed-scope payload gave the logits of a {scope!r}-only payload at {first!r}"
 
     @conformance_case(
-        capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
+        capability=Capability.INTERVENTION,
         modes=(InterventionMode.ADD, InterventionMode.REJECT),
         family="hf_native",
     )
@@ -1115,7 +1109,7 @@ class ModelBackendConformance:
                 fwd_hooks=fwd_hooks,
             )
 
-    @conformance_case(capability=ModelBackendCapability.LATENT_MODELS)
+    @conformance_case(capability=Capability.LATENT_MODELS)
     def test_latent_op_stores_the_declared_schema(self, suite):
         """`logit_diffs_latent` yields, per batch and per attached model, a non-empty alive-latent set and the
         answer-position activations of the correct rows, `[rows, d_sae]`."""
@@ -1132,7 +1126,7 @@ class ModelBackendConformance:
             assert acts.ndim == 2 and acts.shape[-1] == handle.cfg.d_sae, f"batch {i}: {tuple(acts.shape)}"
             assert torch.isfinite(acts).all(), f"batch {i}: non-finite activations"
 
-    @conformance_case(capability=ModelBackendCapability.LATENT_MODELS)
+    @conformance_case(capability=Capability.LATENT_MODELS)
     def test_alive_latents_are_the_positive_latents_at_the_answer(self, suite):
         """Internal consistency, with no reference: every latent positive in a correct row's answer-position
         activation is in the batch's alive set, and some batch has such a latent (else the claim is vacuous)."""
@@ -1147,7 +1141,7 @@ class ModelBackendConformance:
             checked += len(positive)
         assert checked > 0, "no correct row had a positive latent, so the subset claim held vacuously"
 
-    @conformance_case(capability=ModelBackendCapability.LATENT_MODELS)
+    @conformance_case(capability=Capability.LATENT_MODELS)
     def test_batched_hooks_agree_with_sequential(self, suite):
         """`fwd_w_hooks_batched` returns, per config, what one `fwd_w_hooks_and_latent_models` call returns.
 
@@ -1195,7 +1189,7 @@ class ModelBackendConformance:
             f"ablating latent {first} and latent {second} gave the same logits, so the agreement above is vacuous"
         )
 
-    @conformance_case(capability=ModelBackendCapability.LATENT_MODELS)
+    @conformance_case(capability=Capability.LATENT_MODELS)
     def test_ablating_a_dead_latent_is_identity(self, suite):
         """Zeroing a latent that is already zero at the answer position leaves the logits unchanged, and zeroing
         the strongest alive one moves them (positive control).
@@ -1216,7 +1210,7 @@ class ModelBackendConformance:
 
     # -- GRADIENTS ----------------------------------------------------------------------------------
 
-    @conformance_case(capability=ModelBackendCapability.GRADIENTS)
+    @conformance_case(capability=Capability.GRADIENTS)
     def test_gradient_op_stores_the_declared_schema(self, suite):
         """`logit_diffs_attr_grad` yields per-hook attribution values `[rows, d_sae]`, finite, zero off the alive
         set, and non-zero somewhere (positive control)."""
@@ -1255,7 +1249,7 @@ class ModelBackendConformance:
         )
         return float(logit_diffs.sum())
 
-    @conformance_case(capability=ModelBackendCapability.GRADIENTS)
+    @conformance_case(capability=Capability.GRADIENTS)
     def test_gradient_predicts_a_small_perturbation_to_first_order(self, suite):
         """Scaling the strongest latent by `1 + eps` at the answer position moves the summed logit difference by
         `eps` times its stored attribution, to first order.
@@ -1297,7 +1291,7 @@ class ModelBackendConformance:
             f"first-order prediction {predicted:.4e} vs measured {measured:.4e} for latent {latent} (eps={eps})"
         )
 
-    # -- analysis backend: ATTRIBUTION_GRAPH / FEATURE_INTERVENTION -------------------------------------
+    # -- analysis backend: ATTRIBUTION_GRAPH / INTERVENTION on features -------------------------------
     #
     # The graph ops take a prompt rather than a datamodule batch, so these cases call the ops the way every caller
     # does (an analysis batch carrying the prompt, no dataloader batch), which is the ops' own entry rather than a
@@ -1329,7 +1323,7 @@ class ModelBackendConformance:
                 raise AssertionError(_attribution_failure_context(suite, exc)) from exc
         return suite.memo[key]
 
-    @conformance_case(capability=AnalysisBackendCapability.ATTRIBUTION_GRAPH)
+    @conformance_case(capability=Capability.ATTRIBUTION_GRAPH)
     def test_attribution_graph_round_trips_through_the_store(self, suite):
         """The graph the op writes as store columns hydrates back to the graph it computed: same adjacency, same
         active features, and the selected features index into them."""
@@ -1348,7 +1342,7 @@ class ModelBackendConformance:
         selected = torch.as_tensor(graph.selected_features).cpu()
         assert selected.numel() > 0 and int(selected.max()) < int(active.shape[0])
 
-    @conformance_case(capability=AnalysisBackendCapability.HEAD_ATTRIBUTION)
+    @conformance_case(capability=Capability.HEAD_ATTRIBUTION)
     def test_head_loadings_partition_the_edges(self, suite):
         """At a reported layer the heads' shares and the bypass share sum to 1, and a head carries something, since
         a report of zeros would also partition the edges.
@@ -1380,7 +1374,7 @@ class ModelBackendConformance:
         torch.testing.assert_close(partitioned, torch.ones_like(partitioned), atol=1e-3, rtol=0.0)
         assert_non_degenerate(shares.head_loading_shares, what="head shares")
 
-    @conformance_case(capability=AnalysisBackendCapability.ATTRIBUTION_GRAPH)
+    @conformance_case(capability=Capability.ATTRIBUTION_GRAPH)
     def test_pruning_is_monotone(self, suite):
         """A stricter node threshold keeps a subset of what a looser one keeps, and keeps strictly fewer at some
         pair (positive control: a pruning that ignored its threshold would pass the subset claim vacuously)."""
@@ -1401,7 +1395,7 @@ class ModelBackendConformance:
         assert kept[0.3] <= kept[0.6] <= kept[0.9], {t: len(v) for t, v in kept.items()}
         assert len(kept[0.3]) < len(kept[0.9]), f"pruning kept {len(kept[0.9])} nodes at every threshold"
 
-    @conformance_case(capability=AnalysisBackendCapability.FEATURE_INTERVENTION)
+    @conformance_case(capability=Capability.INTERVENTION, target="features", provider="analysis_backend")
     def test_the_edge_predicts_the_measured_feature_intervention(self, suite):
         """Scaling a top feature's activation moves the other active features and the target logits by the graph's
         edge weights into that feature, times the scale: the graph is a linear model of the intervention it
@@ -1417,8 +1411,8 @@ class ModelBackendConformance:
         # frozen at their baseline rather than re-activated nonlinearly), so the case states that requirement on
         # the module's settings rather than assuming the target set it: measured unconstrained on gemma-3-1b-it, the
         # active features moved off the edges by up to 126 where the edges predicted under 1e-3.
-        record = suite.capabilities.feature_intervention
-        assert record is not None, "FEATURE_INTERVENTION is declared with no feature_intervention record"
+        record = suite.capabilities.target_detail("features", provider="analysis_backend")
+        assert record is not None, "the analysis backend's features target carries no detail record"
         if not record.constrainable_layers:
             pytest.skip(
                 "the graph is a linear model of an intervention only with every layer constrained, and this backend"
@@ -1526,7 +1520,7 @@ class ModelBackendConformance:
             )
         return suite.memo[key]
 
-    @conformance_case(capability=AnalysisBackendCapability.FEATURE_INTERVENTION)
+    @conformance_case(capability=Capability.INTERVENTION, target="features", provider="analysis_backend")
     def test_feature_intervention_settings_are_decided_by_the_declaration(self, suite):
         """Each configuration the record declares is honoured through the op path and each it does not is refused
         by name before any forward: a value source outside ``value_sources``, a layer constraint on a backend that
@@ -1535,8 +1529,8 @@ class ModelBackendConformance:
         import interpretune as it
         from interpretune.analysis.ops.base import AnalysisBatch
 
-        record = suite.capabilities.feature_intervention
-        assert record is not None, "FEATURE_INTERVENTION is declared with no feature_intervention record"
+        record = suite.capabilities.target_detail("features", provider="analysis_backend")
+        assert record is not None, "the analysis backend's features target carries no detail record"
         fields = self._single_feature_fields(suite)
 
         def run(**overrides):
@@ -1579,7 +1573,7 @@ class ModelBackendConformance:
                 run(intervention_freeze_norms=True)
             assert "freeze_norms" in str(refused.value), str(refused.value)
 
-    @conformance_case(capability=AnalysisBackendCapability.ATTRIBUTION_GRAPH)
+    @conformance_case(capability=Capability.ATTRIBUTION_GRAPH)
     def test_foreign_attention_is_refused_before_graph_construction(self, suite):
         """When the record requires the modeling module's own eager attention, a model whose attention function
         another library replaced is refused by name, naming the foreign function and the modeling module, before

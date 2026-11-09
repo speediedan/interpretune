@@ -64,7 +64,7 @@ from typing import Any
 
 import torch
 
-from interpretune.analysis.backends.capabilities import FeatureInterventionSupport, InterventionMode, PositionScope
+from interpretune.analysis.backends.capabilities import FeatureTargetSupport, InterventionMode, PositionScope
 from interpretune.analysis.backends.interventions import InterventionSpec
 from interpretune.analysis.venngram.values import member_refusal, member_values, target_kind
 from interpretune.utils import MisconfigurationException
@@ -280,7 +280,7 @@ def recipe_interventions(
 def recipe_feature_interventions(
     recipe: Any,
     *,
-    support: FeatureInterventionSupport,
+    support: FeatureTargetSupport,
     evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
     statistics: Mapping[str, float | Mapping[int, float]] | None = None,
 ) -> list[tuple[int, int, int, float]]:
@@ -288,7 +288,8 @@ def recipe_feature_interventions(
 
     Args:
         recipe: The recipe to translate; every op must be one :func:`feature_op_refusal` admits.
-        support: The analysis backend's declaration. The tuples carry computed values, so it must honour ``constant``.
+        support: The ``features`` target's detail in the analysis backend's intervention record. The tuples carry
+            computed values, so it must honour ``constant``.
         evidence: The tables evidence-sourced values read (:mod:`~interpretune.analysis.venngram.values`).
         statistics: The statistics their transforms name.
 

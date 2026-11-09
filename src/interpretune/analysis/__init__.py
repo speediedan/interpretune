@@ -29,8 +29,7 @@ from interpretune.analysis.execution import AnalysisInputs, execute_analysis_op,
 from interpretune.hub.manager import HubAnalysisOpManager
 from interpretune.analysis.backends import (
     AnalysisBackend,
-    AnalysisBackendCapability,
-    ModelBackendCapability,
+    Capability,
     InterventionMode,
     InterventionSupport,
     LatentModelSupport,
@@ -99,8 +98,7 @@ __all__ = [
     "IT_ANALYSIS_OP_PATHS",
     # Formatters
     "ITAnalysisFormatter",
-    "ModelBackendCapability",
-    "AnalysisBackendCapability",
+    "Capability",
     "AnalysisBackend",
     "ModuleCapabilities",
     "InterventionMode",

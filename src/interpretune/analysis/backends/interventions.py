@@ -15,7 +15,7 @@ from typing import Any, Callable, NamedTuple, TypeAlias
 import torch
 
 from interpretune.analysis.backends.capabilities import (
-    ModelBackendCapability,
+    Capability,
     InterventionMode,
     PositionScope,
 )
@@ -812,7 +812,10 @@ def apply_intervention(
         value[...] = _apply_mode_to_region(flat, spec).reshape(value.shape)
         return value
 
-    raise AssertionError(f"unreachable: normalize_position_scope admitted {scope!r}")
+    raise NotImplementedError(
+        f"a hook spec cannot carry position_scope={scope.value!r}: explicit positions are named by the payload itself"
+        " (circuit-tracer's feature tuples), and a hook spec edits the final real token or every position"
+    )
 
 
 def apply_op(value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
@@ -869,7 +872,7 @@ def normalize_intervention_mode(mode: InterventionMode | str) -> InterventionMod
 
 
 def _declared_axes(backend: Any, *, backend_name: str) -> tuple[set[str], set[str]]:
-    """The backend's declared scope and mode VALUES, or a refusal naming what is missing.
+    """The backend's declared scope and op VALUES, or a refusal naming what is missing.
 
     Read by attribute and compared by value rather than by ``isinstance``, for the same reason
     ``require_backend_capability`` compares capability values: this repository's test infrastructure can
@@ -882,16 +885,16 @@ def _declared_axes(backend: Any, *, backend_name: str) -> tuple[set[str], set[st
     record = getattr(backend, "intervention_support", None)
     if record is None:
         raise NotImplementedError(
-            f"backend {backend_name!r} claims {ModelBackendCapability.ACTIVATION_INTERVENTION.name} but attaches no "
-            "`intervention_support` record, so nothing says which position scopes or modes it can honour. "
-            "Declare an InterventionSupport(position_scopes=..., modes=...) on the backend."
+            f"backend {backend_name!r} claims {Capability.INTERVENTION.name} but attaches no "
+            "`intervention_support` record, so nothing says which position scopes or ops it can honour. "
+            "Declare an InterventionSupport(ops=..., targets=..., position_scopes=...) on the backend."
         )
     scopes = {getattr(s, "value", s) for s in getattr(record, "position_scopes", ()) or ()}
-    modes = {getattr(m, "value", m) for m in getattr(record, "modes", ()) or ()}
+    modes = {getattr(m, "value", m) for m in getattr(record, "ops", ()) or ()}
     if not scopes or not modes:
         raise TypeError(
             f"backend {backend_name!r}.intervention_support must be an InterventionSupport declaring at least one "
-            f"position scope and one mode; got {record!r}"
+            f"position scope and one op; got {record!r}"
         )
     return scopes, modes
 

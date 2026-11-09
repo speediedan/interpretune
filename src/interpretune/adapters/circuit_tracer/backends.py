@@ -14,11 +14,14 @@ import torch
 from transformers import BatchEncoding
 
 from interpretune.analysis.backends import (
-    AnalysisBackendCapability,
+    Capability,
     InterventionDict,
+    InterventionMode,
     InterventionSpec,
+    InterventionSupport,
     AttributionGraphSupport,
-    FeatureInterventionSupport,
+    FeatureTargetSupport,
+    PositionScope,
 )
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
 from interpretune.protocol import GraphComponentPayload
@@ -34,28 +37,41 @@ class CircuitTracerAnalysisBackend:
         return AttributionGraphSupport(requires_own_eager_attention=True)
 
     @property
-    def feature_intervention_support(self) -> FeatureInterventionSupport:
-        """The three value sources circuit-tracer's feature intervention accepts, with layer constraints, returns
-        and norm-denominator freezing."""
-        return FeatureInterventionSupport(
-            value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"}),
-            constrainable_layers=True,
-            returns_activations=True,
-            freezable_norms=True,
+    def intervention_support(self) -> InterventionSupport:
+        """A ``replace`` of transcoder features at the positions each feature tuple names, with the three value
+        sources circuit-tracer's feature intervention accepts, layer constraints, returns and norm-denominator
+        freezing as the ``features`` target's detail."""
+        return InterventionSupport(
+            ops=frozenset({InterventionMode.REPLACE}),
+            targets={
+                "features": FeatureTargetSupport(
+                    value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"}),
+                    constrainable_layers=True,
+                    returns_activations=True,
+                    freezable_norms=True,
+                )
+            },
+            position_scopes=frozenset({PositionScope.POSITIONS}),
         )
 
     @property
-    def capabilities(self) -> frozenset[AnalysisBackendCapability]:
-        """Attribution graphs, head attribution and feature interventions."""
+    def capabilities(self) -> frozenset[Capability]:
+        """Attribution graphs, head attribution and interventions on transcoder features."""
         return frozenset(
             {
-                AnalysisBackendCapability.ATTRIBUTION_GRAPH,
-                AnalysisBackendCapability.FEATURE_INTERVENTION,
-                AnalysisBackendCapability.HEAD_ATTRIBUTION,
+                Capability.ATTRIBUTION_GRAPH,
+                Capability.INTERVENTION,
+                Capability.HEAD_ATTRIBUTION,
             }
         )
 
-    def supports(self, capability: AnalysisBackendCapability) -> bool:
+    @property
+    def requires(self) -> frozenset[Capability]:
+        """Graphs are built on what the model backend computes: gradients through the replacement model, with
+        transcoders attached as latent models."""
+        return frozenset({Capability.GRADIENTS, Capability.LATENT_MODELS})
+
+    def supports(self, capability: Capability) -> bool:
         """Whether ``capability`` is in :attr:`capabilities`."""
         return capability in self.capabilities
 
@@ -253,7 +269,7 @@ class CircuitTracerAnalysisBackend:
             "freeze_norms": bool(_resolve("intervention_freeze_norms", False)),
         }
 
-        why = self.feature_intervention_support.refusal(settings)
+        why = self.intervention_support.target_detail("features").refusal(settings)
         if why is not None:
             raise ValueError(f"feature intervention settings refused: {why}")
         return settings

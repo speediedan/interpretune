@@ -11,6 +11,19 @@ import torch
 TOY_PROMPT = torch.tensor([0, 3, 4, 3, 2, 5, 3, 8])
 
 
+class BaseModelBackendStandIn:
+    """The model backend a circuit-tracer composition carries beneath its analysis backend, for a fake module that
+    exercises only the analysis backend: it declares what that backend requires (``GRADIENTS``, ``LATENT_MODELS``)
+    and implements nothing, so a test that reached it would fail rather than pass on a stand-in."""
+
+    def __init__(self) -> None:
+        from interpretune.analysis.backends import Capability, LatentModelSupport
+
+        self.capabilities = frozenset({Capability.GRADIENTS, Capability.LATENT_MODELS})
+        self.requires = frozenset()
+        self.latent_model_support = LatentModelSupport()
+
+
 def tiny_gemma2_replacement_model(n_layers: int = 3, seed: int = 670):
     """An ``n_layers``-deep, 8-wide Gemma 2 replacement model; builds and runs on CPU in seconds."""
     from circuit_tracer import ReplacementModel

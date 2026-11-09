@@ -40,7 +40,7 @@ def test_the_scale_factor_multiplies_the_tensor_and_the_scope_is_honoured():
 
 
 def test_every_declares_scale_and_a_payload_canonicalizes_it():
-    assert InterventionMode.SCALE in InterventionSupport.every().modes
+    assert InterventionMode.SCALE in InterventionSupport.every().ops
     spec = InterventionSpec(intervention_tensor=torch.ones(4), mode="scale")
     hook = "blocks.0.hook_resid_post"
     canonical = build_intervention_dict({hook: spec}, {hook: [hook]}, {hook: (1, 3, 4)})

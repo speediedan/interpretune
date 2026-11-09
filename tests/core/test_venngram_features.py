@@ -7,7 +7,7 @@ import torch
 pytest.importorskip("venngram", reason="the venngram extra is not installed")
 
 from interpretune.analysis.backends.capabilities import (
-    FeatureInterventionSupport,
+    FeatureTargetSupport,
     InterventionMode,
     InterventionSupport,
     PositionScope,
@@ -27,9 +27,18 @@ from interpretune.utils import MisconfigurationException
 
 SITE = "hook_resid_post"
 HOOKED = f"{SITE}.hook_sae_acts_post"
-TRANSCODER = FeatureInterventionSupport(
+TRANSCODER = FeatureTargetSupport(
     value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"})
 )
+
+
+def _feature_record(detail: FeatureTargetSupport) -> InterventionSupport:
+    """An analysis backend's intervention record whose ``features`` target carries ``detail``."""
+    return InterventionSupport(
+        ops=frozenset({InterventionMode.REPLACE}),
+        position_scopes=frozenset({PositionScope.POSITIONS}),
+        targets={"features": detail},
+    )
 
 
 def _recipe(ops, *, site=SITE, tokens="last", sets=None):
@@ -343,10 +352,10 @@ class TestAnalysisBackendPath:
             recipe_feature_interventions(recipe, support=TRANSCODER)
 
     def test_a_backend_not_honouring_constant_cannot_take_computed_values(self):
-        scores_only = FeatureInterventionSupport(value_sources=frozenset({"top_feature_scores"}))
+        scores_only = FeatureTargetSupport(value_sources=frozenset({"top_feature_scores"}))
         with pytest.raises(MisconfigurationException, match="cannot take a recipe's computed values"):
             recipe_feature_interventions(self._recipe(dose=1.0), support=scores_only)
-        assert venngram_feature_support(scores_only).values == frozenset()
+        assert venngram_feature_support(_feature_record(scores_only)).values == frozenset()
 
 
 class TestSupport:
@@ -368,7 +377,7 @@ class TestSupport:
 
     def test_the_analysis_path_checks_with_its_own_refusals(self):
         recipe = _recipe([_op("replace", dose=1.0)], site="transcoder.features", tokens={"positions": [1]})
-        support = venngram_feature_support(TRANSCODER)
+        support = venngram_feature_support(_feature_record(TRANSCODER))
         assert check_recipe(recipe, support, analysis_backend=True) == []
         require_supported(recipe, support, analysis_backend=True)
         assert any("no native mode at a sub-hook" in r for r in check_recipe(recipe, support))
@@ -377,7 +386,7 @@ class TestSupport:
         "support",
         [
             pytest.param(venngram_support(InterventionSupport.every(), latent_models=True), id="model-backend"),
-            pytest.param(venngram_feature_support(TRANSCODER), id="analysis-backend"),
+            pytest.param(venngram_feature_support(_feature_record(TRANSCODER)), id="analysis-backend"),
         ],
     )
     def test_both_declarations_publish_as_support_records(self, support):

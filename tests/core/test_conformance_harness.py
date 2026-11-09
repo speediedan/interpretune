@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from interpretune.analysis.backends import (
-    ModelBackendCapability,
+    Capability,
     InterventionMode,
     InterventionSupport,
     LatentModelSupport,
@@ -22,18 +22,20 @@ from interpretune.testing.conformance.inputs import ConformanceInputs
 from interpretune.testing.conformance.plugin import vacuity_problems
 
 
-def _caps(*, intervention=None, latent=None, analysis=frozenset()):
-    model = set()
+def _caps(*, intervention=None, latent=None):
+    providers = {}
     if intervention is not None:
-        model.add(ModelBackendCapability.ACTIVATION_INTERVENTION)
+        providers[Capability.INTERVENTION] = ("model_backend",)
     if latent is not None:
-        model.add(ModelBackendCapability.LATENT_MODELS)
+        providers[Capability.LATENT_MODELS] = ("model_backend",)
     return ModuleCapabilities(
-        model=frozenset(model), analysis=frozenset(analysis), intervention=intervention, latent_models=latent
+        providers=providers,
+        intervention={"model_backend": intervention} if intervention is not None else {},
+        latent_models=latent,
     )
 
 
-ADD_LAST = InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, modes={InterventionMode.ADD})
+ADD_LAST = InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, ops={InterventionMode.ADD})
 
 
 class TestGateSelection:
@@ -41,25 +43,23 @@ class TestGateSelection:
         assert Gate().selects(_caps(), family="hf_native")
 
     def test_capability_gate_follows_the_declaration(self):
-        g = Gate(capability=ModelBackendCapability.ACTIVATION_INTERVENTION)
+        g = Gate(capability=Capability.INTERVENTION)
         assert g.selects(_caps(intervention=ADD_LAST), family="x")
         assert not g.selects(_caps(), family="x")
 
     def test_scope_and_mode_gates_read_the_support_record(self):
-        assert Gate(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, scope=PositionScope.LAST_TOKEN).selects(
+        assert Gate(capability=Capability.INTERVENTION, scope=PositionScope.LAST_TOKEN).selects(
             _caps(intervention=ADD_LAST), family="x"
         )
-        assert not Gate(
-            capability=ModelBackendCapability.ACTIVATION_INTERVENTION, scope=PositionScope.ALL_POSITIONS
-        ).selects(_caps(intervention=ADD_LAST), family="x")
-        assert not Gate(
-            capability=ModelBackendCapability.ACTIVATION_INTERVENTION, mode=InterventionMode.REPLACE
-        ).selects(_caps(intervention=ADD_LAST), family="x")
+        assert not Gate(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS).selects(
+            _caps(intervention=ADD_LAST), family="x"
+        )
+        assert not Gate(capability=Capability.INTERVENTION, mode=InterventionMode.REPLACE).selects(
+            _caps(intervention=ADD_LAST), family="x"
+        )
 
     def test_negative_gate_inverts(self):
-        g = Gate(
-            capability=ModelBackendCapability.ACTIVATION_INTERVENTION, scope=PositionScope.ALL_POSITIONS, negative=True
-        )
+        g = Gate(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, negative=True)
         assert g.selects(_caps(intervention=ADD_LAST), family="x")
         assert not g.selects(_caps(intervention=InterventionSupport.every()), family="x")
 
@@ -68,42 +68,32 @@ class TestGateSelection:
         assert not Gate(family="hf_native").selects(_caps(), family="weight_converted")
 
     def test_batched_hooks_gate(self):
-        assert Gate(capability=ModelBackendCapability.LATENT_MODELS, batched_hooks=True).selects(
+        assert Gate(capability=Capability.LATENT_MODELS, batched_hooks=True).selects(
             _caps(latent=LatentModelSupport(True)), family="x"
         )
-        assert not Gate(capability=ModelBackendCapability.LATENT_MODELS, batched_hooks=True).selects(
+        assert not Gate(capability=Capability.LATENT_MODELS, batched_hooks=True).selects(
             _caps(latent=LatentModelSupport(False)), family="x"
         )
 
     def test_scope_compares_by_value(self):
         """A second load of the enum module yields identity-distinct members; the gate must not care."""
 
-        class _Rec:
-            position_scopes = frozenset({"last_token"})
-            modes = frozenset({"add"})
-
-        caps = ModuleCapabilities(
-            model=frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION}),
-            analysis=frozenset(),
-            intervention=InterventionSupport(position_scopes={"last_token"}, modes={"add"}),
-        )
-        assert Gate(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, scope=PositionScope.LAST_TOKEN).selects(
-            caps, family="x"
-        )
+        caps = _caps(intervention=InterventionSupport(position_scopes={"last_token"}, ops={"add"}))
+        assert Gate(capability=Capability.INTERVENTION, scope=PositionScope.LAST_TOKEN).selects(caps, family="x")
 
     def test_a_scopes_gate_needs_every_scope_declared(self):
         """A mixed-scope case selects only when the target declared BOTH scopes; one of two is undeclared."""
         both = InterventionSupport(
-            position_scopes={PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS}, modes={InterventionMode.ADD}
+            position_scopes={PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS}, ops={InterventionMode.ADD}
         )
         g = Gate(
-            capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
+            capability=Capability.INTERVENTION,
             scopes=(PositionScope.LAST_TOKEN, PositionScope.ALL_POSITIONS),
         )
         assert g.selects(_caps(intervention=both), family="x")
         assert not g.selects(_caps(intervention=ADD_LAST), family="x")
         assert not g.selects(_caps(), family="x")
-        assert g.describe() == "ACTIVATION_INTERVENTION, scopes=last_token+all_positions"
+        assert g.describe() == "INTERVENTION, target=activation, scopes=last_token+all_positions"
 
     def test_single_prompt_gate_reads_the_target_not_the_backend(self):
         g = Gate(single_prompt=True)
@@ -113,21 +103,21 @@ class TestGateSelection:
 
     def test_describe_names_every_axis(self):
         g = Gate(
-            capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
+            capability=Capability.INTERVENTION,
             scope=PositionScope.LAST_TOKEN,
             mode=InterventionMode.ADD,
             negative=True,
         )
-        assert g.describe() == "NOT ACTIVATION_INTERVENTION, scope=last_token, mode=add"
+        assert g.describe() == "NOT INTERVENTION, target=activation, scope=last_token, mode=add"
 
 
 class TestDecorator:
     def test_marks_the_function(self):
-        @conformance_case(capability=ModelBackendCapability.GRADIENTS)
+        @conformance_case(capability=Capability.GRADIENTS)
         def f():
             pass
 
-        assert gate_of(f) == Gate(capability=ModelBackendCapability.GRADIENTS)
+        assert gate_of(f) == Gate(capability=Capability.GRADIENTS)
         assert gate_of(lambda: None) is None
 
 
@@ -151,7 +141,7 @@ class TestReportAndVacuity:
         assert vacuity_problems(r, strict=True)
 
     def test_render_prints_all_four_counts(self):
-        r = SelectionReport(declared=["ACTIVATION_INTERVENTION"])
+        r = SelectionReport(declared=["INTERVENTION"])
         r.record("a", "ran")
         text = r.render()
         for needle in ("declared", "ran", "undeclared", "other", "failed"):
@@ -413,23 +403,29 @@ class TestReportArtifact:
 
     def _caps(self):
         from interpretune.analysis.backends import (
-            AnalysisBackendCapability,
-            FeatureInterventionSupport,
+            Capability,
+            FeatureTargetSupport,
             InterventionMode,
             InterventionSupport,
-            ModelBackendCapability,
             ModuleCapabilities,
             PositionScope,
         )
 
         return ModuleCapabilities(
-            model=frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION}),
-            analysis=frozenset({AnalysisBackendCapability.FEATURE_INTERVENTION}),
-            intervention=InterventionSupport(
-                modes=frozenset({InterventionMode.ADD}), position_scopes=frozenset({PositionScope.LAST_TOKEN})
-            ),
+            providers={Capability.INTERVENTION: ("model_backend", "analysis_backend")},
+            intervention={
+                "model_backend": InterventionSupport(
+                    ops=frozenset({InterventionMode.ADD}),
+                    position_scopes=frozenset({PositionScope.LAST_TOKEN}),
+                    targets={"activation": None},
+                ),
+                "analysis_backend": InterventionSupport(
+                    ops=frozenset({InterventionMode.REPLACE}),
+                    position_scopes=frozenset({PositionScope.POSITIONS}),
+                    targets={"features": FeatureTargetSupport(value_sources=frozenset({"constant"}))},
+                ),
+            },
             attribution_graph=None,
-            feature_intervention=FeatureInterventionSupport(value_sources=frozenset({"constant"})),
         )
 
     def test_describe_capabilities_is_plain_data_with_absent_surfaces_absent(self):
@@ -439,10 +435,11 @@ class TestReportArtifact:
 
         data = describe_capabilities(self._caps(), composition=("core", "x"), model_id="gpt2")
         json.dumps(data)  # serializable
-        assert data["model_capabilities"] == ["activation_intervention"]
-        assert data["analysis_capabilities"] == ["feature_intervention"]
-        assert data["intervention"]["modes"] == ["add"] and data["intervention"]["position_scopes"] == ["last_token"]
-        assert data["feature_intervention"]["value_sources"] == ["constant"]
+        assert data["capabilities"] == {"intervention": ["model_backend", "analysis_backend"]}
+        model = data["intervention"]["model_backend"]
+        assert model["ops"] == ["add"] and model["position_scopes"] == ["last_token"]
+        assert model["targets"] == {"activation": None}
+        assert data["intervention"]["analysis_backend"]["targets"]["features"]["value_sources"] == ["constant"]
         assert "latent_models" not in data and "capture" not in data and "attribution_graph" not in data
         assert data["composition"] == ["core", "x"] and data["model_id"] == "gpt2"
 
@@ -459,8 +456,8 @@ class TestReportArtifact:
         path = tmp_path / "out" / "report.json"
         write_report_artifact(report, str(path), exitstatus=0)
         artifact = json.loads(path.read_text())
-        assert artifact["format"] == "interpretune.conformance.report/1"
-        assert artifact["targets"]["TestX"]["intervention"]["modes"] == ["add"]
+        assert artifact["format"] == "interpretune.conformance.report/2"
+        assert artifact["targets"]["TestX"]["intervention"]["model_backend"]["ops"] == ["add"]
         assert artifact["ran"] == ["TestX::case_a"] and artifact["skipped_undeclared"] == ["TestX::case_b"]
         prov = artifact["provenance"]
         assert prov["exit_status"] == 0 and prov["interpretune_version"] and prov["measured_at"].endswith("+00:00")

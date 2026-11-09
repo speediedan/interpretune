@@ -17,6 +17,7 @@ from transformers import BatchEncoding
 
 from interpretune.analysis.backends import FeatureSelectionSpec, InterventionDict
 from interpretune.adapters.circuit_tracer.backends import DEFAULT_CT_ANALYSIS_BACKEND
+from tests.core.circuit_tracer_toy import BaseModelBackendStandIn
 from interpretune.analysis.core import AnalysisStore, schema_to_features
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.bundled.circuit_tracer.ct_ops import feature_intervention_forward_impl
@@ -75,6 +76,7 @@ class _FakeModule:
             },
         )()
         self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
+        self._model_backend = BaseModelBackendStandIn()
         self.model = type(
             "_Model",
             (),

@@ -7,29 +7,33 @@ with ``venngram.ops.check_support`` before running anything, so a recipe asking 
 of time rather than narrowed silently at run time. Interpretune's declaration is DERIVED from the records a
 backend already publishes, never restated by hand:
 
-- **ops** from :class:`~interpretune.analysis.backends.capabilities.InterventionSupport`'s modes, intersected
+- **ops** from :class:`~interpretune.analysis.backends.capabilities.InterventionSupport`'s ops, intersected
   with the ops this integration's apply path implements (:data:`~interpretune.analysis.venngram.apply.APPLIED_OPS`:
-  every core venngram op). The mode names are venngram's op names.
-- **token scopes** from the same record's position scopes: ``last_token`` is venngram's ``last`` and
-  ``all_positions`` its ``all``. The remaining scopes (``prompt``, ``generated``, ``positions``, ``slice``) have
-  no interpretune spelling yet and are not declared.
+  every core venngram op). The record's op names are venngram's op names.
+- **token scopes** from the same record's position scopes: ``last_token`` is venngram's ``last``,
+  ``all_positions`` its ``all`` and ``positions`` its ``positions``. The remaining scopes (``prompt``,
+  ``generated``, ``slice``) have no interpretune spelling yet and are not declared.
 - **sites** from :class:`~interpretune.analysis.backends.capabilities.CaptureSupport`'s capturable points, which
   are layer-free base spellings like a recipe's sites, each also declared in its layered form
   (``blocks.*.<point>``), which a whole-activation op's stage names. A site the backend cannot capture on this
   model is a site a treatment cannot be verified at, so it is not declared reachable. Recipes name
   ``mlp.out.hook_in`` for the MLP hidden activation; the vocabulary's semantic spelling for that tensor is
   ``hook_mlp_hidden_in`` (the down projection's input), and both spellings parse to the one point.
-- **targets and values**: unit and whole-activation targets, with ``dose``/``doses`` values or a ``from`` column of
-  evidence through the transforms the apply path evaluates (:mod:`~interpretune.analysis.venngram.values`). Feature
-  targets are declared when the caller says a latent model is attached (``latent_models``), since that is a fact of the
-  model at hand. ``statistic`` is declared when the caller names statistics it will supply.
-- **bases**: the bases an operand may be written in. An operand is applied as a tensor in the site's own
-  activation coordinates, so the declaration names the bases known to be written there: by default interpretune's
-  two J-lens bases (``jlens_folded``, ``jlens_unfolded``), both residual-stream directions. A caller whose operands
-  come from elsewhere names their bases explicitly.
+- **targets and values** from the record's targets and value sources, through the transforms the apply path
+  evaluates (:mod:`~interpretune.analysis.venngram.values`). A ``features`` target is declared only when the caller
+  says a latent model is attached (``latent_models``), since that is a fact of the model at hand rather than of the
+  backend. ``statistic`` is declared when the caller names statistics it will supply.
+- **bases**: the bases an operand may be written in, from the record when it narrows them. An operand is applied as
+  a tensor in the site's own activation coordinates, so a record naming no bases is declared with the bases known to
+  be written there: by default interpretune's two J-lens bases (``jlens_folded``, ``jlens_unfolded``), both
+  residual-stream directions. A caller whose operands come from elsewhere names their bases explicitly.
 
-:func:`venngram_feature_support` is the analysis-backend path's declaration: a feature ``replace`` at explicit
-positions, which is all circuit-tracer's feature tuples express.
+venngram's ``Support`` has no ``of`` field in the installed release, so the record's flows are not carried into it;
+a recipe acting on a gradient is refused by the apply path until it does.
+
+:func:`venngram_feature_support` is the analysis-backend path's declaration, derived from the provider of the
+``features`` target that applies feature tuples: a feature ``replace`` at explicit positions, which is all
+circuit-tracer's feature tuples express.
 
 .. warning:: This is an experimental API and may change in a future release.
 """
@@ -45,10 +49,14 @@ from interpretune.analysis.venngram.values import EVALUATED_TRANSFORMS
 from interpretune.utils import MisconfigurationException
 
 if TYPE_CHECKING:
-    from interpretune.analysis.backends.capabilities import CaptureSupport, FeatureInterventionSupport
+    from interpretune.analysis.backends.capabilities import CaptureSupport
 
 #: Interpretune position scopes by their venngram token-scope names.
-_TOKEN_SCOPES = {PositionScope.LAST_TOKEN: "last", PositionScope.ALL_POSITIONS: "all"}
+_TOKEN_SCOPES = {
+    PositionScope.LAST_TOKEN: "last",
+    PositionScope.ALL_POSITIONS: "all",
+    PositionScope.POSITIONS: "positions",
+}
 
 #: The operand bases declared by default: the directions interpretune itself writes in a site's activation space
 #: (``optools.JLENS_BASIS_NAMES``, spelled out so this module imports no analysis machinery; a test keeps them equal).
@@ -81,13 +89,14 @@ def venngram_support(
     """Derive a ``venngram.ops.Support`` from a backend's own support records (see the module docstring).
 
     Args:
-        intervention: The backend's declared intervention modes and position scopes.
+        intervention: The provider's intervention record (``ModuleCapabilities.intervention_for(target)``).
         capture: The backend's capture declaration for the model at hand; its capturable points bound the
             reachable sites. Without one, no site bound is declared (any site passes this check, and site
             resolution is left to the apply path).
-        ops: The recipe ops to declare, intersected with what the backend's modes name. Narrowing this declares
-            less than the apply path implements; it must only name ops the apply path implements.
-        bases: The operand bases to honour (see the module docstring), or ``None`` for any.
+        ops: The recipe ops to declare, intersected with the record's ops. Narrowing this declares less than the apply
+            path implements; it must only name ops the apply path implements.
+        bases: The operand bases to honour when the record names none (see the module docstring), or ``None`` for
+            any.
         latent_models: Whether a latent model is attached, so feature targets have a sub-hook to act at.
         statistics: The statistics the caller will supply to ``recipe_interventions``; any declares ``statistic``.
         name: The consumer name the record carries.
@@ -99,31 +108,33 @@ def venngram_support(
         MisconfigurationException: If venngram is not installed.
     """
     vg_ops = _require_venngram()
-    modes = {m.value for m in intervention.modes}
+    declared = {getattr(m, "value", m) for m in intervention.ops}
     return vg_ops.Support(
-        ops=frozenset(ops & modes & set(vg_ops.OPS)),
-        targets=frozenset({"units", "activation"} | ({"features"} if latent_models else set())),
+        ops=frozenset(ops & declared & set(vg_ops.OPS)),
+        targets=frozenset(t for t in intervention.targets if t != "features" or latent_models),
         tokens=frozenset(_TOKEN_SCOPES[s] for s in intervention.position_scopes),
-        values=frozenset({"dose", "doses", "from"}),
+        values=frozenset(intervention.values),
         transforms=EVALUATED_TRANSFORMS | ({"statistic"} if statistics else frozenset()),
         sites=None if capture is None else _sites(capture.capturable),
-        bases=bases,
+        bases=intervention.bases if intervention.bases is not None else bases,
         name=name,
     )
 
 
 def venngram_feature_support(
-    feature_intervention: FeatureInterventionSupport,
+    intervention: InterventionSupport,
     *,
     statistics: frozenset[str] = frozenset(),
     name: str = "interpretune",
 ) -> Any:
-    """Derive a ``venngram.ops.Support`` for the analysis-backend path from a backend's feature-intervention
-    record.
+    """Derive a ``venngram.ops.Support`` for the analysis-backend path from the intervention record of the
+    component applying feature tuples.
 
     Args:
-        feature_intervention: The analysis backend's declaration. ``recipe_feature_interventions`` passes computed
-            values, so a record not honouring ``constant`` declares no value source at all.
+        intervention: That provider's record (``ModuleCapabilities.intervention_for("features",
+            provider="analysis_backend")``); its ``features`` target carries the detail.
+            ``recipe_feature_interventions`` passes computed values, so a detail not honouring ``constant`` declares no
+            value source at all.
         statistics: The statistics the caller will supply; any declares ``statistic``.
         name: The consumer name the record carries.
 
@@ -134,12 +145,13 @@ def venngram_feature_support(
         MisconfigurationException: If venngram is not installed.
     """
     vg_ops = _require_venngram()
-    constant = "constant" in feature_intervention.value_sources
+    detail = intervention.target_detail("features")
+    constant = detail is not None and "constant" in detail.value_sources
     return vg_ops.Support(
-        ops=frozenset({"replace"}),
+        ops=frozenset({getattr(m, "value", m) for m in intervention.ops} & {"replace"}),
         targets=frozenset({"features"}),
-        tokens=frozenset({"positions"}),
-        values=frozenset({"dose", "doses", "from"}) if constant else frozenset(),
+        tokens=frozenset(_TOKEN_SCOPES[s] for s in intervention.position_scopes),
+        values=frozenset(intervention.values) if constant else frozenset(),
         transforms=EVALUATED_TRANSFORMS | ({"statistic"} if statistics else frozenset()),
         sites=None,
         bases=None,

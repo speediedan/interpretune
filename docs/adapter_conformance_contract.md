@@ -64,8 +64,14 @@ session config, its runtime declarations, its forward family, and how its compon
 
 ## How cases are selected
 
-The gate is what the composed module's backends **declare at runtime**: `capabilities`, and the support
-records (`intervention_support`, `latent_model_support`). A declared surface runs its cases. An undeclared
+The gate is what the composed module's components (its model backend and any analysis backend) **declare at
+runtime**: `capabilities` from the one `Capability` namespace, the support records (`intervention_support`,
+`latent_model_support`, `capture_support(model)`, `attribution_graph_support`), and `requires`, the capabilities a
+component needs another component to provide (circuit-tracer's analysis backend requires `GRADIENTS` and
+`LATENT_MODELS`). `get_module_capabilities` refuses, by name, a requirement no other component meets. A case gates
+on who provides a capability, never on which kind of component declares it, and an `INTERVENTION` case names the
+target it acts on (`activation` by default): two components may provide one target, and a gate on such a target
+names the provider it reaches it through. A declared surface runs its cases. An undeclared
 surface runs the refusal case instead, so declaring less is never a way to pass more. A run in which no
 gated case executed fails: a suite that proved nothing must not read as green.
 
@@ -82,7 +88,7 @@ Always on:
 
 | case | oracle | asserts |
 | --- | --- | --- |
-| session composes, declarations coherent | structural | a backend is attached; each declared capability satisfies its protocol; a support record is present iff its surface is declared |
+| session composes, declarations coherent | structural | a model backend is attached; each component's declared capabilities satisfy their protocols; its requirements are provided by another component; a support record is present iff its surface is declared |
 | undeclared capabilities are refused by name | structural | the shared gate refuses every surface the backend does not claim, naming the backend and what it does claim |
 | the runner produces the store schema | structural | `logit_diffs_base` yields the declared columns, one row per batch, declared dtypes |
 | the cache op stores logits and every requested point | structural | `answer_logits` is not `None` from the cache path; every requested point is a tensor in the store |
@@ -111,8 +117,8 @@ which the reviewer sees for what it is; the edit should name the issue tracking 
 repository that runs the suite. Gating on a family or on the prompt shape does not exempt a case: those select
 on a property of the target, so the case still binds every backend of that kind.
 
-Capture is a base method every model backend has, so it is not a `ModelBackendCapability` member: that enum answers
-"is the surface implemented at all". What varies is WHICH vocabulary points a backend can capture on the model it
+Capture is the `CAPTURE` member of the capability namespace, and the member answers "is the surface implemented at
+all". What varies is WHICH vocabulary points a backend can capture on the model it
 wraps, and that is a typed record beside `InterventionSupport`, keyed by layer-free base spellings over the
 architecture's inventory (`interpretune.analysis.points.inventory`), whose keys collapse the semantic names for one
 tensor into its component spelling and keep a semantic contribution (`hook_mlp_out`) distinct. Measured on gpt2,
@@ -134,7 +140,7 @@ Gate `INTERVENTION` (with `intervention_support`):
 | last-token scope moves exactly the final position | causal | the changed-position **set** from `intervention_position_effect` is `{seq_len - 1}` |
 | all-positions scope moves every real position | causal | every real position is in the changed set |
 | an undeclared scope is refused | negative | `NotImplementedError` naming the scope, before the backend is reached |
-| undeclared modes are refused on the mode axis | negative | each mode not in `modes` raises, naming the axis |
+| undeclared modes are refused on the mode axis | negative | each mode not in the record's `ops` raises, naming the axis |
 | zero intervention is identity | causal | scale 0 leaves the logits unchanged |
 | the baseline is an unsteered forward | HF reference, `hf_native` | the pre-intervention half equals the plain forward |
 | steered logits converge on the forward | HF reference, `hf_native` | adding a vector at the last token matches an HF hook doing the same |
@@ -166,7 +172,8 @@ Gate `ATTRIBUTION_GRAPH` (with `attribution_graph_support`), on op outputs only:
 | pruning is monotone | positive control | a stricter node threshold keeps a subset of a looser one's nodes, and strictly fewer at some pair |
 | foreign attention is refused before graph construction | negative | when the record requires the modeling module's own eager attention, a planted replacement of that function is refused by name, naming the foreign function and the module, before construction reaches the tracer; put back, the refusal clears |
 
-Gate `FEATURE_INTERVENTION` (with `feature_intervention_support`):
+Gate `INTERVENTION` on the `features` target through the analysis backend (the `features` detail of its
+`intervention_support`, a `FeatureTargetSupport`):
 
 | case | oracle | asserts |
 | --- | --- | --- |
@@ -349,7 +356,7 @@ only after the seed stopped needing TransformerLens, which had been pulling it i
 
 **Derive complements; never transcribe the vocabulary.** A test that lists the capabilities a backend does
 NOT claim by name goes red the moment the enum changes, with no opinion about the change. Derive the
-complement (`set(ModelBackendCapability) - backend.capabilities`) so a member added upstream is asserted absent
+complement (`set(Capability) - backend.capabilities`) so a member added upstream is asserted absent
 automatically and a removed one simply disappears. The suite's own refusal case is written that way.
 
 **Adding a component slot changes the arity of every adapter-set-keyed helper.** The first adopter hit this
@@ -375,8 +382,9 @@ names take a layer and which do not; expand the former over layers and offer the
 the adapter tuple alone starts returning the datamodule class the moment the datamodule composition is registered
 too, and the failure points at `nn.Module` rather than at the selector. Match on `(component_key, adapters)`.
 
-**Support records coerce.** `InterventionSupport(position_scopes={"last_token"}, modes={"add"})` is valid:
-the record normalizes strings to the enums and refuses an empty set. The gates read the declared values
+**Support records coerce.** `InterventionSupport(position_scopes={"last_token"}, ops={"add"})` is valid:
+the record normalizes strings to the enums, declares every target when it names none (as venngram's `Support`
+does), and refuses an empty set. The gates read the declared values
 rather than checking the record's type, so a record from a second load of the enum module still passes.
 
 ## Padding

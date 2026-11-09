@@ -15,7 +15,7 @@ from typing import Any, ClassVar, cast
 
 import pytest
 
-from interpretune.analysis.backends import ModelBackendCapability
+from interpretune.analysis.backends import Capability
 from interpretune.analysis.ops.base import AnalysisOp
 
 from .inputs import ConformanceInputs, ConformanceTarget
@@ -123,15 +123,15 @@ class OpCollectionConformance:
         from interpretune.analysis.ops.dispatcher import DISPATCHER
 
         caps = suite.capabilities
-        record = caps.intervention
+        record = caps.intervention_for("activation") if caps.target_providers("activation") else None
         for name in collection_ops:
             op = cast(AnalysisOp, DISPATCHER.get_op(name))
             missing: list[str] = [c.value for c in op.required_capabilities if not caps.supports(c)]
             if op.requires_intervention_axes:
                 if record is None:
-                    missing.append(ModelBackendCapability.ACTIVATION_INTERVENTION.value)
+                    missing.append(Capability.INTERVENTION.value)
                 else:
-                    declared_modes = {m.value for m in record.modes}
+                    declared_modes = {m.value for m in record.ops}
                     declared_scopes = {s.value for s in record.position_scopes}
                     missing += [m.value for m in op.required_intervention_modes if m.value not in declared_modes]
                     missing += [s.value for s in op.required_position_scopes if s.value not in declared_scopes]

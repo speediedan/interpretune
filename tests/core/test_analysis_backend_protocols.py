@@ -1,8 +1,8 @@
 """The analysis-backend surface decomposes like the model-backend one: a core plus gated groups with records.
 
-A member of ``AnalysisBackendCapability`` names a ``Supports*`` group and answers whether it is implemented; the
-group's configuration space is a typed record on the protocol. These tests pin the decomposition, the records'
-refusals, and the provenance refusal that guards graph construction, each with a positive control.
+A ``Capability`` member an analysis backend declares names a ``Supports*`` group and answers whether it is
+implemented; the group's configuration space is a typed record on the protocol. These tests pin the decomposition,
+the records' refusals, and the provenance refusal that guards graph construction, each with a positive control.
 """
 
 from __future__ import annotations
@@ -14,12 +14,14 @@ import torch
 
 from interpretune.analysis.backends import (
     AnalysisBackend,
-    AnalysisBackendCapability,
+    Capability,
     AnalysisBackendCore,
     AttributionGraphSupport,
-    FeatureInterventionSupport,
-    ModelBackendCapability,
+    FeatureTargetSupport,
+    InterventionMode,
+    InterventionSupport,
     ModuleCapabilities,
+    PositionScope,
     SupportsAttributionGraph,
     SupportsFeatureInterventions,
     SupportsHeadAttribution,
@@ -31,6 +33,10 @@ class _CoreOnlyAnalysisBackend:
 
     @property
     def capabilities(self):
+        return frozenset()
+
+    @property
+    def requires(self):
         return frozenset()
 
     def supports(self, capability):
@@ -71,9 +77,9 @@ class TestDecomposition:
         ):
             assert isinstance(backend, protocol), protocol.__name__
         assert backend.capabilities == {
-            AnalysisBackendCapability.ATTRIBUTION_GRAPH,
-            AnalysisBackendCapability.FEATURE_INTERVENTION,
-            AnalysisBackendCapability.HEAD_ATTRIBUTION,
+            Capability.ATTRIBUTION_GRAPH,
+            Capability.INTERVENTION,
+            Capability.HEAD_ATTRIBUTION,
         }
 
     def test_head_attribution_is_not_required_of_every_full_backend(self):
@@ -82,33 +88,38 @@ class TestDecomposition:
         assert SupportsHeadAttribution not in AnalysisBackend.__mro__
 
 
+_FEATURES = InterventionSupport(
+    ops=frozenset({InterventionMode.REPLACE}),
+    position_scopes=frozenset({PositionScope.POSITIONS}),
+    targets={"features": FeatureTargetSupport(value_sources=frozenset({"constant"}))},
+)
+
+
 class TestRecordsTravelWithTheirSurface:
     def test_a_declared_analysis_surface_needs_its_record(self):
         with pytest.raises(ValueError, match="ATTRIBUTION_GRAPH is declared but no attribution_graph support record"):
-            ModuleCapabilities(model=frozenset(), analysis=frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH}))
-        with pytest.raises(ValueError, match="FEATURE_INTERVENTION is declared but no feature_intervention support"):
-            ModuleCapabilities(model=frozenset(), analysis=frozenset({AnalysisBackendCapability.FEATURE_INTERVENTION}))
+            ModuleCapabilities(providers={Capability.ATTRIBUTION_GRAPH: ("analysis_backend",)})
+        with pytest.raises(ValueError, match=r"INTERVENTION is provided by \['analysis_backend'\] and support records"):
+            ModuleCapabilities(providers={Capability.INTERVENTION: ("analysis_backend",)})
 
     def test_a_record_without_its_surface_is_refused(self):
-        with pytest.raises(ValueError, match="feature_intervention support record is present but FEATURE_INTERVENTION"):
-            ModuleCapabilities(
-                model=frozenset(),
-                analysis=frozenset(),
-                feature_intervention=FeatureInterventionSupport(value_sources=frozenset({"constant"})),
-            )
+        with pytest.raises(ValueError, match=r"INTERVENTION is provided by \[\] and support records accompany"):
+            ModuleCapabilities(providers={}, intervention={"analysis_backend": _FEATURES})
 
-    def test_both_levels_carry_their_records_together(self):
+    def test_components_carry_their_records_together(self):
         caps = ModuleCapabilities(
-            model=frozenset({ModelBackendCapability.GRADIENTS}),
-            analysis=frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH}),
+            providers={
+                Capability.GRADIENTS: ("model_backend",),
+                Capability.ATTRIBUTION_GRAPH: ("analysis_backend",),
+            },
             attribution_graph=AttributionGraphSupport(),
         )
-        assert caps.supports(AnalysisBackendCapability.ATTRIBUTION_GRAPH)
-        assert not caps.supports(AnalysisBackendCapability.FEATURE_INTERVENTION)
+        assert caps.supports(Capability.ATTRIBUTION_GRAPH)
+        assert not caps.supports(Capability.INTERVENTION)
 
 
-class TestFeatureInterventionSupport:
-    record = FeatureInterventionSupport(
+class TestFeatureTargetSupport:
+    record = FeatureTargetSupport(
         value_sources=frozenset({"top_feature_scores", "constant"}),
         constrainable_layers=False,
         returns_activations=False,
@@ -148,7 +159,7 @@ class TestFeatureInterventionSupport:
 
     def test_an_empty_record_is_refused(self):
         with pytest.raises(ValueError, match="at least one value source"):
-            FeatureInterventionSupport(value_sources=frozenset())
+            FeatureTargetSupport(value_sources=frozenset())
 
 
 @pytest.mark.usefixtures("unpatched_gemma_eager_attention")

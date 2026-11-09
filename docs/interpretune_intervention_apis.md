@@ -1,18 +1,26 @@
 # Interpretune Intervention APIs
 
-Interpretune enables interventions at multiple levels of abstraction.
+Interpretune has one intervention surface, `Capability.INTERVENTION`, and a composition's components provide it on
+the targets they reach. Which component provides a target is a matter of declared targets, not of the component's
+kind:
 
-| Level | Capability member | Object acted on | Entry op | Executed by | Support record |
+| Provider | Targets | Object acted on | Entry op | Executed by | Record |
 |---|---|---|---|---|---|
-| Model backend | `ModelBackendCapability`<br>`.ACTIVATION_INTERVENTION` | an activation at any vocabulary point (residual stream, attention, MLP, head-shaped) or a latent model's sub-hook | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (modes, position scopes) |
-| Analysis backend | `AnalysisBackendCapability`<br>`.FEATURE_INTERVENTION` | a replacement model's latent feature activations, as `(layer, position, feature_id) -> value` tuples | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `FeatureInterventionSupport` (value sources, constrainable layers, returned activations) |
+| Model backend | `activation`, `units`, `features` | an activation at any vocabulary point (residual stream, attention, MLP, head-shaped), a set of its units, or a latent model's features at its sub-hook | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (ops, targets, position scopes, value sources, bases, `of`) |
+| Analysis backend (circuit-tracer) | `features` | a replacement model's transcoder feature activations, as `(layer, position, feature_id) -> value` tuples | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `InterventionSupport` whose `features` target carries a `FeatureTargetSupport` (value sources, constrainable layers, returned activations, freezable norms) |
 
-**Capabilities say what a backend implements; support records say how.** A capability member names a protocol
-surface and answers only whether the backend implements it. The configurations it honours are declared in a typed
-support record: a backend that implements `fwd_w_intervention` for `add` and `project` but not `patch` declares the
-surface and a record saying so, and a gate refuses `patch` before anything runs. Surfaces that are not interventions
-work the same way: `CaptureSupport` lists the vocabulary points a model backend can capture, and
-`AttributionGraphSupport` states what graph construction requires of the model.
+**Capabilities say what a component provides; support records say how.** A capability member names a surface and
+answers only whether a component provides it. The configurations it honours are declared in a typed support record
+whose axes mirror venngram's `Support`: a backend that implements `fwd_w_intervention` for `add` and `project` but
+not `patch` declares the surface and a record saying so, and a gate refuses `patch` before anything runs.
+
+**Two providers of one target are legitimate, and are resolved by name.** In a circuit-tracer composition the model
+backend reaches an SAE's features at `hook_sae_acts_post` and the replacement model reaches its transcoders' features.
+`get_module_capabilities(module).intervention_for("features")` refuses that unqualified request, naming both providers,
+rather than resolving it by precedence; an op names the path it uses (`intervention_for("features",
+provider="analysis_backend")`, as `feature_intervention_forward` does). Surfaces that are not interventions work the
+same way: `CaptureSupport` lists the vocabulary points a model backend can capture, and `AttributionGraphSupport` states
+what graph construction requires of the model.
 
 **Basis is a configuration, not a capability.** An intervention defined in a basis (for the Jacobian lens,
 `jlens_unfolded` or `jlens_folded`, which are not interchangeable) states that basis on its spec, and the backend's
@@ -24,14 +32,14 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
   implemented with the same maths by both the TransformerLens and NNsight model backends at either position
   scope, `last_token` or `all_positions` (including
   SAE/latent sub-hook targets via `use_latent_models`/`sae_handles`). Its record, `InterventionSupport`, declares
-  the modes and position scopes; an op declares what it needs through `required_intervention_modes` and
+  the ops, targets and position scopes; an op declares what it needs through `required_intervention_modes` and
   `required_position_scopes`, and the gate compares the two before the op runs.
 - `ReplacementModel.feature_intervention(...)` is the model-level primitive the analysis-level feature-intervention
   op executes on. Both circuit-tracer backend implementations consume canonical intervention tuples of the form
   `(layer, position, feature_idx, value)` and support passthrough controls such as constrained layers, sparse
   activation capture and optional activation return. `CircuitTracerAnalysisBackend` resolves the settings and
-  refuses, through `FeatureInterventionSupport`, a value source it does not honour, a constant source without a
-  value, a layer constraint or an activation return it cannot provide.
+  refuses, through its `features` target's `FeatureTargetSupport`, a value source it does not honour, a constant
+  source without a value, a layer constraint or an activation return it cannot provide.
 
 - `interpretune.analysis.venngram` applies a [venngram](https://github.com/speediedan/venngram) recipe through the
   model-backend surface above: `recipe_interventions` turns a recipe's treatments (ordered ops at a site, on the whole
@@ -148,10 +156,10 @@ These are ACTIVE runtime controls (not just config candidates): `intervention_va
 
 ## Config split: what exists and what is still planned
 
-`FeatureInterventionSupport` is now the analysis-level configuration space as a record: value sources, whether
-layers can be constrained, whether activations can be returned. What is still planned is the split of the
-`CircuitTracerConfig` fields themselves, which keep both levels' knobs at the top level behind `intervention_`
-prefixes:
+`FeatureTargetSupport`, the detail of circuit-tracer's `features` target, is now that provider's configuration space as
+a record: value sources, whether layers can be constrained, whether activations can be returned. What is still planned
+is the split of the `CircuitTracerConfig` fields themselves, which keep both levels' knobs at the top level behind
+`intervention_` prefixes:
 
 - a shared model-level intervention config dataclass reusable by `model_fwd_intervention`,
   `resolve_interventions(...)` and both model backends: `hook_pattern(s)`, `interventions`, `mode`, `scale_factor`,

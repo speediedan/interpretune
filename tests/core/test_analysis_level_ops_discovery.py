@@ -7,10 +7,12 @@ import pytest
 import torch
 
 from interpretune.analysis.backends import (
-    AnalysisBackendCapability,
+    Capability,
     AttributionGraphSupport,
-    FeatureInterventionSupport,
-    ModelBackendCapability,
+    FeatureTargetSupport,
+    InterventionMode,
+    InterventionSupport,
+    PositionScope,
     get_module_capabilities,
 )
 from interpretune.analysis.ops.base import AnalysisBatch, AnalysisOp, CompositeAnalysisOp
@@ -18,24 +20,28 @@ from interpretune.analysis.ops.dispatcher import DISPATCHER
 
 
 class _DummyBackend:
-    def __init__(self, capabilities: frozenset[ModelBackendCapability]):
+    def __init__(self, capabilities: frozenset[Capability]):
         self.capabilities = capabilities
 
 
 class _DummyAnalysisBackend:
     """Declares analysis surfaces with the records that must travel with them."""
 
-    def __init__(self, capabilities: frozenset[AnalysisBackendCapability]):
+    def __init__(self, capabilities: frozenset[Capability]):
         self.capabilities = capabilities
         self.attribution_graph_support = AttributionGraphSupport(requires_own_eager_attention=False)
-        self.feature_intervention_support = FeatureInterventionSupport(value_sources=frozenset({"constant"}))
+        self.intervention_support = InterventionSupport(
+            ops=frozenset({InterventionMode.REPLACE}),
+            position_scopes=frozenset({PositionScope.POSITIONS}),
+            targets={"features": FeatureTargetSupport(value_sources=frozenset({"constant"}))},
+        )
 
 
 class _DummyModule(torch.nn.Module):
     def __init__(
         self,
-        backend_capabilities: frozenset[ModelBackendCapability] | None = None,
-        analysis_capabilities: frozenset[AnalysisBackendCapability] | None = None,
+        backend_capabilities: frozenset[Capability] | None = None,
+        analysis_capabilities: frozenset[Capability] | None = None,
     ) -> None:
         super().__init__()
         self._model_backend = _DummyBackend(backend_capabilities or frozenset())
@@ -72,25 +78,27 @@ def test_required_capabilities_are_parsed() -> None:
 
     intervention_op = DISPATCHER.get_op("feature_intervention_forward")
     assert isinstance(intervention_op, AnalysisOp)
-    assert {cap.value for cap in intervention_op.required_capabilities} == {"feature_intervention"}
+    assert {cap.value for cap in intervention_op.required_capabilities} == {"intervention"}
 
 
 def test_get_module_capabilities_aggregates_backend_and_adapter_capabilities() -> None:
     module = _DummyModule(
-        backend_capabilities=frozenset({ModelBackendCapability.GRADIENTS}),
-        analysis_capabilities=frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH}),
+        backend_capabilities=frozenset({Capability.GRADIENTS}),
+        analysis_capabilities=frozenset({Capability.ATTRIBUTION_GRAPH}),
     )
 
     capabilities = get_module_capabilities(module)
-    assert capabilities.model == frozenset({ModelBackendCapability.GRADIENTS})
-    assert capabilities.analysis == frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH})
+    assert capabilities.providers == {
+        Capability.GRADIENTS: ("model_backend",),
+        Capability.ATTRIBUTION_GRAPH: ("analysis_backend",),
+    }
     assert capabilities.values == frozenset({"gradients", "attribution_graph"})
 
 
 def test_capability_validation_rejects_missing_module_capability() -> None:
     op = DISPATCHER.get_op("compute_attribution_graph")
     assert isinstance(op, AnalysisOp)
-    module = _DummyModule(backend_capabilities=frozenset({ModelBackendCapability.GRADIENTS}))
+    module = _DummyModule(backend_capabilities=frozenset({Capability.GRADIENTS}))
 
     with pytest.raises(ValueError, match="requires capabilities"):
         op(module=module, analysis_batch=AnalysisBatch(), batch=None, batch_idx=0)
@@ -99,7 +107,7 @@ def test_capability_validation_rejects_missing_module_capability() -> None:
 def test_capability_validation_allows_matching_analysis_capability() -> None:
     op = DISPATCHER.get_op("compute_attribution_graph")
     assert isinstance(op, AnalysisOp)
-    module = _DummyModule(analysis_capabilities=frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH}))
+    module = _DummyModule(analysis_capabilities=frozenset({Capability.ATTRIBUTION_GRAPH}))
     mock_impl = MagicMock(return_value=AnalysisBatch(ok=True))
     original_impl = op._impl
     try:
@@ -116,7 +124,7 @@ def test_capability_validation_allows_matching_analysis_capability() -> None:
 def test_composite_ops_validate_capabilities_per_stage() -> None:
     op = DISPATCHER.get_op("intervention_from_concept")
     assert isinstance(op, CompositeAnalysisOp)
-    module = _DummyModule(analysis_capabilities=frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH}))
+    module = _DummyModule(analysis_capabilities=frozenset({Capability.ATTRIBUTION_GRAPH}))
 
     def noop_impl(module, analysis_batch, batch, batch_idx, **kwargs):
         return analysis_batch
@@ -152,7 +160,7 @@ def test_composite_ops_validate_capabilities_per_stage() -> None:
             top_feature_scores=[0.1],
         )
 
-        with pytest.raises(ValueError, match="feature_intervention"):
+        with pytest.raises(ValueError, match=r"feature_intervention_forward.*missing \[intervention\]"):
             op(module=module, analysis_batch=analysis_batch, batch=None, batch_idx=0)
     finally:
         for sub_op, original_impl in zip(op.composition[:-1], original_impls, strict=True):
@@ -163,8 +171,8 @@ class _InterveningBackend(_DummyBackend):
     def __init__(self, modes, scopes):
         from interpretune.analysis.backends import InterventionSupport
 
-        super().__init__(frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION}))
-        self.intervention_support = InterventionSupport(position_scopes=frozenset(scopes), modes=frozenset(modes))
+        super().__init__(frozenset({Capability.INTERVENTION}))
+        self.intervention_support = InterventionSupport(position_scopes=frozenset(scopes), ops=frozenset(modes))
 
 
 def _intervening_module(modes=("add",), scopes=("last_token",)) -> _DummyModule:
@@ -214,8 +222,8 @@ class TestInterventionRequirementAxes:
 
     def test_declaring_an_axis_implies_the_intervention_surface(self):
         op = _op(modes=["add"])
-        module = _DummyModule(backend_capabilities=frozenset({ModelBackendCapability.GRADIENTS}))
-        with pytest.raises(ValueError, match="declares no activation_intervention surface"):
+        module = _DummyModule(backend_capabilities=frozenset({Capability.GRADIENTS}))
+        with pytest.raises(ValueError, match="declares no intervention surface"):
             op(module=module, analysis_batch=AnalysisBatch(), batch=None, batch_idx=0)
 
     def test_declared_axes_pass_on_a_backend_that_honours_them(self):
@@ -244,15 +252,5 @@ class TestInterventionRequirementAxes:
         op = DISPATCHER.get_op("model_fwd_intervention")
         assert isinstance(op, AnalysisOp)
         # by VALUE: the suite can load the capabilities module twice, leaving value-equal, identity-distinct members
-        assert ModelBackendCapability.ACTIVATION_INTERVENTION.value in {c.value for c in op.required_capabilities}
+        assert Capability.INTERVENTION.value in {c.value for c in op.required_capabilities}
         assert not op.requires_intervention_axes, "the bundled op is payload-driven and fixes no mode itself"
-
-
-def test_analysis_capabilities_declared_on_the_module_alone_are_refused() -> None:
-    """A declaration with no backend has no record to check against, so it is refused rather than aggregated."""
-
-    class _Bare(torch.nn.Module):
-        analysis_capabilities = frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH})
-
-    with pytest.raises(ValueError, match="declares analysis capabilities .* with no analysis backend attached"):
-        get_module_capabilities(_Bare())

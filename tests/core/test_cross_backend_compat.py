@@ -32,6 +32,7 @@ from circuit_tracer.utils.tl_nnsight_mapping import UnifiedConfig
 
 from interpretune.analysis import AnalysisInputs, execute_analysis_op
 from interpretune.adapters.circuit_tracer.backends import DEFAULT_CT_ANALYSIS_BACKEND
+from tests.core.circuit_tracer_toy import BaseModelBackendStandIn
 from interpretune.analysis.core import AnalysisStore
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.bundled.concept.concept_ops import (
@@ -584,6 +585,7 @@ class _TLLikeProducerModule:
         self.model = _TLLikeModel()
         self.datamodule = SimpleNamespace(tokenizer=self.model.tokenizer)
         self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
+        self._model_backend = BaseModelBackendStandIn()
 
 
 class _NNsightLikeProducerModule:
@@ -591,6 +593,7 @@ class _NNsightLikeProducerModule:
         self.model = _NNsightLikeModel()
         self.datamodule = SimpleNamespace(tokenizer=self.model.tokenizer)
         self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
+        self._model_backend = BaseModelBackendStandIn()
 
 
 class _FakeITSession(dict):
@@ -600,7 +603,7 @@ class _FakeITSession(dict):
         self.datamodule = datamodule
 
 
-class _FakeConceptExtractionBackend:
+class _FakeConceptExtractionBackend(BaseModelBackendStandIn):
     def fwd_w_cache_and_latent_models(self, model, batch, latent_model_handles, names_filter):
         del latent_model_handles, model
         labels = batch.get("labels")
@@ -772,6 +775,7 @@ class _FakeCircuitTracerConsumerModule:
     def __init__(self, backend: str, input_store: AnalysisStore | None = None) -> None:
         self.replacement_model = _FakeReplacementModel()
         self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
+        self._model_backend = BaseModelBackendStandIn()
         self.analysis_cfg = SimpleNamespace(input_store=input_store)
         self.datamodule = SimpleNamespace(
             tokenizer=self.replacement_model.tokenizer,
@@ -1809,6 +1813,7 @@ class _EmbedStoreEquivalenceModule:
         )
         self.datamodule = SimpleNamespace(tokenizer=self.tokenizer)
         self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
+        self._model_backend = BaseModelBackendStandIn()
         self.analysis_cfg = (
             SimpleNamespace(input_store=input_store, batch_inputs={}, run_inputs={})
             if input_store is not None

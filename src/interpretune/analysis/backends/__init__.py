@@ -5,8 +5,8 @@ hub) — see ``docs/custom_ops_composition_guide.md``. It provides:
 
 - :mod:`~interpretune.analysis.backends.protocols`: the ``ModelBackend`` / ``AnalysisBackend``
   protocols a framework or analysis package implements
-- :mod:`~interpretune.analysis.backends.capabilities`: capability enums, module capability
-  aggregation, and the named-backend registry
+- :mod:`~interpretune.analysis.backends.capabilities`: the capability namespace, its support records,
+  module capability aggregation, and the named-backend registry
 - :mod:`~interpretune.analysis.backends.interventions`: declarative intervention specs and their
   expansion/application
 - :mod:`~interpretune.analysis.backends.feature_selection`: feature-selection specs and filters
@@ -29,13 +29,13 @@ from __future__ import annotations
 
 from interpretune.analysis.backends.capabilities import (
     ANALYSIS_BACKEND_REGISTRY,
-    AnalysisBackendCapability,
-    ModelBackendCapability,
+    COMPONENTS,
     Capability,
+    INTERVENTION_TARGETS,
     InterventionMode,
     InterventionSupport,
     CaptureSupport,
-    FeatureInterventionSupport,
+    FeatureTargetSupport,
     AttributionGraphSupport,
     LatentModelSupport,
     ModuleCapabilities,
@@ -92,9 +92,9 @@ __all__ = [
     "SupportsHeadAttribution",
     "SupportsAttributionGraph",
     "AnalysisBackendCore",
-    "AnalysisBackendCapability",
-    "ModelBackendCapability",
+    "COMPONENTS",
     "Capability",
+    "INTERVENTION_TARGETS",
     "FeatureSelectionSpec",
     "InterventionDict",
     "InterventionSpec",
@@ -118,7 +118,7 @@ __all__ = [
     "LatentModelSupport",
     "InterventionSupport",
     "CaptureSupport",
-    "FeatureInterventionSupport",
+    "FeatureTargetSupport",
     "AttributionGraphSupport",
     "InterventionMode",
     "apply_optional_feature_sign_filter",

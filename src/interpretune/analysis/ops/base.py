@@ -374,8 +374,8 @@ class ColCfg:
     # named-op error rather than a bare AttributeError mid-run.
     #
     # Why `required_capabilities` cannot simply absorb that case: the blocker is the AVAILABILITY side,
-    # not the vocabulary. `get_module_capabilities()` derives what a module has exclusively from attached
-    # backends (`backend.capabilities`, `analysis_backend.capabilities`, legacy `module.analysis_capabilities`).
+    # not the vocabulary. `get_module_capabilities()` derives what a module has exclusively from its attached
+    # components (`model_backend.capabilities`, `analysis_backend.capabilities`).
     # A "module provides method X" requirement has no backend to ask; satisfying it means `hasattr(module, X)`,
     # a different resolution mechanism. Widening the enum alone therefore achieves nothing -- the derivation
     # would need a branch that ignores backends entirely, which is what would make "capability" mean two
@@ -702,11 +702,7 @@ class AnalysisOp:
         if not self.required_capabilities:
             return
 
-        from interpretune.analysis.backends import (
-            AnalysisBackendCapability,
-            get_analysis_backend,
-            get_module_capabilities,
-        )
+        from interpretune.analysis.backends import get_module_capabilities
 
         available = get_module_capabilities(module)
         required_values = {capability_value(cap) for cap in self.required_capabilities}
@@ -716,40 +712,38 @@ class AnalysisOp:
             required = ", ".join(sorted(required_values))
             available_str = ", ".join(sorted(available_values)) or "none"
             missing_str = ", ".join(sorted(missing_values))
-            backend_detail = ""
-            if any(isinstance(cap, AnalysisBackendCapability) for cap in self.required_capabilities):
-                if get_analysis_backend(module) is None:
-                    backend_detail = "; module does not expose an analysis_backend"
             raise ValueError(
-                f"Operation '{self.name}' requires capabilities [{required}] but module only provides "
-                f"[{available_str}]{backend_detail}; "
-                f"missing [{missing_str}]"
+                f"Operation '{self.name}' requires capabilities [{required}] but the module's components only provide "
+                f"[{available_str}]; missing [{missing_str}]"
             )
 
     def _validate_intervention_axes(self, module: torch.nn.Module) -> None:
         """Refuse, naming the axis, when the module's backend cannot honour a declared mode or scope.
 
-        Compared by VALUE against the backend's ``InterventionSupport`` record (the same reading the payload
-        gates in :mod:`interpretune.analysis.backends.interventions` use), so an undeclared mode is refused
-        here, before execution, instead of at the backend after every earlier op in a composition has run.
-        A backend declaring no ``INTERVENTION`` surface fails the same way: the axes are configurations of that
-        surface, so requiring one requires it.
+        Compared by VALUE against the ``InterventionSupport`` record of the component providing the ``activation``
+        target (the same reading the payload gates in :mod:`interpretune.analysis.backends.interventions` use), so an
+        undeclared mode is refused here, before execution, instead of at the backend after every earlier op in a
+        composition has run. A module providing no ``INTERVENTION`` surface fails the same way: the axes are
+        configurations of that surface, so requiring one requires it.
         """
         if not self.requires_intervention_axes:
             return
-        from interpretune.analysis.backends import ModelBackendCapability, get_module_capabilities
+        from interpretune.analysis.backends import Capability, get_module_capabilities
 
         available = get_module_capabilities(module)
-        record = available.intervention
-        if ModelBackendCapability.ACTIVATION_INTERVENTION.value not in available.values or record is None:
+        if Capability.INTERVENTION.value not in available.values:
             raise ValueError(
                 f"Operation '{self.name}' requires intervention modes "
                 f"{sorted(m.value for m in self.required_intervention_modes)} and position scopes "
                 f"{sorted(s.value for s in self.required_position_scopes)}, but the module declares no "
-                f"{ModelBackendCapability.ACTIVATION_INTERVENTION.value} surface"
+                f"{Capability.INTERVENTION.value} surface"
                 f" (capabilities: {sorted(available.values) or 'none'})"
             )
-        declared_modes = {getattr(m, "value", m) for m in record.modes}
+        try:
+            record = available.intervention_for("activation")
+        except ValueError as exc:
+            raise ValueError(f"Operation '{self.name}' requires intervention axes on activations: {exc}") from None
+        declared_modes = {getattr(m, "value", m) for m in record.ops}
         declared_scopes = {getattr(s, "value", s) for s in record.position_scopes}
         for axis, required, declared in (
             ("mode", {m.value for m in self.required_intervention_modes}, declared_modes),

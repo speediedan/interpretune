@@ -71,7 +71,7 @@ class TestDerivedSupport:
         from interpretune.analysis.backends.capabilities import InterventionMode, PositionScope
 
         support = venngram_support(
-            InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, modes={InterventionMode.REPLACE})
+            InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, ops={InterventionMode.REPLACE})
         )
         assert support.ops == frozenset({"replace"}) and support.tokens == frozenset({"last"})
 
