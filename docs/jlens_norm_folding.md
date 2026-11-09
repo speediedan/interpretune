@@ -192,6 +192,35 @@ In practice:
    processing changes that basis, so a folded vector built from a processed `W_U` would double-count
    the fold; see the weight-processing note in `interpretune_intervention_apis.md`.
 
+## Folding under J++
+
+A J++ lens (see "Lens kinds" in [J-Space Usage](jlens_usage.md)) changes how each layer's map $J$ is fitted, not
+how it is read. What that does and does not change for folding:
+
+1. **The fold formula carries over; its evidence does not.** $v_c = (W_U[c] \odot s) J$ holds for whichever
+   map $J$ is, so `jlens_folded` and `jlens_unfolded` are built the same way from a J++ lens. The per-model
+   choices above (fold on gemma-3-1b-it, the coordinate-alignment mechanism, the permuted control) were
+   measured through J-lens maps and have not been re-measured with J++ maps. That measurement was deliberately
+   not made a prerequisite. A J++ lens is recommended for readouts, where folding does not arise because the
+   readout applies the norm itself, and not for steering, where it does: on the two-hop swap battery the
+   J-lens swaps better on both models we validated
+   ([Qwen3.5-4B, both bases](https://github.com/speediedan/interpretune/issues/925#issuecomment-6729102253)). On Qwen3.5-4B that verdict is the same in the
+   folded and the unfolded basis, so the basis does not explain the J++ deficit there. If you do steer with a
+   J++ direction, the first-order check in the decision rule is how to choose its basis.
+2. **J++'s norm handling matches the frozen-denominator convention.** J++ fits its Jacobians with each
+   RMSNorm's $1/\mathrm{rms}$ factor detached. The derivation above drops the same factor for directions,
+   and J-space attribution validation freezes norm denominators, so a J++ lens and frozen-denominator
+   attribution are a consistent pair. Whether the norm-frozen attribution checks tighten with a J++ lens has
+   not been measured.
+3. **Folding concerns direction; J++'s per-layer scale concerns magnitude.** A J++ map carries an arbitrary
+   scale per layer. That is why `jlens_read` divides by the final norm's RMS by default for a J++ lens, and
+   it does not touch the fold, which is about direction. Never compare raw readout magnitudes across layers
+   or lenses.
+4. **No mixed bases.** A J++ map fitted on raw weights must not compose with a processed unembedding, for the
+   reason the decision rule's last step gives.
+5. **LayerNorm models are out of reach for now.** The J++ fitting code has LRP rules only for RMSNorm
+   families, so the gpt2 and pythia-70m rows above cannot be repeated with J++.
+
 ## A note on method
 
 The prototype implemented both variants because the paper's formal readout and its operational
