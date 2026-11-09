@@ -1,5 +1,43 @@
 # Interpretune Intervention APIs
 
+## What an intervention is
+
+An **intervention** applies an **op** to a **target** at a **site** during a pass: to the forward value of an
+activation, or to its gradient. This is the sense the interpretability literature gives the word: causal-abstraction
+interventions (hard, soft and interchange), activation patching, ablation, steering, and trainable interventions such
+as distributed alignment search and representation fine-tuning are all interventions on a model's internal variables.
+
+- **Ops** come from venngram's op registry (`venngram.ops`): `replace`, `add`, `scale`, `project`, `reject`, `patch`
+  and `clamp`, plus any op a user registers. Each op's meaning is defined once, below.
+- **Targets** are the whole activation, a set of its units, or a latent model's features (venngram's `targets`).
+- **Value or gradient**: an address with `of: grad` names the gradient with respect to what it selects, so an op on a
+  gradient target is a backward-pass intervention. Resolving such sites is
+  [#938](https://github.com/speediedan/interpretune/issues/938); paths between sites (stopping or routing the gradient
+  from one set to another) are [venngram#67](https://github.com/speediedan/venngram/issues/67).
+
+Kinds of intervention differ in the op and in **where the op's operand comes from**:
+
+| operand source | examples | role of its tensors |
+| --- | --- | --- |
+| a constant or a dose | zero ablation, a fixed steering dose, a per-unit gain | none |
+| computed from the model or the store | a concept direction, a J-lens patch pair, another run's activation (activation patching) | none |
+| trainable parameters | a learned steering vector (`add`), a learned per-unit gain (`scale`) | `intervention:<name>` |
+| a latent model's output | an SAE or transcoder spliced in (`replace` or `replace_with_error` with the reconstruction) | `latent:<name>` |
+
+The first two rows are applied by the analysis ops on this page. The last two carry parameters a schedule can tune, so
+they are attached through the tuning seams ([trainable interventions](tuning_interventions.md),
+[latent models](tuning_latent_models.md)) and take the roles shown.
+
+Two boundaries keep the term precise:
+
+- **Weight changes are tuning, not interventions.** A low-rank edit of a representation is an intervention; a low-rank
+  adapter on a weight matrix is an adapter (the `adapter` role).
+- **Attribution patching is not an intervention.** It estimates, by linearization, what an activation-patching
+  intervention would do, and changes nothing. `intervention_first_order_check` is its counterpart: it checks an applied
+  intervention against such a first-order prediction.
+
+## Surfaces
+
 Interpretune enables interventions at multiple levels of abstraction.
 
 | Level | Capability member | Object acted on | Entry op | Executed by | Support record |

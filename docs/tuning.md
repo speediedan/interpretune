@@ -1,8 +1,13 @@
 # Tuning
 
-Interpretune fine-tunes any composition with [finetuning-scheduler](https://finetuning-scheduler.readthedocs.io):
-a schedule thaws parameters phase by phase, on Interpretune's core loop or on a framework adapter loop like
-Lightning.
+Every Interpretune composition exposes a **tunable view**: which of its tensors may be tuned, the role each plays, how
+they group by depth, and which may be promoted to another role. The view is the tuning interface. Its protocol is
+venngram's (`venngram.tuning`), not any one scheduler's, so any scheduler that consumes `venngram.tuning` views can drive
+an Interpretune composition.
+
+Today that scheduler is [finetuning-scheduler](https://finetuning-scheduler.readthedocs.io): a schedule thaws parameters
+phase by phase, on Interpretune's core loop or on a framework adapter loop like Lightning. The schedule format (phases,
+and the per-phase `promote`, `refreeze` and `restore` keys) is finetuning-scheduler's own; the view it reads is not.
 
 ```python
 schedule = {
@@ -46,7 +51,7 @@ Tuning is one of several places Interpretune consumes venngram:
 - **Tuning** (this page): the tunable view protocol and role vocabulary come from `venngram.tuning` and `venngram.roles`,
   and `TuningConformance` runs Fine-Tuning Scheduler's view conformance cases against a composition's view.
 - **Interventions**: `interpretune.analysis.venngram` applies a venngram recipe's treatments through the model
-  backends' native intervention modes, and a support record derived from each backend's own refuses what it cannot
+  backends' native intervention ops, and a support record derived from each backend's own refuses what it cannot
   express. [Interpretune Intervention APIs](interpretune_intervention_apis.md) describes the surfaces it runs on, and
   [#905](https://github.com/speediedan/interpretune/issues/905) tracks interventions on venngram-addressed unit sets.
 - **Recipes by reference**: `load_recipe` reads a recipe from a venngram document reference (fetched, hash-checked and
@@ -147,7 +152,7 @@ tunable_view:
 The module configuration's `tunable_view` (a `class_path` and optional `init_args`) is instantiated with the module as
 the view's root and takes precedence over `build_tunable_view()`, so how a schedule names parameters is part of the
 run's configuration, and of its configuration hash. A view class taking `roles` receives the composition's roles unless
-`init_args` sets them; `init_args` cannot set the root. The [TransformerLens](fts_tuning_transformer_lens.md) page shows
+`init_args` sets them; `init_args` cannot set the root. The [TransformerLens](tuning_transformer_lens.md) page shows
 both of its choices.
 
 ## Phased fine-tuning on the core loop
@@ -198,16 +203,16 @@ a fresh session, because cases change parameters and `requires_grad`.
 
 | Composition | View | Roles |
 | --- | --- | --- |
-| [core / HF](fts_tuning_core_hf.md), and any composition not overriding `build_tunable_view()` (the default) | venngram's composed view (the identity view where no map describes the model): trainable | PEFT adapter tensors as `adapter:<name>` |
-| [TransformerLens](fts_tuning_transformer_lens.md) | `TransformerBridgeView`, in TransformerLens names (refused when the bridge holds quantized or packed parameters) | as on its page |
-| [sae_lens](fts_tuning_sae_lens.md) with `add_saes_on_init=True` | the backend's view | the spliced SAEs as `latent:sae` |
-| [nnsight](fts_tuning_nnsight.md), local and dispatched | the identity view over the HF module, registered as `hf_model` | PEFT adapter tensors as `adapter:<name>` |
-| [nnsight](fts_tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; tuning paths tracked in [#814](https://github.com/speediedan/interpretune/issues/814) and [#775](https://github.com/speediedan/interpretune/issues/775) | |
-| [circuit-tracer](fts_tuning_circuit_tracer.md) | refused, with the reason; tuning paths tracked in [#813](https://github.com/speediedan/interpretune/issues/813), [#787](https://github.com/speediedan/interpretune/issues/787) and [#709](https://github.com/speediedan/interpretune/issues/709) | |
-| [interp-engine (hub adapter)](fts_tuning_interp_engine.md) | Interpretune's default view until the adapter declares its own; its circuit-tracer composition takes the circuit-tracer refusal | none declared yet |
+| [core / HF](tuning_core_hf.md), and any composition not overriding `build_tunable_view()` (the default) | venngram's composed view (the identity view where no map describes the model): trainable | PEFT adapter tensors as `adapter:<name>` |
+| [TransformerLens](tuning_transformer_lens.md) | `TransformerBridgeView`, in TransformerLens names (refused when the bridge holds quantized or packed parameters) | as on its page |
+| [sae_lens](tuning_sae_lens.md) with `add_saes_on_init=True` | the backend's view | the spliced SAEs as `latent:sae` |
+| [nnsight](tuning_nnsight.md), local and dispatched | the identity view over the HF module, registered as `hf_model` | PEFT adapter tensors as `adapter:<name>` |
+| [nnsight](tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; tuning paths tracked in [#814](https://github.com/speediedan/interpretune/issues/814) and [#775](https://github.com/speediedan/interpretune/issues/775) | |
+| [circuit-tracer](tuning_circuit_tracer.md) | refused, with the reason; tuning paths tracked in [#813](https://github.com/speediedan/interpretune/issues/813), [#787](https://github.com/speediedan/interpretune/issues/787) and [#709](https://github.com/speediedan/interpretune/issues/709) | |
+| [interp-engine (hub adapter)](tuning_interp_engine.md) | Interpretune's default view until the adapter declares its own; its circuit-tracer composition takes the circuit-tracer refusal | none declared yet |
 | a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |
 
-Any composition but circuit-tracer can also carry [latent models](fts_tuning_latent_models.md) (SAEs, transcoders
+Any composition but circuit-tracer can also carry [latent models](tuning_latent_models.md) (SAEs, transcoders
 and other dictionaries) spliced in at a site, which take the role `latent:<name>`, and learned
-[interventions](fts_tuning_interventions.md) (steering vectors and other site rewrites), which take the role
+[interventions](tuning_interventions.md) (steering vectors and other site rewrites), which take the role
 `intervention:<name>`. Every interpretune module declares both in its `tunable_roles()`.

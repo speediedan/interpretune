@@ -1,6 +1,6 @@
 # Tuning: interp-engine (hub adapter)
 
-[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
+[Tuning](tuning.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
 
 The interp-engine hub adapter declares no view of its own yet, so its compositions receive Interpretune's default view
 over the Interpretune module. That fits only where its model is reachable there under its own names, which

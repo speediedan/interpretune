@@ -1,6 +1,6 @@
 # Tuning: latent models
 
-[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its finetuning-scheduler view.
+[Tuning](tuning.md) describes how every composition declares and attaches its finetuning-scheduler view.
 
 A *latent model* models a site's activations through latents. Examples:
 
@@ -14,7 +14,7 @@ A *latent model* models a site's activations through latents. Examples:
 
 - **`LatentModel`**: the protocol, an `nn.Module` with `encode(x)` (activations to latents) and `decode(z)` (latents to activations). sae_lens SAEs and circuit-tracer transcoders already satisfy it.
 - **`LatentSite(read, write=None, read_from="output", op="replace_with_error")`**: where the latent model reads (the `read` module's output, or its first input), which module's output it rewrites (`write`, by default the `read` module), and the op applied there with the reconstruction as the operand. Paths are module names under the interpretune module, so a site is `model.layers.0.mlp` on a core module, `hf_model.model.layers.0.mlp` on an nnsight module, or a TransformerLens bridge's hook point. Venngram site addresses replace these once interpretune resolves them ([#864](https://github.com/speediedan/interpretune/issues/864), [#876](https://github.com/speediedan/interpretune/issues/876)).
-- **Ops** (venngram's registry, as every [intervention](fts_tuning_interventions.md) uses):
+- **Ops** (venngram's registry, as every [intervention](tuning_interventions.md) uses):
   - `"replace"`: the output becomes the reconstruction, so the model runs on what the latents capture.
   - `"replace_with_error"`: the straight-through substitution. The output keeps its value (the reconstruction plus its detached error, as sae_lens's error term does) while gradients reach the latent model through the reconstruction.
   - `None`: no op. The latents are captured (`last_latents`) and the output is unchanged, a read rather than an intervention.
@@ -64,4 +64,4 @@ Attached with `frozen=True`, the same transcoder stays an `instrument`, applied 
 
 `layers:3` needs the layer structure a venngram component map gives the module's view; without one, name the layer by regex (`model\.model\.layers\.3\..*`). `promote`, `refreeze` and `restore` run on the core loop; the Lightning callback refuses them by name.
 
-sae_lens's own splice (`add_saes_on_init`) keeps registering its SAEs as `attached_saes` with the `latent:sae` role, as [sae_lens](fts_tuning_sae_lens.md) describes. The seam here is for backends without a native splice, and for latent models other than SAEs.
+sae_lens's own splice (`add_saes_on_init`) keeps registering its SAEs as `attached_saes` with the `latent:sae` role, as [sae_lens](tuning_sae_lens.md) describes. The seam here is for backends without a native splice, and for latent models other than SAEs.

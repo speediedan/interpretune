@@ -1,8 +1,8 @@
 # Tuning: interventions
 
-[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its finetuning-scheduler view.
+[Tuning](tuning.md) describes how every composition declares and attaches its finetuning-scheduler view.
 
-An *intervention* applies an op (`add`, `scale`, `reject`, `patch`, ...: venngram's op registry) to a site's activations, as [Interpretune Intervention APIs](interpretune_intervention_apis.md) describes. Kinds of intervention differ in the op and in where its operand comes from: a constant or a dose (a zero ablation), a value computed from the model (a concept direction, another run's activation), a [latent model](fts_tuning_latent_models.md)'s reconstruction, or parameters of its own. `interpretune.tuning.interventions` is the seam for the last kind, *trainable* interventions, whose operand a schedule tunes. A steering vector is the `add` op with a learned vector; a learned per-unit gain is `scale`. Any trainable intervention can be attached at a site, on any backend but circuit-tracer (below), and scheduled by role.
+An *intervention* applies an op (`add`, `scale`, `reject`, `patch`, ...: venngram's op registry) to a site's activations, as [Interpretune Intervention APIs](interpretune_intervention_apis.md) describes. Kinds of intervention differ in the op and in where its operand comes from: a constant or a dose (a zero ablation), a value computed from the model (a concept direction, another run's activation), a [latent model](tuning_latent_models.md)'s reconstruction, or parameters of its own. `interpretune.tuning.interventions` is the seam for the last kind, *trainable* interventions, whose operand a schedule tunes. A steering vector is the `add` op with a learned vector; a learned per-unit gain is `scale`. Any trainable intervention can be attached at a site, on any backend but circuit-tracer (below), and scheduled by role.
 
 ## The seam
 
