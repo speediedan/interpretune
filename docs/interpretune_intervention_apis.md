@@ -3,9 +3,9 @@
 ## What an intervention is
 
 An **intervention** applies an **op** to a **target** at a **site** during a pass: to the forward value of an
-activation, or to its gradient. This is the sense the interpretability literature gives the word: causal-abstraction
-interventions (hard, soft and interchange), activation patching, ablation, steering, and trainable interventions such
-as distributed alignment search and representation fine-tuning are all interventions on a model's internal variables.
+activation, or to its gradient. Causal-abstraction interventions (hard, soft and interchange), activation patching,
+ablation, steering, and trainable interventions such as distributed alignment search and representation fine-tuning
+are all interventions on a model's internal variables.
 
 - **Ops** come from venngram's op registry (`venngram.ops`): `replace`, `add`, `scale`, `project`, `reject`, `patch`
   and `clamp`, plus any op a user registers. Each op's meaning is defined once, below.
@@ -28,13 +28,8 @@ The first two rows are applied by the analysis ops on this page. The last two ca
 they are attached through the tuning seams ([trainable interventions](tuning_interventions.md),
 [latent models](tuning_latent_models.md)) and take the roles shown.
 
-Two boundaries keep the term precise:
-
-- **Weight changes are tuning, not interventions.** A low-rank edit of a representation is an intervention; a low-rank
-  adapter on a weight matrix is an adapter (the `adapter` role).
-- **Attribution patching is not an intervention.** It estimates, by linearization, what an activation-patching
-  intervention would do, and changes nothing. `intervention_first_order_check` is its counterpart: it checks an applied
-  intervention against such a first-order prediction.
+**Weight changes are tuning, not interventions.** A low-rank edit of a representation is an intervention; a low-rank
+adapter on a weight matrix is an adapter (the `adapter` role).
 
 ## Surfaces
 
@@ -161,6 +156,8 @@ The registered analysis ops (all callable as `it.<name>(...)`):
   `jlens_sparse_inventory` (`jacobian_lens_sparse_inventory`): the J-lens read path (ranked readout, concept
   cosine, and sparse nonnegative decomposition with its residual); see `jlens_usage.md`.
 - `intervention_first_order_check`: checks an applied intervention against its first-order prediction per basis.
+  The prediction is the linearization attribution patching uses to estimate an activation patch without applying it;
+  this op applies the intervention and compares the measured change with that estimate.
 - `compute_attribution_graph` (`ct_graph`), `graph_node_influence` (`ct_node_influence`),
   `extract_top_features` (`ct_top_features`), `feature_intervention_forward` (`ct_feature_intervention`),
   `model_fwd_intervention` (`direction_intervention` / `direct_concept_direction_intervention`).
