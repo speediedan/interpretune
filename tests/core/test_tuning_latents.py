@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import partial
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -160,12 +161,17 @@ class TestRefusals:
             attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.7"))
         assert "sae" not in getattr(root, LATENT_MODELS_ATTR)
 
-    def test_a_circuit_tracer_composition_is_refused(self):
+    def test_a_circuit_tracer_composition_takes_one_only_where_its_forward_runs(self):
         class BaseCircuitTracerModule(Root):  # matched by name: circuit-tracer is optional
             pass
 
-        with pytest.raises(ValueError, match="circuit-tracer composition"):
+        with pytest.raises(ValueError, match="no torch module runs its replacement model's forward"):
             attach_latent_model(BaseCircuitTracerModule(), "sae", TinySAE(), LatentSite("model.blocks.0"))
+        root = BaseCircuitTracerModule()
+        object.__setattr__(root, "_replacement_model", SimpleNamespace(_model=root.model["blocks"]))  # nnsight's shape
+        with pytest.raises(ValueError, match="only at modules of the model circuit-tracer runs"):
+            attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0", write="model.tuple_block"))
+        attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0"))
 
     def test_detaching_an_unknown_name_raises(self):
         with pytest.raises(KeyError):

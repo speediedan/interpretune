@@ -31,6 +31,30 @@ With the transcoders registered as `transcoders`, every parameter of the module 
 until a promotion, so there is nothing to optimize: a session whose configuration sets `optimizer_init` gets no
 optimizer, with a warning, and analysis sessions run as before.
 
+## Interventions and latent models beside the transcoders
+
+Trainable interventions ([Tuning: interventions](fts_tuning_interventions.md)) and latent models
+([Tuning: latent models](fts_tuning_latent_models.md)) attach to a circuit-tracer composition as to any other, with
+three rules of its own:
+
+- **Roles are merged, and only a conflict is refused.** The view assigns the transcoders' roles itself. The module's
+  `tunable_roles()` (the attached interventions' `intervention:<name>`, the latent models' `latent:<name>`) are declared
+  on the bound view, venngram's cooperative-role rule: a declared role on a tensor the view does not assign joins the
+  view and is selectable by `role:`, a role equal to the view's own is accepted, and one that differs (a declaration
+  giving a transcoder tensor any role but its own) is refused by name. Their tensors form the first depth group. The
+  base model is still refused by name unless `tune_base` is set.
+- **A site must be in the model circuit-tracer runs.** circuit-tracer runs its replacement model's forward,
+  attribution included: on the TransformerLens backend the replacement model itself, on the nnsight backend the HF
+  model it wraps (registered as `hf_model`), whose modules' forward hooks fire in its traces. A site elsewhere would
+  never fire, so it is refused by name, as is a composition with no torch module behind its replacement model.
+- **Attribution sees the intervention and never trains it.** An attached intervention runs in every forward pass
+  circuit-tracer makes, so a graph attributes the intervened model. Attribution runs with every thawed tensor frozen,
+  the module's own included, so attribution's backward passes never reach an intervention's or latent model's
+  `.grad`. As with base tuning ([#813](https://github.com/speediedan/interpretune/issues/813)), a thawed intervention
+  changes what the transcoders read: the graph stays complete, since error nodes absorb what the transcoders no longer
+  reconstruct, and the cost is interpretability. Attributing with any tensor outside the transcoders thawed warns,
+  suggesting a fit measurement (below).
+
 ## Lazily loaded weights
 
 With `lazy_encoder` or `lazy_decoder` (the decoder is lazy by default), circuit-tracer re-reads $W_{enc}$ or $W_{dec}$

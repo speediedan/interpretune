@@ -14,7 +14,7 @@ An *intervention* applies an op (`add`, `scale`, `reject`, `patch`, ...: venngra
 
 Interventions without parameters (an ablation, a patch, a dose of a concept direction) need no role and no seam: the analysis ops apply them during a pass.
 
-**Circuit-tracer compositions refuse trainable interventions for now.** Their view assigns its transcoders' roles itself and admits no other tensors, so an intervention's tensors would have no role. circuit-tracer's own interventions are unaffected: `feature_intervention_forward` and `model_fwd_intervention` on concept directions ([circuit-tracer backend support](circuit_tracer_backend_support.md)) carry no parameters, so they never need one. Lifting the refusal where nothing conflicts needs the view to merge declared roles, site resolution that reaches circuit-tracer's forward on every backend, and attribution that never treats the intervention's tensors as gradient leaves ([#953](https://github.com/speediedan/interpretune/issues/953)).
+**On a circuit-tracer composition** an intervention's role is merged with the transcoders' (only a conflicting declaration is refused), its site must be a module of the model circuit-tracer runs, and attribution sees it in the forward pass but never reaches its gradient: [Tuning: circuit-tracer](fts_tuning_circuit_tracer.md#interventions-and-latent-models-beside-the-transcoders). circuit-tracer's own interventions (`feature_intervention_forward`, and `model_fwd_intervention` on concept directions; [circuit-tracer backend support](circuit_tracer_backend_support.md)) carry no parameters, so they need no role.
 
 ## From a configuration
 
