@@ -10,7 +10,7 @@ from torch import nn
 
 from interpretune.tuning.interventions import (
     INTERVENTIONS_ATTR,
-    SteeringVector,
+    OpIntervention,
     attach_intervention,
     detach_intervention,
     intervention_roles,
@@ -73,16 +73,16 @@ class TestSplicing:
     def test_a_steering_vector_changes_nothing_until_it_trains(self):
         root, x = Root(), _x()
         before = root(x)
-        attach_intervention(root, "steer", SteeringVector(D), "model.blocks.0")
+        attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.0")
         assert torch.equal(root(x), before)
         root(x).sum().backward()
-        assert root.interventions["steer"].vector.grad is not None
+        assert root.interventions["steer"].operand.value.grad is not None
 
     def test_the_site_output_becomes_the_intervention_of_it(self):
         root, x = Root(), _x()
-        steer = attach_intervention(root, "steer", SteeringVector(D, scale=2.0), "model.blocks.1")
+        steer = attach_intervention(root, "steer", OpIntervention("add", D, scale_factor=2.0), "model.blocks.1")
         with torch.no_grad():
-            steer.vector.fill_(0.5)
+            steer.operand.value.fill_(0.5)
         seen = {}
         root.model["tuple_block"].register_forward_pre_hook(lambda m, args: seen.update(x=args[0]))
         root(x)
@@ -92,18 +92,18 @@ class TestSplicing:
 
     def test_a_tuple_output_has_its_first_element_rewritten(self):
         root = Root()
-        steer = attach_intervention(root, "steer", SteeringVector(D), "model.tuple_block")
+        steer = attach_intervention(root, "steer", OpIntervention("add", D), "model.tuple_block")
         with torch.no_grad():
-            steer.vector.fill_(1.0)
+            steer.operand.value.fill_(1.0)
         out = root.model["tuple_block"](_x())
         assert isinstance(out, tuple) and torch.allclose(out[0], root.model["tuple_block"].proj(_x()) + 1.0)
 
     def test_detaching_restores_the_forward_pass(self):
         root, x = Root(), _x()
         before = root(x)
-        steer = attach_intervention(root, "steer", SteeringVector(D), "model.blocks.0")
+        steer = attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.0")
         with torch.no_grad():
-            steer.vector.fill_(1.0)
+            steer.operand.value.fill_(1.0)
         assert not torch.equal(root(x), before)
         assert detach_intervention(root, "steer") is steer
         assert torch.equal(root(x), before) and "steer" not in root.interventions
@@ -111,19 +111,20 @@ class TestSplicing:
 
     def test_the_intervention_is_part_of_the_root(self):
         root = Root()
-        attach_intervention(root, "steer", SteeringVector(D), "model.blocks.0")
+        attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.0")
         assert f"{INTERVENTIONS_ATTR}.steer.operand.value" in root.state_dict()
         assert intervention_sites(root) == {"steer": "model.blocks.0"}
 
     def test_the_intervention_moves_to_the_sites_device_and_keeps_its_dtype(self):
         root = Root().to(device="meta", dtype=torch.float16)
-        steer = attach_intervention(root, "s", SteeringVector(D), "model.blocks.0")
-        assert steer.vector.device.type == "meta" and steer.vector.dtype == torch.float32
+        steer = attach_intervention(root, "s", OpIntervention("add", D), "model.blocks.0")
+        assert steer.operand.value.device.type == "meta" and steer.operand.value.dtype == torch.float32
         root.model["hook"] = nn.Identity()  # a site holding no tensors (a hook point) takes the root's device
-        assert attach_intervention(root, "h", SteeringVector(D), "model.hook").vector.device.type == "meta"
+        hooked = attach_intervention(root, "h", OpIntervention("add", D), "model.hook")
+        assert hooked.operand.value.device.type == "meta"
 
     def test_the_vector_follows_the_activations_dtype(self):
-        steer = SteeringVector(D)
+        steer = OpIntervention("add", D)
         assert steer(torch.zeros(2, D, dtype=torch.bfloat16)).dtype == torch.bfloat16
 
 
@@ -131,14 +132,14 @@ class TestRefusals:
     @pytest.mark.parametrize("name", ["a.b", "a:b", "", "a b"])
     def test_names_must_be_role_and_module_safe(self, name):
         with pytest.raises(ValueError, match="letters, digits"):
-            attach_intervention(Root(), name, SteeringVector(D), "model.blocks.0")
+            attach_intervention(Root(), name, OpIntervention("add", D), "model.blocks.0")
 
     def test_a_circuit_tracer_composition_is_refused(self):
         class BaseCircuitTracerModule(Root):  # matched by name: circuit-tracer is optional
             pass
 
         with pytest.raises(ValueError, match="circuit-tracer composition"):
-            attach_intervention(BaseCircuitTracerModule(), "steer", SteeringVector(D), "model.blocks.0")
+            attach_intervention(BaseCircuitTracerModule(), "steer", OpIntervention("add", D), "model.blocks.0")
 
     def test_a_configured_vector_cannot_be_frozen(self):
         from interpretune.tuning.interventions import as_intervention_cfg
@@ -149,14 +150,14 @@ class TestRefusals:
 
     def test_a_name_is_attached_once(self):
         root = Root()
-        attach_intervention(root, "steer", SteeringVector(D), "model.blocks.0")
+        attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.0")
         with pytest.raises(ValueError, match="already attached"):
-            attach_intervention(root, "steer", SteeringVector(D), "model.blocks.1")
+            attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.1")
 
     def test_a_missing_site_is_refused_before_anything_is_registered(self):
         root = Root()
         with pytest.raises(AttributeError):
-            attach_intervention(root, "steer", SteeringVector(D), "model.blocks.7")
+            attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.7")
         assert len(root.interventions) == 0 and intervention_roles(root) == {}
 
     def test_detaching_an_unknown_name_raises(self):
@@ -174,9 +175,9 @@ class SteeredRoot(Root):
 class TestRoles:
     def test_tunable_and_frozen_interventions_take_their_roles(self):
         root = Root()
-        attach_intervention(root, "steer", SteeringVector(D), "model.blocks.0")
+        attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.0")
         attach_intervention(root, "edit", nn.Linear(D, D), "model.blocks.1")
-        attach_intervention(root, "held", SteeringVector(D), "model.tuple_block", frozen=True)
+        attach_intervention(root, "held", OpIntervention("add", D), "model.tuple_block", frozen=True)
         assert intervention_roles(root) == {
             "interventions.steer.operand.value": "intervention:steer",
             "interventions.edit.weight": "intervention:edit",
@@ -191,7 +192,7 @@ class TestRoles:
         from interpretune.tuning.latents import attach_latent_model
 
         root = SteeredRoot()
-        attach_intervention(root, "steer", SteeringVector(D), "model.blocks.1")
+        attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.1")
         attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0"))
         roles = root.tunable_roles()
         assert roles["interventions.steer.operand.value"] == "intervention:steer"
@@ -223,7 +224,7 @@ class TestScheduling:
         from finetuning_scheduler import CanonicalView, TuningScheduler
 
         root = SteeredRoot()
-        attach_intervention(root, "steer", SteeringVector(D), "model.blocks.1")
+        attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.1")
         schedule = {
             0: {"params": ["role:intervention:steer"], "max_transition_epoch": 1},
             1: {"params": [r"model\.tuple_block\..*"]},
@@ -249,7 +250,7 @@ class TestScheduling:
         from interpretune.tuning.views import identity_view
 
         root = SteeredRoot()
-        steer = attach_intervention(root, "steer", SteeringVector(D), "model.blocks.1")
+        steer = attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.1")
         schedule = {
             0: {"params": ["role:intervention:steer"], "max_transition_epoch": 1},
             1: {"params": [r"model\.tuple_block\..*"], "refreeze": ["role:intervention"], "restore": "none"},
@@ -261,7 +262,7 @@ class TestScheduling:
         x, y = _x(), torch.tensor([0, 1, 0, 1])
         for _ in fts.epochs(2):
             if fts.curr_depth == 1 and trained is None:
-                trained = steer.vector.detach().clone()
+                trained = steer.operand.value.detach().clone()
             nn.functional.cross_entropy(root(x), y).backward()
             fts.optimizer.step()
             fts.optimizer.zero_grad()
@@ -270,15 +271,15 @@ class TestScheduling:
         block = ["model.tuple_block.proj.bias", "model.tuple_block.proj.weight"]
         assert seen == [(0, ["interventions.steer.operand.value"]), (1, block)]
         assert trained is not None and trained.abs().sum() > 0  # the steering stage moved it
-        assert torch.equal(steer.vector, trained)  # and the block stage held it fixed
+        assert torch.equal(steer.operand.value, trained)  # and the block stage held it fixed
 
     def test_a_frozen_intervention_steers_and_never_trains(self):
         from finetuning_scheduler import CanonicalView, TuningScheduler
 
         root = SteeredRoot()
-        steer = attach_intervention(root, "steer", SteeringVector(D), "model.blocks.1", frozen=True)
+        steer = attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.1", frozen=True)
         with torch.no_grad():
-            steer.vector.fill_(0.25)  # a precomputed direction, applied from the start
+            steer.operand.value.fill_(0.25)  # a precomputed direction, applied from the start
         schedule = {
             0: {"params": [r"model\.tuple_block\..*"], "max_transition_epoch": 1},
             1: {"params": [r"model\.blocks\..*"]},
@@ -289,7 +290,7 @@ class TestScheduling:
         seen = self._train(fts, root, 2)
         assert all("interventions.steer.operand.value" not in trainable for _, trainable in seen)
         assert fts.roles["interventions.steer.operand.value"] == "instrument"
-        assert torch.equal(steer.vector, torch.full((D,), 0.25))
+        assert torch.equal(steer.operand.value, torch.full((D,), 0.25))
 
 
 class TestOnAnInterpretuneModule:
@@ -305,8 +306,8 @@ class TestOnAnInterpretuneModule:
         from interpretune.tuning.views import identity_view
 
         module = ITSession(deepcopy(request.getfixturevalue("get_it_session_cfg__core_cust"))).module
-        width = module.model.tok_embeddings.embedding_dim
-        attach_intervention(module, "steer", SteeringVector(width), "model.layers.0")
+        d_model = module.model.tok_embeddings.embedding_dim
+        attach_intervention(module, "steer", OpIntervention("add", d_model), "model.layers.0")
         view = identity_view(module, roles={**module.tunable_roles(), **intervention_roles(module)})
         compiled = compile_schedule(
             {0: {"params": ["role:intervention:steer"]}, 1: {"params": ["model.layers.0.*"]}}, view
@@ -314,7 +315,7 @@ class TestOnAnInterpretuneModule:
         assert compiled.physical_for(0) == ("interventions.steer.operand.value",)
         ids = torch.randint(0, module.model.tok_embeddings.num_embeddings, (2, 5))
         module.model(ids).float().sum().backward()
-        assert module.interventions["steer"].vector.grad is not None
+        assert module.interventions["steer"].operand.value.grad is not None
 
 
 def _site(module, cfg_fixture: str) -> str:
@@ -355,8 +356,8 @@ def test_a_configured_steering_vector_is_attached_and_scheduled_by_role(request,
     probe = ITSession(deepcopy(request.getfixturevalue(cfg_fixture))).module
     site = _site(probe, cfg_fixture)
     cfg = deepcopy(request.getfixturevalue(cfg_fixture))
-    width = probe.model.tok_embeddings.embedding_dim if cfg_fixture.endswith("core_cust") else None
-    entry = {"name": "steer", "site": site, "width": width}
+    d_model = probe.model.tok_embeddings.embedding_dim if cfg_fixture.endswith("core_cust") else None
+    entry = {"name": "steer", "site": site, "shape": d_model}
     cfg.module_cfg.tuning_interventions = [entry if as_mapping else InterventionCfg(**entry)]
     module = ITSession(cfg).module
     assert intervention_sites(module) == {"steer": site}
@@ -372,21 +373,21 @@ def test_a_configured_op_must_be_one_a_trainable_intervention_applies():
 
     with pytest.raises(ValueError, match="'reject' is a registered op that this seam does not yet apply"):
         attach_configured_interventions(
-            Root(), [InterventionCfg(name="edit", site="model.blocks.0", op="reject", width=D)]
+            Root(), [InterventionCfg(name="edit", site="model.blocks.0", op="reject", shape=D)]
         )
     with pytest.raises(ValueError, match="'steer' is not a registered op"):
         attach_configured_interventions(
-            Root(), [InterventionCfg(name="edit", site="model.blocks.0", op="steer", width=D)]
+            Root(), [InterventionCfg(name="edit", site="model.blocks.0", op="steer", shape=D)]
         )
-    with pytest.raises(ValueError, match="needs a `width`"):
+    with pytest.raises(ValueError, match="needs a `shape`"):
         attach_configured_interventions(Root(), [InterventionCfg(name="steer", site="model.blocks.0")])
     with pytest.raises(TypeError, match="InterventionCfg or a mapping"):
         attach_configured_interventions(Root(), ["model.blocks.0"])
     (steer, gain) = attach_configured_interventions(
         root := Root(),
         [
-            InterventionCfg(name="s", site="model.blocks.0", width=D),
-            InterventionCfg(name="g", site="model.blocks.1", op="scale", width=D),
+            InterventionCfg(name="s", site="model.blocks.0", shape=D),
+            InterventionCfg(name="g", site="model.blocks.1", op="scale", shape=D),
         ],
     )
     assert root.interventions["s"] is steer and isinstance(steer, OpIntervention) and steer.op == "add"
@@ -405,6 +406,16 @@ class TestOps:
             assert torch.equal(intervention(x), x)  # attaching it changes nothing until it trains
             intervention(x).sum().backward()
             assert intervention.operand.value.grad is not None
+
+    def test_a_tuple_shape_gives_a_per_head_operand(self):
+        from interpretune.tuning.interventions import InterventionCfg, OpIntervention
+
+        x = torch.randn(2, 3, 2, D // 2, generator=torch.Generator().manual_seed(3))  # (batch, pos, n_heads, d_head)
+        gain = OpIntervention("scale", (2, D // 2))
+        assert gain.operand.value.shape == (2, D // 2) and torch.equal(gain(x), x)
+        gain(x).sum().backward()
+        assert gain.operand.value.grad is not None
+        assert InterventionCfg(name="g", site="model.blocks.0", shape=[2, D // 2]).shape == (2, D // 2)  # a YAML list
 
     def test_the_ops_match_the_analysis_op_math(self):
         from interpretune.analysis.backends.interventions import InterventionSpec, apply_intervention

@@ -19,8 +19,8 @@ activation), the output of a latent model (:mod:`interpretune.tuning.latents`), 
 the seam for the last kind, *trainable* interventions, whose operand is tuned by a schedule:
 
 - :class:`OpIntervention`, an op applied at every position with an operand module's output, through the op math every
-  model backend shares (:func:`~interpretune.analysis.backends.interventions.apply_op`). A steering vector
-  (:class:`SteeringVector`) is the ``add`` op with a learned vector; a learned per-unit gain is ``scale``;
+  model backend shares (:func:`~interpretune.analysis.backends.interventions.apply_op`). A steering vector is the
+  ``add`` op with a learned vector (``OpIntervention("add", d_model)``); a learned per-unit gain is ``scale``;
 - :class:`LearnedOperand`, a trainable operand, initialized to its op's identity so attaching it changes nothing until
   it trains;
 - :func:`attach_intervention` and :func:`detach_intervention`, which register an intervention under the root's
@@ -85,7 +85,8 @@ class LearnedOperand(nn.Module):
     """A trainable operand: one tensor, starting at ``init`` everywhere.
 
     Args:
-        shape: The operand's shape (an ``int`` for a vector over a site's width).
+        shape: The operand's shape: an ``int`` for one vector over a site's last axis (a residual stream's
+            ``d_model``), or a tuple (``(n_heads, d_head)`` for a per-head operand).
         init: The starting value, by default ``0.0``; :class:`OpIntervention` passes the value at which its op is the
             identity.
     """
@@ -108,12 +109,13 @@ class OpIntervention(nn.Module):
 
     Args:
         op: The op: ``add`` (``x + scale_factor * operand``) or ``scale`` (``x * (scale_factor * operand)``).
-        operand: A module returning the operand, or the operand's width for a :class:`LearnedOperand` starting where
-            the op is the identity (``0`` for ``add``, ``1 / scale_factor`` for ``scale``).
+        operand: A module returning the operand, or the operand's shape (an ``int`` or a tuple, as
+            :class:`LearnedOperand` takes) for a :class:`LearnedOperand` starting where the op is the identity (``0``
+            for ``add``, ``1 / scale_factor`` for ``scale``).
         scale_factor: A fixed multiplier on the operand (nonzero).
     """
 
-    def __init__(self, op: str, operand: nn.Module | int, scale_factor: float = 1.0) -> None:
+    def __init__(self, op: str, operand: nn.Module | int | Sequence[int], scale_factor: float = 1.0) -> None:
         super().__init__()
         _require_trainable_op(op)
         if not scale_factor:
@@ -122,7 +124,7 @@ class OpIntervention(nn.Module):
             )
         self.op = op
         self.scale_factor = scale_factor
-        if isinstance(operand, int):
+        if not isinstance(operand, nn.Module):
             operand = LearnedOperand(operand, 0.0 if op == "add" else 1.0 / scale_factor)
         self.operand = operand
 
@@ -135,27 +137,6 @@ class OpIntervention(nn.Module):
             self.operand(), mode=self.op, scale_factor=self.scale_factor, position_scope=PositionScope.ALL_POSITIONS
         )
         return apply_op(x, spec)
-
-
-class SteeringVector(OpIntervention):
-    """A learned direction added to every position of a site's activations: the ``add`` op with a learned vector.
-
-    The vector starts at zero, so attaching it changes nothing until it trains.
-
-    Args:
-        width: The site's activation width (a residual stream's ``d_model``).
-        scale: A fixed multiplier on the vector.
-    """
-
-    def __init__(self, width: int, scale: float = 1.0) -> None:
-        super().__init__("add", width, scale_factor=scale)
-
-    @property
-    def vector(self) -> nn.Parameter:
-        """The learned direction (the operand's tensor, ``operand.value``)."""
-        operand = self.operand
-        assert isinstance(operand, LearnedOperand)
-        return operand.value
 
 
 def _interventions(root: nn.Module, create: bool = False) -> nn.ModuleDict | None:
@@ -277,8 +258,9 @@ class InterventionCfg:
         name: The intervention's name (``interventions.<name>``).
         site: Path, under the module, of the module whose output it rewrites.
         op: The op it applies (:data:`TRAINABLE_OPS`): ``add`` (a steering vector, the default) or ``scale``.
-        width: The site's activation width. Defaults to the model's (``config.hidden_size`` of an HF or nnsight model,
-            ``cfg.d_model`` of a TransformerLens one).
+        shape: The operand's shape (an ``int``, or a list or tuple of them). Defaults to the model's hidden size
+            (``config.hidden_size`` of an HF or nnsight model, ``cfg.d_model`` of a TransformerLens one): one vector
+            over a residual-stream site.
         scale_factor: A fixed multiplier on the operand.
 
     A configured intervention's operand starts where its op is the identity and is tunable (``intervention:<name>``).
@@ -289,8 +271,13 @@ class InterventionCfg:
     name: str
     site: str
     op: str = "add"
-    width: int | None = None
+    shape: int | tuple[int, ...] | None = None
     scale_factor: float = 1.0
+
+    def __post_init__(self) -> None:
+        # a YAML list arrives as a list; the operand's shape is a tuple
+        if isinstance(self.shape, list):
+            object.__setattr__(self, "shape", tuple(self.shape))
 
 
 def as_intervention_cfg(entry: InterventionCfg | Mapping[str, Any]) -> InterventionCfg:
@@ -306,12 +293,12 @@ def as_intervention_cfg(entry: InterventionCfg | Mapping[str, Any]) -> Intervent
     raise TypeError(f"An intervention configuration must be an InterventionCfg or a mapping, got {entry!r}")
 
 
-def _model_width(root: nn.Module) -> int | None:
+def _model_hidden_size(root: nn.Module) -> int | None:
     model = getattr(root, "model", None)
-    for cfg_attr, width_attr in (("config", "hidden_size"), ("cfg", "d_model")):
-        width = getattr(getattr(model, cfg_attr, None), width_attr, None)
-        if isinstance(width, int):
-            return width
+    for cfg_attr, size_attr in (("config", "hidden_size"), ("cfg", "d_model")):
+        size = getattr(getattr(model, cfg_attr, None), size_attr, None)
+        if isinstance(size, int):
+            return size
     return None
 
 
@@ -324,15 +311,15 @@ def attach_configured_interventions(
         The attached interventions.
 
     Raises:
-        ValueError: an op is not one a trainable intervention applies, or no width is given and the model's cannot be
-            read.
+        ValueError: an op is not one a trainable intervention applies, or no shape is given and the model's hidden size
+            cannot be read.
         TypeError: an entry is neither an :class:`InterventionCfg` nor a mapping.
     """
     attached = []
     for cfg in map(as_intervention_cfg, cfgs):
-        width = cfg.width if cfg.width is not None else _model_width(root)
-        if width is None:
-            raise ValueError(f"Intervention {cfg.name!r} needs a `width`: the model's activation width is not readable")
-        intervention = OpIntervention(cfg.op, width, scale_factor=cfg.scale_factor)
+        shape = cfg.shape if cfg.shape is not None else _model_hidden_size(root)
+        if shape is None:
+            raise ValueError(f"Intervention {cfg.name!r} needs a `shape`: the model's hidden size is not readable")
+        intervention = OpIntervention(cfg.op, shape, scale_factor=cfg.scale_factor)
         attached.append(attach_intervention(root, cfg.name, intervention, cfg.site))
     return attached
