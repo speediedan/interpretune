@@ -28,8 +28,12 @@ The first two rows are applied by the analysis ops on this page. The last two ca
 they are attached through the tuning seams ([trainable interventions](tuning_interventions.md),
 [latent models](tuning_latent_models.md)) and take the roles shown.
 
-**Weight changes are tuning, not interventions.** A low-rank edit of a representation is an intervention; a low-rank
-adapter on a weight matrix is an adapter (the `adapter` role).
+**An intervention's target is an activation or a parameter.** On an activation it runs in a hook, on every pass, and
+may be scoped to some tokens. On a parameter (a weight patch, such as scaling or zeroing a column of `mlp.down_proj`)
+it is materialized: applied to the tensor, so it acts on every token and persists into exports. Trained, a parameter
+target's operand is an adapter (a LoRA is a trainable low-rank `add` on a weight, the `adapter` role). The ops,
+addresses and roles are the same for both targets. Parameter targets are planned, not yet applied
+([#960](https://github.com/speediedan/interpretune/issues/960)).
 
 ## Surfaces
 
