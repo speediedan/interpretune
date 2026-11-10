@@ -6,8 +6,8 @@ An *intervention* applies an op (`add`, `scale`, `reject`, `patch`, ...: venngra
 
 ## The seam
 
-- **`OpIntervention(op, operand, scale_factor=1.0)`**: applies `op` at every position with the operand's tensor (times `scale_factor`), through the same op math the analysis ops use (`apply_op`, its out-of-place form, so gradients reach the operand). `operand` is a module returning the tensor, or a width, for a `LearnedOperand` that starts where the op is the identity (`0` for `add`, `1 / scale_factor` for `scale`), so attaching it changes nothing until it trains. The ops applied so far are `add` and `scale`; other registered ops are refused by name.
-- **`SteeringVector(width, scale=1.0)`**: `OpIntervention("add", width)`, with its learned direction as `vector`.
+- **`OpIntervention(op, operand, scale_factor=1.0)`**: applies `op` at every position with the operand's tensor (times `scale_factor`), through the same op math the analysis ops use (`apply_op`, its out-of-place form, so gradients reach the operand). `operand` is a module returning the tensor, or a shape (an `int` for one vector over the site's last axis, or a tuple such as `(n_heads, d_head)` for a per-head operand), for a `LearnedOperand` that starts where the op is the identity (`0` for `add`, `1 / scale_factor` for `scale`), so attaching it changes nothing until it trains. The ops applied so far are `add` and `scale`; other registered ops are refused by name.
+- **A steering vector** is `OpIntervention("add", d_model)`: its learned direction is the operand's tensor, `operand.value`.
 - **`attach_intervention(root, name, intervention, site, frozen=False)`**: registers the intervention as `interventions.<name>` on the module (so it is in the module's state dict and reachable by its view) and splices it in with a forward hook on the module at `site`, whose output (the first element of a tuple output) becomes `intervention(output)`. `detach_intervention(root, name)` removes it.
 - **Sites** are module names under the interpretune module: `model.model.layers.12` on a core module, `hf_model.model.layers.12` on an nnsight module, or a TransformerLens bridge's hook point such as `model.blocks.12.hook_out`. Venngram site addresses (`point:resid_post & layers:12`), one spelling for every backend, replace these once interpretune resolves them ([#864](https://github.com/speediedan/interpretune/issues/864), [#876](https://github.com/speediedan/interpretune/issues/876)).
 - **Roles:** an attached intervention's tensors take venngram's role `intervention:<name>`, as a PEFT adapter's take `adapter:<name>`. A schedule selects one intervention with `role:intervention:<name>` and every intervention with `role:intervention`. Every interpretune module declares these roles in its cooperative `tunable_roles()`, which its venngram view reads, so no mixin is needed. A `frozen` intervention is an `instrument` instead: applied in every forward pass and never trained, as a precomputed steering vector is.
@@ -29,21 +29,21 @@ module_cfg:
         site: model.model.layers.12  # hf_model.model.layers.12 with nnsight, model.blocks.12.hook_out with TransformerLens
 ```
 
-`op` is `add` (the default, a steering vector) or `scale`, `width` defaults to the model's (`config.hidden_size`, or a TransformerLens model's `cfg.d_model`), and `scale_factor` is a fixed multiplier on the operand. A configured intervention is always tunable: one attached frozen would start at the identity and never change. To hold a trained operand fixed, refreeze it in a later stage (below). To apply a precomputed one, attach it in code with `frozen=True`.
+`op` is `add` (the default, a steering vector) or `scale`, `shape` defaults to the model's hidden size (`config.hidden_size`, or a TransformerLens model's `cfg.d_model`), and `scale_factor` is a fixed multiplier on the operand. A configured intervention is always tunable: one attached frozen would start at the identity and never change. To hold a trained operand fixed, refreeze it in a later stage (below). To apply a precomputed one, attach it in code with `frozen=True`.
 
 ## Attaching them in code
 
 Attach interventions in `register_tunable_modules()`, which runs once the model exists and before the view is built:
 
 ```python
-from interpretune.tuning.interventions import SteeringVector, attach_intervention
+from interpretune.tuning.interventions import OpIntervention, attach_intervention
 
 
 class MySteeredModule(MyModule):
     def register_tunable_modules(self) -> None:
         super().register_tunable_modules()
-        width = self.model.config.hidden_size
-        attach_intervention(self, "steer", SteeringVector(width), "model.model.layers.12")
+        d_model = self.model.config.hidden_size
+        attach_intervention(self, "steer", OpIntervention("add", d_model), "model.model.layers.12")
 ```
 
 ## Schedules: phases as stages
