@@ -2,13 +2,15 @@
 
 The checker is ``gpu_epsilon.release_eligibility`` (speediedan/gpu-epsilon, pinned in
 ``requirements/ci/gpu_epsilon.txt``), configured for this repository by ``tests/gpu_ci/release.json``. Its own cases
-live with it; these check that the configuration describes the evidence ``tests/gpu_ci/phase_report.py`` writes, and
-that the checker accepts that evidence the way ``.azure-pipelines/gpu-release.yml`` invokes it.
+live with it; these check that the configuration describes the evidence ``gpu_epsilon.phase_evidence`` writes under
+this repository's ``[tool.gpu-epsilon.phase-evidence]``, and that the checker accepts that evidence the way
+``.azure-pipelines/gpu-release.yml`` invokes it.
 """
 
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -16,9 +18,11 @@ eligibility = pytest.importorskip(
     "gpu_epsilon.release_eligibility", reason="gpu-epsilon is not installed (requirements/ci/gpu_epsilon.txt)"
 )
 
-from tests.gpu_ci import phase_report as pr  # noqa: E402
+phase_evidence = pytest.importorskip("gpu_epsilon.phase_evidence")
 
-CONFIG_PATH = pr.ROOT / "tests" / "gpu_ci" / "release.json"
+ROOT = Path(__file__).resolve().parents[2]
+CONFIG_PATH = ROOT / "tests" / "gpu_ci" / "release.json"
+EVIDENCE = phase_evidence.EvidenceConfig.load(ROOT / "pyproject.toml")
 REVISION = "0" * 40
 IMAGES = {"nvidia": "it:cuda@sha256:" + "a" * 64, "amd": "it:rocm@sha256:" + "b" * 64}
 TORCH = {"nvidia": "2.15.0+cu132", "amd": "2.15.0+rocm10.0"}
@@ -33,7 +37,7 @@ def config():
 
 def _manifest(phase):
     return {
-        "repository": pr.REPOSITORY,
+        "repository": EVIDENCE.repository,
         "revision": REVISION,
         "phase": phase,
         "scope": "full",
@@ -46,10 +50,10 @@ def _manifest(phase):
     }
 
 
-def _session(finished=True):
-    records = [{"event": "start", "rank": 0}, {"event": "collected", "nodeids": list(NODES), "rank": 0}]
-    records += [{"event": "outcome", "nodeid": n, "when": "call", "outcome": "passed", "rank": 0} for n in NODES]
-    return records + ([{"event": "finish", "exitstatus": 0, "rank": 0}] if finished else [])
+def _session(finished=True, rank=0, outcome="passed"):
+    records = [{"event": "start", "rank": rank}, {"event": "collected", "nodeids": list(NODES), "rank": rank}]
+    records += [{"event": "outcome", "nodeid": n, "when": "call", "outcome": outcome, "rank": rank} for n in NODES]
+    return records + ([{"event": "finish", "exitstatus": 0, "rank": rank}] if finished else [])
 
 
 def _leg(config, vendor, sessions=None):
@@ -67,7 +71,8 @@ def _leg(config, vendor, sessions=None):
     leg = {}
     for phase in config.phases:
         manifest = _manifest(phase)
-        report = pr.build_report(
+        report = phase_evidence.build_report(
+            EVIDENCE,
             manifest,
             sessions or [_session()],
             vendor=vendor,
@@ -81,20 +86,25 @@ def _leg(config, vendor, sessions=None):
 
 
 def test_the_config_describes_the_phase_reports(config):
-    assert config.repository == pr.REPOSITORY
-    assert config.vendors == pr.VENDORS
-    assert config.phases == tuple(name for name, phase in pr.PHASES.items() if phase.release)
+    assert config.repository == EVIDENCE.repository
+    assert config.vendors == EVIDENCE.vendors
+    assert config.phases == tuple(phase.name for phase in EVIDENCE.phases if phase.release)
+    # the checker fails a leg on exactly the counts the writer fails a phase on
+    assert tuple(config.failure_counts) == phase_evidence.FAILURE_COUNTS
+    # every version the checker compares is one the writer records
+    recorded = {*phase_evidence.BUILTIN_VERSIONS, *EVIDENCE.versions}
+    assert {*config.required_versions, *config.shared_versions, *config.shared_builds} <= recorded
     # the release legs publish `<artifact_prefix>-<vendor>-<attempt>` holding the phase evidence directory
-    job = (pr.ROOT / ".azure-pipelines" / "templates" / "gpu-job.yml").read_text()
+    job = (ROOT / ".azure-pipelines" / "templates" / "gpu-job.yml").read_text()
     assert f"artifact: {config.artifact_prefix}-${{{{ parameters.vendor }}}}-$(System.JobAttempt)" in job
-    container = (pr.ROOT / ".azure-pipelines" / "scripts" / "gpu_job_container.sh").read_text()
+    container = (ROOT / ".azure-pipelines" / "scripts" / "gpu_job_container.sh").read_text()
     assert f"PHASES_OUT=/evidence/{config.phases_dir}" in container
 
 
 def test_two_clean_legs_are_eligible(config):
     legs = {vendor: _leg(config, vendor) for vendor in config.vendors}
     verdict = eligibility.check_release(config, legs, SUCCEEDED, REVISION)
-    assert verdict["eligible"] and verdict["repository"] == pr.REPOSITORY
+    assert verdict["eligible"] and verdict["repository"] == EVIDENCE.repository
     assert {v: e["image"] for v, e in verdict["evidence"].items()} == IMAGES
 
 
@@ -103,8 +113,17 @@ def test_a_missing_completion_is_ineligible(config):
     count."""
     legs = {vendor: _leg(config, vendor) for vendor in config.vendors}
     legs["amd"] = _leg(config, "amd", sessions=[_session(finished=False)])
-    assert all(docs["report"]["missing_completions"] for docs in legs["amd"].values())
+    assert all(docs["report"]["missing_rank_completions"] for docs in legs["amd"].values())
     with pytest.raises(eligibility.Ineligible, match="amd"):
+        eligibility.check_release(config, legs, SUCCEEDED, REVISION)
+
+
+def test_a_rank_failure_is_ineligible(config):
+    """A non-launching rank that failed fails the release even when rank 0 passed every node."""
+    legs = {vendor: _leg(config, vendor) for vendor in config.vendors}
+    legs["nvidia"] = _leg(config, "nvidia", sessions=[_session(), _session(rank=1, outcome="failed")])
+    assert all(docs["report"]["rank_failures"] == len(NODES) for docs in legs["nvidia"].values())
+    with pytest.raises(eligibility.Ineligible, match="nvidia"):
         eligibility.check_release(config, legs, SUCCEEDED, REVISION)
 
 
