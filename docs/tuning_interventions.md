@@ -1,8 +1,8 @@
 # Tuning: interventions
 
-[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its finetuning-scheduler view.
+[Tuning](tuning.md) describes how every composition declares and attaches its finetuning-scheduler view.
 
-An *intervention* applies an op (`add`, `scale`, `reject`, `patch`, ...: venngram's op registry) to a site's activations, as [Interpretune Intervention APIs](interpretune_intervention_apis.md) describes. Kinds of intervention differ in the op and in where its operand comes from: a constant or a dose (a zero ablation), a value computed from the model (a concept direction, another run's activation), a [latent model](fts_tuning_latent_models.md)'s reconstruction, or parameters of its own. `interpretune.tuning.interventions` is the seam for the last kind, *trainable* interventions, whose operand a schedule tunes. A steering vector is the `add` op with a learned vector; a learned per-unit gain is `scale`. Any trainable intervention can be attached at a site, on any backend but circuit-tracer (below), and scheduled by role.
+An *intervention* applies an op (`add`, `scale`, `reject`, `patch`, ...: venngram's op registry) to a site's activations, as [Interpretune Intervention APIs](interpretune_intervention_apis.md) describes. Kinds of intervention differ in the op and in where its operand comes from: a constant or a dose (a zero ablation), a value computed from the model (a concept direction, another run's activation), a [latent model](tuning_latent_models.md)'s reconstruction, or parameters of its own. `interpretune.tuning.interventions` is the seam for the last kind, *trainable* interventions, whose operand a schedule tunes. A steering vector is the `add` op with a learned vector; a learned per-unit gain is `scale`. Any trainable intervention can be attached at a site, on any backend but circuit-tracer (below), and scheduled by role.
 
 ## The seam
 
@@ -14,7 +14,7 @@ An *intervention* applies an op (`add`, `scale`, `reject`, `patch`, ...: venngra
 
 Interventions without parameters (an ablation, a patch, a dose of a concept direction) need no role and no seam: the analysis ops apply them during a pass.
 
-**On a circuit-tracer composition** an intervention's role is merged with the transcoders' (only a conflicting declaration is refused), its site must be a module of the model circuit-tracer runs, and attribution sees it in the forward pass but never reaches its gradient: [Tuning: circuit-tracer](fts_tuning_circuit_tracer.md#interventions-and-latent-models-beside-the-transcoders). circuit-tracer's own interventions (`feature_intervention_forward`, and `model_fwd_intervention` on concept directions; [circuit-tracer backend support](circuit_tracer_backend_support.md)) carry no parameters, so they need no role.
+**On a circuit-tracer composition** an intervention's role is merged with the transcoders' (only a conflicting declaration is refused), its site must be a module of the model circuit-tracer runs, and attribution sees it in the forward pass but never reaches its gradient: [Tuning: circuit-tracer](tuning_circuit_tracer.md#interventions-and-latent-models-beside-the-transcoders). circuit-tracer's own interventions (`feature_intervention_forward`, and `model_fwd_intervention` on concept directions; [circuit-tracer backend support](circuit_tracer_backend_support.md)) carry no parameters, so they need no role.
 
 ## From a configuration
 

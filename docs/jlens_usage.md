@@ -26,6 +26,49 @@ layer is either named explicitly (refused by name when unfitted) or selected
 as a percentile over the fitted set. 85% depth is the default for every J-lens
 op: late enough for naming tasks, below the final layers.
 
+## Lens kinds: the J-lens and J++
+
+Two kinds of lens share one file format: the J-lens (`jlens`, the default) and the
+[J++ lens](https://github.com/safety-research/jpp_lens) (`jpp`). Both are one fitted map per layer, read
+through the final norm and the unembedding in the same way. They differ only in how the maps were fitted, so
+the tensors cannot tell you which one you hold. Pass `jlens_kind="jpp"` to any J-lens op (as a keyword or on
+the analysis batch) to resolve a J++ lens. The resolver looks in the repository's `jpp/` directories and
+checks the artifact's sidecar, refusing by name a lens whose declared fit method contradicts the kind you
+asked for. `neuronpedia/jacobian-lens` publishes J++ lenses for some of its models, among them Qwen3-4B and
+the Qwen3.5 family, but not for every model that has a J-lens: gemma-3-1b-it has none there.
+
+`jlens_read` defaults its readout to the lens kind, because the two kinds' reference readouts differ:
+
+| setting | J-lens default | J++ default | what it does |
+| --- | --- | --- | --- |
+| `jlens_readout_mask` | `none` | `semantic` | `semantic` ranks only tokens whose decoded string has a letter or digit |
+| `jlens_include_rms_scale` | `False` | `True` | divides by the final norm's RMS, as the norm itself does |
+
+Either can be overridden, and the result records the settings it used. The RMS divisor never changes the
+ranking within one position. It matters for magnitudes: a J++ map carries an arbitrary per-layer scale, so raw
+J++ scores are not comparable across layers or lenses, and turning the divisor off with a J++ lens warns.
+Compare readout magnitudes across layers or lenses only with the divisor on, and never compare raw scores
+between a J-lens and a J++ lens.
+
+**Which kind to use, as measured here.** We fitted J++ lenses with the post's code for two models below its
+9B to 284B range and validated them against the published J-lenses:
+
+- **Readouts favour J++.** Held-out macro recall@10, scored the way the post scores it: gemma-3-1b-it 0.302
+  for the J-lens against 0.388 for J++, almost all of the gain on the typo task
+  ([results](https://github.com/speediedan/interpretune/issues/784#issuecomment-6618055568)); Qwen3.5-4B 0.340 against 0.457, with about 60% of the gain
+  surviving when each task is held out of the weight fit ([results](https://github.com/speediedan/interpretune/issues/925#issuecomment-6715805780)). On
+  Qwen3.5-4B the held-out J++ readout falls below the J-lens in the last quarter of layers and at layers 3
+  and 4, so use it for single-token readouts at layers 5 to 22.
+- **Swaps and steering favour the J-lens.** On the two-hop swap battery the J-lens swaps better than J++ on
+  both models, significantly at mid-depth bands ([gemma-3-1b-it](https://github.com/speediedan/interpretune/issues/784#issuecomment-6623062231),
+  [Qwen3.5-4B](https://github.com/speediedan/interpretune/issues/925#issuecomment-6729102253)). On the post's own `probe-swap` runner Qwen3.5-4B's J++ is
+  level with the J-lens. Build steering and swap directions from a J-lens.
+
+Those two models are the evidence. The post reports swaps at least as strong as the J-lens's on one model at
+the top of its size range, and the J++ lenses on `neuronpedia/jacobian-lens` (Qwen3-4B among them) were
+fitted separately and have not been validated here. On any other model, measure before choosing a kind for
+steering.
+
 ## Probing and inventory
 
 Single-concept probing is cosine similarity against chosen J-lens vectors
@@ -51,6 +94,8 @@ basis-agnostic: they apply whatever directions they are given, so the basis is
 chosen where the directions are built. `jlens_concept_probe` and
 `jlens_sparse_inventory` fold by default (`jlens_apply_final_norm`);
 `concept_direction` makes you choose, and folded is the recommended choice.
+Build the directions from a J-lens rather than a J++ lens (see "Lens kinds" above); how folding applies to J++
+maps is in the folding page's J++ section.
 Folding aims the edit into the coordinates the final norm amplifies, so it
 helps exactly where the model stores the task contrast: essential on
 gemma-3-1b-it (unfolded vectors never flip at any layer), ~3x weaker at late

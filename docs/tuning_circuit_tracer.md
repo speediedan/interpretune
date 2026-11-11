@@ -1,6 +1,6 @@
 # Tuning: circuit-tracer
 
-[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
+[Tuning](tuning.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
 
 A circuit-tracer composition's view (`interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`) covers its
 transcoders, whichever backend it runs over:
@@ -33,8 +33,8 @@ optimizer, with a warning, and analysis sessions run as before.
 
 ## Interventions and latent models beside the transcoders
 
-Trainable interventions ([Tuning: interventions](fts_tuning_interventions.md)) and latent models
-([Tuning: latent models](fts_tuning_latent_models.md)) attach to a circuit-tracer composition as to any other, with
+Trainable interventions ([Tuning: interventions](tuning_interventions.md)) and latent models
+([Tuning: latent models](tuning_latent_models.md)) attach to a circuit-tracer composition as to any other, with
 three rules of its own:
 
 - **Roles are merged, and only a conflict is refused.** The view assigns the transcoders' roles itself. The module's
