@@ -10,7 +10,7 @@ sentence, so the row is true today whether or not anyone updates it later; where
 open issue. A row that said only "pending #N" is forbidden here, because it becomes false the day #N closes and
 nothing on the page would show it. This page therefore degrades into *incomplete* rather than into *wrong*. Each
 named issue carries a checklist item to update its row, and a scheduled check in the docs link-check workflow fails
-by name when a row cites an issue that has closed.
+when a row cites an issue that has closed.
 
 ## Paper capability against Interpretune status
 
@@ -23,7 +23,7 @@ by name when a row cites an issue that has closed.
 | Decompose an activation into sparse J-space concepts | Implemented: nonnegative sparse decomposition by gradient pursuit over the J-lens dictionary, with its residual. | `jlens_sparse_inventory` |
 | Add a J-lens direction | Implemented: the model-level `add` mode takes any direction, and `concept_direction` builds a single J-lens direction in the basis its `concept_basis` names (`jlens_folded` or `jlens_unfolded`, with no default). | `model_fwd_intervention`, mode `add`; `concept_direction` |
 | Patch one J-lens coordinate into another | Implemented: the `patch` mode swaps the activation's coordinates along a pair of directions through the pseudoinverse; the pair is built in a stated basis. On a backend with activation capture and `add` but no `patch` (its steering parameters are static), the swap has an exact two-pass form: capture $h$, compute the static update $V(\sigma(c) - c)$ with $c = V^{+} h$, and add it at scale 1. | `model_fwd_intervention`, mode `patch`; `jlens_direction_rows` |
-| Clamp coordinates to a clean-pass value | Implemented as bound-into-range: the `clamp` mode bounds the activation's pseudoinverse coordinates along a stacked basis into `[lo, hi]`, leaving in-range coordinates untouched; a bandless or inverted band is refused by name. A clean-pass-value hold is a two-pass construction over it. | `model_fwd_intervention`, mode `clamp` |
+| Clamp coordinates to a clean-pass value | Implemented as bound-into-range: the `clamp` mode bounds the activation's pseudoinverse coordinates along a stacked basis into `[lo, hi]`, leaving in-range coordinates untouched; a bandless or inverted band is refused. A clean-pass-value hold is a two-pass construction over it. | `model_fwd_intervention`, mode `clamp` |
 | Ablate J-space directions | Implemented: the `reject` mode removes the activation's component in the span (`alpha = 1` full removal), the complement of `project`. | `model_fwd_intervention`, mode `reject` |
 | Reproduce the paper's rates | Reproduced in shape on the paper's own two-hop swap prompts on gemma-3-1b-it and gemma-3-4b-it: intermediate swaps peak at mid depth and collapse late, answer swaps peak late, and an unrelated-entity control swap stays near zero. On gemma-3-4b-it the same holds through the chat template, with the control less specific at mid-to-late layers. The polysemy probe (the paper's Finding 4) finds cancellation at the shared word in the lens readout on gemma-2-2b and on gemma-3 from 1b to 12b, across three wordings. Read through fixed-direction coordinates instead, it depends on the basis. gemma-3-27b is not measured, and on gemma-3 why the coordinate statistic changes with the basis is not established. | an experiment component outside this repository; the steering demo notebooks for single prompts |
 | Attribute toward what the lens reads | Implemented for token targets: `attribution_target_source='jlens_readout'` attributes the top-k tokens a preceding `jlens_read` returns as ordinary final-layer logit targets, and records the lens layer and token ids with the graph. The lens read itself is attributed at the lens layer: a `concept_direction` built with a J-lens `concept_basis` becomes a target read at the output of the lens layer, whose edges match fully frozen interventions. | `compute_attribution_graph` in `analysis/ops/bundled/circuit_tracer/` |
@@ -93,7 +93,7 @@ two one-vector operations in sequence cannot reproduce a coordinate swap when th
 
 1. A result states its basis. `jlens_unfolded` and `jlens_folded` are declared configurations of the intervention
    surface, never defaults; an op that does not state one is refused rather than defaulted, and a backend that
-   cannot honour the requested one refuses it by name. This is the rule the capability vocabulary in
+   cannot honour the requested one refuses it. This is the rule the capability vocabulary in
    [Interpretune Intervention APIs](interpretune_intervention_apis.md) carries for every configuration axis.
 1. Default according to the claim: paper reproduction uses `jlens_unfolded`; "the direction governing the normalized
    readout" uses `jlens_folded`.
@@ -139,6 +139,6 @@ resulting choice of kind per use, are in [J-Space Usage](jlens_usage.md).
 
 The one row above that names an issue cites #957, which carries a checklist item to update its row when it
 closes. The docs link-check workflow, which runs weekly and on demand against the live web, reads
-this page's issue citations and fails by name on any that has closed, so a stale row cannot survive a week unnoticed.
+this page's issue citations and fails on any that has closed, so a stale row cannot survive a week unnoticed.
 The page states current behaviour in every row for the reason given at the top: it must be true between those runs
 as well.
