@@ -32,6 +32,7 @@ from interpretune.analysis.backends.capabilities import (
     ANALYSIS_BACKEND_REGISTRY,
     COMPONENTS,
     Capability,
+    FLOWS,
     INTERVENTION_TARGETS,
     InterventionSupport,
     CaptureSupport,
@@ -47,6 +48,7 @@ from interpretune.analysis.backends.capabilities import (
     register_analysis_backend,
     require_analysis_backend,
     resolve_analysis_backend,
+    VALUE_SOURCES,
 )
 from interpretune.analysis.backends.feature_selection import (
     FeatureSelectionSpec,
@@ -102,7 +104,9 @@ __all__ = [
     "AnalysisBackendCore",
     "COMPONENTS",
     "Capability",
+    "FLOWS",
     "INTERVENTION_TARGETS",
+    "VALUE_SOURCES",
     "FeatureSelectionSpec",
     "InterventionDict",
     "InterventionSpec",
