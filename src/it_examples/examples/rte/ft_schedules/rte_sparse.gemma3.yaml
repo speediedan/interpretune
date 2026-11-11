@@ -3,7 +3,8 @@
 # on: 0.3 times the normalized attribution ratio plus 3 times the error share. Recovery (#700) then re-thaws in two
 # steps, as the chain did: phase 1 refreezes blocks 14-21, so the norm and blocks 22-25 train with the boundary's
 # simplified graph enforced, and phase 2 thaws blocks 14-21 again under the same enforcement (#936). Each recovery phase
-# starts from the previous phase's best with a fresh optimizer.
+# starts from the phase that just ended at its own best (`best:1` for phase 2, so the second step continues from the
+# first even when phase 0 scored better), with a fresh optimizer.
 0:
   params:
   - model.model.norm.weight
@@ -22,7 +23,7 @@
 2:
   params:
   - model.model.layers.(1[4-9]|2[01])\..*
-  restore: best
+  restore: best:1
   new_optimizer:
     optimizer_init:
       class_path: torch.optim.AdamW

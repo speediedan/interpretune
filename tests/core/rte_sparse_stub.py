@@ -87,3 +87,13 @@ class StageRecorder:
             save_dir = Path(self.save_dir)
             shutil.copytree(Path("checkpoints"), save_dir / "checkpoints")
             torch.save(ctx.checkpoint_state(), save_dir / "resume.pt")
+
+
+class PhaseStartParams:
+    """Start hook: a copy of the model's parameters at each phase's start, after the boundary's restore."""
+
+    seen: list = []
+
+    def __call__(self, event):
+        model = event.tuning_scheduler.model.model
+        PhaseStartParams.seen.append((event.depth, {n: p.detach().clone() for n, p in model.named_parameters()}))

@@ -22,7 +22,7 @@ pytest.importorskip(
 )
 pytest.importorskip("circuit_tracer", reason="the rte_sparse variant's transcoders are circuit-tracer's")
 
-from tests.core.rte_sparse_stub import EnforcementProbe, StageRecorder  # noqa: E402
+from tests.core.rte_sparse_stub import EnforcementProbe, PhaseStartParams, StageRecorder  # noqa: E402
 
 RTE_COMPONENT_DIR = Path(__file__).resolve().parents[2] / "src" / "it_examples" / "examples" / "rte"
 
@@ -91,18 +91,19 @@ def _run_cli(rte_component, run_dir, recorder=None, resume_from=None):
     ts_kwargs = cfg["run_cfg"]["callbacks"][0]["init_args"]["tuning_scheduler_kwargs"]
     ts_kwargs["phase_hooks"]["end"] = [{"class_path": "tests.core.rte_sparse_stub.StubGraphs"}]
     ts_kwargs["phase_hooks"]["start"].append({"class_path": "tests.core.rte_sparse_stub.EnforcementProbe"})
+    ts_kwargs["phase_hooks"]["start"].append({"class_path": "tests.core.rte_sparse_stub.PhaseStartParams"})
     cfg["run_cfg"]["callbacks"].append(
         {"class_path": "tests.core.rte_sparse_stub.StageRecorder", "init_args": recorder or {}}
     )
     if resume_from is not None:
         cfg["run_cfg"]["resume_from"] = str(resume_from)
     (run_dir / "run.yaml").write_text(yaml.safe_dump(cfg))
-    EnforcementProbe.seen, StageRecorder.seen = [], []
+    EnforcementProbe.seen, StageRecorder.seen, PhaseStartParams.seen = [], [], []
     args = ["--config", str(run_dir / "run.yaml")]
     args += ["--registered_cfg", json.dumps({"datamodule_cfg": {"dataset_path": str(run_dir / "dataset")}})]
     args += ["--run_cfg.limit_train_batches=2", "--run_cfg.limit_val_batches=2"]
     core_cli_main(run_mode="train", args=args)
-    return list(EnforcementProbe.seen), list(StageRecorder.seen)
+    return list(EnforcementProbe.seen), list(StageRecorder.seen), dict(PhaseStartParams.seen)
 
 
 def test_the_sparse_chain_runs_its_three_stages_and_resumes_after_the_refreeze(
@@ -119,7 +120,7 @@ def test_the_sparse_chain_runs_its_three_stages_and_resumes_after_the_refreeze(
     run_dir, resume_dir = tmp_path / "run", tmp_path / "resume"
     run_dir.mkdir(), resume_dir.mkdir()
     monkeypatch.chdir(run_dir)
-    probes, epochs = _run_cli(rte_component, run_dir, recorder={"save_epoch": 1, "save_dir": str(resume_dir)})
+    probes, epochs, starts = _run_cli(rte_component, run_dir, recorder={"save_epoch": 1, "save_dir": str(resume_dir)})
 
     # phase 0 starts with nothing to enforce; each recovery phase (after `max_transition_epoch`) enforces the
     # boundary's graphs, which moves the answer logits
@@ -135,6 +136,8 @@ def test_the_sparse_chain_runs_its_three_stages_and_resumes_after_the_refreeze(
     # phase 1 starts from phase 0's best (its one epoch) and leaves the refrozen blocks there; phase 2 trains them again
     assert torch.equal(params[1][block9], params[0][block9]) and not torch.equal(params[1][block11], params[0][block11])
     assert not torch.equal(params[2][block9], params[1][block9])
+    # phase 2 continues from phase 1's own best (`restore: best:1`, its one epoch), whichever phase scored best
+    assert all(torch.equal(starts[2][n], params[1][n]) for n in params[1])
 
     best = load_payload(next((run_dir / "checkpoints" / "rte_sparse.gpt2.core").glob("best-*.pt")))
     assert not any(k.startswith("sparse_tcs.") for k in best["model"])  # instruments are never checkpointed
@@ -142,7 +145,7 @@ def test_the_sparse_chain_runs_its_three_stages_and_resumes_after_the_refreeze(
     assert best["statefuls"]["sparse_normalizer"]["value"] > 0
 
     monkeypatch.chdir(resume_dir)
-    _, resumed = _run_cli(rte_component, resume_dir, resume_from=resume_dir / "resume.pt")
+    _, resumed, _ = _run_cli(rte_component, resume_dir, resume_from=resume_dir / "resume.pt")
     assert [(e, d, b) for e, d, b, _ in resumed] == stages[2:]
     for (*_, expected), (*_, got) in zip(epochs[2:], resumed):
         assert all(torch.equal(expected[n], got[n]) for n in expected)
