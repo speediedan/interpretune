@@ -203,10 +203,10 @@ class SupportsFeatureInterventions(Protocol):
     """Methods gated by ``AnalysisBackendCapability.FEATURE_INTERVENTION``: interventions on latent feature
     activations.
 
-    Distinct from the model-level ``ACTIVATION_INTERVENTION`` surface, which edits a residual-stream tensor at a
-    point; this group edits the activations of features an attribution graph named. The record carries the
-    configuration space: which value sources exist, whether layers can be constrained, whether the intervened
-    activations can be returned.
+    Distinct from the model-level ``ACTIVATION_INTERVENTION`` surface, which edits an activation at any vocabulary
+    point or latent sub-hook; this group edits the activations of features an attribution graph named. The record
+    carries the configuration space: which value sources exist, whether layers can be constrained, whether the
+    intervened activations can be returned.
     """
 
     @property

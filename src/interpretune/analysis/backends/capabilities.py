@@ -37,10 +37,10 @@ class ModelBackendCapability(Enum):
     """``SupportsGradients``: forward + backward with gradient caching."""
 
     ACTIVATION_INTERVENTION = "activation_intervention"
-    """``SupportsIntervention``: baseline-vs-intervention paired execution (``fwd_w_intervention``) on a residual-
-    stream tensor at a vocabulary point, the embed path of the two-path table (residual-stream tensor vs latent
-    feature activations); the analysis-level ``FEATURE_INTERVENTION`` acts on latent feature activations
-    instead."""
+    """``SupportsIntervention``: baseline-vs-intervention paired execution (``fwd_w_intervention``) on an
+    activation at any vocabulary point (the residual stream, attention and MLP points, head-shaped activations) or
+    at a latent model's sub-hook; the analysis-level ``FEATURE_INTERVENTION`` acts on a replacement model's latent
+    feature activations through canonical ``(layer, position, feature_id, value)`` tuples instead."""
 
 
 class PositionScope(str, Enum):
@@ -256,9 +256,9 @@ class AnalysisBackendCapability(Enum):
 
     Same rule as :class:`ModelBackendCapability`: a member names a ``Supports*`` protocol and answers whether it is
     implemented; its configurations live in the record on that protocol (:class:`AttributionGraphSupport`,
-    :class:`FeatureInterventionSupport`).     ``FEATURE_INTERVENTION`` acts on latent feature activations, the store
-    path of the two-path table (residual-stream tensor vs latent feature activations);
-    the model-level ``ACTIVATION_INTERVENTION`` acts on a residual-stream tensor at a point.
+    :class:`FeatureInterventionSupport`). ``FEATURE_INTERVENTION`` acts on a replacement model's latent feature
+    activations; the model-level ``ACTIVATION_INTERVENTION`` acts on an activation at any vocabulary point or latent
+    sub-hook.
     """
 
     ATTRIBUTION_GRAPH = "attribution_graph"
