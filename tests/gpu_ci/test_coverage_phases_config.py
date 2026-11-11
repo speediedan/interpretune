@@ -8,6 +8,7 @@ flags ``gen_it_coverage.sh`` passes.
 
 import re
 import shlex
+from pathlib import Path
 
 import pytest
 
@@ -16,12 +17,11 @@ phases = pytest.importorskip(
 )
 special_tests = pytest.importorskip("gpu_epsilon.special_tests")
 
-from tests.gpu_ci import phase_report as pr  # noqa: E402
-
-PYPROJECT = pr.ROOT / "pyproject.toml"
+ROOT = Path(__file__).resolve().parents[2]
+PYPROJECT = ROOT / "pyproject.toml"
 CONFIG = phases.DriverConfig.load(PYPROJECT)
 RUNNER = special_tests.RunnerConfig.load(PYPROJECT)
-SCRIPT = (pr.ROOT / "scripts" / "gen_it_coverage.sh").read_text()
+SCRIPT = (ROOT / "scripts" / "gen_it_coverage.sh").read_text()
 PHASES = {p.name: p for p in CONFIG.phases}
 CUDA_PROBE = ("-c", "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)")
 
@@ -60,7 +60,7 @@ def test_the_main_suite_phases_partition_on_cuda():
     # every visible device, and only the cuda-marked selection (conftest reads IT_RUN_CUDA_TESTS)
     assert cuda.env == {"IT_RUN_CUDA_TESTS": "1"} and cuda.unset == ("CUDA_VISIBLE_DEVICES",)
     assert cuda.skip_unless == CUDA_PROBE and PHASES["benchmark"].skip_unless == CUDA_PROBE
-    assert 'os.getenv("IT_RUN_CUDA_TESTS", "0") == "1"' in (pr.ROOT / "tests" / "conftest.py").read_text()
+    assert 'os.getenv("IT_RUN_CUDA_TESTS", "0") == "1"' in (ROOT / "tests" / "conftest.py").read_text()
 
 
 def test_every_special_test_phase_runs_a_configured_mark():

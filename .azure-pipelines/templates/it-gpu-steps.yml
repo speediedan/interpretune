@@ -49,9 +49,10 @@ steps:
     env:
       IT_GPU_MODE: ${{ parameters.mode }}
       IT_GPU_EXTENDED_PARAM: ${{ parameters.extended }}
-  # Each phase's manifest, collected on the CPU before any GPU work (tests/gpu_ci/phase_report.py): the node ids its
-  # paths collect and the ones its selection keeps, a selected run's narrowing included. The phase reports below count
-  # the phases' recorded outcomes against these, so a node a phase never ran fails it rather than going unnoticed.
+  # Each phase's manifest, collected on the CPU before any GPU work (python -m gpu_epsilon.phase_evidence): the node
+  # ids its paths collect and the ones its selection keeps, a selected run's narrowing included. The phase reports
+  # below count the phases' recorded outcomes against these, so a node a phase never ran fails it rather than going
+  # unnoticed.
   - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh collect'
     displayName: 'Collect phase manifests'
     condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))

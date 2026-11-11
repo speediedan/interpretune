@@ -72,11 +72,26 @@ class TestResolvePlacement:
             SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="tp")  # type: ignore[arg-type]
 
     @pytest.mark.parametrize("placement", ["ddp", "fsdp2"])
-    def test_resuming_a_data_parallel_run_is_refused(self, placement):
-        """A core-loop checkpoint is one process's state; a sharded run needs distributed checkpointing."""
-        with pytest.raises(MisconfigurationException, match=f"supports placement 'single' only, not '{placement}'"):
+    def test_resuming_a_data_parallel_run_needs_the_distributed_form(self, placement, tmp_path):
+        """A mapping or a `torch.save` file is one process's state; a sharded run resumes from a directory."""
+        with pytest.raises(
+            MisconfigurationException, match=f"under placement '{placement}' must be a distributed checkpoint"
+        ):
             SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement=placement, resume_from={})
+        checkpoint_file = tmp_path / "ckpt.pt"
+        checkpoint_file.touch()
+        with pytest.raises(
+            MisconfigurationException, match=f"under placement '{placement}' must be a distributed checkpoint"
+        ):
+            SessionRunnerCfg(
+                module=MagicMock(), datamodule=MagicMock(), placement=placement, resume_from=checkpoint_file
+            )
+        checkpoint_dir = tmp_path / "ckpt"
+        checkpoint_dir.mkdir()
+        SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement=placement, resume_from=checkpoint_dir)
         SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="single", resume_from={})
+        with pytest.raises(MisconfigurationException, match="which is a distributed checkpoint, but the"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="single", resume_from=checkpoint_dir)
 
     def test_analysis_runner_refuses_data_parallel(self):
         with pytest.raises(MisconfigurationException, match="supports placement 'single' only, not 'ddp'"):
@@ -354,6 +369,72 @@ def test_two_rank_phased_tuning_under_fsdp2_matches_global_batch(phased_global_b
         assert record["depth"] == reference["depth"] == 1
         assert record["trainable"] == reference["trainable"]
         assert len(record["fsdp_units"]) == 3
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.parametrize(
+    "placement, extra",
+    [("ddp", ()), ("fsdp2", BLOCK_PLAN)],
+    ids=["ddp", "fsdp2"],
+)
+def test_two_rank_resume_matches_the_uninterrupted_run_exactly(placement, extra, tmp_path):
+    """A run interrupted at an epoch boundary and resumed from its distributed checkpoint reproduces the
+    uninterrupted run's losses exactly: same sharded weights and optimizer state, same per-rank RNG streams, same
+    sampler epoch."""
+    checkpoint_dir = tmp_path / "ckpt"
+    _launch(placement, tmp_path, *extra, "--max-epochs", "2", "--out-name", "full")
+    _launch(
+        placement,
+        tmp_path,
+        *extra,
+        "--max-epochs",
+        "2",
+        "--out-name",
+        "first",
+        "--save-checkpoint-dir",
+        str(checkpoint_dir),
+    )
+    _launch(
+        placement,
+        tmp_path,
+        *extra,
+        "--max-epochs",
+        "2",
+        "--out-name",
+        "resumed",
+        "--resume-from",
+        str(checkpoint_dir),
+    )
+    for rank in range(2):
+        full = json.loads((tmp_path / f"full_rank{rank}.json").read_text())
+        first = json.loads((tmp_path / f"first_rank{rank}.json").read_text())
+        resumed = json.loads((tmp_path / f"resumed_rank{rank}.json").read_text())
+        assert first["losses"][:3] + resumed["losses"] == full["losses"]
+        assert resumed["epoch_metrics"] == full["epoch_metrics"][1:]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning is finetuning-scheduler's")
+def test_two_rank_phased_resume_across_the_transition_matches(phased_global_batch_reference, tmp_path):
+    """Resuming a phased fsdp2 run from a checkpoint taken at the first epoch's end, so the resumed run is the one
+    that crosses the finetuning-scheduler phase transition, still matches the uninterrupted reference:
+
+    the callback's restored state rebuilds the optimizer the checkpoint's optimizer state loads into.
+    """
+    checkpoint_dir = tmp_path / "ckpt"
+    _launch("fsdp2", tmp_path, *BLOCK_PLAN, "--phased", "--out-name", "first",
+            "--save-checkpoint-dir", str(checkpoint_dir))  # fmt: skip
+    _launch("fsdp2", tmp_path, *BLOCK_PLAN, "--phased", "--out-name", "resumed",
+            "--resume-from", str(checkpoint_dir))  # fmt: skip
+    reference = phased_global_batch_reference
+    records = [json.loads((tmp_path / f"resumed_rank{rank}.json").read_text()) for rank in range(2)]
+    rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
+    assert rank_mean == pytest.approx(reference["losses"][3:], rel=1e-5)
+    for record in records:
+        assert record["depth"] == reference["depth"] == 1
+        assert record["trainable"] == reference["trainable"]
 
 
 def _launch_meta(checkpoint: Path, out_dir: Path, *extra: str) -> list[dict]:

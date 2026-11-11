@@ -39,6 +39,18 @@ class LossRecorder:
         self.epoch_metrics.append(dict(metrics))
 
 
+class SaveCheckpoint:
+    """Saves a resumable checkpoint at the end of epoch ``at_epoch`` (after FTSCoreCallback, when phased)."""
+
+    def __init__(self, checkpoint_dir: str, at_epoch: int = 0) -> None:
+        self.checkpoint_dir = checkpoint_dir
+        self.at_epoch = at_epoch
+
+    def on_train_epoch_end(self, ctx, metrics):
+        if ctx.epoch == self.at_epoch:
+            ctx.save_checkpoint(self.checkpoint_dir)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--placement", required=True)
@@ -46,6 +58,10 @@ def main() -> None:
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--fsdp-plan", type=json.loads, default=None, help="the FSDP2 plan, as JSON")
     parser.add_argument("--phased", action="store_true", help="tune in two phases with FTSCoreCallback")
+    parser.add_argument("--max-epochs", type=int, default=None, help="override the run's epoch count")
+    parser.add_argument("--save-checkpoint-dir", default=None, help="save a checkpoint at the first epoch's end")
+    parser.add_argument("--resume-from", default=None, help="resume from a checkpoint directory")
+    parser.add_argument("--out-name", default=None, help="output record stem (default: <placement>)")
     args = parser.parse_args()
 
     from interpretune.config import SessionRunnerCfg
@@ -57,7 +73,7 @@ def main() -> None:
     batch_size = PER_RANK_BATCH * (args.world_size if args.placement == "single" else 1)
     test_cfg = CoreCfg(
         force_prepare_data=False,
-        max_epochs=2 if args.phased else 1,
+        max_epochs=args.max_epochs or (2 if args.phased else 1),
         limit_train_batches=3,
         limit_val_batches=2,
         dm_override_cfg={"train_batch_size": batch_size, "eval_batch_size": batch_size},
@@ -75,6 +91,8 @@ def main() -> None:
 
         fts = FTSCoreCallback()  # its schedule names the placed module's parameters, set once they exist
         callbacks.insert(0, fts)
+    if args.save_checkpoint_dir:
+        callbacks.append(SaveCheckpoint(args.save_checkpoint_dir))
     runner_cfg = SessionRunnerCfg(
         it_session=it_session,
         max_epochs=test_cfg.max_epochs,
@@ -83,6 +101,7 @@ def main() -> None:
         callbacks=callbacks,
         placement=args.placement,
         fsdp_plan=args.fsdp_plan,
+        resume_from=args.resume_from,
     )
     runner = SessionRunner(run_cfg=runner_cfg)
     from torch.distributed.fsdp import FSDPModule
@@ -110,7 +129,7 @@ def main() -> None:
         assert fts.tuning_scheduler is not None
         record["depth"] = fts.tuning_scheduler.curr_depth
         record["trainable"] = sorted(n for n, p in module.named_parameters() if p.requires_grad)
-    (out_dir / f"{args.placement}_rank{rank}.json").write_text(json.dumps(record))
+    (out_dir / f"{args.out_name or args.placement}_rank{rank}.json").write_text(json.dumps(record))
 
 
 if __name__ == "__main__":

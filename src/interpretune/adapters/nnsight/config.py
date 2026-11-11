@@ -278,6 +278,28 @@ class ITNNsightConfig(ITConfig):
             self._dtype = self.nnsight_cfg.resolved_dtype
 
         super().__post_init__()
+        self._refuse_unapplied_hf_settings()
+
+    def _refuse_unapplied_hf_settings(self) -> None:
+        """Refuse the ``hf_from_pretrained_cfg`` settings an nnsight composition's loading path never applies
+        (#942).
+
+        nnsight builds the model through its own ``LanguageModel`` constructor, so the from-pretrained mixin that
+        wraps a model with PEFT adapters or quantizes it never runs. Left alone, a ``lora_cfg`` trains the base model
+        (or nothing) while the configuration says adapters, and a ``bitsandbytesconfig`` loads it unquantized. Both are
+        refused by name instead.
+        """
+        hf_cfg = self.hf_from_pretrained_cfg
+        if hf_cfg is None:
+            return
+        unapplied = [name for name in ("lora_cfg", "bitsandbytesconfig") if getattr(hf_cfg, name, None)]
+        if unapplied:
+            raise MisconfigurationException(
+                f"`hf_from_pretrained_cfg` sets {', '.join(f'`{n}`' for n in unapplied)}, which an nnsight composition"
+                " does not apply: nnsight builds the model through its own `LanguageModel` constructor, so no PEFT"
+                " adapters are added and no quantization happens. Remove the setting, or use a core or Lightning"
+                " composition without nnsight for adapter or quantized tuning (interpretune#942)."
+            )
 
     def _sync_nnsight_model_name(self) -> None:
         """Synchronize model_name_or_path with nnsight_cfg.model_name.

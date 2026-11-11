@@ -1,8 +1,10 @@
 # The GPU CI tooling shared with finetuning-scheduler (speediedan/gpu-epsilon): the release eligibility checker,
-# configured by tests/gpu_ci/release.json, the special-test runner (python -m gpu_epsilon.special_tests), configured by
-# [tool.gpu-epsilon.special-tests] in pyproject.toml, and the phase driver scripts/gen_it_coverage.sh runs its test
-# phases through, configured by [tool.gpu-epsilon.phases]. The GPU job container installs it too. CI only, never package metadata: the hosted CI action and build_it_env.sh install it for
-# the contract test (tests/gpu_ci/test_release_eligibility.py), and .azure-pipelines/gpu-release.yml reads the commit
-# from this line and runs the checker from source on the agent's own Python. This file is its one pin, in this one-line
-# form; it has no dependencies.
-gpu-epsilon @ git+https://github.com/speediedan/gpu-epsilon@39358d0245ddc1fb5bdcc480c1201e7c1272238b
+# configured by tests/gpu_ci/release.json; the special-test runner (python -m gpu_epsilon.special_tests), configured by
+# [tool.gpu-epsilon.special-tests] in pyproject.toml; the phase driver scripts/gen_it_coverage.sh runs its test phases
+# through, configured by [tool.gpu-epsilon.phases]; and the phase-evidence writer the GPU job collects and reports each
+# phase with (python -m gpu_epsilon.phase_evidence), configured by [tool.gpu-epsilon.phase-evidence]. The GPU job
+# container installs it too. CI only, never package metadata: the hosted CI action and build_it_env.sh install it for
+# the contract tests (tests/gpu_ci/test_release_eligibility.py, test_phase_evidence_config.py), and
+# .azure-pipelines/gpu-release.yml reads the commit from this line and runs the checker from source on the agent's own
+# Python. This file is its one pin, in this one-line form; it has no dependencies.
+gpu-epsilon @ git+https://github.com/speediedan/gpu-epsilon@d73fa1aed979e56690f554c278117d5318fedeac
