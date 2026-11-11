@@ -1,5 +1,49 @@
 # Interpretune Intervention APIs
 
+## What an intervention is
+
+An **intervention** applies an **op** to a **target** at a **site** during a pass: to the forward value of an
+activation, or to its gradient. Causal-abstraction interventions (hard, soft and interchange), activation patching,
+ablation, steering, and trainable interventions such as distributed alignment search and representation fine-tuning
+are all interventions on a model's internal variables.
+
+- **Ops** come from venngram's op registry (`venngram.ops`), a federated registry: its core ops (`replace`, `add`,
+  `scale`, `project`, `reject`, `patch`, `clamp` and `replace_with_error`), plus any op a user registers in code or a
+  hub op collection declares. Each core op's meaning is defined once, below.
+- **Targets** are the whole activation, a set of its units, a latent model's features (venngram's `targets`), or a
+  parameter tensor or its units ([#960](https://github.com/speediedan/interpretune/issues/960), planned). A subset of
+  an attribution graph, distilled in one context and applied in another, is a planned target too
+  ([#966](https://github.com/speediedan/interpretune/issues/966),
+  [venngram#78](https://github.com/speediedan/venngram/issues/78)).
+- **Value or gradient**: an address with `of: grad` names the gradient with respect to what it selects, so an op on a
+  gradient target is a backward-pass intervention. Resolving such sites is
+  [#938](https://github.com/speediedan/interpretune/issues/938), the backward surface that applies ops to them
+  (`model_bwd_intervention`) is [#970](https://github.com/speediedan/interpretune/issues/970), and paths between sites
+  (stopping or routing the gradient from one set to another) are
+  [venngram#67](https://github.com/speediedan/venngram/issues/67).
+
+Kinds of intervention differ in the op and in **where the op's operand comes from**:
+
+| operand source | examples | role of its tensors |
+| --- | --- | --- |
+| a constant or a dose | zero ablation, a fixed steering dose, a per-unit gain | none |
+| computed from the model or the store | a concept direction, a J-lens patch pair, another run's activation (activation patching) | none |
+| trainable parameters | a learned steering vector (`add`), a learned per-unit gain (`scale`) | `intervention:<name>` |
+| a latent model's output | an SAE or transcoder spliced in (`replace` or `replace_with_error` with the reconstruction) | `latent:<name>` |
+
+The first two rows are applied by the analysis ops on this page. The last two carry parameters a schedule can tune, so
+they are attached through the tuning seams ([trainable interventions](tuning_interventions.md),
+[latent models](tuning_latent_models.md)) and take the roles shown.
+
+**An intervention's target is an activation or a parameter.** On an activation it runs in a hook, on every pass, and
+may be scoped to some tokens. On a parameter (such as a weight patch, e.g. scaling or zeroing a column of `mlp.down_proj`)
+it is materialized: applied to the tensor, so it acts on every token and persists into exports. Trained, a parameter
+target's operand is an adapter (a LoRA is a trainable low-rank `add` on a weight, the `adapter` role). The ops,
+addresses and roles are the same for both targets. Parameter targets are planned, not yet applied
+([#960](https://github.com/speediedan/interpretune/issues/960)).
+
+## Surfaces
+
 Interpretune has one intervention surface, `Capability.INTERVENTION`, and a composition's components provide it on
 the targets they reach. Which component provides a target is a matter of declared targets, not of the component's
 kind:
@@ -7,6 +51,7 @@ kind:
 | Provider | Targets | Object acted on | Entry op | Executed by | Record |
 |---|---|---|---|---|---|
 | Model backend | `activation`, `units`, `features` | an activation at any vocabulary point (residual stream, attention, MLP, head-shaped), a set of its units, or a latent model's features at its sub-hook | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (ops, targets, position scopes, value sources, bases, `of`) |
+| Model backend, backward pass (planned, [#970](https://github.com/speediedan/interpretune/issues/970)) | `activation`, `units` with `of: grad` | the gradient with respect to an activation, at a site an `of: grad` address names | `model_bwd_intervention` | `ModelBackend.bwd_w_intervention`, through the same op executor as the forward pass | `InterventionSupport` with `of: [value, grad]` |
 | Analysis backend (circuit-tracer) | `features` | a replacement model's transcoder feature activations, as `(layer, position, feature_id) -> value` tuples | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `InterventionSupport` whose `features` target carries a `FeatureTargetSupport` (value sources, constrainable layers, returned activations, freezable norms) |
 
 **Capabilities say what a component provides; support records say how.** A capability member names a surface and
@@ -42,18 +87,28 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
   refuses, through its `features` target's `FeatureTargetSupport`, a value source it does not honour, a constant
   source without a value, a layer constraint or an activation return it cannot provide.
 
-- `interpretune.analysis.venngram` applies a [venngram](https://github.com/speediedan/venngram) recipe through the
-  model-backend surface above: `recipe_interventions` turns a recipe's treatments (ordered ops at a site, on the whole
-  activation, on a set's units, or on a latent model's features at its `hook_sae_acts_post` sub-hook) into
-  `InterventionSpec`s carrying the same ops. `recipe_feature_interventions` turns a feature `replace` at explicit positions
-  into the circuit-tracer tuples above. A value is a dose, or a column of evidence the caller supplies, through venngram's
-  transforms; Interpretune evaluates the transforms, and the `interpretune.analysis.venngram.values` module states what
-  each one means. `venngram_support()` derives what Interpretune honours of a recipe from the backend's own records, and
-  `check_recipe` / `require_supported` refuse, before anything runs, whatever that record cannot express. `export_book` goes the other way, writing an intervention
-  payload as a venngram book carrying it as a treatment, and `support_mapping` publishes the derived declaration as a
-  `support_record`, so venngram's conformance checker reads both without Interpretune installed. Interventions on
-  venngram-addressed unit sets, with registered examples for supported models, are tracked in
-  [#905](https://github.com/speediedan/interpretune/issues/905).
+- `interpretune.analysis.venngram` applies a [venngram](https://github.com/speediedan/venngram) recipe on either
+  surface above, since venngram addresses each level of abstraction a surface acts on:
+  - **Model backend:** `recipe_interventions` turns a recipe's treatments (ordered ops at a site, on the whole
+    activation, on a set's units, or on a latent model's features at its `hook_sae_acts_post` sub-hook) into
+    `InterventionSpec`s carrying the same ops.
+  - **Analysis backend:** `recipe_feature_interventions` turns a recipe's feature ops into the surface's canonical
+    `(layer, position, feature_idx, value)` tuples, which any component providing `Capability.INTERVENTION`
+    on the `features` target takes (circuit-tracer's replacement model today). The values are computed by Interpretune and passed as constants, so a backend must honour
+    the `constant` value source. A feature `replace` at explicit positions is translated now; feature `add` and `scale`
+    need the feature's clean activation, which a backend can capture first, and are planned
+    ([#965](https://github.com/speediedan/interpretune/issues/965)).
+
+  A value is a dose, or a column of evidence the caller supplies, through venngram's transforms; Interpretune evaluates
+  the transforms, and the `interpretune.analysis.venngram.values` module states what each one means.
+  `venngram_support()` derives what Interpretune honours of a recipe from the backend's own records, and `check_recipe`
+  / `require_supported` (with `analysis_backend=True` for the analysis-backend surface) refuse, before anything runs,
+  whatever that record cannot express. `export_book` goes the other way, writing an intervention payload as a venngram
+  book carrying it as a treatment, and `support_mapping` publishes the derived declaration as a `support_record`, so
+  venngram's conformance checker reads both without Interpretune installed. Interventions on venngram-addressed unit
+  sets, with registered examples for supported models, are tracked in
+  [#905](https://github.com/speediedan/interpretune/issues/905); applying attribution-graph subsets from one context in
+  another, on both surfaces, in [#966](https://github.com/speediedan/interpretune/issues/966).
 
 At this layer Interpretune delegates to backend-native steering surfaces rather than inventing a second execution
 mechanism. The closest analogs are TransformerLens hook-driven flows such as `run_with_hooks(...)` and NNsight
@@ -68,7 +123,7 @@ through `module.replacement_model`, and stores Arrow-safe intervention summaries
 `intervention_scale_factor` and `intervention_use_intervention_tensor_as_basis` fields; explicit mappings take
 precedence. Concept-direction notebook experiments use this surface for direct-projection phases, including
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
-such as `blocks.0.hook_in` under the `project` op.
+such as `blocks.0.hook_in` with the `project` op.
 
 ## Ops, not modes
 
@@ -82,10 +137,8 @@ registers another op with venngram's `register_op` and its executor with `regist
 `fn(region, operand, spec)` returns the edited region; a hub op collection can carry one as a tensor op (see
 [publishing an op collection](hub_op_collection_authoring.md)).
 
-`replace_with_error` substitutes the operand $o$ for the activation $x$ while keeping the activation's value:
-$o + \mathrm{sg}(x - o)$, whose value is $x$ and whose gradient reaches $o$ and not $x$ through the substitution.
-
-`model_fwd_intervention` dispatches the op the payload names through that registry. The `patch` op (the
+`model_fwd_intervention` dispatches the op the payload names through that registry, so a recipe or payload naming any
+registered op (core, user or hub) is applied, or refused by name where the backend's record does not declare it. The `patch` op (the
 J-space write) takes exactly two direction vectors stacked on a leading axis and swaps the activation's
 coordinates along that pair, leaving the component orthogonal to the pair untouched. Mechanically it is
 basis-agnostic: any pair of directions can serve as the patch pair, so embed-basis concept poles are as valid a
@@ -112,6 +165,11 @@ What each core op preserves and what it moves, in one place:
 - `scale`: preserves every component's direction and multiplies it elementwise by the target
   tensor times `scale_factor` (a scalar, or a per-unit multiplier with ones where units are left
   alone), so a tensor of ones is the identity.
+- `replace_with_error`: preserves the forward value exactly and moves only the gradient. For an operand $o$ (a latent
+  model's reconstruction) at an activation $x$ it gives $o + \operatorname{sg}(x - o)$, where $\operatorname{sg}$
+  stops the gradient: the forward value is $x$, and the gradient reaches $o$ rather than $x$. It is the straight-through
+  substitution a spliced latent model trains with ([latent models](tuning_latent_models.md)); in an analysis pass,
+  where nothing differentiates, it is the identity.
 
 > **The pair and the model must share a residual basis, and TransformerLens weight processing changes it.**
 > A `TransformerBridge` with `enable_compatibility_mode()` folds LayerNorm and centers weights by default, which
@@ -147,6 +205,8 @@ The registered analysis ops (all callable as `it.<name>(...)`):
   `jlens_sparse_inventory` (`jacobian_lens_sparse_inventory`): the J-lens read path (ranked readout, concept
   cosine, and sparse nonnegative decomposition with its residual); see `jlens_usage.md`.
 - `intervention_first_order_check`: checks an applied intervention against its first-order prediction per basis.
+  The prediction is the linearization attribution patching uses to estimate an activation patch without applying it;
+  this op applies the intervention and compares the measured change with that estimate.
 - `compute_attribution_graph` (`ct_graph`), `graph_node_influence` (`ct_node_influence`),
   `extract_top_features` (`ct_top_features`), `feature_intervention_forward` (`ct_feature_intervention`),
   `model_fwd_intervention` (`direction_intervention` / `direct_concept_direction_intervention`).
