@@ -14,7 +14,7 @@
 #   - the host lease directory at /gpu_leases and the host's lease tool at /gpu_lease_tool (read-only);
 #   - the agent's own Docker socket at /var/run/docker.sock (each agent's rootless daemon has its own uid).
 #   - the job's artifact staging directory's `evidence` at /evidence: the phase manifests, records and reports
-#     (tests/gpu_ci/phase_report.py), published as the job's phase evidence.
+#     (python -m gpu_epsilon.phase_evidence), published as the job's phase evidence.
 # The container runs as the image's user, which rootless Docker maps to the agent's uid, so nothing a step writes is
 # left owned by a uid the agent cannot remove.
 parameters:
