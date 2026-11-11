@@ -304,7 +304,7 @@ class TestTensorOpsInACollection:
 
         monkeypatch.setenv(IT_STRICT_OP_LOAD_ENV_VAR, "1")
         malformed = TENSOR_OPS_YAML.replace("composition: sum", "compose: sum")
-        with pytest.raises(OpLoadError, match=r"`op_spec` names \['compose'\], which OpSpec does not have"):
+        with pytest.raises(OpLoadError, match=r"unknown keys \['compose'\]"):
             _collection(tmp_path, monkeypatch, malformed).load_definitions()
 
     def test_a_name_another_source_holds_is_refused(self, tmp_path, monkeypatch):
@@ -347,6 +347,11 @@ class TestOpSpecFromData:
         assert spec.params["fraction"].range == (0.0, 1.0) and spec.params["label"].type is str
         assert spec.token_override and spec.at_least_one_of == ("fraction",)
 
+    def test_of_is_read_and_a_name_is_refused(self):
+        assert op_registry.op_spec_from_mapping("g", {"of": ["grad"]}).of == ("grad",)
+        with pytest.raises(ValueError, match="takes its name from the op definition"):
+            op_registry.op_spec_from_mapping("g", {"name": "other"})
+
     def test_an_unknown_parameter_type_is_refused(self):
-        with pytest.raises(ValueError, match="parameter 'k' has type 'complex'"):
+        with pytest.raises(ValueError, match="parameter `k` has type 'complex'"):
             op_registry.op_spec_from_mapping("x", {"params": {"k": {"type": "complex"}}})

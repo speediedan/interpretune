@@ -37,7 +37,6 @@ name before the backend is reached.
 
 from __future__ import annotations
 
-import builtins
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -173,62 +172,25 @@ def registered_ops() -> frozenset[str]:
 # Tensor ops as data: an op collection's `op_spec` block
 # --------------------------------------------------------------------------------------------------------------------
 
-#: The keys an ``op_spec`` block may carry: venngram's ``OpSpec`` fields, by name.
-OP_SPEC_KEYS = ("operand", "params", "requires", "targets", "value", "token_override", "composition", "at_least_one_of")
-_PARAM_KEYS = ("type", "required", "range")
-_PARAM_TYPES = {"float": builtins.float, "int": builtins.int, "str": builtins.str, "bool": builtins.bool}
-
 
 def op_spec_from_mapping(name: str, block: Any, *, source: str = "<inline>") -> Any:
     """A ``venngram.ops.OpSpec`` built from an op definition's ``op_spec`` block, refusing a malformed one by name.
 
-    The installed venngram reads a ``support_record`` from data but not an ``OpSpec``, so the block is read here, key
-    for key against ``OpSpec``'s fields; once venngram reads one itself, this defers to it. ``params`` maps each
-    parameter to ``{type: float|int|str|bool, required: bool, range: [lo, hi]}``.
+    The block holds an ``op_specs`` document's op fields (venngram's :func:`venngram.ops.op_spec_from_mapping` reads
+    them, ``of`` included) without the ``name``, which the op definition supplies.
 
     Raises:
-        ValueError: If the block is not a mapping, names a key ``OpSpec`` does not have, or a parameter field or type
-            this reader does not know. venngram's own ``register_op`` refuses an unknown operand kind, target or
-            composition.
+        ValueError: If the block is not a mapping, carries its own ``name``, or is a declaration venngram refuses
+            (an unknown key, a parameter of an unknown type, a malformed field).
     """
-    from venngram.ops import OpSpec, ParamSpec
+    from venngram.ops import op_spec_from_mapping as read_op_spec
 
     where = f"{source}: op {name!r}"
     if not isinstance(block, Mapping):
         raise ValueError(f"{where}: `op_spec` is a mapping of OpSpec fields, got {type(block).__name__}")
-    if unknown := sorted(set(block) - set(OP_SPEC_KEYS)):
-        raise ValueError(
-            f"{where}: `op_spec` names {unknown}, which OpSpec does not have (fields: {list(OP_SPEC_KEYS)})"
-        )
-    fields: dict[str, Any] = {}
-    for key in ("operand", "requires", "targets", "at_least_one_of"):
-        if key in block:
-            raw = block[key]
-            if not isinstance(raw, (list, tuple)) or not all(isinstance(v, str) for v in raw):
-                raise ValueError(f"{where}: `op_spec.{key}` is a list of names, got {raw!r}")
-            fields[key] = tuple(raw)
-    for key, kind in (("value", str), ("composition", str), ("token_override", bool)):
-        if key in block:
-            if not isinstance(block[key], kind):
-                raise ValueError(f"{where}: `op_spec.{key}` is a {kind.__name__}, got {block[key]!r}")
-            fields[key] = block[key]
-    params: dict[str, Any] = {}
-    for param, spec in (block.get("params") or {}).items():
-        spec = spec or {}
-        if not isinstance(spec, Mapping) or (unknown := sorted(set(spec) - set(_PARAM_KEYS))):
-            raise ValueError(f"{where}: parameter {param!r} is a mapping of {list(_PARAM_KEYS)}, got {spec!r}")
-        type_name = spec.get("type", "float")
-        if type_name not in _PARAM_TYPES:
-            raise ValueError(f"{where}: parameter {param!r} has type {type_name!r}; known: {sorted(_PARAM_TYPES)}")
-        bounds = spec.get("range")
-        if bounds is not None and (not isinstance(bounds, (list, tuple)) or len(bounds) != 2):
-            raise ValueError(f"{where}: parameter {param!r} range is [lo, hi], got {bounds!r}")
-        params[str(param)] = ParamSpec(
-            _PARAM_TYPES[type_name], bool(spec.get("required", False)), None if bounds is None else tuple(bounds)
-        )
-    if params:
-        fields["params"] = params
-    return OpSpec(name, **fields)
+    if "name" in block:
+        raise ValueError(f"{where}: `op_spec` takes its name from the op definition, so it carries no `name`")
+    return read_op_spec({"name": name, **block}, source=source)
 
 
 #: The probe's activation width and row count: small enough to run at load, wide enough that a reduction over the
@@ -343,7 +305,6 @@ def load_tensor_op(
 
 
 __all__ = [
-    "OP_SPEC_KEYS",
     "OpExecutor",
     "RegisteredExecutor",
     "check_tensor_op",

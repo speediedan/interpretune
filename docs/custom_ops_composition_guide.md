@@ -369,8 +369,9 @@ soft_add:
     composition: sum
 ```
 
-`op_spec` takes `OpSpec`'s fields by name (`operand`, `params`, `requires`, `targets`, `value`, `token_override`,
-`composition`, `at_least_one_of`), and an unknown key is refused by name. Loading the collection registers the
+`op_spec` takes the op fields of a venngram `op_specs` document by name (`operand`, `params`, `requires`, `targets`,
+`value`, `token_override`, `composition`, `at_least_one_of`, `of`), read by venngram's own reader
+(`venngram.ops.op_spec_from_mapping`); the op's name is the definition's, and an unknown key is refused by name. Loading the collection registers the
 `OpSpec` with venngram and the executor here, records the collection, its version and the revision it was loaded
 from as the executor's provenance (`interpretune.analysis.backends.ops.executor_record("soft_add")`), and first holds
 the implementation to the contract on a seeded probe: a result of another shape, a write to the region or the
