@@ -9,15 +9,16 @@ extends it.
 sentence, so the row is true today whether or not anyone updates it later; where a gap exists the row also names an
 open issue. A row that said only "pending #N" is forbidden here, because it becomes false the day #N closes and
 nothing on the page would show it. This page therefore degrades into *incomplete* rather than into *wrong*. Each
-named issue carries a checklist item to update its row, and a scheduled check in the docs link-check workflow fails when a row cites an issue that has closed.
+named issue carries a checklist item to update its row, and a scheduled check in the docs link-check workflow fails
+when a row cites an issue that has closed.
 
 ## Paper capability against Interpretune status
 
 | Paper capability | Interpretune today | Where |
 |---|---|---|
-| Fit a Jacobian lens $J_\ell$ | Not implemented; pre-fitted lenses are consumed from the `neuronpedia/jacobian-lens` artifacts. Fitting is out of scope for #225 as written. | `resolve_jlens`, `jlens_layer_for_percentile` in `analysis/optools.py` |
+| Fit a Jacobian lens $J_\ell$ | Fitting runs in the upstream fitting code, outside this repository, for both kinds: a J-lens with `anthropics/jacobian-lens` (or the same J-lens trainer, which `safety-research/jpp_lens` ships beside J++), and a J++ lens with `jpp_lens`. Interpretune consumes the result: `resolve_jlens(repo_id=...)` reads pre-fitted lenses of either kind from any Hub repository in the Neuronpedia layout (`neuronpedia/jacobian-lens` by default), so a lens refitted on another corpus or another model resolves through the same seam as the published ones. A J-lens refit here reproduces the published gemma-3-1b-it lens at the published inputs. | `resolve_jlens`, `jlens_layer_for_percentile` in `analysis/optools.py` |
 | Read J-lens tokens from an activation | Implemented: the readout calls the model's own final-norm module and unembedding, so it is the paper's formula rather than a reconstruction. | `jlens_read` in `analysis/ops/bundled/jlens/` |
-| Read through a J++ lens | Implemented for pre-fitted lenses: `jlens_kind="jpp"` resolves a J++ artifact through the same seam, checked against its sidecar's declared fit method, and `jlens_read` defaults to the J++ readout's semantic-token mask and RMS divisor. Fitting J++ lenses is not implemented. See "The J++ lens" below. | `resolve_jlens`, `jlens_read` |
+| Read through a J++ lens | Implemented for pre-fitted lenses: `jlens_kind="jpp"` resolves a J++ artifact through the same seam, checked against its sidecar's declared fit method, and `jlens_read` defaults to the J++ readout's semantic-token mask and RMS divisor. Fitting happens upstream, as the row above describes. The J-space example notebooks read only J-lens lenses so far; a J++ section is #957. See "The J++ lens" below. | `resolve_jlens`, `jlens_read` |
 | Probe one concept | Implemented as a cosine against the concept tokens' directions in the norm-aware basis; the paper's unfolded convention is available through `jlens_apply_final_norm=False`. | `jlens_concept_probe` |
 | Decompose an activation into sparse J-space concepts | Implemented: nonnegative sparse decomposition by gradient pursuit over the J-lens dictionary, with its residual. | `jlens_sparse_inventory` |
 | Add a J-lens direction | Implemented: the model-level `add` mode takes any direction, and `concept_direction` builds a single J-lens direction in the basis its `concept_basis` names (`jlens_folded` or `jlens_unfolded`, with no default). | `model_fwd_intervention`, mode `add`; `concept_direction` |
@@ -136,7 +137,7 @@ resulting choice of kind per use, are in [J-Space Usage](jlens_usage.md).
 
 ## Maintenance
 
-The one row above that names an issue cites #225, which carries a checklist item to update its row when it
+The one row above that names an issue cites #957, which carries a checklist item to update its row when it
 closes. The docs link-check workflow, which runs weekly and on demand against the live web, reads
 this page's issue citations and fails on any that has closed, so a stale row cannot survive a week unnoticed.
 The page states current behaviour in every row for the reason given at the top: it must be true between those runs
