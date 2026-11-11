@@ -4,6 +4,7 @@ load-time check of the document against its model. Every case here is a decision
 from __future__ import annotations
 
 from pathlib import Path
+from unittest import mock
 
 import pytest
 import yaml
@@ -344,6 +345,22 @@ def _tiny(architecture: str):
                 ),
             )
         ),
+        # 32 layers so the default `layer_types` is Qwen3.5-4B's own (full attention at 3, 7, ..., 31), which is what
+        # the document's layer lists are checked against
+        "Qwen3_5ForConditionalGeneration": lambda: tr.Qwen3_5ForConditionalGeneration(
+            tr.Qwen3_5Config(
+                text_config=dict(
+                    num_hidden_layers=32,
+                    head_dim=8,
+                    linear_num_key_heads=2,
+                    linear_num_value_heads=2,
+                    linear_key_head_dim=8,
+                    linear_value_head_dim=8,
+                    **small,
+                ),
+                vision_config=dict(depth=1, hidden_size=16, intermediate_size=32, num_heads=2, out_hidden_size=16),
+            )
+        ),
     }
     if architecture not in builders:
         pytest.fail(
@@ -361,7 +378,79 @@ EXPECTED_RMSNORM_OFFSET = {
     "Gemma2ForCausalLM": True,
     "Gemma3ForCausalLM": True,
     "Gemma3ForConditionalGeneration": True,
+    "Qwen3_5ForConditionalGeneration": True,
 }
+
+
+class TestQwen3_5HybridAttention:
+    """Qwen3.5 alternates three linear-attention layers with one full-attention layer, so its attention has two
+    modules.
+
+    Each layer type resolves to its own module and the other is refused by name, never mapped.
+    """
+
+    FULL, LINEAR = 7, 6
+
+    def test_each_attention_kind_resolves_on_its_own_layers(self):
+        cmap = component_map_for("Qwen3_5ForConditionalGeneration")
+        full = resolve(parse(f"blocks.{self.FULL}.attn.hook_out"), cmap)
+        assert isinstance(full, TensorRef) and full.module_path == f"model.language_model.layers.{self.FULL}.self_attn"
+        assert full.tuple_output is True
+        lin = resolve(parse(f"blocks.{self.LINEAR}.linear_attn.hook_out"), cmap)
+        assert isinstance(lin, TensorRef)
+        assert lin.module_path == f"model.language_model.layers.{self.LINEAR}.linear_attn"
+        assert lin.tuple_output is False
+
+    def test_the_other_kind_is_refused_by_name_on_each_layer(self):
+        cmap = component_map_for("Qwen3_5ForConditionalGeneration")
+        no_attn = resolve(parse(f"blocks.{self.LINEAR}.attn.hook_out"), cmap)
+        assert isinstance(no_attn, Unresolvable) and f"not layer {self.LINEAR}" in no_attn.reason
+        no_lin = resolve(parse(f"blocks.{self.FULL}.linear_attn.o.hook_out"), cmap)
+        assert isinstance(no_lin, Unresolvable) and f"not layer {self.FULL}" in no_lin.reason
+
+    @pytest.mark.parametrize("layer", [FULL, LINEAR])
+    def test_the_residual_points_hold_on_both_layer_types(self, layer):
+        cmap = component_map_for("Qwen3_5ForConditionalGeneration")
+        mid = resolve(parse(f"blocks.{layer}.hook_resid_mid"), cmap)
+        assert mid.module_path == f"model.language_model.layers.{layer}.post_attention_layernorm" and mid.io == "input"
+        post = resolve(parse(f"blocks.{layer}.hook_resid_post"), cmap)
+        assert post.module_path == f"model.language_model.layers.{layer}" and post.io == "output"
+
+    def test_the_final_norm_and_unembed_resolve(self):
+        cmap = component_map_for("Qwen3_5ForConditionalGeneration")
+        assert resolve(parse("ln_final.hook_out"), cmap).module_path == "model.language_model.norm"
+        assert resolve(parse("unembed.hook_out"), cmap).module_path == "lm_head"
+
+    def test_the_vision_tower_is_refused_until_it_is_mapped(self):
+        res = resolve(parse("vision.blocks.0.attn.hook_out"), component_map_for("Qwen3_5ForConditionalGeneration"))
+        assert isinstance(res, Unresolvable) and "declares no block stack 'vision'" in res.reason
+
+    def test_the_seam_reads_the_final_norms_applied_scale(self):
+        """The model's own norm, nested under `language_model`, probed for the scale it applies: `1 + weight`."""
+        torch = pytest.importorskip("torch")
+        tr = pytest.importorskip("transformers")
+        from interpretune.analysis.optools import resolve_unembed_and_norm_scale
+
+        small = dict(hidden_size=16, intermediate_size=32, num_attention_heads=2, num_key_value_heads=2, vocab_size=64)
+        model = tr.Qwen3_5ForConditionalGeneration(
+            tr.Qwen3_5Config(
+                text_config=dict(
+                    num_hidden_layers=4,
+                    head_dim=8,
+                    linear_num_key_heads=2,
+                    linear_num_value_heads=2,
+                    linear_key_head_dim=8,
+                    linear_value_head_dim=8,
+                    **small,
+                ),
+                vision_config=dict(depth=1, hidden_size=16, intermediate_size=32, num_heads=2, out_hidden_size=16),
+            )
+        )
+        with torch.no_grad():
+            model.model.language_model.norm.weight.fill_(0.5)
+        info = resolve_unembed_and_norm_scale(type("Module", (), {"model": model})())
+        assert info.norm_kind == "rmsnorm"
+        torch.testing.assert_close(info.norm_scale.float(), torch.full((16,), 1.5))
 
 
 class TestEveryBundledMapDescribesItsModel:
@@ -408,7 +497,20 @@ def _tl_adapter(architecture: str):
     for nested in ("text_config", "vision_config"):
         if hasattr(hf_config, nested):
             setattr(cfg, nested, getattr(hf_config, nested))
-    return ArchitectureAdapterFactory.select_architecture_adapter(cfg)
+    if architecture not in TL_LIBRARY_CHECK_NOT_NEEDED:
+        return ArchitectureAdapterFactory.select_architecture_adapter(cfg)
+    from transformer_lens.model_bridge.architecture_adapter import ArchitectureAdapter
+
+    with mock.patch.object(ArchitectureAdapter, "_check_required_libraries", lambda self: None):
+        return ArchitectureAdapterFactory.select_architecture_adapter(cfg)
+
+
+#: Architectures whose TransformerLens adapter refuses to construct without an optional library that its component
+#: mapping does not use, with the reason. The check is suppressed for those alone, so the oracle reads the real
+#: adapter instead of being skipped in every environment that lacks the library (the pinned and CI ones do).
+TL_LIBRARY_CHECK_NOT_NEEDED = {
+    "Qwen3_5ForConditionalGeneration": "torchvision, for TransformerLens' image processor at run time",
+}
 
 
 #: Bundled rows that have no TransformerLens counterpart, by architecture, each with the reason it is expected.
@@ -433,6 +535,9 @@ EXPECTED_WITHOUT_TL_COUNTERPART = {
         "vision.embed",
         "vision.ln_final",
     },
+    # TransformerLens' gated delta net bridge exposes no output-projection submodule; the row is checked against the
+    # class by TestEveryBundledMapDescribesItsModel instead
+    "Qwen3_5ForConditionalGeneration": {"blocks.{i}.linear_attn.o"},
 }
 
 
@@ -456,10 +561,13 @@ class TestEveryBundledMapAgreesWithTransformerLens:
         bundled = component_map_for(architecture)
         derived = from_transformer_lens(_tl_adapter(architecture), architecture)
         shared = sorted(set(bundled.components) & set(derived.components))
+        # module and kind only: TransformerLens has no per-row layer predicate (it marks a hybrid stack's attention
+        # bridges optional), so a row's `layers` is vouched for against the class, not here
         mismatches = [
             (k, bundled.components[k], derived.components[k])
             for k in shared
-            if bundled.components[k] != derived.components[k]
+            if (bundled.components[k].module, bundled.components[k].kind)
+            != (derived.components[k].module, derived.components[k].kind)
         ]
         assert not mismatches, mismatches
         # the oracle's reach, as a number: every text row is compared, not a subset that happens to overlap

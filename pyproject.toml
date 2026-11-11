@@ -251,7 +251,7 @@ git-deps = [
     # The SHA is venngram main with #56 (a reader passes over registry documents newer than it reads, so the default
     # view survives a registry schema change), over #53 (overlay roles named by adapter, every PEFT tuner family), #51
     # (a base map mounted under a wrapper root), #48 and #45 (base and overlay maps).
-    "venngram @ git+https://github.com/speediedan/venngram@edbd6e0c6016dc6761295b47ae53c0b6294bed07",
+    "venngram @ git+https://github.com/speediedan/venngram@a1407881a53bf2db92fffcf6f385d6ef890d4a45",
 ]
 
 dev = [
@@ -339,7 +339,7 @@ override-dependencies = [
     "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@db0305d5f351525c99381ceef6140e6bfc1f6b0a",
     # venngram by git SHA until 0.1.0 is on PyPI, for the same reason: interpretune and finetuning-scheduler both
     # require it and it is in no release. RETIRE it with the `git-deps` entry once 0.1.0 is published.
-    "venngram @ git+https://github.com/speediedan/venngram@edbd6e0c6016dc6761295b47ae53c0b6294bed07",
+    "venngram @ git+https://github.com/speediedan/venngram@a1407881a53bf2db92fffcf6f385d6ef890d4a45",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.
@@ -685,6 +685,54 @@ name = "benchmark"
 optional = true
 skip-unless = ["-c", "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)"]
 special-tests = ["--mark_type=benchmark"]
+
+[tool.gpu-epsilon.phase-evidence]
+# gpu-epsilon's phase-evidence writer (python -m gpu_epsilon.phase_evidence) reads this table: the GPU job collects each
+# phase's manifest on the CPU before any GPU work (.azure-pipelines/scripts/gpu_job_container.sh collect), records every
+# pytest process the phase starts (gpu_phase.sh, through run-env) and reports each phase against its manifest, gated
+# below. The phases are the GPU job's own steps (gpu_phase.sh); a phase's selector is the selection-relevant part of
+# its step, not what only reruns or reports.
+repository = "speediedan/interpretune"
+# Every selection variable tests/conftest.py reads, stripped before each collection so an inherited one cannot change
+# what a phase is. The memory class goes too, so a two-stage phase's manifest covers both stages.
+selection-vars = [
+    "IT_RUN_CUDA_TESTS", "IT_RUN_STANDALONE_TESTS", "IT_RUN_STANDALONE_CPU_TESTS", "IT_RUN_PROFILING_TESTS",
+    "IT_RUN_OPTIONAL_TESTS", "IT_RUN_BENCHMARK_TESTS", "IT_GPU_MEM_CLASS", "IT_GPU_SMALL_MAX_GB",
+]
+device-vars = ["CUDA_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "IT_GPU_DEVICE"]
+# An empty phase fails only a full run (a selected run may legitimately select nothing in a phase), and a skip without
+# a reviewed reason (tests/gpu_ci/reviewed_exclusions.json) fails only a release leg.
+gate = { empty = "outside-full", unreviewed-exclusions = "except-release", release-job-classes = ["ci-release"] }
+
+[tool.gpu-epsilon.phase-evidence.versions]
+interpretune = "dist:interpretune"
+lightning = "dist:lightning"
+finetuning-scheduler = "dist:finetuning-scheduler"
+transformer-lens = "dist:transformer-lens"
+nnsight = "dist:nnsight"
+sae-lens = "dist:sae-lens"
+
+# a selected run's selection file narrows the phase in tests/conftest.py, and the collection with it
+[tool.gpu-epsilon.phase-evidence.scopes.selected]
+select-file-env = "IT_GPU_SELECTION_FILE"
+
+[[tool.gpu-epsilon.phase-evidence.phase]]
+name = "cuda"
+paths = ["tests", "src/it_examples/tests"]
+selection-env = { IT_RUN_CUDA_TESTS = "1" }
+command = "python -m pytest --cov=src/interpretune tests src/it_examples/tests -v --reruns 2"
+
+[[tool.gpu-epsilon.phase-evidence.phase]]
+name = "standalone"
+paths = ["tests", "src/it_examples/tests"]
+selection-env = { IT_RUN_STANDALONE_TESTS = "1" }
+command = "python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type=standalone --allow-failures --allow-empty"
+
+[[tool.gpu-epsilon.phase-evidence.phase]]
+name = "profile_ci"
+paths = ["tests", "src/it_examples/tests"]
+selection-env = { IT_RUN_PROFILING_TESTS = "1" }
+command = "python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type=profile_ci --allow-failures --allow-empty"
 
 [tool.notebook-publishing]
 # interpretune's own example notebooks, read by the publisher (src/interpretune/utils/notebook_publishing.py) and the

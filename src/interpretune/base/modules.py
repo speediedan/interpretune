@@ -4,6 +4,8 @@ import torch
 
 from interpretune.config import ITConfig
 from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
+from interpretune.tuning.interventions import attach_configured_interventions, intervention_roles
+from interpretune.tuning.latents import latent_model_roles
 from interpretune.tuning.views import attach_tunable_view
 from interpretune.utils import MisconfigurationException
 
@@ -61,6 +63,8 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         # finetuning-scheduler view (never replacing one attached in `post_auto_model_init`); the attachment is a no-op
         # when the installed finetuning-scheduler predates views
         self.register_tunable_modules()
+        # interventions declared in the configuration, once every module their sites may name is registered
+        attach_configured_interventions(self, self.it_cfg.tuning_interventions)
         attach_tunable_view(self)
         self._capture_hyperparameters()
         self.load_metric()
@@ -139,9 +143,11 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
     def tunable_roles(self) -> dict[str, str]:
         """Roles for this module's parameters and buffers, by name.
 
-        Cooperative: mixins add theirs to ``super()``'s.
+        Cooperative: mixins add theirs to ``super()``'s. This base declares the roles of the latent models and
+        interventions attached to it (``latent:<name>`` and ``intervention:<name>``, or ``instrument`` for a frozen
+        one: :mod:`interpretune.tuning.latents`, :mod:`interpretune.tuning.interventions`).
         """
-        return {}
+        return {**latent_model_roles(self), **intervention_roles(self)}
 
     def model_init(self) -> None:
         """Optionally load a custom model ."""
