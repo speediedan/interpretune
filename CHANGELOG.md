@@ -221,6 +221,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- An nnsight composition refuses `hf_from_pretrained_cfg.lora_cfg` at configuration, naming it. nnsight loads the model through its own path, which applies no PEFT adapters, so the setting used to be dropped and a run trained the base model while its configuration said adapters. The `(lightning, nnsight)` composition gets a tuning conformance target, so finetuning-scheduler's schedules compile, thaw and step through its view under Lightning as they do under core ([#942](https://github.com/speediedan/interpretune/issues/942))
+
 - `FTSCoreCallback` resolves a `class_path` naming a Hub component's entrypoint (`rte_boolq.ChainCalibrate`, say) for its gates, hooks and other `tuning_scheduler_kwargs` objects, as session configurations do; it raised `ModuleNotFoundError`. Configuration loading also passes a list's scalars through `instantiate_nested`, which raised `TypeError` on `reg_layers: [17, 18]` ([#899](https://github.com/speediedan/interpretune/issues/899))
 
 - Moving a loaded circuit-tracer replacement model moves its attribution device too. It was recorded at load, so `safe_clean_cuda` on a CPU-loaded model sent activations to the CPU while the transcoders reading them were on the GPU, which failed two Gemma 3 session parity tests with a device error (#915).

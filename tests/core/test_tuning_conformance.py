@@ -30,6 +30,33 @@ class TestNNsightTuning(TuningConformance):
         assert probe.support().trainable, probe.support().reason
 
 
+@pytest.mark.skipif(not package_available("nnsight"), reason="nnsight is not installed")
+class TestLightningNNsightTuning(TuningConformance):
+    """The ``(lightning, nnsight)`` composition registers the same HF module under Lightning, so the scheduler's
+    schedules compile, thaw and step through its view as they do for core (#942)."""
+
+    target = ConformanceTarget(
+        composition=("lightning", "nnsight"), forward_family="hf_native", datamodule_flavour="nnsight"
+    )
+
+    def test_view_is_trainable(self, probe):
+        assert probe.support().trainable, probe.support().reason
+
+    def test_the_target_is_the_lightning_composition(self):
+        """The cases above also pass on the core composition, so check that this target builds Lightning's."""
+        from lightning.pytorch import LightningModule
+
+        from interpretune import ITSession
+        from interpretune.testing.conformance import ConformanceInputs
+
+        def built(target):
+            return ITSession(target.build_session_cfg(ConformanceInputs())).module
+
+        module = built(self.target)
+        assert isinstance(module, LightningModule) and "hf_model" in module._modules
+        assert not isinstance(built(TestNNsightTuning.target), LightningModule)
+
+
 def test_a_frozen_spliced_sae_is_an_instrument(request):
     """An SAE configured ``frozen`` is spliced and applied but declared ``instrument``; the others stay
     ``latent:sae`` (#812)."""

@@ -451,6 +451,23 @@ class TestNNsightErrorHandling:
                 nnsight_cfg=NNsightConfig(model_name=None),
             )
 
+    def test_lora_cfg_is_refused(self):
+        """Nnsight's loading path applies no PEFT adapters, so a `lora_cfg` is refused by name rather than dropped,
+        which would train the base model while the configuration says adapters (#942)."""
+        from interpretune.config import HFFromPretrainedConfig
+
+        def cfg(**hf_kwargs):
+            return ITNNsightConfig(
+                model_name_or_path="gpt2",
+                nnsight_cfg=NNsightConfig(model_name="gpt2"),
+                hf_from_pretrained_cfg=HFFromPretrainedConfig(**hf_kwargs),
+            )
+
+        with pytest.raises(MisconfigurationException, match="lora_cfg.*no PEFT adapters"):
+            cfg(lora_cfg={"r": 8, "target_modules": ["c_attn"]})
+        # the same configuration without adapters still builds, so the refusal is about `lora_cfg` alone
+        assert not cfg().hf_from_pretrained_cfg.lora_cfg
+
 
 # =============================================================================
 # Remote Execution Tests (require NDIF_API_KEY)

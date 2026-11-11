@@ -264,6 +264,16 @@ class ITNNsightConfig(ITConfig):
                     f"convertible to one. Error: {e}"
                 )
 
+        # nnsight loads the model through its own path, which never reaches the HF path's PEFT step, so a `lora_cfg`
+        # here would be dropped and the run would train the base model while the configuration says adapters.
+        if self.hf_from_pretrained_cfg is not None and self.hf_from_pretrained_cfg.lora_cfg:
+            raise MisconfigurationException(
+                "`hf_from_pretrained_cfg.lora_cfg` is set on an nnsight composition, but nnsight builds its model "
+                "through its own loading path (`LanguageModel`), which applies no PEFT adapters: the run would tune "
+                "the base model, not adapters. Remove `lora_cfg`, or tune adapters through a composition that loads "
+                "the model through the HF path (`core` without `nnsight`)."
+            )
+
         # Note: We don't require hf_from_pretrained_cfg for NNsight because:
         # 1. NNsight handles HF model loading internally via LanguageModel(model_name, **kwargs)
         # 2. dtype is resolved from nnsight_cfg.resolved_dtype (set below)
