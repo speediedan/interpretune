@@ -7,8 +7,9 @@ activation, or to its gradient. Causal-abstraction interventions (hard, soft and
 ablation, steering, and trainable interventions such as distributed alignment search and representation fine-tuning
 are all interventions on a model's internal variables.
 
-- **Ops** come from venngram's op registry (`venngram.ops`): `replace`, `add`, `scale`, `project`, `reject`, `patch`
-  and `clamp`, plus any op a user registers. Each op's meaning is defined once, below.
+- **Ops** come from venngram's op registry (`venngram.ops`), a federated registry: its core ops (`replace`, `add`,
+  `scale`, `project`, `reject`, `patch`, `clamp` and `replace_with_error`), plus any op a user registers in code or a
+  hub op collection declares. Each core op's meaning is defined once, below.
 - **Targets** are the whole activation, a set of its units, a latent model's features (venngram's `targets`), or a
   parameter tensor or its units ([#960](https://github.com/speediedan/interpretune/issues/960), planned). A subset of
   an attribution graph, distilled in one context and applied in another, is a planned target too
@@ -16,8 +17,10 @@ are all interventions on a model's internal variables.
   [venngram#78](https://github.com/speediedan/venngram/issues/78)).
 - **Value or gradient**: an address with `of: grad` names the gradient with respect to what it selects, so an op on a
   gradient target is a backward-pass intervention. Resolving such sites is
-  [#938](https://github.com/speediedan/interpretune/issues/938); paths between sites (stopping or routing the gradient
-  from one set to another) are [venngram#67](https://github.com/speediedan/venngram/issues/67).
+  [#938](https://github.com/speediedan/interpretune/issues/938), the backward surface that applies ops to them
+  (`model_bwd_intervention`) is [#970](https://github.com/speediedan/interpretune/issues/970), and paths between sites
+  (stopping or routing the gradient from one set to another) are
+  [venngram#67](https://github.com/speediedan/venngram/issues/67).
 
 Kinds of intervention differ in the op and in **where the op's operand comes from**:
 
@@ -46,6 +49,7 @@ Interpretune enables interventions at multiple levels of abstraction.
 | Level | Capability member | Object acted on | Entry op | Executed by | Support record |
 |---|---|---|---|---|---|
 | Model backend | `ModelBackendCapability`<br>`.ACTIVATION_INTERVENTION` | an activation at any vocabulary point (residual stream, attention, MLP, head-shaped) or a latent model's sub-hook | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (modes, position scopes) |
+| Model backend, backward pass (planned, [#970](https://github.com/speediedan/interpretune/issues/970)) | the backward counterpart of `.ACTIVATION_INTERVENTION` | the gradient with respect to an activation, at a site an `of: grad` address names | `model_bwd_intervention` | `ModelBackend.bwd_w_intervention`, through the same op executor as the forward pass | `InterventionSupport` with `of: [value, grad]` |
 | Analysis backend | `AnalysisBackendCapability`<br>`.FEATURE_INTERVENTION` | a replacement model's latent feature activations, as `(layer, position, feature_id) -> value` tuples | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `FeatureInterventionSupport` (value sources, constrainable layers, returned activations) |
 
 **Capabilities say what a backend implements; support records say how.** A capability member names a protocol
@@ -65,7 +69,7 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
   implemented with the same maths by both the TransformerLens and NNsight model backends at either position
   scope, `last_token` or `all_positions` (including
   SAE/latent sub-hook targets via `use_latent_models`/`sae_handles`). Its record, `InterventionSupport`, declares
-  the modes and position scopes; an op declares what it needs through `required_intervention_modes` and
+  the ops and position scopes it applies; an op declares what it needs through `required_intervention_modes` and
   `required_position_scopes`, and the gate compares the two before the op runs.
 - `ReplacementModel.feature_intervention(...)` is the model-level primitive the analysis-level feature-intervention
   op executes on. Both circuit-tracer backend implementations consume canonical intervention tuples of the form
@@ -110,27 +114,32 @@ through `module.replacement_model`, and stores Arrow-safe intervention summaries
 `intervention_scale_factor` and `intervention_use_intervention_tensor_as_basis` fields; explicit mappings take
 precedence. Concept-direction notebook experiments use this surface for direct-projection phases, including
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
-such as `blocks.0.hook_in` in `project` mode.
+such as `blocks.0.hook_in` with the `project` op.
 
-`model_fwd_intervention` dispatches seven modes: `replace`, `add`, `project`, `patch`, `reject`, `clamp`, and `scale`. The `patch` mode (the
+`model_fwd_intervention` applies ops from venngram's registry: the core ops `replace`, `add`, `project`, `patch`,
+`reject`, `clamp`, `scale` and `replace_with_error`, and, through an op executor registry keyed by op name, any op a
+user or a hub op collection registers with its implementation
+([#952](https://github.com/speediedan/interpretune/issues/952); until it lands the shorthand field is still spelled
+`intervention_mode`). A recipe naming a registered op validates against venngram's registry with or without the
+publisher's code. The `patch` op (the
 J-space write) takes exactly two direction vectors stacked on a leading axis and swaps the activation's
 coordinates along that pair, leaving the component orthogonal to the pair untouched. Mechanically it is
 basis-agnostic: any pair of directions can serve as the patch pair, so embed-basis concept poles are as valid a
 source as Jacobian lens rows; which basis produced the pair is the configuration the paragraph above requires the
 op to state.
 
-What each mode preserves and what it moves, in one place:
+What each core op preserves and what it moves, in one place:
 
 - `replace`: preserves nothing — the region becomes the target tensor (broadcast to shape).
 - `add`: preserves everything except the shift — `h + target · scale_factor`, perturbing every
   component the added vector overlaps.
 - `project`: preserves the component parallel to the basis and discards the rest (the opposite of
-  `reject`; at full strength the two modes sum to the input).
+  `reject`; at full strength the two ops sum to the input).
 - `patch`: preserves the component orthogonal to the pair and swaps the two in-pair coordinates
   (`V(σ(c) − c)` with `c = V⁺h`), exact by pseudoinverse rather than transpose.
 - `reject`: preserves the component orthogonal to `span(V)` and removes the in-span part
   (`h − α·VV⁺h`); `scale_factor` is the removal fraction (1.0 removes, 0.0 is the identity),
-  which is what makes graded ablation bands one mode with a parameter instead of three.
+  which is what makes graded ablation bands one op with a parameter instead of three.
 - `clamp`: preserves in-range coordinates exactly and bounds the out-of-range ones into
   `[clamp_min, clamp_max]` measured in `V⁺` coordinates (`h + (c′ − c)V`); a clamp with
   neither bound is the identity and is refused rather than run. Bound-into-range and
@@ -139,6 +148,11 @@ What each mode preserves and what it moves, in one place:
 - `scale`: preserves every component's direction and multiplies it elementwise by the target
   tensor times `scale_factor` (a scalar, or a per-unit multiplier with ones where units are left
   alone), so a tensor of ones is the identity.
+- `replace_with_error`: preserves the forward value exactly and moves only the gradient. For an operand $o$ (a latent
+  model's reconstruction) at an activation $x$ it gives $o + \operatorname{sg}(x - o)$, where $\operatorname{sg}$
+  stops the gradient: the forward value is $x$, and the gradient reaches $o$ rather than $x$. It is the straight-through
+  substitution a spliced latent model trains with ([latent models](tuning_latent_models.md)); in an analysis pass,
+  where nothing differentiates, it is the identity.
 
 > **The pair and the model must share a residual basis, and TransformerLens weight processing changes it.**
 > A `TransformerBridge` with `enable_compatibility_mode()` folds LayerNorm and centers weights by default, which
@@ -231,7 +245,7 @@ tries supported canonical and legacy spellings in both directions before backend
 A payload may name several specs at one hook point, given as a list in declaration order. They apply sequentially,
 each seeing the previous spec's output: `[add(v), reject(v)]` differs from `[reject(v), add(v)]`, while two `add`
 specs commute. Backends fold the spec tuple left to right, and adapters preserve the declaration order rather than
-grouping by mode.
+grouping by op.
 
 ## Direct projection config pattern
 
