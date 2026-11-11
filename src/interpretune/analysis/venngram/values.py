@@ -3,13 +3,16 @@ A Recipe Op's Members and Values
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 What a unit or feature target names, and the value each of its members takes. Venngram declares a value's source and
-its transforms and leaves evaluating them to the consumer, so this is where Interpretune evaluates them. An
-evidence-sourced value reads a column the caller supplies: ``evidence`` maps an evidence name to a table, a table maps
-a column name to its values, and a column is keyed by ``(layer, unit)``. Interpretune does not compute evidence, and a
+its transforms and leaves evaluating them to the consumer, so this is where Interpretune evaluates them, checked against
+venngram's own conformance vectors (``venngram.ops.check_transforms``). A value starts as a ``dose``, a ``doses``
+table, or a column of evidence the caller supplies: ``evidence`` maps an evidence name to a table, a table maps a
+column name to its values, and a column is keyed by ``(layer, unit)``. Interpretune does not compute evidence, and a
 member the column has no row for is refused rather than dropped, since a treatment missing a member is a different
 treatment.
 
-The transforms run in the order the recipe writes them, each over the values the last one produced:
+The transforms run in the order the recipe writes them, each over the values the last one produced, whatever the
+value's source. The two that read the evidence table (``sign_of`` and ``sign_aware_scale``) apply only to an
+evidence-sourced value, as venngram refuses them on a dose when it reads a recipe:
 
 - ``scale``: $v \cdot f$ for the ``factor`` $f$;
 - ``abs``: $\lvert v \rvert$;
@@ -24,8 +27,9 @@ The transforms run in the order the recipe writes them, each over the values the
   units of a statistic (neuronary's, in units of a layer's median residual norm, which ``venngram.recipe.migrate``
   translates into this transform) becomes an activation-space dose this way, as venngram#58's draft defines it.
 
-The sign of zero is zero, as circuit-tracer takes it. A statistic is computed from the model, so the caller supplies it
-(``statistics`` maps a name to a value, or to a value per layer), and one it does not supply is refused by name.
+The sign of zero is zero, as circuit-tracer takes it. A statistic is computed from the model, so the caller supplies it:
+``statistics`` maps a name to one value, to a value per layer (keyed by layer), or to a value per member (keyed by
+``(layer, unit)``). One it does not supply for a member is refused.
 
 .. warning:: This is an experimental API and may change in a future release.
 """
@@ -35,17 +39,24 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from interpretune.utils import MisconfigurationException
 
 #: The transforms :func:`member_values` evaluates without a statistic from the caller.
 EVALUATED_TRANSFORMS = frozenset({"scale", "abs", "normalize", "sign_of", "sign_aware_scale"})
 
+#: The transforms that read the evidence table, so apply only to an evidence-sourced value (venngram's
+#: ``EVIDENCE_TRANSFORMS`` for its core transforms; a test keeps them equal).
+EVIDENCE_TRANSFORMS = frozenset({"sign_of", "sign_aware_scale"})
+
 #: A ``features`` value naming the features themselves, rather than a latent model whose ``units`` name them.
 _FEATURE_IDS = re.compile(r"^\d+(,\s*\d+)*$")
 
 Member = tuple[int, int]
+
+#: A supplied statistic: one value, a value per layer, or a value per ``(layer, unit)`` member.
+Statistic = float | Mapping[int, float] | Mapping[Member, float]
 
 
 def target_kind(recipe: Any, op: Any) -> str:
@@ -116,7 +127,7 @@ class _Evaluation:
 
     table: Mapping[str, Mapping[Member, float]]
     scores: Mapping[Member, float]
-    statistics: Mapping[str, float | Mapping[int, float]]
+    statistics: Mapping[str, Statistic]
     where: str
 
     def column(self, name: str, members: Any) -> dict[Member, float]:
@@ -132,29 +143,44 @@ class _Evaluation:
             )
         return {m: float(column[m]) for m in members}
 
-    def statistic(self, name: str, layer: int) -> float:
-        """The named statistic at ``layer``."""
+    def statistic(self, name: str, member: Member) -> float:
+        """The named statistic for ``member``: its own value, its layer's, or the one value supplied."""
         if name not in self.statistics:
             raise MisconfigurationException(
                 f"{self.where}: no statistic `{name}` was supplied (supplied: {sorted(self.statistics)})"
             )
         statistic = self.statistics[name]
-        if isinstance(statistic, Mapping) and layer not in statistic:
-            raise MisconfigurationException(f"{self.where}: statistic `{name}` has no value at layer {layer}")
-        return float(statistic[layer] if isinstance(statistic, Mapping) else statistic)
+        if not isinstance(statistic, Mapping):
+            return float(statistic)
+        per_member = [isinstance(key, tuple) for key in statistic]
+        if any(per_member) and not all(per_member):
+            raise MisconfigurationException(
+                f"{self.where}: statistic `{name}` mixes per-layer and per-(layer, unit) keys; give one or the other"
+            )
+        if any(per_member):
+            by_member = cast(Mapping[Member, float], statistic)
+            if member not in by_member:
+                raise MisconfigurationException(
+                    f"{self.where}: statistic `{name}` has no value at (layer, unit) {member}"
+                )
+            return float(by_member[member])
+        by_layer = cast(Mapping[int, float], statistic)
+        if member[0] not in by_layer:
+            raise MisconfigurationException(f"{self.where}: statistic `{name}` has no value at layer {member[0]}")
+        return float(by_layer[member[0]])
 
     def divide(self, values: Mapping[Member, float], name: str) -> dict[Member, float]:
-        """``values``, each over the named statistic at its layer."""
+        """``values``, each over the named statistic for its member."""
         out = {}
-        for (layer, unit), value in values.items():
-            if (divisor := self.statistic(name, layer)) == 0.0:
-                raise MisconfigurationException(f"{self.where}: statistic `{name}` is zero at layer {layer}")
-            out[(layer, unit)] = value / divisor
+        for member, value in values.items():
+            if (divisor := self.statistic(name, member)) == 0.0:
+                raise MisconfigurationException(f"{self.where}: statistic `{name}` is zero at (layer, unit) {member}")
+            out[member] = value / divisor
         return out
 
     def multiply(self, values: Mapping[Member, float], name: str) -> dict[Member, float]:
-        """``values``, each times the named statistic at its layer."""
-        return {(layer, unit): value * self.statistic(name, layer) for (layer, unit), value in values.items()}
+        """``values``, each times the named statistic for its member."""
+        return {member: value * self.statistic(name, member) for member, value in values.items()}
 
 
 def _normalize(values: Mapping[Member, float], params: Mapping[str, Any], ctx: _Evaluation) -> dict[Member, float]:
@@ -181,24 +207,23 @@ _TRANSFORMS: dict[str, Callable[[Mapping[Member, float], Mapping[str, Any], _Eva
 }
 
 
-def _from_evidence(
-    value: Any,
-    members: list[Member],
-    evidence: Mapping[str, Mapping[str, Mapping[Member, float]]],
-    statistics: Mapping[str, float | Mapping[int, float]],
-    where: str,
-) -> dict[Member, float]:
+def _starting_values(
+    value: Any, members: list[Member], evidence: Mapping[str, Mapping[str, Mapping[Member, float]]], where: str
+) -> tuple[Mapping[str, Mapping[Member, float]], dict[Member, float]]:
+    """The evidence table a value reads (empty unless evidence-sourced) and each member's value before
+    transforms."""
+    if value.source == "dose":
+        return {}, dict.fromkeys(members, float(value.dose))
+    if value.source == "doses":
+        doses = value.doses or {}
+        return {}, {(ly, u): float(doses[ly][u]) for ly, u in members if u in doses.get(ly, {})}
     if value.evidence not in evidence:
         raise MisconfigurationException(
             f"{where}: the value reads evidence `{value.evidence}`, which the caller did not supply"
             f" (supplied: {sorted(evidence)})"
         )
-    ctx = _Evaluation(evidence[value.evidence], {}, statistics, where)
-    values = ctx.column(value.column, members)
-    ctx = _Evaluation(ctx.table, values, statistics, where)
-    for transform in value.transform:
-        values = _TRANSFORMS[transform.name](values, transform.params, ctx)
-    return values
+    table = evidence[value.evidence]
+    return table, _Evaluation(table, {}, {}, where).column(value.column, members)
 
 
 def member_values(
@@ -206,20 +231,23 @@ def member_values(
     op: Any,
     *,
     evidence: Mapping[str, Mapping[str, Mapping[Member, float]]] | None = None,
-    statistics: Mapping[str, float | Mapping[int, float]] | None = None,
+    statistics: Mapping[str, Statistic] | None = None,
     where: str = "<recipe>",
 ) -> dict[Member, float]:
     """``(layer, unit) -> value`` for a unit or feature target (a ``doses`` table may leave members undosed).
 
     Raises:
-        MisconfigurationException: If the target's members cannot be listed, or an evidence-sourced value reads
-            evidence, a column, a member or a statistic the caller did not supply.
+        MisconfigurationException: If the target's members cannot be listed, a transform that reads the evidence
+            table applies to a value that is not evidence-sourced, or a value reads evidence, a column, a member or a
+            statistic the caller did not supply.
     """
     value = op.value
-    members = target_members(recipe, op)
-    if value.source == "dose":
-        return dict.fromkeys(members, float(value.dose))
-    if value.source == "doses":
-        doses = value.doses or {}
-        return {(ly, u): doses[ly][u] for ly, u in members if u in doses.get(ly, {})}
-    return _from_evidence(value, members, evidence or {}, statistics or {}, where)
+    if value.source != "from" and (reads := sorted({t.name for t in value.transform} & EVIDENCE_TRANSFORMS)):
+        raise MisconfigurationException(
+            f"{where}: {reads} read the evidence table, so apply only to a `from` value, not `{value.source}`"
+        )
+    table, values = _starting_values(value, target_members(recipe, op), evidence or {}, where)
+    ctx = _Evaluation(table, values, statistics or {}, where)
+    for transform in value.transform:
+        values = _TRANSFORMS[transform.name](values, transform.params, ctx)
+    return values

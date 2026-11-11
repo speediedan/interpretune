@@ -35,14 +35,30 @@ class CircuitTracerAnalysisBackend:
 
     @property
     def feature_intervention_support(self) -> FeatureInterventionSupport:
-        """The three value sources circuit-tracer's feature intervention accepts, with layer constraints, returns
-        and norm-denominator freezing."""
+        """The three value sources circuit-tracer's feature intervention accepts, with layer constraints, returns,
+        norm-denominator freezing and a clean capture."""
         return FeatureInterventionSupport(
             value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"}),
             constrainable_layers=True,
             returns_activations=True,
             freezable_norms=True,
+            captures_clean_activations=True,
         )
+
+    def capture_feature_activations(self, module: Any, prompt: Any, *, apply_activation_function: bool = True) -> Any:
+        """The replacement model's clean feature activations over ``prompt``, ``(n_layers, n_pos, d_transcoder)``.
+
+        The prompt is tokenized the way ``feature_intervention_forward`` tokenizes it, so positions index the tokens
+        the intervention acts on. ``apply_activation_function`` must match the intervention call's: circuit-tracer
+        writes an intervened value before or after the activation function according to it.
+        """
+        replacement_model = getattr(module, "replacement_model", None)
+        if replacement_model is None:
+            raise ValueError("capture_feature_activations requires module.replacement_model")
+        _, activations = replacement_model.get_activations(
+            replacement_model.ensure_tokenized(prompt), apply_activation_function=apply_activation_function
+        )
+        return activations
 
     @property
     def capabilities(self) -> frozenset[AnalysisBackendCapability]:
