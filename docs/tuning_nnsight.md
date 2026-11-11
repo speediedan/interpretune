@@ -1,6 +1,6 @@
 # Tuning: nnsight
 
-[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
+[Tuning](tuning.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
 
 A local, dispatched nnsight composition registers the nnsight model's HF module on the Interpretune module as `hf_model`
 (in `register_tunable_modules()`), so the optimizer, checkpoints and the default view, venngram's composed view mounted
