@@ -1,13 +1,13 @@
 src/it_examples/tests/test_notebooks.py::test_ct_attention_attribution_notebook:
   outcome: passed
-  need_gb: 11.693
+  need_gb: 11.734
   allocator_peak_gb: 0.0
-  device_peak_gb: 11.693
+  device_peak_gb: 11.734
   context_gb: 0.07
   device: AMD Radeon AI PRO R9700
   torch: 2.15.0+rocm10.0
-  seconds: 35.67
-  date: '2026-11-08'
+  seconds: 51.69
+  date: '2026-11-11'
 tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma2_2b_it_ct_ns]:
   outcome: failed
   need_gb: 0.386

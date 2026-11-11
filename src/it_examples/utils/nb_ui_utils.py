@@ -1623,6 +1623,16 @@ def _plotly_figure_html(fig: Any, id_prefix: str) -> str:
     return '<div style="width:100%;max-width:100%;overflow-x:hidden">' + plot_html + resize_shim + "</div>"
 
 
+def display_plotly_figure(fig: Any, id_prefix: str = "it-figure") -> None:
+    """Show a plotly figure so it renders on the docs site as well as in a live notebook.
+
+    ``fig.show()`` writes only the ``application/vnd.plotly.v1+json`` output, which Jupyter renders and the docs build
+    drops without a warning, so a figure shown that way is missing from every rendered page. This embeds the figure as
+    HTML instead (see ``_plotly_figure_html``), which both render.
+    """
+    display(HTML(_plotly_figure_html(fig, id_prefix)))
+
+
 def build_steering_scale_sweep_html(points: Sequence[Any], token_labels: Sequence[str]) -> str:
     """Build the per-arm, per-scale table of logit and probability shifts for the two target tokens.
 
