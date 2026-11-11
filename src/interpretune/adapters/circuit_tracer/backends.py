@@ -66,9 +66,14 @@ class CircuitTracerAnalysisBackend:
 
     @property
     def requires(self) -> frozenset[Capability]:
-        """Graphs are built on what the model backend computes: gradients through the replacement model, with
-        transcoders attached as latent models."""
-        return frozenset({Capability.GRADIENTS, Capability.LATENT_MODELS})
+        """Nothing of another component.
+
+        circuit-tracer attributes by differentiating through its own replacement
+        model, which carries its transcoders itself, so it needs neither the model backend's ``GRADIENTS`` nor its
+        ``LATENT_MODELS`` surface: a composition whose model backend provides only interventions and capture (a
+        hub-delivered backend may) attributes as well as one whose model backend provides everything.
+        """
+        return frozenset()
 
     def supports(self, capability: Capability) -> bool:
         """Whether ``capability`` is in :attr:`capabilities`."""

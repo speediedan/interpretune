@@ -13,8 +13,8 @@ TOY_PROMPT = torch.tensor([0, 3, 4, 3, 2, 5, 3, 8])
 
 class BaseModelBackendStandIn:
     """The model backend a circuit-tracer composition carries beneath its analysis backend, for a fake module that
-    exercises only the analysis backend: it declares what that backend requires (``GRADIENTS``, ``LATENT_MODELS``)
-    and implements nothing, so a test that reached it would fail rather than pass on a stand-in."""
+    exercises only the analysis backend: it declares the surfaces a full model backend provides (``GRADIENTS``,
+    ``LATENT_MODELS``) and implements nothing, so a test that reached it would fail rather than pass on a stand-in."""
 
     def __init__(self) -> None:
         from interpretune.analysis.backends import Capability, LatentModelSupport

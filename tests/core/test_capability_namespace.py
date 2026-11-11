@@ -77,10 +77,16 @@ class TestRequirements:
         with pytest.raises(ValueError, match=r"the model_backend .* requires \['GRADIENTS'\] from another component"):
             get_module_capabilities(_Module(_SelfReliant()))
 
-    def test_the_bundled_circuit_tracer_backend_requires_what_graphs_are_built_on(self):
+    def test_the_bundled_circuit_tracer_backend_requires_nothing_of_the_model_backend(self):
+        """Circuit-tracer differentiates through its own replacement model, so a model backend providing only
+        interventions and capture composes with it."""
         from interpretune.adapters.circuit_tracer.backends import CircuitTracerAnalysisBackend
 
-        assert CircuitTracerAnalysisBackend().requires == {Capability.GRADIENTS, Capability.LATENT_MODELS}
+        backend = CircuitTracerAnalysisBackend()
+        assert backend.requires == frozenset()
+        engine_like = _ModelBackend(capabilities={Capability.INTERVENTION, Capability.CAPTURE})
+        caps = get_module_capabilities(_Module(engine_like, backend))  # composes: nothing is required
+        assert not caps.requires.get("analysis_backend") and Capability.CAPTURE in caps.providers
 
 
 class TestTargetsWithTwoProviders:

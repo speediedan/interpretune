@@ -67,8 +67,8 @@ session config, its runtime declarations, its forward family, and how its compon
 The gate is what the composed module's components (its model backend and any analysis backend) **declare at
 runtime**: `capabilities` from the one `Capability` namespace, the support records (`intervention_support`,
 `latent_model_support`, `capture_support(model)`, `attribution_graph_support`), and `requires`, the capabilities a
-component needs another component to provide (circuit-tracer's analysis backend requires `GRADIENTS` and
-`LATENT_MODELS`). `get_module_capabilities` refuses, by name, a requirement no other component meets. A case gates
+component needs another component to provide (circuit-tracer's analysis backend requires nothing: it differentiates
+through its own replacement model). `get_module_capabilities` refuses, by name, a requirement no other component meets. A case gates
 on who provides a capability, never on which kind of component declares it, and an `INTERVENTION` case names the
 target it acts on (`activation` by default): two components may provide one target, and a gate on such a target
 names the provider it reaches it through. A declared surface runs its cases. An undeclared
