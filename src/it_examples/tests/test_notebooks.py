@@ -380,8 +380,9 @@ def test_ct_analysis_backend_notebook(params: dict[str, Any], tmp_path: Path):
     _run_ct_analysis_backend_notebook(params, tmp_path)
 
 
-# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
-@RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0, optional=True)
+# measured with tests/gpu_ci/calibrate.py: need 10.17 GiB (AMD R9700, ROCm), declared at the
+# calibrator's recommendation (need plus margin, rounded up to the next half GiB)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=12.0, optional=True)
 @pytest.mark.parametrize("params", CT_ANALYSIS_BACKEND_LOCAL_PARAMS)
 def test_ct_analysis_backend_notebook_local(params: dict[str, Any], tmp_path: Path):
     """Test CT analysis backend demo notebook against a local Neuronpedia dev webapp."""
@@ -498,7 +499,9 @@ def test_ct_concept_steering_notebook(params: dict[str, Any], tmp_path: Path):
     _run_ct_concept_steering_notebook(params, tmp_path, "ct_concept_steering_demo.ipynb")
 
 
-# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+# unmeasured: calibration needs the gemma-3-1b-it dashboards imported into the local Neuronpedia database
+# (measured 2026-11-08: the local DB holds none for gemmascope-2-transcoder-16k and allow_fetch is off, so
+# the notebook fails before any GPU work); conservative until that corpus is imported and it can be measured
 @RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0, optional=True)
 @pytest.mark.parametrize("params", CT_CONCEPT_STEERING_LOCAL_PARAMS)
 def test_ct_concept_steering_notebook_local(params: dict[str, Any], tmp_path: Path):
@@ -564,7 +567,9 @@ _neuronpedia_key_available = bool(
 )
 
 
-@RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0)  # unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+# measured with tests/gpu_ci/calibrate.py: need 5.98 GiB (AMD R9700, ROCm), declared at the
+# calibrator's recommendation (need plus margin, rounded up to the next half GiB)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=7.0)
 @pytest.mark.skipif(
     not _neuronpedia_key_available,
     reason="NEURONPEDIA_API_KEY (or DEV_NEURONPEDIA_API_KEY with USE_LOCALHOST=true) required",
@@ -612,8 +617,9 @@ SAE_LENS_PARAMS = [
 # these never ran in any CI phase, and on first collection both fail before the session exists (the notebook loads a
 # component entrypoint without the trust opt-in the hub now requires). The optional tier still runs them, each in its
 # own process, until the notebook is fixed (#738) and they can rejoin a pull-request phase.
-# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
-@RunIf(bf16_cuda=True, min_gpu_mem_gb=10.0, optional=True)
+# measured with tests/gpu_ci/calibrate.py: need 6.39 GiB on both parameterizations (AMD R9700, ROCm),
+# declared at the calibrator's recommendation (need plus margin, rounded up to the next half GiB)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=7.5, optional=True)
 @pytest.mark.parametrize("params", SAE_LENS_PARAMS)
 def test_sae_lens_notebooks(params: dict[str, Any], tmp_path: Path):
     """Test SAE Lens adapter notebooks with different backend parameterizations."""

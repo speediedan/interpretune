@@ -188,7 +188,7 @@ ns_parity_results = {
 #   - Best checkpoint remains at depth 0 (phase 0) for all architectures
 #   - All tests correctly restore to best checkpoint from phase 0 in epochs 3-4
 #
-# See docs/fts_tuning_transformer_lens.md for the TransformerLens view
+# See docs/tuning_transformer_lens.md for the TransformerLens view
 # =====================================================================================
 
 # Base GPT-2 FTS Results (3-phase schedule: 36 → 60 → 148 params)

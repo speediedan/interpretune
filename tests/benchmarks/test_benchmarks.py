@@ -73,7 +73,11 @@ def _parse_accuracy(output: str) -> float | None:
     return parse_accuracy(output)
 
 
-# unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+# partly measured with tests/gpu_ci/calibrate.py (AMD R9700, ROCm, 2026-11-08/10): 9 of 11 entries pass with
+# needs from 2.59 to 9.34 GiB, which a single declaration of 11.0 would cover, but this one declaration also
+# covers `gemma2_2b_it_l_sl_br`, which OOMs on that 32 GiB device (31.34 GiB allocated) and so has no passing
+# measurement there, and `gemma3_1b_it_ft_core`, which no current-FTS GPU env here can run. The declaration
+# stays conservative at 20.0 until those two are measured on a device and env that can run them.
 @RunIf(benchmark=True, min_cuda_gpus=1, min_gpu_mem_gb=20.0)
 @pytest.mark.parametrize(
     ("experiment_name", "benchmark_id", "benchmark_entry"),

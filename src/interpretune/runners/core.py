@@ -116,6 +116,9 @@ class CoreLoopContext:
     epoch_lr_pending: bool = False
     should_stop: bool = False
     callbacks: Sequence[Any] = ()
+    # this process's place in a data-parallel run, or None in a single process; set by the loop, read by
+    # `save_checkpoint`, whose format depends on it
+    dist_run: DistributedRun | None = None
 
     @property
     def optimizer(self) -> Optimizable | None:
@@ -135,6 +138,10 @@ class CoreLoopContext:
     def load_checkpoint_state(self, state: Mapping[str, Any]) -> None:
         """Restore state from :meth:`checkpoint_state` (see :func:`load_checkpoint_state`)."""
         load_checkpoint_state(self.module, state, self)
+
+    def save_checkpoint(self, path: str | Path) -> None:
+        """Save this run's checkpoint to ``path``, for a later ``resume_from`` (see :func:`save_checkpoint`)."""
+        save_checkpoint(self.module, path, self, self.dist_run)
 
 
 @runtime_checkable
@@ -264,10 +271,12 @@ def core_train_loop(
         dist_run: This rank's place in a data-parallel run (set by the runner for placements other than
             ``single``): each loader is rebuilt over this rank's share of the data, and the epoch's metrics are
             averaged across ranks before callbacks and lr schedulers see them.
-        resume_from: A :func:`checkpoint_state` (or a path to one saved with ``torch.save``) taken at the end of an
-            epoch, in a callback's ``on_train_epoch_end`` (after ``FTSCoreCallback`` in ``callbacks``, when it is
-            used). It is loaded once every callback's ``on_train_start`` has run, and the loop continues at the epoch
-            after the checkpoint's.
+        resume_from: A checkpoint taken at the end of an epoch, in a callback's ``on_train_epoch_end`` (after
+            ``FTSCoreCallback`` in ``callbacks``, when it is used), with :meth:`CoreLoopContext.save_checkpoint`.
+            In one process that is a :func:`checkpoint_state` mapping or a path to one saved with ``torch.save``;
+            under a data-parallel ``dist_run`` it is the checkpoint's directory, saved and restored through
+            ``torch.distributed.checkpoint``. It is loaded once every callback's ``on_train_start`` has run, and
+            the loop continues at the epoch after the checkpoint's.
 
     Returns:
         The loop's final context.
@@ -284,10 +293,12 @@ def core_train_loop(
     if accumulate_grad_batches < 1:
         raise MisconfigurationException(f"`accumulate_grad_batches` must be at least 1, got {accumulate_grad_batches}.")
     autocast_dtype(precision, module)  # refuse a precision that contradicts the module before any batch runs
-    ctx = CoreLoopContext(module=module, max_epochs=max_epochs, max_steps=max_steps, callbacks=tuple(callbacks))
+    ctx = CoreLoopContext(
+        module=module, max_epochs=max_epochs, max_steps=max_steps, callbacks=tuple(callbacks), dist_run=dist_run
+    )
     val_grad_ctx = torch.enable_grad if validate_with_grad else torch.inference_mode
     _callbacks(ctx, "on_train_start")
-    start_epoch = _resume(ctx, resume_from) if resume_from is not None else 0
+    start_epoch = _resume(ctx, resume_from, dist_run) if resume_from is not None else 0
     with profiling(module) as prof:
         for epoch_idx in range(start_epoch, max_epochs):
             if ctx.should_stop or ctx.steps_exhausted:
@@ -365,12 +376,34 @@ def core_train_loop(
     return ctx
 
 
-def _resume(ctx: CoreLoopContext, resume_from: str | Path | Mapping[str, Any]) -> int:
-    """Load ``resume_from`` into ``ctx``, completing the epoch it was taken in, and return the epoch to start
-    at."""
-    checkpoint = resume_from if isinstance(resume_from, Mapping) else torch.load(resume_from, weights_only=False)
-    load_checkpoint_state(ctx.module, checkpoint, ctx)
-    loop = checkpoint["loop"]
+def _resume(ctx: CoreLoopContext, resume_from: str | Path | Mapping[str, Any], dist_run: DistributedRun | None) -> int:
+    """Load ``resume_from`` into ``ctx``, completing the epoch it was taken in, and return the epoch to start at.
+
+    The checkpoint's form must match the run's placement: a mapping or a ``torch.save`` file in one process,
+    a distributed checkpoint directory under a data-parallel ``dist_run``. Any other pairing is refused by
+    name, because loading one process's state into sharded parameters (or the reverse) would otherwise fail
+    later as a shape mismatch, or worse, succeed on the replicated parts only.
+    """
+    checkpoint_dir = Path(resume_from) if isinstance(resume_from, (str, Path)) and Path(resume_from).is_dir() else None
+    if dist_run is not None:
+        if checkpoint_dir is None:
+            raise MisconfigurationException(
+                f"`resume_from` under placement '{dist_run.placement}' must be a distributed checkpoint directory"
+                f" (saved with `save_checkpoint` in a data-parallel run), not {type(resume_from).__name__}"
+                f" {resume_from!r}: a mapping or a `torch.save` file is one process's state, and every rank here"
+                " holds shards."
+            )
+        loop = load_distributed_checkpoint(ctx.module, checkpoint_dir, ctx, dist_run)
+    else:
+        if checkpoint_dir is not None:
+            raise MisconfigurationException(
+                f"`resume_from` is a directory ({resume_from!r}), which is a distributed checkpoint, but this run"
+                " is a single process: resume it under the data-parallel placement that saved it, or pass a"
+                " `checkpoint_state` mapping or a path to one saved with `torch.save`."
+            )
+        checkpoint = resume_from if isinstance(resume_from, Mapping) else torch.load(resume_from, weights_only=False)
+        load_checkpoint_state(ctx.module, checkpoint, ctx)
+        loop = checkpoint["loop"]
     if loop.get("epoch_lr_pending"):  # taken in `on_train_epoch_end`, before the epoch-interval lr schedulers stepped
         step_lr_schedulers(ctx.module, "epoch", loop["epoch"] + 1, loop.get("epoch_metrics"))
     return loop["epoch"] + 1
@@ -470,6 +503,131 @@ def load_checkpoint_state(module: Any, checkpoint: Mapping[str, Any], ctx: CoreL
     module.global_step = checkpoint["loop"]["global_step"]
     if ctx is not None:
         ctx.optimizer_step = checkpoint["loop"].get("optimizer_step", 0)
+
+
+def save_checkpoint(
+    module: Any, path: str | Path, ctx: CoreLoopContext | None = None, dist_run: DistributedRun | None = None
+) -> None:
+    """Save a core-loop checkpoint to ``path``, in the form ``resume_from`` reads back under this placement.
+
+    In one process the checkpoint is :func:`checkpoint_state` written with ``torch.save`` to a file. Under a
+    data-parallel ``dist_run`` it is a directory written through ``torch.distributed.checkpoint``: the module
+    and optimizer state through ``get_state_dict``, which is what knows how to flatten sharded parameters and
+    their optimizer state. The rest of :func:`checkpoint_state` (lr schedulers, loop counters, callbacks) is
+    plain Python state, which a distributed checkpoint does not round-trip (its planner stores tensors, and
+    measured here it drops plain leaves and empty containers alike), so rank 0 writes it to a sidecar file in
+    the checkpoint directory. Each rank's RNG state goes to its own sidecar for the same reason, sharpened:
+    a distributed checkpoint stores one copy of a plain tensor and the ranks' RNG streams differ by design.
+
+    Saving is collective under a ``dist_run``: every rank must call it, as every rank's callbacks do.
+    """
+    if dist_run is None:
+        torch.save(checkpoint_state(module, ctx), path)
+        return
+    import torch.distributed as dist
+    from torch.distributed.checkpoint.state_dict_saver import save as dcp_save
+    from torch.distributed.checkpoint.state_dict import get_state_dict
+
+    checkpoint_dir = Path(path)
+    extras = _checkpoint_extras(module, ctx)
+    _call_itmodule_hook(
+        module, hook_name="on_save_checkpoint", hook_msg="Running save checkpoint hook", optional=True,
+        checkpoint=extras,
+    )  # fmt: skip
+    model_state, optimizer_state = get_state_dict(module, optimizers=tuple(module.optimizers or ()))
+    dcp_save({"model": model_state, "optimizers": optimizer_state}, checkpoint_id=str(checkpoint_dir))
+    if dist_run.is_rank_zero:
+        torch.save(extras, checkpoint_dir / _EXTRAS_FILENAME)
+    torch.save(_rng_state(), checkpoint_dir / f"rng_rank{dist_run.rank}.pt")
+    dist.barrier()
+
+
+#: The sidecar a distributed checkpoint keeps its non-tensor state in (see :func:`save_checkpoint`).
+_EXTRAS_FILENAME = "extras.pt"
+
+
+def _checkpoint_extras(module: Any, ctx: CoreLoopContext | None) -> dict[str, Any]:
+    """Everything :func:`checkpoint_state` carries besides the module, optimizer and RNG state, which a distributed
+    checkpoint stores through their own paths."""
+    extras: dict[str, Any] = {
+        "lr_schedulers": [cfg.scheduler.state_dict() for cfg in (getattr(module, "lr_scheduler_configs", None) or [])],
+        "loop": {"epoch": module.current_epoch, "global_step": module.global_step},
+    }
+    if ctx is not None:
+        extras["loop"].update(
+            optimizer_step=ctx.optimizer_step, epoch_lr_pending=ctx.epoch_lr_pending, epoch_metrics=ctx.epoch_metrics
+        )
+        extras["callbacks"] = {
+            f"{i}:{type(cb).__name__}": cb.state_dict()
+            for i, cb in enumerate(ctx.callbacks)
+            if hasattr(cb, "state_dict")
+        }
+    return extras
+
+
+def load_distributed_checkpoint(
+    module: Any, checkpoint_dir: str | Path, ctx: CoreLoopContext | None, dist_run: DistributedRun
+) -> dict[str, Any]:
+    """Restore a distributed checkpoint (see :func:`save_checkpoint`) and return its loop counters.
+
+    The order mirrors :func:`load_checkpoint_state`, and each step of it is load-bearing: the module's
+    ``on_load_checkpoint`` hook first (with the checkpoint's non-tensor state: the tensors are not a mapping
+    one rank holds), then the callbacks' ``load_state_dict`` (a callback may rebuild the optimizers, as
+    ``FTSCoreCallback`` does at a phase transition, so the optimizer state must load into the rebuilt ones),
+    then the module and optimizer state through ``set_state_dict``, the lr schedulers, this rank's RNG state
+    and the loop counters. Loading is collective: every rank must call it.
+
+    Raises:
+        MisconfigurationException: If the checkpoint's lr scheduler count differs from the module's, or a
+            sidecar is missing (a checkpoint taken by fewer ranks, or an incomplete save).
+    """
+    from torch.distributed.checkpoint.state_dict_loader import load as dcp_load
+    from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
+
+    checkpoint_dir = Path(checkpoint_dir)
+    extras_path = checkpoint_dir / _EXTRAS_FILENAME
+    if not extras_path.is_file():
+        raise MisconfigurationException(
+            f"The distributed checkpoint at {str(checkpoint_dir)!r} holds no {_EXTRAS_FILENAME!r}: it is not a"
+            " core-loop checkpoint directory, or its save did not complete."
+        )
+    saved = torch.load(extras_path, weights_only=False)
+    _call_itmodule_hook(
+        module, hook_name="on_load_checkpoint", hook_msg="Running load checkpoint hook", optional=True,
+        checkpoint=saved,
+    )  # fmt: skip
+    if ctx is not None:
+        for i, cb in enumerate(ctx.callbacks):
+            key = f"{i}:{type(cb).__name__}"
+            if hasattr(cb, "load_state_dict") and key in saved.get("callbacks", {}):
+                cb.load_state_dict(saved["callbacks"][key])
+    optimizers = tuple(module.optimizers or ())
+    model_state, optimizer_state = get_state_dict(module, optimizers=optimizers)
+    state = {"model": model_state, "optimizers": optimizer_state}
+    dcp_load(state, checkpoint_id=str(checkpoint_dir))
+    set_state_dict(module, optimizers=optimizers, model_state_dict=state["model"],
+                   optim_state_dict=state["optimizers"])  # fmt: skip
+    schedulers = [cfg.scheduler for cfg in (getattr(module, "lr_scheduler_configs", None) or [])]
+    saved_schedulers = saved.get("lr_schedulers") or []
+    if len(schedulers) != len(saved_schedulers):
+        raise MisconfigurationException(
+            f"The checkpoint holds {len(saved_schedulers)} lr schedulers but the module has {len(schedulers)}."
+        )
+    for scheduler, scheduler_state in zip(schedulers, saved_schedulers):
+        scheduler.load_state_dict(scheduler_state)
+    rng_path = checkpoint_dir / f"rng_rank{dist_run.rank}.pt"
+    if not rng_path.is_file():
+        raise MisconfigurationException(
+            f"The distributed checkpoint at {str(checkpoint_dir)!r} holds no RNG state for rank {dist_run.rank}"
+            f" ({rng_path.name!r} is missing): it was saved by fewer ranks than this run's"
+            f" {dist_run.world_size}, or the save did not complete."
+        )
+    _set_rng_state(torch.load(rng_path, weights_only=False))
+    module.current_epoch = saved["loop"]["epoch"]
+    module.global_step = saved["loop"]["global_step"]
+    if ctx is not None:
+        ctx.optimizer_step = saved["loop"].get("optimizer_step", 0)
+    return saved["loop"]
 
 
 def core_test_loop(

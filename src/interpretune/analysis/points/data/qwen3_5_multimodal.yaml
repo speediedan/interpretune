@@ -1,0 +1,34 @@
+# Qwen3.5 multimodal (`Qwen3_5ForConditionalGeneration`): the language model lives one level down, as in Gemma 3
+# multimodal. Pre-norm blocks with a gated MLP, and no post-sublayer norms.
+#
+# The stack is hybrid: three linear-attention layers (`linear_attn`, a gated delta net) then one full-attention layer
+# (`self_attn`), so `attn` covers only the full-attention layers and a declared `linear_attn` sublayer covers the rest.
+# An attention point on a layer its row excludes is refused by name rather than resolved to a module that is not
+# there. Both sit before the MLP, so the default sublayer order holds and `resid_mid` is the pre-MLP norm's input on
+# every layer. The layer lists are Qwen3.5-4B's 32 layers (`text_config.layer_types`); the vision tower is not mapped
+# yet, so a `vision.` point is refused. Module paths and output rules were measured on the transformers class.
+schema_version: 2
+architecture: Qwen3_5ForConditionalGeneration
+properties:
+  sandwich_norms: false
+kinds:
+  linear_attn: {output: tensor, sublayer: true}
+components:
+  embed:                  {module: "model.language_model.embed_tokens",                        kind: embed}
+  blocks.{i}:             {module: "model.language_model.layers.{i}",                          kind: block}
+  blocks.{i}.ln1:         {module: "model.language_model.layers.{i}.input_layernorm",          kind: norm}
+  blocks.{i}.attn:        {module: "model.language_model.layers.{i}.self_attn",                kind: attn,
+                           layers: [3, 7, 11, 15, 19, 23, 27, 31]}
+  blocks.{i}.attn.o:      {module: "model.language_model.layers.{i}.self_attn.o_proj",         kind: linear,
+                           layers: [3, 7, 11, 15, 19, 23, 27, 31]}
+  blocks.{i}.linear_attn: {module: "model.language_model.layers.{i}.linear_attn",              kind: linear_attn,
+                           layers: [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 16, 17, 18, 20, 21, 22, 24, 25, 26, 28, 29, 30]}
+  blocks.{i}.linear_attn.o: {module: "model.language_model.layers.{i}.linear_attn.out_proj",   kind: linear,
+                           layers: [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 16, 17, 18, 20, 21, 22, 24, 25, 26, 28, 29, 30]}
+  blocks.{i}.ln2:         {module: "model.language_model.layers.{i}.post_attention_layernorm", kind: norm}
+  blocks.{i}.mlp:         {module: "model.language_model.layers.{i}.mlp",                      kind: mlp}
+  blocks.{i}.mlp.gate:    {module: "model.language_model.layers.{i}.mlp.gate_proj",            kind: linear}
+  blocks.{i}.mlp.in:      {module: "model.language_model.layers.{i}.mlp.up_proj",              kind: linear}
+  blocks.{i}.mlp.out:     {module: "model.language_model.layers.{i}.mlp.down_proj",            kind: linear}
+  ln_final:               {module: "model.language_model.norm",                                kind: norm}
+  unembed:                {module: "lm_head",                                                  kind: unembed}

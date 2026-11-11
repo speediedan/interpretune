@@ -1,3 +1,23 @@
+src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook:
+  outcome: passed
+  need_gb: 5.977
+  allocator_peak_gb: 0.0
+  device_peak_gb: 5.977
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 26.68
+  date: '2026-11-08'
+src/it_examples/tests/test_notebooks.py::test_ct_analysis_backend_notebook_local[ct_analysis_backend_nnsight_local]:
+  outcome: passed
+  need_gb: 10.168
+  allocator_peak_gb: 0.0
+  device_peak_gb: 10.168
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 29.69
+  date: '2026-11-08'
 src/it_examples/tests/test_notebooks.py::test_ct_attention_attribution_notebook:
   outcome: passed
   need_gb: 11.734
@@ -8,106 +28,146 @@ src/it_examples/tests/test_notebooks.py::test_ct_attention_attribution_notebook:
   torch: 2.15.0+rocm10.0
   seconds: 51.69
   date: '2026-11-11'
+src/it_examples/tests/test_notebooks.py::test_ct_concept_steering_notebook_local[ct_concept_steering_local_gemma3_16k]:
+  outcome: failed
+  need_gb: 0.07
+  allocator_peak_gb: 0.0
+  device_peak_gb: 0.07
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 4.89
+  date: '2026-11-08'
+src/it_examples/tests/test_notebooks.py::test_sae_lens_notebooks[sae_lens_nnsight]:
+  outcome: passed
+  need_gb: 6.389
+  allocator_peak_gb: 0.0
+  device_peak_gb: 6.389
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 20.7
+  date: '2026-11-08'
+src/it_examples/tests/test_notebooks.py::test_sae_lens_notebooks[sae_lens_tl]:
+  outcome: passed
+  need_gb: 6.389
+  allocator_peak_gb: 0.0
+  device_peak_gb: 6.389
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 20.62
+  date: '2026-11-08'
 tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma2_2b_it_ct_ns]:
-  outcome: failed
-  need_gb: 0.386
+  outcome: passed
+  need_gb: 5.557
   allocator_peak_gb: 0.0
-  device_peak_gb: 0.386
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 0.14
-  date: '2026-10-01'
+  device_peak_gb: 5.557
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 39.35
+  date: '2026-11-08'
 tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma2_2b_it_l]:
-  outcome: failed
-  need_gb: 0.386
+  outcome: passed
+  need_gb: 5.562
   allocator_peak_gb: 0.0
-  device_peak_gb: 0.386
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 0.14
-  date: '2026-10-01'
+  device_peak_gb: 5.562
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 125.79
+  date: '2026-11-08'
 tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma2_2b_it_l_sl_br]:
   outcome: failed
-  need_gb: 0.386
+  need_gb: 31.859
   allocator_peak_gb: 0.0
-  device_peak_gb: 0.386
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 0.14
-  date: '2026-10-01'
+  device_peak_gb: 31.859
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 8.25
+  date: '2026-11-10'
 tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma2_2b_it_l_sl_ht]:
-  outcome: failed
-  need_gb: 0.386
+  outcome: passed
+  need_gb: 8.139
   allocator_peak_gb: 0.0
-  device_peak_gb: 0.386
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 0.14
-  date: '2026-10-01'
+  device_peak_gb: 8.139
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 64.79
+  date: '2026-11-08'
 tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_1b_it_ct_ns]:
-  outcome: failed
-  need_gb: 0.386
+  outcome: passed
+  need_gb: 2.674
   allocator_peak_gb: 0.0
-  device_peak_gb: 0.386
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 0.14
-  date: '2026-10-01'
+  device_peak_gb: 2.674
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 31.83
+  date: '2026-11-08'
+tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_1b_it_ft_core]:
+  outcome: failed
+  need_gb: 3.945
+  allocator_peak_gb: 0.0
+  device_peak_gb: 3.945
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 15.5
+  date: '2026-11-10'
 tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_1b_it_l_ct_ns]:
-  outcome: failed
-  need_gb: 0.386
+  outcome: passed
+  need_gb: 2.674
   allocator_peak_gb: 0.0
-  device_peak_gb: 0.386
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 0.14
-  date: '2026-10-01'
+  device_peak_gb: 2.674
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 30.89
+  date: '2026-11-08'
 tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_1b_it_l_ns]:
-  outcome: failed
-  need_gb: 0.386
+  outcome: passed
+  need_gb: 2.592
   allocator_peak_gb: 0.0
-  device_peak_gb: 0.386
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 0.14
-  date: '2026-10-01'
+  device_peak_gb: 2.592
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 29.17
+  date: '2026-11-08'
 tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_1b_it_ns]:
-  outcome: failed
-  need_gb: 0.386
+  outcome: passed
+  need_gb: 2.592
   allocator_peak_gb: 0.0
-  device_peak_gb: 0.386
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 0.14
-  date: '2026-10-01'
+  device_peak_gb: 2.592
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 27.65
+  date: '2026-11-08'
 tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_4b_262k_it_ct_ns]:
-  outcome: failed
-  need_gb: 0.386
+  outcome: passed
+  need_gb: 9.344
   allocator_peak_gb: 0.0
-  device_peak_gb: 0.386
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 0.14
-  date: '2026-10-01'
+  device_peak_gb: 9.344
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 1340.81
+  date: '2026-11-10'
 tests/benchmarks/test_benchmarks.py::test_benchmark[rte_boolq/gemma3_4b_it_ct_ns]:
-  outcome: failed
-  need_gb: 0.386
+  outcome: passed
+  need_gb: 9.314
   allocator_peak_gb: 0.0
-  device_peak_gb: 0.386
-  context_gb: 0.386
-  device: NVIDIA GeForce RTX 4090
-  torch: 2.13.0+cu130
-  seconds: 0.14
-  date: '2026-10-01'
+  device_peak_gb: 9.314
+  context_gb: 0.07
+  device: AMD Radeon AI PRO R9700
+  torch: 2.15.0+rocm10.0
+  seconds: 44.65
+  date: '2026-11-08'
 ? tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerLightningTLBackendInitialization::test_lightning_adapter_backend_support[lightning_transformerlens]
 : outcome: skipped
   need_gb: 0.386

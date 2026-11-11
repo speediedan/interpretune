@@ -1,6 +1,6 @@
 # Tuning: TransformerLens
 
-[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
+[Tuning](tuning.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
 
 `TransformerBridgeView` names parameters as `tl_named_parameters()` does (`blocks.9.attn.W_Q`). Each name maps to the
 parameters its TransformerLens tensor is computed from, found by walking that tensor's autograd graph, so the mapping
@@ -48,7 +48,7 @@ named tensors and the fused `qkv` weight and bias they are views of. Its norms a
 
 ## Choosing the naming
 
-The module configuration's `tunable_view` (see [Choosing the view in configuration](fts_tunable_views.md)) selects either
+The module configuration's `tunable_view` (see [Choosing the view in configuration](tuning.md)) selects either
 alternative to the default, with no subclass.
 
 To name the module's own parameters (`model.blocks.9._original_component.attn.q.<...>`), select Fine-Tuning Scheduler's
