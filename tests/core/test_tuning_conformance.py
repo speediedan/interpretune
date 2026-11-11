@@ -28,3 +28,18 @@ class TestNNsightTuning(TuningConformance):
     def test_view_is_trainable(self, probe):
         """A refusing view would pass the cases above with only the refusal case run, so require the real view."""
         assert probe.support().trainable, probe.support().reason
+
+
+@pytest.mark.skipif(
+    not (package_available("nnsight") and package_available("lightning")), reason="nnsight and lightning are needed"
+)
+class TestLightningNNsightTuning(TuningConformance):
+    """The Lightning nnsight composition registers the same HF module, so its view runs the full cases too
+    (#942)."""
+
+    target = ConformanceTarget(
+        composition=("lightning", "nnsight", "sae_lens"), forward_family="hf_native", datamodule_flavour="nnsight"
+    )
+
+    def test_view_is_trainable(self, probe):
+        assert probe.support().trainable, probe.support().reason
