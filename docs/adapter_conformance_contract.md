@@ -26,7 +26,7 @@ cannot be wrong in the same way as the thing it checks; a versioned artifact can
 pip install "interpretune[conformance]"   # pytest, evaluate, scikit-learn, accelerate: what the suite's session reaches
 ```
 
-The suite refuses to build a session, by name, when those are missing; without that check a clean install
+The suite refuses to build a session when those are missing; without that check a clean install
 presents as a page of setup errors (measured on the first adopter) rather than as a dependency.
 
 ## What a repository writes
@@ -68,7 +68,7 @@ The gate is what the composed module's components (its model backend and any ana
 runtime**: `capabilities` from the one `Capability` namespace, the support records (`intervention_support`,
 `latent_model_support`, `capture_support(model)`, `attribution_graph_support`), and `requires`, the capabilities a
 component needs another component to provide (circuit-tracer's analysis backend requires nothing: it differentiates
-through its own replacement model). `get_module_capabilities` refuses, by name, a requirement no other component meets. A case gates
+through its own replacement model). `get_module_capabilities` refuses, a requirement no other component meets. A case gates
 on who provides a capability, never on which kind of component declares it, and an `INTERVENTION` case names the
 target it acts on (`activation` by default): two components may provide one target, and a gate on such a target
 names the provider it reaches it through. A declared surface runs its cases. An undeclared
@@ -89,7 +89,7 @@ Always on:
 | case | oracle | asserts |
 | --- | --- | --- |
 | session composes, declarations coherent | structural | a model backend is attached; each component's declared capabilities satisfy their protocols; its requirements are provided by another component; a support record is present iff its surface is declared |
-| undeclared capabilities are refused by name | structural | the shared gate refuses every surface the backend does not claim, naming the backend and what it does claim |
+| undeclared capabilities are refused | structural | the shared gate refuses every surface the backend does not claim, naming the backend and what it does claim |
 | the runner produces the store schema | structural | `logit_diffs_base` yields the declared columns, one row per batch, declared dtypes |
 | the cache op stores logits and every requested point | structural | `answer_logits` is not `None` from the cache path; every requested point is a tensor in the store |
 | a block's output is the next block's input | causal | `blocks.L.hook_out` equals `blocks.L+1.hook_in` exactly; the layer index and slot mean what they say |
@@ -103,7 +103,7 @@ The capture declaration (every model backend):
 | --- | --- | --- |
 | the backend declares what it can capture | structural | `capture_support(model)` returns a `CaptureSupport`; every suite capture point is either declared capturable or declared uncapturable with a reason, never undeclared |
 | every declared point is captured | structural | every capturable base point, spelled at the capture layer, reaches the store as a non-degenerate tensor |
-| a point outside the declaration is refused by name | negative | asking for a declared gap (or a layer the model lacks) through the runner path raises, naming the point and the reason, rather than returning a cache that is silently short |
+| a point outside the declaration is refused | negative | asking for a declared gap (or a layer the model lacks) through the runner path raises, naming the point and the reason, rather than returning a cache that is silently short |
 
 **An always-on case is a requirement on every out-of-tree backend, and adding one is a breaking change that
 produces no signal in this repository.** The bundled targets satisfy a new case the moment it lands, because they
@@ -111,7 +111,7 @@ are written alongside it, so the suite here stays green while an adapter reposit
 the merge and stays red until something unrelated runs its suite. A conformance suite whose every implementation
 shares a construction path tests the construction rather than the contract. The ungated set is therefore recorded
 in a manifest (`interpretune.testing.conformance.manifest.UNGATED_CASES`: the case, what it binds, the pull
-request that introduced it, and how its downstream adoption was tracked), and a unit test refuses by name an
+request that introduced it, and how its downstream adoption was tracked), and a unit test refuses an
 ungated case the manifest does not list and a row whose case is gone. Growing the set costs an edit to that file,
 which the reviewer sees for what it is; the edit should name the issue tracking the adopting change in each
 repository that runs the suite. Gating on a family or on the prompt shape does not exempt a case: those select
@@ -148,7 +148,7 @@ Gate `INTERVENTION` (with `intervention_support`):
 
 Gate `LATENT_MODELS`, over the latent model the suite attaches (`inputs.latent_models`, one gpt2 residual SAE at
 the first block; a target that declares the gate attaches it in its session config, and a declaration with no
-handle attached fails these cases by name rather than skipping them):
+handle attached fails these cases rather than skipping them):
 
 | case | oracle | asserts |
 | --- | --- | --- |
@@ -170,14 +170,14 @@ Gate `ATTRIBUTION_GRAPH` (with `attribution_graph_support`), on op outputs only:
 | --- | --- | --- |
 | the attribution graph round-trips through the store | structural | the graph the op writes as store columns hydrates back to the graph it computed: same adjacency, same active features, selected features index into them |
 | pruning is monotone | positive control | a stricter node threshold keeps a subset of a looser one's nodes, and strictly fewer at some pair |
-| foreign attention is refused before graph construction | negative | when the record requires the modeling module's own eager attention, a planted replacement of that function is refused by name, naming the foreign function and the module, before construction reaches the tracer; put back, the refusal clears |
+| foreign attention is refused before graph construction | negative | when the record requires the modeling module's own eager attention, a planted replacement of that function is refused, naming the foreign function and the module, before construction reaches the tracer; put back, the refusal clears |
 
 Gate `INTERVENTION` on the `features` target through the analysis backend (the `features` detail of its
 `intervention_support`, a `FeatureTargetSupport`):
 
 | case | oracle | asserts |
 | --- | --- | --- |
-| feature-intervention settings are decided by the declaration | negative, with positive control | a value source outside `value_sources` is refused by name before any forward and a declared one runs through the same path; a layer constraint, returned activations and frozen norm denominators are each honoured when declared (a frozen run records `freeze_norms` in its intervention config) and refused by name when not |
+| feature-intervention settings are decided by the declaration | negative, with positive control | a value source outside `value_sources` is refused before any forward and a declared one runs through the same path; a layer constraint, returned activations and frozen norm denominators are each honoured when declared (a frozen run records `freeze_norms` in its intervention config) and refused when not |
 | the edge predicts the measured feature intervention | causal | scaling a top feature's activation moves the other active features and the target logits by the graph's edge weights into it, times the scale; skips by name when the record says layers cannot be constrained, since the graph is a linear model of the intervention only with every layer constrained |
 
 ## Per-op invariants and distinguishability
@@ -271,7 +271,7 @@ colab_branch = "main"                                  # optional
 "examples.dev." = "examples.publish."
 ```
 
-The first four keys are required, and a key the tools do not read is refused by name. The table's earlier name,
+The first four keys are required, and a key the tools do not read is refused. The table's earlier name,
 `[tool.interpretune.notebooks]`, is still read; a pyproject carrying both is refused. Nothing is copied from
 interpretune. `NotebookFormConformance` holds the published copies to their static form
 without a kernel: in sync with dev (the stored hashes match), every dev notebook published, badge and install cell
@@ -300,8 +300,7 @@ logits. A case asserts the declared return type and reads the value from it.
 into a plausible value. A missing attribute is an error.
 
 **The fixture is asserted before the sets are compared.** Below two real positions the two scopes both edit
-`{0}`, so a one-token input would pass a backend that ignores scope entirely. The scope cases therefore fail
-by name on any batch with fewer than two real positions rather than reporting a green that measured nothing.
+`{0}`, so a one-token input would pass a backend that ignores scope entirely. The scope cases therefore fail on any batch with fewer than two real positions rather than reporting a green that measured nothing.
 The discriminating power lives in the input, and an adopter-supplied session config could shorten it.
 
 ## Single-prompt backends
@@ -310,7 +309,7 @@ Some engines take one prompt at a time and refuse a batch, deliberately. A loop 
 transparent implementation of the batched contract: in a batched forward, left-padded rows keep their padded
 positions, so per-row unpadded forwards legitimately diverge from the batched reference. The contract therefore
 carries the limit rather than hiding it: a target declares `batch_size=1`, every case then runs unpadded at one
-row per batch, and one more case asserts that a batch above the declared limit is refused by name (never
+row per batch, and one more case asserts that a batch above the declared limit is refused (never
 processed as row 0, never looped silently).
 
 Four facts about composing into a real session, learned by the first hub adapter on first contact with

@@ -499,7 +499,7 @@ Current behavior:
 ## Choosing a TransformerLens Config
 
 `TransformerBridge` is the only model path: TransformerLens 4.0 removed `HookedTransformer`, and the
-`use_bridge` flag that used to select between them is retired. Passing it fails by name. What remains is a
+`use_bridge` flag that used to select between them is retired. Passing it fails. What remains is a
 choice of which IT config expresses how the bridge is built.
 
 | Use Case | Config Class |

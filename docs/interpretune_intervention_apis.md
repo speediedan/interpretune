@@ -130,7 +130,7 @@ such as `blocks.0.hook_in` with the `project` op.
 An intervention applies an op, and an op is a name in venngram's registry (`venngram.ops.OPS`), applied through the
 executor registered for that name in `interpretune.analysis.backends.ops`. `InterventionSpec.op` names it, the payload
 key is `op`, and the shorthand field is `intervention_op`; the retired spellings (`mode`, `intervention_mode`) are
-refused by name rather than read. The core ops are `replace`, `add`, `project`, `patch`, `reject`, `clamp`, `scale`
+refused rather than read. The core ops are `replace`, `add`, `project`, `patch`, `reject`, `clamp`, `scale`
 and `replace_with_error`, registered from the shared op math, and a backend whose hook computes its edit during the
 pass (both bundled model backends) declares every registered op, including one registered after it was built. A user
 registers another op with venngram's `register_op` and its executor with `register_executor(name, fn)`, where
@@ -138,7 +138,7 @@ registers another op with venngram's `register_op` and its executor with `regist
 [publishing an op collection](hub_op_collection_authoring.md)).
 
 `model_fwd_intervention` dispatches the op the payload names through that registry, so a recipe or payload naming any
-registered op (core, user or hub) is applied, or refused by name where the backend's record does not declare it. The `patch` op (the
+registered op (core, user or hub) is applied, or refused where the backend's record does not declare it. The `patch` op (the
 J-space write) takes exactly two direction vectors stacked on a leading axis and swaps the activation's
 coordinates along that pair, leaving the component orthogonal to the pair untouched. Mechanically it is
 basis-agnostic: any pair of directions can serve as the patch pair, so embed-basis concept poles are as valid a

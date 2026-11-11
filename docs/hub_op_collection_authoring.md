@@ -89,7 +89,7 @@ implementation, registers the `OpSpec` with venngram and the executor with
 Interpretune, and records the collection, version and revision as the
 executor's provenance. The implementation is first checked on a probe against
 the tensor-op contract (shape-preserving, out of place, differentiable in the
-activation and the operand); one that breaks a clause is refused by name and
+activation and the operand); one that breaks a clause is refused and
 nothing registers. A recipe or another collection's `required_ops` then names
 it like a core op. See the custom ops composition guide's tensor-op section for
 the full contract.
@@ -105,7 +105,7 @@ Two rules earned the hard way travel with that dependency:
 - A copy here would mean fixing bugs twice and drifting again: the module's
   own history records a private norm-folding copy that chose the wrong
   convention for two model lines, fixed once in the seam.
-- Anything the module cannot vouch for is refused by name (unknown lens
+- Anything the module cannot vouch for is refused (unknown lens
   layouts, backends lacking an op, empty token groups), never defaulted.
 
 ## Offline tests

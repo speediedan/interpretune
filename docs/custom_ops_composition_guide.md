@@ -51,7 +51,7 @@ An op should define:
   backend to apply (`patch`, `add`, a tensor op a hub collection registers). The loader partitions the two,
   since there is one op namespace. The tensor ops and the scopes (`last_token`, `all_positions`) are the
   configurations of the `intervention` capability the op needs, checked at validation, before anything runs,
-  against the backend's declared `InterventionSupport`, so a backend that cannot honour an op refuses by name
+  against the backend's declared `InterventionSupport`, so a backend that cannot honour an op refuses
   up front rather than after every earlier op in a composition has executed. A composite needs the union of
   its parts' axes plus whatever it declares itself. Declaring an axis implies requiring the `intervention`
   surface.
@@ -356,7 +356,7 @@ register_executor("soft_add", soft_add)
 
 Every backend whose hook computes its edit during the pass (both bundled model backends) declares every registered
 op, so `soft_add` is applied wherever `add` is; a backend whose steering surface takes only parameters fixed before
-the pass lists the ops it can express, and refuses `soft_add` by name.
+the pass lists the ops it can express, and refuses `soft_add`.
 
 In an op collection the same op is a definition with an `op_spec` block in place of schemas:
 
@@ -371,11 +371,11 @@ soft_add:
 
 `op_spec` takes the op fields of a venngram `op_specs` document by name (`operand`, `params`, `requires`, `targets`,
 `value`, `token_override`, `composition`, `at_least_one_of`, `of`), read by venngram's own reader
-(`venngram.ops.op_spec_from_mapping`); the op's name is the definition's, and an unknown key is refused by name. Loading the collection registers the
+(`venngram.ops.op_spec_from_mapping`); the op's name is the definition's, and an unknown key is refused. Loading the collection registers the
 `OpSpec` with venngram and the executor here, records the collection, its version and the revision it was loaded
 from as the executor's provenance (`interpretune.analysis.backends.ops.executor_record("soft_add")`), and first holds
 the implementation to the contract on a seeded probe: a result of another shape, a write to the region or the
-operand, or a result with no gradient to either is refused by name, and nothing registers. A hub collection's tensor
+operand, or a result with no gradient to either is refused, and nothing registers. A hub collection's tensor
 op loads only under the same trust opt-in as any hub implementation, since it runs inside every forward pass it is
 attached to. A tensor op cannot take a name another source holds (a core op, another collection's op).
 

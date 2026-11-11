@@ -9,7 +9,7 @@ transcoders, whichever backend it runs over:
   checkpointed, so a fresh view's default schedule is empty. Promote the tensors you want to adapt to
   `latent:transcoder` through Fine-Tuning Scheduler's promotion, and a schedule can then thaw them. Adapting transcoders
   that drift after fine-tuning ([interpretune#709](https://github.com/speediedan/interpretune/issues/709)) works this way.
-- **The base model is refused by name.** The transcoders were trained on the base model's activations, so a schedule
+- **The base model is refused.** The transcoders were trained on the base model's activations, so a schedule
   naming a base-model parameter is refused, saying why. Tuning the base model under a frozen replacement is a separate
   path ([interpretune#813](https://github.com/speediedan/interpretune/issues/813)).
 - **Every offload mode keeps the parameters.** circuit-tracer's `offload='disk'` moves each offloaded module to the
@@ -20,7 +20,7 @@ transcoders, whichever backend it runs over:
   tied). Disk offload holds the offloaded weights on disk rather than in host memory, so an attribution needs less host
   memory than under `offload='cpu'`, at the cost of the reads. `offload=None` and `offload='cpu'` never replace a
   parameter.
-- **Each transcoder layer is one depth group**, from the last layer; a cross-layer transcoder is one group.
+- **A generated schedule thaws one transcoder layer per stage**, from the last layer; a cross-layer transcoder is one stage.
 
 The transcoders are registered on the Interpretune module once: under `model` when the replacement model is a torch
 module, under the nnsight model's registered HF module (`hf_model`) when there is one, and as `transcoders` otherwise.
