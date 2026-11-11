@@ -3,7 +3,10 @@
 [Tuning](fts_tunable_views.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
 
 A local, dispatched nnsight composition registers the nnsight model's HF module on the Interpretune module as `hf_model`
-(in `register_tunable_modules()`), so the optimizer, checkpoints and the identity view reach its parameters. A composition
+(in `register_tunable_modules()`), so the optimizer, checkpoints and the default view, venngram's composed view mounted
+at `hf_model`, reach its parameters. nnsight builds the model through its own constructor, so a `lora_cfg` or
+`bitsandbytesconfig` in `hf_from_pretrained_cfg` is not applied
+([interpretune#942](https://github.com/speediedan/interpretune/issues/942)). A composition
 executing remotely (NDIF) has no local weights to tune, and one built with `dispatch=False` keeps its weights on the
 meta device; both are refused, each with its reason.
 
