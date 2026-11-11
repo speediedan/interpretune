@@ -28,7 +28,7 @@
   "notebooks/dev/example_op_collections/local_op_collection/local_op_definitions.py": "e7a21b8151f745ed60fabf992f9742eae30a4a4b9c98d1ced6a5d47a0461d450",
   "notebooks/dev/example_op_collections/op_collection_demo_utils.py": "a7a739e9457dade95ee0e4480e3ac855db352127de816c04032dc26f658f65ec",
   "notebooks/dev/example_op_collections/op_collection_example.ipynb": "7249d103fd6f2fcb9b9d7f7bb890e45f495bbdca69b8eaf6ceb2aa82babdd383",
-  "notebooks/dev/interp_engine_example/interp_engine_hub_adapter.ipynb": "bb770b9a3f2d99482d9e74ccee534dc7173b6804d0b8cd13bbff6d0f76e1e960",
+  "notebooks/dev/interp_engine_example/interp_engine_hub_adapter.ipynb": "cf037c6d68b6a7c226379e0c052c7750f5354dbb2a6a4b3943f47729be0077f5",
   "notebooks/dev/neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb": "7adde3c22b264b4c822ebfc5d4ba1d214809a9d260c635c527c17f4527d327a6",
   "notebooks/dev/quickstart/cpu_quickstart.ipynb": "47d1c428876a12d32a5766654d3975bb15190f80b0dc7757c702b23fcfb959d2",
   "notebooks/dev/runners/runner_flexibility_demo.ipynb": "abced250a4c8e44e1b8d4ddb65c66bdca6401ac92e58b76aaefe2feb1b500a67",
