@@ -77,7 +77,7 @@ Two rules earned the hard way travel with that dependency:
 - A copy here would mean fixing bugs twice and drifting again: the module's
   own history records a private norm-folding copy that chose the wrong
   convention for two model lines, fixed once in the seam.
-- Anything the module cannot vouch for is refused by name (unknown lens
+- Anything the module cannot vouch for is refused (unknown lens
   layouts, backends lacking a mode, empty token groups), never defaulted.
 
 ## Offline tests

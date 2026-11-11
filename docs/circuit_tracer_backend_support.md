@@ -113,7 +113,7 @@ attention implementation.
 | Backend | Status | Model Types |
 |---------|--------|-------------|
 | NNsight (`NNSightReplacementModel`) | Supported | Gemma-2, Gemma-3 |
-| TransformerLens (`TransformerLensReplacementModel`) | Unavailable under TransformerLens 4.0; refused by name (below) | Gemma-2 |
+| TransformerLens (`TransformerLensReplacementModel`) | Unavailable under TransformerLens 4.0; refused (below) | Gemma-2 |
 
 Backend selection is automatic based on the module's adapter context. Configurations with
 `(core, nnsight, circuit_tracer)` use NNsight; `(core, transformer_lens, circuit_tracer)` use TransformerLens.
