@@ -111,9 +111,9 @@ def test_check_next_token_refuses_multi_token_answers():
 def test_neumann_term_mass_and_figures():
     trace = [torch.tensor([1.0, -1.0]), torch.tensor([0.5, 0.0]), torch.tensor([0.0, 0.0])]
     np.testing.assert_allclose(aah.neumann_term_mass(trace), [2.0, 0.5, 0.0])
-    assert len(aah.plot_neumann_convergence({"frozen": trace}).data) == 1
+    assert len(aah.plot_neumann_convergence({"frozen": trace}).to_dict()["data"]) == 1
     ridge = aah.plot_ridgeline([("a", np.array([1e-3, 1e-2, 0.0])), ("b", np.array([0.0]))], "t", "x")
-    assert len(ridge.data) == 1  # a series with fewer than two values above the floor draws no curve
+    assert len(ridge.to_dict()["data"]) == 1  # a series with fewer than two values above the floor draws no curve
     kinds = ["feature", "feature", "error", "token"]
     fig = aah.plot_regime_edges(
         torch.tensor([1.0, 0.0, 0.5, -0.2]),
@@ -123,13 +123,13 @@ def test_neumann_term_mass_and_figures():
         "Austin",
         annotate=1,
     )
-    assert {trace.name.split(" ")[0] for trace in fig.data} == {"feature", "error", "token", "no"}
+    assert {trace["name"].split(" ")[0] for trace in fig.to_dict()["data"]} == {"feature", "error", "token", "no"}
 
 
 def test_head_split_parts_add_to_the_bypass_plus_heads():
     rows = torch.tensor([[1.5], [2.0], [1.0], [2.5]])  # head 0 copy, head 1 copy, bypass, every head live
     fig = aah.plot_head_split({"rows": rows, "n_heads": 2, "layer": 3}, 0, "src", "Austin")
-    assert list(fig.data[0].y) == [1.0, 0.5, 1.0, 0.0]
+    assert list(fig.to_dict()["data"][0]["y"]) == [1.0, 0.5, 1.0, 0.0]
 
 
 def test_running_credit_and_conductance_path():
@@ -138,14 +138,14 @@ def test_running_credit_and_conductance_path():
         1: [(torch.tensor([0.0, 1.0]), torch.tensor([0.0, 1.0]), 0.0)] * 2,
     }
     assert aah.running_head_credit(running).shape == (2, 2, 2)
-    assert len(aah.plot_running_credit(running, n_steps=2, top=2).data) == 2
+    assert len(aah.plot_running_credit(running, n_steps=2, top=2).to_dict()["data"]) == 2
     points = [
         {"alphas": torch.tensor([0.0, 0.5]), "t": torch.tensor([1.0, 0.5]), "dt_dalpha": torch.tensor([-1.0, -1.0])},
         {"alphas": torch.tensor([1.0]), "t": torch.tensor([0.0]), "dt_dalpha": torch.tensor([-1.0])},
     ]
     alphas, t, _ = aah.conductance_path(points)
     assert alphas.tolist() == [0.0, 0.5, 1.0] and t.tolist() == [1.0, 0.5, 0.0]
-    assert len(aah.plot_conductance_path(points, "T").data) == 3
+    assert len(aah.plot_conductance_path(points, "T").to_dict()["data"]) == 3
 
 
 def test_display_plotly_figure_embeds_html(monkeypatch):

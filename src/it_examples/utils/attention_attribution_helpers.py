@@ -17,7 +17,7 @@ from plotly.subplots import make_subplots
 
 from it_examples.utils.nb_ui_utils import display_plotly_figure
 
-_LAYOUT = dict(template="simple_white", autosize=True, margin=dict(l=60, r=30, t=60, b=60))
+_LAYOUT: dict[str, Any] = dict(template="simple_white", autosize=True, margin=dict(l=60, r=30, t=60, b=60))
 
 
 @dataclass(frozen=True)
@@ -213,7 +213,7 @@ def plot_regime_edges(
                 mode="markers",
                 name=f"{kind} ({len(idx)})",
                 marker=dict(size=5, opacity=0.6),
-                text=[labels[i] for i in idx],
+                text=[labels[int(i)] for i in idx],
                 customdata=np.stack([frozen_np[idx], live_np[idx]], axis=1),
                 hovertemplate="%{text}<br>frozen %{customdata[0]:.4f}<br>live %{customdata[1]:.4f}<extra></extra>",
             )
@@ -227,7 +227,7 @@ def plot_regime_edges(
         fig.add_annotation(
             x=float(np.arcsinh(frozen_np[i] / scale)),
             y=float(np.arcsinh(live_np[i] / scale)),
-            text=labels[i],
+            text=labels[int(i)],
             showarrow=True,
             arrowhead=1,
             font=dict(size=10),
