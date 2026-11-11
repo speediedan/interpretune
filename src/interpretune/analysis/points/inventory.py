@@ -40,7 +40,9 @@ def inventory(cmap: ComponentMap, stack: str | None = None) -> tuple[str, ...]:
         # points no backend on this architecture could ever capture. Filed under the declaration key, so a semantic
         # name for the same tensor as a component spelling collapses into it and a contribution keeps its own.
         point = parse(f"blocks.0.{name}")
-        if cmap.module_for(point.component, 0, stack) is not None or point.component == "":
+        # a row restricted to other layers (a hybrid stack's attention) still backs the point where it applies
+        mapped = cmap.module_for(point.component, 0, stack) is not None
+        if mapped or point.component == "" or cmap.unmapped_reason(point.component, 0, stack) is not None:
             bases.add(declaration_key(f"blocks.0.{name}"))
     for component in cmap.global_components():
         for slot in (Slot.IN, Slot.OUT):

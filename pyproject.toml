@@ -251,7 +251,7 @@ git-deps = [
     # The SHA is venngram main with #56 (a reader passes over registry documents newer than it reads, so the default
     # view survives a registry schema change), over #53 (overlay roles named by adapter, every PEFT tuner family), #51
     # (a base map mounted under a wrapper root), #48 and #45 (base and overlay maps).
-    "venngram @ git+https://github.com/speediedan/venngram@edbd6e0c6016dc6761295b47ae53c0b6294bed07",
+    "venngram @ git+https://github.com/speediedan/venngram@a1407881a53bf2db92fffcf6f385d6ef890d4a45",
 ]
 
 dev = [
@@ -339,7 +339,7 @@ override-dependencies = [
     "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@db0305d5f351525c99381ceef6140e6bfc1f6b0a",
     # venngram by git SHA until 0.1.0 is on PyPI, for the same reason: interpretune and finetuning-scheduler both
     # require it and it is in no release. RETIRE it with the `git-deps` entry once 0.1.0 is published.
-    "venngram @ git+https://github.com/speediedan/venngram@edbd6e0c6016dc6761295b47ae53c0b6294bed07",
+    "venngram @ git+https://github.com/speediedan/venngram@a1407881a53bf2db92fffcf6f385d6ef890d4a45",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.

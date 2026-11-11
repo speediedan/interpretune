@@ -236,7 +236,7 @@ class TestRMSNormOffsetIsPerFamilyNotPerPrefix:
     """
 
     WEIGHT = 0.5
-    OFFSET_FAMILIES = [("gemma", "Gemma"), ("gemma2", "Gemma2"), ("gemma3", "Gemma3")]
+    OFFSET_FAMILIES = [("gemma", "Gemma"), ("gemma2", "Gemma2"), ("gemma3", "Gemma3"), ("qwen3_5", "Qwen3_5")]
     PLAIN_GEMMA_FAMILIES = [("gemma3n", "Gemma3n"), ("gemma4", "Gemma4")]
     OUTSIDE_FAMILIES = [("llama", "Llama"), ("qwen3", "Qwen3"), ("mistral", "Mistral")]
 

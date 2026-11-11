@@ -290,6 +290,33 @@ class TestHookNameResolver:
         assert path == "model.language_model.layers.0"
         assert io_type == "input"
 
+    @pytest.mark.parametrize("layer", [6, 7])  # a linear-attention layer and a full-attention one
+    def test_resolve_qwen3_5_resid_post_on_both_layer_types(self, layer):
+        path, io_type = HookNameResolver("Qwen3_5ForConditionalGeneration").resolve(f"blocks.{layer}.hook_resid_post")
+        assert path == f"model.language_model.layers.{layer}"
+        assert io_type == "output"
+
+    def test_qwen3_5_attention_on_a_linear_attention_layer_is_refused(self):
+        resolver = HookNameResolver("Qwen3_5ForConditionalGeneration")
+        assert resolver.resolve("blocks.7.attn.hook_out")[0] == "model.language_model.layers.7.self_attn"
+        assert resolver.resolve("blocks.6.linear_attn.hook_out")[0] == "model.language_model.layers.6.linear_attn"
+        with pytest.raises(ValueError, match="not layer 6"):
+            resolver.resolve("blocks.6.attn.hook_out")
+
+    def test_qwen3_5_enumerates_a_restricted_hook_only_where_it_exists(self):
+        """The backend expands base hooks over layers from these, so an uncovered layer must not be offered."""
+        from interpretune.analysis.points import component_map_for
+        from interpretune.analysis.points.inventory import inventory
+
+        resolver = HookNameResolver("Qwen3_5ForConditionalGeneration")
+        full = [3, 7, 11, 15, 19, 23, 27, 31]
+        assert resolver.covered_layers("attn.hook_out", 32) == full
+        assert resolver.covered_layers("hook_attn_out", 32) == full
+        assert resolver.covered_layers("linear_attn.hook_out", 32) == [i for i in range(32) if i not in full]
+        assert resolver.covered_layers("hook_resid_post", 32) == list(range(32))
+        assert resolver.first_layer("attn.o.hook_in") == 3
+        assert "hook_attn_out" in inventory(component_map_for("Qwen3_5ForConditionalGeneration"))
+
     def test_unsupported_architecture_raises(self):
         with pytest.raises(ValueError, match="Unsupported model architecture"):
             HookNameResolver("UnknownModel")
