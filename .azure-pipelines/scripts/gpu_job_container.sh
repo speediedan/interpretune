@@ -12,7 +12,8 @@ set -uo pipefail
 
 CACHE=/opt/interpretune/hf_cache
 VENV=/tmp/venvs/it_dev
-# Phase manifests, records and reports (tests/gpu_ci/phase_report.py), on the template's evidence mount.
+# Phase manifests, records and reports (python -m gpu_epsilon.phase_evidence, configured by
+# [tool.gpu-epsilon.phase-evidence] in pyproject.toml), on the template's evidence mount.
 PHASES_OUT=/evidence/it-phases
 PHASES=(cuda standalone profile_ci)
 venv() { source "${VENV}/bin/activate"; }
@@ -66,7 +67,7 @@ case "${1:?command}" in
         [[ -f "${VENV}/torch-excludes.txt" ]] && excludes=(--excludes "${VENV}/torch-excludes.txt")
         uv pip install -e . --group git-deps "${excludes[@]}"
         uv pip install -r requirements/ci/requirements.txt "${excludes[@]}"
-        # the special-test runner the GPU phases run (gpu-epsilon, standard library only)
+        # the special-test runner the GPU phases run and the phase-evidence writer (gpu-epsilon, standard library only)
         uv pip install -r requirements/ci/gpu_epsilon.txt
         uv pip list
         for pkg in coverage pytest torch transformers gpu-epsilon; do
@@ -110,17 +111,18 @@ PY
         trusted_git_env
         mkdir -p "$PHASES_OUT"
         args=(); for phase in "${PHASES[@]}"; do args+=(--phase "$phase"); done
-        python -m tests.gpu_ci.phase_report collect "${args[@]}" --out-dir "$PHASES_OUT"
+        python -m gpu_epsilon.phase_evidence collect "${args[@]}" --out-dir "$PHASES_OUT"
         echo "##vso[task.setvariable variable=IT_PHASES_COLLECTED]true"
         ;;
     report)
-        # One report per collected phase, under the vendor the agent reported, gated by its class (phase_report.gate).
+        # One report per collected phase, under the vendor the agent reported, gated by its class (the gate in
+        # [tool.gpu-epsilon.phase-evidence]).
         venv
         lease_mode=$(cat /tmp/azp_gpu_large.pid.mode 2>/dev/null || echo none)
         status=0
         for phase in "${PHASES[@]}"; do
             [[ -f "${PHASES_OUT}/manifests/${phase}.json" ]] || continue
-            python -m tests.gpu_ci.phase_report report --phase "$phase" --out-dir "$PHASES_OUT" \
+            python -m gpu_epsilon.phase_evidence report --phase "$phase" --out-dir "$PHASES_OUT" \
                 --vendor "${IT_GPU_VENDOR:?}" --evidence-class pipeline --job-class "${IT_JOB_CLASS:-ci-any-vendor}" \
                 --lease-mode "$lease_mode" --image "${IT_IMAGE:?}" --reviewed-exclusions tests/gpu_ci/reviewed_exclusions.json \
                 || { echo "##vso[task.logissue type=error]phase ${phase}: report does not pass a ${IT_JOB_CLASS:-ci-any-vendor} job"; status=1; }
