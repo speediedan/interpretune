@@ -233,7 +233,8 @@ class TestCircuitTracerTLBackend:
     transformer_lens, circuit_tracer) adapter combination. Requires CUDA with bf16 support (Gemma2 model).
     """
 
-    # unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+    # unmeasured: the class is skipped while the TransformerLens backend is disabled (see _CT_TL_DISABLED),
+    # so there is nothing to calibrate until it returns; conservative until then
     @RunIf(bf16_cuda=True, min_gpu_mem_gb=12.0, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY")
     def test_tl_backend_integration(self, get_it_session__ct_tl_gemma2__setup):
         """Verify TL backend initialization: property access, model loading, typing, and config preservation."""
@@ -261,7 +262,8 @@ class TestCircuitTracerLightningTLBackendInitialization:
     Requires CUDA with bf16 support (Gemma2 model) and Lightning.
     """
 
-    # unmeasured: conservative until calibrated with tests/gpu_ci/calibrate.py
+    # unmeasured: the class is skipped while the TransformerLens backend is disabled (see _CT_TL_DISABLED),
+    # so there is nothing to calibrate until it returns; conservative until then
     @RunIf(lightning=True, bf16_cuda=True, min_gpu_mem_gb=12.0, requires_env="HF_GATED_PUBLIC_REPO_AUTH_KEY")
     @pytest.mark.parametrize(
         "session_fixture",

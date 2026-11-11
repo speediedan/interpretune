@@ -198,7 +198,7 @@ row's own activation" is not expressible through the op path and is deliberately
 `TuningConformance` runs Fine-Tuning Scheduler's `TunableView` cases against the view a composition declares, with the
 same `target` as the model-backend cases. A trainable view runs every case that applies to it, a refused composition
 runs the refusal case, and a run in which no case applies fails. See
-[tuning compositions through Fine-Tuning Scheduler views](fts_tunable_views.md).
+[tuning compositions through Fine-Tuning Scheduler views](tuning.md).
 
 ## Op collections
 

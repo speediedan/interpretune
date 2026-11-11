@@ -1,6 +1,6 @@
 # Tuning: circuit-tracer
 
-[Tuning](fts_tunable_views.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
+[Tuning](tuning.md) describes how every composition declares and attaches its Fine-Tuning Scheduler view.
 
 A circuit-tracer composition's view (`interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`) covers its
 transcoders, whichever backend it runs over:

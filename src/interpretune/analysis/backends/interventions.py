@@ -30,6 +30,7 @@ __all__ = [
     "build_intervention_dict",
     "resolve_interventions",
     "apply_intervention",
+    "apply_op",
     "get_intervention_target_shape",
     "normalize_position_scope",
     "normalize_intervention_mode",
@@ -812,6 +813,29 @@ def apply_intervention(
         return value
 
     raise AssertionError(f"unreachable: normalize_position_scope admitted {scope!r}")
+
+
+def apply_op(value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
+    """Apply ``spec``'s op at every position of ``value``, returning a new tensor and leaving ``value`` untouched.
+
+    The out-of-place counterpart of :func:`apply_intervention`, for an op whose operand has parameters (a trainable
+    intervention, :mod:`interpretune.tuning.interventions`): the result is differentiable in both ``value`` and
+    ``spec.intervention_tensor``. It edits every position (every row over the axes the operand does not span), so a
+    spec scoped to ``last_token`` is refused: inside a hook the final real token under left padding is not known.
+    """
+    if normalize_position_scope(spec.position_scope) is not PositionScope.ALL_POSITIONS:
+        raise ValueError(
+            f"apply_op edits every position; a spec scoped to {spec.position_scope!r} needs `apply_intervention`, "
+            "which knows the final real token"
+        )
+    # every leading axis indexes independent rows; the trailing axes the operand spans (at least one) are the units
+    units = max(torch.as_tensor(spec.intervention_tensor).ndim, 1)
+    if value.ndim < units:
+        raise ValueError(
+            f"an operand spanning {units} axes cannot apply to an activation of shape {tuple(value.shape)}"
+        )
+    flat = value.reshape(-1, *value.shape[value.ndim - units :])
+    return _apply_mode_to_region(flat, spec).reshape(value.shape)
 
 
 def normalize_position_scope(scope: PositionScope | str) -> PositionScope:
