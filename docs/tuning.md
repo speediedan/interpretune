@@ -51,8 +51,8 @@ Tuning is one of several places Interpretune consumes venngram:
 - **Tuning** (this page): the tunable view protocol and role vocabulary come from `venngram.tuning` and `venngram.roles`,
   and `TuningConformance` runs Fine-Tuning Scheduler's view conformance cases against a composition's view.
 - **Interventions**: `interpretune.analysis.venngram` applies a venngram recipe's treatments through the model
-  backends' native intervention ops, and a support record derived from each backend's own refuses what it cannot
-  express. [Interpretune Intervention APIs](interpretune_intervention_apis.md) describes the surfaces it runs on, and
+  backends' native intervention ops or an analysis backend's feature interventions, and a support record derived from
+  each backend's own refuses what it cannot express. [Interpretune Intervention APIs](interpretune_intervention_apis.md) describes the surfaces it runs on, and
   [#905](https://github.com/speediedan/interpretune/issues/905) tracks interventions on venngram-addressed unit sets.
 - **Recipes by reference**: `load_recipe` reads a recipe from a venngram document reference (fetched, hash-checked and
   returned with its pinned reference for provenance), a local file or an inline mapping, so an experiment's treatment is

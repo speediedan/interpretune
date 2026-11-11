@@ -9,7 +9,11 @@ are all interventions on a model's internal variables.
 
 - **Ops** come from venngram's op registry (`venngram.ops`): `replace`, `add`, `scale`, `project`, `reject`, `patch`
   and `clamp`, plus any op a user registers. Each op's meaning is defined once, below.
-- **Targets** are the whole activation, a set of its units, or a latent model's features (venngram's `targets`).
+- **Targets** are the whole activation, a set of its units, a latent model's features (venngram's `targets`), or a
+  parameter tensor or its units ([#960](https://github.com/speediedan/interpretune/issues/960), planned). A subset of
+  an attribution graph, distilled in one context and applied in another, is a planned target too
+  ([#966](https://github.com/speediedan/interpretune/issues/966),
+  [venngram#78](https://github.com/speediedan/venngram/issues/78)).
 - **Value or gradient**: an address with `of: grad` names the gradient with respect to what it selects, so an op on a
   gradient target is a backward-pass intervention. Resolving such sites is
   [#938](https://github.com/speediedan/interpretune/issues/938); paths between sites (stopping or routing the gradient
@@ -29,7 +33,7 @@ they are attached through the tuning seams ([trainable interventions](tuning_int
 [latent models](tuning_latent_models.md)) and take the roles shown.
 
 **An intervention's target is an activation or a parameter.** On an activation it runs in a hook, on every pass, and
-may be scoped to some tokens. On a parameter (a weight patch, such as scaling or zeroing a column of `mlp.down_proj`)
+may be scoped to some tokens. On a parameter (such as a weight patch, e.g. scaling or zeroing a column of `mlp.down_proj`)
 it is materialized: applied to the tensor, so it acts on every token and persists into exports. Trained, a parameter
 target's operand is an adapter (a LoRA is a trainable low-rank `add` on a weight, the `adapter` role). The ops,
 addresses and roles are the same for both targets. Parameter targets are planned, not yet applied
@@ -70,18 +74,28 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
   refuses, through `FeatureInterventionSupport`, a value source it does not honour, a constant source without a
   value, a layer constraint or an activation return it cannot provide.
 
-- `interpretune.analysis.venngram` applies a [venngram](https://github.com/speediedan/venngram) recipe through the
-  model-backend surface above: `recipe_interventions` turns a recipe's treatments (ordered ops at a site, on the whole
-  activation, on a set's units, or on a latent model's features at its `hook_sae_acts_post` sub-hook) into
-  `InterventionSpec`s in the native modes. `recipe_feature_interventions` turns a feature `replace` at explicit positions
-  into the circuit-tracer tuples above. A value is a dose, or a column of evidence the caller supplies, through venngram's
-  transforms; Interpretune evaluates the transforms, and the `interpretune.analysis.venngram.values` module states what
-  each one means. `venngram_support()` derives what Interpretune honours of a recipe from the backend's own records, and
-  `check_recipe` / `require_supported` refuse, before anything runs, whatever that record cannot express. `export_book` goes the other way, writing an intervention
-  payload as a venngram book carrying it as a treatment, and `support_mapping` publishes the derived declaration as a
-  `support_record`, so venngram's conformance checker reads both without Interpretune installed. Interventions on
-  venngram-addressed unit sets, with registered examples for supported models, are tracked in
-  [#905](https://github.com/speediedan/interpretune/issues/905).
+- `interpretune.analysis.venngram` applies a [venngram](https://github.com/speediedan/venngram) recipe on either
+  surface above, since venngram addresses each level of abstraction a surface acts on:
+  - **Model backend:** `recipe_interventions` turns a recipe's treatments (ordered ops at a site, on the whole
+    activation, on a set's units, or on a latent model's features at its `hook_sae_acts_post` sub-hook) into
+    `InterventionSpec`s in the native modes.
+  - **Analysis backend:** `recipe_feature_interventions` turns a recipe's feature ops into the surface's canonical
+    `(layer, position, feature_idx, value)` tuples, which any backend implementing `FEATURE_INTERVENTION` takes
+    (circuit-tracer's today). The values are computed by Interpretune and passed as constants, so a backend must honour
+    the `constant` value source. A feature `replace` at explicit positions is translated now; feature `add` and `scale`
+    need the feature's clean activation, which a backend can capture first, and are planned
+    ([#965](https://github.com/speediedan/interpretune/issues/965)).
+
+  A value is a dose, or a column of evidence the caller supplies, through venngram's transforms; Interpretune evaluates
+  the transforms, and the `interpretune.analysis.venngram.values` module states what each one means.
+  `venngram_support()` derives what Interpretune honours of a recipe from the backend's own records, and `check_recipe`
+  / `require_supported` (with `analysis_backend=True` for the analysis-backend surface) refuse, before anything runs,
+  whatever that record cannot express. `export_book` goes the other way, writing an intervention payload as a venngram
+  book carrying it as a treatment, and `support_mapping` publishes the derived declaration as a `support_record`, so
+  venngram's conformance checker reads both without Interpretune installed. Interventions on venngram-addressed unit
+  sets, with registered examples for supported models, are tracked in
+  [#905](https://github.com/speediedan/interpretune/issues/905); applying attribution-graph subsets from one context in
+  another, on both surfaces, in [#966](https://github.com/speediedan/interpretune/issues/966).
 
 At this layer Interpretune delegates to backend-native steering surfaces rather than inventing a second execution
 mechanism. The closest analogs are TransformerLens hook-driven flows such as `run_with_hooks(...)` and NNsight
