@@ -8,7 +8,7 @@ is still to be checked per composition. Its base weights are frozen by default, 
 `tunable_roles()`, not inferred from `requires_grad`.
 
 Its circuit-tracer composition places `BaseCircuitTracerModule` ahead of its own base, so it resolves to Interpretune's
-[circuit-tracer view](fts_tuning_circuit_tracer.md): the transcoders are `instrument` until promoted, a base-model
+[circuit-tracer view](tuning_circuit_tracer.md): the transcoders are `instrument` until promoted, a base-model
 tensor is refused by name unless `CircuitTracerConfig.tune_base` is set, and with no replacement model loaded the
 composition is refused. The replacement model is registered on the module once.
 
