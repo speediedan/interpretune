@@ -391,17 +391,23 @@ def test_ct_analysis_backend_notebook_local(params: dict[str, Any], tmp_path: Pa
     _run_ct_analysis_backend_notebook(params, tmp_path)
 
 
-# measured with tests/gpu_ci/calibrate.py: need 11.69 GiB (AMD R9700, ROCm), declared at the
-# calibrator's recommendation (need plus margin, rounded up to the next half GiB)
-@RunIf(bf16_cuda=True, min_gpu_mem_gb=13.5)
+# the rendered artifact runs the full panel, sweep and doses; this test runs the notebook's every assertion on a
+# smaller set of each, which is what an execution test needs. Measured with tests/gpu_ci/calibrate.py: need 14.04
+# GiB (RTX 4090, CUDA), declared at the calibrator's recommendation (need plus margin, next half GiB)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=16.5)
 def test_ct_attention_attribution_notebook(tmp_path: Path):
-    """Test the attention-aware attribution notebook (regimes, head loadings, head conductance)."""
+    """Test the attention-aware attribution notebook (regimes, influence, head reports, partition,
+    interventions)."""
     notebook_path = NOTEBOOKS_DIR / "circuit_tracer_examples" / "attention_attribution_analysis.ipynb"
     output_dir = tmp_path / "notebook_outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_notebook = execute_notebook_with_params(
         notebook_path=notebook_path,
-        parameters={},
+        parameters={
+            "influence_panel": [["Dallas", "Austin"], ["Detroit", "Lansing"]],
+            "residual_sweep_steps": [8, 16, 32],
+            "intervention_doses": [0.0, 0.5, 1.0],
+        },
         output_dir=output_dir,
     )
     assert output_notebook.exists(), f"Output notebook not created at {output_notebook}"
