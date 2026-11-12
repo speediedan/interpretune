@@ -10,9 +10,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+# On a Windows runner `bash` resolves to the WSL launcher stub, which prints an install notice instead of running.
+pytestmark = pytest.mark.skipif(sys.platform.startswith("win"), reason="bash helper")
 
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
