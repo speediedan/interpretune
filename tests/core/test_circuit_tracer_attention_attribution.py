@@ -180,7 +180,7 @@ class TestHeadConductance:
     def test_the_change_is_the_models_own(self, toy, weights, report):
         with torch.no_grad():
             measured = [
-                float(toy._model(input_ids=ids[None]).logits[0, -1] @ weights) for ids in (TOY_PROMPT, self.SWAPPED)
+                float(toy._module(input_ids=ids[None]).logits[0, -1] @ weights) for ids in (TOY_PROMPT, self.SWAPPED)
             ]
         assert [report.head_conductance_t_from, report.head_conductance_t_to] == pytest.approx(measured, rel=1e-5)
         assert measured[0] != pytest.approx(measured[1], abs=1e-2)

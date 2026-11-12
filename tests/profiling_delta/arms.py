@@ -383,9 +383,12 @@ def _nnsight_answer_loss(lm, batch: dict[str, Any], label_ids: torch.Tensor, los
 
 
 def _params_root(model) -> nn.Module:
-    """The torch module holding the parameters: nnsight wrappers keep it as ``_model``."""
-    inner = getattr(model, "_model", None)
-    return inner if isinstance(inner, nn.Module) else model
+    """The torch module holding the parameters: nnsight wrappers keep it as ``_module``."""
+    for attr in ("_module", "_model"):
+        inner = getattr(model, attr, None)
+        if isinstance(inner, nn.Module):
+            return inner
+    return model
 
 
 def _accepted(fn: Callable, kwargs: dict[str, Any]) -> dict[str, Any]:

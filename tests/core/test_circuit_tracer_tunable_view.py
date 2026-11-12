@@ -57,7 +57,7 @@ def _ct_module(replacement_model, hf_model: nn.Module | None = None, **cfg) -> _
 
 def _toy_module(**cfg) -> _CTModule:
     rm = tiny_gemma2_replacement_model()
-    return _ct_module(rm, hf_model=rm._model, **cfg)
+    return _ct_module(rm, hf_model=rm._module, **cfg)
 
 
 def _uniform_(module: nn.Module) -> nn.Module:
@@ -150,7 +150,7 @@ class TestTranscoderView:
         rm = tiny_gemma2_replacement_model()
         bare = _ct_module(rm)
         assert bare._modules["transcoders"] is rm.transcoders._module  # nnsight wraps the transcoders in an envoy
-        with_hf = _ct_module(rm, hf_model=rm._model)
+        with_hf = _ct_module(rm, hf_model=rm._module)
         assert "transcoders" not in with_hf._modules
         keys = list(with_hf.state_dict())
         assert len(keys) == len(set(keys)) and any(k.startswith("hf_model.transcoders.") for k in keys)

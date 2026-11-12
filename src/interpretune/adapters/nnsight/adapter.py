@@ -1,7 +1,7 @@
 """NNsight adapter for interpretune integration.
 
 This module provides the NNsight adapter that enables interpretune to use NNsight's
-LanguageModel for model wrapping, tracing, and intervention capabilities.
+TransformersModel for model wrapping, tracing, and intervention capabilities.
 
 NNsight wraps HuggingFace models directly without weight conversion, providing:
 - Tracing-based activation access via context managers
@@ -24,7 +24,7 @@ from interpretune.utils import move_data_to_device, rank_zero_warn, rank_zero_in
 from interpretune.protocol import Adapter
 
 if TYPE_CHECKING:
-    from nnsight import LanguageModel
+    from nnsight import TransformersModel
     from interpretune.adapters.nnsight.config import NNsightConfig, ITNNsightConfig
     from interpretune.config import ITState
 
@@ -42,7 +42,7 @@ class NNsightAttributeMixin:
     """
 
     it_cfg: ITNNsightConfig  # Provided by mixing class
-    model: LanguageModel | None  # Provided by mixing class
+    model: TransformersModel | None  # Provided by mixing class
     _it_state: ITState  # Provided by mixing class
 
     @property
@@ -53,12 +53,12 @@ class NNsightAttributeMixin:
         return None
 
     @property
-    def nnsight_model(self) -> LanguageModel | None:
-        """Get the underlying NNsight LanguageModel."""
+    def nnsight_model(self) -> TransformersModel | None:
+        """Get the underlying NNsight TransformersModel."""
         if hasattr(self, "model") and self.model is not None:
-            from nnsight import LanguageModel
+            from nnsight import TransformersModel
 
-            if isinstance(self.model, LanguageModel):
+            if isinstance(self.model, TransformersModel):
                 return self.model
         return None
 
@@ -77,9 +77,9 @@ class NNsightAttributeMixin:
 
             # Try to get from model parameters
             if self.nnsight_model is not None:
-                # NNsight's _model attribute holds the actual PyTorch model
-                underlying_model = getattr(self.nnsight_model, "_model", None)
-                if underlying_model is not None:
+                # NNsight's _module attribute holds the actual PyTorch model
+                underlying_model = getattr(self.nnsight_model, "_module", None)
+                if isinstance(underlying_model, torch.nn.Module):
                     try:
                         # Get device from first parameter
                         param = next(underlying_model.parameters())
@@ -150,7 +150,7 @@ class BaseNNsightModule(BaseITModule):
                 " on the interpretune module; dispatch the model to tune it."
             )
         return (
-            "the nnsight model has no local HF module (`model._model` is not a torch module), so there is nothing"
+            "the nnsight model has no local HF module (`model._module` is not a torch module), so there is nothing"
             " to register on the interpretune module."
         )
 
@@ -163,7 +163,7 @@ class BaseNNsightModule(BaseITModule):
         through its own init path and config), so the config is read as ``NNsightAttributeMixin`` reads it.
         """
         cfg = getattr(self.it_cfg, "nnsight_cfg", None)
-        hf_model = getattr(self.model, "_model", None)
+        hf_model = getattr(self.model, "_module", None)
         if cfg is None or cfg.remote or not isinstance(hf_model, torch.nn.Module):
             return
         if not getattr(self.model, "dispatched", True):
@@ -199,7 +199,7 @@ class BaseNNsightModule(BaseITModule):
         self._register_hf_model()
 
     def auto_model_init(self) -> None:
-        """Initialize model using NNsight LanguageModel.
+        """Initialize model using NNsight TransformersModel.
 
         NNsight wraps HuggingFace models directly, so we use its initialization path rather than a separate HF -> TL
         conversion.
@@ -211,14 +211,14 @@ class BaseNNsightModule(BaseITModule):
             self.model_init()
 
     def _init_nnsight_model(self) -> None:
-        """Initialize the NNsight LanguageModel.
+        """Initialize the NNsight TransformersModel.
 
-        Uses NNsight's LanguageModel which handles:
+        Uses NNsight's TransformersModel which handles:
         - HuggingFace model loading
         - Tokenizer initialization
         - Device placement
         """
-        from nnsight import LanguageModel
+        from nnsight import TransformersModel
 
         nnsight_cfg = self.it_cfg.nnsight_cfg
         if nnsight_cfg is None:
@@ -229,7 +229,7 @@ class BaseNNsightModule(BaseITModule):
         if model_name is None:
             raise ValueError("model_name must be specified in nnsight_cfg or model_name_or_path in it_cfg")
 
-        rank_zero_info(f"Initializing NNsight LanguageModel with model: {model_name}")
+        rank_zero_info(f"Initializing NNsight TransformersModel with model: {model_name}")
 
         # Get NNsight initialization kwargs
         nnsight_kwargs = nnsight_cfg.get_nnsight_kwargs()
@@ -257,32 +257,27 @@ class BaseNNsightModule(BaseITModule):
                     "Set NDIF_API_KEY environment variable or provide api_key in nnsight_cfg."
                 )
 
-        # Initialize NNsight LanguageModel
+        # Initialize the NNsight model. TransformersModel with the text-generation task
+        # is what the deprecated LanguageModel name pinned; it also constructs
+        # multimodal-registered repos (e.g. gemma-3-4b-it) that LanguageModel refused,
+        # so no vision fallback remains. tokenizer_kwargs are settings on the loaded
+        # tokenizer (padding_side being the usual one), applied after construction.
         rank_zero_debug(f"NNsight kwargs: {nnsight_kwargs}")
-        try:
-            self.model = LanguageModel(model_name, **nnsight_kwargs)
-        except ValueError as ve:
-            # nnsight 0.7+ refuses multimodal-registered repos via LanguageModel (e.g.
-            # gemma-3-4b-it is AutoModelForImageTextToText) and directs callers to
-            # VisionLanguageModel, a LanguageModel subclass exposing the same tracing
-            # surface for text-only use
-            if "VisionLanguageModel" not in str(ve):
-                raise
-            from nnsight import VisionLanguageModel
-
-            rank_zero_info(f"{model_name} is registered as multimodal; using NNsight VisionLanguageModel")
-            self.model = VisionLanguageModel(model_name, **nnsight_kwargs)
+        tokenizer_kwargs = nnsight_kwargs.pop("tokenizer_kwargs", None)
+        self.model = TransformersModel(model_name, task="text-generation", **nnsight_kwargs)
+        for key, value in (tokenizer_kwargs or {}).items():
+            setattr(self.model.tokenizer, key, value)
 
         # Store reference to tokenizer if not already set. The cast is real: Envoy
         # attribute access is typed as Tensor | Module, but `tokenizer` on a
-        # LanguageModel is the HF tokenizer object, not a traced proxy.
+        # TransformersModel is the HF tokenizer object, not a traced proxy.
         if self.it_cfg.tokenizer is None and hasattr(self.model, "tokenizer"):
             self.it_cfg.tokenizer = cast(PreTrainedTokenizerBase, self.model.tokenizer)
 
         # Apply generation config to the underlying HF model (equivalent to _hf_post_init_cfg for NNsight)
         self._apply_generation_config()
 
-        rank_zero_info("NNsight LanguageModel initialized successfully")
+        rank_zero_info("NNsight TransformersModel initialized successfully")
 
     def _apply_generation_config(self) -> None:
         """Apply HFGenerationConfig settings to the underlying HF model's generation_config.
@@ -298,9 +293,9 @@ class BaseNNsightModule(BaseITModule):
         lm_gen_cfg = getattr(gen_cfg, "lm_generation_cfg", None)
         if not isinstance(lm_gen_cfg, HFGenerationConfig):
             return
-        # Get the underlying HF model from NNsight LanguageModel
-        underlying_model = getattr(self.model, "_model", None)
-        if underlying_model is None:
+        # Get the underlying HF model from the NNsight model
+        underlying_model = getattr(self.model, "_module", None)
+        if not isinstance(underlying_model, torch.nn.Module):
             return
         hf_gen_config = getattr(underlying_model, "generation_config", None)
         if hf_gen_config is None:
@@ -323,8 +318,8 @@ class BaseNNsightModule(BaseITModule):
         # Try to capture underlying HF config
         if self.nnsight_model is not None:
             try:
-                underlying_model = getattr(self.nnsight_model, "_model", None)
-                if underlying_model is not None and hasattr(underlying_model, "config"):
+                underlying_model = getattr(self.nnsight_model, "_module", None)
+                if isinstance(underlying_model, torch.nn.Module) and hasattr(underlying_model, "config"):
                     hf_config = deepcopy(underlying_model.config)
                     self._it_state._init_hparams.update({"hf_model_config": hf_config})
             except Exception as e:

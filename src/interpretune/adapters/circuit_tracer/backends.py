@@ -774,7 +774,7 @@ class CircuitTracerAnalysisBackend:
         model = module.replacement_model
         with attribution_frozen(model):
             report = head_conductance(
-                model._model,  # the raw causal LM: conductance hooks its modules directly and reads its logits
+                model._module,  # the raw causal LM: conductance hooks its modules directly and reads its logits
                 model.ensure_tokenized(prompt_from),
                 model.ensure_tokenized(prompt_to),
                 torch.as_tensor(target_weights),
