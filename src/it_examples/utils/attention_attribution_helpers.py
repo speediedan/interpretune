@@ -15,7 +15,12 @@ import plotly.graph_objects as go
 import torch
 from plotly.subplots import make_subplots
 
-from it_examples.utils.nb_ui_utils import display_plotly_figure
+from it_examples.utils.nb_ui_utils import (
+    NotebookLink,
+    display_notebook_table,
+    display_plotly_figure,
+    resolve_feature_explanations,
+)
 
 _LAYOUT: dict[str, Any] = dict(template="simple_white", autosize=True, margin=dict(l=60, r=30, t=60, b=60))
 
@@ -101,6 +106,93 @@ def print_next_token_checks(checks: Sequence[NextTokenCheck]) -> None:
         print(
             f"{c.label:<10} {c.expected.lstrip('▁'):<12} {c.rank:>4} {c.prob:>6.3f} {c.margin:>+7.2f} {copy:>14}  {top}"
         )
+
+
+def display_next_token_checks(checks: Sequence[NextTokenCheck]) -> None:
+    """Show answer, confidence, competing city and top alternatives with explicit units."""
+    display_notebook_table(
+        [
+            [
+                c.label,
+                c.expected.lstrip("▁"),
+                c.rank,
+                f"{c.prob:.1%}",
+                f"{c.margin:+.2f}",
+                f"{c.copy_prob:.1%} ({c.copy_token.lstrip('▁')})"
+                if c.copy_prob is not None and c.copy_token is not None
+                else "Not measured",
+                ", ".join(f"{tok.strip()}: {p:.1%}" for tok, p in c.top),
+            ]
+            for c in checks
+        ],
+        ["Prompt city", "Expected capital", "Rank", "Probability", "Lead (logits)", "Copy probability", "Top tokens"],
+        title="Does the model answer the intended question?",
+        caption="Lead is the expected capital's logit minus the strongest competing token's logit.",
+    )
+
+
+@dataclass(frozen=True)
+class FeatureContext:
+    """What a reader needs beside a feature id: the token it fires on, a description, and where to look further.
+
+    Attributes:
+        tokens: The prompt's tokens as text, by position.
+        explanations: ``(layer, feature) -> description`` for the features that have one.
+        model_id: Neuronpedia's model id (``"gemma-2-2b"``).
+        source_set: Neuronpedia's source set for the transcoders (``"gemmascope-transcoder-16k"``).
+        base_url: The Neuronpedia instance the links point at.
+    """
+
+    tokens: Sequence[str]
+    explanations: Mapping[tuple[int, int], str]
+    model_id: str
+    source_set: str
+    base_url: str = "https://www.neuronpedia.org"
+
+    def link(self, layer: int, feature: int) -> NotebookLink:
+        """A link to the feature's Neuronpedia page, labelled with its layer and index."""
+        url = f"{self.base_url.rstrip('/')}/{self.model_id}/{layer}-{self.source_set}/{feature}"
+        return NotebookLink(f"L{layer} #{feature}", url)
+
+    def token(self, pos: int) -> str:
+        """The token at ``pos`` as quoted text, so a leading space stays visible."""
+        return repr(self.tokens[pos])
+
+    def explanation(self, layer: int, feature: int) -> str:
+        """The feature's description, or a dash when Neuronpedia has none (or could not be reached)."""
+        return self.explanations.get((int(layer), int(feature)), "-")
+
+    def describe(self, layer: int, pos: int, feature: int) -> str:
+        """One line for prose: ``L20 #15589 on ' is' (pos 10), "Texas"``."""
+        text = self.explanations.get((int(layer), int(feature)))
+        suffix = f', "{text}"' if text else ""
+        return f"L{layer} #{feature} on {self.token(pos)} (pos {pos}){suffix}"
+
+
+def resolve_feature_context(
+    features: Sequence[tuple[int, int, int]],
+    tokens: Sequence[str],
+    *,
+    model_id: str,
+    source_set: str,
+    preferred_type_name: str | None = "oai_token-act-pair",
+    base_url: str = "https://www.neuronpedia.org",
+) -> FeatureContext:
+    """Fetch descriptions for the ``(layer, pos, feature)`` triples a notebook displays, and nothing more.
+
+    One request per distinct feature, so pass the handful a table shows rather than a graph's whole selection. The
+    preferred type is Neuronpedia's autointerpretation; a feature without one falls back to another listed explanation.
+    A description is a hypothesis about what a feature responds to, not a measured causal role.
+    """
+    pairs = list(dict.fromkeys((int(layer), int(feat)) for layer, _, feat in features))
+    explanations = resolve_feature_explanations(
+        model_id=model_id,
+        source_set=source_set,
+        feature_tuples=pairs,
+        base_url=base_url,
+        preferred_type_name=preferred_type_name,
+    )
+    return FeatureContext(list(tokens), explanations, model_id, source_set, base_url)
 
 
 @dataclass(frozen=True)
@@ -407,8 +499,14 @@ def conductance_path(points: Sequence[Mapping[str, torch.Tensor]]) -> tuple[np.n
     return alphas, t, dt
 
 
-def plot_conductance_path(points: Sequence[Mapping[str, torch.Tensor]], target: str) -> go.Figure:
-    """The target along the interpolation path, beside the straight line a linearization at the start predicts."""
+def plot_conductance_path(
+    points: Sequence[Mapping[str, torch.Tensor]], target: str, units: str = "logits"
+) -> go.Figure:
+    """The target along the interpolation path, beside the straight line a linearization at the start predicts.
+
+    The left panel is the target in ``units``; the right is its derivative in ``alpha``, in ``units`` per unit
+    ``alpha``, whose area over the path is the measured change.
+    """
     alphas, t, dt = conductance_path(points)
     fig = make_subplots(rows=1, cols=2, subplot_titles=(f"{target} along the path", "its derivative along the path"))
     fig.add_trace(go.Scatter(x=alphas, y=t, mode="lines+markers", name="measured"), row=1, col=1)
@@ -425,6 +523,8 @@ def plot_conductance_path(points: Sequence[Mapping[str, torch.Tensor]], target: 
     )
     fig.add_trace(go.Scatter(x=alphas, y=dt, mode="lines+markers", name="d target / d alpha"), row=1, col=2)
     fig.update_xaxes(title_text="alpha (0: first prompt, 1: second)")
+    fig.update_yaxes(title_text=f"{target} ({units})", row=1, col=1)
+    fig.update_yaxes(title_text=f"d({target}) / d alpha ({units} per unit alpha)", row=1, col=2)
     fig.update_layout(height=420, legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="left", x=0), **_LAYOUT)
     return fig
 

@@ -153,3 +153,50 @@ def test_display_plotly_figure_embeds_html(monkeypatch):
     monkeypatch.setattr("it_examples.utils.nb_ui_utils.display", shown.append)
     aah.display_plotly_figure(aah.plot_residual_convergence([8, 16], [0.02, 0.01]), "it-test")
     assert len(shown) == 1 and "cdn.plot.ly" in shown[0].data and 'id="it-test-' in shown[0].data
+
+
+def test_notebook_table_escapes_cells_and_renders_only_http_links():
+    from it_examples.utils.nb_ui_utils import NotebookLink, build_notebook_table_html
+
+    html_out = build_notebook_table_html(
+        [["<script>x</script>", NotebookLink("L20 #15589", "https://example.org/a?b=1&c=2")]],
+        ["text", "link"],
+        title="T <b>",
+        caption="denominator & units",
+    )
+    assert "<script>" not in html_out and "&lt;script&gt;x&lt;/script&gt;" in html_out
+    assert '<a href="https://example.org/a?b=1&amp;c=2">L20 #15589</a>' in html_out
+    assert "T &lt;b&gt;" in html_out and "denominator &amp; units" in html_out
+    with pytest.raises(ValueError, match="HTTP"):
+        build_notebook_table_html([[NotebookLink("x", "javascript:alert(1)")]], ["link"], title="t")
+    with pytest.raises(ValueError, match="column count"):
+        build_notebook_table_html([[1, 2]], ["only one"], title="t")
+
+
+def test_feature_context_links_quotes_tokens_and_marks_missing_explanations():
+    ctx = aah.FeatureContext(
+        tokens=["<bos>", " is"],
+        explanations={(20, 15589): "Texas"},
+        model_id="gemma-2-2b",
+        source_set="gemmascope-transcoder-16k",
+    )
+    link = ctx.link(20, 15589)
+    assert link.url == "https://www.neuronpedia.org/gemma-2-2b/20-gemmascope-transcoder-16k/15589"
+    assert ctx.describe(20, 1, 15589) == "L20 #15589 on ' is' (pos 1), \"Texas\""
+    assert ctx.explanation(3, 7) == "-" and ctx.describe(3, 1, 7) == "L3 #7 on ' is' (pos 1)"
+
+
+def test_resolve_feature_context_requests_each_feature_once(monkeypatch):
+    seen = {}
+
+    def fake(**kwargs):
+        seen.update(kwargs)
+        return {(20, 15589): "Texas"}
+
+    monkeypatch.setattr(aah, "resolve_feature_explanations", fake)
+    ctx = aah.resolve_feature_context(
+        [(20, 10, 15589), (20, 9, 15589), (21, 10, 5943)], ["a"], model_id="m", source_set="s"
+    )
+    assert seen["feature_tuples"] == [(20, 15589), (21, 5943)]
+    assert seen["preferred_type_name"] == "oai_token-act-pair"
+    assert ctx.explanation(20, 15589) == "Texas"
