@@ -30,6 +30,10 @@ HOOKED = f"{SITE}.hook_sae_acts_post"
 TRANSCODER = FeatureInterventionSupport(
     value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"})
 )
+CAPTURING = FeatureInterventionSupport(
+    value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"}),
+    captures_clean_activations=True,
+)
 
 
 def _recipe(ops, *, site=SITE, tokens="last", sets=None):
@@ -124,16 +128,30 @@ class TestModelBackendPath:
                 id="unit-slice",
             ),
             pytest.param(
-                [{"op": "add", "target": {"set": "top"}, "value": {"dose": 1.0, "transform": ["abs"]}}],
-                {},
-                "a transform applies to an evidence-sourced value",
-                id="dose-transform",
+                [{"op": "add", "value": {"dose": 1.0, "transform": ["abs"]}}],
+                {"site": f"blocks.2.{SITE}"},
+                "a whole-activation op's dose takes no transform",
+                id="whole-activation-dose-transform",
             ),
         ],
     )
     def test_what_it_cannot_translate_is_refused_by_name(self, ops, kwargs, match):
         with pytest.raises(MisconfigurationException, match=match):
             recipe_interventions(_recipe(ops, **kwargs), site_widths={HOOKED: 16})
+
+    def test_a_dose_runs_its_transforms_too(self):
+        """Venngram's transforms apply to a dose or a doses table, not only to evidence (venngram's conformance
+        vectors include both)."""
+        value = {"dose": -0.5, "transform": ["abs", {"scale": {"factor": 4.0}}]}
+        (spec,) = recipe_interventions(_recipe([_op(**value)]), site_widths={HOOKED: 16})[f"blocks.2.{HOOKED}"]
+        assert spec.intervention_tensor[3] == 2.0 and spec.intervention_tensor[7] == 2.0
+        doses = {"doses": {2: {3: 3.0}, 5: {7: -1.5}}, "transform": [{"statistic": {"name": "t"}}]}
+        sets = {"top": {"features": "sae", "layers": [2, 5], "units": [3, 7]}}
+        payload = recipe_interventions(
+            _recipe([_op(**doses)], sets=sets), site_widths={HOOKED: 16}, statistics={"t": {(2, 3): 2.0, (5, 7): 4.0}}
+        )
+        assert payload[f"blocks.2.{HOOKED}"][0].intervention_tensor[3] == 6.0
+        assert payload[f"blocks.5.{HOOKED}"][0].intervention_tensor[7] == -6.0
 
     def test_the_latent_width_is_required_and_bounds_the_features(self):
         with pytest.raises(MisconfigurationException, match="no width was supplied for this site"):
@@ -228,7 +246,7 @@ class TestEvidenceValues:
                 _from(transform=[{"normalize": {"by": "median"}}]),
                 _table(score=SCORES),
                 {"median": 0.0},
-                "statistic `median` is zero at layer 2",
+                r"statistic `median` is zero at \(layer, unit\) \(2, 3\)",
                 id="zero-statistic",
             ),
             pytest.param(
@@ -246,6 +264,22 @@ class TestEvidenceValues:
                 _recipe([_op(**value)]), site_widths={HOOKED: 8}, evidence=tables, statistics=statistics
             )
 
+    def test_a_statistic_may_be_given_per_member(self):
+        per_member = {"median": {(2, 3): 2.0, (2, 7): 4.0, (5, 3): 0.5, (5, 7): 1.0}}
+        values = self._values({"statistic": {"name": "median"}}, statistics=per_member)
+        assert values == {(2, 3): 4.0, (2, 7): -16.0, (5, 3): 0.5, (5, 7): 0.0}
+
+    @pytest.mark.parametrize(
+        "statistic, match",
+        [
+            pytest.param({(2, 3): 1.0, 5: 1.0}, "mixes per-layer and per-\\(layer, unit\\) keys", id="mixed"),
+            pytest.param({(2, 3): 1.0}, r"has no value at \(layer, unit\) \(2, 7\)", id="missing-member"),
+        ],
+    )
+    def test_a_per_member_statistic_names_every_member(self, statistic, match):
+        with pytest.raises(MisconfigurationException, match=match):
+            self._values({"statistic": {"name": "median"}}, statistics={"median": statistic})
+
     def test_a_unit_target_reads_evidence_too(self):
         sets = {"top": {"point": SITE, "layers": [2], "units": [3]}}
         payload = recipe_interventions(
@@ -257,6 +291,59 @@ class TestEvidenceValues:
         op = {"op": "add", "value": _from()}
         with pytest.raises(MisconfigurationException, match="takes a single `dose`"):
             recipe_interventions(_recipe([op], site=f"blocks.2.{SITE}"), site_widths={}, evidence=_table(score=SCORES))
+
+
+class TestVenngramConformance:
+    """Interpretune's evaluator agrees with venngram's own transform meanings, measured by venngram's vectors."""
+
+    @staticmethod
+    def _evaluate(case):
+        """One conformance vector through the real path: a recipe whose feature set names one member per vector
+        member, its value and transforms as the vector writes them, evaluated by ``member_values``."""
+        from interpretune.analysis.venngram.values import member_values
+
+        n = len(case.members)
+        if case.source == "dose":
+            value = {"dose": case.members[0].start}
+        elif case.source == "doses":
+            value = {"doses": {0: {i: m.start for i, m in enumerate(case.members)}}}
+        else:
+            value = {"from": {"evidence": "e", "column": case.column}}
+        value["transform"] = [{t.name: dict(t.params)} if t.params else t.name for t in case.transform]
+        sets = {"top": {"features": "sae", "layers": [0], "units": list(range(n))}}
+        recipe = _recipe([{"op": "add", "target": {"set": "top"}, "value": value}], sets=sets)
+        columns = {c for m in case.members for c in m.columns}
+        evidence = {
+            "e": {c: {(0, i): m.columns[c] for i, m in enumerate(case.members) if c in m.columns} for c in columns}
+        }
+        names = {s for m in case.members for s in m.statistics}
+        statistics = {s: {(0, i): m.statistics[s] for i, m in enumerate(case.members)} for s in names}
+        values = member_values(recipe, recipe.stages[0].ops[0], evidence=evidence, statistics=statistics)
+        return [values[(0, i)] for i in range(n)]
+
+    def test_every_transform_vector_agrees(self):
+        vg_ops = pytest.importorskip("venngram.ops")
+        cases = vg_ops.transform_cases()
+        assert {t.name for c in cases for t in c.transform} >= set(vg_ops.TRANSFORMS), "a core transform has no vector"
+        assert vg_ops.check_transforms(self._evaluate) == []
+
+    def test_a_disagreeing_evaluator_is_caught(self):
+        """Positive control: the check can fail, so its empty answer above is evidence."""
+        vg_ops = pytest.importorskip("venngram.ops")
+        assert vg_ops.check_transforms(lambda case: [v + 1.0 for v in self._evaluate(case)])
+
+    def test_the_evidence_transforms_agree_with_venngrams(self):
+        """Venngram refuses an evidence-reading transform on a dose when it reads the recipe; the evaluator refuses
+        the same set."""
+        from interpretune.analysis.venngram.values import EVALUATED_TRANSFORMS, EVIDENCE_TRANSFORMS
+
+        vg_ops = pytest.importorskip("venngram.ops")
+        evaluated = EVALUATED_TRANSFORMS | {"statistic"}
+        assert EVIDENCE_TRANSFORMS == {name for name in vg_ops.EVIDENCE_TRANSFORMS if name in evaluated}
+        from venngram.errors import AddressError
+
+        with pytest.raises(AddressError, match="read the evidence table"):
+            _recipe([_op(dose=1.0, transform=[{"sign_of": {"column": "score"}}])])
 
 
 class TestAnalysisBackendPath:
@@ -327,7 +414,8 @@ class TestAnalysisBackendPath:
     @pytest.mark.parametrize(
         "ops, tokens, match",
         [
-            pytest.param([_op("add", dose=1.0)], TOKENS, "replace a feature's value, not `add`", id="add"),
+            pytest.param([_op("add", dose=1.0)], TOKENS, "declares no clean capture", id="add-without-a-capture"),
+            pytest.param([_op("scale", dose=1.0)], TOKENS, "declares no clean capture", id="scale-without-a-capture"),
             pytest.param([_op("replace", dose=1.0)], "last", "name their positions", id="scope"),
             pytest.param(
                 [{"op": "replace", "target": {"set": "top"}, "operand": "v"}], TOKENS, "takes a value", id="operand"
@@ -347,6 +435,39 @@ class TestAnalysisBackendPath:
         with pytest.raises(MisconfigurationException, match="cannot take a recipe's computed values"):
             recipe_feature_interventions(self._recipe(dose=1.0), support=scores_only)
         assert venngram_feature_support(scores_only).values == frozenset()
+
+    @pytest.mark.parametrize("op, combine", [("add", lambda a, d: a + d), ("scale", lambda a, d: a * d)])
+    def test_add_and_scale_are_relative_to_the_clean_capture(self, op, combine):
+        clean = torch.arange(6 * 8 * 8, dtype=torch.float32).reshape(6, 8, 8) / 10
+        recipe = _recipe([_op(op, dose=1.5)], site=self.SITE, tokens=self.TOKENS)
+        tuples = recipe_feature_interventions(recipe, support=CAPTURING, clean_activations=clean)
+        assert sorted(tuples) == sorted(
+            (layer, position, feature, pytest.approx(combine(float(clean[layer, position, feature]), 1.5)))
+            for layer in (2, 5)
+            for feature in (3, 7)
+            for position in (4, 6)
+        )
+
+    def test_a_relative_op_needs_the_capture_passed(self):
+        recipe = _recipe([_op("add", dose=1.0)], site=self.SITE, tokens=self.TOKENS)
+        with pytest.raises(MisconfigurationException, match="pass `clean_activations`"):
+            recipe_feature_interventions(recipe, support=CAPTURING)
+        with pytest.raises(
+            MisconfigurationException, match=r"of shape \(6, 5, 8\).*no activation at layer 2, position 6"
+        ):
+            recipe_feature_interventions(recipe, support=CAPTURING, clean_activations=torch.zeros(6, 5, 8))
+
+    def test_a_replace_needs_no_capture(self):
+        """The capture is read only for a relative op, so a replace-only recipe translates as it did."""
+        assert recipe_feature_interventions(self._recipe(dose=2.0), support=CAPTURING, clean_activations=None)
+
+    def test_add_and_scale_are_declared_only_with_a_capture(self):
+        recipe = _recipe([_op("add", dose=1.0)], site=self.SITE, tokens=self.TOKENS)
+        assert venngram_feature_support(TRANSCODER).ops == frozenset({"replace"})
+        assert venngram_feature_support(CAPTURING).ops == frozenset({"replace", "add", "scale"})
+        refusals = check_recipe(recipe, venngram_feature_support(TRANSCODER), analysis_backend=True)
+        assert any("`add`): the op is not supported" in r for r in refusals), refusals
+        assert check_recipe(recipe, venngram_feature_support(CAPTURING), analysis_backend=True) == []
 
 
 class TestSupport:

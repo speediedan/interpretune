@@ -44,9 +44,11 @@ The caller supplies each unit-targeted site's width (from the model's own config
 fact of the checkpoint the recipe pins, not of the recipe, and guessing it from the largest unit named would
 silently truncate a dose table that names a unit past the guess. A supplied width also checks an operand's.
 
-:func:`recipe_feature_interventions` is the analysis-backend path: a feature ``replace`` at explicit positions becomes
-circuit-tracer's ``(layer, position, feature_idx, value)`` tuples. Its values are computed here and passed as
-constants, so a backend must honour the ``constant`` value source.
+:func:`recipe_feature_interventions` is the analysis-backend path: a feature ``replace``, ``add`` or ``scale`` at
+explicit positions becomes circuit-tracer's ``(layer, position, feature_idx, value)`` tuples. A tuple sets a value, so
+``add`` and ``scale`` are computed from the feature's clean activation, which the backend captures first
+(``capture_feature_activations``, declared by ``captures_clean_activations``). The values are computed here and passed
+as constants, so a backend must honour the ``constant`` value source.
 
 Anything the declaration does not cover is refused by
 :func:`~interpretune.analysis.venngram.support.require_supported`, which lists every refusal this module would
@@ -66,7 +68,7 @@ import torch
 
 from interpretune.analysis.backends.capabilities import FeatureInterventionSupport, InterventionMode, PositionScope
 from interpretune.analysis.backends.interventions import InterventionSpec
-from interpretune.analysis.venngram.values import member_refusal, member_values, target_kind
+from interpretune.analysis.venngram.values import Statistic, member_refusal, member_values, target_kind
 from interpretune.utils import MisconfigurationException
 
 #: Recipe token scopes by their interpretune position-scope names.
@@ -89,6 +91,11 @@ _ACTIVATION_OPS = {
 #: Every recipe op this module translates (for at least one target kind).
 APPLIED_OPS = frozenset(_UNIT_OPS) | frozenset(_ACTIVATION_OPS)
 
+#: The feature ops a feature tuple's value is computed for: ``replace`` sets the op's value; ``add`` and ``scale`` set a
+#: value relative to the feature's clean activation $a$ ($a + d$ and $a \cdot d$ for the op's value $d$).
+_RELATIVE_FEATURE_OPS = {"add": lambda a, d: a + d, "scale": lambda a, d: a * d}
+FEATURE_TUPLE_OPS = frozenset({"replace"}) | frozenset(_RELATIVE_FEATURE_OPS)
+
 _LAYERED_SITE = re.compile(r"^blocks\.(\d+)\.(.+)$")
 
 #: The sub-hook a latent model's feature activations are written at.
@@ -102,9 +109,10 @@ def split_site(site: str) -> tuple[int | None, str]:
 
 
 def _value_refusal(op: Any) -> str | None:
+    """Why a whole-activation op's value cannot be applied: its transforms have no members to evaluate over."""
     value = op.value
-    if value is not None and value.source != "from" and value.transform:
-        return "a transform applies to an evidence-sourced value; write a dose as its final value"
+    if value is not None and value.transform:
+        return "a whole-activation op's dose takes no transform; write the dose as its final value"
     return None
 
 
@@ -131,11 +139,11 @@ def op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     """Why ``op`` (at ``stage`` of ``recipe``) cannot be translated, or ``None`` when it can."""
     layer, _ = split_site(stage.site)
     kind = target_kind(recipe, op)
-    if (refusal := _value_refusal(op)) is not None:
-        return refusal
     if kind in ("units", "features"):
         return _member_refusal(recipe, stage, op, kind)
     value = op.value
+    if (refusal := _value_refusal(op)) is not None:
+        return refusal
     if op.op not in _ACTIVATION_OPS:
         return f"the op has no native mode (supported: {sorted(_ACTIVATION_OPS)})"
     if layer is None:
@@ -151,16 +159,21 @@ def op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
 
 
 def feature_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
-    """Why ``op`` cannot become circuit-tracer feature tuples, or ``None`` when it can."""
+    """Why ``op`` cannot become circuit-tracer feature tuples, or ``None`` when it can.
+
+    Whether the backend can capture the clean activations a feature ``add`` or ``scale`` is computed from is the
+    backend's declaration, not the recipe's, so :func:`recipe_feature_interventions` and the derived support record
+    decide it.
+    """
     if target_kind(recipe, op) != "features":
         return "circuit-tracer's feature tuples act on a feature target only"
-    if op.op != "replace":
-        return f"circuit-tracer's feature tuples replace a feature's value, not `{op.op}`"
+    if op.op not in FEATURE_TUPLE_OPS:
+        return f"circuit-tracer's feature tuples express {sorted(FEATURE_TUPLE_OPS)}, not `{op.op}`"
     if (op.tokens or stage.tokens).kind != "positions":
         return "circuit-tracer's feature tuples name their positions: write the stage's tokens as `{positions: [...]}`"
     if op.value is None:
         return "a feature-targeted op takes a value"
-    return _value_refusal(op) or member_refusal(recipe, op)
+    return member_refusal(recipe, op)
 
 
 def _scatter(doses: Mapping[int, float], width: int, fill: float, where: str, layer: int) -> torch.Tensor:
@@ -226,7 +239,7 @@ def recipe_interventions(
     *,
     site_widths: Mapping[str, int],
     evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
-    statistics: Mapping[str, float | Mapping[int, float]] | None = None,
+    statistics: Mapping[str, Statistic] | None = None,
 ) -> dict[str, tuple[InterventionSpec, ...]]:
     """Translate a supported ``venngram.recipe.Recipe`` into a backend intervention payload.
 
@@ -277,18 +290,57 @@ def recipe_interventions(
     return {pattern: tuple(specs) for pattern, specs in payload.items()}
 
 
+def _clean_activation(clean_activations: Any, layer: int, position: int, feature: int, where: str) -> float:
+    shape = tuple(clean_activations.shape)
+    if len(shape) != 3 or not (0 <= layer < shape[0] and 0 <= position < shape[1] and 0 <= feature < shape[2]):
+        raise MisconfigurationException(
+            f"{where}: the clean capture, of shape {shape} ([layer, position, feature]), has no activation at"
+            f" layer {layer}, position {position}, feature {feature}"
+        )
+    return float(clean_activations[layer, position, feature])
+
+
+def _relative_op_refusal(op: Any, support: FeatureInterventionSupport, clean_activations: Any | None) -> str | None:
+    """Why a feature op computed from a clean activation cannot be computed here, or ``None``."""
+    if op.op not in _RELATIVE_FEATURE_OPS:
+        return None
+    if not support.captures_clean_activations:
+        return (
+            "a feature `add` or `scale` is computed from the feature's clean activation, and this backend declares"
+            " no clean capture (`captures_clean_activations`)"
+        )
+    if clean_activations is None:
+        return (
+            "a feature `add` or `scale` is computed from the feature's clean activation: pass `clean_activations`,"
+            " from the backend's `capture_feature_activations` over the same prompt"
+        )
+    return None
+
+
 def recipe_feature_interventions(
     recipe: Any,
     *,
     support: FeatureInterventionSupport,
+    clean_activations: Any | None = None,
     evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
-    statistics: Mapping[str, float | Mapping[int, float]] | None = None,
+    statistics: Mapping[str, Statistic] | None = None,
 ) -> list[tuple[int, int, int, float]]:
-    """Translate a recipe's feature ``replace`` ops into circuit-tracer's feature intervention tuples.
+    """Translate a recipe's feature ``replace``, ``add`` and ``scale`` ops into circuit-tracer's feature
+    intervention tuples.
+
+    A tuple sets a feature's value. ``replace`` sets the op's value $d$; ``add`` and ``scale`` set $a + d$ and
+    $a \\cdot d$, where $a$ is the feature's clean activation at that layer and position, read from
+    ``clean_activations``. The clean activation is the one the unintervened prompt produces, so where a recipe also
+    intervenes at an earlier layer, an ``add`` is relative to the clean value rather than to the value the earlier
+    intervention propagates to (the model-backend surface's ``add`` at the latent sub-hook is relative to the latter).
 
     Args:
         recipe: The recipe to translate; every op must be one :func:`feature_op_refusal` admits.
-        support: The analysis backend's declaration. The tuples carry computed values, so it must honour ``constant``.
+        support: The analysis backend's declaration. The tuples carry computed values, so it must honour ``constant``,
+            and an ``add`` or ``scale`` needs it to declare ``captures_clean_activations``.
+        clean_activations: The clean feature activations, indexed ``[layer, position, feature]``: the backend's
+            ``capture_feature_activations`` over the prompt the tuples will be applied to, with the same
+            ``apply_activation_function`` as the intervention call. Needed only for ``add`` and ``scale``.
         evidence: The tables evidence-sourced values read (:mod:`~interpretune.analysis.venngram.values`).
         statistics: The statistics their transforms name.
 
@@ -298,7 +350,8 @@ def recipe_feature_interventions(
 
     Raises:
         MisconfigurationException: For any op :func:`feature_op_refusal` refuses, a backend not honouring ``constant``,
-            or a value the supplied evidence cannot give, naming the stage and op.
+            an ``add`` or ``scale`` without a clean capture (undeclared, or not passed), a member or position the
+            capture has no activation for, or a value the supplied evidence cannot give, naming the stage and op.
     """
     if (why := support.refusal({"value_source": "constant", "value": 0.0})) is not None:
         raise MisconfigurationException(f"this backend cannot take a recipe's computed values: {why}")
@@ -306,12 +359,21 @@ def recipe_feature_interventions(
     for i, stage in enumerate(recipe.stages):
         for j, op in enumerate(stage.ops):
             where = f"stage {i} ({stage.site}) op {j} (`{op.op}`)"
-            if (refusal := feature_op_refusal(recipe, stage, op)) is not None:
+            refusal = feature_op_refusal(recipe, stage, op) or _relative_op_refusal(op, support, clean_activations)
+            if refusal is not None:
                 raise MisconfigurationException(f"{where}: {refusal}")
             values = member_values(recipe, op, evidence=evidence, statistics=statistics, where=where)
             positions = (op.tokens or stage.tokens).positions
+            relative = _RELATIVE_FEATURE_OPS.get(op.op)
             interventions += [
-                (layer, position, feature, value)
+                (
+                    layer,
+                    position,
+                    feature,
+                    value
+                    if relative is None
+                    else relative(_clean_activation(clean_activations, layer, position, feature, where), value),
+                )
                 for (layer, feature), value in values.items()
                 for position in positions
             ]
