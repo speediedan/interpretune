@@ -106,6 +106,7 @@ def serial_test_cleanup(*objects: Any, clear_cuda: bool = True):
                 "replacement_model",
                 "_replacement_model",
                 "_model",
+                "_module",
             ):
                 if hasattr(obj, attr):
                     try:
