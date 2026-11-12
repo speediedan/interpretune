@@ -231,6 +231,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- A tuning schedule that would thaw a quantized or packed tensor (storage torch cannot make require gradients, such as bitsandbytes' 4-bit weights) is refused when it is set up, naming the tensor and the phase, on every composition: core and Hugging Face, nnsight, sae_lens, circuit-tracer and hub-adapter views alike. It previously failed at the thaw with a torch error naming no tensor. A frozen quantized base under trainable adapters (QLoRA) still trains, and generated schedules leave the packed tensors out. finetuning-scheduler is pinned at `76b25047` (its main with #207, which makes the check) ([#758](https://github.com/speediedan/interpretune/issues/758))
+
 - `FTSCoreCallback` resolves a `class_path` naming a Hub component's entrypoint (`rte_boolq.ChainCalibrate`, say) for its gates, hooks and other `tuning_scheduler_kwargs` objects, as session configurations do; it raised `ModuleNotFoundError`. Configuration loading also passes a list's scalars through `instantiate_nested`, which raised `TypeError` on `reg_layers: [17, 18]` ([#899](https://github.com/speediedan/interpretune/issues/899))
 
 - Moving a loaded circuit-tracer replacement model moves its attribution device too. It was recorded at load, so `safe_clean_cuda` on a CPU-loaded model sent activations to the CPU while the transcoders reading them were on the GPU, which failed two Gemma 3 session parity tests with a device error (#915).
