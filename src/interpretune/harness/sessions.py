@@ -183,14 +183,35 @@ class NeutralSessionMixin:
     """
 
 
+def _refusing_step(phase: str):
+    """Build a step method that refuses: readout sessions run ops on their own batches, never a loop phase."""
+
+    def _step(self, *args: Any, **kwargs: Any):
+        raise NotImplementedError(
+            f"Readout experiment sessions have no {phase} loop: pipelines call ops on prompt batches they build. "
+            f"Calling {phase}_step here is a programming error."
+        )
+
+    _step.__name__ = f"{phase}_step"
+    return _step
+
+
 class ReadoutModule:
-    """Task module for readout-only experiment sessions: a plain class that adds nothing.
+    """Task module for readout-only experiment sessions: no task, and step methods that refuse.
 
     The session composes a spec's ``module_cls`` with the classes its adapter combination registers, and for
     ``[core, nnsight]`` that is ``NNsightModule`` itself, which supplies model loading and the analysis surface. Naming
     an adapter class (or one of its bases) as ``module_cls`` would list it twice among the composed bases, which Python
     refuses. Circuit-tracer specs name ``CircuitTracerModule``, a sibling of the class their combination registers.
+
+    The session's protocol check wants at least one step method, as ``ExperimentDataModule``'s wants dataloaders, so
+    the four exist only to satisfy it and refuse if called.
     """
+
+    training_step = _refusing_step("training")
+    validation_step = _refusing_step("validation")
+    test_step = _refusing_step("test")
+    predict_step = _refusing_step("predict")
 
 
 # Session kwargs the harness assembly consumes; anything else (debug presets,

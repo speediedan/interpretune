@@ -117,6 +117,16 @@ def test_every_model_spec_composes_its_module_class(spec):
     assert issubclass(composed, cfg.module_cls)
 
 
+def test_readout_module_satisfies_the_step_protocol_and_refuses_steps():
+    """The session's protocol check sees step methods; calling one is refused rather than run on no task."""
+    from interpretune.harness.sessions import ReadoutModule
+
+    module = ReadoutModule()
+    for phase in ("training", "validation", "test", "predict"):
+        with pytest.raises(NotImplementedError, match=f"no {phase} loop"):
+            getattr(module, f"{phase}_step")()
+
+
 def test_readout_session_refuses_transcoder_options():
     from interpretune.harness.sessions import build_session_body
 
