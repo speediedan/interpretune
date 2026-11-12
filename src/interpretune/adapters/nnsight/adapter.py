@@ -11,12 +11,12 @@ NNsight wraps HuggingFace models directly without weight conversion, providing:
 """
 
 from __future__ import annotations
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, cast
 from copy import deepcopy
 import os
 
 import torch
-from transformers.tokenization_utils_base import BatchEncoding
+from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
 from interpretune.adapters import CompositionRegistry, LightningDataModule, LightningModule, LightningAdapter
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
@@ -273,9 +273,11 @@ class BaseNNsightModule(BaseITModule):
             rank_zero_info(f"{model_name} is registered as multimodal; using NNsight VisionLanguageModel")
             self.model = VisionLanguageModel(model_name, **nnsight_kwargs)
 
-        # Store reference to tokenizer if not already set
+        # Store reference to tokenizer if not already set. The cast is real: Envoy
+        # attribute access is typed as Tensor | Module, but `tokenizer` on a
+        # LanguageModel is the HF tokenizer object, not a traced proxy.
         if self.it_cfg.tokenizer is None and hasattr(self.model, "tokenizer"):
-            self.it_cfg.tokenizer = self.model.tokenizer
+            self.it_cfg.tokenizer = cast(PreTrainedTokenizerBase, self.model.tokenizer)
 
         # Apply generation config to the underlying HF model (equivalent to _hf_post_init_cfg for NNsight)
         self._apply_generation_config()
