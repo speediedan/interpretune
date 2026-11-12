@@ -402,6 +402,7 @@ def partition_final_residual(
     path = (r0 + alphas[:, None] * (r1 - r0)).requires_grad_(True)
     values = readout(path)
     values.sum().backward()
+    assert path.grad is not None
     grad = (path.grad * weights[:, None]).sum(0)
     parts = {name: float(grad @ (second[h][0, -1].float() - first[h][0, -1].float())) for name, h in terms.items()}
     return ResidualPartition(float(values[0].detach()), float(values[-1].detach()), parts, recon)
@@ -438,7 +439,7 @@ def apply_last_token_edits(
     hf = _hf_causal_lm(module.model)
     device, dtype = next(hf.parameters()).device, next(hf.parameters()).dtype
     tokenizer = module.replacement_model.tokenizer
-    batch = {k: v.to(device) for k, v in dict(tokenizer(prompt, return_tensors="pt")).items()}
+    batch = tokenizer(prompt, return_tensors="pt").to(device)
     specs = {
         h: InterventionSpec(
             intervention_tensor=d.to(device, dtype),
@@ -454,7 +455,7 @@ def apply_last_token_edits(
     post = out.post_intervention_logits.float().reshape(-1)
     probs = torch.softmax(post, -1)
     top = int(post.argmax())
-    norm = float(torch.sqrt(sum((d.float() ** 2).sum() for d in edits.values()))) if edits else 0.0
+    norm = float(torch.stack([(d.float() ** 2).sum() for d in edits.values()]).sum().sqrt()) if edits else 0.0
     size = dose * norm if mode == "add" else float("nan")
     return {
         "dose": dose,
@@ -591,7 +592,13 @@ def plot_dose_response(arms: Mapping[str, Sequence[Mapping[str, Any]]], label_a:
                 col=col,
             )
     for col in (1, 2):
-        fig.add_hline(y=0.0, line=dict(color="gray", dash="dash"), row=1, col=col)
+        # plotly's stubs type row and col as str; make_subplots grids take ints
+        fig.add_hline(
+            y=0.0,
+            line=dict(color="gray", dash="dash"),
+            row=1,  # pyright: ignore[reportArgumentType]
+            col=col,  # pyright: ignore[reportArgumentType]
+        )
     fig.update_xaxes(title_text="dose (1: the full Dallas-to-Detroit change)", row=1, col=1)
     fig.update_xaxes(title_text="edit size (L2 norm over every edited site, residual units)", row=1, col=2)
     fig.update_yaxes(title_text=f"{label_a} minus {label_b} (logits)", row=1, col=1)
