@@ -404,7 +404,7 @@ def partition_final_residual(
     values.sum().backward()
     grad = (path.grad * weights[:, None]).sum(0)
     parts = {name: float(grad @ (second[h][0, -1].float() - first[h][0, -1].float())) for name, h in terms.items()}
-    return ResidualPartition(float(values[0]), float(values[-1]), parts, recon)
+    return ResidualPartition(float(values[0].detach()), float(values[-1].detach()), parts, recon)
 
 
 def last_token_edits(
