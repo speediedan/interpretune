@@ -7,7 +7,7 @@ model_specs:
     neuronpedia_set: ""
     use_chat_template: true
     composition: [core, nnsight]
-    module_cls: interpretune.adapters.nnsight.adapter.NNsightModule
+    module_cls: interpretune.harness.sessions.ReadoutModule
     nnsight_overrides:
       model_name: "{model_name}"
       device_map: "{device_type}"

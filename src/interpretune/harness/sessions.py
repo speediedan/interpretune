@@ -183,6 +183,16 @@ class NeutralSessionMixin:
     """
 
 
+class ReadoutModule:
+    """Task module for readout-only experiment sessions: a plain class that adds nothing.
+
+    The session composes a spec's ``module_cls`` with the classes its adapter combination registers, and for
+    ``[core, nnsight]`` that is ``NNsightModule`` itself, which supplies model loading and the analysis surface. Naming
+    an adapter class (or one of its bases) as ``module_cls`` would list it twice among the composed bases, which Python
+    refuses. Circuit-tracer specs name ``CircuitTracerModule``, a sibling of the class their combination registers.
+    """
+
+
 # Session kwargs the harness assembly consumes; anything else (debug presets,
 # Neuronpedia upload toggles) stays caller-side and is named in debug output
 # rather than silently dropped.

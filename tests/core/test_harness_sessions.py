@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from interpretune.harness.sessions import ExperimentDataModule, HubModelSpec, resolve_model_spec
+from interpretune.harness.sessions import (
+    ExperimentDataModule,
+    HubModelSpec,
+    _hub_model_spec_registry,
+    resolve_model_spec,
+)
 
 
 def test_known_spec_resolves_with_composition():
@@ -90,6 +95,26 @@ def test_qwen_readout_session_loads_config_without_transcoders():
     assert cfg.module_cfg.nnsight_cfg.model_name == "Qwen/Qwen3.5-4B"
     assert str(cfg.module_cfg.nnsight_cfg.resolved_dtype) == "torch.bfloat16"
     assert cfg.module_cfg.nnsight_cfg.device_map == "cpu"
+
+
+@pytest.mark.parametrize(
+    "spec",
+    sorted(_hub_model_spec_registry().values(), key=lambda s: (s.family, s.variant)),
+    ids=lambda s: f"{s.family}.{s.variant}",
+)
+def test_every_model_spec_composes_its_module_class(spec):
+    """Compose each spec's module class exactly as the session does, without loading a model.
+
+    A ``module_cls`` that is also one of the classes its adapter combination registers (or one of their bases) fails
+    here as Python's duplicate-base or MRO error, which a config-only check cannot see.
+    """
+    from interpretune.config.loading import load_session_cfg
+    from interpretune.harness.sessions import build_session_body
+    from interpretune.session import ITMeta
+
+    cfg = load_session_cfg(build_session_body(spec, force_device="cpu"))
+    composed = ITMeta("InterpretunableModule", (), {}, component="m", input=cfg.module_cls, ctx=cfg.adapter_ctx)
+    assert issubclass(composed, cfg.module_cls)
 
 
 def test_readout_session_refuses_transcoder_options():
