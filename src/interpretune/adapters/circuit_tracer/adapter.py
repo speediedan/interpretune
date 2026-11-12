@@ -219,9 +219,10 @@ class BaseCircuitTracerModule(BaseITModule):
     """
 
     def build_tunable_view(self) -> Any | None:
-        """The transcoders' view (:class:`~interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`):
-        every transcoder tensor ``instrument`` until promoted, and base-model tensors refused by name unless
-        ``CircuitTracerConfig.tune_base`` makes them ``base``.
+        """The transcoders' view (:class:`~interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`),
+        bound with this module's declared roles: every transcoder tensor ``instrument`` until promoted, attached
+        interventions and latent models with the roles ``tunable_roles()`` declares, and base-model tensors refused
+        by name unless ``CircuitTracerConfig.tune_base`` makes them ``base``.
 
         A composition with no replacement model loaded is refused.
         """
@@ -239,7 +240,13 @@ class BaseCircuitTracerModule(BaseITModule):
                 " composition's tunable view; set `CircuitTracerConfig.lazy_delta_rank` to tune them through low-rank"
                 " corrections, or load them eagerly (`lazy_encoder=False`, `lazy_decoder=False`)."
             )
-        return CircuitTracerView(self, transcoders, tune_base=cfg is not None and cfg.tune_base)
+        from venngram.tuning import resolve_view
+
+        # the composition's own roles (attached interventions and latent models) are declared on the bound view, which
+        # merges them with the transcoders' and refuses one that conflicts (#953)
+        declared = self.tunable_roles()
+        view = CircuitTracerView(self, transcoders, tune_base=cfg is not None and cfg.tune_base, cooperative=declared)
+        return resolve_view(self, view, roles=declared)
 
     def fsdp_direct_calls(self) -> list[tuple[str, nn.Module, tuple[str, ...]]]:
         """Add the transcoder methods circuit-tracer calls outside ``forward`` (see
@@ -536,13 +543,13 @@ class BaseCircuitTracerModule(BaseITModule):
         )
 
         with (
-            attribution_frozen(self.replacement_model) as thawed,
+            attribution_frozen(self.replacement_model, self) as thawed,
             offload_keeps_parameters(attribution_kwargs["offload"]),
         ):
             graph = attribute(prompt=prompt, model=self.replacement_model, **attribution_kwargs)
         transcoders = _replacement_transcoders(self)
         tc_ids = {id(p) for p in transcoders.parameters()} if transcoders is not None else set()
-        if cfg is not None and cfg.tune_base and any(id(p) not in tc_ids for p in thawed):
+        if any(id(p) not in tc_ids for p in thawed):
             rank_zero_warn(REFIT_SUGGESTION)
 
         # Store the graph

@@ -3,7 +3,7 @@
 ## Overview
 This document provides an overview of the TransformerLens configuration hierarchy and its integration with Interpretune configurations.
 
-TransformerLens 4.0 removed the legacy `Hooked*` model stack, so `TransformerBridge` is the only model path and `TransformerBridgeConfig` the only TL config. The `use_bridge` flag that selected between them is retired: it had one reachable value left, and passing it now fails by name rather than being accepted and ignored.
+TransformerLens 4.0 removed the legacy `Hooked*` model stack, so `TransformerBridge` is the only model path and `TransformerBridgeConfig` the only TL config. The `use_bridge` flag that selected between them is retired: it had one reachable value left, and passing it now fails rather than being accepted and ignored.
 
 ## TransformerLens Config Hierarchy
 
