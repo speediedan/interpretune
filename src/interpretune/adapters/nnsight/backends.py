@@ -1216,7 +1216,11 @@ class NNsightModelBackend:
 
                         self._splice_sae(model, sae, interventions=latent_specs, last_pos=last_pos)
 
-                for hook_qualifier, specs in pending_base_interventions.items():
+                # in FORWARD order, as captures are: nnsight resolves envoy values in trace order, so a caller's
+                # mapping listing `blocks.0.hook_attn_out` and the rest before `blocks.0.hook_mlp_out` failed with
+                # `MissedProviderError` on its first out-of-order pair
+                for hook_qualifier in _forward_order(list(pending_base_interventions), self._resolver):
+                    specs = pending_base_interventions[hook_qualifier]
                     resolved = self._resolver.resolve_for_envoy(hook_qualifier)
                     envoy = _navigate_envoy(model, resolved.module_path)
                     act_proxy = _read_envoy_activation(envoy, resolved)

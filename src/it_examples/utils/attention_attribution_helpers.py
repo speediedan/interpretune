@@ -7,6 +7,8 @@ report) or a trace the notebook's analysis points recorded inside circuit-tracer
 
 from __future__ import annotations
 
+import copy
+
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -263,6 +265,196 @@ def source_layers(active_features: torch.Tensor, n_layers: int, n_pos: int, n_lo
     feature_layers = active_features[:, 0].cpu().numpy()
     error_layers = np.repeat(np.arange(n_layers), n_pos)
     return np.concatenate([feature_layers, error_layers, np.full(n_pos, -1), np.full(n_logits, n_layers)])
+
+
+def node_positions(features: torch.Tensor, n_layers: int, n_pos: int, n_logits: int) -> np.ndarray:
+    """The prompt position of every node (features, errors and tokens by their position; logits ``-1``)."""
+    feature_pos = features[:, 1].cpu().numpy()
+    error_pos = np.tile(np.arange(n_pos), n_layers)
+    return np.concatenate([feature_pos, error_pos, np.arange(n_pos), np.full(n_logits, -1)])
+
+
+def influence_by_kind(influence: torch.Tensor, kinds: Sequence[str]) -> dict[str, float]:
+    """The summed influence of each node kind, and the error nodes' share of the summed influence.
+
+    Influence is linear in the logit weights, so the sums scale with the targets' total probability; the share is the
+    quantity that can be compared between graphs whose targets differ.
+    """
+    values = influence.float().cpu().numpy()
+    kinds_arr = np.asarray(kinds)
+    sums = {kind: float(values[kinds_arr == kind].sum()) for kind in ("feature", "error", "token")}
+    total = sum(sums.values())
+    return {**sums, "total": total, "error_share": sums["error"] / total if total else float("nan")}
+
+
+def position_change_mass(delta: torch.Tensor, positions: np.ndarray, kinds: Sequence[str], n_pos: int) -> np.ndarray:
+    """``(n_pos, n_pos)``: summed ``|delta|`` of the feature-to-feature edges, by (target position, source
+    position).
+
+    An edge between two positions can only run through attention, so mass off the diagonal is credit that moves between
+    positions; mass on it stays within one position's residual stream.
+    """
+    features = np.asarray(kinds) == "feature"
+    block = delta.abs()[np.flatnonzero(features)][:, np.flatnonzero(features)].float().cpu().numpy()
+    pos = positions[features]
+    out = np.zeros((n_pos, n_pos))
+    np.add.at(out, (pos[:, None].repeat(len(pos), 1), pos[None, :].repeat(len(pos), 0)), block)
+    return out
+
+
+@dataclass(frozen=True)
+class ResidualPartition:
+    """The change of a logit difference between two prompts, split over the components that wrote the final
+    residual.
+
+    The final residual at the last position is the embedding plus every attention and MLP output, so the change of any
+    function of it is split exactly by integrating its gradient along the straight line between the two residuals
+    (integrated gradients over a sum is additive over its terms). Each part is a DIRECT path: what that component
+    wrote into the final residual. An effect an attention layer has through a later MLP is credited to the MLP.
+
+    Attributes:
+        t_from: The logit difference on the first prompt (recomputed in fp32 from the captured residual).
+        t_to: The same on the second prompt.
+        parts: Component name (``embed``, ``attn<L>``, ``mlp<L>``) to its part of the change, in logits.
+        recon_error: The relative error of rebuilding the first prompt's final residual from the components, the
+            control that the components really are the residual's terms.
+    """
+
+    t_from: float
+    t_to: float
+    parts: dict[str, float]
+    recon_error: float
+
+    @property
+    def change(self) -> float:
+        return self.t_to - self.t_from
+
+    @property
+    def unexplained(self) -> float:
+        """The change the parts do not account for (the integral's discretization)."""
+        return self.change - sum(self.parts.values())
+
+    def total(self, prefix: str) -> float:
+        return sum(v for k, v in self.parts.items() if k.startswith(prefix))
+
+
+def _hf_causal_lm(model: Any) -> Any:
+    """The Hugging Face model behind an nnsight wrapper (``_model``), or the model itself."""
+    inner = getattr(model, "_model", None)
+    return inner if isinstance(inner, torch.nn.Module) else model
+
+
+def capture_residual_terms(module: Any, prompt: str, n_layers: int) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Next-token logits and every term of the residual stream for ``prompt``, through the model backend."""
+    from interpretune.analysis.optools import require_model_backend
+
+    hooks = (
+        ["blocks.0.hook_resid_pre"]
+        + [f"blocks.{layer}.hook_{kind}_out" for layer in range(n_layers) for kind in ("attn", "mlp")]
+        + [f"blocks.{n_layers - 1}.hook_resid_post"]
+    )
+    model = module.model
+    device = next(_hf_causal_lm(model).parameters()).device
+    batch = {k: v.to(device) for k, v in dict(module.replacement_model.tokenizer(prompt, return_tensors="pt")).items()}
+    logits, cache = require_model_backend(module).fwd_w_cache(model=model, batch=batch, names_filter=hooks)
+    return torch.as_tensor(logits).float(), {h: torch.as_tensor(cache[h]).detach() for h in hooks}
+
+
+def partition_final_residual(
+    module: Any, prompt: str, counterfactual: str, token_a: int, token_b: int, n_steps: int = 64
+) -> ResidualPartition:
+    """Split the change of ``logit[token_a] - logit[token_b]`` between two prompts over the final residual's terms.
+
+    The readout (final norm, unembedding and, where the model has one, the logit soft cap) is evaluated in fp32 so the
+    partition's own arithmetic is not limited by the model's dtype.
+    """
+    hf = _hf_causal_lm(module.model)
+    decoder, head = hf.get_decoder(), hf.get_output_embeddings()
+    norm = getattr(decoder, "norm", None)
+    if norm is None or head is None:
+        raise ValueError(f"{type(hf).__name__}: no final norm and output embedding to read the residual through")
+    norm = copy.deepcopy(norm).float()
+    w_u = head.weight.float()
+    cap = getattr(hf.config, "final_logit_softcapping", None)
+    n_layers = int(hf.config.num_hidden_layers)
+    final = f"blocks.{n_layers - 1}.hook_resid_post"
+    _, first = capture_residual_terms(module, prompt, n_layers)
+    _, second = capture_residual_terms(module, counterfactual, n_layers)
+    terms = {"embed": "blocks.0.hook_resid_pre"}
+    terms.update(
+        {f"{kind}{layer}": f"blocks.{layer}.hook_{kind}_out" for layer in range(n_layers) for kind in ("attn", "mlp")}
+    )
+    rebuilt = sum(first[h][0, -1].float() for h in terms.values())
+    recon = float((rebuilt - first[final][0, -1].float()).norm() / first[final][0, -1].float().norm())
+
+    def readout(r: torch.Tensor) -> torch.Tensor:
+        z = norm(r) @ w_u.T
+        if cap:
+            z = cap * torch.tanh(z / cap)
+        return z[..., token_a] - z[..., token_b]
+
+    r0, r1 = first[final][0, -1].float(), second[final][0, -1].float()
+    alphas = torch.linspace(0, 1, n_steps + 1, device=r0.device)
+    weights = torch.full((n_steps + 1,), 1.0 / n_steps, device=r0.device)
+    weights[0] = weights[-1] = 0.5 / n_steps
+    path = (r0 + alphas[:, None] * (r1 - r0)).requires_grad_(True)
+    values = readout(path)
+    values.sum().backward()
+    grad = (path.grad * weights[:, None]).sum(0)
+    parts = {name: float(grad @ (second[h][0, -1].float() - first[h][0, -1].float())) for name, h in terms.items()}
+    return ResidualPartition(float(values[0]), float(values[-1]), parts, recon)
+
+
+def last_token_edits(
+    first: Mapping[str, torch.Tensor], second: Mapping[str, torch.Tensor], hooks: Sequence[str]
+) -> dict[str, torch.Tensor]:
+    """The second prompt's minus the first prompt's output at the last position, per hook: an additive edit."""
+    return {h: (second[h][0, -1] - first[h][0, -1]).float() for h in hooks}
+
+
+def apply_last_token_edits(
+    module: Any, prompt: str, edits: Mapping[str, torch.Tensor], dose: float, token_a: int, token_b: int
+) -> dict[str, Any]:
+    """Add ``dose`` times each edit at the last position through ``model_fwd_intervention`` and read the answer.
+
+    The model runs with its own attention patterns and norms, so later layers respond to the edit. Returns the logit
+    difference, both tokens' probabilities, the top token and the edit's size (the L2 norm of every site's added vector
+    together, in residual units).
+    """
+    import interpretune as it
+    from interpretune.analysis.backends.interventions import InterventionSpec
+    from interpretune.analysis.ops.base import AnalysisBatch
+
+    hf = _hf_causal_lm(module.model)
+    device, dtype = next(hf.parameters()).device, next(hf.parameters()).dtype
+    tokenizer = module.replacement_model.tokenizer
+    batch = {k: v.to(device) for k, v in dict(tokenizer(prompt, return_tensors="pt")).items()}
+    specs = {
+        h: InterventionSpec(
+            intervention_tensor=d.to(device, dtype), mode="add", scale_factor=dose, position_scope="last_token"
+        )
+        for h, d in edits.items()
+    }
+    out = it.model_fwd_intervention(
+        module, AnalysisBatch(prompts=[prompt], interventions=specs, logit_target_ids=torch.tensor([token_a])), batch, 0
+    )
+    post = out.post_intervention_logits.float().reshape(-1)
+    probs = torch.softmax(post, -1)
+    top = int(post.argmax())
+    size = dose * float(torch.sqrt(sum((d.float() ** 2).sum() for d in edits.values()))) if edits else 0.0
+    return {
+        "dose": dose,
+        "gap": float(post[token_a] - post[token_b]),
+        "p_a": float(probs[token_a]),
+        "p_b": float(probs[token_b]),
+        "top": tokenizer.decode([top]),
+        "top_p": float(probs[top]),
+        "edit_norm": size,
+        "pre_gap": float(
+            out.pre_intervention_logits.float().reshape(-1)[token_a]
+            - out.pre_intervention_logits.float().reshape(-1)[token_b]
+        ),
+    }
 
 
 def _asinh_axis(title: str, scale: float) -> dict[str, Any]:
@@ -584,6 +776,17 @@ def plot_residual_convergence(steps: Sequence[int], residuals: Sequence[float]) 
 
 __all__ = [
     "AlignedRegimes",
+    "FeatureContext",
+    "ResidualPartition",
+    "apply_last_token_edits",
+    "capture_residual_terms",
+    "influence_by_kind",
+    "last_token_edits",
+    "node_positions",
+    "partition_final_residual",
+    "position_change_mass",
+    "resolve_feature_context",
+    "display_next_token_checks",
     "NextTokenCheck",
     "align_regime_nodes",
     "check_next_token",

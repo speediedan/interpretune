@@ -200,3 +200,35 @@ def test_resolve_feature_context_requests_each_feature_once(monkeypatch):
     assert seen["feature_tuples"] == [(20, 15589), (21, 5943)]
     assert seen["preferred_type_name"] == "oai_token-act-pair"
     assert ctx.explanation(20, 15589) == "Texas"
+
+
+def test_node_positions_and_position_change_mass_separate_within_and_cross_position_edges():
+    features = torch.tensor([[0, 0, 5], [1, 1, 6]])  # two features, at positions 0 and 1
+    n_layers, n_pos, n_logits = 1, 2, 1
+    positions = aah.node_positions(features, n_layers, n_pos, n_logits)
+    assert positions.tolist() == [0, 1, 0, 1, 0, 1, -1]
+    kinds = aah.node_kinds(2, n_layers, n_pos, n_logits)
+    delta = torch.zeros(7, 7)
+    delta[1, 0] = -3.0  # feature at pos 1 <- feature at pos 0: crosses positions
+    delta[0, 0] = 2.0  # within position 0
+    delta[6, 1] = 100.0  # a logit row is not a feature-to-feature edge
+    mass = aah.position_change_mass(delta, positions, kinds, n_pos)
+    assert mass.tolist() == [[2.0, 0.0], [3.0, 0.0]]
+
+
+def test_influence_by_kind_reports_a_share_that_does_not_scale_with_the_logit_weights():
+    kinds = aah.node_kinds(2, 1, 2, 1)
+    influence = torch.tensor([0.4, 0.2, 0.1, 0.1, 0.2, 0.0, 0.0])
+    one = aah.influence_by_kind(influence, kinds)
+    scaled = aah.influence_by_kind(influence * 0.01, kinds)
+    assert one["error"] == pytest.approx(0.2) and one["total"] == pytest.approx(1.0)
+    assert scaled["error_share"] == pytest.approx(one["error_share"]) == pytest.approx(0.2)
+
+
+def test_residual_partition_reports_what_its_parts_leave_unexplained():
+    part = aah.ResidualPartition(
+        t_from=8.0, t_to=-6.0, parts={"embed": 0.0, "attn3": -10.0, "mlp3": -3.5}, recon_error=0.0
+    )
+    assert part.change == -14.0
+    assert part.total("attn") == -10.0 and part.total("mlp") == -3.5
+    assert part.unexplained == pytest.approx(-0.5)
