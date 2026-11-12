@@ -32,6 +32,11 @@ class Capability(Enum):
     declaring exactly which configurations of it it honours, and lets a gate refuse the rest by name. What a component
     needs ANOTHER component to provide is its ``requires`` set, checked when the module's capabilities are aggregated
     (:func:`get_module_capabilities`).
+
+    .. note:: The members sit at different levels, surfaces (``INTERVENTION``, ``CAPTURE``, ``GRADIENTS``,
+       ``LATENT_MODELS``) beside techniques (``ATTRIBUTION_GRAPH``, ``HEAD_ATTRIBUTION``), and the namespace is under
+       review: it may narrow to the core surfaces, with techniques as registered ops, or become a hierarchy that users
+       and Hub collections extend (interpretune#984).
     """
 
     INTERVENTION = "intervention"

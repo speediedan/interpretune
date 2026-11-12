@@ -7,9 +7,11 @@ activation, or to its gradient. Causal-abstraction interventions (hard, soft and
 ablation, steering, and trainable interventions such as distributed alignment search and representation fine-tuning
 are all interventions on a model's internal variables.
 
-- **Ops** come from venngram's op registry (`venngram.ops`), a federated registry: its core ops (`replace`, `add`,
-  `scale`, `project`, `reject`, `patch`, `clamp` and `replace_with_error`), plus any op a user registers in code or a
-  hub op collection declares. Each core op's meaning is defined once, below.
+- **Ops** are names in venngram's op registry (`venngram.ops`), and that registry is federated: it starts from the
+  core ops (`replace`, `add`, `scale`, `project`, `reject`, `patch`, `clamp` and `replace_with_error`), but you are
+  not limited to them. Define your own op, register it in code, or publish it in a Hub op collection for others to
+  use, and it is applied exactly as a core op is ([intervention ops](#intervention-ops)). Sharing ops this way is how
+  one experiment's technique becomes the next one's starting point. Each core op's meaning is defined once, below.
 - **Targets** are the whole activation, a set of its units, a latent model's features (venngram's `targets`), or a
   parameter tensor or its units ([#960](https://github.com/speediedan/interpretune/issues/960), planned). A subset of
   an attribution graph, distilled in one context and applied in another, is a planned target too
@@ -52,12 +54,19 @@ kind:
 |---|---|---|---|---|---|
 | Model backend | `activation`, `units`, `features` | an activation at any vocabulary point (residual stream, attention, MLP, head-shaped), a set of its units, or a latent model's features at its sub-hook | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (ops, targets, position scopes, value sources, bases, `of`) |
 | Model backend, backward pass (planned, [#970](https://github.com/speediedan/interpretune/issues/970)) | `activation`, `units` with `of: grad` | the gradient with respect to an activation, at a site an `of: grad` address names | `model_bwd_intervention` | `ModelBackend.bwd_w_intervention`, through the same op executor as the forward pass | `InterventionSupport` with `of: [value, grad]` |
-| Analysis backend (circuit-tracer) | `features` | a replacement model's transcoder feature activations, as `(layer, position, feature_id) -> value` tuples | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `InterventionSupport` whose `features` target carries a `FeatureTargetSupport` (value sources, constrainable layers, returned activations, freezable norms) |
+| Analysis backend (e.g. circuit-tracer) | `features` | a replacement model's transcoder feature activations, as `(layer, position, feature_id) -> value` tuples | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `InterventionSupport` whose `features` target carries a `FeatureTargetSupport` (value sources, constrainable layers, returned activations, freezable norms) |
 
 **Capabilities say what a component provides; support records say how.** A capability member names a surface and
 answers only whether a component provides it. The configurations it honours are declared in a typed support record
 whose axes mirror venngram's `Support`: a backend that implements `fwd_w_intervention` for `add` and `project` but
 not `patch` declares the surface and a record saying so, and a gate refuses `patch` before anything runs.
+
+> **The capability namespace is under review.** `Capability` is one flat enum whose members sit at different levels:
+> surfaces (`INTERVENTION`, `CAPTURE`, `GRADIENTS`, `LATENT_MODELS`) beside techniques (`ATTRIBUTION_GRAPH`,
+> `HEAD_ATTRIBUTION`). A member per technique does not scale to the range of experiments Interpretune composes, so
+> the namespace is likely to change soon: to the core surfaces alone, with techniques as registered ops that declare
+> what they require, or to a hierarchy that users and Hub collections can extend
+> ([#984](https://github.com/speediedan/interpretune/issues/984)).
 
 **Two providers of one target are legitimate, and are resolved by name.** In a circuit-tracer composition the model
 backend reaches an SAE's features at `hook_sae_acts_post` and the replacement model reaches its transcoders' features.
@@ -140,12 +149,11 @@ precedence. Concept-direction notebook experiments use this surface for direct-p
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
 such as `blocks.0.hook_in` with the `project` op.
 
-## Ops, not modes
+## Intervention ops
 
-An intervention applies an op, and an op is a name in venngram's registry (`venngram.ops.OPS`), applied through the
-executor registered for that name in `interpretune.analysis.backends.ops`. `InterventionSpec.op` names it, the payload
-key is `op`, and the shorthand field is `intervention_op`; the retired spellings (`mode`, `intervention_mode`) are
-refused rather than read. The core ops are `replace`, `add`, `project`, `patch`, `reject`, `clamp`, `scale`
+An intervention applies an op, and an op is a name in venngram's federated registry (`venngram.ops.OPS`), applied
+through the executor registered for that name in `interpretune.analysis.backends.ops`. `InterventionSpec.op` names it,
+the payload key is `op`, and the shorthand field is `intervention_op`. The core ops are `replace`, `add`, `project`, `patch`, `reject`, `clamp`, `scale`
 and `replace_with_error`, registered from the shared op math, and a backend whose hook computes its edit during the
 pass (both bundled model backends) declares every registered op, including one registered after it was built. A user
 registers another op with venngram's `register_op` and its executor with `register_executor(name, fn)`, where
