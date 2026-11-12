@@ -24,8 +24,12 @@ transcoders, whichever backend it runs over:
 
 The transcoders are registered on the Interpretune module once: under `model` when the replacement model is a torch
 module, under the nnsight model's registered HF module (`hf_model`) when there is one, and as `transcoders` otherwise.
-In that last case the base model's parameters are not the module's, so `CircuitTracerConfig.tune_base` refuses the
-composition, naming why, rather than tuning nothing of the base.
+In that last case the base model's parameters are not the module's. `CircuitTracerConfig.tune_base` then registers the
+nnsight model's torch module as `hf_model` first, so the base model is the module's and the view declares the same
+names as when the HF module was registered beforehand; its tensors join the module's state dict, so checkpoints carry
+the base model too. Without `tune_base` nothing more is registered, so attribution-only compositions keep their
+submodules and state-dict keys. Where there is no local torch module to register (remote execution, or weights still on
+the meta device), `tune_base` refuses the composition, naming why, rather than tuning nothing of the base.
 
 With the transcoders registered as `transcoders`, every parameter of the module is a transcoder tensor, `instrument`
 until a promotion, so there is nothing to optimize: a session whose configuration sets `optimizer_init` gets no

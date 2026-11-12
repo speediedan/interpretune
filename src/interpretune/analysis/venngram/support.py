@@ -32,8 +32,9 @@ venngram's ``Support`` has no ``of`` field in the installed release, so the reco
 a recipe acting on a gradient is refused by the apply path until it does.
 
 :func:`venngram_feature_support` is the analysis-backend path's declaration, derived from the provider of the
-``features`` target that applies feature tuples: a feature ``replace`` at explicit positions, which is all
-circuit-tracer's feature tuples express.
+``features`` target that applies feature tuples: a feature ``replace`` at explicit positions, which circuit-tracer's
+feature tuples express, and a feature ``add`` and ``scale`` where the target's detail declares a clean capture to
+compute them from.
 
 .. warning:: This is an experimental API and may change in a future release.
 """
@@ -44,7 +45,7 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 from interpretune.analysis.backends.capabilities import InterventionSupport, PositionScope
-from interpretune.analysis.venngram.apply import APPLIED_OPS, feature_op_refusal, op_refusal
+from interpretune.analysis.venngram.apply import APPLIED_OPS, FEATURE_TUPLE_OPS, feature_op_refusal, op_refusal
 from interpretune.analysis.venngram.values import EVALUATED_TRANSFORMS
 from interpretune.utils import MisconfigurationException
 
@@ -134,7 +135,7 @@ def venngram_feature_support(
         intervention: That provider's record (``ModuleCapabilities.intervention_for("features",
             provider="analysis_backend")``); its ``features`` target carries the detail.
             ``recipe_feature_interventions`` passes computed values, so a detail not honouring ``constant`` declares no
-            value source at all.
+            value source at all, and one declaring no clean capture declares ``replace`` alone.
         statistics: The statistics the caller will supply; any declares ``statistic``.
         name: The consumer name the record carries.
 
@@ -147,8 +148,11 @@ def venngram_feature_support(
     vg_ops = _require_venngram()
     detail = intervention.target_detail("features")
     constant = detail is not None and "constant" in detail.value_sources
+    tuple_ops = frozenset(intervention.declared_ops & {"replace"})
+    captures = bool(tuple_ops) and detail is not None and detail.captures_clean_activations
+    relative = FEATURE_TUPLE_OPS - {"replace"} if captures else frozenset()
     return vg_ops.Support(
-        ops=frozenset(intervention.declared_ops & {"replace"}),
+        ops=tuple_ops | relative,
         targets=frozenset({"features"}),
         tokens=frozenset(_TOKEN_SCOPES[s] for s in intervention.position_scopes),
         values=frozenset(intervention.values) if constant else frozenset(),

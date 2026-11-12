@@ -122,6 +122,9 @@ class FeatureTargetSupport:
     """Whether the intervened activations can be returned beside the logits."""
     freezable_norms: bool = False
     """Whether ``freeze_norms`` can hold every residual-stream norm's denominator at its clean value."""
+    captures_clean_activations: bool = False
+    """Whether ``capture_feature_activations`` returns the clean feature activations, so a value relative to one
+    (venngram's feature ``add`` and ``scale``) can be computed before intervening."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "value_sources", frozenset(self.value_sources))
@@ -150,7 +153,8 @@ class FeatureTargetSupport:
         """One line for a card or a report."""
         return (
             f"value sources {sorted(self.value_sources)}, constrainable layers {self.constrainable_layers}, "
-            f"returns activations {self.returns_activations}, freezable norms {self.freezable_norms}"
+            f"returns activations {self.returns_activations}, freezable norms {self.freezable_norms}, "
+            f"captures clean activations {self.captures_clean_activations}"
         )
 
 

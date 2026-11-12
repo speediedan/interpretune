@@ -256,6 +256,15 @@ class SupportsFeatureInterventions(Protocol):
         """
         ...
 
+    def capture_feature_activations(self, module: Any, prompt: Any, *, apply_activation_function: bool = True) -> Any:
+        """The clean feature activations over ``prompt``, indexed ``[layer, position, feature]``.
+
+        Only meaningful where the record declares ``captures_clean_activations``; a backend declaring it does not
+        raises. The capture is what a value relative to a feature's clean activation (a recipe's feature ``add`` or
+        ``scale``) is computed from.
+        """
+        ...
+
     def select_feature_rows(self, active_features: torch.Tensor, selected_features: torch.Tensor) -> torch.Tensor:
         """Index the active-feature table by selected feature indices, preserving its column layout.
 

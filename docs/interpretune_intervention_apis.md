@@ -94,13 +94,28 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     `InterventionSpec`s carrying the same ops.
   - **Analysis backend:** `recipe_feature_interventions` turns a recipe's feature ops into the surface's canonical
     `(layer, position, feature_idx, value)` tuples, which any component providing `Capability.INTERVENTION`
-    on the `features` target takes (circuit-tracer's replacement model today). The values are computed by Interpretune and passed as constants, so a backend must honour
-    the `constant` value source. A feature `replace` at explicit positions is translated now; feature `add` and `scale`
-    need the feature's clean activation, which a backend can capture first, and are planned
-    ([#965](https://github.com/speediedan/interpretune/issues/965)).
+    on the `features` target takes (circuit-tracer's replacement model today). The values are computed by Interpretune
+    and passed as constants, so a backend must honour the `constant` value source. A tuple sets a feature's value, so a
+    feature `add` or `scale` is computed from the feature's clean activation: the backend captures it first
+    (`capture_feature_activations`, declared by the `features` target's `captures_clean_activations`) and the caller
+    passes it as `clean_activations`.
 
-  A value is a dose, or a column of evidence the caller supplies, through venngram's transforms; Interpretune evaluates
-  the transforms, and the `interpretune.analysis.venngram.values` module states what each one means.
+  What each recipe op is honoured as, per surface and target:
+
+  | Op | Model backend: whole activation | Model backend: units, or features at the latent sub-hook | Analysis backend: features, at explicit positions |
+  |---|---|---|---|
+  | `replace` | the operand, or the dose broadcast | refused: a spec replaces the whole tensor | the dose $d$ |
+  | `add` | the operand times the dose, or the dose | the dose per member, added to the activation the forward pass meets | $a + d$, for the clean activation $a$ |
+  | `scale` | the dose, as a multiplier | the dose per member, ones elsewhere | $a \cdot d$, for the clean activation $a$ |
+  | `project`, `reject`, `patch`, `clamp` | the operand (a vector, or a pair for `patch`) | refused | refused |
+
+  The two `add` columns differ only where a recipe also intervenes upstream of the feature: the model backend adds to
+  the activation the earlier intervention produces, while the analysis backend's value is fixed from the clean pass.
+
+  A value is a dose, a table of doses, or a column of evidence the caller supplies, through venngram's transforms;
+  Interpretune evaluates the transforms on a unit or feature target's members, checked against venngram's conformance
+  vectors, and the `interpretune.analysis.venngram.values` module states what each one means. A statistic a transform
+  names is supplied by the caller as one value, a value per layer, or a value per member.
   `venngram_support()` derives what Interpretune honours of a recipe from the backend's own records, and `check_recipe`
   / `require_supported` (with `analysis_backend=True` for the analysis-backend surface) refuse, before anything runs,
   whatever that record cannot express. `export_book` goes the other way, writing an intervention payload as a venngram
