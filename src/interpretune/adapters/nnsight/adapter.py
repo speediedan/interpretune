@@ -245,22 +245,11 @@ class BaseNNsightModule(BaseITModule):
         if nnsight_cfg.remote:
             api_key = nnsight_cfg.api_key or os.environ.get("NDIF_API_KEY")
             if api_key:
-                from interpretune.adapters.nnsight.config import _nnsight_accepts_init_remote
+                # Init kwargs pass through to the HF constructor, so the NDIF key is
+                # configured globally on nnsight's CONFIG instead of at init.
+                import nnsight as _nnsight_mod
 
-                if _nnsight_accepts_init_remote():
-                    # nnsight 0.6 line: the wrapper consumes api_key at init
-                    nnsight_kwargs["api_key"] = api_key
-                else:
-                    # nnsight 0.7+: init kwargs pass through to the HF constructor (TypeError);
-                    # the API key is configured globally via nnsight.CONFIG instead (accessed
-                    # dynamically — the CONFIG.API surface is not present in 0.6-line stubs)
-                    import nnsight as _nnsight_mod
-
-                    _api_cfg = getattr(getattr(_nnsight_mod, "CONFIG", None), "API", None)
-                    if _api_cfg is not None:
-                        _api_cfg.APIKEY = api_key
-                    else:
-                        rank_zero_warn("nnsight CONFIG.API surface not found; NDIF API key not applied")
+                _nnsight_mod.CONFIG.API.APIKEY = api_key
                 rank_zero_debug("Using NDIF_API_KEY for remote execution")
             else:
                 rank_zero_warn(

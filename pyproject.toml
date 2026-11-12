@@ -219,7 +219,7 @@ git-deps = [
     # shifting every position index in the feature-intervention path. The branch is rebased as the PRs
     # evolve, so VERIFY BY CONTENT, not by SHA:
     #   git log --grep="Canonicalize nnsight trace" <pin>   -> must return exactly one commit
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6a278292747293bcc0ce863aaeb26620f198aacc",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@1fdbc1b81c8b66098609e6c1ff8f7e87fb5b68df",
     # sae-lens: pinned to the head of decoderesearch/SAELens#739 (transformer-lens 4.0 support), because
     # every sae-lens release through 6.51.2 fails `import sae_lens` under transformer-lens 4.0
     # (`No module named 'transformer_lens.HookedTransformer'`). RETIRE this pin for a released floor in
@@ -321,9 +321,12 @@ override-dependencies = [
     # sae-dashboard imports only the annotation types (`Float`, `Int`, `Bool`) and never type-checks at
     # runtime, and every one of its modules imports under jaxtyping 0.3.
     "jaxtyping>=0.3",
-    # keep transitive nnsight (pulled in by sae-lens) at the validated release
-    # (0.7.0 validated: nnsight slice + parity 34/0 + low-RAM mock, both versions)
-    "nnsight==0.7.0",
+    # keep transitive nnsight (pulled in by sae-lens) at the validated release. 0.8.1 is the
+    # oldest client the NDIF server accepts (it refuses older clients by name; 0.7.0 cannot
+    # even complete the websocket handshake), and 0.8 moved Barrier to
+    # nnsight.intervention.barrier and dropped the CROSS_INVOKER/TRACE_CACHING switches, which
+    # is why the circuit-tracer git pin carries its 0.8 compat commit.
+    "nnsight==0.8.2",
     # lift the pinned sae-dashboard's torch ceiling (`>=2.7.1,<2.14`) back to interpretune's own floor. The
     # ceiling is a release-time cap, not a measured incompatibility: without this an install that is not
     # handed requirements/ci/overrides.txt (hosted CI, the gated image, the README flow) silently replaced

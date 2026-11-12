@@ -132,12 +132,8 @@ class TestNNsightConfig:
 
         kwargs = config.get_nnsight_kwargs()
 
-        from interpretune.adapters.nnsight.config import _nnsight_accepts_init_remote
-
-        if _nnsight_accepts_init_remote():  # nnsight 0.6 line: remote is an init kwarg
-            assert kwargs["remote"] is True
-        else:  # 0.7+: remote moved to per-trace selection; init kwarg would leak to the HF ctor
-            assert "remote" not in kwargs
+        # remote is per-trace selection; an init kwarg would leak to the HF ctor
+        assert "remote" not in kwargs
         assert kwargs["dispatch"] is False
 
 
@@ -461,9 +457,8 @@ class TestNNsightRemoteExecution:
     """Tests for NNsight remote execution via NDIF.
 
     These tests require NDIF_API_KEY to be set and network access. NDIF accepts any python 3.9+ client (nnsight
-    serializes intervention functions by source, not bytecode — the old exact-py3.12 requirement is obsolete), but
-    nnsight itself supports python <=3.12 only (no 3.13 classifier as of 0.6.3/0.7.0) — run these from a 3.11-3.12
-    environment.
+    serializes intervention functions by source, not bytecode: the old exact-py3.12 requirement is obsolete), and
+    nnsight 0.8 runs on python 3.13, so the standard test environment can run these.
     """
 
     @pytest.fixture
@@ -489,12 +484,9 @@ class TestNNsightRemoteExecution:
         )
 
         kwargs = config.get_nnsight_kwargs()
-        from interpretune.adapters.nnsight.config import _nnsight_accepts_init_remote
 
-        if _nnsight_accepts_init_remote():  # nnsight 0.6 line: remote is an init kwarg
-            assert kwargs["remote"] is True
-        else:  # 0.7+: remote moved to per-trace selection; init kwarg would leak to the HF ctor
-            assert "remote" not in kwargs
+        # remote is per-trace selection; an init kwarg would leak to the HF ctor
+        assert "remote" not in kwargs
         assert kwargs["dispatch"] is False
 
     @RunIf(optional=True)
