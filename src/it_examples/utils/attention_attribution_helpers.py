@@ -8,6 +8,7 @@ report) or a trace the notebook's analysis points recorded inside circuit-tracer
 from __future__ import annotations
 
 import copy
+import html
 
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
@@ -24,6 +25,7 @@ from it_examples.utils.nb_ui_utils import (
     resolve_feature_explanations,
 )
 
+_PALETTE = ("#2471a3", "#c0392b", "#27ae60", "#8e44ad", "#e67e22", "#16a085", "#7f8c8d", "#d4ac0d")
 _LAYOUT: dict[str, Any] = dict(template="simple_white", autosize=True, margin=dict(l=60, r=30, t=60, b=60))
 
 
@@ -413,13 +415,21 @@ def last_token_edits(
 
 
 def apply_last_token_edits(
-    module: Any, prompt: str, edits: Mapping[str, torch.Tensor], dose: float, token_a: int, token_b: int
+    module: Any,
+    prompt: str,
+    edits: Mapping[str, torch.Tensor],
+    dose: float,
+    token_a: int,
+    token_b: int,
+    mode: str = "add",
 ) -> dict[str, Any]:
-    """Add ``dose`` times each edit at the last position through ``model_fwd_intervention`` and read the answer.
+    """Edit each site at the last position through ``model_fwd_intervention`` and read the answer.
 
-    The model runs with its own attention patterns and norms, so later layers respond to the edit. Returns the logit
-    difference, both tokens' probabilities, the top token and the edit's size (the L2 norm of every site's added vector
-    together, in residual units).
+    ``mode="add"`` adds ``dose`` times each tensor; ``mode="replace"`` overwrites the site with the tensor (an
+    interchange, when the tensor is another prompt's value there; ``dose`` is then ignored). The model runs with its
+    own attention patterns and norms, so every site after an edited one responds to it. Returns the logit difference,
+    both tokens' probabilities, the top token and, for ``add``, the edit's size (the L2 norm of every site's added
+    vector together, in residual units).
     """
     import interpretune as it
     from interpretune.analysis.backends.interventions import InterventionSpec
@@ -431,7 +441,10 @@ def apply_last_token_edits(
     batch = {k: v.to(device) for k, v in dict(tokenizer(prompt, return_tensors="pt")).items()}
     specs = {
         h: InterventionSpec(
-            intervention_tensor=d.to(device, dtype), mode="add", scale_factor=dose, position_scope="last_token"
+            intervention_tensor=d.to(device, dtype),
+            mode=mode,
+            scale_factor=dose if mode == "add" else 1.0,
+            position_scope="last_token",
         )
         for h, d in edits.items()
     }
@@ -441,7 +454,8 @@ def apply_last_token_edits(
     post = out.post_intervention_logits.float().reshape(-1)
     probs = torch.softmax(post, -1)
     top = int(post.argmax())
-    size = dose * float(torch.sqrt(sum((d.float() ** 2).sum() for d in edits.values()))) if edits else 0.0
+    norm = float(torch.sqrt(sum((d.float() ** 2).sum() for d in edits.values()))) if edits else 0.0
+    size = dose * norm if mode == "add" else float("nan")
     return {
         "dose": dose,
         "gap": float(post[token_a] - post[token_b]),
@@ -475,8 +489,12 @@ def plot_regime_edges(
     target: str,
     annotate: int = 6,
     scale: float = 0.01,
+    hover: Sequence[str] | None = None,
 ) -> go.Figure:
     """Scatter every source's edge into one target, frozen regime against live, one colour per node kind.
+
+    ``hover`` (one per source, defaulting to ``labels``) is the hover text, so a description can ride on the points
+    without crowding the annotations.
 
     Both axes use $\\operatorname{asinh}(x / s)$ so small edges stay visible beside large ones while the sign is kept;
     tick labels are raw edge values. Points on the diagonal are sources the regime does not change. The ``annotate``
@@ -497,7 +515,7 @@ def plot_regime_edges(
                 mode="markers",
                 name=f"{kind} ({len(idx)})",
                 marker=dict(size=5, opacity=0.6),
-                text=[labels[int(i)] for i in idx],
+                text=[html.escape((hover or labels)[int(i)]) for i in idx],
                 customdata=np.stack([frozen_np[idx], live_np[idx]], axis=1),
                 hovertemplate="%{text}<br>frozen %{customdata[0]:.4f}<br>live %{customdata[1]:.4f}<extra></extra>",
             )
@@ -522,6 +540,83 @@ def plot_regime_edges(
         yaxis=_asinh_axis("live-pattern edge", scale),
         height=560,
         legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="left", x=0),
+        **_LAYOUT,
+    )
+    return fig
+
+
+def plot_position_change_mass(mass: np.ndarray, tokens: Sequence[str], title: str) -> go.Figure:
+    """The feature-to-feature change mass by (target position, source position), as a lower-triangular heatmap."""
+    labels = [f"{i} {tok!r}" for i, tok in enumerate(tokens)]
+    fig = go.Figure(
+        go.Heatmap(
+            z=mass,
+            x=labels,
+            y=labels,
+            colorscale="Viridis",
+            colorbar=dict(title="summed |live - frozen|"),
+            hovertemplate="target %{y}<br>source %{x}<br>%{z:.1f}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=title,
+        xaxis=dict(title="source position"),
+        yaxis=dict(title="target position", autorange="reversed"),
+        height=520,
+        **_LAYOUT,
+    )
+    return fig
+
+
+def plot_dose_response(arms: Mapping[str, Sequence[Mapping[str, Any]]], label_a: str, label_b: str) -> go.Figure:
+    """Each arm's logit difference against its dose, and against the edit's size, with the sign change marked."""
+    fig = make_subplots(rows=1, cols=2, subplot_titles=("against the dose", "against the edit's size"))
+    for i, (name, rows) in enumerate(arms.items()):
+        color = _PALETTE[i % len(_PALETTE)]
+        text = [f"{name}, dose {r['dose']}: top {r['top']!r} ({r['top_p']:.0%})" for r in rows]
+        for col, key in ((1, "dose"), (2, "edit_norm")):
+            fig.add_trace(
+                go.Scatter(
+                    x=[r[key] for r in rows],
+                    y=[r["gap"] for r in rows],
+                    mode="lines+markers",
+                    name=name,
+                    legendgroup=name,
+                    showlegend=col == 1,
+                    line=dict(color=color),
+                    text=[html.escape(t) for t in text],
+                    hovertemplate="%{text}<br>gap %{y:.2f}<extra></extra>",
+                ),
+                row=1,
+                col=col,
+            )
+    for col in (1, 2):
+        fig.add_hline(y=0.0, line=dict(color="gray", dash="dash"), row=1, col=col)
+    fig.update_xaxes(title_text="dose (1: the full Dallas-to-Detroit change)", row=1, col=1)
+    fig.update_xaxes(title_text="edit size (L2 norm over every edited site, residual units)", row=1, col=2)
+    fig.update_yaxes(title_text=f"{label_a} minus {label_b} (logits)", row=1, col=1)
+    fig.update_layout(height=460, legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="left", x=0), **_LAYOUT)
+    return fig
+
+
+def plot_layer_bars(series: Mapping[str, Sequence[float]], title: str, yaxis_title: str) -> go.Figure:
+    """Grouped bars per layer, one bar series per entry of ``series``."""
+    fig = go.Figure()
+    for i, (name, values) in enumerate(series.items()):
+        fig.add_trace(
+            go.Bar(
+                x=[f"L{layer}" for layer in range(len(values))],
+                y=list(values),
+                name=name,
+                marker_color=_PALETTE[i % len(_PALETTE)],
+            )
+        )
+    fig.update_layout(
+        title=title,
+        barmode="group",
+        yaxis=dict(title=yaxis_title),
+        height=420,
+        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0),
         **_LAYOUT,
     )
     return fig
@@ -795,7 +890,10 @@ __all__ = [
     "neumann_term_mass",
     "node_kinds",
     "plot_conductance_path",
+    "plot_dose_response",
     "plot_head_heatmap",
+    "plot_layer_bars",
+    "plot_position_change_mass",
     "plot_head_split",
     "plot_neumann_convergence",
     "plot_regime_edges",
