@@ -1,6 +1,6 @@
 # When Things Go Wrong
 
-First-run failures in interpretune refuse by name: each mode below fails with a message that says
+First-run failures in interpretune are explicit: each mode below fails with a message that says
 what happened and what to do next, and each is pinned by a test asserting message content, not
 just the exception type. If you meet a bare traceback instead, that is a bug: file it with the
 message and what you ran.

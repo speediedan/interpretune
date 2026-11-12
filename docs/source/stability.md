@@ -43,7 +43,7 @@ If you build on one of these, pin an exact interpretune version and read the CHA
 None of the above covers persisted artifacts: Hub artifacts and published component manifests. Code can
 move fast because its reader and writer are the same checkout. A persisted artifact outlives the code
 that wrote it, so artifacts get real compatibility handling: a versioned schema with a stated readable
-floor, so an older artifact either loads or is refused by name with the reason. That handling is tracked
+floor, so an older artifact either loads or is refused with the reason. That handling is tracked
 separately from this policy.
 
 ## Exit criterion

@@ -21,7 +21,7 @@ A *latent model* models a site's activations through latents. Examples:
 - **`attach_latent_model(root, name, latent, site, frozen=False)`**: registers the latent model as `latent_models.<name>` on the module (so it is in the module's state dict and reachable by its view) and splices it in with forward hooks. `detach_latent_model(root, name)` removes it.
 - **Roles:** an attached latent model's tensors take venngram's role `latent:<name>`, so a schedule selects them with `role:latent:<name>`. Every interpretune module declares these roles in its cooperative `tunable_roles()`, which its venngram view reads, so no mixin is needed. A `frozen` latent model is an `instrument`: never thawed or checkpointed until a schedule promotes it.
 
-A circuit-tracer composition refuses latent models attached this way for now: its view assigns its roles itself, and its transcoders are tuned by promoting them ([#953](https://github.com/speediedan/interpretune/issues/953) tracks lifting the refusal where nothing conflicts). The analysis surface's feature ops (venngram feature targets at an SAE's `hook_sae_acts_post`) reach sae_lens SAEs only, not latent models attached here.
+On a circuit-tracer composition another latent model attaches beside the transcoders, at modules of the model circuit-tracer runs, with its role merged into the view's ([Tuning: circuit-tracer](tuning_circuit_tracer.md#interventions-and-other-latent-models-beside-the-transcoders)); the transcoders themselves are tuned by promoting them. The analysis surface's feature ops (venngram feature targets at an SAE's `hook_sae_acts_post`) reach sae_lens SAEs only, not latent models attached here.
 
 ## Attaching them
 
@@ -62,6 +62,6 @@ Attached with `frozen=True`, the same transcoder stays an `instrument`, applied 
   promote: {"role:instrument": "latent:mlp3"}
 ```
 
-`layers:3` needs the layer structure a venngram component map gives the module's view; without one, name the layer by regex (`model\.model\.layers\.3\..*`). `promote`, `refreeze` and `restore` run on the core loop; the Lightning callback refuses them by name.
+`layers:3` needs the layer structure a venngram component map gives the module's view; without one, name the layer by regex (`model\.model\.layers\.3\..*`). `promote`, `refreeze` and `restore` run on the core loop; the Lightning callback refuses them.
 
 sae_lens's own splice (`add_saes_on_init`) keeps registering its SAEs as `attached_saes` with the `latent:sae` role, as [sae_lens](tuning_sae_lens.md) describes. The seam here is for backends without a native splice, and for latent models other than SAEs.

@@ -22,7 +22,7 @@ checkpoint passes its path directly and skips discovery. The resolution is
 `jlens_direction_rows`, the one construction every J-lens direction goes through.
 
 Layers are dense model layers; lenses exist only for the fitted subset, so a
-layer is either named explicitly (refused by name when unfitted) or selected
+layer is either named explicitly (refused when unfitted) or selected
 as a percentile over the fitted set. 85% depth is the default for every J-lens
 op: late enough for naming tasks, below the final layers.
 
@@ -33,7 +33,7 @@ Two kinds of lens share one file format: the J-lens (`jlens`, the default) and t
 through the final norm and the unembedding in the same way. They differ only in how the maps were fitted, so
 the tensors cannot tell you which one you hold. Pass `jlens_kind="jpp"` to any J-lens op (as a keyword or on
 the analysis batch) to resolve a J++ lens. The resolver looks in the repository's `jpp/` directories and
-checks the artifact's sidecar, refusing by name a lens whose declared fit method contradicts the kind you
+checks the artifact's sidecar, refusing a lens whose declared fit method contradicts the kind you
 asked for. `neuronpedia/jacobian-lens` publishes J++ lenses for some of its models, among them Qwen3-4B and
 the Qwen3.5 family, but not for every model that has a J-lens: gemma-3-1b-it has none there.
 

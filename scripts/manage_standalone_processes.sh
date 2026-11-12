@@ -5,6 +5,10 @@
 #   ./manage_standalone_processes.sh /path/to/script.sh --arg1 value1 --arg2 value2
 #   ./manage_standalone_processes.sh python -m pytest tests/some_test.py
 #   ./manage_standalone_processes.sh --use-nohup /path/to/script.sh --arg1 value1
+#
+# Kept byte-identical between interpretune and finetuning-scheduler (interpretune's
+# scripts/check_shared_scripts_sync.py fails on drift); what differs per project is the
+# manage_standalone_regex.cfg beside it.
 set -eo pipefail
 
 # Directory of this script (so we can find the config file next to it)
@@ -82,11 +86,6 @@ validate_process_not_running() {
     exit 2
   fi
 
-  if [ ${#patterns[@]} -eq 0 ]; then
-    echo "No patterns found to check for conflicting processes; proceeding..."
-    return 0
-  fi
-
   # Join patterns with | for pgrep -f
   IFS='|'; pgrep_pattern="${patterns[*]}"; unset IFS
 
@@ -108,7 +107,7 @@ validate_process_not_running() {
 
 if [ -z "$1" ]; then
   echo "Usage: $0 command [arguments]"
-  echo "Example: $0 ./gen_it_coverage.sh --arg1 value1"
+  echo "Example: $0 ./scripts/run_coverage.sh --arg1 value1"
   echo ""
   echo "This script will check for potentially conflicting processes before running."
   echo "It reads process-match patterns from the config file located next to this script:"
