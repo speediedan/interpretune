@@ -1,6 +1,6 @@
 """Tuning the local nnsight cases nothing else exercises (#942): the ``(lightning, nnsight)`` composition under the
-``FinetuningScheduler`` callback, and a ``lora_cfg`` on an nnsight composition, which is refused by name rather
-than silently ignored."""
+``FinetuningScheduler`` callback, and a ``lora_cfg`` on an nnsight composition, which is refused rather than
+silently ignored."""
 
 from __future__ import annotations
 
