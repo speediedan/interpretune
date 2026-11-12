@@ -6,7 +6,15 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ## [Unreleased]
 
+### Breaking
+
+- Publish guards are named checks. `publish_dashboard_run`'s `require_page_index=` and `require_manifest_consistency=` are replaced by `skip_checks=` (`skip_checks={"page-index"}`, `skip_checks={"manifest-consistency"}`), and `scripts/publish_dashboards_to_hub.py`'s `--allow-missing-page-index` and `--allow-manifest-inconsistency` by `--skip-check page-index` and `--skip-check manifest-consistency`. `MissingPageIndexError`, `ManifestReferencesExcludedTableError` and `BucketPrefixUnspecifiedError` are replaced by one `PublishCheckError` listing every failed check, with `.names` saying which ([#262](https://github.com/speediedan/interpretune/issues/262))
+
+- A dashboard corpus whose page-index coverage cannot be measured (no pyarrow, no Parquet among the files to upload) is now refused. It used to publish, because unknown coverage did not trip the guard; a check that cannot measure no longer reads as a pass ([#262](https://github.com/speediedan/interpretune/issues/262))
+
 ### Added
+
+- Pre-publish checks as one interface (`interpretune.utils.publish_checks`): each check is named, an unknown name in `skip_checks` or `add_checks` is refused, and a check that cannot tell does not pass. Dashboard publishing runs `page-index`, `manifest-consistency`, `bucket-prefix` and an advisory `row-group-size` report before any network call. A post-upload `range-read` check reads one published Parquet file back through `HfFileSystem` and checks that it decodes; it is on by default for the bucket store and for `push_analysis_store`, and its failure (`PublishedArtifactCheckError`) says the artifact is already live. `push_analysis_store` takes `skip_checks` and `add_checks` and records skips in the envelope's `provenance`. The `datasets` floor rises to 4.1.0, the first release that page-indexes every Parquet file `push_to_hub` writes ([#262](https://github.com/speediedan/interpretune/issues/262))
 
 - A recipe's feature `add` and `scale` apply on the analysis-backend surface. A circuit-tracer feature tuple sets a value, so `recipe_feature_interventions` computes $a + d$ and $a \cdot d$ from the feature's clean activation $a$, which the caller passes as `clean_activations` from the backend's new `capture_feature_activations`. `FeatureInterventionSupport` gains `captures_clean_activations` (circuit-tracer's backend declares it), `venngram_feature_support` declares `add` and `scale` only where it is set, and `check_recipe(..., analysis_backend=True)` refuses them elsewhere. The intervention APIs page states what each op is honoured as, per surface and target ([#965](https://github.com/speediedan/interpretune/issues/965))
 

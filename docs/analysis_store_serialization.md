@@ -138,6 +138,16 @@ Two blocks with opposite rules:
 - `provenance` (including `content_fingerprint`) is refreshed freely, so consumers get change
   detection without identity churn.
 
+### Checks on push
+
+`Dataset.push_to_hub` writes the parquet, and from `datasets` 4.1.0 (interpretune's floor) every
+file it writes carries a page index, so nothing checks the files before they upload. After the
+upload, the `range-read` check reads one published parquet file back through `HfFileSystem` at the
+pushed revision and checks that it decodes. A failure raises `PublishedArtifactCheckError`: the
+artifact is already live, so delete it or republish. Pass `skip_checks={"range-read"}` to skip it;
+the skip is recorded in the envelope's `provenance` as `publish_checks_skipped`. The same check
+interface guards dashboard corpora (see the dashboard pipeline docs).
+
 ### What the `interpretune` block re-attaches
 
 Alongside those two, the `interpretune` block carries what a reader needs to rebuild the store's
