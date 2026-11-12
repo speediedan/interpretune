@@ -9,7 +9,7 @@ in a local directory (``--against-dir``).
 It is online by construction, so it runs as its own CI job rather than a pre-commit hook: a hook that fails on a clean
 offline checkout teaches contributors to skip hooks. A drift is fixed by making the two copies identical again, in
 whichever repository is behind. What differs per project stays outside these files (``manage_standalone_regex.cfg``
-beside ``manage_standalone_processes.sh``).
+beside ``manage_standalone_processes.sh``, ``infra_utils_project.sh`` beside ``infra_utils.sh``).
 
 Exit status: 0 every copy identical, 1 any drifted (a unified diff is printed for each), 2 any other copy could not
 be read.
@@ -26,7 +26,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 #: The shared scripts, by their path relative to the repository root (the same in both repositories).
-SHARED = ("scripts/gpu_lease_wrap.sh", "scripts/manage_standalone_processes.sh")
+SHARED = ("scripts/gpu_lease_wrap.sh", "scripts/infra_utils.sh", "scripts/manage_standalone_processes.sh")
 UPSTREAM = "speediedan/finetuning-scheduler"
 RAW = "https://raw.githubusercontent.com/{repo}/{ref}/{path}"
 

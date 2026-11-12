@@ -32,7 +32,11 @@ def copies(checker, tmp_path):
 
 
 def test_every_shared_script_is_checked(checker):
-    assert set(checker.SHARED) >= {"scripts/gpu_lease_wrap.sh", "scripts/manage_standalone_processes.sh"}
+    assert set(checker.SHARED) >= {
+        "scripts/gpu_lease_wrap.sh",
+        "scripts/infra_utils.sh",
+        "scripts/manage_standalone_processes.sh",
+    }
     assert all((checker.REPO / path).is_file() for path in checker.SHARED)
 
 
