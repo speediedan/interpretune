@@ -56,7 +56,7 @@ from typing import Any
 import torch
 from torch import nn
 
-from interpretune.tuning.latents import _first, _refuse_circuit_tracer, _with_first
+from interpretune.tuning.latents import _first, _require_reachable, _with_first
 
 # the `nn.ModuleDict` on the root that holds attached interventions, by name
 INTERVENTIONS_ATTR = "interventions"
@@ -185,12 +185,12 @@ def attach_intervention(
         ``intervention``.
 
     Raises:
-        ValueError: ``name`` is not a valid name or is already attached, or ``root`` is a circuit-tracer composition.
+        ValueError: ``name`` is not a valid name or is already attached, or ``root`` is a circuit-tracer composition
+            whose forward never runs through ``site``.
         AttributeError: the site's module does not exist under ``root``.
     """
     if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
         raise ValueError(f"Intervention name {name!r} must be letters, digits, '_' and '-' only")
-    _refuse_circuit_tracer(root, "interventions")
     if not isinstance(intervention, nn.Module):
         raise ValueError(f"{type(intervention).__name__} is not an nn.Module")
     held = _interventions(root, create=True)
@@ -198,6 +198,7 @@ def attach_intervention(
     if name in held:
         raise ValueError(f"An intervention named {name!r} is already attached; detach it first")
     target = root.get_submodule(site)
+    _require_reachable(root, "interventions", target)
     if (device := _site_device(root, target)) is not None:
         intervention.to(device=device)
 

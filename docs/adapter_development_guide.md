@@ -462,7 +462,7 @@ architecture's inventory (`interpretune.analysis.points.inventory.inventory(comp
 the backend cannot capture. Derive it from what the backend can actually resolve rather than writing it down: the
 bundled TransformerLens backend probes the wrapper's hook names through the vocabulary's spellings, and the nnsight
 backend asks its hook resolver, so the declaration and the refusal cannot drift apart. `AnalysisCfg` refuses a listed
-point the declaration excludes by name before any run, and the conformance suite checks the declaration in both
+point the declaration excludes before any run, and the conformance suite checks the declaration in both
 directions: every declared point is captured, and a declared gap is refused through the runner path. The backend
 declares `Capability.CAPTURE` beside the record: the member says the surface is provided, the record says which points.
 It is a method taking the model because the answer belongs to the backend and this model instance as it stands: a

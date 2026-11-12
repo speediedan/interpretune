@@ -5,10 +5,16 @@
 # but `split_colon_fields`, `parse_from_source_specs`, and `install_from_source_packages`
 # use namerefs/associative arrays and therefore require bash >= 4.3 (callers such as
 # build_it_env.sh enforce this with an early version check).
+#
+# Kept byte-identical between interpretune and finetuning-scheduler (interpretune's
+# scripts/check_shared_scripts_sync.py fails on drift). What differs per project lives in
+# infra_utils_project.sh beside this file, sourced at the end: it names the venv-base variable
+# (INFRA_VENV_BASE_VAR) and defines any helper only that project uses.
 
 
 # Optional GPU-lease serialization (no-op unless GPU_LEASE_CMD is set). See scripts/gpu_lease_wrap.sh.
 _gpu_lease_wrap="$(dirname "${BASH_SOURCE[0]}")/gpu_lease_wrap.sh"
+# shellcheck source=gpu_lease_wrap.sh
 [[ -r "${_gpu_lease_wrap}" ]] && source "${_gpu_lease_wrap}"
 type maybe_gpu_lease &>/dev/null || maybe_gpu_lease() { "$@"; }
 show_elapsed_time(){
@@ -30,65 +36,6 @@ show_elapsed_time(){
 # Function to safely deactivate a virtual environment if one is active
 maybe_deactivate(){
     deactivate 2>/dev/null || true
-}
-
-
-resource_debug_enabled(){
-    [[ "${IT_RESOURCE_DEBUG:-0}" == "1" ]]
-}
-
-
-enable_resource_debug_env(){
-    export IT_RESOURCE_DEBUG=1
-}
-
-
-log_shell_resource_snapshot(){
-    local label="$1"
-
-    if ! resource_debug_enabled; then
-        return 0
-    fi
-
-    python - <<'PY' "$label"
-import os
-import sys
-
-import psutil
-
-label = sys.argv[1]
-process = psutil.Process(os.getpid())
-memory = process.memory_info()
-parts = [
-    "context=shell",
-    f"rss_gb={memory.rss / (1024**3):.2f}",
-    f"vms_gb={memory.vms / (1024**3):.2f}",
-]
-
-try:
-    import torch
-except Exception as exc:  # pragma: no cover - defensive shell helper
-    parts.append(f"torch_import_error={type(exc).__name__}")
-else:
-    cuda_available = torch.cuda.is_available()
-    parts.append(f"cuda_available={str(cuda_available).lower()}")
-    parts.append(f"cuda_device_count={torch.cuda.device_count() if cuda_available else 0}")
-    if cuda_available:
-        for device_idx in range(torch.cuda.device_count()):
-            prefix = f"cuda_gpu{device_idx}"
-            props = torch.cuda.get_device_properties(device_idx)
-            parts.extend(
-                [
-                    f"{prefix}_total_gb={props.total_memory / (1024**3):.2f}",
-                    f"{prefix}_current_allocated_gb={torch.cuda.memory_allocated(device_idx) / (1024**3):.2f}",
-                    f"{prefix}_current_reserved_gb={torch.cuda.memory_reserved(device_idx) / (1024**3):.2f}",
-                    f"{prefix}_peak_allocated_gb={torch.cuda.max_memory_allocated(device_idx) / (1024**3):.2f}",
-                    f"{prefix}_peak_reserved_gb={torch.cuda.max_memory_reserved(device_idx) / (1024**3):.2f}",
-                ]
-            )
-
-print(f"[shell_resource_debug] {label}: " + " ".join(parts))
-PY
 }
 
 # Function to strip leading and trailing quotes from a string
@@ -132,14 +79,15 @@ expand_tilde_segments(){
 #   TORCH_PRE_VERSION: The torch version to install (e.g., "2.10.0.dev20250122")
 #   TORCH_PRE_CUDA: The CUDA target (e.g., "cu128")
 #   TORCH_PRE_CHANNEL: The channel type (e.g., "nightly" or "test")
-# If torch-pre.txt doesn't exist or is empty, these variables will be empty.
+# If torch-pre.txt doesn't exist or is empty, these variables will be empty. A channel other
+# than "nightly", "test" or "stable" is refused (return 1), naming the file.
 # Usage:
-#   read_torch_pre_config "/path/to/torch-pre.txt"
+#   read_torch_pre_config ["/path/to/torch-pre.txt"]   # default: requirements/ci/torch-pre.txt
 #   if [[ -n "${TORCH_PRE_VERSION}" ]]; then
 #       echo "Using torch prerelease: ${TORCH_PRE_VERSION}"
 #   fi
 read_torch_pre_config(){
-    local torch_pre_file="$1"
+    local torch_pre_file="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/requirements/ci/torch-pre.txt}"
     TORCH_PRE_VERSION=""
     TORCH_PRE_CUDA=""
     TORCH_PRE_CHANNEL=""
@@ -157,18 +105,27 @@ read_torch_pre_config(){
             _idx=$((_idx + 1))
         done < <(grep -v '^#' "${torch_pre_file}" | grep -v '^$')
     fi
+
+    case "${TORCH_PRE_CHANNEL}" in
+        nightly|test|stable|"") ;;
+        *)
+            echo "Error: Invalid torch channel '${TORCH_PRE_CHANNEL}' in ${torch_pre_file}" >&2
+            echo "Must be 'nightly', 'test' or 'stable'" >&2
+            return 1
+            ;;
+    esac
 }
 
 # Get the PyTorch index URL for a given channel and CUDA target
 # Arguments:
 #   $1: channel - "nightly", "test", or "stable"
-#   $2: cuda_target - e.g., "cu128", "cu126", "cpu"
+#   $2: cuda_target - e.g., "cu128", "cu126", "cpu" (default: "cpu")
 # Returns: The index URL (e.g., "https://download.pytorch.org/whl/nightly/cu128")
 # Usage:
 #   index_url=$(get_torch_index_url "nightly" "cu128")
 get_torch_index_url(){
     local channel="$1"
-    local cuda_target="$2"
+    local cuda_target="${2:-cpu}"
 
     case "${channel}" in
         nightly)
@@ -188,7 +145,9 @@ get_torch_index_url(){
     esac
 }
 
-# Determine venv path based on priority: --venv-dir > IT_VENV_BASE > default ~/.venvs
+# Determine venv path based on priority: --venv-dir > the project's venv-base variable > default ~/.venvs
+# The project's variable is the one INFRA_VENV_BASE_VAR names (infra_utils_project.sh sets it, e.g.
+# IT_VENV_BASE or FTS_VENV_BASE).
 # Usage: venv_path=$(determine_venv_path "$venv_dir" "$target_env_name")
 # Arguments:
 #   $1: venv_dir (optional) - explicit base directory from --venv-dir flag
@@ -207,9 +166,9 @@ determine_venv_path(){
     if [[ -n "${venv_dir}" ]]; then
         # Explicit --venv-dir provided (base directory)
         venv_base="${venv_dir}"
-    elif [[ -n "${IT_VENV_BASE}" ]]; then
-        # Use IT_VENV_BASE environment variable
-        venv_base="${IT_VENV_BASE}"
+    elif [[ -n "${INFRA_VENV_BASE_VAR:-}" && -n "${!INFRA_VENV_BASE_VAR:-}" ]]; then
+        # Use the project's venv-base environment variable
+        venv_base="${!INFRA_VENV_BASE_VAR}"
     else
         # Use default
         venv_base="~/.venvs"
@@ -424,3 +383,10 @@ install_from_source_packages(){
         fi
     done
 }
+
+# The project's own part: its venv-base variable and any helper only it uses.
+_infra_utils_project="$(dirname "${BASH_SOURCE[0]}")/infra_utils_project.sh"
+if [[ -r "${_infra_utils_project}" ]]; then
+    # shellcheck source=infra_utils_project.sh
+    source "${_infra_utils_project}"
+fi

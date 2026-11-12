@@ -14,7 +14,7 @@ settings:
   # Refresh after a pin bump with:
   #   uv pip install --no-deps "circuit-tracer @ git+<pinned url>" && python -c \
   #     "from importlib.metadata import version; print(version('circuit-tracer'))"
-  target_package_version: "0.5.3.dev45+gbd6bc784c"  # circuit_tracer this notebook was validated against
+  target_package_version: "0.5.3.dev54+g6a2782927"  # circuit_tracer this notebook was validated against
   log_to_console: false
   log_to_file: true
   log_dir: /tmp

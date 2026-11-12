@@ -757,7 +757,7 @@ class CircuitTracerAnalysisBackend:
         model = module.replacement_model
         report_layers = range(model.cfg.n_layers) if layers is None else [int(layer) for layer in layers]
         parts = []
-        with attribution_frozen(model):
+        with attribution_frozen(model, module):
             for layer in report_layers:
                 parts.append(
                     head_loadings(
@@ -799,7 +799,7 @@ class CircuitTracerAnalysisBackend:
         from interpretune.adapters.circuit_tracer.tunable_view import attribution_frozen
 
         model = module.replacement_model
-        with attribution_frozen(model):
+        with attribution_frozen(model, module):
             report = head_conductance(
                 model._model,  # the raw causal LM: conductance hooks its modules directly and reads its logits
                 model.ensure_tokenized(prompt_from),

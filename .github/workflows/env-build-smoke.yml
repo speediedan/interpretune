@@ -19,6 +19,7 @@ on:
     paths:
       - "scripts/build_it_env.sh"
       - "scripts/infra_utils.sh"
+      - "scripts/infra_utils_project.sh"
       - "requirements/ci/**"
       - "requirements/utils/collect_env_details.py"
       - ".github/workflows/env-build-smoke.yml"

@@ -39,7 +39,7 @@ from the view, and the module warns once, naming them.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, TYPE_CHECKING
 
@@ -226,25 +226,30 @@ def attach_lazy_deltas(transcoders: nn.Module, rank: int) -> list[str]:
 
 
 REFIT_SUGGESTION = (
-    "Attributing with base-model parameters thawed (`CircuitTracerConfig.tune_base`): the transcoders were trained on"
-    " the untuned base model, so the graph stays complete but may route more influence through error nodes. Measure"
-    " the transcoders' fit with `interpretune.adapters.circuit_tracer.drift.TranscoderFitMeter`; if it has degraded,"
-    " consider re-fitting them by promoting them to `latent:transcoder` and tuning them against the tuned base."
+    "Attributing with parameters outside the transcoders thawed (the base model's under"
+    " `CircuitTracerConfig.tune_base`, or an attached intervention's or latent model's): the transcoders were trained"
+    " on the unmodified model's activations, so the graph stays complete but may route more influence through error"
+    " nodes. Measure the"
+    " transcoders' fit with `interpretune.adapters.circuit_tracer.drift.TranscoderFitMeter`; if it has degraded,"
+    " consider re-fitting them by promoting them to `latent:transcoder` and tuning them against the tuned model."
 )
 
 
 @contextmanager
-def attribution_frozen(replacement_model: Any) -> Iterator[list[nn.Parameter]]:
-    """Run circuit-tracer attribution with every parameter of ``replacement_model`` frozen, restoring each
-    parameter's ``requires_grad`` afterwards. Yields the parameters it froze.
+def attribution_frozen(*modules: Any) -> Iterator[list[nn.Parameter]]:
+    """Run circuit-tracer attribution with every parameter of ``modules`` frozen (the replacement model, and the
+    interpretune module whose attached interventions and latent models run in its forward), restoring each
+    parameter's ``requires_grad`` afterwards. Yields the parameters it froze, each once.
 
     circuit-tracer freezes the replacement model at construction and attributes with ``backward()``, so a parameter
     a schedule has since thawed changes attribution: a thawed embedding fails it outright (its output is no longer a
     leaf whose ``requires_grad`` circuit-tracer can set), and other thawed base-model parameters accumulate attribution
-    gradients into ``.grad``, where the next optimizer step would read them as training gradients. Gradients already
-    accumulated are left untouched.
+    gradients into ``.grad``, where the next optimizer step would read them as training gradients. A thawed
+    intervention or latent model's parameters would do the same. Gradients already accumulated are left untouched.
     """
-    thawed = [p for p in replacement_model.parameters() if p.requires_grad]
+    thawed = list(
+        {id(p): p for m in modules if hasattr(m, "parameters") for p in m.parameters() if p.requires_grad}.values()
+    )
     for p in thawed:
         p.requires_grad_(False)
     try:
@@ -290,10 +295,19 @@ class CircuitTracerView:
         tune_base: Whether the base model's parameters (every parameter of ``root`` outside the transcoders) join
             the view as ``base``. With none outside the transcoders (an nnsight replacement model whose weights are
             not local, so its torch module was not registered), the whole composition is refused, naming why.
+        cooperative: Names of ``root``'s parameters outside the transcoders that the composition declares roles for
+            (its ``tunable_roles()``: attached interventions and latent models). They join the view, but their roles
+            are not the view's: they are declared on the bound view (``venngram.tuning.resolve_view(..., roles=)``),
+            which merges them and refuses a declaration that conflicts with the view's own.
     """
 
     def __init__(
-        self, root: nn.Module, transcoders: nn.Module, refusal: str | None = None, tune_base: bool = False
+        self,
+        root: nn.Module,
+        transcoders: nn.Module,
+        refusal: str | None = None,
+        tune_base: bool = False,
+        cooperative: Collection[str] = (),
     ) -> None:
         from venngram.roles import validate_roles
 
@@ -304,6 +318,8 @@ class CircuitTracerView:
         ids = {id(p) for p in transcoders.parameters()}
         self._names = [n for n, p in root.named_parameters() if id(p) in ids]
         self._base_names = [n for n, p in root.named_parameters() if id(p) not in ids] if tune_base else []
+        coop = set(cooperative)
+        self._coop_names = [n for n, p in root.named_parameters() if n in coop and id(p) not in ids]
         # an opt-in that reaches nothing is refused by name rather than tuning the transcoders alone (#859)
         self.refusal = refusal or (BASE_UNREACHABLE_REASON if tune_base and not self._base_names else None)
         if len(self._names) != len(ids):
@@ -336,8 +352,11 @@ class CircuitTracerView:
     def logical_named_parameters(self) -> Iterator[tuple[str, Tensor]]:
         """The transcoders' parameters (and the base model's, under ``tune_base``), under the interpretune module's
         names."""
-        names = set(self._names) | set(self._base_names)
+        names = self._view_names()
         return ((n, p) for n, p in self.root.named_parameters() if n in names)
+
+    def _view_names(self) -> set[str]:
+        return set(self._names) | set(self._base_names) | set(self._coop_names)
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Each name in the view maps to itself; a base-model name outside ``tune_base`` is refused, naming why."""
@@ -345,7 +364,7 @@ class CircuitTracerView:
 
         if self.refusal:
             raise Unresolvable(list(logical), self.refusal)
-        names = set(self._names) | set(self._base_names)
+        names = self._view_names()
         params = {n for n, _ in self.root.named_parameters()}
         if base := [n for n in logical if n in params and n not in names]:
             raise Unresolvable(base, BASE_MODEL_REASON)
@@ -358,11 +377,14 @@ class CircuitTracerView:
         return list(dict.fromkeys(physical))
 
     def depth_groups(self) -> list[list[str]]:
-        """Under ``tune_base``, the base model's parameters in pairs from the last; then one group per transcoder
-        layer, from the last (a cross-layer transcoder is one group)."""
+        """The cooperatively declared tensors as one group; under ``tune_base``, the base model's parameters in
+        pairs from the last; then one group per transcoder layer, from the last (a cross-layer transcoder is one
+        group)."""
         from venngram.tuning.views import pair_groups
 
-        groups = pair_groups(self._base_names) if self._base_names else []
+        # the composition's own modules (interventions, latent models) first, then the base model
+        groups = [list(self._coop_names)] if self._coop_names else []
+        groups += pair_groups(self._base_names) if self._base_names else []
         if isinstance(self.transcoders, CrossLayerTranscoder):
             return groups + ([list(self._names)] if self._names else [])
         for tc in reversed(list(self.transcoders.transcoders)):  # pyright: ignore[reportArgumentType]

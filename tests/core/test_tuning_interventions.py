@@ -134,12 +134,21 @@ class TestRefusals:
         with pytest.raises(ValueError, match="letters, digits"):
             attach_intervention(Root(), name, OpIntervention("add", D), "model.blocks.0")
 
-    def test_a_circuit_tracer_composition_is_refused(self):
+    def test_a_circuit_tracer_composition_takes_one_only_where_its_forward_runs(self):
         class BaseCircuitTracerModule(Root):  # matched by name: circuit-tracer is optional
             pass
 
-        with pytest.raises(ValueError, match="circuit-tracer composition"):
+        with pytest.raises(ValueError, match="no torch module runs its replacement model's forward"):
             attach_intervention(BaseCircuitTracerModule(), "steer", OpIntervention("add", D), "model.blocks.0")
+        root = BaseCircuitTracerModule()
+        object.__setattr__(root, "_replacement_model", root.model["blocks"])  # the model circuit-tracer runs
+        with pytest.raises(ValueError, match="only at modules of the model circuit-tracer runs"):
+            attach_intervention(root, "steer", OpIntervention("add", D), "model.tuple_block")
+        assert "steer" not in getattr(root, INTERVENTIONS_ATTR)
+        assert (
+            attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.1")
+            is root.interventions["steer"]
+        )
 
     def test_a_configured_vector_cannot_be_frozen(self):
         from interpretune.tuning.interventions import as_intervention_cfg
