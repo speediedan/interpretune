@@ -68,9 +68,9 @@ PROMOTE_BASE_REASON = (
 
 BASE_UNREACHABLE_REASON = (
     "`CircuitTracerConfig.tune_base` is set, but none of the base model's parameters are parameters of this module:"
-    " the nnsight backend's replacement model is not a torch module, so only its transcoders are registered here,"
-    " and tuning would silently leave the base model untouched. Register the base model's torch module on the"
-    " interpretune module, or leave `tune_base` unset."
+    " the nnsight backend's replacement model has no local torch module to register (execution is remote, or its"
+    " weights are still on the meta device), so tuning would silently leave the base model untouched. Load the model"
+    " locally, or leave `tune_base` unset."
 )
 
 
@@ -293,8 +293,8 @@ class CircuitTracerView:
         transcoders: The replacement model's transcoders, registered on ``root``.
         refusal: A reason to refuse the whole composition, or ``None``.
         tune_base: Whether the base model's parameters (every parameter of ``root`` outside the transcoders) join
-            the view as ``base``. With none outside the transcoders (the nnsight backend's replacement model is not a
-            torch module), the whole composition is refused, naming why.
+            the view as ``base``. With none outside the transcoders (an nnsight replacement model whose weights are
+            not local, so its torch module was not registered), the whole composition is refused, naming why.
         cooperative: Names of ``root``'s parameters outside the transcoders that the composition declares roles for
             (its ``tunable_roles()``: attached interventions and latent models). They join the view, but their roles
             are not the view's: they are declared on the bound view (``venngram.tuning.resolve_view(..., roles=)``),

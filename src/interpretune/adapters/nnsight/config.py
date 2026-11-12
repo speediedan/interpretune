@@ -287,7 +287,7 @@ class ITNNsightConfig(ITConfig):
         nnsight builds the model through its own ``LanguageModel`` constructor, so the from-pretrained mixin that
         wraps a model with PEFT adapters or quantizes it never runs. Left alone, a ``lora_cfg`` trains the base model
         (or nothing) while the configuration says adapters, and a ``bitsandbytesconfig`` loads it unquantized. Both are
-        refused by name instead.
+        refused instead.
         """
         hf_cfg = self.hf_from_pretrained_cfg
         if hf_cfg is None:

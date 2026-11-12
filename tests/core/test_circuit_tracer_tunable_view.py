@@ -224,11 +224,46 @@ class TestBaseTuning:
         assert report.ok, report.failures
         assert {"step_changes_only_thawed", "checkpoint_round_trip", "frozen_roles_refuse"} <= set(report.ran)
 
-    def test_an_unreachable_base_is_refused_by_name(self):
-        """With no HF module registered, the nnsight backend's base model is not this module's: the opt-in would
-        tune nothing of it, so the composition is refused rather than tuning its transcoders alone (#859)."""
-        support = as_view(_ct_module(tiny_gemma2_replacement_model(), tune_base=True).build_tunable_view()).support()
+    def test_an_unregistered_base_is_registered(self):
+        """With no HF module registered, ``tune_base`` registers the nnsight model's torch module as ``hf_model``,
+        so the view declares the same base names as when the HF module is registered beforehand (#943)."""
+        module = _ct_module(tiny_gemma2_replacement_model(), tune_base=True)
+        support = as_view(module.build_tunable_view()).support()
+        assert support.trainable and support.reason is None, support.reason
+        assert list(module._modules) == ["hf_model"]
+        assert _base_names(module) == _base_names(_toy_module(tune_base=True))
+
+    def test_registered_base_is_named_a_direct_call(self):
+        """Nnsight calls the registered torch module directly, so a data-parallel placement wraps its forward."""
+        module = _ct_module(tiny_gemma2_replacement_model(), tune_base=True)
+        calls = [(name, methods) for name, _, methods in module.fsdp_direct_calls() if name == "hf_model"]
+        assert calls == [("hf_model", ("forward",))]
+
+    def test_without_tune_base_nothing_more_is_registered(self):
+        """Attribution-only compositions keep their submodules and state-dict keys: only the transcoders."""
+        module = _ct_module(tiny_gemma2_replacement_model())
+        assert list(module._modules) == ["transcoders"]
+        assert all(k.startswith("transcoders.") for k in module.state_dict())
+
+    def test_registered_base_round_trips_a_strict_checkpoint(self):
+        """The registered base model's tensors are in the state dict, and a strict load restores them."""
+        source = _ct_module(tiny_gemma2_replacement_model(), tune_base=True)
+        _uniform_(source)
+        target = _ct_module(tiny_gemma2_replacement_model(), tune_base=True)
+        target.load_state_dict(source.state_dict(), strict=True)
+        assert all(torch.equal(t, source.state_dict()[k]) for k, t in target.state_dict().items())
+
+    @pytest.mark.parametrize("base", [None, "meta"], ids=["no_torch_module", "meta_weights"])
+    def test_an_unreachable_base_is_refused_by_name(self, base):
+        """A replacement model whose weights are not local (no torch module, or still on the meta device) has no
+        base model to register: the opt-in would tune nothing of it, so the composition is refused rather than
+        tuning its transcoders alone (#859)."""
+        rm = tiny_gemma2_replacement_model()
+        stub = SimpleNamespace(transcoders=rm.transcoders, _model=nn.Linear(2, 2, device="meta") if base else None)
+        module = _ct_module(stub, tune_base=True)
+        support = as_view(module.build_tunable_view()).support()
         assert not support.trainable and support.reason == BASE_UNREACHABLE_REASON
+        assert "hf_model" not in module._modules
 
 
 class TestDefaultOptimizer:
