@@ -550,6 +550,31 @@ def test_jspace_workspace_notebook(params: dict[str, Any], expected_order: str, 
     _cleanup_notebook_artifacts()
 
 
+# The notebook's own defaults: Qwen3.5-4B through the NNsight composition with no transcoders, read through both the
+# J-lens and J++. Both defects the default path first met (a module class listed twice among the composed bases, and a
+# multimodal processor needing the torchvision the pins exclude) passed every Gemma case. Measured with
+# tests/gpu_ci/calibrate.py: need 11.79 GiB (RTX 4090, CUDA), declared at the calibrator's recommendation.
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=14.0)
+def test_jspace_workspace_notebook_default_qwen(tmp_path: Path):
+    """Execute the workspace notebook on its defaults and check the J-lens and J++ comparison and the verdict."""
+    import json
+
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "circuit_tracer_examples" / "jspace_workspace_demo.ipynb",
+        parameters={},
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    text = "".join("".join(out.get("text", [])) for out in outputs)
+    assert "J++ defaults verified" in text, "the J-lens and J++ comparison did not run"
+    verdicts = [line for line in text.splitlines() if " was readable at layer " in line]
+    assert verdicts and "before" in verdicts[-1], f"expected the intermediate before the answer, got: {verdicts}"
+    _cleanup_notebook_artifacts()
+
+
 # The Neuronpedia example validates a Neuronpedia API key before it builds a session, so gate on the
 # same variable it checks. Executing it publishes NOTHING: generate_graph is called with
 # upload_to_np=False and the upload cell is commented out, so the graph stays local.
