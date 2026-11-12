@@ -222,7 +222,7 @@ def build_session_body(
     # Config-covering adapters: the framework entries never provide config
     # sections, so only the rest scope the subclass search.
     config_adapters = [name for name in spec.composition if name not in ("core", "lightning")]
-    return {
+    body: dict[str, Any] = {
         "reg_info": {"adapter_combinations": [list(spec.composition)]},
         "module_cls": spec.module_cls,
         "module_cfg": {
@@ -240,16 +240,6 @@ def build_session_body(
                         "target_adapters": config_adapters,
                     },
                 },
-                "circuit_tracer_cfg": {
-                    "class_path": "interpretune.adapters.circuit_tracer.config.CircuitTracerConfig",
-                    "init_args": {
-                        "backend": "nnsight",
-                        "model_name": spec.model_name,
-                        "transcoder_set": spec.transcoder_set,
-                        **({"batch_size": batch_size} if batch_size is not None else {}),
-                        **({"max_feature_nodes": max_feature_nodes} if max_feature_nodes is not None else {}),
-                    },
-                },
                 "nnsight_cfg": {
                     "class_path": "interpretune.adapters.nnsight.config.NNsightConfig",
                     "init_args": {"model_name": spec.model_name, "device_map": device_type},
@@ -261,6 +251,45 @@ def build_session_body(
             "init_args": {"model_name_or_path": spec.model_name},
         },
     }
+    if "nnsight" not in spec.composition:
+        raise ValueError(f"Experiment sessions require the nnsight adapter, got {spec.composition}")
+    init_args = body["module_cfg"]["init_args"]
+    if "circuit_tracer" in spec.composition:
+        init_args["circuit_tracer_cfg"] = {
+            "class_path": "interpretune.adapters.circuit_tracer.config.CircuitTracerConfig",
+            "init_args": {
+                "backend": "nnsight",
+                "model_name": spec.model_name,
+                "transcoder_set": spec.transcoder_set,
+                **({"batch_size": batch_size} if batch_size is not None else {}),
+                **({"max_feature_nodes": max_feature_nodes} if max_feature_nodes is not None else {}),
+            },
+        }
+    elif batch_size is not None or max_feature_nodes is not None:
+        raise ValueError("batch_size and max_feature_nodes require a circuit_tracer experiment session")
+    # A model spec's loading policy is part of its session, including dtype and tokenizer settings.
+    values = {
+        "model_name": spec.model_name,
+        "device_type": device_type,
+        "transcoder_set": spec.transcoder_set,
+    }
+
+    def format_value(value: Any) -> Any:
+        if isinstance(value, str):
+            return value.format(**values)
+        if isinstance(value, dict):
+            return {key: format_value(item) for key, item in value.items()}
+        return value
+
+    for section, overrides in (
+        ("nnsight_cfg", spec.nnsight_overrides),
+        ("circuit_tracer_cfg", spec.circuit_tracer_overrides),
+    ):
+        if overrides:
+            if section not in init_args:
+                raise ValueError(f"{spec.family}.{spec.variant} declares {section} overrides without that adapter")
+            init_args[section]["init_args"].update(format_value(overrides))
+    return body
 
 
 def experiment_session(

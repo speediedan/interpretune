@@ -78,6 +78,27 @@ def test_preset_notebook_default_is_empty():
     assert resolve_session_surface_preset_config_defaults("notebook_default") == {}
 
 
+def test_qwen_readout_session_loads_config_without_transcoders():
+    """A readout-only model must construct without inventing or loading a transcoder set."""
+    from interpretune.config.loading import load_session_cfg
+    from interpretune.harness.sessions import build_session_body
+
+    spec = resolve_model_spec("qwen3_5", "4b")
+    body = build_session_body(spec, force_device="cpu")
+    cfg = load_session_cfg(body)
+    assert not hasattr(cfg.module_cfg, "circuit_tracer_cfg")
+    assert cfg.module_cfg.nnsight_cfg.model_name == "Qwen/Qwen3.5-4B"
+    assert str(cfg.module_cfg.nnsight_cfg.resolved_dtype) == "torch.bfloat16"
+    assert cfg.module_cfg.nnsight_cfg.device_map == "cpu"
+
+
+def test_readout_session_refuses_transcoder_options():
+    from interpretune.harness.sessions import build_session_body
+
+    with pytest.raises(ValueError, match="require a circuit_tracer"):
+        build_session_body(resolve_model_spec("qwen3_5", "4b"), max_feature_nodes=5)
+
+
 def test_preset_unknown_refused_by_name():
     import pytest
 

@@ -505,9 +505,17 @@ def test_ct_concept_steering_notebook_local(params: dict[str, Any], tmp_path: Pa
 # before the answer on it; the second case is one where it is not, so the notebook's computed verdict is exercised in
 # both directions and the prose that describes the default cannot drift from what the run shows.
 JSPACE_WORKSPACE_PARAMS = [
-    pytest.param({}, "before", id="jspace_workspace_default"),
+    pytest.param(
+        {"MODEL_FAMILY": "gemma3", "MODEL_VARIANT": "1b_it", "LENS_MODEL_ID": "gemma-3-1b-it", "COMPARE_JPP": False},
+        "before",
+        id="jspace_workspace_gemma",
+    ),
     pytest.param(
         {
+            "MODEL_FAMILY": "gemma3",
+            "MODEL_VARIANT": "1b_it",
+            "LENS_MODEL_ID": "gemma-3-1b-it",
+            "COMPARE_JPP": False,
             "PROMPT": "Fact: The language spoken in the country where the Amazon River ends is",
             "THINK_TOKEN": "Brazil",
             "SAY_TOKEN": "Portuguese",
