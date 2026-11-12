@@ -181,6 +181,9 @@ final phase asks for more. A `tuning_scheduler_factory` builds the tuning schedu
   optimizer phase by phase to the saved depth, then loads the module's and that optimizer's state and continues at the
   next epoch.
 
+A research example of a phased run on the core loop, with run-fitted state, `instrument` transcoders, gates and per-phase
+`refreeze` and `restore`, is the [sparsity chain on RTE](tuning_sparsity_chain.md).
+
 ## Conformance
 
 Fine-Tuning Scheduler ships the view contract's cases; `interpretune.testing.conformance.TuningConformance` runs them against a
