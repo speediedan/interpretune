@@ -221,6 +221,54 @@ class TestNNsightAPIKey:
         assert os.environ.get("NDIF_API_KEY") == "env_test_key_456"
 
 
+class TestMultimodalFallback:
+    """A checkpoint registered as multimodal loads through VisionLanguageModel with a text-only processor."""
+
+    def _init_with(self, monkeypatch, nnsight_cfg: NNsightConfig) -> dict:
+        from types import SimpleNamespace
+
+        import transformers
+
+        from interpretune.adapters.nnsight.adapter import BaseNNsightModule, TextOnlyProcessor
+
+        def refuse(model_name, **kwargs):
+            raise ValueError(f"{model_name!r} is multimodal. Use VisionLanguageModel instead")
+
+        seen: dict = {}
+
+        def vlm(model_name, **kwargs):
+            seen.update(kwargs)
+            return SimpleNamespace(tokenizer=kwargs["processor"].tokenizer)
+
+        monkeypatch.setattr(nnsight, "LanguageModel", refuse)
+        monkeypatch.setattr(nnsight, "VisionLanguageModel", vlm)
+        monkeypatch.setattr(
+            transformers.AutoTokenizer,
+            "from_pretrained",
+            lambda name, **kwargs: SimpleNamespace(name=name, **kwargs),
+        )
+        module = SimpleNamespace(
+            it_cfg=SimpleNamespace(
+                nnsight_cfg=nnsight_cfg, model_name_or_path=None, os_env_model_auth_key=None, tokenizer=None
+            ),
+            _apply_generation_config=lambda: None,
+        )
+        BaseNNsightModule._init_nnsight_model(module)  # pyright: ignore[reportArgumentType]
+        assert isinstance(seen["processor"], TextOnlyProcessor)
+        return seen
+
+    def test_the_processor_builds_its_tokenizer_with_the_configured_kwargs(self, monkeypatch):
+        cfg = NNsightConfig(model_name="org/multimodal", dispatch=False, tokenizer_kwargs={"padding_side": "left"})
+        tokenizer = self._init_with(monkeypatch, cfg)["processor"].tokenizer
+        assert (tokenizer.name, tokenizer.padding_side) == ("org/multimodal", "left")
+
+    def test_the_text_only_processor_refuses_a_call(self, monkeypatch):
+        cfg = NNsightConfig(model_name="org/multimodal", dispatch=False)
+        processor = self._init_with(monkeypatch, cfg)["processor"]
+        with pytest.raises(RuntimeError, match="text only"):
+            processor(text="a", images=[object()])
+
+
 # =============================================================================
 # Session and Module Tests
 # =============================================================================
