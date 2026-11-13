@@ -369,9 +369,9 @@ def _upstream_model(spec: _UpstreamSpec, dev: torch.device) -> nn.Module:
 def _nnsight_model(spec: _UpstreamSpec, dev: torch.device):
     """A bare nnsight ``LanguageModel`` of the same checkpoint, loaded the native way: nnsight's defaults,
     dispatched to the measured device."""
-    from nnsight import LanguageModel
+    from nnsight import TransformersModel
 
-    return LanguageModel(spec.nnsight_kwargs["model_name"], device_map=dev.type, dispatch=True)
+    return TransformersModel(spec.nnsight_kwargs["model_name"], task="text-generation", device=dev.type, dispatch=True)
 
 
 def _nnsight_answer_loss(lm, batch: dict[str, Any], label_ids: torch.Tensor, loss_fn: nn.Module) -> torch.Tensor:

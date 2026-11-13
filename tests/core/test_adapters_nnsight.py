@@ -120,7 +120,8 @@ class TestNNsightConfig:
         kwargs = config.get_nnsight_kwargs()
 
         assert kwargs["dispatch"] is True
-        assert kwargs["device_map"] == "cpu"
+        assert kwargs["device"] == "cpu"
+        assert "device_map" not in kwargs
         assert kwargs["torch_dtype"] == torch.float32
         assert kwargs["trust_remote_code"] is True
         assert kwargs["attn_implementation"] == "sdpa"
@@ -500,7 +501,7 @@ class TestNNsightRemoteExecution:
         2026-07).
         """
         model_name = os.environ.get("IT_NDIF_REMOTE_SMOKE_MODEL", "EleutherAI/gpt-j-6b")
-        model = nnsight.LanguageModel(model_name)  # meta tensors only — no local weight download
+        model = nnsight.TransformersModel(model_name, task="text-generation")  # meta tensors only: no local weights
         try:
             with model.trace("The capital of France is", remote=True):
                 logits = nnsight.save(model.lm_head.output)
