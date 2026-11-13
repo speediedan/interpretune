@@ -60,3 +60,40 @@ class EnforcementProbe:
         module._sparse_saved.clear()
         template = tuple(int(v) for v in module.sparse_enforce_template)
         EnforcementProbe.seen.append((event.depth, was, template, float((enforced - free).abs().max())))
+
+
+class StageRecorder:
+    """Core-loop callback (after ``FTSCoreCallback``): after every epoch, the phase, the trainable blocks and a
+    copy of the model's parameters; and, at ``save_epoch``, the core loop's checkpoint (``resume.pt``) beside a
+    copy of the checkpoint policy's directory, which a resumed run starts from."""
+
+    seen: list = []
+
+    def __init__(self, save_epoch: int | None = None, save_dir: str | None = None) -> None:
+        self.save_epoch, self.save_dir = save_epoch, save_dir
+
+    def on_train_epoch_end(self, ctx, metrics):
+        import shutil
+        from pathlib import Path
+
+        from interpretune.tuning.core_loop import FTSCoreCallback
+
+        fts = next(cb for cb in ctx.callbacks if isinstance(cb, FTSCoreCallback))
+        model = ctx.module.model
+        trainable = sorted({n.split(".")[2] for n, p in model.named_parameters() if p.requires_grad and ".h." in n})
+        params = {n: p.detach().clone() for n, p in model.named_parameters()}
+        StageRecorder.seen.append((ctx.epoch, fts.tuning_scheduler.curr_depth, trainable, params))
+        if ctx.epoch == self.save_epoch:
+            save_dir = Path(self.save_dir)
+            shutil.copytree(Path("checkpoints"), save_dir / "checkpoints")
+            torch.save(ctx.checkpoint_state(), save_dir / "resume.pt")
+
+
+class PhaseStartParams:
+    """Start hook: a copy of the model's parameters at each phase's start, after the boundary's restore."""
+
+    seen: list = []
+
+    def __call__(self, event):
+        model = event.tuning_scheduler.model.model
+        PhaseStartParams.seen.append((event.depth, {n: p.detach().clone() for n, p in model.named_parameters()}))

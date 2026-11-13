@@ -1,20 +1,25 @@
-# The sparsity chain (interpretune#698 to #700) as one phased run of gemma-3-1b-it on interpretune's core loop (#899),
-# about 20 to 25 minutes per seed on one 24 GB GPU, 18.2 GiB at peak (research-class: a reserved window, not CI):
+# The sparsity chain (interpretune#698 to #700) as one phased run of gemma-3-1b-it on interpretune's core loop (#899,
+# #936), on one 24 GB GPU (research-class: a reserved window, not CI):
 #
 #   interpretune --run_command train --config hub://speediedan/rte/runs/rte_sparse.gemma3.core.yaml
 #
 # The chain's training setup: bf16-mixed with two-step accumulation, batch 8, AdamW at 1e-5. Phase 0 calibrates the
-# penalty's normalizer on 8 dev batches and tunes with the penalty on. At each boundary the best checkpoint is restored,
-# `ChainBuildGraphs` graphs the restored weights (the 100 #667 pilot items fit the enforcement; the 40 gate items are
-# measured), `ChainGraphGate` judges the phase against the pinned untuned reference (#709: error share up at most 5
-# points, replacement down at most 0.10), and phase 1 tunes with the simplified graph enforced and a fresh optimizer.
-# The final gate judges the global best, whichever phase holds it, and a veto ends the run on phase 0's best (#899 has
-# the outcome per seed). The reference is graphed at circuit-tracer bd6bc784, and graphs from another circuit-tracer are
-# not comparable with it. Every phase is judged on `val_task`, the phase-invariant task loss.
+# penalty's normalizer on 8 dev batches and tunes with the penalty on. Recovery re-thaws in two steps, as #700 did
+# (`ft_schedules/rte_sparse.gemma3.yaml`): phase 1 refreezes blocks 14-21 and tunes the norm and blocks 22-25 with the
+# simplified graph enforced, and phase 2 thaws blocks 14-21 again from phase 1's own best (`best:1`). At each boundary
+# the ended phase's best checkpoint is restored and `ChainBuildGraphs` graphs the restored weights (the 40 gate items
+# are measured; at the sparsity boundary the 100 #667 pilot items also fit the enforcement both recovery phases hold).
+# `ChainGraphGate` compares the graphs with the pinned untuned reference (#709: error share up at most 5 points;
+# replacement down at most 0.15, relaxed from #709's 0.10 for this exploration, #936). It judges phase 0 and the final
+# phase; phase 1, the first step of the re-thaw, is graphed and recorded with the verdict it would have had, but not
+# judged, so the second step always runs. The final gate judges the global best, whichever phase holds it, and a veto
+# ends the run on the previous phase's best (#899 and #936 have the outcome per seed). The reference is graphed at
+# circuit-tracer bd6bc784, and graphs from another circuit-tracer are not comparable with it. Every phase is judged on
+# `val_task`, the phase-invariant task loss.
 session_ref: speediedan/rte:rte_sparse.gemma3.core
 seed_everything: 0
 run_cfg:
-  max_epochs: 10
+  max_epochs: 15
   precision: bf16-mixed
   accumulate_grad_batches: 2
   # the attribution penalty needs the gap's gradient at validation too
@@ -24,13 +29,15 @@ run_cfg:
       init_args:
         schedule: hub://speediedan/rte/ft_schedules/rte_sparse.gemma3.yaml
         tuning_scheduler_kwargs:
-          max_depth: 1
+          max_depth: 2
           restore_best: true
           transition:
             class_path: finetuning_scheduler.core.transitions.PlateauTransition
             init_args:
               monitor: val_task
               patience: 1
+              # judge each stage against its own best: a recovery stage can start worse than the sparsity phase's best
+              reset_best_on_phase: true
               min_delta: 0.001
           checkpoint:
             class_path: finetuning_scheduler.core.checkpoint.BestCheckpoint
@@ -44,6 +51,8 @@ run_cfg:
                 init_args:
                   reference: hub://speediedan/rte/chain/untuned_reference.json
                   sha256: 2f0ad55275106d84c69bda4d84d17aa48cb51bb0141628c457f07e7fdb054eb6
+                  max_replacement_drop: 0.15
+                  record_only_depths: [1]
               rank_zero_only: true
           phase_hooks:
             start:
