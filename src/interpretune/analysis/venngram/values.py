@@ -67,7 +67,11 @@ def target_kind(recipe: Any, op: Any) -> str:
     """
     if op.target is None:
         return "activation"
+    from venngram.address import Term
+
     term = recipe.book.sets()[op.target]
+    if not isinstance(term, Term):
+        return "units"  # a composed target: venngram refuses any composition but one of unit sets when it reads it
     return "features" if term.features is not None else op.target_kind(recipe.book)
 
 
@@ -87,25 +91,52 @@ def target_members(recipe: Any, op: Any) -> list[Member]:
     """The ``(layer, unit)`` pairs a unit or feature target names.
 
     A feature target names its features in ``units``, or directly in ``features`` (``features: "3,7"``), as venngram's
-    recipes do. A ``features`` value that is a name and comes with no ``units`` names a whole latent space.
+    recipes do. A ``features`` value that is a name and comes with no ``units`` names a whole latent space. A composed
+    unit target (``@a & @b``) lists the members venngram resolves for it (see :func:`_composed_members`).
 
     Raises:
-        MisconfigurationException: If the set does not name explicit layers and members.
+        MisconfigurationException: If the set does not name explicit layers and members, or a composed target's value
+            is neither a ``dose`` nor a ``doses`` table.
     """
+    from venngram.address import Term
+
     name = op.target
     term = recipe.book.sets()[name]
+    if not isinstance(term, Term):
+        return _composed_members(recipe, op)
     units = term.units
     if units is None:
-        if not _FEATURE_IDS.match(term.features):
+        named = term.features or ""
+        if not _FEATURE_IDS.match(named):
             raise MisconfigurationException(
                 f"set `{name}` names the latent space `{term.features}` but no features: list them in `units`"
             )
-        features = tuple(int(f) for f in term.features.split(","))
+        features = tuple(int(f) for f in named.split(","))
         return [(layer, f) for layer in _explicit_layers(term, name) for f in features]
     if units.per_layer is not None:
         return [(layer, u) for layer, unit_set in units.per_layer for u in _explicit(unit_set, name, "units")]
     flat = _explicit(units.flat, name, "units")
     return [(layer, u) for layer in _explicit_layers(term, name) for u in flat]
+
+
+def _composed_members(recipe: Any, op: Any) -> list[Member]:
+    """A composed unit target's members (``@a & @b``, ``@a - @control``), as venngram resolves the composition.
+
+    Venngram lists a composition's ``(layer, unit)`` pairs through an op's doses (``Op.unit_doses``), so a composed
+    target takes a ``dose`` or ``doses`` value; with ``doses``, its members are the ones the table doses.
+    """
+    from venngram.errors import AddressError
+
+    value = op.value
+    if value is None or value.source not in ("dose", "doses"):
+        raise MisconfigurationException(
+            f"set `{op.target}` composes unit sets, whose members are listed through the op's doses: give it a"
+            " `dose` or `doses` value (an evidence-sourced value on a composed target is not applied yet)"
+        )
+    try:
+        return list(op.unit_doses(recipe.book))
+    except AddressError as err:
+        raise MisconfigurationException(str(err)) from err
 
 
 def member_refusal(recipe: Any, op: Any) -> str | None:

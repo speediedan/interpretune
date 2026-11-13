@@ -206,3 +206,46 @@ def test_a_sidecar_operand_loads_relative_to_the_recipe(tmp_path):
 def test_untranslatable_activation_ops_refuse_by_name(ops, operands, site, widths, match):
     with pytest.raises(MisconfigurationException, match=match):
         recipe_interventions(_activation_recipe(ops, operands, site=site), site_widths=widths)
+
+
+def _composed_recipe(target, value):
+    """A recipe whose op targets ``target``, a composition of the book's unit sets at one site (#905,
+    venngram#80)."""
+    point = {"point": "mlp.out.hook_in", "layers": [12]}
+    sets = {
+        "a": {**point, "units": {12: [1, 2, 3]}},
+        "b": {**point, "units": {12: [3, 4]}},
+        "both": "@a & @b",
+        "rest": "@a - @b",
+    }
+    doc = {
+        **RECIPE,
+        "book": {**RECIPE["book"], "schema_version": 2, "sets": sets},
+        "stages": [{**RECIPE["stages"][0], "ops": [{"op": "add", "target": {"set": target}, "value": value}]}],
+    }
+    return _recipe(doc)
+
+
+def test_a_composed_unit_target_applies_through_the_native_path():
+    """An intersection dosed once doses exactly its one member; it was refused as a feature target before."""
+    payload = recipe_interventions(_composed_recipe("both", {"dose": 0.5}), site_widths={"mlp.out.hook_in": 16})
+    (spec,) = payload["blocks.12.mlp.out.hook_in"]
+    assert spec.mode is InterventionMode.ADD and spec.intervention_tensor[3] == 0.5
+    assert torch.count_nonzero(spec.intervention_tensor) == 1
+
+
+def test_a_doses_table_on_a_composed_target_doses_only_its_members():
+    """``@a - @b`` is units 1 and 2: a table entry for unit 4 (in ``b``) is not a member, so nothing doses it."""
+    recipe = _composed_recipe("rest", {"doses": {12: {1: 0.5, 2: -0.25, 4: 9.0}}})
+    (spec,) = recipe_interventions(recipe, site_widths={"mlp.out.hook_in": 16})["blocks.12.mlp.out.hook_in"]
+    assert spec.intervention_tensor[1] == 0.5 and spec.intervention_tensor[2] == -0.25
+    assert spec.intervention_tensor[4] == 0.0 and torch.count_nonzero(spec.intervention_tensor) == 2
+
+
+def test_an_evidence_value_on_a_composed_target_is_refused():
+    """Venngram lists a composition's members through an op's doses, so an evidence-sourced value is refused, as a
+    unit target and not as a feature one."""
+    value = {"from": {"evidence": "scores", "column": "score"}}
+    with pytest.raises(MisconfigurationException, match="composes unit sets") as excinfo:
+        recipe_interventions(_composed_recipe("both", value), site_widths={"mlp.out.hook_in": 16})
+    assert "feature" not in str(excinfo.value)
