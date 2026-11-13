@@ -460,11 +460,6 @@ class BaseITLensModule(BaseITModule):
         2. TL Model Config: Actual TransformerLens config (TransformerBridgeConfig)
         3. IT TL Config: Interpretune-specific settings (ITLensFromPretrainedConfig or ITLensCustomConfig)
         """
-        # Override unsupported from pretrained options
-        if self.hf_cfg:
-            self.hf_cfg.lora_cfg = None  # pyright: ignore[reportAttributeAccessIssue]  # config flexibility
-            # TODO NEXT: enable bnb now that it's supported by TransformerLens
-            self.hf_cfg.bitsandbytesconfig = None  # pyright: ignore[reportAttributeAccessIssue]  # config flexibility
         # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
         # Serialize the actual TransformerLens config from the initialized model
         tl_model_cfg = self._make_config_serializable(self.model.cfg, ["device", "dtype"])

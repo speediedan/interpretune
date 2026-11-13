@@ -303,6 +303,27 @@ class TestClassTransformerLens:
         with pytest.raises(MisconfigurationException, match="A valid tl_cfg"):
             _ = ITLensConfig(**test_tl_cfg)
 
+    def test_lora_cfg_is_refused_and_bitsandbytes_is_kept(self):
+        """The bridge path never adds PEFT adapters, so a ``lora_cfg`` would train the base model while the
+        configuration says adapters; a quantization config does reach ``from_pretrained``, so it is kept."""
+        test_tl_cfg = deepcopy(TestClassTransformerLens.test_tlens_gpt2)
+        test_tl_cfg["hf_from_pretrained_cfg"]["lora_cfg"] = {"r": 8, "target_modules": ["c_attn"]}
+        test_tl_cfg["tl_cfg"] = ITLensFromPretrainedConfig(**test_tl_cfg["tl_cfg"])
+        with pytest.raises(MisconfigurationException, match="sets `lora_cfg`, which a TransformerLens composition"):
+            _ = ITLensConfig(**test_tl_cfg)
+        test_tl_cfg = deepcopy(TestClassTransformerLens.test_tlens_gpt2)
+        test_tl_cfg["hf_from_pretrained_cfg"]["bitsandbytesconfig"] = {"load_in_4bit": True}
+        test_tl_cfg["tl_cfg"] = ITLensFromPretrainedConfig(**test_tl_cfg["tl_cfg"])
+        it_cfg = ITLensConfig(**test_tl_cfg)
+        assert it_cfg.hf_from_pretrained_cfg.bitsandbytesconfig == {"load_in_4bit": True}
+
+    def test_capturing_hyperparameters_leaves_the_hf_config_as_given(self, get_it_session__tl_gpt2_debug__setup):
+        """Capturing once overwrote ``lora_cfg`` and ``bitsandbytesconfig`` with ``None`` on the user's own config,
+        so a checkpoint no longer recorded what the run was asked for."""
+        module = get_it_session__tl_gpt2_debug__setup.it_session.module
+        assert module.hf_cfg is module.it_cfg.hf_from_pretrained_cfg
+        assert module.hf_cfg.lora_cfg == {}
+
     @pytest.mark.parametrize(
         "use_hf_pretrained, hf_pretrained_cfg, tl_cust_cfg, tl_pretrained_cfg, expected_warn, expected_error",
         [

@@ -341,6 +341,22 @@ class ITLensConfig(ITConfig, TLConfigInitMixin):
     def __post_init__(self) -> None:
         self._init_tl_cfg_state()
         super().__post_init__()
+        self._refuse_unapplied_hf_settings()
+
+    def _refuse_unapplied_hf_settings(self) -> None:
+        """Refuse a ``lora_cfg``, which a TransformerLens composition's loading path never applies.
+
+        The HF model is loaded only to be wrapped in a ``TransformerBridge``, so the from-pretrained step that adds PEFT
+        adapters never runs. Left alone, a ``lora_cfg`` trains the base model (or nothing) while the configuration says
+        adapters. A ``bitsandbytesconfig`` is applied: the quantization config reaches ``from_pretrained``.
+        """
+        hf_cfg = self.hf_from_pretrained_cfg
+        if hf_cfg is not None and getattr(hf_cfg, "lora_cfg", None):
+            raise MisconfigurationException(
+                "`hf_from_pretrained_cfg` sets `lora_cfg`, which a TransformerLens composition does not apply: the HF"
+                " model is loaded only to be wrapped in a `TransformerBridge`, so no PEFT adapters are added. Remove"
+                " the setting, or use a core or Lightning composition without TransformerLens for adapter tuning."
+            )
 
 
 # TODO: we should be able to standardize on the HF GenerationConfig interface and remove TLensGenerationConfig once

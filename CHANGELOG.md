@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ## [Unreleased]
 
+### Breaking
+
+- A TransformerLens composition with `hf_from_pretrained_cfg.lora_cfg` set is refused at configuration, naming the setting. It was accepted and silently dropped: the HF model is loaded only to be wrapped in a `TransformerBridge`, so no PEFT adapters were ever added and the run tuned the base model. Old form: a TransformerLens composition carrying `lora_cfg`; new form: no `lora_cfg` on a TransformerLens composition (use a core or Lightning composition for adapter tuning). The `rte.llama3.transformer_lens` test registry entry drops its `lora_cfg` ([#974](https://github.com/speediedan/interpretune/issues/974)).
+
 ### Added
 
 - A tuning schedule that thaws a quantized or packed tensor (a bitsandbytes 4-bit or 8-bit base weight chosen by name or by address on a composition whose view keeps physical names) is refused when the schedule compiles, naming the phase and the tensor with its dtype, rather than failing nameless at the thaw with torch's floating-point error. finetuning-scheduler is pinned at `76b25047` for the refusal, which its compiler now makes for every view (speediedan/finetuning-scheduler#207). Packed storage no phase thaws stays schedulable around, so a frozen quantized base under trainable adapters still trains ([#758](https://github.com/speediedan/interpretune/issues/758))
@@ -238,6 +242,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 - SAE-Lens adapter expanded from TL-only to dual-backend with hook resolution (455+ lines added)
 
 ### Fixed
+
+- Capturing a TransformerLens composition's hyperparameters no longer overwrites the user's `lora_cfg` and `bitsandbytesconfig` with `None`, so a checkpoint records what the run was asked for. `bitsandbytesconfig` is applied, as before ([#974](https://github.com/speediedan/interpretune/issues/974)).
 
 - `FTSCoreCallback` resolves a `class_path` naming a Hub component's entrypoint (`rte_boolq.ChainCalibrate`, say) for its gates, hooks and other `tuning_scheduler_kwargs` objects, as session configurations do; it raised `ModuleNotFoundError`. Configuration loading also passes a list's scalars through `instantiate_nested`, which raised `TypeError` on `reg_layers: [17, 18]` ([#899](https://github.com/speediedan/interpretune/issues/899))
 
