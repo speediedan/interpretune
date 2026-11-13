@@ -24,4 +24,4 @@ jaxtyping>=0.2
 # venngram, an interpretune base dependency, is not on PyPI yet: Read the Docs and the docs-build CI install this file
 # before `pip install .` and without UV_OVERRIDE, so it takes the same commit pin as pyproject.toml's git-deps and
 # override-dependencies (keep the three in step). Remove once venngram 0.1.0 is published.
-venngram @ git+https://github.com/speediedan/venngram.git@a1407881a53bf2db92fffcf6f385d6ef890d4a45
+venngram @ git+https://github.com/speediedan/venngram.git@c993c2c3ba8ad943f3d1d2a03cca132236d3196e

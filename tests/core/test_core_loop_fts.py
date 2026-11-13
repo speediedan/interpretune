@@ -374,3 +374,40 @@ def test_fts_core_callback_round_trips_through_a_parsed_configuration(tmp_path, 
         SessionRunner(run_cfg=run_cfg).train()
         results.append((fts.tuning_scheduler.curr_depth, fts.tuning_scheduler.config_hash))
     assert results[0] == results[1] and results[0][0] == 1
+
+
+def test_a_schedule_thawing_a_packed_tensor_is_refused_by_name_at_compile():
+    """A phase thawing a quantized or packed tensor through the composition's own (physical-name) view is refused
+    when the schedule compiles, naming the phase and the tensor, rather than failing nameless at the thaw (#758).
+
+    The packed tensor planted here is the positive control: this test fails if the refusal is
+    not raised. A packed tensor no phase thaws compiles, which is the frozen quantized base's shape.
+    """
+    from finetuning_scheduler.core.compile import compile_schedule
+    from finetuning_scheduler.core.exceptions import FTSConfigurationError
+
+    from interpretune.tuning.views import default_view
+
+    module = core_loop.TinyModule()
+    module.model.register_parameter("packed", torch.nn.Parameter(torch.zeros(2, dtype=torch.int8), requires_grad=False))
+    view = default_view(module)
+    compile_schedule({0: {"params": ["model.bias"]}}, view)
+    with pytest.raises(
+        FTSConfigurationError, match=r"Phase 1 schedules tensors whose storage cannot require gradients.*packed"
+    ):
+        compile_schedule(
+            {0: {"params": ["model.bias"], "max_transition_epoch": 1}, 1: {"params": ["model.packed"]}}, view
+        )
+
+
+def test_a_frozen_packed_base_trains_what_is_thawed_beside_it():
+    """The QLoRA shape through the core loop: packed storage stays frozen and untouched while the schedule's
+    floating-point tensors train (#758)."""
+    module = core_loop.TinyModule()
+    module.model.register_parameter("packed", torch.nn.Parameter(torch.zeros(2, dtype=torch.int8), requires_grad=False))
+    packed_before = module.model.packed.detach().clone()
+    bias_before = module.model.bias.detach().clone()
+    fts = FTSCoreCallback({0: {"params": ["model.bias"]}}, tuning_scheduler_kwargs={"optimizer": _sgd()})
+    core_loop._train(module, max_epochs=1, callbacks=[fts])
+    assert torch.equal(module.model.packed, packed_before) and not module.model.packed.requires_grad
+    assert not torch.equal(module.model.bias, bias_before)

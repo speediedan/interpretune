@@ -73,5 +73,5 @@ matched literally against the model's hook names.
   when you mean a specific module (`blocks.5.ln2.hook_out`, `unembed.hook_in`).
 - Write canonical spellings in new configs and validate with `parse(name, strict=True)`; an alias stays
   accepted, since TransformerLens itself still documents these spellings as current vocabulary.
-- A backend that cannot honour a point refuses by name (`Unresolvable`, or the backend's own error). Nothing is
+- A backend that cannot honour a point refuses (`Unresolvable`, or the backend's own error). Nothing is
   narrowed, widened or substituted for you, because every substitution produces plausible activations.

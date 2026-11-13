@@ -49,7 +49,7 @@ An op should define:
 - optional `required_intervention_modes` and `required_position_scopes`: the configurations of the
   `intervention` capability the op will ask a backend for (`replace`, `add`, `patch`, `project`;
   `last_token`, `all_positions`). Checked at validation, before anything runs, against the backend's
-  declared `InterventionSupport`, so a backend that cannot honour a mode refuses by name up front rather
+  declared `InterventionSupport`, so a backend that cannot honour a mode refuses up front rather
   than after every earlier op in a composition has executed. A composite needs the union of its parts'
   axes plus whatever it declares itself. Declaring an axis implies requiring the `intervention` surface.
 - one implementation function

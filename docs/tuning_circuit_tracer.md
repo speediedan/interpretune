@@ -9,7 +9,7 @@ transcoders, whichever backend it runs over:
   checkpointed, so a fresh view's default schedule is empty. Promote the tensors you want to adapt to
   `latent:transcoder` through Fine-Tuning Scheduler's promotion, and a schedule can then thaw them. Adapting transcoders
   that drift after fine-tuning ([interpretune#709](https://github.com/speediedan/interpretune/issues/709)) works this way.
-- **The base model is refused by name.** The transcoders were trained on the base model's activations, so a schedule
+- **The base model is refused.** The transcoders were trained on the base model's activations, so a schedule
   naming a base-model parameter is refused, saying why. Tuning the base model under a frozen replacement is a separate
   path ([interpretune#813](https://github.com/speediedan/interpretune/issues/813)).
 - **Every offload mode keeps the parameters.** circuit-tracer's `offload='disk'` moves each offloaded module to the
@@ -20,16 +20,44 @@ transcoders, whichever backend it runs over:
   tied). Disk offload holds the offloaded weights on disk rather than in host memory, so an attribution needs less host
   memory than under `offload='cpu'`, at the cost of the reads. `offload=None` and `offload='cpu'` never replace a
   parameter.
-- **Each transcoder layer is one depth group**, from the last layer; a cross-layer transcoder is one group.
+- **A generated schedule thaws one transcoder layer per stage**, from the last layer; a cross-layer transcoder is one stage.
 
 The transcoders are registered on the Interpretune module once: under `model` when the replacement model is a torch
 module, under the nnsight model's registered HF module (`hf_model`) when there is one, and as `transcoders` otherwise.
-In that last case the base model's parameters are not the module's, so `CircuitTracerConfig.tune_base` refuses the
-composition, naming why, rather than tuning nothing of the base.
+In that last case the base model's parameters are not the module's. `CircuitTracerConfig.tune_base` then registers the
+nnsight model's torch module as `hf_model` first, so the base model is the module's and the view declares the same
+names as when the HF module was registered beforehand; its tensors join the module's state dict, so checkpoints carry
+the base model too. Without `tune_base` nothing more is registered, so attribution-only compositions keep their
+submodules and state-dict keys. Where there is no local torch module to register (remote execution, or weights still on
+the meta device), `tune_base` refuses the composition, naming why, rather than tuning nothing of the base.
 
 With the transcoders registered as `transcoders`, every parameter of the module is a transcoder tensor, `instrument`
 until a promotion, so there is nothing to optimize: a session whose configuration sets `optimizer_init` gets no
 optimizer, with a warning, and analysis sessions run as before.
+
+## Interventions and other latent models beside the transcoders
+
+Trainable interventions ([Tuning: interventions](tuning_interventions.md)) and latent models
+([Tuning: latent models](tuning_latent_models.md)) attach to a circuit-tracer composition as to any other, with
+three rules of its own:
+
+- **Roles are merged, and only a conflict is refused.** The view assigns the transcoders' roles itself. The module's
+  `tunable_roles()` (the attached interventions' `intervention:<name>`, the latent models' `latent:<name>`) are declared
+  on the bound view, venngram's cooperative-role rule: a declared role on a tensor the view does not assign joins the
+  view and is selectable by `role:`, a role equal to the view's own is accepted, and one that differs (a declaration
+  giving a transcoder tensor any role but its own) is refused. A generated schedule thaws them in its first stage. The
+  base model is still refused unless `tune_base` is set.
+- **A site must be in the model circuit-tracer runs.** circuit-tracer runs its replacement model's forward,
+  attribution included: on the TransformerLens backend the replacement model itself, on the nnsight backend the HF
+  model it wraps (registered as `hf_model`), whose modules' forward hooks fire in its traces. A site elsewhere would
+  never fire, so it is refused, as is a composition with no torch module behind its replacement model.
+- **Attribution sees the intervention and never trains it.** An attached intervention runs in every forward pass
+  circuit-tracer makes, so a graph attributes the intervened model. Attribution runs with every thawed tensor frozen,
+  the module's own included, so attribution's backward passes never reach an intervention's or latent model's
+  `.grad`. As with base tuning ([#813](https://github.com/speediedan/interpretune/issues/813)), a thawed intervention
+  changes what the transcoders read: the graph stays complete, since error nodes absorb what the transcoders no longer
+  reconstruct, and the cost is interpretability. Attributing with any tensor outside the transcoders thawed warns,
+  suggesting a fit measurement (below).
 
 ## Lazily loaded weights
 

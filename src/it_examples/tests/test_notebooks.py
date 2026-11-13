@@ -281,14 +281,16 @@ def test_op_collection_notebooks(notebook_file: str, tmp_path: Path):
 # this test does not run and made circuit_tracer_w_neuronpedia_example look covered when it had no
 # test at all (see test_circuit_tracer_w_neuronpedia_notebook, added after two breakages shipped in
 # that notebook unnoticed). The basic notebook contains no Neuronpedia references whatsoever.
+# The two cases split the target modes as well: the CLT case attributes the configuration's specific targets
+# (Dallas, Austin), so the notebook's specific-logits branch runs without adding a GPU run.
 CIRCUIT_TRACER_PARAMS = [
     pytest.param(
         {
-            "use_baseline_salient_logits": True,
+            "use_baseline_salient_logits": False,
             "enable_analysis_injection": False,
             "use_baseline_transcoder_arch": False,  # CLT
         },
-        id="ct_salient_logits_CLT",
+        id="ct_specific_logits_CLT",
     ),
     pytest.param(
         {

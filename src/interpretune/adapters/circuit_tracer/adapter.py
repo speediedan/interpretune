@@ -219,9 +219,10 @@ class BaseCircuitTracerModule(BaseITModule):
     """
 
     def build_tunable_view(self) -> Any | None:
-        """The transcoders' view (:class:`~interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`):
-        every transcoder tensor ``instrument`` until promoted, and base-model tensors refused by name unless
-        ``CircuitTracerConfig.tune_base`` makes them ``base``.
+        """The transcoders' view (:class:`~interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`),
+        bound with this module's declared roles: every transcoder tensor ``instrument`` until promoted, attached
+        interventions and latent models with the roles ``tunable_roles()`` declares, and base-model tensors refused
+        by name unless ``CircuitTracerConfig.tune_base`` makes them ``base``.
 
         A composition with no replacement model loaded is refused.
         """
@@ -239,12 +240,23 @@ class BaseCircuitTracerModule(BaseITModule):
                 " composition's tunable view; set `CircuitTracerConfig.lazy_delta_rank` to tune them through low-rank"
                 " corrections, or load them eagerly (`lazy_encoder=False`, `lazy_decoder=False`)."
             )
-        return CircuitTracerView(self, transcoders, tune_base=cfg is not None and cfg.tune_base)
+        from venngram.tuning import resolve_view
+
+        # the composition's own roles (attached interventions and latent models) are declared on the bound view, which
+        # merges them with the transcoders' and refuses one that conflicts (#953)
+        declared = self.tunable_roles()
+        view = CircuitTracerView(self, transcoders, tune_base=cfg is not None and cfg.tune_base, cooperative=declared)
+        return resolve_view(self, view, roles=declared)
 
     def fsdp_direct_calls(self) -> list[tuple[str, nn.Module, tuple[str, ...]]]:
         """Add the transcoder methods circuit-tracer calls outside ``forward`` (see
         :func:`transcoder_direct_calls`)."""
         calls = super().fsdp_direct_calls()
+        # the base model registered under `tune_base` (#943) is called directly too, as the nnsight adapter names it
+        hf_model = self._modules.get("hf_model")
+        nnsight_backend = not isinstance(getattr(self, "_replacement_model", None), nn.Module)
+        if nnsight_backend and isinstance(hf_model, nn.Module) and not any(m is hf_model for _, m, _ in calls):
+            calls.append(("hf_model", hf_model, ("forward",)))
         if (transcoders := _replacement_transcoders(self)) is not None:
             calls.extend(transcoder_direct_calls(transcoders))
         return calls
@@ -255,7 +267,8 @@ class BaseCircuitTracerModule(BaseITModule):
 
         A replacement model that is a torch module is registered as ``model``, which reaches its transcoders already.
         The nnsight backend's is an nnsight ``LanguageModel``, not a torch module, so its transcoders are registered
-        here as ``transcoders`` unless something already registered them.
+        here as ``transcoders`` unless something already registered them. Under ``CircuitTracerConfig.tune_base``
+        its torch module is registered first, as ``hf_model``, so the base model is this module's too (#943).
         """
         super().register_tunable_modules()
         from interpretune.adapters.circuit_tracer.tunable_view import attach_lazy_deltas
@@ -264,11 +277,32 @@ class BaseCircuitTracerModule(BaseITModule):
         if transcoders is None:
             return
         cfg = self.circuit_tracer_cfg
+        if cfg is not None and cfg.tune_base:
+            self._register_base_model()
         if cfg is not None and cfg.lazy_delta_rank is not None:
             attach_lazy_deltas(transcoders, cfg.lazy_delta_rank)
         registered = {id(p) for p in self.parameters()}
         if not any(id(p) in registered for p in transcoders.parameters()):
             self._modules["transcoders"] = transcoders
+
+    def _register_base_model(self) -> None:
+        """Register the nnsight replacement model's torch module as ``hf_model``, as the nnsight adapter does, when
+        none of its parameters are this module's yet.
+
+        Only under ``tune_base``, so attribution-only compositions keep their submodules and state-dict keys. A
+        replacement model that is a torch module is already registered as ``model``, and one whose weights are not
+        local (remote execution, or not yet dispatched off the meta device) registers nothing, so the view refuses it.
+        """
+        replacement_model = getattr(self, "_replacement_model", None)
+        if replacement_model is None or isinstance(replacement_model, nn.Module) or "hf_model" in self._modules:
+            return
+        base = getattr(replacement_model, "_model", None)
+        if not isinstance(base, nn.Module) or not getattr(replacement_model, "dispatched", True):
+            return
+        registered = {id(p) for p in self.parameters()}
+        if any(p.is_meta or id(p) in registered for p in base.parameters()):
+            return
+        self._modules["hf_model"] = base
 
     def __init__(self, *args, **kwargs):
         # Initialize attributes that may be required in base init methods
@@ -509,13 +543,13 @@ class BaseCircuitTracerModule(BaseITModule):
         )
 
         with (
-            attribution_frozen(self.replacement_model) as thawed,
+            attribution_frozen(self.replacement_model, self) as thawed,
             offload_keeps_parameters(attribution_kwargs["offload"]),
         ):
             graph = attribute(prompt=prompt, model=self.replacement_model, **attribution_kwargs)
         transcoders = _replacement_transcoders(self)
         tc_ids = {id(p) for p in transcoders.parameters()} if transcoders is not None else set()
-        if cfg is not None and cfg.tune_base and any(id(p) not in tc_ids for p in thawed):
+        if any(id(p) not in tc_ids for p in thawed):
             rank_zero_warn(REFIT_SUGGESTION)
 
         # Store the graph

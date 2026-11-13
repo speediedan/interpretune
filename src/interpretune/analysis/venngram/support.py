@@ -29,7 +29,8 @@ backend already publishes, never restated by hand:
   come from elsewhere names their bases explicitly.
 
 :func:`venngram_feature_support` is the analysis-backend path's declaration: a feature ``replace`` at explicit
-positions, which is all circuit-tracer's feature tuples express.
+positions, which circuit-tracer's feature tuples express, and a feature ``add`` and ``scale`` where the backend
+declares a clean capture to compute them from.
 
 .. warning:: This is an experimental API and may change in a future release.
 """
@@ -40,7 +41,7 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 from interpretune.analysis.backends.capabilities import InterventionSupport, PositionScope
-from interpretune.analysis.venngram.apply import APPLIED_OPS, feature_op_refusal, op_refusal
+from interpretune.analysis.venngram.apply import APPLIED_OPS, FEATURE_TUPLE_OPS, feature_op_refusal, op_refusal
 from interpretune.analysis.venngram.values import EVALUATED_TRANSFORMS
 from interpretune.utils import MisconfigurationException
 
@@ -123,7 +124,8 @@ def venngram_feature_support(
 
     Args:
         feature_intervention: The analysis backend's declaration. ``recipe_feature_interventions`` passes computed
-            values, so a record not honouring ``constant`` declares no value source at all.
+            values, so a record not honouring ``constant`` declares no value source at all, and one declaring no clean
+            capture declares ``replace`` alone.
         statistics: The statistics the caller will supply; any declares ``statistic``.
         name: The consumer name the record carries.
 
@@ -135,8 +137,9 @@ def venngram_feature_support(
     """
     vg_ops = _require_venngram()
     constant = "constant" in feature_intervention.value_sources
+    relative = FEATURE_TUPLE_OPS - {"replace"} if feature_intervention.captures_clean_activations else frozenset()
     return vg_ops.Support(
-        ops=frozenset({"replace"}),
+        ops=frozenset({"replace"}) | relative,
         targets=frozenset({"features"}),
         tokens=frozenset({"positions"}),
         values=frozenset({"dose", "doses", "from"}) if constant else frozenset(),

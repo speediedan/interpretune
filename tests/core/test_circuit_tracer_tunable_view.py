@@ -224,11 +224,46 @@ class TestBaseTuning:
         assert report.ok, report.failures
         assert {"step_changes_only_thawed", "checkpoint_round_trip", "frozen_roles_refuse"} <= set(report.ran)
 
-    def test_an_unreachable_base_is_refused_by_name(self):
-        """With no HF module registered, the nnsight backend's base model is not this module's: the opt-in would
-        tune nothing of it, so the composition is refused rather than tuning its transcoders alone (#859)."""
-        support = as_view(_ct_module(tiny_gemma2_replacement_model(), tune_base=True).build_tunable_view()).support()
+    def test_an_unregistered_base_is_registered(self):
+        """With no HF module registered, ``tune_base`` registers the nnsight model's torch module as ``hf_model``,
+        so the view declares the same base names as when the HF module is registered beforehand (#943)."""
+        module = _ct_module(tiny_gemma2_replacement_model(), tune_base=True)
+        support = as_view(module.build_tunable_view()).support()
+        assert support.trainable and support.reason is None, support.reason
+        assert list(module._modules) == ["hf_model"]
+        assert _base_names(module) == _base_names(_toy_module(tune_base=True))
+
+    def test_registered_base_is_named_a_direct_call(self):
+        """Nnsight calls the registered torch module directly, so a data-parallel placement wraps its forward."""
+        module = _ct_module(tiny_gemma2_replacement_model(), tune_base=True)
+        calls = [(name, methods) for name, _, methods in module.fsdp_direct_calls() if name == "hf_model"]
+        assert calls == [("hf_model", ("forward",))]
+
+    def test_without_tune_base_nothing_more_is_registered(self):
+        """Attribution-only compositions keep their submodules and state-dict keys: only the transcoders."""
+        module = _ct_module(tiny_gemma2_replacement_model())
+        assert list(module._modules) == ["transcoders"]
+        assert all(k.startswith("transcoders.") for k in module.state_dict())
+
+    def test_registered_base_round_trips_a_strict_checkpoint(self):
+        """The registered base model's tensors are in the state dict, and a strict load restores them."""
+        source = _ct_module(tiny_gemma2_replacement_model(), tune_base=True)
+        _uniform_(source)
+        target = _ct_module(tiny_gemma2_replacement_model(), tune_base=True)
+        target.load_state_dict(source.state_dict(), strict=True)
+        assert all(torch.equal(t, source.state_dict()[k]) for k, t in target.state_dict().items())
+
+    @pytest.mark.parametrize("base", [None, "meta"], ids=["no_torch_module", "meta_weights"])
+    def test_an_unreachable_base_is_refused_by_name(self, base):
+        """A replacement model whose weights are not local (no torch module, or still on the meta device) has no
+        base model to register: the opt-in would tune nothing of it, so the composition is refused rather than
+        tuning its transcoders alone (#859)."""
+        rm = tiny_gemma2_replacement_model()
+        stub = SimpleNamespace(transcoders=rm.transcoders, _model=nn.Linear(2, 2, device="meta") if base else None)
+        module = _ct_module(stub, tune_base=True)
+        support = as_view(module.build_tunable_view()).support()
         assert not support.trainable and support.reason == BASE_UNREACHABLE_REASON
+        assert "hf_model" not in module._modules
 
 
 class TestDefaultOptimizer:
@@ -262,6 +297,73 @@ class TestDefaultOptimizer:
         promoted = {id(p) for n, p in module.named_parameters() if ".transcoders.2." in n}
         assert promoted and {id(p) for g in optimizers[0].param_groups for p in g["params"]} == promoted
         assert len(schedulers) == 1
+
+
+def _steered_module(**cfg):
+    """The toy composition with a steering vector at its second decoder layer, attached before its view is
+    built."""
+    from interpretune.tuning.interventions import OpIntervention, attach_intervention
+
+    module = _toy_module(**cfg)
+    attach_intervention(module, "steer", OpIntervention("add", D_MODEL), "hf_model.model.layers.1")
+    return module
+
+
+class TestCooperativeRoles:
+    """An attached intervention's roles are declared on the transcoders' view and merged, and only a conflicting
+    declaration is refused (#953)."""
+
+    STEER = "interventions.steer.operand.value"
+
+    def test_an_intervention_joins_the_view_with_its_declared_role(self):
+        from finetuning_scheduler.core.compile import compile_schedule
+
+        view = as_view(_steered_module().build_tunable_view())
+        roles = view.roles()
+        assert roles[self.STEER] == "intervention:steer"
+        assert {r for n, r in roles.items() if n != self.STEER} == {"instrument"}
+        assert "intervention" in view.support().declared_roles
+        assert view.to_physical([self.STEER]) == {self.STEER: (self.STEER,)}
+        assert view.depth_groups()[0] == [self.STEER]
+        compiled = compile_schedule({0: {"params": ["role:intervention:steer"]}}, view)
+        assert compiled.physical_for(0) == (self.STEER,)
+
+    def test_conformance(self):
+        """Finetuning-scheduler's cases on the transcoders' view with a steering vector declared beside them."""
+        report = TunableViewConformance(lambda: as_view(_steered_module().build_tunable_view())).run()
+        assert report.ok, report.failures
+        assert {"step_changes_only_thawed", "checkpoint_round_trip"} <= set(report.ran)
+
+    def test_the_base_model_stays_refused_beside_an_intervention(self):
+        view = as_view(_steered_module().build_tunable_view())
+        base = next(n for n, _ in view.root.named_parameters() if n not in view.roles())
+        with pytest.raises(Unresolvable, match="base-model parameters"):
+            view.to_physical([base])
+
+    def test_a_declaration_conflicting_with_the_transcoders_role_is_refused(self):
+        from venngram.tuning import TunableViewError
+
+        module = _steered_module()
+        transcoder = next(n for n, _ in module.named_parameters() if ".transcoders." in n)
+        object.__setattr__(
+            module, "tunable_roles", lambda: {transcoder: "latent:mine", self.STEER: "intervention:steer"}
+        )
+        with pytest.raises(TunableViewError, match="conflict"):
+            module.build_tunable_view()
+
+    def test_attribution_sees_the_intervention_and_never_its_gradient(self, recwarn):
+        steered = _steered_module()
+        steered.attribution_graphs = []
+        operand = steered.interventions["steer"].operand.value
+        with only_token_zero_special(steered.replacement_model):
+            before = steered.generate_attribution_graph(TOY_PROMPT, max_n_logits=3, batch_size=8, verbose=False)
+            with torch.no_grad():
+                operand.fill_(2.0)  # a trained vector
+            operand.requires_grad_(True)  # thawed by a schedule
+            with pytest.warns(UserWarning, match="consider re-fitting"):
+                after = steered.generate_attribution_graph(TOY_PROMPT, max_n_logits=3, batch_size=8, verbose=False)
+        assert not torch.allclose(before.logit_probabilities, after.logit_probabilities)  # its forward is attributed
+        assert operand.grad is None and operand.requires_grad
 
 
 class TestAttributionAfterThawing:

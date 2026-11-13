@@ -28,8 +28,10 @@ attached at a site and scheduled by role, whichever backend the module wraps:
   interpretune module declares them through its cooperative ``tunable_roles()``, which its venngram view reads.
 
 Attach latent models in a module's ``register_tunable_modules()`` override, which runs once the model exists and before
-the module's view is built. A circuit-tracer composition refuses them for now: its view assigns roles itself and would
-leave a spliced model's tensors without one (#953 lifts this where nothing conflicts). The analysis surface's feature
+the module's view is built. A circuit-tracer composition takes them at modules of the model circuit-tracer runs (the
+replacement model on the TransformerLens backend, the HF model it wraps on the nnsight backend), and refuses any other
+site by name; its view assigns the transcoders' roles and merges these, refusing only a conflicting declaration. The
+analysis surface's feature
 ops (venngram feature targets at an SAE's ``hook_sae_acts_post``) reach sae_lens SAEs only, not models attached here.
 
 Sites are module paths under the root, so the same latent model attaches wherever a module computes the activations: a
@@ -158,14 +160,28 @@ def _latent_models(root: nn.Module, create: bool = False) -> nn.ModuleDict | Non
     return held
 
 
-def _refuse_circuit_tracer(root: nn.Module, what: str) -> None:
-    """Refuse a splice on a circuit-tracer composition, whose view assigns its roles itself and so would leave the
-    spliced tensors without one (matched by class name: circuit-tracer is an optional dependency)."""
-    if any(cls.__name__ == "BaseCircuitTracerModule" for cls in type(root).__mro__):
+def _require_reachable(root: nn.Module, what: str, *targets: nn.Module) -> None:
+    """On a circuit-tracer composition, refuse a splice whose hook would not fire.
+
+    circuit-tracer runs its replacement
+    model's forward (attribution included): on the TransformerLens backend the replacement model is the torch module,
+    and on the nnsight backend it wraps one (``_model``, the HF model), whose modules' hooks fire in its traces. A site
+    is reachable when its module is part of that torch module. Matched by class name: circuit-tracer is optional.
+    """
+    if not any(cls.__name__ == "BaseCircuitTracerModule" for cls in type(root).__mro__):
+        return
+    replacement = getattr(root, "_replacement_model", None)
+    executed = replacement if isinstance(replacement, nn.Module) else getattr(replacement, "_model", None)
+    if not isinstance(executed, nn.Module):
         raise ValueError(
-            f"A circuit-tracer composition does not take {what} yet: its view (CircuitTracerView) assigns roles itself,"
-            " so the spliced tensors would have none (interpretune#953 tracks merging declared roles where they do not"
-            " conflict). Tune its transcoders by promoting them instead."
+            f"This circuit-tracer composition cannot take {what}: no torch module runs its replacement model's forward"
+            f" ({type(replacement).__name__}), so a forward hook at the site would never fire."
+        )
+    members = {id(m) for m in executed.modules()}
+    if outside := [t for t in targets if id(t) not in members]:
+        raise ValueError(
+            f"A circuit-tracer composition takes {what} only at modules of the model circuit-tracer runs"
+            f" ({type(executed).__name__}); {', '.join(type(t).__name__ for t in outside)} is not one of them."
         )
 
 
@@ -191,12 +207,11 @@ def attach_latent_model(
 
     Raises:
         ValueError: ``name`` is not a valid name or is already attached, ``latent`` is not a latent model, or ``root``
-            is a circuit-tracer composition.
+            is a circuit-tracer composition whose forward never runs through the site.
         AttributeError: a site's module does not exist under ``root``.
     """
     if not _NAME_RE.fullmatch(name):
         raise ValueError(f"Latent model name {name!r} must be letters, digits, '_' and '-' only")
-    _refuse_circuit_tracer(root, "latent models")
     if not isinstance(latent, nn.Module) or not isinstance(latent, LatentModel):
         raise ValueError(f"{type(latent).__name__} is not an nn.Module with encode() and decode()")
     held = _latent_models(root, create=True)
@@ -204,6 +219,7 @@ def attach_latent_model(
     if name in held:
         raise ValueError(f"A latent model named {name!r} is already attached; detach it first")
     read, write = root.get_submodule(site.read), root.get_submodule(site.write_path)
+    _require_reachable(root, "latent models", read, write)
     splice = _Splice(latent, site)
     handles = [
         read.register_forward_pre_hook(splice.capture)
