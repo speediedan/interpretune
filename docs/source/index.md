@@ -178,6 +178,7 @@ circuit-tracer <usage/tuning_circuit_tracer>
 interp-engine (hub adapter) <usage/tuning_interp_engine>
 Latent models <usage/tuning_latent_models>
 Interventions <usage/tuning_interventions>
+Sparse attribution graphs (RTE) <usage/tuning_sparsity_chain>
 ```
 
 ```{toctree}
