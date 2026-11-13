@@ -230,7 +230,7 @@ def test_a_composed_unit_target_applies_through_the_native_path():
     """An intersection dosed once doses exactly its one member; it was refused as a feature target before."""
     payload = recipe_interventions(_composed_recipe("both", {"dose": 0.5}), site_widths={"mlp.out.hook_in": 16})
     (spec,) = payload["blocks.12.mlp.out.hook_in"]
-    assert spec.mode is InterventionMode.ADD and spec.intervention_tensor[3] == 0.5
+    assert spec.op == "add" and spec.intervention_tensor[3] == 0.5
     assert torch.count_nonzero(spec.intervention_tensor) == 1
 
 
