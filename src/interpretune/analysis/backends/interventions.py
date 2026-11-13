@@ -15,14 +15,13 @@ from typing import Any, Callable, NamedTuple, TypeAlias
 import torch
 
 from interpretune.analysis.backends.capabilities import (
-    ModelBackendCapability,
-    InterventionMode,
+    Capability,
     PositionScope,
 )
+from interpretune.analysis.backends.ops import executor_for, normalize_op, register_executor
 
 __all__ = [
     "PositionScope",
-    "InterventionMode",
     "InterventionSpec",
     "InterventionDict",
     "InterventionValue",
@@ -33,9 +32,9 @@ __all__ = [
     "apply_op",
     "get_intervention_target_shape",
     "normalize_position_scope",
-    "normalize_intervention_mode",
+    "normalize_op",
     "require_position_scope",
-    "require_intervention_mode",
+    "require_op",
     "require_intervention_support",
     "iter_intervention_axes",
 ]
@@ -49,22 +48,23 @@ class InterventionSpec(NamedTuple):
             targeted hook-point slice at the intervention position. This is not restricted to
             ``(d_model,)`` and may instead match higher-rank activations such as
             ``(n_heads, d_head)`` or latent feature activations.
-        mode: ``"replace"`` overwrites the activation at the target position with the tensor;
-              ``"add"`` adds ``intervention_tensor * scale_factor`` to the activation;
-              ``"patch"`` swaps a pair of concepts in lens coordinates, leaving the component
-              orthogonal to that pair untouched (see :func:`_apply_lens_coordinate_patch`);
-              ``"project"`` replaces the activation with a projection result. By default, the
-              current hook input is projected onto the span of ``intervention_tensor``, so the
-              intervention tensor acts as the projection basis. When
-              ``use_intervention_tensor_as_basis`` is ``False``, the direction is reversed and
-              ``intervention_tensor`` is projected onto the span of the current hook input;
-              ``"reject"`` removes the activation's component in the span of ``intervention_tensor``
-              (``h - scale_factor * V V^+ h``, so ``scale_factor`` is the removal fraction);
-              ``"clamp"`` bounds the activation's pseudoinverse coordinates into
-              ``[clamp_min, clamp_max]`` and leaves in-range coordinates exactly as they were.
-              ``"scale"`` multiplies the activation elementwise by ``intervention_tensor * scale_factor``
-              (a scalar, a per-unit multiplier with ones where units are left alone, or any
-              broadcast-compatible tensor), so ones are the identity.
+        op: The op, a name in venngram's registry applied through the executor registered for it
+            (:mod:`~interpretune.analysis.backends.ops`). The core ops: ``"replace"`` overwrites the activation
+            at the target position with the tensor; ``"add"`` adds ``intervention_tensor * scale_factor`` to the
+            activation; ``"patch"`` swaps a pair of concepts in lens coordinates, leaving the component orthogonal
+            to that pair untouched (see :func:`_apply_lens_coordinate_patch`); ``"project"`` replaces the
+            activation with a projection result. By default, the current hook input is projected onto the span of
+            ``intervention_tensor``, so the intervention tensor acts as the projection basis. When
+            ``use_intervention_tensor_as_basis`` is ``False``, the direction is reversed and ``intervention_tensor``
+            is projected onto the span of the current hook input; ``"reject"`` removes the activation's component
+            in the span of ``intervention_tensor`` (``h - scale_factor * V V^+ h``, so ``scale_factor`` is the
+            removal fraction); ``"clamp"`` bounds the activation's pseudoinverse coordinates into
+            ``[clamp_min, clamp_max]`` and leaves in-range coordinates exactly as they were; ``"scale"`` multiplies
+            the activation elementwise by ``intervention_tensor * scale_factor`` (a scalar, a per-unit multiplier
+            with ones where units are left alone, or any broadcast-compatible tensor), so ones are the identity;
+            ``"replace_with_error"`` substitutes the tensor while keeping the activation's value, so the result
+            equals the activation and its gradient reaches the tensor and not the activation (a straight-through
+            substitution).
         scale_factor: Scalar multiplier applied to *intervention_tensor* before the intervention
             (not used in ``"replace"`` mode and applied to the projected activation in
             ``"project"`` mode).
@@ -88,7 +88,7 @@ class InterventionSpec(NamedTuple):
     """
 
     intervention_tensor: torch.Tensor
-    mode: InterventionMode | str = InterventionMode.REPLACE
+    op: str = "replace"
     scale_factor: float = 1.0
     use_intervention_tensor_as_basis: bool = True
     clamp_min: float | None = None
@@ -155,7 +155,7 @@ class InterventionDict(Mapping[str, tuple[InterventionSpec, ...]]):
 def _coerce_single_intervention_spec(
     value: InterventionSpec | torch.Tensor | Mapping[str, Any],
     *,
-    default_mode: str = "replace",
+    default_op: str = "replace",
     default_scale_factor: float = 1.0,
 ) -> InterventionSpec:
     if isinstance(value, InterventionSpec):
@@ -163,7 +163,7 @@ def _coerce_single_intervention_spec(
     if isinstance(value, torch.Tensor):
         return InterventionSpec(
             intervention_tensor=value,
-            mode=default_mode,
+            op=default_op,
             scale_factor=default_scale_factor,
         )
     if isinstance(value, Mapping):
@@ -171,7 +171,7 @@ def _coerce_single_intervention_spec(
             raise ValueError("Intervention mapping entries must include an 'intervention_tensor' field")
         return InterventionSpec(
             intervention_tensor=torch.as_tensor(value["intervention_tensor"]),
-            **_shared_spec_fields(value, default_mode=default_mode, default_scale_factor=default_scale_factor),
+            **_shared_spec_fields(value, default_op=default_op, default_scale_factor=default_scale_factor),
         )
     raise TypeError(f"Unsupported intervention value type: {type(value)!r}")
 
@@ -179,21 +179,21 @@ def _coerce_single_intervention_spec(
 def _coerce_shared_intervention_specs(
     value: InterventionValue,
     *,
-    default_mode: str = "replace",
+    default_op: str = "replace",
     default_scale_factor: float = 1.0,
 ) -> tuple[InterventionSpec, ...]:
     if isinstance(value, (InterventionSpec, torch.Tensor, Mapping)):
         return (
             _coerce_single_intervention_spec(
                 value,
-                default_mode=default_mode,
+                default_op=default_op,
                 default_scale_factor=default_scale_factor,
             ),
         )
 
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         return tuple(
-            _coerce_single_intervention_spec(item, default_mode=default_mode, default_scale_factor=default_scale_factor)
+            _coerce_single_intervention_spec(item, default_op=default_op, default_scale_factor=default_scale_factor)
             for item in value
         )
 
@@ -238,23 +238,23 @@ def _validate_intervention_spec(
     hook_name: str,
 ) -> InterventionSpec:
     tensor = torch.as_tensor(spec.intervention_tensor)
-    mode = normalize_intervention_mode(spec.mode)
-    if mode is InterventionMode.PATCH:
+    op = normalize_op(spec.op)
+    if op == "patch":
         # A swap needs a PAIR, so this is the one mode whose tensor is legitimately larger than the slice
         # it targets: `(2, *target_shape)`. The general check below demands the tensor broadcast INTO the
         # target, which `(2, d_model)` against `(d_model,)` does not -- so validating patch under it would
-        # make the mode unreachable through the op surface while low-level calls kept working.
+        # make the op unreachable through the op surface while low-level calls kept working.
         if tensor.ndim < 1 or tensor.shape[0] != 2:
             raise ValueError(
-                "intervention mode 'patch' requires exactly two lens vectors stacked on a leading axis of "
+                "op 'patch' requires exactly two lens vectors stacked on a leading axis of "
                 f"size 2 (source, target); got tensor with shape {tuple(tensor.shape)}"
             )
         _ensure_shape_compatible(tuple(tensor.shape[1:]), target_shape, hook_name)
-    elif mode in (InterventionMode.REJECT, InterventionMode.CLAMP):
+    elif op in ("reject", "clamp"):
         # A span is legitimately `(k, *target_shape)` for any k >= 1, not only a single direction:
-        # the mode maths reads coordinates through the pseudoinverse of the stack. Validating a
+        # the op maths reads coordinates through the pseudoinverse of the stack. Validating a
         # stacked operand under the broadcast-into-slice check refuses the J-lens pole pair (k = 2),
-        # the case these modes were added for, while low-level calls keep working -- the same failure
+        # the case these ops were added for, while low-level calls keep working -- the same failure
         # the patch branch above exists to prevent.
         if tensor.ndim == len(target_shape) + 1 and tensor.shape[0] >= 1:
             _ensure_shape_compatible(tuple(tensor.shape[1:]), target_shape, hook_name)
@@ -267,7 +267,7 @@ def _validate_intervention_spec(
     # bundled backends: plausible logits, right arithmetic, wrong position set, nothing raised.
     return InterventionSpec(
         intervention_tensor=tensor,
-        mode=mode,
+        op=op,
         scale_factor=spec.scale_factor,
         use_intervention_tensor_as_basis=spec.use_intervention_tensor_as_basis,
         clamp_min=spec.clamp_min,
@@ -336,7 +336,7 @@ def _split_tensor_across_matches(
     matched_hooks: Sequence[str],
     hook_shapes: Mapping[str, tuple[int, ...]],
     *,
-    default_mode: str,
+    default_op: str,
     default_scale_factor: float,
 ) -> list[tuple[InterventionSpec, ...]] | None:
     if len(matched_hooks) <= 1:
@@ -355,26 +355,36 @@ def _split_tensor_across_matches(
     for hook_name, hook_tensor in zip(matched_hooks, tensor, strict=True):
         spec = InterventionSpec(
             intervention_tensor=hook_tensor,
-            mode=default_mode,
+            op=default_op,
             scale_factor=default_scale_factor,
         )
         per_hook_specs.append((_validate_intervention_spec(spec, hook_shapes[hook_name], hook_name),))
     return per_hook_specs
 
 
-def _shared_spec_fields(
-    value: Mapping[str, Any], *, default_mode: InterventionMode | str, default_scale_factor: float
-) -> dict[str, Any]:
+#: Payload keys that once named a spec field and no longer do, each with the key that replaced it. Refused by name
+#: rather than read: a mapping carrying the old key would otherwise take the default op, and every op returns
+#: plausible logits, so the substitution could not be seen in the result.
+_RETIRED_PAYLOAD_KEYS = {"mode": "op"}
+
+
+def _shared_spec_fields(value: Mapping[str, Any], *, default_op: str, default_scale_factor: float) -> dict[str, Any]:
     """The non-tensor fields of a mapping payload, normalized, for every spec the mapping expands to.
 
     One reader for the per-hook (`intervention_tensors`) and single-tensor mapping shapes, so a field
     added to one cannot be silently absent from the other -- which is how `position_scope` was dropped
     on the per-hook path while the single-tensor path carried it.
     """
+    if retired := sorted(set(value) & set(_RETIRED_PAYLOAD_KEYS)):
+        raise ValueError(
+            "intervention payload keys "
+            + ", ".join(f"`{k}` is now `{_RETIRED_PAYLOAD_KEYS[k]}`" for k in retired)
+            + "; update the payload rather than relying on a translation"
+        )
     clamp_min = value.get("clamp_min", None)
     clamp_max = value.get("clamp_max", None)
     return {
-        "mode": normalize_intervention_mode(value.get("mode", default_mode)),
+        "op": normalize_op(value.get("op", default_op)),
         "scale_factor": float(value.get("scale_factor", default_scale_factor)),
         "use_intervention_tensor_as_basis": bool(value.get("use_intervention_tensor_as_basis", True)),
         "clamp_min": None if clamp_min is None else float(clamp_min),
@@ -388,7 +398,7 @@ def _expand_intervention_value_for_matches(
     matched_hooks: Sequence[str],
     hook_shapes: Mapping[str, tuple[int, ...]],
     *,
-    default_mode: str = "replace",
+    default_op: str = "replace",
     default_scale_factor: float = 1.0,
 ) -> list[tuple[InterventionSpec, ...]]:
     if isinstance(raw_value, Mapping) and "intervention_tensors" in raw_value:
@@ -399,7 +409,7 @@ def _expand_intervention_value_for_matches(
             raise ValueError(
                 "intervention_tensors length must match the number of resolved hook points for wildcard interventions"
             )
-        shared = _shared_spec_fields(raw_value, default_mode=default_mode, default_scale_factor=default_scale_factor)
+        shared = _shared_spec_fields(raw_value, default_op=default_op, default_scale_factor=default_scale_factor)
         return [
             (
                 _validate_intervention_spec(
@@ -416,7 +426,7 @@ def _expand_intervention_value_for_matches(
             raw_value,
             matched_hooks,
             hook_shapes,
-            default_mode=default_mode,
+            default_op=default_op,
             default_scale_factor=default_scale_factor,
         )
         if split_specs is not None:
@@ -429,7 +439,7 @@ def _expand_intervention_value_for_matches(
                     _validate_intervention_spec(
                         _coerce_single_intervention_spec(
                             item,
-                            default_mode=default_mode,
+                            default_op=default_op,
                             default_scale_factor=default_scale_factor,
                         ),
                         hook_shapes[hook_name],
@@ -441,7 +451,7 @@ def _expand_intervention_value_for_matches(
 
     shared_specs = _coerce_shared_intervention_specs(
         raw_value,
-        default_mode=default_mode,
+        default_op=default_op,
         default_scale_factor=default_scale_factor,
     )
     return [
@@ -455,7 +465,7 @@ def build_intervention_dict(
     expanded_matches: Mapping[str, Sequence[str]],
     hook_shapes: Mapping[str, tuple[int, ...]],
     *,
-    default_mode: str = "replace",
+    default_op: str = "replace",
     default_scale_factor: float = 1.0,
 ) -> InterventionDict:
     """Canonicalize raw intervention inputs into a resolved :class:`InterventionDict`."""
@@ -473,7 +483,7 @@ def build_intervention_dict(
             raw_value,
             matched_hooks,
             hook_shapes,
-            default_mode=default_mode,
+            default_op=default_op,
             default_scale_factor=default_scale_factor,
         )
         for hook_name, specs in zip(matched_hooks, per_hook_specs, strict=True):
@@ -525,7 +535,14 @@ def resolve_interventions(
             default_hook_qualifier,
         )
     )
-    intervention_mode = _first_defined(resolve_field("intervention_mode"), kwargs.get("mode"))
+    retired = [name for name in ("intervention_mode",) if resolve_field(name) is not None]
+    retired += [f"`{name}` keyword" for name in ("mode",) if name in kwargs]
+    if retired:
+        raise ValueError(
+            f"{', '.join(retired)} names the op under its retired spelling; pass `intervention_op` (or the `op`"
+            " keyword) instead"
+        )
+    intervention_op = _first_defined(resolve_field("intervention_op"), kwargs.get("op"))
     scale_factor = _first_defined(
         resolve_field("intervention_scale_factor"),
         batch_get("direction_scale_factor"),
@@ -558,10 +575,10 @@ def resolve_interventions(
                 "model_fwd_intervention requires either explicit interventions or shorthand intervention tensor inputs"
             )
         intervention_tensor = concept_direction
-        intervention_mode = intervention_mode or "add"
+        intervention_op = intervention_op or "add"
 
     payload: dict[str, Any] = {
-        "mode": normalize_intervention_mode(intervention_mode or InterventionMode.REPLACE),
+        "op": normalize_op(intervention_op or "replace"),
         "scale_factor": float(scale_factor),
         "use_intervention_tensor_as_basis": bool(use_intervention_tensor_as_basis),
         "position_scope": normalize_position_scope(position_scope),
@@ -590,7 +607,7 @@ def _apply_lens_coordinate_patch(
 
     ``spec.intervention_tensor`` must supply exactly two vectors, stacked on a leading axis of size 2:
     index 0 is the source concept $v_s$ and index 1 the target $v_t$. A single vector cannot express
-    a swap, so this mode rejects one rather than guessing a partner.
+    a swap, so this op rejects one rather than guessing a partner.
 
     ``spec.scale_factor`` scales the swapped coordinates, the paper's optional $\alpha$. It defaults to
     1.0, a pure exchange. The paper reports oversteering as a real failure mode and uses $\alpha = 2$ only
@@ -607,7 +624,7 @@ def _apply_lens_coordinate_patch(
     """
     if target.ndim < 1 or target.shape[0] != 2:
         raise ValueError(
-            "intervention mode 'patch' requires exactly two lens vectors stacked on a leading axis of "
+            "op 'patch' requires exactly two lens vectors stacked on a leading axis of "
             f"size 2 (source, target); got tensor with shape {tuple(target.shape)}"
         )
 
@@ -616,7 +633,7 @@ def _apply_lens_coordinate_patch(
     basis = target.reshape(2, -1).to(dtype=torch.float32)
     if basis.shape[1] != flat.shape[1]:
         raise ValueError(
-            f"intervention mode 'patch' lens vectors have width {basis.shape[1]} but the hook activation "
+            f"op 'patch' lens vectors have width {basis.shape[1]} but the hook activation "
             f"is {flat.shape[1]}-dimensional"
         )
 
@@ -641,7 +658,7 @@ def _apply_span_clamp(
     value: the operation is a no-op on activations that were never out of bounds, and that is the
     property the paper's coordinate-clamping ablation depends on.
 
-    ``clamp`` and assign-to-value are deliberately different modes rather than one with a degenerate
+    ``clamp`` and assign-to-value are deliberately different ops rather than one with a degenerate
     parameterization. No choice of bounds makes a clamp swap two coordinates, so ``patch`` is a special
     case of ASSIGNMENT and not of this. They share an English word and nothing else.
 
@@ -652,14 +669,14 @@ def _apply_span_clamp(
     lo, hi = spec.clamp_min, spec.clamp_max
     if lo is None and hi is None:
         raise ValueError(
-            "intervention mode 'clamp' was given neither `clamp_min` nor `clamp_max`, which is the "
+            "op 'clamp' was given neither `clamp_min` nor `clamp_max`, which is the "
             "identity for every input: the coordinate is clipped into an unbounded range, the delta is "
             "zero, and the intervention completes returning plausible logits for an edit that never "
-            "happened. Pass at least one bound, or use a mode that expresses what you meant."
+            "happened. Pass at least one bound, or use an op that expresses what you meant."
         )
     if lo is not None and hi is not None and lo > hi:
         raise ValueError(
-            f"intervention mode 'clamp' was given clamp_min={lo} greater than clamp_max={hi}, which "
+            f"op 'clamp' was given clamp_min={lo} greater than clamp_max={hi}, which "
             "bounds every coordinate into an empty range. Refused rather than silently ordered."
         )
 
@@ -669,7 +686,7 @@ def _apply_span_clamp(
     basis = basis.to(dtype=torch.float32)
     if basis.shape[1] != flat.shape[1]:
         raise ValueError(
-            f"intervention mode 'clamp' basis vectors have width {basis.shape[1]} but the hook slice is "
+            f"op 'clamp' basis vectors have width {basis.shape[1]} but the hook slice is "
             f"{flat.shape[1]} wide; refused rather than broadcast, since a width mismatch here yields a "
             "plausible activation rather than an error."
         )
@@ -707,7 +724,7 @@ def _apply_span_rejection(
 
     ``spec.scale_factor`` is the removal FRACTION rather than a magnitude: 1.0 removes the component
     entirely, 0.5 halves it, 0.0 is the identity. That is what makes the paper's graded ablation bands
-    expressible as one mode with a parameter instead of three modes.
+    expressible as one op with a parameter instead of three ops.
     """
     batch = input_value.shape[0]
     flat = input_value.reshape(batch, -1).to(dtype=torch.float32)
@@ -715,7 +732,7 @@ def _apply_span_rejection(
     basis = basis.to(dtype=torch.float32)
     if basis.shape[1] != flat.shape[1]:
         raise ValueError(
-            f"intervention mode 'reject' basis vectors have width {basis.shape[1]} but the hook "
+            f"op 'reject' basis vectors have width {basis.shape[1]} but the hook "
             f"activation is {flat.shape[1]}-dimensional"
         )
 
@@ -727,39 +744,9 @@ def _apply_span_rejection(
     return rejected.reshape(input_value.shape).to(dtype=input_value.dtype)
 
 
-def _apply_mode_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
-    """Apply one intervention mode to a selected REGION, returning the edited region.
-
-    The region is whatever the scope selected, flattened so that its leading axis indexes independent
-    rows. That flattening is what lets one implementation serve both scopes: ``last_token`` passes a
-    single position per batch row, ``all_positions`` passes every position as its own row, and the
-    per-row mathematics is identical in both cases -- which is the property that makes the two scopes
-    the SAME operation applied to different position sets, rather than two operations that happen to
-    share a name.
-    """
-    target = torch.as_tensor(spec.intervention_tensor, device=input_value.device, dtype=input_value.dtype)
-    mode = normalize_intervention_mode(spec.mode)
-
-    if mode is InterventionMode.REPLACE:
-        return torch.broadcast_to(target, input_value.shape).to(dtype=input_value.dtype).clone()
-
-    if mode is InterventionMode.ADD:
-        return input_value + target * spec.scale_factor
-
-    if mode is InterventionMode.PATCH:
-        return _apply_lens_coordinate_patch(spec, input_value=input_value, target=target)
-
-    if mode is InterventionMode.REJECT:
-        return _apply_span_rejection(spec, input_value=input_value, target=target)
-
-    if mode is InterventionMode.CLAMP:
-        return _apply_span_clamp(spec, input_value=input_value, target=target)
-
-    if mode is InterventionMode.SCALE:
-        return input_value * (target * spec.scale_factor)
-
-    assert mode is InterventionMode.PROJECT, f"unreachable: normalize_intervention_mode admitted {mode!r}"
-
+def _apply_projection(spec: InterventionSpec, *, input_value: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Replace the activation with its projection onto ``span(target)`` (or the reverse, see
+    ``use_intervention_tensor_as_basis``), scaled by ``spec.scale_factor``."""
     input_float = input_value.to(dtype=torch.float32)
     target_float = torch.broadcast_to(target, input_value.shape[1:]).to(dtype=torch.float32)
     keepdim_axes = tuple(range(1, input_float.ndim))
@@ -777,6 +764,62 @@ def _apply_mode_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> 
         projected = coeff * basis
 
     return projected.to(dtype=input_value.dtype) * spec.scale_factor
+
+
+def _replace(region: torch.Tensor, operand: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
+    return torch.broadcast_to(operand, region.shape).to(dtype=region.dtype).clone()
+
+
+def _replace_with_error(region: torch.Tensor, operand: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
+    r"""$o + \mathrm{sg}(x - o)$: the value of the activation $x$, with the gradient reaching the operand $o$ and not
+    $x$ through the substitution (the error term $x - o$ is a constant to autograd)."""
+    substituted = torch.broadcast_to(operand, region.shape).to(dtype=region.dtype)
+    return substituted + (region - substituted).detach()
+
+
+#: The core ops' executors, registered from the shared op math when this module is imported.
+_CORE_EXECUTORS = {
+    "replace": _replace,
+    "add": lambda region, operand, spec: region + operand * spec.scale_factor,
+    "scale": lambda region, operand, spec: region * (operand * spec.scale_factor),
+    "patch": lambda region, operand, spec: _apply_lens_coordinate_patch(spec, input_value=region, target=operand),
+    "reject": lambda region, operand, spec: _apply_span_rejection(spec, input_value=region, target=operand),
+    "clamp": lambda region, operand, spec: _apply_span_clamp(spec, input_value=region, target=operand),
+    "project": lambda region, operand, spec: _apply_projection(spec, input_value=region, target=operand),
+    "replace_with_error": _replace_with_error,
+}
+
+
+def _seed_core_executors() -> None:
+    """Register the core executors, keeping any a user registered in their place.
+
+    Idempotent, so a second load of this module (this suite's documented double-import class) re-registers the core ops
+    rather than refusing them, and never overwrites an executor another source registered.
+    """
+    from interpretune.analysis.backends import ops as registry
+
+    for name, executor in _CORE_EXECUTORS.items():
+        existing = registry._EXECUTORS.get(name)
+        if existing is None or existing.source == "core":
+            register_executor(name, executor, source="core", replace=True)
+
+
+_seed_core_executors()
+
+
+def _apply_op_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
+    """Apply one op to a selected REGION through its registered executor, returning the edited region.
+
+    The region is whatever the scope selected, flattened so that its leading axis indexes independent
+    rows. That flattening is what lets one implementation serve both scopes: ``last_token`` passes a
+    single position per batch row, ``all_positions`` passes every position as its own row, and the
+    per-row mathematics is identical in both cases -- which is the property that makes the two scopes
+    the SAME operation applied to different position sets, rather than two operations that happen to
+    share a name. Dispatch is by name through the executor registry, so an op registered after this module
+    (by a user, or from a hub collection) runs through the same path as the core ones.
+    """
+    target = torch.as_tensor(spec.intervention_tensor, device=input_value.device, dtype=input_value.dtype)
+    return executor_for(normalize_op(spec.op))(input_value, target, spec)
 
 
 def apply_intervention(
@@ -797,22 +840,25 @@ def apply_intervention(
     ``all_positions``.
 
     The existing hook value is treated as the projection input and ``spec.intervention_tensor`` as the
-    projection target. In ``"project"`` mode the target defines the default projection basis; when
+    projection target. Under ``"project"`` the target defines the default projection basis; when
     ``spec.use_intervention_tensor_as_basis`` is ``False`` the direction is reversed.
     """
     scope = normalize_position_scope(spec.position_scope)
 
     if scope == PositionScope.LAST_TOKEN:
-        value[:, last_pos, ...] = _apply_mode_to_region(value[:, last_pos, ...], spec)
+        value[:, last_pos, ...] = _apply_op_to_region(value[:, last_pos, ...], spec)
         return value
 
     if scope == PositionScope.ALL_POSITIONS:
         batch, seq = value.shape[0], value.shape[1]
         flat = value.reshape(batch * seq, *value.shape[2:])
-        value[...] = _apply_mode_to_region(flat, spec).reshape(value.shape)
+        value[...] = _apply_op_to_region(flat, spec).reshape(value.shape)
         return value
 
-    raise AssertionError(f"unreachable: normalize_position_scope admitted {scope!r}")
+    raise NotImplementedError(
+        f"a hook spec cannot carry position_scope={scope.value!r}: explicit positions are named by the payload itself"
+        " (circuit-tracer's feature tuples), and a hook spec edits the final real token or every position"
+    )
 
 
 def apply_op(value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
@@ -835,7 +881,7 @@ def apply_op(value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
             f"an operand spanning {units} axes cannot apply to an activation of shape {tuple(value.shape)}"
         )
     flat = value.reshape(-1, *value.shape[value.ndim - units :])
-    return _apply_mode_to_region(flat, spec).reshape(value.shape)
+    return _apply_op_to_region(flat, spec).reshape(value.shape)
 
 
 def normalize_position_scope(scope: PositionScope | str) -> PositionScope:
@@ -855,21 +901,8 @@ def normalize_position_scope(scope: PositionScope | str) -> PositionScope:
         ) from None
 
 
-def normalize_intervention_mode(mode: InterventionMode | str) -> InterventionMode:
-    """Coerce a spec's mode to the enum, raising with the valid set if it is not one.
-
-    One converter, as for scope.
-    """
-    try:
-        return InterventionMode(mode)
-    except ValueError:
-        raise ValueError(
-            f"Unknown intervention mode {mode!r}; expected one of {[m.value for m in InterventionMode]!r}."
-        ) from None
-
-
 def _declared_axes(backend: Any, *, backend_name: str) -> tuple[set[str], set[str]]:
-    """The backend's declared scope and mode VALUES, or a refusal naming what is missing.
+    """The backend's declared scope and op VALUES, or a refusal naming what is missing.
 
     Read by attribute and compared by value rather than by ``isinstance``, for the same reason
     ``require_backend_capability`` compares capability values: this repository's test infrastructure can
@@ -882,18 +915,18 @@ def _declared_axes(backend: Any, *, backend_name: str) -> tuple[set[str], set[st
     record = getattr(backend, "intervention_support", None)
     if record is None:
         raise NotImplementedError(
-            f"backend {backend_name!r} claims {ModelBackendCapability.ACTIVATION_INTERVENTION.name} but attaches no "
-            "`intervention_support` record, so nothing says which position scopes or modes it can honour. "
-            "Declare an InterventionSupport(position_scopes=..., modes=...) on the backend."
+            f"backend {backend_name!r} claims {Capability.INTERVENTION.name} but attaches no "
+            "`intervention_support` record, so nothing says which position scopes or ops it can honour. "
+            "Declare an InterventionSupport(ops=..., targets=..., position_scopes=...) on the backend."
         )
     scopes = {getattr(s, "value", s) for s in getattr(record, "position_scopes", ()) or ()}
-    modes = {getattr(m, "value", m) for m in getattr(record, "modes", ()) or ()}
-    if not scopes or not modes:
+    ops = {getattr(m, "value", m) for m in getattr(record, "declared_ops", ()) or ()}
+    if not scopes or not ops:
         raise TypeError(
             f"backend {backend_name!r}.intervention_support must be an InterventionSupport declaring at least one "
-            f"position scope and one mode; got {record!r}"
+            f"position scope and one op; got {record!r}"
         )
-    return scopes, modes
+    return scopes, ops
 
 
 def require_position_scope(backend: Any, spec: InterventionSpec, *, backend_name: str) -> None:
@@ -906,7 +939,7 @@ def require_position_scope(backend: Any, spec: InterventionSpec, *, backend_name
     only one name for the operation.
     """
     scope = normalize_position_scope(spec.position_scope)
-    scopes, _modes = _declared_axes(backend, backend_name=backend_name)
+    scopes, _ops = _declared_axes(backend, backend_name=backend_name)
     if scope.value not in scopes:
         raise NotImplementedError(
             f"backend {backend_name!r} cannot apply an intervention with position_scope={scope.value!r}; it declares "
@@ -916,34 +949,34 @@ def require_position_scope(backend: Any, spec: InterventionSpec, *, backend_name
         )
 
 
-def require_intervention_mode(backend: Any, spec: InterventionSpec, *, backend_name: str) -> None:
-    """Refuse, with the axis named, when a backend cannot express the spec's mode.
+def require_op(backend: Any, spec: InterventionSpec, *, backend_name: str) -> None:
+    """Refuse, with the axis named, when a backend does not declare the spec's op.
 
-    Modes are where the semantics live: ``replace``, ``patch`` and ``project`` all need the CURRENT
+    Ops are where the semantics live: ``replace``, ``patch`` and ``project`` all need the CURRENT
     activation, and an additive steering primitive never observes it. A backend applying an undeclared
-    mode as the one it has returns plausible logits for an intervention nobody requested, so the gate
+    op as the one it has returns plausible logits for an intervention nobody requested, so the gate
     refuses before the backend is reached.
     """
-    mode = normalize_intervention_mode(spec.mode)
-    _scopes, modes = _declared_axes(backend, backend_name=backend_name)
-    if mode.value not in modes:
+    op = normalize_op(spec.op)
+    _scopes, ops = _declared_axes(backend, backend_name=backend_name)
+    if op not in ops:
         raise NotImplementedError(
-            f"backend {backend_name!r} cannot apply an intervention with mode={mode.value!r}; it declares "
-            f"{sorted(modes)!r}. Refused on the MODE axis rather than applied as "
-            "another mode, since every mode returns plausible logits and the substitution is undetectable."
+            f"backend {backend_name!r} cannot apply op={op!r}; it declares {sorted(ops)!r}. Refused on the OP axis"
+            " rather than applied as another op, since every op returns plausible logits and the substitution is"
+            " undetectable."
         )
 
 
 def iter_intervention_axes(
     interventions: InterventionDict | Mapping[str, InterventionValue],
     *,
-    default_mode: InterventionMode | str = InterventionMode.REPLACE,
+    default_op: str = "replace",
 ) -> Iterator[tuple[str, InterventionSpec]]:
     """Yield ``(hook_pattern, spec)`` for every intervention in a RAW or canonical payload.
 
     Gating happens before canonicalization, because canonicalization needs concrete hook shapes and therefore runs
-    inside the backend, which is exactly the place a refusal must not depend on. Only the scope and mode of each entry
-    are needed to gate, and both are readable without a shape: a bare tensor carries the defaults, a mapping carries
+    inside the backend, which is exactly the place a refusal must not depend on. Only the scope and op of each entry are
+    needed to gate, and both are readable without a shape: a bare tensor carries the defaults, a mapping carries
     whatever it names, a spec carries itself.
     """
     items = interventions.items() if hasattr(interventions, "items") else interventions
@@ -951,10 +984,10 @@ def iter_intervention_axes(
         if isinstance(raw, Mapping) and "intervention_tensors" in raw:
             # The per-hook shape carries one set of axes for every tensor, and the tensors are not needed
             # to gate, so a placeholder stands in for them rather than coercing a shape the gate never reads.
-            shared = _shared_spec_fields(raw, default_mode=default_mode, default_scale_factor=1.0)
+            shared = _shared_spec_fields(raw, default_op=default_op, default_scale_factor=1.0)
             yield pattern, InterventionSpec(torch.empty(0), **shared)
             continue
-        for spec in _coerce_shared_intervention_specs(raw, default_mode=normalize_intervention_mode(default_mode)):
+        for spec in _coerce_shared_intervention_specs(raw, default_op=normalize_op(default_op)):
             yield pattern, spec
 
 
@@ -972,4 +1005,4 @@ def require_intervention_support(
     """
     for _pattern, spec in iter_intervention_axes(interventions):
         require_position_scope(backend, spec, backend_name=backend_name)
-        require_intervention_mode(backend, spec, backend_name=backend_name)
+        require_op(backend, spec, backend_name=backend_name)

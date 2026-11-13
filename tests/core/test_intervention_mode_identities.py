@@ -33,12 +33,12 @@ def _pinv_coords(v: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
 
 
 def _reject(v: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
-    spec = InterventionSpec(intervention_tensor=v, mode="reject", scale_factor=1.0)
+    spec = InterventionSpec(intervention_tensor=v, op="reject", scale_factor=1.0)
     return _apply_span_rejection(spec, input_value=h.reshape(1, -1), target=v)[0]
 
 
 def _clamp(v: torch.Tensor, h: torch.Tensor, lo: float, hi: float) -> torch.Tensor:
-    spec = InterventionSpec(intervention_tensor=v, mode="clamp", clamp_min=lo, clamp_max=hi)
+    spec = InterventionSpec(intervention_tensor=v, op="clamp", clamp_min=lo, clamp_max=hi)
     return _apply_span_clamp(spec, input_value=h.reshape(1, -1), target=v)[0]
 
 

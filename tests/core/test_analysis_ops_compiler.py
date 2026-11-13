@@ -1882,10 +1882,10 @@ class TestCacheFormatVersionCoversCompilerChanges:
     # comment: a comment-triggered failure is at least explicable by looking at what you just changed.
     # Raw bytes hash identically on all four.
     GUARDED = ("schema_compiler.py", "cache_manager.py")
-    EXPECTED_VERSION = "8"
+    EXPECTED_VERSION = "9"
     EXPECTED_DIGESTS = {
         "schema_compiler.py": "4125460ee167",
-        "cache_manager.py": "b161173c515c",
+        "cache_manager.py": "97b708e5fcf8",
     }
 
     @staticmethod

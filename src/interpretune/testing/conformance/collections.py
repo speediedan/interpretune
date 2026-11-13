@@ -15,7 +15,7 @@ from typing import Any, ClassVar, cast
 
 import pytest
 
-from interpretune.analysis.backends import ModelBackendCapability
+from interpretune.analysis.backends import Capability
 from interpretune.analysis.ops.base import AnalysisOp
 
 from .inputs import ConformanceInputs, ConformanceTarget
@@ -108,7 +108,7 @@ class OpCollectionConformance:
         return ops
 
     def test_every_declared_requirement_is_a_known_axis(self, collection_ops):
-        """Each op's declared capabilities, modes and scopes are members of the vocabulary.
+        """Each op's declared capabilities, tensor ops and scopes are members of the vocabulary.
 
         Instantiation normalizes every axis and raises naming the stray value, so instantiating is the check.
         """
@@ -119,21 +119,21 @@ class OpCollectionConformance:
 
     def test_requirements_are_satisfied_or_refused_by_name(self, suite, collection_ops):
         """For each op: the target's live declarations satisfy its requirements, or validation refuses naming
-        the missing capability, mode or scope. Nothing executes either way."""
+        the missing capability, op or scope. Nothing executes either way."""
         from interpretune.analysis.ops.dispatcher import DISPATCHER
 
         caps = suite.capabilities
-        record = caps.intervention
+        record = caps.intervention_for("activation") if caps.target_providers("activation") else None
         for name in collection_ops:
             op = cast(AnalysisOp, DISPATCHER.get_op(name))
             missing: list[str] = [c.value for c in op.required_capabilities if not caps.supports(c)]
             if op.requires_intervention_axes:
                 if record is None:
-                    missing.append(ModelBackendCapability.ACTIVATION_INTERVENTION.value)
+                    missing.append(Capability.INTERVENTION.value)
                 else:
-                    declared_modes = {m.value for m in record.modes}
+                    declared_ops = record.declared_ops
                     declared_scopes = {s.value for s in record.position_scopes}
-                    missing += [m.value for m in op.required_intervention_modes if m.value not in declared_modes]
+                    missing += [m for m in op.required_tensor_ops if m not in declared_ops]
                     missing += [s.value for s in op.required_position_scopes if s.value not in declared_scopes]
             if not missing:
                 op._validate_capabilities(suite.module)  # the runner's pre-execution check, no execution

@@ -7,8 +7,7 @@ import torch
 pytest.importorskip("venngram", reason="the venngram extra is not installed")
 
 from interpretune.analysis.backends.capabilities import (
-    FeatureInterventionSupport,
-    InterventionMode,
+    FeatureTargetSupport,
     InterventionSupport,
     PositionScope,
 )
@@ -27,13 +26,22 @@ from interpretune.utils import MisconfigurationException
 
 SITE = "hook_resid_post"
 HOOKED = f"{SITE}.hook_sae_acts_post"
-TRANSCODER = FeatureInterventionSupport(
+TRANSCODER = FeatureTargetSupport(
     value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"})
 )
-CAPTURING = FeatureInterventionSupport(
+CAPTURING = FeatureTargetSupport(
     value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"}),
     captures_clean_activations=True,
 )
+
+
+def _feature_record(detail: FeatureTargetSupport) -> InterventionSupport:
+    """An analysis backend's intervention record whose ``features`` target carries ``detail``."""
+    return InterventionSupport(
+        ops=frozenset({"replace"}),
+        position_scopes=frozenset({PositionScope.POSITIONS}),
+        targets={"features": detail},
+    )
 
 
 def _recipe(ops, *, site=SITE, tokens="last", sets=None):
@@ -78,7 +86,7 @@ class TestModelBackendPath:
         payload = recipe_interventions(_recipe([_op(dose=0.5)]), site_widths={HOOKED: 16})
         assert sorted(payload) == [f"blocks.2.{HOOKED}", f"blocks.5.{HOOKED}"]
         (spec,) = payload[f"blocks.2.{HOOKED}"]
-        assert spec.mode is InterventionMode.ADD and spec.position_scope is PositionScope.LAST_TOKEN
+        assert spec.op == "add" and spec.position_scope is PositionScope.LAST_TOKEN
         assert spec.intervention_tensor.shape == (16,) and torch.count_nonzero(spec.intervention_tensor) == 2
         out = apply_intervention(torch.zeros(1, 3, 16), spec, last_pos=2)
         assert out[0, 2, 3] == 0.5 and out[0, 2, 7] == 0.5 and out[0, 0, 3] == 0.0
@@ -87,7 +95,7 @@ class TestModelBackendPath:
         (spec,) = recipe_interventions(_recipe([_op("scale", dose=0.0)]), site_widths={HOOKED: 16})[
             f"blocks.2.{HOOKED}"
         ]
-        assert spec.mode is InterventionMode.SCALE
+        assert spec.op == "scale"
         assert spec.intervention_tensor[3] == 0.0 and spec.intervention_tensor.sum() == 14.0
 
     def test_a_latent_name_lists_its_features_in_units(self):
@@ -106,7 +114,7 @@ class TestModelBackendPath:
     @pytest.mark.parametrize(
         "ops, kwargs, match",
         [
-            pytest.param([_op("replace", dose=1.0)], {}, "has no native mode at a sub-hook", id="replace"),
+            pytest.param([_op("replace", dose=1.0)], {}, "has no native translation at a sub-hook", id="replace"),
             pytest.param([_op(dose=0.5)], {"site": f"blocks.2.{SITE}"}, "stage names the layer-free", id="layered"),
             pytest.param([_op(dose=0.5)], {"site": HOOKED}, "`hook_sae_acts_post` is implied", id="sub-hook-site"),
             pytest.param(
@@ -431,10 +439,10 @@ class TestAnalysisBackendPath:
             recipe_feature_interventions(recipe, support=TRANSCODER)
 
     def test_a_backend_not_honouring_constant_cannot_take_computed_values(self):
-        scores_only = FeatureInterventionSupport(value_sources=frozenset({"top_feature_scores"}))
+        scores_only = FeatureTargetSupport(value_sources=frozenset({"top_feature_scores"}))
         with pytest.raises(MisconfigurationException, match="cannot take a recipe's computed values"):
             recipe_feature_interventions(self._recipe(dose=1.0), support=scores_only)
-        assert venngram_feature_support(scores_only).values == frozenset()
+        assert venngram_feature_support(_feature_record(scores_only)).values == frozenset()
 
     @pytest.mark.parametrize("op, combine", [("add", lambda a, d: a + d), ("scale", lambda a, d: a * d)])
     def test_add_and_scale_are_relative_to_the_clean_capture(self, op, combine):
@@ -463,11 +471,12 @@ class TestAnalysisBackendPath:
 
     def test_add_and_scale_are_declared_only_with_a_capture(self):
         recipe = _recipe([_op("add", dose=1.0)], site=self.SITE, tokens=self.TOKENS)
-        assert venngram_feature_support(TRANSCODER).ops == frozenset({"replace"})
-        assert venngram_feature_support(CAPTURING).ops == frozenset({"replace", "add", "scale"})
-        refusals = check_recipe(recipe, venngram_feature_support(TRANSCODER), analysis_backend=True)
+        plain, capturing = (venngram_feature_support(_feature_record(d)) for d in (TRANSCODER, CAPTURING))
+        assert plain.ops == frozenset({"replace"})
+        assert capturing.ops == frozenset({"replace", "add", "scale"})
+        refusals = check_recipe(recipe, plain, analysis_backend=True)
         assert any("`add`): the op is not supported" in r for r in refusals), refusals
-        assert check_recipe(recipe, venngram_feature_support(CAPTURING), analysis_backend=True) == []
+        assert check_recipe(recipe, capturing, analysis_backend=True) == []
 
 
 class TestSupport:
@@ -489,16 +498,16 @@ class TestSupport:
 
     def test_the_analysis_path_checks_with_its_own_refusals(self):
         recipe = _recipe([_op("replace", dose=1.0)], site="transcoder.features", tokens={"positions": [1]})
-        support = venngram_feature_support(TRANSCODER)
+        support = venngram_feature_support(_feature_record(TRANSCODER))
         assert check_recipe(recipe, support, analysis_backend=True) == []
         require_supported(recipe, support, analysis_backend=True)
-        assert any("no native mode at a sub-hook" in r for r in check_recipe(recipe, support))
+        assert any("no native translation at a sub-hook" in r for r in check_recipe(recipe, support))
 
     @pytest.mark.parametrize(
         "support",
         [
             pytest.param(venngram_support(InterventionSupport.every(), latent_models=True), id="model-backend"),
-            pytest.param(venngram_feature_support(TRANSCODER), id="analysis-backend"),
+            pytest.param(venngram_feature_support(_feature_record(TRANSCODER)), id="analysis-backend"),
         ],
     )
     def test_both_declarations_publish_as_support_records(self, support):

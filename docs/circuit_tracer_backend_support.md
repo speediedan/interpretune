@@ -41,7 +41,7 @@ feature available to `feature_intervention_forward` even when other requested fe
 
 For direct tensor steering outside the feature-intervention path, concept-direction notebook experiments now also use
 `model_fwd_intervention` with explicit intervention mappings. This allows the runtime concept-direction vector to be
-applied at non-default hook points such as `blocks.0.hook_in` in modes like `project`.
+applied at non-default hook points such as `blocks.0.hook_in` with ops like `project`.
 
 For hook naming, prefer the canonical TransformerBridge-style patterns documented in
 [intervention_hook_pattern_support.md](intervention_hook_pattern_support.md).

@@ -84,7 +84,7 @@ Tracked here until a Wave 2 issue is opened for it. The stub should not outlive 
   [#273](https://github.com/speediedan/interpretune/issues/273) as a separately published op
   collection): the read/probe/steer ops, the `concept_basis="jlens_*"` selector for
   `concept_direction`, per-feature J-space signatures, and the `patch` / `clamp` /
-  `reject` write modes have shipped, and the separately published collection is
+  `reject` write ops have shipped, and the separately published collection is
   the first genuinely non-bundled proving ground for hub registration. Open research:
   J-space attribution graphs ([#683](https://github.com/speediedan/interpretune/issues/683)),
   RTE attribution graphs with a learned pruner and graph-guided fine-tuning

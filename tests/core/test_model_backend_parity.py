@@ -541,7 +541,7 @@ class TestDirectionInterventionBackendParity:
         analysis_batch = AnalysisBatch(
             intervention_hook_pattern="unembed.hook_in",
             intervention_tensor=direction,
-            intervention_mode="add",
+            intervention_op="add",
             intervention_scale_factor=scale_factor,
         )
         return it.model_fwd_intervention(module, analysis_batch, batch=batch, batch_idx=0)

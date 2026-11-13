@@ -130,11 +130,12 @@ class OpIntervention(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """``x`` with the op applied."""
-        # imported here: `interpretune.config` imports this module, and must not pull in the analysis package
+        # imported here: this module is imported with the module configuration, and the op seam imports the analysis
+        # package, which a configuration import must not pull in
         from interpretune.analysis.backends.interventions import InterventionSpec, PositionScope, apply_op
 
         spec = InterventionSpec(
-            self.operand(), mode=self.op, scale_factor=self.scale_factor, position_scope=PositionScope.ALL_POSITIONS
+            self.operand(), op=self.op, scale_factor=self.scale_factor, position_scope=PositionScope.ALL_POSITIONS
         )
         return apply_op(x, spec)
 
