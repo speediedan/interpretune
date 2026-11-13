@@ -231,6 +231,7 @@ def recipe_interventions(
     site_widths: Mapping[str, int],
     evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
     statistics: Mapping[str, Statistic] | None = None,
+    weights_applied: bool = False,
 ) -> dict[str, tuple[InterventionSpec, ...]]:
     """Translate a supported ``venngram.recipe.Recipe`` into a backend intervention payload.
 
@@ -241,18 +242,27 @@ def recipe_interventions(
             whole-activation op's site also checks its operand's width.
         evidence: The tables evidence-sourced values read (:mod:`~interpretune.analysis.venngram.values`).
         statistics: The statistics their transforms name.
+        weights_applied: Whether the recipe's ``weights`` section (ops on parameters, which a recipe applies before any
+            stage) has been applied (:func:`~interpretune.tuning.weights.apply_recipe_weights`). A recipe with weights
+            is refused until it has, since its stages alone are a different treatment.
 
     Returns:
         A mapping of hook patterns (``blocks.<layer>.<site>``) to the ordered specs to apply at each, in the raw
         form :func:`~interpretune.analysis.backends.interventions.build_intervention_dict` canonicalizes.
 
     Raises:
-        MisconfigurationException: For anything this module cannot translate (see :func:`op_refusal`), an
-            unmapped token scope, a unit- or feature-targeted site whose width was not supplied, a unit outside its
-            site's width, an operand whose width differs from a supplied site width, or a value the supplied evidence
-            cannot give, naming the stage and op. Run
+        MisconfigurationException: For a recipe whose weights were not applied, anything this module cannot translate
+            (see :func:`op_refusal`), an unmapped token scope, a unit- or feature-targeted site whose width was not
+            supplied, a unit outside its site's width, an operand whose width differs from a supplied site width, or a
+            value the supplied evidence cannot give, naming the stage and op. Run
             :func:`~interpretune.analysis.venngram.support.require_supported` first for the full list at once.
     """
+    if getattr(recipe, "weights", ()) and not weights_applied:
+        raise MisconfigurationException(
+            f"recipe {recipe.name!r} has a `weights` section ({len(recipe.weights)} ops on parameters), applied before "
+            "its stages: apply it first (`interpretune.tuning.weights.apply_recipe_weights`), then pass "
+            "`weights_applied=True`"
+        )
     payload: dict[str, list[InterventionSpec]] = {}
     for i, stage in enumerate(recipe.stages):
         if stage.tokens.kind not in _POSITION_SCOPES:
