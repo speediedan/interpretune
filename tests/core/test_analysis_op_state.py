@@ -540,7 +540,7 @@ class TestOpDefCacheRoundTrip:
             "requires_grad",
             "per_latent_preds",
             "protocol_cls",
-            "required_intervention_modes",
+            "required_tensor_ops",
             "required_position_scopes",
             "conformance",
         }
@@ -568,7 +568,7 @@ class TestOpDefCacheRoundTrip:
             requires_grad=True,
             per_latent_preds=True,
             protocol_cls="interpretune.protocol.DefaultAnalysisBatchProtocol",
-            required_intervention_modes=["patch"],
+            required_tensor_ops=["patch"],
             required_position_scopes=["all_positions"],
             conformance={"run_inputs": {"alpha": 1}},
         )
@@ -590,7 +590,7 @@ class TestOpDefCacheRoundTrip:
         assert restored.protocol_cls == "interpretune.protocol.DefaultAnalysisBatchProtocol"
         # The intervention axes must survive, or a cached op skips the pre-execution axis check that a cold
         # load performs and the refusal moves back to the backend, late, for warm caches only.
-        assert (restored.required_intervention_modes, restored.required_position_scopes) == (
+        assert (restored.required_tensor_ops, restored.required_position_scopes) == (
             ["patch"],
             ["all_positions"],
         )
@@ -605,14 +605,14 @@ class TestOpDefCacheRoundTrip:
         assert "source=" not in plain_serialized and "requires_grad" not in plain_serialized
         assert "protocol_cls" not in plain_serialized
         assert "collection_name" not in plain_serialized
-        assert "required_intervention_modes" not in plain_serialized and "conformance" not in plain_serialized
+        assert "required_tensor_ops" not in plain_serialized and "conformance" not in plain_serialized
         # Deliberately a LITERAL, unlike the derived assertion in test_analysis_ops_compiler.py: the point is
         # to fail when the format changes without someone deciding it should, since adding an OpDef field (or
         # otherwise changing compiled output) without a bump makes stale caches deserialize silently wrong.
         # Updating it is the acknowledgement, so it should move only alongside a new `# N:` rationale line on
         # CACHE_FORMAT_VERSION itself. Note this only guards fields reaching THIS test; the compiler source is
         # not part of the cache fingerprint at all.
-        assert CACHE_FORMAT_VERSION == "8"
+        assert CACHE_FORMAT_VERSION == "9"
 
 
 class TestOpStateIsNotSerialized:

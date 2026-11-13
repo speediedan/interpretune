@@ -5,13 +5,14 @@ hub) — see ``docs/custom_ops_composition_guide.md``. It provides:
 
 - :mod:`~interpretune.analysis.backends.protocols`: the ``ModelBackend`` / ``AnalysisBackend``
   protocols a framework or analysis package implements
-- :mod:`~interpretune.analysis.backends.capabilities`: capability enums, module capability
-  aggregation, and the named-backend registry
+- :mod:`~interpretune.analysis.backends.capabilities`: the capability namespace, its support records,
+  module capability aggregation, and the named-backend registry
 - :mod:`~interpretune.analysis.backends.interventions`: declarative intervention specs and their
   expansion/application
+- :mod:`~interpretune.analysis.backends.ops`: the executor registry that applies each op by name
 - :mod:`~interpretune.analysis.backends.feature_selection`: feature-selection specs and filters
 
-The four modules above are the seam. The concrete backends live one level down in
+The five modules above are the seam. The concrete backends live one level down in
 each adapter's own package (``interpretune.adapters.<name>.backends``),
 which is **not** part of the op-author surface: an op consumes backends through the protocols and
 capability helpers, never by importing one, and the publishability lint enforces that by excluding
@@ -22,20 +23,20 @@ through this façade, so moving it would invert the layering.
 This module is a re-export façade only: ``__all__`` below is the public surface. Note that
 ``resolve_analysis_backend`` treats ``backends.<name>`` as a by-name lookup namespace, so only
 modules that call ``register_analysis_backend`` at import time participate in that resolution; the
-four seam modules deliberately do not.
+five seam modules deliberately do not.
 """
 
 from __future__ import annotations
 
 from interpretune.analysis.backends.capabilities import (
     ANALYSIS_BACKEND_REGISTRY,
-    AnalysisBackendCapability,
-    ModelBackendCapability,
+    COMPONENTS,
     Capability,
-    InterventionMode,
+    FLOWS,
+    INTERVENTION_TARGETS,
     InterventionSupport,
     CaptureSupport,
-    FeatureInterventionSupport,
+    FeatureTargetSupport,
     AttributionGraphSupport,
     LatentModelSupport,
     ModuleCapabilities,
@@ -47,6 +48,7 @@ from interpretune.analysis.backends.capabilities import (
     register_analysis_backend,
     require_analysis_backend,
     resolve_analysis_backend,
+    VALUE_SOURCES,
 )
 from interpretune.analysis.backends.feature_selection import (
     FeatureSelectionSpec,
@@ -63,15 +65,22 @@ from interpretune.analysis.backends.interventions import (
     apply_intervention,
     apply_op,
     iter_intervention_axes,
-    normalize_intervention_mode,
     normalize_position_scope,
-    require_intervention_mode,
+    require_op,
     require_intervention_support,
     require_position_scope,
     build_intervention_dict,
     expand_intervention_patterns,
     get_intervention_target_shape,
     resolve_interventions,
+)
+from interpretune.analysis.backends.ops import (
+    OpExecutor,
+    check_tensor_op,
+    executor_for,
+    normalize_op,
+    register_executor,
+    registered_ops,
 )
 from interpretune.analysis.backends.protocols import (
     AnalysisBackend,
@@ -93,9 +102,11 @@ __all__ = [
     "SupportsHeadAttribution",
     "SupportsAttributionGraph",
     "AnalysisBackendCore",
-    "AnalysisBackendCapability",
-    "ModelBackendCapability",
+    "COMPONENTS",
     "Capability",
+    "FLOWS",
+    "INTERVENTION_TARGETS",
+    "VALUE_SOURCES",
     "FeatureSelectionSpec",
     "InterventionDict",
     "InterventionSpec",
@@ -114,15 +125,19 @@ __all__ = [
     "normalize_position_scope",
     "require_position_scope",
     "require_intervention_support",
-    "require_intervention_mode",
-    "normalize_intervention_mode",
+    "require_op",
+    "normalize_op",
+    "OpExecutor",
+    "check_tensor_op",
+    "executor_for",
+    "register_executor",
+    "registered_ops",
     "iter_intervention_axes",
     "LatentModelSupport",
     "InterventionSupport",
     "CaptureSupport",
-    "FeatureInterventionSupport",
+    "FeatureTargetSupport",
     "AttributionGraphSupport",
-    "InterventionMode",
     "apply_optional_feature_sign_filter",
     "augment_feature_rows_for_selection",
     "build_intervention_dict",

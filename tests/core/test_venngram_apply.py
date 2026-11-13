@@ -5,7 +5,7 @@ import torch
 
 pytest.importorskip("venngram", reason="the venngram extra is not installed")
 
-from interpretune.analysis.backends.capabilities import InterventionMode, PositionScope
+from interpretune.analysis.backends.capabilities import PositionScope
 from interpretune.analysis.backends.interventions import apply_intervention
 from interpretune.analysis.venngram import load_recipe, recipe_interventions
 from interpretune.utils import MisconfigurationException
@@ -40,7 +40,7 @@ def test_unit_doses_scatter_per_layer_and_apply_through_the_native_path():
     payload = recipe_interventions(_recipe(), site_widths={"mlp.out.hook_in": 8192})
     assert sorted(payload) == ["blocks.15.mlp.out.hook_in", "blocks.2.mlp.out.hook_in"]
     (spec,) = payload["blocks.15.mlp.out.hook_in"]
-    assert spec.mode is InterventionMode.ADD and spec.position_scope is PositionScope.LAST_TOKEN
+    assert spec.op == "add" and spec.position_scope is PositionScope.LAST_TOKEN
     assert spec.intervention_tensor.shape == (8192,) and spec.intervention_tensor[4041] == -1.25
     assert torch.count_nonzero(spec.intervention_tensor) == 1
 
@@ -66,7 +66,7 @@ def test_an_unapplied_op_refuses_rather_than_narrowing():
             }
         ],
     }
-    with pytest.raises(MisconfigurationException, match="a unit-targeted `replace` has no native mode"):
+    with pytest.raises(MisconfigurationException, match="a unit-targeted `replace` has no native translation"):
         recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 8192})
 
 
@@ -98,7 +98,7 @@ def test_a_unit_scale_multiplies_the_named_units_and_keeps_the_rest():
     }
     payload = recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 8192})
     (spec,) = payload["blocks.2.mlp.out.hook_in"]
-    assert spec.mode is InterventionMode.SCALE and spec.intervention_tensor[7] == 3.0
+    assert spec.op == "scale" and spec.intervention_tensor[7] == 3.0
     assert torch.count_nonzero(spec.intervention_tensor - 1.0) == 1  # ones everywhere else
     value = torch.ones(1, 3, 8192)
     out = apply_intervention(value, spec, last_pos=2)
@@ -121,14 +121,14 @@ def test_each_operand_op_maps_onto_its_native_mode_in_recipe_order():
         {"op": "clamp", "operand": "v", "params": {"min": -1.0, "max": 1.0}},
     ]
     specs = recipe_interventions(_activation_recipe(ops, operands), site_widths={})["blocks.3.hook_resid_post"]
-    assert [s.mode for s in specs] == [
-        InterventionMode.ADD,
-        InterventionMode.REPLACE,
-        InterventionMode.SCALE,
-        InterventionMode.PROJECT,
-        InterventionMode.REJECT,
-        InterventionMode.PATCH,
-        InterventionMode.CLAMP,
+    assert [s.op for s in specs] == [
+        "add",
+        "replace",
+        "scale",
+        "project",
+        "reject",
+        "patch",
+        "clamp",
     ]
     add, replace, scale, _, reject, patch, clamp = specs
     assert add.scale_factor == 0.5 and torch.equal(add.intervention_tensor, torch.tensor([1.0, 0.0, 0.0, 0.0]))
@@ -185,14 +185,14 @@ def test_a_sidecar_operand_loads_relative_to_the_recipe(tmp_path):
             {"s": {"values": [1.0, 0.0, 0.0, 1.0], "shape": [2, 2]}},
             "blocks.0.hook_resid_post",
             {},
-            "projecting onto a subspace has no native mode",
+            "projecting onto a subspace has no native translation",
         ),
         (
             [{"op": "project", "operand": "v", "params": {"fraction": 0.5}}],
             {"v": {"values": [1.0, 0.0], "shape": [2]}},
             "blocks.0.hook_resid_post",
             {},
-            "fraction below 1 has no native mode",
+            "fraction below 1 has no native translation",
         ),
         (
             [{"op": "add", "operand": "v"}],

@@ -22,7 +22,7 @@ import nnsight as _nnsight
 import torch
 
 from interpretune.analysis.backends import (
-    ModelBackendCapability,
+    Capability,
     CaptureSupport,
     InterventionSupport,
     LatentModelSupport,
@@ -509,19 +509,26 @@ class NNsightModelBackend:
     # ------------------------------------------------------------------
 
     @property
-    def capabilities(self) -> frozenset[ModelBackendCapability]:
+    def capabilities(self) -> frozenset[Capability]:
         """NNsight implements every method group."""
         return frozenset(
             {
-                ModelBackendCapability.GRADIENTS,
-                ModelBackendCapability.LATENT_MODELS,
-                ModelBackendCapability.ACTIVATION_INTERVENTION,
+                Capability.GRADIENTS,
+                Capability.LATENT_MODELS,
+                Capability.INTERVENTION,
+                Capability.CAPTURE,
             }
         )
 
     @property
+    def requires(self) -> frozenset[Capability]:
+        """Nothing: a model backend is the composition's base."""
+        return frozenset()
+
+    @property
     def intervention_support(self) -> InterventionSupport:
-        """Every scope and every mode, for the same reason as TL: the traced value is the full activation."""
+        """Every op and both hook scopes on every target, for the same reason as TL: the traced value is the full
+        activation, and an attached latent model's features are traced at its sub-hook."""
         return InterventionSupport.every()
 
     @property
@@ -556,7 +563,7 @@ class NNsightModelBackend:
             architecture=architecture,
         )
 
-    def supports(self, capability: ModelBackendCapability) -> bool:
+    def supports(self, capability: Capability) -> bool:
         """Check whether this backend supports a given capability."""
         return capability in self.capabilities
 

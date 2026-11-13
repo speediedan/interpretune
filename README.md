@@ -25,6 +25,8 @@ Interpretune is a (pre-MVP) AI world model analysis framework. It strives to pro
 
 By granting a wide range of interpretability methods and packages access to **composable**, **shareable analysis operations** and **state** it accelerates novel, collaborative, world model analysis and tuning with PyTorch.
 
+That composability and shareability serve one aim: to **broaden the shoulders of giants**. An analysis operation, an intervention op or a component that one researcher writes and registers (in a federated registry such as venngram's ops, or as a Hub collection) is one any other researcher, or agent, can compose, rerun and extend.
+
 Both humans and agents can inspect and refine the mechanistic and causal faithfulness of model reasoning at mutually intelligible levels of abstraction. Core framework goals:
 
 - transparent, causally faithful reasoning

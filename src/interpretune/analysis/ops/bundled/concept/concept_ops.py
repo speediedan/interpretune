@@ -23,7 +23,7 @@ from interpretune.analysis.backends import (
     resolve_interventions,
 )
 from interpretune.analysis.ops.base import AnalysisBatch
-from interpretune.analysis.backends.capabilities import ModelBackendCapability
+from interpretune.analysis.backends.capabilities import Capability
 from interpretune.analysis.optools import (
     JLENS_BASIS_NAMES,
     refuse_retired_jlens_basis,
@@ -1147,7 +1147,7 @@ def model_fwd_intervention_impl(
     """
 
     model_backend = require_model_backend(module)
-    require_backend_capability(model_backend, ModelBackendCapability.ACTIVATION_INTERVENTION, "concept_intervention")
+    require_backend_capability(model_backend, Capability.INTERVENTION, "concept_intervention")
     interventions = resolve_interventions(
         analysis_batch=analysis_batch,
         resolve_field=lambda field_name: resolve_aggregate_input(module, analysis_batch, field_name),
@@ -1274,7 +1274,7 @@ def intervention_first_order_check_impl(
             "configuration's hook machinery, but the module carries no `analysis_cfg`."
         )
     model_backend = require_model_backend(module)
-    require_backend_capability(model_backend, ModelBackendCapability.GRADIENTS, "intervention_first_order_check")
+    require_backend_capability(model_backend, Capability.GRADIENTS, "intervention_first_order_check")
 
     if (
         getattr(module, "analysis_cfg", None)

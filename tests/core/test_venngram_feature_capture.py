@@ -68,9 +68,11 @@ def _intervened_logits(toy, op: str, dose: float) -> tuple[torch.Tensor, torch.T
     clean = backend.capture_feature_activations(types.SimpleNamespace(replacement_model=toy), TOY_PROMPT)
     position, feature = _active_feature(clean)
     recipe = _recipe(op, dose, feature, {"positions": [position]})
-    support = backend.feature_intervention_support
-    require_supported(recipe, venngram_feature_support(support), analysis_backend=True)
-    (intervention,) = recipe_feature_interventions(recipe, support=support, clean_activations=clean)
+    record = backend.intervention_support
+    require_supported(recipe, venngram_feature_support(record), analysis_backend=True)
+    (intervention,) = recipe_feature_interventions(
+        recipe, support=record.target_detail("features"), clean_activations=clean
+    )
     clean_logits, _ = toy.get_activations(TOY_PROMPT)
     logits, _ = toy.feature_intervention(TOY_PROMPT, [intervention])
     return clean_logits, logits, (clean, position, feature, intervention)
@@ -97,7 +99,7 @@ def test_a_misaligned_capture_breaks_the_identity(toy):
     assert float(shifted[LAYER, position, feature]) != pytest.approx(float(clean[LAYER, position, feature]))
     (intervention,) = recipe_feature_interventions(
         _recipe("add", 0.0, feature, {"positions": [position]}),
-        support=backend.feature_intervention_support,
+        support=backend.intervention_support.target_detail("features"),
         clean_activations=shifted,
     )
     clean_logits, _ = toy.get_activations(TOY_PROMPT)
@@ -124,7 +126,7 @@ def test_both_surfaces_give_one_value_for_the_same_op(toy, op, dose):
     width = clean.shape[-1]
     ((_, _, _, value),) = recipe_feature_interventions(
         _recipe(op, dose, feature, {"positions": [position]}),
-        support=backend.feature_intervention_support,
+        support=backend.intervention_support.target_detail("features"),
         clean_activations=clean,
     )
     (spec,) = recipe_interventions(

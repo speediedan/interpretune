@@ -416,7 +416,7 @@ graph_node_influence:
 feature_intervention_forward:
   description: Run feature interventions and return pre/post intervention outputs
   implementation: interpretune.analysis.ops.bundled.circuit_tracer.ct_ops.feature_intervention_forward_impl
-  required_capabilities: [feature_intervention]
+  required_capabilities: [intervention]
   aliases: [ct_feature_intervention]
   input_schema:
     top_feature_ids:

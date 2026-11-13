@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from interpretune.analysis.backends import ModelBackendCapability
+from interpretune.analysis.backends import Capability
 from interpretune.testing.conformance import ConformanceTarget, ModelBackendConformance, OpCollectionConformance
 from interpretune.testing.conformance.gates import conformance_case
 from interpretune.testing.conformance.inputs import CAPTURE_LAYER, ConformanceInputs
@@ -157,12 +157,12 @@ class TestCompatibilityModeConformance(ModelBackendConformance):
     )
 
     @pytest.mark.xfail(strict=True, reason=_TL4_MASKED_GRADIENTS)
-    @conformance_case(capability=ModelBackendCapability.GRADIENTS)
+    @conformance_case(capability=Capability.GRADIENTS)
     def test_gradient_op_stores_the_declared_schema(self, suite):
         super().test_gradient_op_stores_the_declared_schema(suite)
 
     @pytest.mark.xfail(strict=True, reason=_TL4_MASKED_GRADIENTS)
-    @conformance_case(capability=ModelBackendCapability.GRADIENTS)
+    @conformance_case(capability=Capability.GRADIENTS)
     def test_gradient_predicts_a_small_perturbation_to_first_order(self, suite):
         super().test_gradient_predicts_a_small_perturbation_to_first_order(suite)
 

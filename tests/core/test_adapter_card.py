@@ -158,7 +158,7 @@ class TestMeasuredCapabilitiesAreRenderedOnlyWhenTrustworthy:
 
     HEAD = "a" * 40
 
-    def _report(self, *, head=None, exit_status=0, fmt="interpretune.conformance.report/1"):
+    def _report(self, *, head=None, exit_status=0, fmt="interpretune.conformance.report/2"):
         return {
             "format": fmt,
             "provenance": {
@@ -171,9 +171,14 @@ class TestMeasuredCapabilitiesAreRenderedOnlyWhenTrustworthy:
                 "TestX": {
                     "composition": ["core", "interp_engine"],
                     "model_id": "gpt2",
-                    "model_capabilities": ["activation_intervention"],
-                    "analysis_capabilities": [],
-                    "intervention": {"modes": ["add"], "position_scopes": ["last_token"]},
+                    "capabilities": {"intervention": ["model_backend"], "capture": ["model_backend"]},
+                    "intervention": {
+                        "model_backend": {
+                            "ops": ["add"],
+                            "targets": {"activation": None, "units": None},
+                            "position_scopes": ["last_token"],
+                        }
+                    },
                     "capture": {
                         "capturable": ["hook_in", "hook_out"],
                         "uncapturable": {"ln2.hook_scale": "the vocabulary has no spelling this engine can address"},
@@ -207,7 +212,8 @@ class TestMeasuredCapabilitiesAreRenderedOnlyWhenTrustworthy:
         body = self._card(tmp_path, self._report(), self.HEAD)
         assert "### Measured capabilities" in body and "What this card cannot tell you" not in body
         assert "component revision `aaaaaaaaaaaa`" in body and "exit status 0" in body
-        assert "modes `add`" in body and "2 of 3 base points on `GPT2LMHeadModel`" in body
+        assert "intervention (model_backend): ops `add`; targets `activation`, `units`" in body
+        assert "`intervention` (model_backend)" in body and "2 of 3 base points on `GPT2LMHeadModel`" in body
         assert "cannot capture `ln2.hook_scale`: the vocabulary has no spelling" in body
         assert "**vocabulary gap**" in body and "**capability gap**" in body
         assert "1 ran, 1 skipped because the surface is undeclared" in body
@@ -272,7 +278,7 @@ class TestTheRevisionKeyIsStableAcrossUnrelatedCommits:
         assert repo_head(repo) != measured, "the repository head moved"
         assert source_revision_of(component) == measured, "the component's own revision did not"
         report = {
-            "format": "interpretune.conformance.report/1",
+            "format": "interpretune.conformance.report/2",
             "provenance": {
                 "interpretune_version": "0.1.0",
                 "git_head": measured,
@@ -305,7 +311,7 @@ class TestTheRevisionKeyIsStableAcrossUnrelatedCommits:
         repo = self._repo(tmp_path)
         head = repo_head(repo)
         report = {
-            "format": "interpretune.conformance.report/1",
+            "format": "interpretune.conformance.report/2",
             "provenance": {"git_head": head, "exit_status": 0, "interpretune_version": "x", "measured_at": "t"},
             "targets": {},
             "ran": [],

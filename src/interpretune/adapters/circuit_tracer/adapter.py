@@ -31,8 +31,6 @@ from interpretune.protocol import Adapter, StrOrPath
 if TYPE_CHECKING:
     from typing import Protocol
 
-    from interpretune.analysis.backends import AnalysisBackendCapability
-
     class _NeuronpediaExtension(Protocol):
         """The Neuronpedia extension surface the analysis mixin uses, present when that extension is enabled."""
 
@@ -312,14 +310,6 @@ class BaseCircuitTracerModule(BaseITModule):
 
         self._analysis_backend = DEFAULT_CT_ANALYSIS_BACKEND
         super().__init__(*args, **kwargs)
-
-    @property
-    def analysis_capabilities(self) -> frozenset[AnalysisBackendCapability]:
-        """Analysis-level capabilities provided by the circuit-tracer adapter."""
-        from interpretune.analysis.backends import get_analysis_backend
-
-        analysis_backend = get_analysis_backend(self)
-        return analysis_backend.capabilities if analysis_backend is not None else frozenset()
 
     def _load_replacement_model(self, pretrained_kwargs: dict | None = None) -> None:
         """Load the ReplacementModel for circuit tracing.
