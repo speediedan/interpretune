@@ -462,7 +462,7 @@ architecture's inventory (`interpretune.analysis.points.inventory.inventory(comp
 point the backend cannot capture. Derive it from what the backend can actually resolve rather than writing it down:
 the bundled TransformerLens backend probes the wrapper's hook names through the vocabulary's spellings, and the
 nnsight backend asks its hook resolver, so the declaration and the refusal cannot drift apart. `AnalysisCfg` refuses
-a listed point the declaration excludes by name before any run, and the conformance suite checks the declaration in
+a listed point the declaration excludes before any run, and the conformance suite checks the declaration in
 both directions: every declared point is captured, and a declared gap is refused through the runner path. It is not
 a `ModelBackendCapability` member because capture is a base method every backend has; the record says which points, not
 whether at all. It is a method taking the model because the answer belongs to the backend and this model instance as
@@ -499,7 +499,7 @@ Current behavior:
 ## Choosing a TransformerLens Config
 
 `TransformerBridge` is the only model path: TransformerLens 4.0 removed `HookedTransformer`, and the
-`use_bridge` flag that used to select between them is retired. Passing it fails by name. What remains is a
+`use_bridge` flag that used to select between them is retired. Passing it fails. What remains is a
 choice of which IT config expresses how the bridge is built.
 
 | Use Case | Config Class |

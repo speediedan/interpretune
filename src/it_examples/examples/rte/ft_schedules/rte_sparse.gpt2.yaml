@@ -1,6 +1,8 @@
-# The sparsity chain's two phases for GPT-2 small (CPU-sized; `rte_sparse.gemma3.yaml` is the research schedule).
-# Phase 0 (sparsity) thaws the final norm and blocks 9-11 with the penalty on; phase 1 (recovery) keeps them thawed
-# with a fresh optimizer and the boundary's simplified graph enforced. `phase_config` is the payload the component's
+# The sparsity chain's three stages for GPT-2 small (CPU-sized; `rte_sparse.gemma3.yaml` is the research schedule).
+# Phase 0 (sparsity) thaws the final norm and blocks 9-11 with the penalty on. Recovery re-thaws in two steps: phase 1
+# refreezes blocks 9 and 10, so the norm and block 11 train with the boundary's simplified graph enforced, and phase 2
+# thaws blocks 9 and 10 again under the same enforcement. Each recovery phase starts from the phase that just ended at
+# its own best (`best:1` for phase 2), with a fresh optimizer. `phase_config` is the payload the component's
 # `ChainApplyPayload` start hook applies.
 0:
   params:
@@ -10,6 +12,19 @@
   phase_config: {reg_weight: 0.3, err_weight: 3.0, enforce: false}
 1:
   params: []
+  refreeze:
+  - model.transformer.h.(9|10)\..*
+  restore: best
+  max_transition_epoch: 2
+  new_optimizer:
+    optimizer_init:
+      class_path: torch.optim.AdamW
+      init_args: {weight_decay: 0.0, lr: 3.0e-05}
+  phase_config: {reg_weight: 0.3, err_weight: 3.0, enforce: true}
+2:
+  params:
+  - model.transformer.h.(9|10)\..*
+  restore: best:1
   new_optimizer:
     optimizer_init:
       class_path: torch.optim.AdamW

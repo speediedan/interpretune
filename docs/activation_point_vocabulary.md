@@ -98,7 +98,7 @@ both sides through the same resolver cannot see a wrong row.
 The bundled map for `Gemma3ForConditionalGeneration` is a schema-2 document: the language model is the
 primary stack and keeps the bare spelling, the vision tower is a second stack (`vision.blocks.{i}...`,
 `vision.embed`, `vision.ln_final`) and the multimodal projector is a declared kind (`projector`). A point under
-an undeclared stack name is refused by name.
+an undeclared stack name is refused.
 
 ## What this asks of interp-engine
 
@@ -145,7 +145,7 @@ components:
   path that does not exist.
 - **`stacks`**: additional block stacks by name. The point grammar gains an optional leading stack name
   (`encoder.blocks.3.attn.hook_out`); bare `blocks.` and bare globals keep meaning the primary stack, so every
-  existing string keeps its meaning. A stack the document does not declare is refused by name.
+  existing string keeps its meaning. A stack the document does not declare is refused.
 - **`properties`** (renamed from `facts`): each name in the vocabulary is **declared** (the document is the
   source) or **derived** (the model is the source, and a document value is only a cross-check). The RMSNorm
   offset is derived from the norm module's own arithmetic, which is right for every gemma family without a
@@ -195,13 +195,13 @@ architecture, built from the same tiny config with no weights and no Hub call, s
 A document added without the builder, or without a row in the oracle's table of rows expected to have no
 TransformerLens counterpart (today: the Gemma 3 multimodal document's vision stack and projector, which
 TransformerLens bridges as one opaque component, and Qwen3.5's linear-attention output projection, which its gated delta
-net bridge does not expose), fails the suite by name. The derivation itself refuses a bridge class it does
+net bridge does not expose), fails the suite. The derivation itself refuses a bridge class it does
 not know rather than skipping it: skipping once dropped two RMSNorm-era classes, so four documents were compared
 on seven rows of fourteen while the oracle reported agreement over the whole.
 
 **Leaving.** A retiring map gains `deprecated_since` and `replacement`; it keeps loading with a warning, strict
 lookup refuses it, and after its stated horizon the document is deleted. From then on the architecture has no
-bundled map: a lookup refuses by name, listing what is known, and a map pulled as a `hookmaps` component becomes
+bundled map: a lookup refuses, listing what is known, and a map pulled as a `hookmaps` component becomes
 the source for it with nothing to conflict against.
 
 **While both exist.** Precedence is enforced at load, not by order: a pulled map for an architecture that already
