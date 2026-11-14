@@ -133,7 +133,17 @@ parameters:
       nvidia: "speediedan/interpretune:py3.13-pt2.15.0-azpl-init@sha256:fda1c1cd8373da860e38d9aaea5bd1a096dbc1ed886043a3c8054d2b0c7bd7e8"
       amd: "speediedan/interpretune:py3.13-pt2.15.0-rocm10.0-azpl-init@sha256:bd6ef05d876cea67c58b6f108a4ea300227f6272843a8f246c172c7689307283"
 
-# One job, on whichever GPU agent is free (#703): the any-vendor template (.azure-pipelines/templates/gpu-job.yml)
+# The any-vendor GPU job template shared with finetuning-scheduler, pinned to a gpu-epsilon tag (move it with
+# requirements/ci/gpu_epsilon.txt). templates/it-gpu-job.yml passes interpretune's settings to it.
+resources:
+  repositories:
+    - repository: ci
+      type: github
+      name: speediedan/gpu-epsilon
+      endpoint: speediedan
+      ref: refs/tags/gpu-job-v1
+
+# One job, on whichever GPU agent is free (#703): the any-vendor template (gpu-epsilon's templates/gpu-job.yml)
 # picks the image and device options from the vendor the agent declares and starts the job's container; every step
 # below runs inside it through .azure-pipelines/scripts/ctr.sh.
 #
@@ -170,7 +180,7 @@ parameters:
 # exactly two tests the hosted Linux job did not, both skipped there only for want of a warmed tokenizer
 # (now in tests/hf_warm_manifest.yaml), while it cost about half of every build's test time.
 jobs:
-  - template: templates/gpu-job.yml
+  - template: templates/it-gpu-job.yml
     parameters:
       jobName: pytest
       vendor: ${{ parameters.vendor }}
