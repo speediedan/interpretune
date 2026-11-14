@@ -28,6 +28,16 @@ src/it_examples/tests/test_notebooks.py::test_ct_concept_steering_notebook_local
   torch: 2.15.0+rocm10.0
   seconds: 4.89
   date: '2026-11-08'
+src/it_examples/tests/test_notebooks.py::test_jspace_workspace_notebook_default_qwen:
+  outcome: passed
+  need_gb: 11.786
+  allocator_peak_gb: 0.0
+  device_peak_gb: 11.786
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.15.0+cu132
+  seconds: 68.51
+  date: '2026-11-12'
 src/it_examples/tests/test_notebooks.py::test_sae_lens_notebooks[sae_lens_nnsight]:
   outcome: passed
   need_gb: 6.389

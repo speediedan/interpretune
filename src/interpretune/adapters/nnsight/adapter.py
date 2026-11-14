@@ -282,6 +282,12 @@ class BaseNNsightModule(BaseITModule):
             from nnsight import VisionLanguageModel
 
             rank_zero_info(f"{model_name} is registered as multimodal; using NNsight VisionLanguageModel")
+            if nnsight_kwargs.get("processor") is None:
+                nnsight_kwargs["processor"] = TextOnlyProcessor(
+                    model_name,
+                    token=nnsight_kwargs.get("token"),
+                    **(nnsight_kwargs.get("tokenizer_kwargs") or {}),
+                )
             self.model = VisionLanguageModel(model_name, **nnsight_kwargs)
 
         # Store reference to tokenizer if not already set
@@ -351,6 +357,28 @@ class BaseNNsightModule(BaseITModule):
 ################################################################################
 # NNsight Module Composition
 ################################################################################
+
+
+class TextOnlyProcessor:
+    """A multimodal checkpoint's processor, reduced to its tokenizer.
+
+    This adapter traces text, and nnsight's ``VisionLanguageModel`` sends a call without images down
+    ``LanguageModel``'s path, so the processor is never called. Building the real one can still fail: Qwen3.5's bundles
+    a video processor that needs torchvision, which the pinned environments exclude. With a processor supplied, nnsight
+    takes the tokenizer from it, so the tokenizer is built here with the configured ``tokenizer_kwargs``. An image input
+    is refused; pass ``processor`` in the NNsight kwargs to use the real one.
+    """
+
+    def __init__(self, model_name: str, token: str | None = None, **tokenizer_kwargs: Any):
+        from transformers import AutoTokenizer
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, token=token, **tokenizer_kwargs)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Refuse to process inputs: this processor exists only to carry the tokenizer."""
+        raise RuntimeError(
+            "TextOnlyProcessor handles text only; pass the model's processor as `processor` to use image inputs"
+        )
 
 
 class NNsightAdapter(NNsightAttributeMixin):

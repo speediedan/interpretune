@@ -47,7 +47,7 @@ class ModelSpec:
     neuronpedia_model: str
     neuronpedia_set: str
     use_chat_template: bool
-    cfg_class: str
+    cfg_class: str | None
     hf_model_head: str | None = None
     nnsight_overrides: dict[str, Any] | None = None
     circuit_tracer_overrides: dict[str, Any] | None = None
@@ -141,7 +141,7 @@ def _model_spec_registry() -> dict[tuple[str, str], ModelSpec]:
             neuronpedia_model=str(raw_value["neuronpedia_model"]),
             neuronpedia_set=str(raw_value["neuronpedia_set"]),
             use_chat_template=bool(raw_value["use_chat_template"]),
-            cfg_class=str(raw_value["cfg_class"]),
+            cfg_class=raw_value.get("cfg_class"),
             hf_model_head=cast(str | None, raw_value.get("hf_model_head")),
             nnsight_overrides=cast(dict[str, Any] | None, raw_value.get("nnsight_overrides")),
             circuit_tracer_overrides=cast(dict[str, Any] | None, raw_value.get("circuit_tracer_overrides")),
@@ -300,6 +300,11 @@ def build_test_cfg(
 ) -> Any:
     device_type = force_device or ("cuda" if torch.cuda.is_available() else "cpu")
     spec = _find_model_spec_for_cfg(model_family, model_name, model_variant)
+    if spec.cfg_class is None:
+        raise ValueError(
+            f"{spec.family}.{spec.variant} has no legacy test configuration; "
+            "use interpretune.harness.sessions.experiment_session"
+        )
     cfg_class = _import_object(spec.cfg_class)
     cfg = cfg_class(phase="test", device_type=device_type)
 
