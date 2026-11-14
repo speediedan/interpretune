@@ -592,7 +592,7 @@ class TestDefaultCacheKeyIsTheBlockOutput:
 
     @pytest.fixture(scope="class")
     def nnsight_tiny_gpt2(self, tmp_path_factory):
-        from nnsight import LanguageModel
+        from nnsight import TransformersModel
         from transformers import AutoTokenizer, GPT2Config, GPT2LMHeadModel
 
         from interpretune.adapters.nnsight.backends import (
@@ -609,7 +609,7 @@ class TestDefaultCacheKeyIsTheBlockOutput:
         path = tmp_path_factory.mktemp("tiny_gpt2_cache_key")
         GPT2LMHeadModel(config).eval().save_pretrained(path)
         tokenizer.save_pretrained(path)
-        lm = LanguageModel(str(path), device_map="cpu", dispatch=True)
+        lm = TransformersModel(str(path), task="text-generation", device="cpu", dispatch=True)
         hf_model = NNsightModelBackend._get_hf_model(lm)
         backend = NNsightModelBackend(
             HookNameResolver(hf_model.config.architectures[0]), configs_per_pass=get_default_configs_per_pass()

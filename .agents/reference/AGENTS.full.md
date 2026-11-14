@@ -130,7 +130,7 @@ thing it asserted is not true, and the weakened form carries a false premise for
 | **Bare pip** | `pip install .` | **nobody. Not supported.** | **NO** |
 
 **`pip install .` is not a supported way to install interpretune, and it fails in a way that looks
-like an application bug.** The `transformer-lens==4.0.0` / `nnsight==0.7.0` pins live in
+like an application bug.** The `transformer-lens==4.0.0` / `nnsight==0.8.2` pins live in
 `[tool.uv] override-dependencies`, a **uv** mechanism that pip ignores. They exist precisely to force
 TransformerLens 4.0 over sae-dashboard's `^2.2.0` cap, so pip happily resolves a TL 2.x release
 (**2.16.1** when this was measured), and every
@@ -276,7 +276,7 @@ When a from-source package brings in git-pinned dependencies, UV caches those re
 
 Where pins live and how to refresh them:
 
-- `pyproject.toml` `[tool.uv] override-dependencies` — the `transformer-lens==4.0.0` / `nnsight==0.7.0`
+- `pyproject.toml` `[tool.uv] override-dependencies` — the `transformer-lens==4.0.0` / `nnsight==0.8.2`
   release pins (plus `jaxtyping>=0.3`, which TL 4.0 needs over sae-dashboard's `^0.2.28`), which force
   TransformerLens 4.0 over downstream v2 caps; keep them in sync with
   `requirements/ci/overrides.txt` (and `requirements/ci/excludes.txt` still keeps those caps from

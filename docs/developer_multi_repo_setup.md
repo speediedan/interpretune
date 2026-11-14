@@ -73,7 +73,7 @@ duration of that package's install. Three keywords matter in practice:
   stop a from-source package from downgrading shared pins. Two maintained files:
   - `requirements/ci/torch-override.txt`: auto-generated, pins only torch. Use for simple cases.
   - `requirements/ci/overrides.txt`: manually maintained; pins torch **and** triton/torchvision plus the
-    `transformer-lens==4.0.0`/`nnsight==0.7.0` release pins and several ecosystem floors. Use for packages
+    `transformer-lens==4.0.0`/`nnsight==0.8.2` release pins and several ecosystem floors. Use for packages
     with aggressive constraints (nnsight, SAEDashboard's `<2.8` torch pin, etc.). If the override file
     mentions the package currently being installed, the builder automatically filters that line out so the
     editable install still wins.

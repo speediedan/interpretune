@@ -45,7 +45,8 @@ def clear_nnsight_test_state(obj: Any) -> None:
 
     This is intended for test teardown after in-process serial execution patterns.
     It clears cached ``Envoy.source`` state and default edit mediators when those
-    attributes are present, then resets NNsight's global tracing cache/stack.
+    attributes are present. (nnsight 0.8 keeps trace state per trace scope, so there
+    is no global tracing cache left to reset.)
     """
 
     visited: set[int] = set()
@@ -80,13 +81,6 @@ def clear_nnsight_test_state(obj: Any) -> None:
 
     _visit(obj)
 
-    try:
-        from nnsight.intervention.tracing.globals import Globals
-    except ImportError:
-        return
-
-    Globals.clear()
-
 
 @contextmanager
 def serial_test_cleanup(*objects: Any, clear_cuda: bool = True):
@@ -112,6 +106,7 @@ def serial_test_cleanup(*objects: Any, clear_cuda: bool = True):
                 "replacement_model",
                 "_replacement_model",
                 "_model",
+                "_module",
             ):
                 if hasattr(obj, attr):
                     try:
