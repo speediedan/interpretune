@@ -127,8 +127,24 @@ def _member_refusal(recipe: Any, stage: Any, op: Any, kind: str) -> str | None:
     return member_refusal(recipe, op)
 
 
+def _gradient_refusal(recipe: Any, op: Any) -> str | None:
+    """Why an op acting on a gradient (its target set is ``of: grad``) cannot be translated: the forward surface
+    writes activation values, so translating it would apply the op to the value instead.
+
+    The backward surface is #970.
+    """
+    if op.target is not None and op.target_of(recipe.book) == "grad":
+        return (
+            "its target addresses the gradient (`of: grad`); interpretune applies recipe ops to activation values "
+            "only, so it is refused rather than applied to the value"
+        )
+    return None
+
+
 def op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     """Why ``op`` (at ``stage`` of ``recipe``) cannot be translated, or ``None`` when it can."""
+    if (refusal := _gradient_refusal(recipe, op)) is not None:
+        return refusal
     layer, _ = split_site(stage.site)
     kind = target_kind(recipe, op)
     if kind in ("units", "features"):
@@ -159,6 +175,8 @@ def feature_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     """
     if target_kind(recipe, op) != "features":
         return "circuit-tracer's feature tuples act on a feature target only"
+    if (refusal := _gradient_refusal(recipe, op)) is not None:
+        return refusal
     if op.op not in FEATURE_TUPLE_OPS:
         return f"circuit-tracer's feature tuples express {sorted(FEATURE_TUPLE_OPS)}, not `{op.op}`"
     if (op.tokens or stage.tokens).kind != "positions":

@@ -206,3 +206,40 @@ def test_a_sidecar_operand_loads_relative_to_the_recipe(tmp_path):
 def test_untranslatable_activation_ops_refuse_by_name(ops, operands, site, widths, match):
     with pytest.raises(MisconfigurationException, match=match):
         recipe_interventions(_activation_recipe(ops, operands, site=site), site_widths=widths)
+
+
+GRADIENT_RECIPE = {
+    **RECIPE,
+    "book": {
+        **RECIPE["book"],
+        "schema_version": 2,
+        "sets": {"grads": {"point": "mlp.out.hook_in", "layers": [2], "units": [7], "of": "grad"}},
+    },
+    "stages": [
+        {
+            "site": "mlp.out.hook_in",
+            "tokens": "all",
+            "ops": [{"op": "scale", "target": {"set": "grads"}, "value": {"dose": 0.0}}],
+        }
+    ],
+}
+
+
+def test_an_op_on_a_gradient_is_refused_rather_than_applied_to_the_activation_value():
+    """#938: a target set addressing `of: grad` names the gradient through those units; the forward surface writes
+    values, so translating the op would scale the activation instead."""
+    from interpretune.analysis.backends.capabilities import InterventionSupport
+    from interpretune.analysis.venngram import check_recipe, venngram_support
+
+    recipe = _recipe(GRADIENT_RECIPE)
+    with pytest.raises(MisconfigurationException, match="addresses the gradient"):
+        recipe_interventions(recipe, site_widths={"mlp.out.hook_in": 8192})
+    record = InterventionSupport(position_scopes={PositionScope.ALL_POSITIONS}, ops={"scale"})
+    support = venngram_support(record)
+    assert support.of == frozenset({"value"})  # the record's flows are carried into the declaration
+    refusals = check_recipe(recipe, support)
+    assert any("does not act on" in r for r in refusals) and any("addresses the gradient" in r for r in refusals)
+    # declaring `grad` (as no backend does yet) passes venngram's check; the apply path still refuses
+    both = InterventionSupport(position_scopes={PositionScope.ALL_POSITIONS}, ops={"scale"}, of={"value", "grad"})
+    assert venngram_support(both).of == frozenset({"value", "grad"})
+    assert [r for r in check_recipe(recipe, venngram_support(both)) if "addresses the gradient" in r]
