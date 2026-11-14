@@ -1,6 +1,10 @@
 """The any-vendor GPU job (#703), on CPU: what the in-container exec helper forwards, and the pipeline invariants a
 YAML edit could break silently (every step inside the container, digest-pinned images both pipelines agree on, the
-admission demands, and AMD's one-stage lease)."""
+admission settings, and the shared template's pin).
+
+The job itself is gpu-epsilon's templates/gpu-job.yml, whose own invariants (the demands, AMD's one-stage lease, the
+container's lifetime) gpu-epsilon's tests hold.
+"""
 
 from __future__ import annotations
 
@@ -17,7 +21,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 PIPELINES = ROOT / ".azure-pipelines"
 CTR = PIPELINES / "scripts" / "ctr.sh"
-TEMPLATE = PIPELINES / "templates" / "gpu-job.yml"
+WRAPPER = PIPELINES / "templates" / "it-gpu-job.yml"
+GPU_PIPELINES = ("gpu-tests.yml", "readme-flow-gpu.yml", "gpu-release.yml")
 DIGEST = re.compile(r"^speediedan/interpretune:[\w.-]+@sha256:[0-9a-f]{64}$")
 
 
@@ -27,7 +32,7 @@ def _load(name: str) -> dict:
 
 def _template_use(pipeline: dict) -> dict:
     (job,) = pipeline["jobs"]
-    assert job["template"] == "templates/gpu-job.yml"
+    assert job["template"] == "templates/it-gpu-job.yml"
     return job["parameters"]
 
 
@@ -91,23 +96,49 @@ def test_both_pipelines_pin_the_same_images_by_digest():
     assert "-rocm" in images[0]["amd"] and "-rocm" not in images[0]["nvidia"]
 
 
+def _shared_use() -> dict:
+    (job,) = yaml.safe_load(WRAPPER.read_text())["jobs"]
+    assert job["template"] == "templates/gpu-job.yml@ci"
+    return job["parameters"]
+
+
 def test_admission():
     tests, readme = _template_use(_load("gpu-tests.yml")), _template_use(_load("readme-flow-gpu.yml"))
     # gate builds run on either agent; the README flow installs CUDA torch, so it demands NVIDIA, as a release job
     assert (tests["vendor"], tests["jobClass"]) == ("${{ parameters.vendor }}", "ci-any-vendor")
     assert (readme["vendor"], readme["jobClass"]) == ("nvidia", "ci-release")
-    template = TEMPLATE.read_text()
-    for demand in ("- GPU_VENDOR\n", "- ${{ parameters.jobClass }}", "- ${{ parameters.project }}"):
-        assert demand in template
-    assert "default: ci-it" in template
+    shared = _shared_use()
+    assert (shared["project"], shared["vendor"], shared["jobClass"]) == (
+        "ci-it",
+        "${{ parameters.vendor }}",
+        "${{ parameters.jobClass }}",
+    )
 
 
-def test_amd_takes_one_whole_server_stage():
-    template = TEMPLATE.read_text()
-    amd = next(line for line in template.splitlines() if line.strip().startswith("amd)"))
-    nvidia = next(line for line in template.splitlines() if line.strip().startswith("nvidia)"))
-    assert "one_stage=1" in amd and "/dev/kfd" in amd
-    assert "one_stage=0" in nvidia
+def test_every_gpu_pipeline_pins_the_shared_template_to_one_tag():
+    """A tag stays where it was cut, while a branch would move the job under every pipeline."""
+    refs = set()
+    for name in GPU_PIPELINES:
+        (repo,) = _load(name)["resources"]["repositories"]
+        assert (repo["repository"], repo["type"], repo["name"]) == ("ci", "github", "speediedan/gpu-epsilon"), name
+        refs.add(repo["ref"])
+    (ref,) = refs
+    assert re.fullmatch(r"refs/tags/gpu-job-v\d+", ref), ref
+
+
+def test_the_shared_template_sets_the_variables_the_step_scripts_read():
+    shared = _shared_use()
+    # IT_CTR (ctr.sh), IT_GPU_ONE_STAGE (gpu_stage_lease.sh, set on an AMD agent, whose identical cards make
+    # placement moot) and IT_PHASES_COLLECTED (the evidence publish condition) are named by this prefix
+    assert shared["variablePrefix"] == "IT"
+    assert "IT_GPU_ONE_STAGE" in (PIPELINES / "scripts" / "gpu_stage_lease.sh").read_text()
+    assert "IT_PHASES_COLLECTED" in (PIPELINES / "scripts" / "gpu_job_container.sh").read_text()
+    # the wrapper's own commands run in the container too, and the cleanup releases every stage's lease
+    for step in shared["steps"]:
+        if "bash" in step:
+            assert step["bash"].startswith("bash .azure-pipelines/scripts/ctr.sh "), step["bash"]
+    assert shared["releaseCommand"].startswith("bash .azure-pipelines/scripts/ctr.sh ")
+    assert "gpu_stage_lease.sh release all" in shared["releaseCommand"]
 
 
 def test_every_gpu_phase_runs_while_its_stage_holds_its_lease():
@@ -129,15 +160,14 @@ def test_phases_are_collected_before_and_reported_after_the_gpu_work():
     # it reports whatever the phases did, and only when the phases were collected
     assert step["condition"].startswith("and(succeededOrFailed(),") and "IT_PHASES_COLLECTED" in step["condition"]
     assert step["env"]["IT_JOB_CLASS"] == "${{ parameters.jobClass }}"
-    template = TEMPLATE.read_text()
-    assert '-v "$(Build.ArtifactStagingDirectory)/evidence:/evidence"' in template
-    assert "artifact: it-release-${{ parameters.vendor }}-$(System.JobAttempt)" in template
+    # the shared template mounts the evidence directory at /evidence and names its artifacts by this prefix
+    assert _shared_use()["artifactPrefix"] == "it"
 
 
 def test_release_pipeline_demands_each_vendor_and_checks_both():
     release = _load("gpu-release.yml")
     assert release["trigger"] == "none" and release["pr"] == "none"
-    legs = [j["parameters"] for j in release["jobs"] if j.get("template") == "templates/gpu-job.yml"]
+    legs = [j["parameters"] for j in release["jobs"] if j.get("template") == "templates/it-gpu-job.yml"]
     assert [(leg["jobName"], leg["vendor"], leg["jobClass"]) for leg in legs] == [
         ("release_nvidia", "nvidia", "ci-release"),
         ("release_amd", "amd", "ci-release"),
