@@ -15,7 +15,7 @@ from interpretune.analysis.backends.interventions import InterventionSpec, apply
 def _patch(h: torch.Tensor, v_s: torch.Tensor, v_t: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
     value = torch.zeros(1, 2, h.shape[-1], dtype=h.dtype)
     value[:, 1, :] = h
-    spec = InterventionSpec(intervention_tensor=torch.stack([v_s, v_t]), mode="patch", scale_factor=scale)
+    spec = InterventionSpec(intervention_tensor=torch.stack([v_s, v_t]), op="patch", scale_factor=scale)
     return apply_intervention(value, spec, last_pos=1)[0, 1]
 
 
@@ -85,13 +85,13 @@ class TestLensCoordinatePatch:
         Accepting one vector would have to invent the partner.
         """
         h = torch.randn(1, 2, 6)
-        spec = InterventionSpec(intervention_tensor=torch.randn(6), mode="patch")
+        spec = InterventionSpec(intervention_tensor=torch.randn(6), op="patch")
         with pytest.raises(ValueError, match="exactly two lens vectors"):
             apply_intervention(h, spec, last_pos=1)
 
     def test_width_mismatch_names_both_widths(self):
         value = torch.randn(1, 2, 6)
-        spec = InterventionSpec(intervention_tensor=torch.randn(2, 5), mode="patch")
+        spec = InterventionSpec(intervention_tensor=torch.randn(2, 5), op="patch")
         with pytest.raises(ValueError, match="width 5 .*6-dimensional"):
             apply_intervention(value, spec, last_pos=1)
 
@@ -102,7 +102,7 @@ class TestLensCoordinatePatch:
         value = torch.zeros(2, 2, 6)
         value[0, 1, :] = 3.0 * v_s + 1.0 * v_t
         value[1, 1, :] = -2.0 * v_s + 7.0 * v_t
-        spec = InterventionSpec(intervention_tensor=torch.stack([v_s, v_t]), mode="patch")
+        spec = InterventionSpec(intervention_tensor=torch.stack([v_s, v_t]), op="patch")
         out = apply_intervention(value, spec, last_pos=1)
         assert out[0, 1] @ v_s == pytest.approx(1.0, abs=1e-4)
         assert out[1, 1] @ v_s == pytest.approx(7.0, abs=1e-4)
@@ -111,8 +111,8 @@ class TestLensCoordinatePatch:
     def test_unknown_mode_still_raises(self):
         """Adding a mode must not turn a typo into silent no-op behaviour."""
         value = torch.randn(1, 2, 6)
-        spec = InterventionSpec(intervention_tensor=torch.randn(6), mode="patchh")
-        with pytest.raises(ValueError, match="Unknown intervention mode"):
+        spec = InterventionSpec(intervention_tensor=torch.randn(6), op="patchh")
+        with pytest.raises(ValueError, match="Unknown op"):
             apply_intervention(value, spec, last_pos=1)
 
 
@@ -128,22 +128,22 @@ class TestPatchReachesThroughTheValidatedPath:
     def test_mode_is_accepted_by_the_validator(self):
         from interpretune.analysis.backends.interventions import _validate_intervention_spec
 
-        spec = InterventionSpec(intervention_tensor=torch.randn(2, 6), mode="patch")
+        spec = InterventionSpec(intervention_tensor=torch.randn(2, 6), op="patch")
         validated = _validate_intervention_spec(spec, target_shape=(6,), hook_name="blocks.0.hook_resid_post")
-        assert validated.mode == "patch"
+        assert validated.op == "patch"
         assert tuple(validated.intervention_tensor.shape) == (2, 6)
 
     def test_validator_checks_the_pair_width_against_the_hook(self):
         from interpretune.analysis.backends.interventions import _validate_intervention_spec
 
-        spec = InterventionSpec(intervention_tensor=torch.randn(2, 5), mode="patch")
+        spec = InterventionSpec(intervention_tensor=torch.randn(2, 5), op="patch")
         with pytest.raises(ValueError, match="not compatible with hook"):
             _validate_intervention_spec(spec, target_shape=(6,), hook_name="blocks.0.hook_resid_post")
 
     def test_validator_rejects_a_single_vector(self):
         from interpretune.analysis.backends.interventions import _validate_intervention_spec
 
-        spec = InterventionSpec(intervention_tensor=torch.randn(6), mode="patch")
+        spec = InterventionSpec(intervention_tensor=torch.randn(6), op="patch")
         with pytest.raises(ValueError, match="exactly two lens vectors"):
             _validate_intervention_spec(spec, target_shape=(6,), hook_name="blocks.0.hook_resid_post")
 
@@ -154,22 +154,22 @@ class TestPatchReachesThroughTheValidatedPath:
 
         assert (
             _validate_intervention_spec(
-                InterventionSpec(intervention_tensor=torch.randn(6), mode=mode),
+                InterventionSpec(intervention_tensor=torch.randn(6), op=mode),
                 target_shape=(6,),
                 hook_name="h",
-            ).mode
+            ).op
             == mode
         )
         # a (2, 6) tensor is still incompatible for these -- only patch takes a pair
         with pytest.raises(ValueError, match="not compatible with hook"):
             _validate_intervention_spec(
-                InterventionSpec(intervention_tensor=torch.randn(2, 6), mode=mode), target_shape=(6,), hook_name="h"
+                InterventionSpec(intervention_tensor=torch.randn(2, 6), op=mode), target_shape=(6,), hook_name="h"
             )
 
     def test_validator_still_rejects_an_unknown_mode(self):
         from interpretune.analysis.backends.interventions import _validate_intervention_spec
 
-        with pytest.raises(ValueError, match="Unknown intervention mode"):
+        with pytest.raises(ValueError, match="Unknown op"):
             _validate_intervention_spec(
-                InterventionSpec(intervention_tensor=torch.randn(6), mode="patchh"), target_shape=(6,), hook_name="h"
+                InterventionSpec(intervention_tensor=torch.randn(6), op="patchh"), target_shape=(6,), hook_name="h"
             )

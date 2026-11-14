@@ -7,9 +7,11 @@ activation, or to its gradient. Causal-abstraction interventions (hard, soft and
 ablation, steering, and trainable interventions such as distributed alignment search and representation fine-tuning
 are all interventions on a model's internal variables.
 
-- **Ops** come from venngram's op registry (`venngram.ops`), a federated registry: its core ops (`replace`, `add`,
-  `scale`, `project`, `reject`, `patch`, `clamp` and `replace_with_error`), plus any op a user registers in code or a
-  hub op collection declares. Each core op's meaning is defined once, below.
+- **Ops** are names in venngram's op registry (`venngram.ops`), and that registry is federated: it starts from the
+  core ops (`replace`, `add`, `scale`, `project`, `reject`, `patch`, `clamp` and `replace_with_error`), but you are
+  not limited to them. Define your own op, register it in code, or publish it in a Hub op collection for others to
+  use, and it is applied exactly as a core op is ([intervention ops](#intervention-ops)). Sharing ops this way is how
+  one experiment's technique becomes the next one's starting point. Each core op's meaning is defined once, below.
 - **Targets** are the whole activation, a set of its units, a latent model's features (venngram's `targets`), or a
   parameter tensor or its units ([#960](https://github.com/speediedan/interpretune/issues/960), planned). A subset of
   an attribution graph, distilled in one context and applied in another, is a planned target too
@@ -44,20 +46,35 @@ addresses and roles are the same for both targets. Parameter targets are planned
 
 ## Surfaces
 
-Interpretune enables interventions at multiple levels of abstraction.
+Interpretune has one intervention surface, `Capability.INTERVENTION`, and a composition's components provide it on
+the targets they reach. Which component provides a target is a matter of declared targets, not of the component's
+kind:
 
-| Level | Capability member | Object acted on | Entry op | Executed by | Support record |
+| Provider | Targets | Object acted on | Entry op | Executed by | Record |
 |---|---|---|---|---|---|
-| Model backend | `ModelBackendCapability`<br>`.ACTIVATION_INTERVENTION` | an activation at any vocabulary point (residual stream, attention, MLP, head-shaped) or a latent model's sub-hook | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (modes, position scopes) |
-| Model backend, backward pass (planned, [#970](https://github.com/speediedan/interpretune/issues/970)) | the backward counterpart of `.ACTIVATION_INTERVENTION` | the gradient with respect to an activation, at a site an `of: grad` address names | `model_bwd_intervention` | `ModelBackend.bwd_w_intervention`, through the same op executor as the forward pass | `InterventionSupport` with `of: [value, grad]` |
-| Analysis backend | `AnalysisBackendCapability`<br>`.FEATURE_INTERVENTION` | a replacement model's latent feature activations, as `(layer, position, feature_id) -> value` tuples | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `FeatureInterventionSupport` (value sources, constrainable layers, returned activations) |
+| Model backend | `activation`, `units`, `features` | an activation at any vocabulary point (residual stream, attention, MLP, head-shaped), a set of its units, or a latent model's features at its sub-hook | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (ops, targets, position scopes, value sources, bases, `of`) |
+| Model backend, backward pass (planned, [#970](https://github.com/speediedan/interpretune/issues/970)) | `activation`, `units` with `of: grad` | the gradient with respect to an activation, at a site an `of: grad` address names | `model_bwd_intervention` | `ModelBackend.bwd_w_intervention`, through the same op executor as the forward pass | `InterventionSupport` with `of: [value, grad]` |
+| Analysis backend (e.g. circuit-tracer) | `features` | a replacement model's transcoder feature activations, as `(layer, position, feature_id) -> value` tuples | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `InterventionSupport` whose `features` target carries a `FeatureTargetSupport` (value sources, constrainable layers, returned activations, freezable norms) |
 
-**Capabilities say what a backend implements; support records say how.** A capability member names a protocol
-surface and answers only whether the backend implements it. The configurations it honours are declared in a typed
-support record: a backend that implements `fwd_w_intervention` for `add` and `project` but not `patch` declares the
-surface and a record saying so, and a gate refuses `patch` before anything runs. Surfaces that are not interventions
-work the same way: `CaptureSupport` lists the vocabulary points a model backend can capture, and
-`AttributionGraphSupport` states what graph construction requires of the model.
+**Capabilities say what a component provides; support records say how.** A capability member names a surface and
+answers only whether a component provides it. The configurations it honours are declared in a typed support record
+whose axes mirror venngram's `Support`: a backend that implements `fwd_w_intervention` for `add` and `project` but
+not `patch` declares the surface and a record saying so, and a gate refuses `patch` before anything runs.
+
+> **The capability namespace is under review.** `Capability` is one flat enum whose members sit at different levels:
+> surfaces (`INTERVENTION`, `CAPTURE`, `GRADIENTS`, `LATENT_MODELS`) beside techniques (`ATTRIBUTION_GRAPH`,
+> `HEAD_ATTRIBUTION`). A member per technique does not scale to the range of experiments Interpretune composes, so
+> the namespace is likely to change soon: to the core surfaces alone, with techniques as registered ops that declare
+> what they require, or to a hierarchy that users and Hub collections can extend
+> ([#984](https://github.com/speediedan/interpretune/issues/984)).
+
+**Two providers of one target are legitimate, and are resolved by name.** In a circuit-tracer composition the model
+backend reaches an SAE's features at `hook_sae_acts_post` and the replacement model reaches its transcoders' features.
+`get_module_capabilities(module).intervention_for("features")` refuses that unqualified request, naming both providers,
+rather than resolving it by precedence; an op names the path it uses (`intervention_for("features",
+provider="analysis_backend")`, as `feature_intervention_forward` does). Surfaces that are not interventions work the
+same way: `CaptureSupport` lists the vocabulary points a model backend can capture, and `AttributionGraphSupport` states
+what graph construction requires of the model.
 
 **Basis is a configuration, not a capability.** An intervention defined in a basis (for the Jacobian lens,
 `jlens_unfolded` or `jlens_folded`, which are not interchangeable) states that basis on its spec, and the backend's
@@ -69,26 +86,28 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
   implemented with the same maths by both the TransformerLens and NNsight model backends at either position
   scope, `last_token` or `all_positions` (including
   SAE/latent sub-hook targets via `use_latent_models`/`sae_handles`). Its record, `InterventionSupport`, declares
-  the ops and position scopes it applies; an op declares what it needs through `required_intervention_modes` and
-  `required_position_scopes`, and the gate compares the two before the op runs.
+  the ops, targets and position scopes; an op declares the tensor ops it needs in `required_ops` (beside any
+  composition ops it depends on) and the scopes in `required_position_scopes`, and the gate compares the two before
+  the op runs.
 - `ReplacementModel.feature_intervention(...)` is the model-level primitive the analysis-level feature-intervention
   op executes on. Both circuit-tracer backend implementations consume canonical intervention tuples of the form
   `(layer, position, feature_idx, value)` and support passthrough controls such as constrained layers, sparse
   activation capture and optional activation return. `CircuitTracerAnalysisBackend` resolves the settings and
-  refuses, through `FeatureInterventionSupport`, a value source it does not honour, a constant source without a
-  value, a layer constraint or an activation return it cannot provide.
+  refuses, through its `features` target's `FeatureTargetSupport`, a value source it does not honour, a constant
+  source without a value, a layer constraint or an activation return it cannot provide.
 
 - `interpretune.analysis.venngram` applies a [venngram](https://github.com/speediedan/venngram) recipe on either
   surface above, since venngram addresses each level of abstraction a surface acts on:
   - **Model backend:** `recipe_interventions` turns a recipe's treatments (ordered ops at a site, on the whole
     activation, on a set's units, or on a latent model's features at its `hook_sae_acts_post` sub-hook) into
-    `InterventionSpec`s in the native modes.
+    `InterventionSpec`s carrying the same ops.
   - **Analysis backend:** `recipe_feature_interventions` turns a recipe's feature ops into the surface's canonical
-    `(layer, position, feature_idx, value)` tuples, which any backend implementing `FEATURE_INTERVENTION` takes
-    (circuit-tracer's today). The values are computed by Interpretune and passed as constants, so a backend must honour
-    the `constant` value source. A tuple sets a feature's value, so a feature `add` or `scale` is computed from the
-    feature's clean activation: the backend captures it first (`capture_feature_activations`, declared by
-    `FeatureInterventionSupport.captures_clean_activations`) and the caller passes it as `clean_activations`.
+    `(layer, position, feature_idx, value)` tuples, which any component providing `Capability.INTERVENTION`
+    on the `features` target takes (circuit-tracer's replacement model today). The values are computed by Interpretune
+    and passed as constants, so a backend must honour the `constant` value source. A tuple sets a feature's value, so a
+    feature `add` or `scale` is computed from the feature's clean activation: the backend captures it first
+    (`capture_feature_activations`, declared by the `features` target's `captures_clean_activations`) and the caller
+    passes it as `clean_activations`.
 
   What each recipe op is honoured as, per surface and target:
 
@@ -124,18 +143,25 @@ tracing that mutates activations inside a trace.
 through `module.replacement_model`, and stores Arrow-safe intervention summaries back into `AnalysisStore`.
 
 `model_fwd_intervention` is the model-level op for direct tensor interventions. It accepts either explicit
-`interventions` / `interventions_json` mappings or the shorthand `intervention_hook_pattern`, `intervention_mode`,
+`interventions` / `interventions_json` mappings or the shorthand `intervention_hook_pattern`, `intervention_op`,
 `intervention_scale_factor` and `intervention_use_intervention_tensor_as_basis` fields; explicit mappings take
 precedence. Concept-direction notebook experiments use this surface for direct-projection phases, including
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
 such as `blocks.0.hook_in` with the `project` op.
 
-`model_fwd_intervention` applies ops from venngram's registry: the core ops `replace`, `add`, `project`, `patch`,
-`reject`, `clamp`, `scale` and `replace_with_error`, and, through an op executor registry keyed by op name, any op a
-user or a hub op collection registers with its implementation
-([#952](https://github.com/speediedan/interpretune/issues/952); until it lands the shorthand field is still spelled
-`intervention_mode`). A recipe naming a registered op validates against venngram's registry with or without the
-publisher's code. The `patch` op (the
+## Intervention ops
+
+An intervention applies an op, and an op is a name in venngram's federated registry (`venngram.ops.OPS`), applied
+through the executor registered for that name in `interpretune.analysis.backends.ops`. `InterventionSpec.op` names it,
+the payload key is `op`, and the shorthand field is `intervention_op`. The core ops are `replace`, `add`, `project`, `patch`, `reject`, `clamp`, `scale`
+and `replace_with_error`, registered from the shared op math, and a backend whose hook computes its edit during the
+pass (both bundled model backends) declares every registered op, including one registered after it was built. A user
+registers another op with venngram's `register_op` and its executor with `register_executor(name, fn)`, where
+`fn(region, operand, spec)` returns the edited region; a hub op collection can carry one as a tensor op (see
+[publishing an op collection](hub_op_collection_authoring.md)).
+
+`model_fwd_intervention` dispatches the op the payload names through that registry, so a recipe or payload naming any
+registered op (core, user or hub) is applied, or refused where the backend's record does not declare it. The `patch` op (the
 J-space write) takes exactly two direction vectors stacked on a leading axis and swaps the activation's
 coordinates along that pair, leaving the component orthogonal to the pair untouched. Mechanically it is
 basis-agnostic: any pair of directions can serve as the patch pair, so embed-basis concept poles are as valid a
@@ -229,13 +255,13 @@ These are ACTIVE runtime controls (not just config candidates): `intervention_va
 
 ## Config split: what exists and what is still planned
 
-`FeatureInterventionSupport` is now the analysis-level configuration space as a record: value sources, whether
-layers can be constrained, whether activations can be returned. What is still planned is the split of the
-`CircuitTracerConfig` fields themselves, which keep both levels' knobs at the top level behind `intervention_`
-prefixes:
+`FeatureTargetSupport`, the detail of circuit-tracer's `features` target, is now that provider's configuration space as
+a record: value sources, whether layers can be constrained, whether activations can be returned. What is still planned
+is the split of the `CircuitTracerConfig` fields themselves, which keep both levels' knobs at the top level behind
+`intervention_` prefixes:
 
 - a shared model-level intervention config dataclass reusable by `model_fwd_intervention`,
-  `resolve_interventions(...)` and both model backends: `hook_pattern(s)`, `interventions`, `mode`, `scale_factor`,
+  `resolve_interventions(...)` and both model backends: `hook_pattern(s)`, `interventions`, `op`, `scale_factor`,
   `use_intervention_tensor_as_basis`, `intervention_tensor`, and the basis where one applies, with the
   non-prefixed spellings canonical and legacy prefixed spellings normalized at the op boundary;
 - a circuit-tracer analysis-level intervention config dataclass for `value`, `value_source`, `sign_aware_scale`,
@@ -275,7 +301,7 @@ ANALYSIS:
     direct_projection:
         interventions:
             blocks.0.hook_in:
-                mode: project
+                op: project
                 scale_factor: 10.0
                 use_intervention_tensor_as_basis: true
 ```
