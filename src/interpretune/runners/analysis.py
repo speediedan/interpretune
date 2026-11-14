@@ -215,6 +215,8 @@ def generate_analysis_dataset(
             }
         )
         resolved_fingerprint = hashlib.sha256(mix.encode()).hexdigest()[:32]
+    # None passes nothing, so the datasets default stays in place
+    writer_kwargs: dict[str, Any] = {} if writer_batch_size is None else {"writer_batch_size": writer_batch_size}
     try:
         dataset = Dataset.from_generator(
             analysis_store_generator,
@@ -227,7 +229,7 @@ def generate_analysis_dataset(
             gen_kwargs=gen_kwargs,
             split=split,  # pyright: ignore[reportArgumentType]  # str acceptable for NamedSplit at runtime
             fingerprint=resolved_fingerprint,
-            **({} if writer_batch_size is None else {"writer_batch_size": writer_batch_size}),
+            **writer_kwargs,
         ).with_format("interpretune", **it_format_kwargs)
         return dataset  # datasets compatibility
     except Exception as e:
