@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# The non-phase steps of gpu-tests.yml's any-vendor job (#703), run INSIDE its container (.azure-pipelines/templates/
-# gpu-job.yml) through ctr.sh, with the checkout at the working directory. The GPU phases and leases have scripts of
-# their own beside this one (gpu_phase.sh, gpu_stage_lease.sh, check_gpu_phases.sh).
+# The non-phase steps of gpu-tests.yml's any-vendor job (#703), run INSIDE its container (gpu-epsilon's
+# templates/gpu-job.yml, through .azure-pipelines/templates/it-gpu-job.yml) through ctr.sh, with the checkout at the
+# working directory. The GPU phases and leases have scripts of their own beside this one (gpu_phase.sh,
+# gpu_stage_lease.sh, check_gpu_phases.sh).
 #
 #   gpu_job_container.sh hf-cache-check | hf-cache-probe | hf-cache-reset | install | env | plan | collect | warm
 #                        | report | extended-profile | extended-optional | coverage | hf-cache-fix

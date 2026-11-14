@@ -207,7 +207,7 @@ a fresh session, because cases change parameters and `requires_grad`.
 | Composition | View | Roles |
 | --- | --- | --- |
 | [core / HF](tuning_core_hf.md), and any composition not overriding `build_tunable_view()` (the default) | venngram's composed view (the identity view where no map describes the model): trainable | PEFT adapter tensors as `adapter:<name>` |
-| [TransformerLens](tuning_transformer_lens.md) | `TransformerBridgeView`, in TransformerLens names (refused when the bridge holds quantized or packed parameters) | as on its page |
+| [TransformerLens](tuning_transformer_lens.md) | `TransformerBridgeView`, in TransformerLens names (refused when the bridge holds quantized or packed parameters) | LoRA tensors from `lora_cfg` as `adapter:<name>` (see [LoRA adapters](tuning_transformer_lens.md#lora-adapters)); the rest as on its page |
 | [sae_lens](tuning_sae_lens.md) with `add_saes_on_init=True` | the backend's view | the spliced SAEs as `latent:sae` |
 | [nnsight](tuning_nnsight.md), local and dispatched | venngram's composed view over the HF module, registered as `hf_model` | none: nnsight does not apply a `lora_cfg` ([#942](https://github.com/speediedan/interpretune/issues/942)) |
 | [nnsight](tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; tuning paths tracked in [#814](https://github.com/speediedan/interpretune/issues/814) and [#775](https://github.com/speediedan/interpretune/issues/775) | |

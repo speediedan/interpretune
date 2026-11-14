@@ -341,6 +341,23 @@ class ITLensConfig(ITConfig, TLConfigInitMixin):
     def __post_init__(self) -> None:
         self._init_tl_cfg_state()
         super().__post_init__()
+        self._refuse_quantized_lora()
+
+    def _refuse_quantized_lora(self) -> None:
+        """Refuse a ``lora_cfg`` over a ``bitsandbytesconfig``-quantized base on a TransformerLens composition.
+
+        LoRA is applied to the HF model before the ``TransformerBridge`` wraps it (see the TransformerLens tuning
+        page), but ``TransformerBridgeView`` refuses a bridge holding quantized parameters, so QLoRA has no tunable view
+        here. Either setting alone is applied.
+        """
+        hf_cfg = self.hf_from_pretrained_cfg
+        if hf_cfg is not None and getattr(hf_cfg, "lora_cfg", None) and getattr(hf_cfg, "bitsandbytesconfig", None):
+            raise MisconfigurationException(
+                "`hf_from_pretrained_cfg` sets both `lora_cfg` and `bitsandbytesconfig`, which a TransformerLens"
+                " composition does not support together: the adapters would sit on quantized base weights, and"
+                " `TransformerBridgeView` refuses a bridge holding quantized parameters. Drop `bitsandbytesconfig` to"
+                " train LoRA adapters on the bridge, or use a core or Lightning composition for QLoRA."
+            )
 
 
 # TODO: we should be able to standardize on the HF GenerationConfig interface and remove TLensGenerationConfig once

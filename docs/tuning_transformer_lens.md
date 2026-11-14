@@ -46,6 +46,45 @@ architectures:
 Fine-Tuning Scheduler reports what it thaws in physical parameters, so a GPT-2 block thawed by name counts 18: its 16
 named tensors and the fused `qkv` weight and bias they are views of. Its norms are thawed with it.
 
+## LoRA adapters
+
+A TransformerLens composition takes PEFT LoRA adapters through the same setting as a core composition,
+`hf_from_pretrained_cfg.lora_cfg`:
+
+```yaml
+hf_from_pretrained_cfg:
+  lora_cfg:
+    r: 8
+    lora_alpha: 32
+    target_modules: ["q_proj", "v_proj"]
+    lora_dropout: 0.05
+```
+
+- **Where the adapters go.** They are added to the HF model in place (`peft.inject_adapter_in_model`) before the
+  `TransformerBridge` wraps it, so each targeted module keeps its path and the bridge runs its LoRA layer. The HF model
+  is not wrapped in a `PeftModel`.
+- **What trains.** Only the LoRA tensors require gradients after bridging. That includes freezing the parameters the
+  bridge adds itself, such as the q, k and v it splits out of GPT-2's fused attention.
+- **Roles.** The LoRA tensors take the `adapter:<name>` role (`adapter:default` unless the configuration names the
+  adapter). No TransformerLens name reaches them, so a schedule selects them by role:
+
+  ```yaml
+  0:
+    params:
+    - role:adapter
+  ```
+
+  The default schedule orders the TransformerLens names, which are base weights, so a LoRA run gives its own schedule.
+- **Targets the bridge never calls are refused.** Some bridge components compute from their own copy of a module's
+  weights rather than calling the module. GPT-2's fused `c_attn` is one: the bridge splits it into its own q, k and v,
+  so a LoRA layer on `c_attn` would never run. After bridging, one single-token forward checks that every LoRA layer
+  ran, and the configuration is refused if any did not, naming the module. On GPT-2, target `c_proj` and `c_fc`.
+  Where the projections are separate modules (Gemma 3's `q_proj`, `v_proj`, `o_proj` and `down_proj`, for example),
+  the bridge calls them.
+- **Not with quantization.** A `lora_cfg` together with a `bitsandbytesconfig` is refused at configuration:
+  `TransformerBridgeView` refuses a bridge holding quantized parameters. Either setting alone is applied. For QLoRA, use
+  a [core](tuning_core_hf.md) or Lightning composition.
+
 ## Choosing the naming
 
 The module configuration's `tunable_view` (see [Choosing the view in configuration](tuning.md)) selects either
