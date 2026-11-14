@@ -38,7 +38,9 @@ dependencies = [
     # (`interpretune.analysis.venngram`, #887) and the default view (`venngram.view`, #900). The floor is the one
     # finetuning-scheduler declares for the same pre-release line; both rise to 0.1.0 when it publishes.
     "venngram>=0.1.0.dev0,<0.2.0",
-    "transformers>=4.57.1",
+    # CEILING <5.23: transformers 5.23.0 breaks nnsight 0.8.2 model construction ("Impossible to guess which
+    # tokenizer", #1002). Lift it once an nnsight release or a transformers patch constructs gemma-2-2b again.
+    "transformers>=4.57.1,<5.23",
     "tabulate >= 0.9.0",
     "datasets >= 4.0.0",
     # FLOOR >=4.49.0: `instantiate_classes` is deprecated from 4.49.0 (removed in 5.0.0) and its
