@@ -238,7 +238,11 @@ class BaseITLensModule(BaseITModule):
         from peft.tuners.lora import LoraLayer
 
         self.model = inject_adapter_in_model(LoraConfig(**self.hf_cfg.lora_cfg), self.model)
-        return {module: name for name, module in self.model.named_modules() if isinstance(module, LoraLayer)}
+        layers: dict[torch.nn.Module, str] = {}
+        for name, module in self.model.named_modules():
+            if isinstance(module, LoraLayer):
+                layers[cast(torch.nn.Module, module)] = name  # peft types LoraLayer as a mixin, not a Module
+        return layers
 
     def _train_only_reached_lora_adapters(self, lora_layers: dict[torch.nn.Module, str]) -> None:
         """Leave only the LoRA tensors trainable, and refuse an adapter the bridge never runs.
