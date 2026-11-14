@@ -572,7 +572,7 @@ def test_nnsight_interventions_apply_in_forward_order_whatever_order_they_are_li
     lm, _hf_model, backend = nnsight_setup
     torch.manual_seed(3)
     edits = {
-        f"blocks.{layer}.{hook}": InterventionSpec(intervention_tensor=torch.randn(D_MODEL), mode="add")
+        f"blocks.{layer}.{hook}": InterventionSpec(intervention_tensor=torch.randn(D_MODEL), op="add")
         for hook in ("hook_mlp_out", "hook_resid_post")
         for layer in range(N_LAYERS)
     }

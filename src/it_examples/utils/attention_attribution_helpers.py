@@ -341,9 +341,12 @@ class ResidualPartition:
 
 
 def _hf_causal_lm(model: Any) -> Any:
-    """The Hugging Face model behind an nnsight wrapper (``_model``), or the model itself."""
-    inner = getattr(model, "_model", None)
-    return inner if isinstance(inner, torch.nn.Module) else model
+    """The Hugging Face model behind an nnsight wrapper (``_module``), or the model itself."""
+    for attr in ("_module", "_model"):
+        inner = getattr(model, attr, None)
+        if isinstance(inner, torch.nn.Module):
+            return inner
+    return model
 
 
 def capture_residual_terms(module: Any, prompt: str, n_layers: int) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
@@ -443,7 +446,7 @@ def apply_last_token_edits(
     specs = {
         h: InterventionSpec(
             intervention_tensor=d.to(device, dtype),
-            mode=mode,
+            op=mode,
             scale_factor=dose if mode == "add" else 1.0,
             position_scope="last_token",
         )
