@@ -58,6 +58,7 @@ class TestRoundTrip:
             pytest.param(InterventionSpec(torch.tensor(3.0), "scale", 0.5), id="scale-dose"),
             pytest.param(InterventionSpec(VECTOR, "project"), id="project"),
             pytest.param(InterventionSpec(VECTOR, "reject", 0.5), id="reject-vector"),
+            pytest.param(InterventionSpec(VECTOR, "reject", 1.5), id="over-reject-vector"),
             pytest.param(InterventionSpec(SUBSPACE, "reject"), id="reject-subspace"),
             pytest.param(InterventionSpec(PAIR, "patch"), id="patch"),
             pytest.param(InterventionSpec(PAIR, "clamp", clamp_min=0.0), id="clamp-min"),
@@ -176,7 +177,9 @@ class TestRefusals:
             pytest.param({HOOK: InterventionSpec(SUBSPACE, "project")}, "operand of rank", id="project-subspace"),
             pytest.param({HOOK: InterventionSpec(VECTOR, "patch")}, "operand of rank", id="patch-rank"),
             pytest.param({HOOK: InterventionSpec(SUBSPACE, "patch")}, "needs a pair", id="patch-stack"),
-            pytest.param({HOOK: InterventionSpec(VECTOR, "reject", 1.5)}, "`fraction` in", id="reject-fraction"),
+            pytest.param(
+                {HOOK: InterventionSpec(VECTOR, "reject", -0.5)}, "non-negative `fraction`", id="reject-fraction"
+            ),
             pytest.param({HOOK: InterventionSpec(VECTOR, "clamp")}, "neither bound", id="clamp"),
         ],
     )
