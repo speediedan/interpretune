@@ -394,7 +394,7 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
         """
         import os
 
-        from nnsight import LanguageModel
+        from nnsight import TransformersModel
 
         from interpretune.analysis.backends.hook_mapping import HookNameResolver
         from interpretune.adapters.nnsight.backends import NNsightModelBackend, get_default_configs_per_pass
@@ -408,7 +408,7 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
         if model_name is None:
             raise ValueError("model_name must be specified in nnsight_cfg or model_name_or_path in it_cfg")
 
-        rank_zero_info(f"Initializing NNsight LanguageModel for SAE Lens with model: {model_name}")
+        rank_zero_info(f"Initializing NNsight TransformersModel for SAE Lens with model: {model_name}")
 
         nnsight_kwargs = nnsight_cfg.get_nnsight_kwargs()
 
@@ -419,32 +419,30 @@ class SAELensNNsightModuleMixin(NNsightAttributeMixin):
                 nnsight_kwargs["token"] = access_token
                 rank_zero_debug("Using authentication token from environment for NNsight model")
 
-        # Handle NDIF API key for remote execution
+        # Handle NDIF API key for remote execution: init kwargs pass through to the HF
+        # constructor, so the key goes on nnsight's global CONFIG (as in the nnsight adapter)
         if nnsight_cfg.remote:
             api_key = nnsight_cfg.api_key or os.environ.get("NDIF_API_KEY")
             if api_key:
-                nnsight_kwargs["api_key"] = api_key
+                import nnsight as _nnsight_mod
 
-        # Initialize NNsight LanguageModel
-        try:
-            self.model = LanguageModel(model_name, **nnsight_kwargs)
-        except ValueError as ve:
-            # nnsight 0.7+ refuses multimodal-registered repos via LanguageModel (e.g.
-            # gemma-3-4b-it is AutoModelForImageTextToText) and directs callers to
-            # VisionLanguageModel, a LanguageModel subclass exposing the same tracing
-            # surface for text-only use (mirrors the fallback in adapters/nnsight.py)
-            if "VisionLanguageModel" not in str(ve):
-                raise
-            from nnsight import VisionLanguageModel
+                _nnsight_mod.CONFIG.API.APIKEY = api_key
 
-            rank_zero_info(f"{model_name} is registered as multimodal; using NNsight VisionLanguageModel")
-            self.model = VisionLanguageModel(model_name, **nnsight_kwargs)
+        # Initialize the NNsight model (TransformersModel: see the nnsight adapter for why
+        # the deprecated LanguageModel name and its vision fallback are gone)
+        tokenizer_kwargs = nnsight_kwargs.pop("tokenizer_kwargs", None)
+        self.model = TransformersModel(model_name, task="text-generation", **nnsight_kwargs)
+        for key, value in (tokenizer_kwargs or {}).items():
+            setattr(self.model.tokenizer, key, value)
 
-        # Store tokenizer reference
+        # Store tokenizer reference (cast: Envoy attribute access is typed as
+        # Tensor | Module, but `tokenizer` is the HF tokenizer object)
         if self.it_cfg.tokenizer is None and hasattr(self.model, "tokenizer"):
-            self.it_cfg.tokenizer = self.model.tokenizer
+            from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-        rank_zero_info("NNsight LanguageModel initialized for SAE Lens")
+            self.it_cfg.tokenizer = cast(PreTrainedTokenizerBase, self.model.tokenizer)
+
+        rank_zero_info("NNsight TransformersModel initialized for SAE Lens")
 
         # Load SAEs (pure PyTorch, backend-agnostic)
         self.instantiate_saes()  # from BaseSAELensModule

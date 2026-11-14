@@ -163,15 +163,28 @@ class NNsightConfig(ITSerializableCfg):
         return getattr(self, "_resolved_dtype", self.torch_dtype)
 
     def get_nnsight_kwargs(self) -> dict[str, Any]:
-        """Generate kwargs dict for NNsight LanguageModel initialization.
+        """Generate kwargs dict for NNsight TransformersModel initialization.
 
         Returns:
-            Dictionary of kwargs to pass to LanguageModel constructor.
+            Dictionary of kwargs to pass to TransformersModel constructor.
         """
         kwargs: dict[str, Any] = {"dispatch": self.dispatch}
 
         if self.device_map is not None:
-            kwargs["device_map"] = self.device_map
+            # nnsight 0.8 loads through a transformers pipeline, which moves the model to
+            # its own `device` (cuda:0 whenever CUDA is available) after loading: a
+            # single-device `device_map` like "cpu" is silently overridden. Single-device
+            # placements therefore go through `device`; genuine Accelerate strategies
+            # ("auto", "balanced", a layer dict) keep `device_map`.
+            if isinstance(self.device_map, str) and self.device_map not in (
+                "auto",
+                "balanced",
+                "balanced_low_0",
+                "sequential",
+            ):
+                kwargs["device"] = self.device_map
+            else:
+                kwargs["device_map"] = self.device_map
 
         if self.resolved_dtype is not None:
             kwargs["torch_dtype"] = self.resolved_dtype
@@ -185,28 +198,12 @@ class NNsightConfig(ITSerializableCfg):
         if self.tokenizer_kwargs:
             kwargs["tokenizer_kwargs"] = self.tokenizer_kwargs
 
-        # Remote execution settings
-        if self.remote and _nnsight_accepts_init_remote():
-            # nnsight 0.6.x consumes `remote` at LanguageModel init (default execution backend);
-            # on the 0.7 line the wrapper no longer consumes it and the kwarg leaks into the HF
-            # model constructor (TypeError: ... unexpected keyword argument 'remote') — remote
-            # selection moved to per-trace `trace(..., remote=True)`.
-            kwargs["remote"] = True
-            # API key is handled separately in adapter initialization
-            # to allow for environment variable fallback
+        # Remote execution is selected per trace (`trace(..., remote=True)`), never at
+        # LanguageModel init: an init `remote` kwarg would leak into the HF model
+        # constructor. The API key is applied separately in adapter initialization to
+        # allow for environment variable fallback.
 
         return kwargs
-
-
-def _nnsight_accepts_init_remote() -> bool:
-    """Whether the installed nnsight consumes ``remote`` at ``LanguageModel`` init (0.6 line only)."""
-    try:
-        import nnsight
-        from packaging.version import Version
-
-        return Version(getattr(nnsight, "__version__", "0")) < Version("0.7")
-    except Exception:
-        return True
 
 
 # Type aliases for static typing

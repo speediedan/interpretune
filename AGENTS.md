@@ -133,7 +133,7 @@ Only three install flows exist:
 | Bare pip | `pip install .` | **not supported** |
 
 `pip install .` fails in a way that looks like an application bug: pip ignores `[tool.uv] override-dependencies` (the
-`transformer-lens==4.0.0` and `nnsight==0.7.0` pins), so it resolves a TransformerLens 2.x, and every downstream
+`transformer-lens==4.0.0` and `nnsight==0.8.2` pins), so it resolves a TransformerLens 2.x, and every downstream
 failure (a `sae_dashboard` import error, `BertForPreTraining`) is a symptom of that resolution, not a defect to file.
 
 Rules that must not be missed:
