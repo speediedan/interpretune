@@ -72,7 +72,7 @@ def generate_artifact_card(envelope: dict, repo_id: str, summary: str | None = N
 
 #: The conformance suite's report, published beside a component as a declared supplementary file.
 CONFORMANCE_REPORT_FILE = "conformance_report.json"
-CONFORMANCE_REPORT_FORMAT = "interpretune.conformance.report/1"
+CONFORMANCE_REPORT_FORMAT = "interpretune.conformance.report/2"
 
 _CANNOT_TELL = (
     "**What this card cannot tell you:** the capabilities this adapter declares at runtime and the hook patterns "
@@ -161,15 +161,27 @@ def measured_capabilities_lines(report: dict[str, Any] | None, source_revision: 
     for target, decl in sorted((report.get("targets") or {}).items()):
         comp = " + ".join(f"`{a}`" for a in decl.get("composition") or []) or "(composition not recorded)"
         lines += ["", f"#### {target}", "", f"Composition {comp} on `{decl.get('model_id') or '?'}`.", ""]
-        model_caps = decl.get("model_capabilities") or []
-        analysis_caps = decl.get("analysis_capabilities") or []
-        lines.append(f"- declares: {', '.join(f'`{c}`' for c in model_caps + analysis_caps) or '(nothing)'}")
-        iv = decl.get("intervention")
-        if iv:
+        caps = decl.get("capabilities") or {}
+        lines.append(
+            "- declares: " + (", ".join(f"`{c}` ({', '.join(by)})" for c, by in sorted(caps.items())) or "(nothing)")
+        )
+        for component, needed in sorted((decl.get("requires") or {}).items()):
+            lines.append(f"- {component} requires: {', '.join(f'`{c}`' for c in needed)}")
+        for provider, iv in sorted((decl.get("intervention") or {}).items()):
+            targets = iv.get("targets") or {}
             lines.append(
-                f"- activation intervention: modes {', '.join(f'`{m}`' for m in iv.get('modes') or [])}; "
+                f"- intervention ({provider}): ops {', '.join(f'`{m}`' for m in iv.get('ops') or [])}; "
+                f"targets {', '.join(f'`{t}`' for t in sorted(targets))}; "
                 f"position scopes {', '.join(f'`{m}`' for m in iv.get('position_scopes') or [])}"
             )
+            fi = targets.get("features")
+            if fi:
+                lines.append(
+                    f"  - features: value sources {', '.join(f'`{v}`' for v in fi.get('value_sources') or [])}; "
+                    f"constrainable layers {fi.get('constrainable_layers')};"
+                    f" returns activations {fi.get('returns_activations')};"
+                    f" freezable norms {fi.get('freezable_norms')}"
+                )
         lm = decl.get("latent_models")
         if lm:
             lines.append(f"- latent models: batched hooks {lm.get('batched_hooks')}")
@@ -193,14 +205,6 @@ def measured_capabilities_lines(report: dict[str, Any] | None, source_revision: 
                     if ag.get("requires_own_eager_attention")
                     else "no model requirement"
                 )
-            )
-        fi = decl.get("feature_intervention")
-        if fi:
-            lines.append(
-                f"- feature intervention: value sources {', '.join(f'`{v}`' for v in fi.get('value_sources') or [])}; "
-                f"constrainable layers {fi.get('constrainable_layers')};"
-                f" returns activations {fi.get('returns_activations')};"
-                f" freezable norms {fi.get('freezable_norms')}"
             )
     lines += [
         "",

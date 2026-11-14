@@ -12,9 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from interpretune.analysis.backends import (
-    AnalysisBackendCapability,
-    ModelBackendCapability,
-    InterventionMode,
+    Capability,
     ModuleCapabilities,
     PositionScope,
 )
@@ -30,34 +28,42 @@ class Gate:
     Empty means always-on.
     """
 
-    capability: ModelBackendCapability | AnalysisBackendCapability | None = None
+    capability: Capability | None = None
+    target: str = "activation"
+    """The intervention target the case acts on, when ``capability`` is ``INTERVENTION``: the target must be
+    provided, and the scope and mode axes are read from its provider's record."""
+    provider: str | None = None
+    """The component the case reaches the target through (``model_backend``, ``analysis_backend``), or ``None``
+    when the target has one provider."""
     scope: PositionScope | None = None
     scopes: tuple[PositionScope, ...] = ()
     """Every scope a case needs declared at once (a mixed-scope payload); ``scope`` is the one-scope form."""
-    mode: InterventionMode | None = None
-    modes: tuple[InterventionMode, ...] = ()
-    """Every mode a case needs declared at once (a mixed-mode payload); ``mode`` is the one-mode form."""
+    op: str | None = None
+    ops: tuple[str, ...] = ()
+    """Every op a case needs declared at once (a mixed-op payload); ``op`` is the one-op form."""
     batched_hooks: bool | None = None
     family: str | None = None
     single_prompt: bool | None = None
     """Select on whether the TARGET declared it takes one prompt at a time (a property of the target, not of the
     backend's capability set)."""
     negative: bool = False
-    """A negative case runs when its capability/scope/mode is ABSENT and is skipped when present."""
+    """A negative case runs when its capability/scope/op is ABSENT and is skipped when present."""
 
     def describe(self) -> str:
         """A one-line rendering for skip reasons and the report."""
         parts = []
         if self.capability is not None:
             parts.append(self.capability.name)
+        if self.capability is Capability.INTERVENTION or self.scope or self.scopes or self.op or self.ops:
+            parts.append(f"target={self.target}" + (f"@{self.provider}" if self.provider else ""))
         if self.scope is not None:
             parts.append(f"scope={self.scope.value}")
         if self.scopes:
             parts.append("scopes=" + "+".join(s.value for s in self.scopes))
-        if self.mode is not None:
-            parts.append(f"mode={self.mode.value}")
-        if self.modes:
-            parts.append("modes=" + "+".join(m.value for m in self.modes))
+        if self.op is not None:
+            parts.append(f"op={self.op}")
+        if self.ops:
+            parts.append("ops=" + "+".join(self.ops))
         if self.batched_hooks is not None:
             parts.append(f"batched_hooks={self.batched_hooks}")
         if self.family is not None:
@@ -77,20 +83,16 @@ class Gate:
         # Compare by VALUE: the capabilities module can be loaded twice under a test runner, leaving
         # value-equal, identity-distinct members on either side.
         needed = tuple(self.scopes) + ((self.scope,) if self.scope is not None else ())
-        if needed:
-            if caps.intervention is None:
+        ops = tuple(self.ops) + ((self.op,) if self.op is not None else ())
+        if self.capability is Capability.INTERVENTION or needed or ops:
+            providers = caps.target_providers(self.target)
+            if (self.provider not in providers) if self.provider is not None else not providers:
                 return False
-            declared_scopes = {s.value for s in caps.intervention.position_scopes}
-            if any(s.value not in declared_scopes for s in needed):
+            # an unqualified gate on a target two components provide is refused by name, like the request it gates
+            record = caps.intervention_for(self.target, provider=self.provider)
+            if any(s.value not in {d.value for d in record.position_scopes} for s in needed):
                 return False
-        if self.mode is not None:
-            if caps.intervention is None or self.mode.value not in {m.value for m in caps.intervention.modes}:
-                return False
-        if self.modes:
-            if caps.intervention is None:
-                return False
-            declared_modes = {m.value for m in caps.intervention.modes}
-            if any(m.value not in declared_modes for m in self.modes):
+            if any(op not in record.declared_ops for op in ops):
                 return False
         if self.batched_hooks is not None:
             if caps.latent_models is None or caps.latent_models.batched_hooks is not self.batched_hooks:
@@ -119,8 +121,9 @@ _CASE_GATES: dict[str, Gate] = {}
 def conformance_case(gate: Gate | None = None, **kw: Any) -> Callable:
     """Mark a test method as a conformance case with the declaration it needs.
 
-    ``conformance_case()`` is always-on; ``conformance_case(capability=ModelBackendCapability.ACTIVATION_INTERVENTION,
-    scope=PositionScope.ALL_POSITIONS)`` needs both; ``negative=True`` inverts the selection.
+    ``conformance_case()`` is always-on; ``conformance_case(capability=Capability.INTERVENTION,
+    scope=PositionScope.ALL_POSITIONS)`` needs both on the ``activation`` target; ``negative=True`` inverts the
+    selection.
     """
     resolved = gate if gate is not None else Gate(**kw)
 
@@ -172,7 +175,7 @@ class SelectionReport:
         composed session, never what a manifest declared; provenance says which tree and which run measured it.
         """
         return {
-            "format": "interpretune.conformance.report/1",
+            "format": "interpretune.conformance.report/2",
             "provenance": dict(provenance),
             "targets": {name: dict(record) for name, record in self.targets.items()},
             "ran": list(self.ran),
@@ -224,10 +227,16 @@ def describe_capabilities(caps: Any, *, composition: tuple[str, ...] = (), model
     out: dict[str, Any] = {
         "composition": list(composition),
         "model_id": model_id,
-        "model_capabilities": sorted(c.value for c in caps.model),
-        "analysis_capabilities": sorted(c.value for c in caps.analysis),
+        "capabilities": {c.value: list(names) for c, names in sorted(caps.providers.items(), key=lambda i: i[0].value)},
     }
-    for name in ("intervention", "latent_models", "capture", "attribution_graph", "feature_intervention"):
+    if caps.requires:
+        out["requires"] = {name: sorted(c.value for c in needed) for name, needed in caps.requires.items()}
+    if caps.intervention:
+        # the ops a provider honours NOW: a record declaring every registered op lists the registry's current set
+        out["intervention"] = {
+            name: {**plain(record), "ops": sorted(record.declared_ops)} for name, record in caps.intervention.items()
+        }
+    for name in ("latent_models", "capture", "attribution_graph"):
         record = getattr(caps, name, None)
         if record is not None:
             out[name] = plain(record)

@@ -245,10 +245,11 @@ git-deps = [
     # finetuning-scheduler by git SHA until 2.15.0 is published (#758): see its `override-dependencies` entry,
     # which carries the same URL and replaces the lock file's release pin at install. Kept here too so an
     # install still gets it once a relock drops it from the lock (`--no-emit-package`). The SHA is finetuning-scheduler
-    # main with #202 (a phase restores one earlier phase's best, `best:<depth>`, and `PlateauTransition` can judge each
-    # phase against its own best), over #195 (per-phase `refreeze` and `restore`) and #177 (venngram's address books,
+    # main with #207 (a schedule thawing storage that cannot require gradients is refused at compile, for every view),
+    # over #202 (a phase restores one earlier phase's best, `best:<depth>`, and `PlateauTransition` can judge each
+    # phase against its own best), #195 (per-phase `refreeze` and `restore`) and #177 (venngram's address books,
     # support record and registry lookup), which depends on venngram.
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@fbbddb8e81ea8b31c7af4bce1636abf7569dbe5f",
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@76b250470f67cb942aa37894c47ce611dccca445",
     # venngram by git SHA until 0.1.0 is published: a base dependency (#874) whose floor admits this pre-release.
     # The SHA is venngram main with #56 (a reader passes over registry documents newer than it reads, so the default
     # view survives a registry schema change), over #53 (overlay roles named by adapter, every PEFT tuner family), #51
@@ -341,7 +342,7 @@ override-dependencies = [
     # this. The lock script leaves it out of the universal lock (`--no-emit-package`), whose 2.13.0 pin is
     # replaced by this at install. RETIRE it, and raise the `tune` extra's floor to 2.15.0, once 2.15.0
     # is published.
-    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@fbbddb8e81ea8b31c7af4bce1636abf7569dbe5f",
+    "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@76b250470f67cb942aa37894c47ce611dccca445",
     # venngram by git SHA until 0.1.0 is on PyPI, for the same reason: interpretune and finetuning-scheduler both
     # require it and it is in no release. RETIRE it with the `git-deps` entry once 0.1.0 is published.
     "venngram @ git+https://github.com/speediedan/venngram@c993c2c3ba8ad943f3d1d2a03cca132236d3196e",

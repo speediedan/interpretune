@@ -15,10 +15,10 @@ from __future__ import annotations
 import pytest
 import torch
 
-from interpretune.analysis.backends.capabilities import InterventionMode
+from interpretune.analysis.backends.ops import normalize_op
 from interpretune.analysis.backends.interventions import (
     InterventionSpec,
-    _apply_mode_to_region,
+    _apply_op_to_region,
     _apply_span_rejection,
 )
 
@@ -32,7 +32,7 @@ def _oracle(v: torch.Tensor, h: torch.Tensor, alpha: float = 1.0) -> torch.Tenso
 
 
 def _reject(v: torch.Tensor, h: torch.Tensor, alpha: float = 1.0) -> torch.Tensor:
-    spec = InterventionSpec(intervention_tensor=v, mode="reject", scale_factor=alpha)
+    spec = InterventionSpec(intervention_tensor=v, op="reject", scale_factor=alpha)
     return _apply_span_rejection(spec, input_value=h.reshape(1, -1), target=v)[0]
 
 
@@ -114,17 +114,17 @@ class TestItIsNotAnotherModeWearingTheName:
     def test_it_differs_from_project_on_the_same_inputs(self, pair):
         """If these agreed, one mode would be dead and every test above would still pass."""
         v, h = pair
-        rejected = _apply_mode_to_region(
-            h.reshape(1, -1), InterventionSpec(intervention_tensor=v[:1], mode="reject", scale_factor=1.0)
+        rejected = _apply_op_to_region(
+            h.reshape(1, -1), InterventionSpec(intervention_tensor=v[:1], op="reject", scale_factor=1.0)
         )
-        projected = _apply_mode_to_region(
+        projected = _apply_op_to_region(
             h.reshape(1, -1),
             InterventionSpec(
                 # `project` takes an UNSTACKED (d,) vector, which it broadcasts to the activation shape,
                 # where `reject` takes a stacked (k, d) basis because it accepts any rank. The asymmetry
                 # is real and worth knowing at a call site; it is not something this test can fix.
                 intervention_tensor=v[0],
-                mode="project",
+                op="project",
                 scale_factor=1.0,
                 use_intervention_tensor_as_basis=True,
             ),
@@ -140,12 +140,10 @@ class TestItIsNotAnotherModeWearingTheName:
 
 class TestModeRegistration:
     def test_reject_is_a_declared_mode(self):
-        assert InterventionMode("reject") is InterventionMode.REJECT
+        assert normalize_op("reject") == "reject"
 
     def test_it_dispatches_through_the_shared_region_path(self, pair):
-        """Routing through `_apply_mode_to_region` is what makes both position scopes work for free."""
+        """Routing through `_apply_op_to_region` is what makes both position scopes work for free."""
         v, h = pair
-        spec = InterventionSpec(intervention_tensor=v, mode="reject", scale_factor=1.0)
-        torch.testing.assert_close(
-            _apply_mode_to_region(h.reshape(1, -1), spec)[0], _oracle(v, h), atol=1e-5, rtol=1e-5
-        )
+        spec = InterventionSpec(intervention_tensor=v, op="reject", scale_factor=1.0)
+        torch.testing.assert_close(_apply_op_to_region(h.reshape(1, -1), spec)[0], _oracle(v, h), atol=1e-5, rtol=1e-5)

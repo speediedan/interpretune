@@ -436,7 +436,7 @@ class TestOps:
             with torch.no_grad():
                 intervention.operand.value.uniform_(0.5, 1.5)
             spec = InterventionSpec(
-                intervention.operand.value.detach(), mode=op, scale_factor=0.5, position_scope="all_positions"
+                intervention.operand.value.detach(), op=op, scale_factor=0.5, position_scope="all_positions"
             )
             assert torch.allclose(intervention(x), apply_intervention(x.clone(), spec, last_pos=-1))
 
@@ -456,7 +456,7 @@ class TestOps:
 
         x = _x()
         before = x.clone()
-        apply_op(x, InterventionSpec(torch.ones(D), mode="add", position_scope="all_positions"))
+        apply_op(x, InterventionSpec(torch.ones(D), op="add", position_scope="all_positions"))
         assert torch.equal(x, before)
         with pytest.raises(ValueError, match="edits every position"):
-            apply_op(x, InterventionSpec(torch.ones(D), mode="add"))
+            apply_op(x, InterventionSpec(torch.ones(D), op="add"))

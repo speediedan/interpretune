@@ -11,10 +11,9 @@ from __future__ import annotations
 import pytest
 import torch
 
-from interpretune.analysis.backends.capabilities import InterventionMode
 from interpretune.analysis.backends.interventions import (
     InterventionSpec,
-    _apply_mode_to_region,
+    _apply_op_to_region,
     _apply_span_clamp,
     _coerce_single_intervention_spec,
     _expand_intervention_value_for_matches,
@@ -29,7 +28,7 @@ def basis() -> torch.Tensor:
 
 
 def _spec(basis: torch.Tensor, **kw) -> InterventionSpec:
-    return InterventionSpec(basis, mode=InterventionMode.CLAMP, **kw)
+    return InterventionSpec(basis, op="clamp", **kw)
 
 
 class TestClampBoundsRatherThanAssigns:
@@ -110,7 +109,7 @@ class TestClampReachesTheSharedDispatch:
         h = torch.tensor([[5.0, -5.0, 2.0]])
         spec = _spec(basis, clamp_min=-1.0, clamp_max=1.0)
         direct = _apply_span_clamp(spec, input_value=h, target=basis)
-        dispatched = _apply_mode_to_region(h, spec)
+        dispatched = _apply_op_to_region(h, spec)
         assert torch.allclose(direct, dispatched, atol=1e-6)
 
 
@@ -125,7 +124,7 @@ class TestClampBandSurvivesTheMappingPayload:
     def _mapping(self, basis):
         return {
             "intervention_tensor": basis,
-            "mode": "clamp",
+            "op": "clamp",
             "scale_factor": 1.0,
             "position_scope": "all_positions",
             "clamp_min": -1.0,

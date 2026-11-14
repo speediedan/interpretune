@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from interpretune.analysis.backends.capabilities import ModelBackendCapability
+from interpretune.analysis.backends.capabilities import Capability
 from interpretune.testing.conformance.gates import Gate
 from interpretune.testing.conformance.manifest import (
     MODEL_BACKEND_CASE_CLASS,
@@ -36,8 +36,8 @@ def test_the_ungated_set_is_measured_not_recalled():
     assert binds_every_backend(Gate())
     assert binds_every_backend(Gate(family="hf_native"))
     assert binds_every_backend(Gate(single_prompt=True))
-    assert not binds_every_backend(Gate(capability=ModelBackendCapability.GRADIENTS))
-    assert not binds_every_backend(Gate(capability=ModelBackendCapability.ACTIVATION_INTERVENTION, negative=True))
+    assert not binds_every_backend(Gate(capability=Capability.GRADIENTS))
+    assert not binds_every_backend(Gate(capability=Capability.INTERVENTION, negative=True))
 
 
 def test_a_planted_ungated_case_is_refused_by_name():
@@ -56,7 +56,7 @@ def test_a_planted_gated_case_does_not_trip_the_check():
     """The manifest is about the ungated set; a capability-gated case needs no row."""
     registered = dict(ungated_cases())
     # ungated_cases() has already filtered by the predicate; a gated addition never reaches the manifest
-    gated = {f"{MODEL_BACKEND_CASE_CLASS}.test_gated": Gate(capability=ModelBackendCapability.GRADIENTS)}
+    gated = {f"{MODEL_BACKEND_CASE_CLASS}.test_gated": Gate(capability=Capability.GRADIENTS)}
     assert not any(binds_every_backend(g) for g in gated.values())
     check_manifest(registered)
 

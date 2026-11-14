@@ -95,7 +95,7 @@ def _patch_pair() -> torch.Tensor:
 
 def _spec(scale: float) -> InterventionSpec:
     return _validate_intervention_spec(
-        InterventionSpec(intervention_tensor=_patch_pair(), mode="patch", scale_factor=scale),
+        InterventionSpec(intervention_tensor=_patch_pair(), op="patch", scale_factor=scale),
         target_shape=(D_MODEL,),
         hook_name=f"blocks.{HOOK_LAYER}.hook_resid_post",
     )
@@ -388,7 +388,7 @@ class TestCrossBackendAgreement:
         nns_backend.register_model_hooks(lm)
         ids = lm.tokenizer(prompt, return_tensors="pt")["input_ids"]
         spec = _validate_intervention_spec(
-            InterventionSpec(intervention_tensor=pair, mode="patch", scale_factor=1.0),
+            InterventionSpec(intervention_tensor=pair, op="patch", scale_factor=1.0),
             target_shape=(768,),
             hook_name=hook,
         )
@@ -466,7 +466,7 @@ def _gemma_pair_case(model_id: str, jlens_id: str, layer: int) -> dict[str, obje
 
         hook = f"blocks.{resolved_layer}.hook_resid_post"
         spec = _validate_intervention_spec(
-            InterventionSpec(intervention_tensor=pair, mode="patch", scale_factor=1.0),
+            InterventionSpec(intervention_tensor=pair, op="patch", scale_factor=1.0),
             target_shape=(pair.shape[1],),
             hook_name=hook,
         )
@@ -507,7 +507,7 @@ def _tl_gap_for_pair(model_id: str, case: dict[str, object]) -> dict[str, object
             / torch.linalg.norm(case["scale"]).clamp_min(1e-12)
         )
         spec = _validate_intervention_spec(
-            InterventionSpec(intervention_tensor=case["pair"], mode="patch", scale_factor=1.0),
+            InterventionSpec(intervention_tensor=case["pair"], op="patch", scale_factor=1.0),
             target_shape=(case["pair"].shape[1],),
             hook_name=case["hook"],
         )

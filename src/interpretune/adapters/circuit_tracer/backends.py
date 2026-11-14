@@ -14,11 +14,13 @@ import torch
 from transformers import BatchEncoding
 
 from interpretune.analysis.backends import (
-    AnalysisBackendCapability,
+    Capability,
     InterventionDict,
     InterventionSpec,
+    InterventionSupport,
     AttributionGraphSupport,
-    FeatureInterventionSupport,
+    FeatureTargetSupport,
+    PositionScope,
 )
 from interpretune.analysis.ops.base import AnalysisBatch, get_batch_input
 from interpretune.protocol import GraphComponentPayload
@@ -34,15 +36,22 @@ class CircuitTracerAnalysisBackend:
         return AttributionGraphSupport(requires_own_eager_attention=True)
 
     @property
-    def feature_intervention_support(self) -> FeatureInterventionSupport:
-        """The three value sources circuit-tracer's feature intervention accepts, with layer constraints, returns,
-        norm-denominator freezing and a clean capture."""
-        return FeatureInterventionSupport(
-            value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"}),
-            constrainable_layers=True,
-            returns_activations=True,
-            freezable_norms=True,
-            captures_clean_activations=True,
+    def intervention_support(self) -> InterventionSupport:
+        """A ``replace`` of transcoder features at the positions each feature tuple names, with the three value
+        sources circuit-tracer's feature intervention accepts, layer constraints, returns, norm-denominator
+        freezing and a clean capture as the ``features`` target's detail."""
+        return InterventionSupport(
+            ops=frozenset({"replace"}),
+            targets={
+                "features": FeatureTargetSupport(
+                    value_sources=frozenset({"top_feature_scores", "top_feature_activation_values", "constant"}),
+                    constrainable_layers=True,
+                    returns_activations=True,
+                    freezable_norms=True,
+                    captures_clean_activations=True,
+                )
+            },
+            position_scopes=frozenset({PositionScope.POSITIONS}),
         )
 
     def capture_feature_activations(self, module: Any, prompt: Any, *, apply_activation_function: bool = True) -> Any:
@@ -61,17 +70,28 @@ class CircuitTracerAnalysisBackend:
         return activations
 
     @property
-    def capabilities(self) -> frozenset[AnalysisBackendCapability]:
-        """Attribution graphs, head attribution and feature interventions."""
+    def capabilities(self) -> frozenset[Capability]:
+        """Attribution graphs, head attribution and interventions on transcoder features."""
         return frozenset(
             {
-                AnalysisBackendCapability.ATTRIBUTION_GRAPH,
-                AnalysisBackendCapability.FEATURE_INTERVENTION,
-                AnalysisBackendCapability.HEAD_ATTRIBUTION,
+                Capability.ATTRIBUTION_GRAPH,
+                Capability.INTERVENTION,
+                Capability.HEAD_ATTRIBUTION,
             }
         )
 
-    def supports(self, capability: AnalysisBackendCapability) -> bool:
+    @property
+    def requires(self) -> frozenset[Capability]:
+        """Nothing of another component.
+
+        circuit-tracer attributes by differentiating through its own replacement
+        model, which carries its transcoders itself, so it needs neither the model backend's ``GRADIENTS`` nor its
+        ``LATENT_MODELS`` surface: a composition whose model backend provides only interventions and capture (a
+        hub-delivered backend may) attributes as well as one whose model backend provides everything.
+        """
+        return frozenset()
+
+    def supports(self, capability: Capability) -> bool:
         """Whether ``capability`` is in :attr:`capabilities`."""
         return capability in self.capabilities
 
@@ -269,7 +289,7 @@ class CircuitTracerAnalysisBackend:
             "freeze_norms": bool(_resolve("intervention_freeze_norms", False)),
         }
 
-        why = self.feature_intervention_support.refusal(settings)
+        why = self.intervention_support.target_detail("features").refusal(settings)
         if why is not None:
             raise ValueError(f"feature intervention settings refused: {why}")
         return settings
@@ -300,7 +320,7 @@ class CircuitTracerAnalysisBackend:
             payload[target] = [
                 {
                     "intervention_tensor": torch.as_tensor(spec.intervention_tensor).detach().cpu().tolist(),
-                    "mode": spec.mode,
+                    "op": spec.op,
                     "scale_factor": float(spec.scale_factor),
                     "use_intervention_tensor_as_basis": bool(spec.use_intervention_tensor_as_basis),
                 }
@@ -318,7 +338,7 @@ class CircuitTracerAnalysisBackend:
                     spec["layer"],
                     spec["position"],
                     spec["feature_id"],
-                ): InterventionSpec(torch.tensor(float(spec["value"]), dtype=torch.float32), mode="replace")
+                ): InterventionSpec(torch.tensor(float(spec["value"]), dtype=torch.float32), op="replace")
                 for spec in intervention_specs
             }
         )
@@ -473,12 +493,19 @@ class CircuitTracerAnalysisBackend:
         if isinstance(interventions_json, list):
             interventions_json = "".join(str(part) for part in interventions_json)
         raw_interventions = json.loads(interventions_json)
+        if retired := sorted(
+            {"mode"} & {key for specs in raw_interventions.values() for spec in specs for key in spec}
+        ):
+            raise ValueError(
+                f"stored feature interventions carry the retired key(s) {retired} (now `op`); re-run the op to"
+                " write them under the current spelling"
+            )
         return InterventionDict.from_mapping(
             {
                 target: tuple(
                     InterventionSpec(
                         torch.as_tensor(spec["intervention_tensor"], dtype=torch.float32),
-                        mode=str(spec.get("mode", "replace")),
+                        op=str(spec.get("op", "replace")),
                         scale_factor=float(spec.get("scale_factor", 1.0)),
                         use_intervention_tensor_as_basis=bool(spec.get("use_intervention_tensor_as_basis", True)),
                     )

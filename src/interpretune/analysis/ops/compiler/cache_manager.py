@@ -36,7 +36,9 @@ from interpretune.analysis.ops.base import OpSchema, ColCfg
 #    needs, checked at validation against the backend's InterventionSupport record) and `conformance` (the op's
 #    declared sample inputs) to OpDef. A serialized-shape change: a cache without the fields would serve ops that
 #    skip the axis check and fail late at the backend, and report every op as unsampled.
-CACHE_FORMAT_VERSION = "8"
+# 9: `required_intervention_modes` becomes `required_tensor_ops` (the tensor ops a definition's `required_ops` names,
+#    partitioned from the composition ops at load); a cache carrying the old field would build ops without it.
+CACHE_FORMAT_VERSION = "9"
 
 
 @dataclass(frozen=True)
@@ -57,8 +59,9 @@ class OpDef:
     # Siblings of `required_capabilities` rather than members of it: a capability names a surface, these name
     # which configurations of that surface the op will ask for, and the backend's `InterventionSupport`
     # record is the availability source they are checked against. A composite carries the union of its
-    # parts' axes plus its own.
-    required_intervention_modes: list[str] = field(default_factory=list)
+    # parts' axes plus its own. `required_tensor_ops` is the tensor-op part of the definition's `required_ops`
+    # (one key names both kinds; the loader partitions it).
+    required_tensor_ops: list[str] = field(default_factory=list)
     required_position_scopes: list[str] = field(default_factory=list)
     # An optional `conformance:` block from the definition: `run_inputs` the op runs on end to end in a
     # conformance suite (OpCollectionConformance). Declared beside the op so a collection carries its own
@@ -100,7 +103,7 @@ class OpDef:
             "normal_params": self.normal_params,
             "required_ops": self.required_ops,
             "required_capabilities": self.required_capabilities,
-            "required_intervention_modes": self.required_intervention_modes,
+            "required_tensor_ops": self.required_tensor_ops,
             "required_position_scopes": self.required_position_scopes,
             "conformance": self.conformance,
             "composition": self.composition,
@@ -509,7 +512,7 @@ class OpDefinitionsCacheManager:
             fields.append(f"required_ops={op_def.required_ops!r}")
         if op_def.required_capabilities:
             fields.append(f"required_capabilities={op_def.required_capabilities!r}")
-        for axis in ("required_intervention_modes", "required_position_scopes"):
+        for axis in ("required_tensor_ops", "required_position_scopes"):
             if value := getattr(op_def, axis):
                 fields.append(f"{axis}={value!r}")
         if op_def.conformance is not None:
