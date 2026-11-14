@@ -16,9 +16,9 @@ from that manifest and RAISES when the preferred entry is absent -- it does not 
 ``activation_rows``.
 
 So the default is to include it, and :func:`publish_dashboard_run` refuses to publish a corpus whose
-manifests reference a table the publish would drop. Exclusion remains available for a consumer who
-reads the parquet directly (DuckDB, pandas) and never imports -- pass
-``include_copy_rows=False, require_manifest_consistency=False`` to say so deliberately.
+manifests reference a table the publish would drop (the ``manifest-consistency`` check). Exclusion
+remains available for a consumer who reads the parquet directly (DuckDB, pandas) and never imports --
+pass ``include_copy_rows=False, skip_checks={"manifest-consistency"}`` to say so deliberately.
 
 Run logs are always excluded -- they carry absolute host paths, pids and timings, which are noise to a
 consumer and a small leak of local layout.
@@ -30,9 +30,18 @@ streaming one row group still pays to fetch whole row groups -- which removes th
 the Hub over a file share. ``write_page_index`` costs ~0.01% in size but only at GENERATION time; it
 cannot be retrofitted without rewriting every file, i.e. regenerating and re-uploading the corpus.
 
-:func:`publish_dashboard_run` therefore REFUSES by default to upload a corpus lacking a page index.
-That is deliberate: the failure mode it prevents is discovering the gap after a multi-GiB upload,
-when the only remedy is to regenerate and upload again. Pass ``require_page_index=False`` to override.
+:func:`publish_dashboard_run` therefore REFUSES by default to upload a corpus lacking a page index
+(the ``page-index`` check). That is deliberate: the failure mode it prevents is discovering the gap
+after a multi-GiB upload, when the only remedy is to regenerate and upload again. Pass
+``skip_checks={"page-index"}`` to override.
+
+THE CHECKS
+----------
+Every guard is a named check from :mod:`interpretune.utils.publish_checks`, run in this order:
+``page-index``, ``manifest-consistency``, ``bucket-prefix`` and the advisory ``row-group-size`` before
+any network call, then ``range-read`` against the published copy (on by default for the bucket store).
+All failures are reported together in one ``PublishCheckError``. Skipped checks are recorded in the
+returned plan's ``checks`` and, for the dataset store, in the commit message.
 """
 
 from __future__ import annotations
@@ -40,18 +49,32 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import quote
+
+from interpretune.utils.publish_checks import (
+    DASHBOARD_CORPUS,
+    POST_UPLOAD,
+    PRE_UPLOAD,
+    CheckResult,
+    PublishCheckReport,
+    PublishTarget,
+    register_publish_check,
+    run_publish_checks,
+    validate_check_names,
+)
 
 __all__ = [
     "COPY_ROWS_STEM",
     "EXCLUDED_SUFFIXES",
     "DashboardPublishPlan",
     "PageIndexCoverage",
-    "MissingPageIndexError",
-    "ManifestReferencesExcludedTableError",
-    "BucketPrefixUnspecifiedError",
+    "PageIndexCheck",
+    "ManifestConsistencyCheck",
+    "BucketPrefixCheck",
+    "RowGroupSizeCheck",
     "BUCKET_ROOT",
     "UNSPECIFIED",
     "CORPUS_MANIFEST_FILE",
@@ -102,35 +125,6 @@ DEFAULT_PAGE_INDEX_SAMPLE = 12
 _GIB = 1024**3
 
 
-class ManifestReferencesExcludedTableError(RuntimeError):
-    """Raised when an excluded table is still referenced by the corpus's own manifests.
-
-    Not a warning. The importer resolves the activation table from ``manifest.json`` and RAISES when
-    the preferred entry is absent -- it does not fall back -- so such a corpus cannot be imported at
-    all. Publishing it produces something that downloads cleanly and then fails on first use.
-    """
-
-
-class MissingPageIndexError(RuntimeError):
-    """Raised when a corpus without a Parquet page index would be uploaded.
-
-    Not a warning, because the remedy after the fact is to regenerate the corpus and upload it again.
-    """
-
-
-class BucketPrefixUnspecifiedError(RuntimeError):
-    """Raised when a bucket publish does not say where in the bucket it should land.
-
-    Buckets are mutable and unversioned, so two corpora that differ only in a dimension absent from
-    the bucket NAME -- prompt count is the obvious one -- silently interleave at the root, and
-    ``sync`` overwrites in place with no history to recover from. A dataset repo would express the
-    difference as a revision; a bucket can only express it as a path prefix.
-
-    So the prefix is not defaulted. Pass one, or pass :data:`BUCKET_ROOT` to say the root is
-    genuinely intended.
-    """
-
-
 class _Unspecified:
     """Distinguishes "the caller expressed no opinion" from "the caller chose the root"."""
 
@@ -140,7 +134,7 @@ class _Unspecified:
         return "UNSPECIFIED"
 
 
-#: Sentinel default for ``revision``; see :class:`BucketPrefixUnspecifiedError`.
+#: Sentinel default for ``revision``; see :class:`BucketPrefixCheck`.
 UNSPECIFIED: Any = _Unspecified()
 
 #: Explicit "publish at the bucket root". Named so the intent is legible at the call site and in the
@@ -175,6 +169,8 @@ class DashboardPublishPlan:
     skip: list[Path]
     page_index: PageIndexCoverage
     by_table: dict[str, tuple[int, int]] = field(default_factory=dict)
+    #: The checks a publish ran and skipped; set on the plan :func:`publish_dashboard_run` returns.
+    checks: PublishCheckReport | None = None
 
     @property
     def upload_bytes(self) -> int:
@@ -439,7 +435,7 @@ class DashboardStore(Protocol):
     name: str
 
     #: Whether a publish must state WHERE in the target it lands. True only where the target cannot
-    #: express the distinction any other way -- see :class:`BucketPrefixUnspecifiedError`.
+    #: express the distinction any other way -- see :class:`BucketPrefixCheck`.
     requires_explicit_prefix: bool
 
     def ensure(self, target: str, *, private: bool, token: str | None) -> None:
@@ -627,6 +623,182 @@ def get_dashboard_store(name: str | None = None) -> Any:
     return DASHBOARD_STORES[key]
 
 
+#: Parquet files sampled for the row-group report.
+DEFAULT_ROW_GROUP_SAMPLE = 12
+
+
+@dataclass(frozen=True)
+class PageIndexCheck:
+    """Refuse a corpus whose sampled Parquet files carry no page index.
+
+    Fatal rather than a warning, because the remedy after the fact is to regenerate the corpus and upload it again (see
+    the module docstring). Unknown coverage (no pyarrow, no Parquet among the files to upload) does not pass either: a
+    check that cannot measure must not read as a pass.
+    """
+
+    name: str = "page-index"
+    stage: str = PRE_UPLOAD
+    kinds: frozenset[str] = frozenset({DASHBOARD_CORPUS})
+    advisory: bool = False
+    sample: int = DEFAULT_PAGE_INDEX_SAMPLE
+
+    def default_on(self, target: PublishTarget) -> bool:
+        """Always on."""
+        return True
+
+    def check(self, target: PublishTarget) -> CheckResult:
+        """Sample the upload's Parquet footers for an offset index."""
+        coverage = page_index_coverage(list(target.files), self.sample)
+        if coverage.checked == 0:
+            return CheckResult(
+                self.name,
+                None,
+                "no Parquet footer could be inspected among the files to upload (pyarrow unavailable, or no Parquet "
+                "files), so page-index coverage is unknown",
+                "Check that the run root holds the generated Parquet tables and that pyarrow imports.",
+            )
+        finding = f"{coverage.with_index}/{coverage.checked} sampled parquet files carry a page index"
+        if coverage.absent:
+            return CheckResult(
+                self.name,
+                False,
+                finding + "; readers cannot range-read individual pages, and this cannot be fixed after upload",
+                "Enable write_page_index at generation time and regenerate the corpus.",
+            )
+        return CheckResult(self.name, True, finding)
+
+
+@dataclass(frozen=True)
+class ManifestConsistencyCheck:
+    """Refuse a publish that would drop a table the corpus's own ``feature_batch_*/manifest.json`` references.
+
+    The importer resolves the activation table from ``manifest.json`` and raises when the preferred entry is absent --
+    it does not fall back -- so such a corpus downloads cleanly and then fails on first import.
+    """
+
+    name: str = "manifest-consistency"
+    stage: str = PRE_UPLOAD
+    kinds: frozenset[str] = frozenset({DASHBOARD_CORPUS})
+    advisory: bool = False
+
+    def default_on(self, target: PublishTarget) -> bool:
+        """Always on."""
+        return True
+
+    def check(self, target: PublishTarget) -> CheckResult:
+        """Compare the excluded Parquet stems with the tables the sampled manifests declare."""
+        if target.root is None:
+            return CheckResult(self.name, None, "no run root to read manifests from")
+        excluded_stems = {p.stem for p in target.excluded if p.suffix == ".parquet"}
+        orphaned = excluded_stems & manifest_referenced_tables(target.root)
+        if orphaned:
+            return CheckResult(
+                self.name,
+                False,
+                f"the manifests reference {sorted(orphaned)}, which this publish would exclude, so the published "
+                "corpus would fail on first import",
+                'Publish with include_copy_rows=True, or skip_checks={"manifest-consistency"} if the consumer only '
+                "reads the parquet directly (e.g. DuckDB) and never imports.",
+            )
+        return CheckResult(self.name, True, "every table the sampled manifests reference is uploaded")
+
+
+@dataclass(frozen=True)
+class BucketPrefixCheck:
+    """Refuse a bucket publish that does not say where in the bucket it should land.
+
+    Buckets are mutable and unversioned, so two corpora that differ only in a dimension absent from the bucket NAME --
+    prompt count is the obvious one -- silently interleave at the root, and ``sync`` overwrites in place with no history
+    to recover from. A dataset repo would express the difference as a revision; a bucket can only express it as a path
+    prefix. So the prefix is not defaulted: pass one, or pass :data:`BUCKET_ROOT` to say the root is genuinely
+    intended. A destination check, so it runs after the corpus checks: their remedies cost gigabytes.
+    """
+
+    name: str = "bucket-prefix"
+    stage: str = PRE_UPLOAD
+    kinds: frozenset[str] = frozenset({DASHBOARD_CORPUS})
+    advisory: bool = False
+
+    def default_on(self, target: PublishTarget) -> bool:
+        """On for stores that cannot express the distinction any other way."""
+        return getattr(get_dashboard_store(target.store), "requires_explicit_prefix", False)
+
+    def check(self, target: PublishTarget) -> CheckResult:
+        """Fail when the caller left ``revision`` unstated."""
+        if target.prefix is UNSPECIFIED:
+            return CheckResult(
+                self.name,
+                False,
+                f"publishing to {target.destination!r} via the {target.store!r} store needs an explicit destination; "
+                "an unstated prefix puts every corpus at the root, where a later sync overwrites in place with "
+                "nothing to roll back to",
+                "Pass revision='<prefix>' (e.g. the prompt count, which the bucket name does not carry), or "
+                "revision=BUCKET_ROOT to publish at the root deliberately.",
+            )
+        where = "the bucket root" if target.prefix == BUCKET_ROOT else f"prefix {target.prefix!r}"
+        return CheckResult(self.name, True, f"destination stated: {where}")
+
+
+@dataclass(frozen=True)
+class RowGroupSizeCheck:
+    """Report the rows per row group in the sampled Parquet files. Advisory: it never refuses.
+
+    The right bound is a property of the consumer, and the size is chosen at generation time (the pipeline's
+    ``runner_columnar_parquet_row_group_size``), so this reports what was measured rather than judging it.
+    """
+
+    name: str = "row-group-size"
+    stage: str = PRE_UPLOAD
+    kinds: frozenset[str] = frozenset({DASHBOARD_CORPUS})
+    advisory: bool = True
+    sample: int = DEFAULT_ROW_GROUP_SAMPLE
+
+    def default_on(self, target: PublishTarget) -> bool:
+        """Always on."""
+        return True
+
+    def check(self, target: PublishTarget) -> CheckResult:
+        """Read rows per row group from the sampled footers."""
+        try:
+            import pyarrow.parquet as pq
+        except ImportError:  # pragma: no cover - pyarrow ships with datasets
+            return CheckResult(self.name, None, "pyarrow unavailable; rows per row group not measured")
+        sizes: list[int] = []
+        for path in [p for p in target.files if p.suffix == ".parquet"][: self.sample]:
+            try:
+                meta = pq.ParquetFile(path).metadata
+                sizes.extend(meta.row_group(i).num_rows for i in range(meta.num_row_groups))
+            except Exception as exc:  # an unreadable footer is reported by page-index; here it is only unmeasured
+                log.debug("could not read parquet footer for %s: %s", path, exc)
+        if not sizes:
+            return CheckResult(self.name, None, "no Parquet footer could be read; rows per row group not measured")
+        return CheckResult(
+            self.name,
+            True,
+            f"{len(sizes)} row groups sampled: {min(sizes)} to {max(sizes)} rows per row group",
+        )
+
+
+for _check in (PageIndexCheck(), ManifestConsistencyCheck(), BucketPrefixCheck(), RowGroupSizeCheck()):
+    register_publish_check(_check)
+
+
+def _published_parquet_paths(
+    plan: DashboardPublishPlan, repo_id: str, backend: Any, revision: str | None, path_in_repo: str
+) -> tuple[str, ...]:
+    """``hf://`` paths of the plan's first uploaded Parquet file, where the published copy now lives."""
+    first = next((p for p in plan.upload if p.suffix == ".parquet"), None)
+    if first is None:
+        return ()
+    rel = first.relative_to(plan.run_root).as_posix()
+    if backend.name == "bucket":
+        prefix = "/".join(p for p in (revision or "", path_in_repo or "") if p)
+        return (f"{HubBucketStore.uri(repo_id, prefix)}/{rel}",)
+    at = f"@{quote(revision, safe='')}" if revision else ""
+    sub = f"{path_in_repo.strip('/')}/" if path_in_repo.strip("/") else ""
+    return (f"hf://datasets/{repo_id}{at}/{sub}{rel}",)
+
+
 def publish_dashboard_run(
     run_root: Path,
     repo_id: str,
@@ -636,64 +808,46 @@ def publish_dashboard_run(
     revision: str | None = UNSPECIFIED,
     path_in_repo: str = "",
     commit_message: str = "Publish columnar dashboard artifacts",
-    require_page_index: bool = True,
-    require_manifest_consistency: bool = True,
+    skip_checks: frozenset[str] | set[str] | tuple[str, ...] = (),
+    add_checks: frozenset[str] | set[str] | tuple[str, ...] = (),
     token: str | None = None,
     store: str | None = None,
 ) -> DashboardPublishPlan:
-    """Upload a dashboard run to the Hub. Returns the plan that was executed.
+    """Upload a dashboard run to the Hub. Returns the plan that was executed, with its check report.
 
     ``store`` selects the transport (``"dataset"`` or ``"bucket"``); see :data:`DASHBOARD_STORES`.
 
     ``revision`` is a branch for dataset repos and a path PREFIX for buckets. Buckets require it to
     be stated -- pass :data:`BUCKET_ROOT` for the root -- because they have neither revisions nor
-    history; see :class:`BucketPrefixUnspecifiedError`.
+    history; see :class:`BucketPrefixCheck`.
 
-    Raises :class:`MissingPageIndexError` when the corpus carries no page index and
-    ``require_page_index`` is set -- see the module docstring for why that is fatal rather than a
-    warning. Unknown coverage (no pyarrow, no Parquet files) does not trip the check. The check runs
-    BEFORE any network call, and is backend-independent: an unstreamable corpus is unstreamable
-    wherever it lands.
+    The pre-upload checks (``page-index``, ``manifest-consistency``, ``bucket-prefix``, and the advisory
+    ``row-group-size``) run BEFORE any network call and raise one ``PublishCheckError`` listing every
+    failure. ``range-read`` runs against the published copy (on by default for the bucket store) and
+    raises ``PublishedArtifactCheckError``, which means the corpus is already live. ``skip_checks`` and
+    ``add_checks`` name checks to skip or to turn on; an unknown name is refused. Skips are recorded in
+    the returned plan's ``checks`` and, for the dataset store, in the commit message.
     """
+    validate_check_names(DASHBOARD_CORPUS, skip_checks, add_checks)
     plan = build_publish_plan(run_root, include_copy_rows)
     token = token or resolve_dashboards_token()
     backend = get_dashboard_store(store)
 
-    if require_page_index and plan.page_index.absent:
-        raise MissingPageIndexError(
-            f"{plan.run_root} has no Parquet page index "
-            f"({plan.page_index.with_index}/{plan.page_index.checked} sampled files). "
-            "Uploading it would ship a corpus that cannot be range-read, and the fix requires "
-            "regenerating and re-uploading. Enable write_page_index at generation time, or pass "
-            "require_page_index=False to publish anyway."
-        )
-
-    if require_manifest_consistency:
-        excluded_stems = {p.stem for p in plan.skip if p.suffix == ".parquet"}
-        orphaned = excluded_stems & manifest_referenced_tables(plan.run_root)
-        if orphaned:
-            raise ManifestReferencesExcludedTableError(
-                f"{plan.run_root} manifests reference {sorted(orphaned)}, which this publish would "
-                "exclude. The importer resolves the activation table from manifest.json and RAISES "
-                "when the preferred entry is missing -- it does not fall back -- so the published "
-                "corpus would download cleanly and then fail on first import. Publish with "
-                "include_copy_rows=True, or pass require_manifest_consistency=False if the consumer "
-                "genuinely only reads parquet directly (e.g. DuckDB) and never imports."
-            )
-
-    # Destination check LAST among the guards: the corpus checks above report problems whose remedy
-    # is regenerating gigabytes, and hearing about a missing flag first would hide that behind a
-    # trivial fix and a second attempt.
+    target = PublishTarget(
+        kind=DASHBOARD_CORPUS,
+        destination=repo_id,
+        store=backend.name,
+        root=plan.run_root,
+        files=tuple(plan.upload),
+        excluded=tuple(plan.skip),
+        prefix=revision,
+        token=token,
+    )
+    report = run_publish_checks(target, PRE_UPLOAD, skip_checks=skip_checks, add_checks=add_checks)
     if revision is UNSPECIFIED:
-        if getattr(backend, "requires_explicit_prefix", False):
-            raise BucketPrefixUnspecifiedError(
-                f"publishing to {repo_id!r} via the {backend.name!r} store needs an explicit destination. "
-                "Buckets have no revisions and no history, so an unstated prefix puts every corpus at "
-                "the root, where a later sync overwrites in place with nothing to roll back to. Pass "
-                "revision='<prefix>' (e.g. the prompt count, which the bucket name does not carry), or "
-                "revision=BUCKET_ROOT to publish at the root deliberately."
-            )
         revision = None
+    if report.skipped:
+        commit_message = f"{commit_message}\n\nPublished with checks skipped: {', '.join(report.skipped)}"
 
     backend.ensure(repo_id, private=private, token=token)
     backend.push(
@@ -705,7 +859,9 @@ def publish_dashboard_run(
         commit_message=commit_message,
         token=token,
     )
-    return plan
+    published = replace(target, remote_files=_published_parquet_paths(plan, repo_id, backend, revision, path_in_repo))
+    report = report.merged(run_publish_checks(published, POST_UPLOAD, skip_checks=skip_checks, add_checks=add_checks))
+    return replace(plan, checks=report)
 
 
 def download_dashboard_run(
