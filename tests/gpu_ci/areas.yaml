@@ -167,6 +167,8 @@ areas:
       - tests/core/test_utils.py
       - tests/core/test_adapters_sae_lens.py
       - tests/core/test_memprofiler.py
+      # a bitsandbytes 4-bit base under LoRA adapters: thawing its packed storage is refused, the adapters train (#758)
+      - tests/core/test_tuning_packed_storage.py
       - tests/gpu_ci/
   tl_arch:
     # the TransformerLens view's parameter mapping on gated llama3/gemma2
