@@ -21,8 +21,6 @@ from interpretune.utils.neuronpedia_dashboard_hub import (
     BUCKET_ROOT,
     CORPUS_MANIFEST_FILE,
     COPY_ROWS_STEM,
-    BucketPrefixUnspecifiedError,
-    ManifestReferencesExcludedTableError,
     corpus_manifest_summary,
     manifest_referenced_tables,
     DASHBOARD_STORES,
@@ -33,7 +31,6 @@ from interpretune.utils.neuronpedia_dashboard_hub import (
     get_dashboard_store,
     resolve_dashboards_token,
     DashboardPublishPlan,
-    MissingPageIndexError,
     PageIndexCoverage,
     build_publish_plan,
     collect_publish_files,
@@ -43,6 +40,7 @@ from interpretune.utils.neuronpedia_dashboard_hub import (
     publish_ignore_patterns,
     summarize_by_table,
 )
+from interpretune.utils.publish_checks import PublishCheckError, PublishedArtifactCheckError, UnknownPublishCheckError
 
 pq = pytest.importorskip("pyarrow.parquet")
 pa = pytest.importorskip("pyarrow")
@@ -67,6 +65,43 @@ def _write_parquet(path: Path, *, page_index: bool, rows: int = 256) -> Path:
     # A small row-group size forces multiple pages, so an offset index is meaningful.
     pq.write_table(table, path, write_page_index=page_index, row_group_size=64)
     return path
+
+
+class _LocalHfFileSystem:
+    """Stands in for ``HfFileSystem``: serves a published ``hf://`` path from the local file it was uploaded from.
+
+    The range-read check runs after every bucket publish, so without this each bucket test would reach the network. The
+    path is resolved by its run-relative suffix, which is exactly what the publisher appends to the destination.
+    """
+
+    roots: list[Path] = []
+    opened: list[str] = []
+
+    def __init__(self, token: str | None = None) -> None:
+        self.token = token
+
+    def _local(self, path: str) -> Path:
+        for root in self.roots:
+            for candidate in root.rglob("*.parquet"):
+                if path.endswith("/" + candidate.relative_to(root).as_posix()):
+                    return candidate
+        raise FileNotFoundError(path)
+
+    def size(self, path: str) -> int:
+        return self._local(path).stat().st_size
+
+    def open(self, path: str, mode: str = "rb"):
+        self.opened.append(path)
+        return self._local(path).open(mode)
+
+
+@pytest.fixture(autouse=True)
+def _local_hf_filesystem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Route the post-upload range-read through local files; see :class:`_LocalHfFileSystem`."""
+    monkeypatch.setattr(_LocalHfFileSystem, "roots", [tmp_path])
+    monkeypatch.setattr(_LocalHfFileSystem, "opened", [])
+    monkeypatch.setattr("huggingface_hub.HfFileSystem", _LocalHfFileSystem)
+    return _LocalHfFileSystem
 
 
 def _build_run(root: Path, *, page_index: bool = False, layers: int = 2) -> Path:
@@ -240,17 +275,21 @@ class TestIgnorePatterns:
 class TestPublish:
     def test_refuses_without_page_index_and_makes_no_network_call(self, tmp_path: Path) -> None:
         with patch("huggingface_hub.HfApi") as api:
-            with pytest.raises(MissingPageIndexError, match="no Parquet page index"):
+            with pytest.raises(PublishCheckError, match="page-index") as raised:
                 publish_dashboard_run(_build_run(tmp_path, page_index=False), "me/mine")
+        assert "page-index" in raised.value.names
         api.assert_not_called()
 
     def test_override_allows_publishing_without_page_index(self, tmp_path: Path) -> None:
         with patch("huggingface_hub.HfApi") as api:
             plan = publish_dashboard_run(
-                _build_run(tmp_path, page_index=False), "me/mine", require_page_index=False, store="dataset"
+                _build_run(tmp_path, page_index=False), "me/mine", skip_checks={"page-index"}, store="dataset"
             )
         assert isinstance(plan, DashboardPublishPlan)
         api.return_value.upload_folder.assert_called_once()
+        # The skip is recorded with the publish: in the returned report and in the commit it made.
+        assert plan.checks is not None and plan.checks.skipped == ("page-index",)
+        assert "checks skipped: page-index" in api.return_value.upload_folder.call_args.kwargs["commit_message"]
 
     def test_publishes_when_page_index_present(self, tmp_path: Path) -> None:
         with patch("huggingface_hub.HfApi") as api:
@@ -266,12 +305,55 @@ class TestPublish:
         assert not any(COPY_ROWS_STEM in p for p in upload_kwargs["ignore_patterns"])
         assert "*.log" in upload_kwargs["ignore_patterns"]
 
-    def test_unknown_coverage_does_not_block_publish(self, tmp_path: Path) -> None:
-        """No parquet at all -> coverage unknown -> must not be treated as a missing index."""
+    def test_unknown_coverage_refuses_rather_than_passing(self, tmp_path: Path) -> None:
+        """No Parquet to inspect -> coverage unknown -> refused: a check that cannot measure must not read as a
+        pass."""
         (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")
         with patch("huggingface_hub.HfApi") as api:
-            publish_dashboard_run(tmp_path, "me/mine", store="dataset")
-        api.return_value.upload_folder.assert_called_once()
+            with pytest.raises(PublishCheckError, match="could not tell") as raised:
+                publish_dashboard_run(tmp_path, "me/mine", store="dataset")
+        assert raised.value.names == {"page-index"}
+        api.assert_not_called()
+
+    def test_unreadable_parquet_refuses(self, tmp_path: Path) -> None:
+        """Positive control for the flip above: a corpus whose only Parquet cannot be read refuses too."""
+        (tmp_path / "activation_rows.parquet").write_bytes(b"not a parquet file")
+        with patch("huggingface_hub.HfApi") as api:
+            with pytest.raises(PublishCheckError) as raised:
+                publish_dashboard_run(tmp_path, "me/mine", store="dataset")
+        assert "page-index" in raised.value.names
+        api.assert_not_called()
+
+    def test_unknown_check_name_is_refused_before_any_network_call(self, tmp_path: Path) -> None:
+        """Running the check anyway would be silent in exactly the case the caller believes they skipped it."""
+        with patch("huggingface_hub.HfApi") as api:
+            with pytest.raises(UnknownPublishCheckError, match="page-idx"):
+                publish_dashboard_run(_build_run(tmp_path, page_index=False), "me/mine", skip_checks={"page-idx"})
+        api.assert_not_called()
+
+    def test_a_name_in_both_skip_and_add_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(UnknownPublishCheckError, match="both"):
+            publish_dashboard_run(
+                _build_run(tmp_path, page_index=True), "me/mine", skip_checks={"range-read"}, add_checks={"range-read"}
+            )
+
+    def test_every_failure_is_reported_at_once(self, tmp_path: Path) -> None:
+        """One error lists the corpus and destination problems together, corpus first."""
+        with patch("huggingface_hub.HfApi"):
+            with pytest.raises(PublishCheckError) as raised:
+                publish_dashboard_run(
+                    _build_run(tmp_path, page_index=False), "ns/bkt", include_copy_rows=False, store="bucket"
+                )
+        assert raised.value.names == {"page-index", "manifest-consistency", "bucket-prefix"}
+        message = str(raised.value)
+        assert message.index("page-index") < message.index("manifest-consistency") < message.index("bucket-prefix")
+
+    def test_row_group_size_is_reported_and_never_refuses(self, tmp_path: Path) -> None:
+        with patch("huggingface_hub.HfApi"):
+            plan = publish_dashboard_run(_build_run(tmp_path, page_index=True), "me/mine", store="dataset")
+        assert plan.checks is not None
+        (row_groups,) = [r for r in plan.checks.results if r.name == "row-group-size"]
+        assert row_groups.passed is True and "64 to 64 rows per row group" in row_groups.finding
 
 
 class TestCli:
@@ -291,6 +373,20 @@ class TestCli:
             rc = main(["--run-root", str(_build_run(tmp_path, page_index=False)), "--repo-id", "me/mine"])
         assert rc == 2
         assert "REFUSING TO PUBLISH" in capsys.readouterr().err
+
+    def test_skip_check_flag_publishes_without_the_page_index(self, tmp_path: Path) -> None:
+        main = _publish_cli().main
+        argv = ["--run-root", str(_build_run(tmp_path, page_index=False)), "--repo-id", "me/mine", "--store", "dataset"]
+        with patch("huggingface_hub.HfApi") as api:
+            assert main([*argv, "--skip-check", "page-index"]) == 0
+        api.return_value.upload_folder.assert_called_once()
+
+    def test_unknown_skip_check_exits_one(self, tmp_path: Path) -> None:
+        main = _publish_cli().main
+        argv = ["--run-root", str(_build_run(tmp_path, page_index=True)), "--repo-id", "me/mine", "--bucket-root"]
+        with patch("huggingface_hub.HfApi") as api:
+            assert main([*argv, "--skip-check", "nope"]) == 1
+        api.assert_not_called()
 
     def test_bad_run_root_exits_one(self, tmp_path: Path) -> None:
         assert _publish_cli().main(["--run-root", str(tmp_path / "nope"), "--repo-id", "me/mine"]) == 1
@@ -339,7 +435,7 @@ class TestBackendParity:
                 include_copy_rows=include_copy_rows,
                 # Manifests declare copy-rows, so excluding them is only legal with the explicit
                 # parquet-only override -- see TestManifestConsistency.
-                require_manifest_consistency=include_copy_rows,
+                skip_checks=() if include_copy_rows else {"manifest-consistency"},
                 revision=BUCKET_ROOT,
                 token="t",
             )
@@ -357,7 +453,7 @@ class TestBackendParity:
     def test_page_index_guard_precedes_any_network_call(self, tmp_path: Path, store_name: str) -> None:
         """An unstreamable corpus is unstreamable wherever it lands, so the guard is backend-independent."""
         with patch("huggingface_hub.HfApi") as api:
-            with pytest.raises(MissingPageIndexError):
+            with pytest.raises(PublishCheckError, match="page-index"):
                 publish_dashboard_run(_build_run(tmp_path, page_index=False), "ns/name", store=store_name, token="t")
         api.assert_not_called()
 
@@ -394,7 +490,7 @@ class TestBucketPrefix:
 
     def test_bucket_publish_without_a_prefix_is_refused_before_any_network_call(self, tmp_path: Path) -> None:
         with patch("huggingface_hub.HfApi") as api:
-            with pytest.raises(BucketPrefixUnspecifiedError, match="explicit destination"):
+            with pytest.raises(PublishCheckError, match="explicit destination"):
                 publish_dashboard_run(_build_run(tmp_path, page_index=True), "ns/bkt", store="bucket", token="t")
         api.assert_not_called()
 
@@ -417,8 +513,10 @@ class TestBucketPrefix:
         Reporting the flag first would hide the expensive problem behind the trivial one.
         """
         with patch("huggingface_hub.HfApi"):
-            with pytest.raises(MissingPageIndexError):
+            with pytest.raises(PublishCheckError) as raised:
                 publish_dashboard_run(_build_run(tmp_path, page_index=False), "ns/bkt", store="bucket", token="t")
+        message = str(raised.value)
+        assert message.index("page-index") < message.index("bucket-prefix")
 
     def test_cli_bucket_root_flag_publishes_at_the_root(self, tmp_path: Path) -> None:
         main = _publish_cli().main
@@ -548,7 +646,7 @@ class TestManifestConsistency:
 
     def test_refuses_to_publish_an_unimportable_corpus(self, tmp_path: Path) -> None:
         with patch("huggingface_hub.HfApi") as api:
-            with pytest.raises(ManifestReferencesExcludedTableError, match=COPY_ROWS_STEM):
+            with pytest.raises(PublishCheckError, match=COPY_ROWS_STEM):
                 publish_dashboard_run(_build_run(tmp_path, page_index=True), "ns/n", include_copy_rows=False, token="t")
         api.assert_not_called()
 
@@ -566,8 +664,65 @@ class TestManifestConsistency:
                 _build_run(tmp_path, page_index=True),
                 "ns/n",
                 include_copy_rows=False,
-                require_manifest_consistency=False,
+                skip_checks={"manifest-consistency"},
                 token="t",
                 store="dataset",
             )
         api.return_value.upload_folder.assert_called_once()
+
+
+class TestRangeRead:
+    """The post-upload check reads the published copy back, so it is the one that sees a transport rewrite."""
+
+    def test_bucket_publish_reads_back_the_published_file(self, tmp_path: Path, _local_hf_filesystem) -> None:
+        with patch("huggingface_hub.HfApi"):
+            plan = publish_dashboard_run(
+                _build_run(tmp_path, page_index=True), "ns/bkt", store="bucket", revision="pfx", token="t"
+            )
+        (opened,) = _local_hf_filesystem.opened
+        assert opened.startswith("hf://buckets/ns/bkt/pfx/layer_0/") and opened.endswith(".parquet")
+        assert plan.checks is not None
+        (read_back,) = [r for r in plan.checks.results if r.name == "range-read"]
+        assert read_back.passed is True and "read back" in read_back.finding
+
+    def test_off_by_default_for_the_dataset_store_and_addable(self, tmp_path: Path, _local_hf_filesystem) -> None:
+        run = _build_run(tmp_path, page_index=True)
+        with patch("huggingface_hub.HfApi"):
+            publish_dashboard_run(run, "ns/ds", store="dataset", token="t")
+            assert _local_hf_filesystem.opened == []
+            publish_dashboard_run(run, "ns/ds", store="dataset", revision="v1", token="t", add_checks={"range-read"})
+        (opened,) = _local_hf_filesystem.opened
+        assert opened.startswith("hf://datasets/ns/ds@v1/layer_0/")
+
+    def test_a_corrupt_published_copy_names_the_remediation(self, tmp_path: Path, monkeypatch) -> None:
+        """The artifact is already live when this fails, so the error must not read like a pre-publish refusal."""
+
+        class _Rewritten(_LocalHfFileSystem):
+            def open(self, path: str, mode: str = "rb"):
+                import io
+
+                return io.BytesIO(b"PAR1" + b"x" * 64)
+
+            def size(self, path: str) -> int:
+                return 68
+
+        monkeypatch.setattr("huggingface_hub.HfFileSystem", _Rewritten)
+        with patch("huggingface_hub.HfApi") as api:
+            with pytest.raises(PublishedArtifactCheckError, match="delete it or republish") as raised:
+                publish_dashboard_run(_build_run(tmp_path, page_index=True), "ns/bkt", store="bucket", revision="p")
+        assert raised.value.names == {"range-read"}
+        api.return_value.sync_bucket.assert_called_once()  # it fails AFTER the upload, by construction
+
+    def test_cli_post_upload_failure_exits_five(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        class _Missing(_LocalHfFileSystem):
+            def size(self, path: str) -> int:
+                raise FileNotFoundError(path)
+
+        monkeypatch.setattr("huggingface_hub.HfFileSystem", _Missing)
+        main = _publish_cli().main
+        with patch("huggingface_hub.HfApi"):
+            rc = main(
+                ["--run-root", str(_build_run(tmp_path, page_index=True)), "--repo-id", "ns/bkt", "--bucket-root"]
+            )
+        assert rc == 5
+        assert "PUBLISHED, BUT" in capsys.readouterr().err

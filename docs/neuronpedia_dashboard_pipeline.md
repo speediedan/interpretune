@@ -1689,12 +1689,18 @@ upload sessions to "save space". Local-session dedup is exact; global dedup is *
 whose hash `% 1024 == 0` are eligible), so separating them downgrades a guaranteed saving to a
 probabilistic one and gains nothing.
 
-### Two guards that refuse to publish, and why
+### The checks that refuse to publish, and why
 
-**Missing Parquet page index.** Without one a reader cannot range-read individual pages, so HTTP
-streaming degrades to whole row groups. It cannot be added after the fact; the corpus must be
-regenerated. Generate with `runner_columnar_write_page_index: true` (the default). Override with
-`--allow-missing-page-index` only if the corpus is not intended for streaming.
+Each guard is a named check (`interpretune.utils.publish_checks`). The pre-upload checks run before any
+network call, and every failure is reported in one error. Skip one by name with `--skip-check <name>`
+(`skip_checks={...}` in Python); an unknown name is refused, and a skip is recorded in the returned
+plan and, for the dataset store, in the commit message. A check that cannot measure its property (no
+pyarrow, no readable Parquet) does not pass.
+
+**`page-index`: missing Parquet page index.** Without one a reader cannot range-read individual pages,
+so HTTP streaming degrades to whole row groups. It cannot be added after the fact; the corpus must be
+regenerated. Generate with `runner_columnar_write_page_index: true` (the default). Skip it with
+`--skip-check page-index` only if the corpus is not intended for streaming.
 
 > **The page index alone does not make a corpus streamable — row group size does.** Readers prune at
 > **row group** granularity, so a file written as a single row group costs a reader the whole file to
@@ -1707,25 +1713,34 @@ regenerated. Generate with `runner_columnar_write_page_index: true` (the default
 > `DEFAULT_PARQUET_ROW_GROUP_SIZE` (4096) and is recorded in `dashboards.json` under
 > `artifacts.parquet_row_group_size`, so a published corpus says how it is laid out. The optimum
 > moves only as √(features per file), so the default holds across batch sizes; set it explicitly
-> only if you have measured a reason to. Like the page index, it is **fixed at write time**.
+> only if you have measured a reason to. Like the page index, it is **fixed at write time**. The
+> advisory `row-group-size` check reports the sampled rows per row group at publish time and never
+> refuses, since the right bound is the consumer's.
 >
 
-**Manifests referencing an excluded table.** Each `feature_batch_*/manifest.json` declares the tables
+**`manifest-consistency`: manifests referencing an excluded table.** Each `feature_batch_*/manifest.json` declares the tables
 in that batch, and the importer resolves the activation table from it and **raises** when the
 preferred entry is absent — it does not fall back. So excluding `activation_copy_rows` produces a
 corpus that downloads byte-identically and then **fails on the first import**. `--include-copy-rows`
 is therefore the default. Exclude it only for a consumer that reads the parquet directly (DuckDB,
 pandas) and never imports, which requires both `--no-include-copy-rows` and
-`--allow-manifest-inconsistency`. Excluding it saves little anyway — see the dedup table above.
+`--skip-check manifest-consistency`. Excluding it saves little anyway — see the dedup table above.
 
-**Unspecified bucket destination.** Buckets have no revisions and no history, so a publish that does
+**`bucket-prefix`: unspecified bucket destination.** Buckets have no revisions and no history, so a publish that does
 not say *where* in the bucket it lands puts every corpus at the root. Two corpora differing only in a
 dimension the bucket *name* does not carry — prompt count being the obvious one — then interleave,
 and a later sync overwrites in place with nothing to roll back to. Pass `--revision <prefix>` or
 `--bucket-root`. Dataset repos are unaffected: a revision defaults to a branch and destroys nothing.
 
-The destination guard is checked **after** the two corpus guards, deliberately: a missing page index
+The destination check is reported **after** the corpus checks, deliberately: a missing page index
 costs a regeneration to fix, and reporting a missing flag first would hide that behind a retype.
+
+**`range-read`: the published copy does not read back.** After the upload, one published Parquet file
+is read back through `HfFileSystem` with range requests (its footer and the first column chunk of its
+first row group, as DuckDB's `read_parquet` would), and the chunk must decode to the row count the
+footer declares. It is on by default for the bucket store and runs on the dataset store with
+`--add-check range-read`. It fails after the upload by construction, so its error says the corpus is
+live and needs deleting or republishing (exit code 5).
 
 ### What a corpus says about itself
 

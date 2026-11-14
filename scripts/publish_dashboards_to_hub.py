@@ -3,7 +3,7 @@
 
 All logic lives in :mod:`interpretune.utils.neuronpedia_dashboard_hub`; this file is argument
 parsing and reporting only. See that module's docstring for what is excluded and why the page-index
-check is fatal by default.
+check is fatal by default. Skip a check by name with ``--skip-check``, or turn one on with ``--add-check``.
 
 Usage:
     # inspect what would be uploaded (no network writes)
@@ -17,7 +17,8 @@ Usage:
     python scripts/publish_dashboards_to_hub.py --run-root <dir> --repo-id <user>/<name> \
         --store dataset --private
 
-Exit codes: 1 bad arguments/run root, 2 missing page index, 3 unspecified bucket prefix.
+Exit codes: 1 bad arguments/run root, 2 missing page index, 3 unspecified bucket prefix, 4 another
+pre-upload check refused, 5 the published copy failed a post-upload check (it is live: delete or republish).
 """
 
 from __future__ import annotations
@@ -33,11 +34,16 @@ from interpretune.utils.neuronpedia_dashboard_hub import (
     DASHBOARDS_TOKEN_ENV_VAR,
     DEFAULT_STORE,
     UNSPECIFIED,
-    BucketPrefixUnspecifiedError,
-    MissingPageIndexError,
     build_publish_plan,
     format_publish_plan,
     publish_dashboard_run,
+)
+from interpretune.utils.publish_checks import (
+    DASHBOARD_CORPUS,
+    PublishCheckError,
+    PublishedArtifactCheckError,
+    UnknownPublishCheckError,
+    publish_checks_for,
 )
 
 
@@ -74,11 +80,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "raises when it is absent rather than falling back. Only exclude for consumers that read "
         "the parquet directly and never import.",
     )
-    parser.add_argument(
-        "--allow-manifest-inconsistency",
-        action="store_true",
-        help="Publish even when the manifests reference an excluded table. Refused by default.",
-    )
     parser.add_argument("--private", action="store_true", help="Create the repo private if it does not exist.")
     parser.add_argument("--commit-message", default="Publish columnar dashboard artifacts")
     parser.add_argument("--dry-run", action="store_true", help="Report the plan; make no network writes.")
@@ -88,11 +89,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Hub token. Defaults to ${DASHBOARDS_TOKEN_ENV_VAR} (process env, then the repo .env), "
         "then the ambient huggingface-cli credential.",
     )
+    names = ", ".join(c.name for c in publish_checks_for(DASHBOARD_CORPUS))
     parser.add_argument(
-        "--allow-missing-page-index",
-        action="store_true",
-        help="Publish even if the corpus has no Parquet page index. Refused by default because the "
-        "only fix after upload is to regenerate the corpus and upload it again.",
+        "--skip-check",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=f"Skip a publish check by name (repeatable; one of: {names}). 'page-index' is refused by "
+        "default because the only fix after upload is to regenerate the corpus and upload it again; "
+        "'manifest-consistency' because a corpus missing a referenced table cannot be imported.",
+    )
+    parser.add_argument(
+        "--add-check",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Run a check that is off by default for this store (e.g. range-read on the dataset store).",
     )
     return parser.parse_args(argv)
 
@@ -120,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     revision = BUCKET_ROOT if args.bucket_root else (args.revision if args.revision is not None else UNSPECIFIED)
 
     try:
-        publish_dashboard_run(
+        executed = publish_dashboard_run(
             plan.run_root,
             args.repo_id,
             include_copy_rows=args.include_copy_rows,
@@ -128,18 +140,27 @@ def main(argv: list[str] | None = None) -> int:
             revision=revision,
             path_in_repo=args.path_in_repo,
             commit_message=args.commit_message,
-            require_page_index=not args.allow_missing_page_index,
-            require_manifest_consistency=not args.allow_manifest_inconsistency,
+            skip_checks=tuple(args.skip_check),
+            add_checks=tuple(args.add_check),
             token=args.token,
             store=args.store,
         )
-    except MissingPageIndexError as exc:
+    except UnknownPublishCheckError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except PublishedArtifactCheckError as exc:
+        print(f"\nPUBLISHED, BUT THE PUBLISHED COPY FAILED: {exc}", file=sys.stderr)
+        return 5
+    except PublishCheckError as exc:
         print(f"\nREFUSING TO PUBLISH: {exc}", file=sys.stderr)
-        return 2
-    except BucketPrefixUnspecifiedError as exc:
-        print(f"\nREFUSING TO PUBLISH: {exc}", file=sys.stderr)
-        return 3
+        if "page-index" in exc.names:
+            return 2
+        return 3 if exc.names == {"bucket-prefix"} else 4
 
+    if executed.checks is not None:
+        print("\nchecks:")
+        for line in executed.checks.lines():
+            print(f"  {line}")
     kind = "buckets" if args.store == "bucket" else "datasets"
     print(f"\nuploaded to https://huggingface.co/{kind}/{args.repo_id}")
     return 0

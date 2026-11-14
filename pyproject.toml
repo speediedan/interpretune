@@ -40,7 +40,10 @@ dependencies = [
     "venngram>=0.1.0.dev0,<0.2.0",
     "transformers>=4.57.1",
     "tabulate >= 0.9.0",
-    "datasets >= 4.0.0",
+    # FLOOR >=4.1.0: from 4.1.0 every Parquet write is page-indexed by default (`ParquetDatasetWriter` defaults
+    # `write_page_index=True`), and `push_to_hub` writes through it, so a published AnalysisStore is range-readable.
+    # A floor rather than a writer-side guard, because upstream already fixed it.
+    "datasets >= 4.1.0",
     # FLOOR >=4.49.0: `instantiate_classes` is deprecated from 4.49.0 (removed in 5.0.0) and its
     # replacement `instantiate` does not exist below it, so the two cannot both be satisfied.
     #
