@@ -15,6 +15,9 @@ import logging
 
 from .config_parser import FileHook
 
+# the opening of a triple-quoted string, with any string prefix Python accepts before it (r, u, b, f and their pairs)
+_DOCSTRING_OPEN = re.compile(r'^(?:[rRuUbBfF]{1,2})?("""|\'\'\')')
+
 
 class HookRegistry:
     """Global registry for managing analysis hook functions."""
@@ -197,11 +200,14 @@ def patch_file_with_hooks(
                 multiline_delimiter = None
             continue
 
-        # Check for start of multi-line string (docstring)
-        if stripped.startswith(('"""', "'''")):
-            delimiter = '"""' if stripped.startswith('"""') else "'''"
+        # Check for start of multi-line string (docstring). A docstring may carry a string prefix (``r"""`` for one
+        # holding LaTeX backslashes): missing it reads the docstring as the first statement, which puts the import
+        # above a following ``from __future__`` import and makes the patched module a SyntaxError.
+        docstring_open = _DOCSTRING_OPEN.match(stripped)
+        if docstring_open:
+            delimiter = docstring_open.group(1)
             # Check if it's a single-line docstring (starts and ends on same line)
-            if stripped.count(delimiter) >= 2:
+            if stripped[docstring_open.start(1) :].count(delimiter) >= 2:
                 # Single-line docstring, continue to next line
                 continue
             else:

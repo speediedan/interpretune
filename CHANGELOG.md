@@ -249,6 +249,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- Analysis injection patches a module whose docstring carries a string prefix (`r"""`, as circuit-tracer's `head_conductance.py` opens). The patcher read such a docstring as the first statement and put its `HOOK_REGISTRY` import above the module's `from __future__` import, so the patched module failed to compile with a `SyntaxError` as soon as a hook targeted that file.
 - `recipe_interventions` refuses an op whose target set addresses a gradient (`of: grad`) instead of translating it into an op on the activation value, which applied a different treatment silently when `require_supported` was skipped; `check_recipe` lists it too. `venngram_support` now carries the record's `of` into the declaration, so venngram's own check refuses such a recipe for every backend, since each declares `value` only ([#938](https://github.com/speediedan/interpretune/issues/938))
 
 - `FTSCoreCallback` resolves a `class_path` naming a Hub component's entrypoint (`rte_boolq.ChainCalibrate`, say) for its gates, hooks and other `tuning_scheduler_kwargs` objects, as session configurations do; it raised `ModuleNotFoundError`. Configuration loading also passes a list's scalars through `instantiate_nested`, which raised `TypeError` on `reg_layers: [17, 18]` ([#899](https://github.com/speediedan/interpretune/issues/899))

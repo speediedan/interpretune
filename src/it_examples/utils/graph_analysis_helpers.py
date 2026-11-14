@@ -228,7 +228,8 @@ def plot_ridgeline_convergence(
         ),
         showlegend=True,
         legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
-        width=1200,
+        # sized by its container rather than a fixed width, so the figure fits a docs page as well as a notebook
+        autosize=True,
         height=800,
         plot_bgcolor="white",
     )

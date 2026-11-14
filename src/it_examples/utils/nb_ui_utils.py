@@ -8,7 +8,9 @@ functions (attribution config, generation comparisons).
 from __future__ import annotations
 
 import html
+from dataclasses import dataclass
 from typing import Any, Mapping, NamedTuple, Sequence
+from urllib.parse import urlsplit
 
 import torch
 from IPython.display import HTML, display
@@ -21,6 +23,62 @@ from IPython.display import HTML, display
 
 # Counter for unique plotly div ids (stable within a run, so artifacts stay diffable).
 _decoder_map_html_counter = [0]
+
+
+@dataclass(frozen=True)
+class NotebookLink:
+    """A labelled HTTP(S) link in a notebook table; both label and URL are escaped on rendering."""
+
+    label: str
+    url: str
+
+
+def build_notebook_table_html(
+    rows: Sequence[Sequence[Any]],
+    columns: Sequence[str],
+    *,
+    title: str,
+    caption: str = "",
+) -> str:
+    """Build a scrollable, accessible report table from already formatted cells.
+
+    Callers own numerical precision and units, so the same helper can show probabilities, logits, checks or
+    configuration. Ordinary cells are escaped text, never HTML; use :class:`NotebookLink` for a feature reference.
+    A caption can state the denominator or limitation alongside the measurement. No notebook kernel is required.
+    """
+
+    def cell(value: Any) -> str:
+        if isinstance(value, NotebookLink):
+            parsed = urlsplit(value.url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError("notebook table links require an absolute HTTP(S) URL")
+            return f'<a href="{html.escape(value.url, quote=True)}">{html.escape(value.label)}</a>'
+        return html.escape(str(value))
+
+    if not columns:
+        raise ValueError("a notebook table needs at least one column")
+    if any(len(row) != len(columns) for row in rows):
+        raise ValueError("every notebook table row must match the column count")
+    header = "".join(f'<th scope="col">{html.escape(c)}</th>' for c in columns)
+    body = "".join("<tr>" + "".join(f"<td>{cell(v)}</td>" for v in row) + "</tr>" for row in rows)
+    return f"""<style>
+    .it-report {{font-family:system-ui,sans-serif; font-size:14px; margin:12px 0; overflow-x:auto;}}
+    .it-report table {{border-collapse:collapse; width:max-content; min-width:55%; max-width:none;}}
+    .it-report caption {{text-align:left; caption-side:top; padding:8px 0; color:inherit;}}
+    .it-report th {{background:#2471a3; color:white; text-align:left;}}
+    .it-report th,.it-report td {{padding:7px 10px; border:1px solid #aaa6; vertical-align:top;}}
+    .it-report tr:nth-child(even) {{background:#78b4f018;}}
+    .it-report td {{font-variant-numeric:tabular-nums; max-width:36em; white-space:pre-wrap;}}
+    </style><div class="it-report"><table>
+    <caption><strong>{html.escape(title)}</strong><br>{html.escape(caption)}</caption>
+    <thead><tr>{header}</tr></thead><tbody>{body}</tbody></table></div>"""
+
+
+def display_notebook_table(
+    rows: Sequence[Sequence[Any]], columns: Sequence[str], *, title: str, caption: str = ""
+) -> None:
+    """Display :func:`build_notebook_table_html` in a notebook or its rendered documentation."""
+    display(HTML(build_notebook_table_html(rows, columns, title=title, caption=caption)))
 
 
 def format_prob(p: float, *, precision: int = 4) -> str:
@@ -1621,6 +1679,16 @@ def _plotly_figure_html(fig: Any, id_prefix: str) -> str:
 </script>
 """
     return '<div style="width:100%;max-width:100%;overflow-x:hidden">' + plot_html + resize_shim + "</div>"
+
+
+def display_plotly_figure(fig: Any, id_prefix: str = "it-figure") -> None:
+    """Show a plotly figure so it renders on the docs site as well as in a live notebook.
+
+    ``fig.show()`` writes only the ``application/vnd.plotly.v1+json`` output, which Jupyter renders and the docs build
+    drops without a warning, so a figure shown that way is missing from every rendered page. This embeds the figure as
+    HTML instead (see ``_plotly_figure_html``), which both render.
+    """
+    display(HTML(_plotly_figure_html(fig, id_prefix)))
 
 
 def build_steering_scale_sweep_html(points: Sequence[Any], token_labels: Sequence[str]) -> str:

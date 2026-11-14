@@ -18,6 +18,16 @@ src/it_examples/tests/test_notebooks.py::test_ct_analysis_backend_notebook_local
   torch: 2.15.0+rocm10.0
   seconds: 29.69
   date: '2026-11-08'
+src/it_examples/tests/test_notebooks.py::test_ct_attention_attribution_notebook:
+  outcome: passed
+  need_gb: 14.042
+  allocator_peak_gb: 0.0
+  device_peak_gb: 14.042
+  context_gb: 0.386
+  device: NVIDIA GeForce RTX 4090
+  torch: 2.15.0+cu132
+  seconds: 185.47
+  date: '2026-11-12'
 src/it_examples/tests/test_notebooks.py::test_ct_concept_steering_notebook_local[ct_concept_steering_local_gemma3_16k]:
   outcome: failed
   need_gb: 0.07
