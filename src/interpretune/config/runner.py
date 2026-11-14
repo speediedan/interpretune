@@ -303,6 +303,10 @@ class AnalysisRunnerCfg(SessionRunnerCfg):
     # a persistent directory only accumulate files no run can reuse.
     dataset_fingerprint: str | None = None
     generator_cache_dir: str | Path | None = None
+    # Records the store's writer buffers before each flush to disk. Peak host memory during generation scales with
+    # this times the record size, not with the number of records, so large-record analyses lower it. None keeps the
+    # `datasets` default (1000).
+    writer_batch_size: int | None = None
     # Per-case key derivation. When set, each run derives its own `dataset_fingerprint` from this
     # target part plus the case identity AFTER the cfg is applied (resolved op, materialized filter),
     # because setup mutates the cfg in place: a key taken before the run would differ from the same
