@@ -303,6 +303,85 @@ class TestClassTransformerLens:
         with pytest.raises(MisconfigurationException, match="A valid tl_cfg"):
             _ = ITLensConfig(**test_tl_cfg)
 
+    def test_lora_over_quantization_is_refused_and_either_alone_is_kept(self):
+        """A ``lora_cfg`` over a ``bitsandbytesconfig``-quantized base would leave ``TransformerBridgeView`` a
+        bridge of quantized parameters, which it refuses; each setting alone is applied, so each alone is kept."""
+        test_tl_cfg = deepcopy(TestClassTransformerLens.test_tlens_gpt2)
+        test_tl_cfg["hf_from_pretrained_cfg"]["lora_cfg"] = {"r": 8, "target_modules": ["c_proj"]}
+        test_tl_cfg["hf_from_pretrained_cfg"]["bitsandbytesconfig"] = {"load_in_4bit": True}
+        test_tl_cfg["tl_cfg"] = ITLensFromPretrainedConfig(**test_tl_cfg["tl_cfg"])
+        with pytest.raises(MisconfigurationException, match="sets both `lora_cfg` and `bitsandbytesconfig`"):
+            _ = ITLensConfig(**test_tl_cfg)
+        for setting, value in (
+            ("lora_cfg", {"r": 8, "target_modules": ["c_proj"]}),
+            ("bitsandbytesconfig", {"load_in_4bit": True}),
+        ):
+            test_tl_cfg = deepcopy(TestClassTransformerLens.test_tlens_gpt2)
+            test_tl_cfg["hf_from_pretrained_cfg"][setting] = value
+            test_tl_cfg["tl_cfg"] = ITLensFromPretrainedConfig(**test_tl_cfg["tl_cfg"])
+            assert getattr(ITLensConfig(**test_tl_cfg).hf_from_pretrained_cfg, setting) == value
+
+    @staticmethod
+    def _tl_gpt2_lora_module(tmp_path, target_modules: list[str]):
+        from tests.configuration import config_modules
+        from tests.conftest import FixtPhase, session_fixture_hook_exec
+        from tests.core.cfg_aliases import TLDebugCfg, base_lora_cfg
+        from tests.module_registry import TEST_MODULE_REGISTRY
+
+        _, base_it_cfg, _, _ = TEST_MODULE_REGISTRY.get(TLDebugCfg())
+        hf_cfg = deepcopy(base_it_cfg.hf_from_pretrained_cfg)
+        hf_cfg.lora_cfg = {**base_lora_cfg, "target_modules": target_modules, "fan_in_fan_out": True}
+        it_session = config_modules(TLDebugCfg(hf_from_pretrained_cfg=hf_cfg), "tl_gpt2_lora", {}, tmp_path)
+        session_fixture_hook_exec(it_session, FixtPhase.setup)
+        return it_session.module
+
+    def test_lora_cfg_trains_only_adapters_the_bridge_runs(self, tmp_path):
+        """``lora_cfg``'s adapters are added before the bridge wraps the HF model, so the bridge runs them, and
+        only the LoRA tensors train (the bridge's own q, k and v, split out of GPT-2's fused attention, stay
+        frozen)."""
+        from peft.tuners.lora import LoraLayer
+
+        module = self._tl_gpt2_lora_module(tmp_path, ["c_fc", "c_proj"])
+        bridge = module.model
+        assert sum(isinstance(m, LoraLayer) for m in bridge.modules()) == 36  # 12 blocks: attn c_proj, mlp c_fc, c_proj
+        trainable = {n: p for n, p in bridge.named_parameters() if p.requires_grad}
+        assert len(trainable) == 72 and all(".lora_" in n for n in trainable)
+        tokens = torch.tensor([[464, 3797, 3332, 319]], device=next(bridge.parameters()).device)
+        with torch.no_grad():
+            before = bridge(tokens)
+            for name, param in trainable.items():
+                if ".lora_B." in name:
+                    param.normal_(std=0.02)
+            after = bridge(tokens)
+        assert not torch.allclose(before, after)  # the adapters are on the bridge's forward path
+        bridge(tokens, return_type="loss").backward()
+        assert all(p.grad is not None for p in trainable.values())
+        assert all(p.grad is None for n, p in bridge.named_parameters() if n not in trainable)
+        adapters = {n for n, r in module.tunable_roles().items() if r == "adapter:default"}
+        assert len(adapters) == 72 and {id(p) for n, p in module.named_parameters() if n in adapters} == {
+            id(p) for p in trainable.values()
+        }
+        from finetuning_scheduler.core.compile import compile_schedule
+        from interpretune.tuning.views import VIEW_ATTR
+
+        compiled = compile_schedule({0: {"params": ["role:adapter"]}}, getattr(module, VIEW_ATTR))
+        assert set(compiled.phases[0].physical) | set(compiled.phases[0].coupled) == adapters
+
+    def test_lora_cfg_on_a_module_the_bridge_never_calls_is_refused(self, tmp_path):
+        """The bridge computes GPT-2's q, k and v from its own split of the fused ``c_attn`` weight, so a LoRA
+        layer on ``c_attn`` would train without changing the model."""
+        with pytest.raises(
+            MisconfigurationException, match=r"targets 12 module\(s\) the TransformerBridge never calls"
+        ):
+            self._tl_gpt2_lora_module(tmp_path, ["c_attn", "c_fc"])
+
+    def test_capturing_hyperparameters_leaves_the_hf_config_as_given(self, get_it_session__tl_gpt2_debug__setup):
+        """Capturing once overwrote ``lora_cfg`` and ``bitsandbytesconfig`` with ``None`` on the user's own config,
+        so a checkpoint no longer recorded what the run was asked for."""
+        module = get_it_session__tl_gpt2_debug__setup.it_session.module
+        assert module.hf_cfg is module.it_cfg.hf_from_pretrained_cfg
+        assert module.hf_cfg.lora_cfg == {}
+
     @pytest.mark.parametrize(
         "use_hf_pretrained, hf_pretrained_cfg, tl_cust_cfg, tl_pretrained_cfg, expected_warn, expected_error",
         [

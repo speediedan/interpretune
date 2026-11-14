@@ -1,6 +1,7 @@
 import os
 from typing import TYPE_CHECKING, Type, cast, Any
 import inspect
+import re
 from functools import reduce
 from copy import deepcopy
 
@@ -19,6 +20,7 @@ from transformers.tokenization_utils_base import BatchEncoding
 from interpretune.adapters import CompositionRegistry, LightningDataModule, LightningModule, LightningAdapter
 from interpretune.base import CoreHelperAttributes, ITDataModule, BaseITModule
 from interpretune.utils import (
+    MisconfigurationException,
     move_data_to_device,
     rank_zero_warn,
     rank_zero_info,
@@ -38,6 +40,7 @@ if TYPE_CHECKING:
 
 
 _BRIDGE_PROCESSED_WEIGHT_PATCH_APPLIED = False
+_LORA_PARAM = re.compile(r"\.lora_(?:A|B|embedding_A|embedding_B|magnitude_vector)\.([^.]+)(?:\.|$)")
 
 
 def _ensure_bridge_processed_weight_device_patch() -> None:
@@ -176,6 +179,15 @@ class BaseITLensModule(BaseITModule):
 
         return TransformerBridgeView(self, roles=self.tunable_roles())
 
+    def tunable_roles(self) -> dict[str, str]:
+        """The LoRA tensors ``lora_cfg`` added take the ``adapter:<name>`` role, so a schedule selects them with
+        ``role:adapter``: no TransformerLens name reaches them."""
+        roles = super().tunable_roles()  # cooperative, provided by BaseITModule
+        for name, _ in self.named_parameters():  # the module's own names, which the view validates roles against
+            if (match := _LORA_PARAM.search(name)) is not None:
+                roles[name] = f"adapter:{match.group(1)}"
+        return roles
+
     def model_sig_keys(self, target_method: str) -> list:
         """The bridge method's parameter names, without ``labels``.
 
@@ -207,8 +219,61 @@ class BaseITLensModule(BaseITModule):
         super()._update_hf_pretrained_cfg(quantization_config)
         cust_config, _ = super()._hf_gen_cust_config(access_token)
         self.model = self.hf_configured_model_init(cust_config, access_token)
+        lora_layers = self._inject_lora_adapters()
 
         self._convert_hf_to_bridge()
+        if lora_layers:
+            self._train_only_reached_lora_adapters(lora_layers)
+
+    def _inject_lora_adapters(self) -> dict[torch.nn.Module, str]:
+        """Add ``lora_cfg``'s adapters to the HF model in place, before the ``TransformerBridge`` wraps it.
+
+        ``inject_adapter_in_model`` replaces each targeted module with a LoRA layer at the same path, so the bridge's
+        component mapping still finds every module it wraps; ``get_peft_model`` would nest the model under a
+        ``PeftModel`` and move every path. Returns each LoRA layer with its HF name, for the reach check after bridging.
+        """
+        if not (self.hf_cfg and self.hf_cfg.lora_cfg):
+            return {}
+        from peft import LoraConfig, inject_adapter_in_model
+        from peft.tuners.lora import LoraLayer
+
+        self.model = inject_adapter_in_model(LoraConfig(**self.hf_cfg.lora_cfg), self.model)
+        layers: dict[torch.nn.Module, str] = {}
+        for name, module in self.model.named_modules():
+            if isinstance(module, LoraLayer):
+                layers[cast(torch.nn.Module, module)] = name  # peft types LoraLayer as a mixin, not a Module
+        return layers
+
+    def _train_only_reached_lora_adapters(self, lora_layers: dict[torch.nn.Module, str]) -> None:
+        """Leave only the LoRA tensors trainable, and refuse an adapter the bridge never runs.
+
+        A bridge component may compute from its own copy of a module's weights rather than call the module: GPT-2's
+        fused attention is split into the bridge's own q, k and v, so a LoRA layer on ``c_attn`` never runs and its
+        tensors would train while changing nothing. A one-token forward with a hook on every LoRA layer finds each such
+        layer. The freeze follows bridging because the bridge can add parameters of its own (those split q, k and v).
+        """
+        for param in self.model.parameters():
+            param.requires_grad_(False)
+        for layer in lora_layers:
+            for name, param in layer.named_parameters():
+                if name.startswith("lora_"):
+                    param.requires_grad_(True)
+        reached: set[torch.nn.Module] = set()
+        handles = [layer.register_forward_hook(lambda mod, *_: reached.add(mod)) for layer in lora_layers]
+        try:
+            with torch.no_grad():
+                self.model(torch.zeros((1, 1), dtype=torch.long, device=next(self.model.parameters()).device))
+        finally:
+            for handle in handles:
+                handle.remove()
+        if unreached := sorted(name for layer, name in lora_layers.items() if layer not in reached):
+            raise MisconfigurationException(
+                f"`lora_cfg` targets {len(unreached)} module(s) the TransformerBridge never calls ({unreached[0]}"
+                f"{', ...' if len(unreached) > 1 else ''}): the bridge computes those projections from its own copy"
+                " of the weights, so their adapters would train without changing the model. Target modules the bridge"
+                " calls instead (on GPT-2, `c_proj` and `c_fc` rather than the fused `c_attn`); see"
+                " docs/tuning_transformer_lens.md#lora-adapters."
+            )
 
     def hf_configured_model_init(
         self, cust_config: HFPretrainedConfig, access_token: str | None = None
@@ -460,11 +525,6 @@ class BaseITLensModule(BaseITModule):
         2. TL Model Config: Actual TransformerLens config (TransformerBridgeConfig)
         3. IT TL Config: Interpretune-specific settings (ITLensFromPretrainedConfig or ITLensCustomConfig)
         """
-        # Override unsupported from pretrained options
-        if self.hf_cfg:
-            self.hf_cfg.lora_cfg = None  # pyright: ignore[reportAttributeAccessIssue]  # config flexibility
-            # TODO NEXT: enable bnb now that it's supported by TransformerLens
-            self.hf_cfg.bitsandbytesconfig = None  # pyright: ignore[reportAttributeAccessIssue]  # config flexibility
         # TODO: refactor the captured config here to only add tl_from_pretrained, other added in superclass
         # Serialize the actual TransformerLens config from the initialized model
         tl_model_cfg = self._make_config_serializable(self.model.cfg, ["device", "dtype"])
