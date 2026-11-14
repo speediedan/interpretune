@@ -298,7 +298,7 @@ _BLOCK_RANK = {
 def _forward_order(hook_names: Any, resolver: HookNameResolver) -> list[str]:
     """Sort hook names into the order the forward pass produces them.
 
-    nnsight resolves an envoy's ``.input``/``.output`` in trace order and raises ``MissedProviderError``
+    nnsight resolves an envoy's ``.input``/``.output`` in trace order and raises ``OutOfOrderError``
     ("did you call an Envoy out of order?") when a later module's value is requested before an earlier
     one's. A caller's ``names_filter`` is a set, not a schedule, so the order it happens to arrive in must
     not decide whether the capture works: ``["blocks.5.hook_out", "blocks.6.hook_in"]`` succeeded and the
@@ -335,7 +335,7 @@ def _forward_order(hook_names: Any, resolver: HookNameResolver) -> list[str]:
         head = base.split(".")[0]
         # Within one sublayer, nnsight provides the parent's input, then each child in forward order (its input,
         # then its output), then the parent's output. Reading `attn.hook_out` before `attn.o.hook_in` raised
-        # MissedProviderError for `c_proj.input` once the attention output had been consumed, and depth alone was
+        # OutOfOrderError for `c_proj.input` once the attention output had been consumed, and depth alone was
         # not enough either: `mlp.out.hook_in` (c_proj) comes after `mlp.in.hook_out` (c_fc), a later sibling's
         # input after an earlier sibling's output. So children carry their forward rank.
         parts = base.split(".")
@@ -1227,7 +1227,7 @@ class NNsightModelBackend:
 
                 # in FORWARD order, as captures are: nnsight resolves envoy values in trace order, so a caller's
                 # mapping listing `blocks.0.hook_attn_out` and the rest before `blocks.0.hook_mlp_out` failed with
-                # `MissedProviderError` on its first out-of-order pair
+                # `OutOfOrderError` on its first out-of-order pair
                 for hook_qualifier in _forward_order(list(pending_base_interventions), self._resolver):
                     specs = pending_base_interventions[hook_qualifier]
                     resolved = self._resolver.resolve_for_envoy(hook_qualifier)

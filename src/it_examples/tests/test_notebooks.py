@@ -16,6 +16,7 @@ import pytest
 
 from interpretune.utils.resource_mgmt import cleanup_python_cuda
 from tests.analysis_resource_utils import clear_nnsight_test_state
+from tests.results import on_rocm
 from tests.runif import RunIf
 
 try:
@@ -397,6 +398,10 @@ def test_ct_analysis_backend_notebook_local(params: dict[str, Any], tmp_path: Pa
 # smaller set of each, which is what an execution test needs. Measured with tests/gpu_ci/calibrate.py: need 14.04
 # GiB (RTX 4090, CUDA), declared at the calibrator's recommendation (need plus margin, next half GiB)
 @RunIf(bf16_cuda=True, min_gpu_mem_gb=16.5)
+@pytest.mark.skipif(
+    on_rocm(),
+    reason="ROCm: circuit-tracer head_loadings hits an illegal memory access in a batched bf16 hipBLASLt GEMM (#1001)",
+)
 def test_ct_attention_attribution_notebook(tmp_path: Path):
     """Test the attention-aware attribution notebook (regimes, influence, head reports, partition,
     interventions)."""
