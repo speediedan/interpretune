@@ -25,6 +25,35 @@ from interpretune.protocol import BaseAnalysisBatchProtocol
 from interpretune.utils.logging import rank_zero_debug, rank_zero_warn
 
 
+def _is_tensor_op_definition(definition: Any) -> bool:
+    """Whether an op definition is a tensor op: one carrying an ``op_spec`` block rather than schemas."""
+    return isinstance(definition, dict) and "op_spec" in definition
+
+
+def _partition_required_ops(definition: dict[str, Any]) -> dict[str, Any]:
+    """Split a definition's ``required_ops`` into the composition ops it inherits schemas from and the tensor ops
+    it asks a backend for (``required_tensor_ops``).
+
+    One key names both, because there is one op namespace: a name with an executor here or in venngram's registry is a
+    tensor op, whose requirement is checked against the backend's declared ops, and any other name is a composition op,
+    resolved and compiled as before. A tensor op a later collection registers is not known yet and resolves as a
+    composition op, which then fails by name at compile time.
+    """
+    required = definition.get("required_ops")
+    if not required:
+        return definition
+    from interpretune.analysis.backends.ops import _EXECUTORS, _venngram_ops
+
+    tensor = [name for name in required if name in _EXECUTORS or name in _venngram_ops()]
+    if not tensor:
+        return definition
+    return {
+        **definition,
+        "required_ops": [name for name in required if name not in tensor],
+        "required_tensor_ops": [*(definition.get("required_tensor_ops") or []), *tensor],
+    }
+
+
 def _ensure_loaded(func):
     """Decorator to ensure operations are loaded before access."""
 
@@ -267,6 +296,11 @@ class AnalysisOpDispatcher:
                 if yaml_file not in [info.path for info in self._cache_manager._yaml_files]:
                     self._cache_manager.add_yaml_file(yaml_file)
 
+            # Tensor ops register on every load, cache hit or miss: the cache holds compiled composition ops, and a
+            # tensor op lives in venngram's registry and the executor registry, which a new process starts without.
+            # Before the composition ops, so a definition's `required_ops` can be partitioned against them.
+            self._register_tensor_ops(yaml_files)
+
             rank_zero_debug("[DISPATCHER] Attempting to load from cache")
             # Strict loading vetoes the cache. Every check `op_load_failure` guards -- failed compiles,
             # unresolvable importable_params, invalid op_state, unsanctioned hub params, name collisions --
@@ -389,8 +423,14 @@ class AnalysisOpDispatcher:
                 # hub collection's header arrived as `<user>.<repo>.collection` and no longer matched the
                 # header key -- it was then registered as an op, giving every hub collection a junk
                 # `collection` op with the header's mapping as its definition. Bundled files are not
-                # namespaced, which is why the equality check held there and hid this.
-                op_content = {key: value for key, value in yaml_content.items() if key != COLLECTION_HEADER_KEY}
+                # namespaced, which is why the equality check held there and hid this. Tensor ops (an
+                # `op_spec` block) are dropped too: `_register_tensor_ops` registered them, and they are not
+                # composition ops.
+                op_content = {
+                    key: value
+                    for key, value in yaml_content.items()
+                    if key != COLLECTION_HEADER_KEY and not _is_tensor_op_definition(value)
+                }
                 namespaced_content = self._apply_hub_namespacing(op_content, yaml_file)
 
                 source = self._op_source_for(yaml_file)
@@ -423,7 +463,7 @@ class AnalysisOpDispatcher:
                             continue
                         if key in raw_definitions:
                             rank_zero_debug(f"Operation '{key}' redefined in {yaml_file}, using latest definition")
-                        raw_definitions[key] = {**value, **provenance}
+                        raw_definitions[key] = {**_partition_required_ops(value), **provenance}
                         self._op_declaration_sites[key] = str(yaml_file)
 
             except OpLoadError:
@@ -598,7 +638,7 @@ class AnalysisOpDispatcher:
                 normal_params=op_def.get("normal_params", {}),
                 required_ops=op_def.get("required_ops", []),
                 required_capabilities=op_def.get("required_capabilities", []),
-                required_intervention_modes=list(op_def.get("required_intervention_modes", []) or []),
+                required_tensor_ops=list(op_def.get("required_tensor_ops", []) or []),
                 required_position_scopes=list(op_def.get("required_position_scopes", []) or []),
                 conformance=op_def.get("conformance"),
                 composition=op_def.get("composition", None),
@@ -613,6 +653,75 @@ class AnalysisOpDispatcher:
             )
 
             self._op_definitions[op_name] = op_def_obj
+
+    def _register_tensor_ops(self, yaml_files: list[Path]) -> None:
+        """Register every tensor op the discovered YAMLs define: its ``OpSpec`` with venngram, its executor here.
+
+        A hub collection's YAMLs are discovered only under the trust opt-in, so a hub implementation imported here
+        is imported under the same opt-in as any hub op's; the revision it is imported from is the one its
+        definition was loaded from, and the registration records the collection and revision as its provenance.
+        Each op is held to the tensor-op contract on a probe before anything registers
+        (:func:`~interpretune.analysis.backends.ops.load_tensor_op`); a failure goes through ``op_load_failure``,
+        so one malformed op warns (or raises under ``IT_STRICT_OP_LOAD=1``) instead of taking every other op down.
+        """
+        for yaml_file in yaml_files:
+            try:
+                text = Path(yaml_file).read_text(encoding="utf-8")
+                # a substring gate before parsing: most files define no tensor op, and this runs on every load,
+                # cache hits included, where nothing else parses YAML
+                yaml_content = yaml.safe_load(text) if "op_spec" in text else None
+            except (OSError, yaml.YAMLError):
+                continue  # `_load_raw_definitions` reports an unreadable file; nothing here to register
+            if not isinstance(yaml_content, dict):
+                continue
+            tensor_ops = {
+                name: definition for name, definition in yaml_content.items() if _is_tensor_op_definition(definition)
+            }
+            if not tensor_ops:
+                continue
+            from interpretune.analysis.backends.ops import load_tensor_op
+
+            source = self._op_source_for(yaml_file)
+            collection = self._collection_for(yaml_file, yaml_content)
+            revision = None
+            if source.startswith("hub:"):
+                revision = self._cache_manager.hub_commit_for_namespace(source.split(":", 1)[1])
+            for name, definition in tensor_ops.items():
+                try:
+                    executor = self._import_tensor_op_implementation(name, definition, source, revision)
+                    load_tensor_op(
+                        name,
+                        definition["op_spec"],
+                        executor,
+                        source=source,
+                        collection=collection.name if collection else None,
+                        version=collection.version if collection else None,
+                        revision=revision,
+                    )
+                except OpLoadError:
+                    raise
+                except Exception as exc:
+                    op_load_failure(f"Skipping tensor op {name!r} from {yaml_file}: {exc}")
+
+    def _import_tensor_op_implementation(
+        self, name: str, definition: dict[str, Any], source: str, revision: str | None
+    ) -> Callable:
+        """Import a tensor op's executor: from the collection's own revision for a hub op, by path otherwise."""
+        implementation = definition.get("implementation")
+        if not isinstance(implementation, str) or "." not in implementation:
+            raise ValueError(f"tensor op {name!r} names no implementation (`module.function`): {implementation!r}")
+        if not source.startswith("hub:"):
+            return self._import_callable(implementation)
+        from interpretune.hub.trust import ensure_remote_code_trusted
+
+        namespace = source.split(":", 1)[1]
+        ensure_remote_code_trusted(namespace.replace(".", "/", 1), what=f"the tensor op {name!r}")
+        return get_function_from_dynamic_module(
+            function_reference=implementation,
+            op_repo_name_or_path=namespace,
+            cache_dir=IT_ANALYSIS_HUB_CACHE,
+            revision=revision,
+        )
 
     def _op_source_for(self, yaml_file: Path) -> str:
         """Classify where an op definition came from: ``bundled``, ``local``, or ``hub:<namespace>``.
@@ -1222,7 +1331,7 @@ class AnalysisOpDispatcher:
                 ops,
                 name=op_name,
                 aliases=op_def.aliases,
-                required_intervention_modes=op_def.required_intervention_modes,
+                required_tensor_ops=op_def.required_tensor_ops,
                 required_position_scopes=op_def.required_position_scopes,
             )
             op.description = op_def.description
@@ -1274,7 +1383,7 @@ class AnalysisOpDispatcher:
             aliases=op_def.aliases,
             impl_params=impl_params,
             required_capabilities=op_def.required_capabilities,
-            required_intervention_modes=op_def.required_intervention_modes,
+            required_tensor_ops=op_def.required_tensor_ops,
             required_position_scopes=op_def.required_position_scopes,
             op_state=op_def.op_state,
             uses_default_hooks=op_def.uses_default_hooks,

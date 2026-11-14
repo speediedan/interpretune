@@ -13,10 +13,13 @@ from __future__ import annotations
 import pytest
 import torch
 
-from interpretune.analysis.backends import InterventionMode, PositionScope
+from interpretune.analysis.backends import PositionScope
 from interpretune.analysis.backends.interventions import InterventionSpec, apply_intervention
 
 BATCH, SEQ, D = 2, 5, 8
+#: The core ops that change the activation's value; `replace_with_error` keeps it by construction (only its gradient
+#: differs), so no position can read as changed under it.
+VALUE_OPS = ("add", "clamp", "patch", "project", "reject", "replace", "scale")
 LAST = 3  # not the final index: left padding makes the last REAL token an argument, not a shape
 
 
@@ -34,7 +37,7 @@ def _spec(mode: str, scope: str) -> InterventionSpec:
     # and pass while testing nothing. A clamp with no band at all is refused by name rather than
     # silently behaving as the identity, which is why it cannot simply be omitted here.
     extra = {"clamp_min": -0.05, "clamp_max": 0.05} if mode == "clamp" else {}
-    return InterventionSpec(intervention_tensor=tensor, mode=mode, scale_factor=2.0, position_scope=scope, **extra)
+    return InterventionSpec(intervention_tensor=tensor, op=mode, scale_factor=2.0, position_scope=scope, **extra)
 
 
 def _changed_positions(before: torch.Tensor, after: torch.Tensor) -> set[int]:
@@ -42,7 +45,7 @@ def _changed_positions(before: torch.Tensor, after: torch.Tensor) -> set[int]:
     return {int(p) for p in torch.nonzero(moved.any(dim=-1).any(dim=0)).flatten().tolist()}
 
 
-@pytest.mark.parametrize("mode", [m.value for m in InterventionMode])
+@pytest.mark.parametrize("mode", VALUE_OPS)
 class TestExactlyTheSelectedPositionsChange:
     def test_last_token_changes_the_last_real_position_and_nothing_else(self, mode):
         before = _activation()

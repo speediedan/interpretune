@@ -135,7 +135,7 @@ class TestRealPairSubspaceAttribution:
             handle.remove()
 
         spec = _validate_intervention_spec(
-            InterventionSpec(intervention_tensor=pair, mode="patch", scale_factor=1.0),
+            InterventionSpec(intervention_tensor=pair, op="patch", scale_factor=1.0),
             target_shape=(pair.shape[1],),
             hook_name=f"blocks.{layer}.hook_resid_post",
         )

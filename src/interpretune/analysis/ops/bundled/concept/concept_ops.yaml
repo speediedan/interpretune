@@ -316,7 +316,7 @@ model_fwd_intervention:
   implementation: interpretune.analysis.ops.bundled.concept.concept_ops.model_fwd_intervention_impl
   # The mode and scope axes are payload-driven for this op (any declared mode of the backend), so it
   # declares the surface only; a composite built on it that fixes a mode declares that mode itself.
-  required_capabilities: [activation_intervention]
+  required_capabilities: [intervention]
   aliases: [direction_intervention, direct_concept_direction_intervention]
   input_schema:
     interventions:
@@ -342,7 +342,7 @@ model_fwd_intervention:
       required: false
       non_tensor: true
       sequence_type: false
-    intervention_mode:
+    intervention_op:
       datasets_dtype: string
       required: false
       non_tensor: true
@@ -405,7 +405,7 @@ model_fwd_intervention:
 intervention_first_order_check:
   description: Check an applied intervention against its first-order prediction per basis
   implementation: interpretune.analysis.ops.bundled.concept.concept_ops.intervention_first_order_check_impl
-  required_capabilities: [activation_intervention, gradients]
+  required_capabilities: [intervention, gradients]
   input_schema:
     interventions:
       datasets_dtype: object
@@ -430,7 +430,7 @@ intervention_first_order_check:
       required: false
       non_tensor: true
       sequence_type: false
-    intervention_mode:
+    intervention_op:
       datasets_dtype: string
       required: false
       non_tensor: true
