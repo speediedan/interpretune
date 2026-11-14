@@ -1,6 +1,6 @@
 # Release validation on both GPU vendors (#703, after finetuning-scheduler's #57): a release needs one demanded, full,
-# clean run per vendor at the release candidate's revision. One leg per vendor runs through
-# .azure-pipelines/templates/gpu-job.yml under the `ci-release` class with the gate's steps
+# clean run per vendor at the release candidate's revision. One leg per vendor runs through gpu-epsilon's
+# templates/gpu-job.yml (through templates/it-gpu-job.yml) under the `ci-release` class with the gate's steps
 # (templates/it-gpu-steps.yml), and a CPU job then checks both legs' phase evidence with the checker shared with
 # finetuning-scheduler (gpu-epsilon's `gpu_epsilon.release_eligibility`, configured by tests/gpu_ci/release.json and
 # pinned in requirements/ci/gpu_epsilon.txt). Its verdict, published as `it-release-eligibility`, is the release's GPU gate;
@@ -22,8 +22,18 @@ parameters:
       nvidia: "speediedan/interpretune:py3.13-pt2.15.0-azpl-init@sha256:fda1c1cd8373da860e38d9aaea5bd1a096dbc1ed886043a3c8054d2b0c7bd7e8"
       amd: "speediedan/interpretune:py3.13-pt2.15.0-rocm10.0-azpl-init@sha256:bd6ef05d876cea67c58b6f108a4ea300227f6272843a8f246c172c7689307283"
 
+# The any-vendor GPU job template shared with finetuning-scheduler, pinned to a gpu-epsilon tag (move it with
+# requirements/ci/gpu_epsilon.txt). templates/it-gpu-job.yml passes interpretune's settings to it.
+resources:
+  repositories:
+    - repository: ci
+      type: github
+      name: speediedan/gpu-epsilon
+      endpoint: speediedan
+      ref: refs/tags/gpu-job-v1
+
 jobs:
-  - template: templates/gpu-job.yml
+  - template: templates/it-gpu-job.yml
     parameters:
       jobName: release_nvidia
       vendor: nvidia
@@ -37,7 +47,7 @@ jobs:
             extended: false
             jobClass: ci-release
 
-  - template: templates/gpu-job.yml
+  - template: templates/it-gpu-job.yml
     parameters:
       jobName: release_amd
       vendor: amd

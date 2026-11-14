@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 eligibility = pytest.importorskip(
     "gpu_epsilon.release_eligibility", reason="gpu-epsilon is not installed (requirements/ci/gpu_epsilon.txt)"
@@ -94,9 +95,10 @@ def test_the_config_describes_the_phase_reports(config):
     # every version the checker compares is one the writer records
     recorded = {*phase_evidence.BUILTIN_VERSIONS, *EVIDENCE.versions}
     assert {*config.required_versions, *config.shared_versions, *config.shared_builds} <= recorded
-    # the release legs publish `<artifact_prefix>-<vendor>-<attempt>` holding the phase evidence directory
-    job = (ROOT / ".azure-pipelines" / "templates" / "gpu-job.yml").read_text()
-    assert f"artifact: {config.artifact_prefix}-${{{{ parameters.vendor }}}}-$(System.JobAttempt)" in job
+    # the release legs publish `<artifact_prefix>-<vendor>-<attempt>` holding the phase evidence directory: the shared
+    # GPU job template names a release leg's artifact `<artifactPrefix>-release-<vendor>-<attempt>`
+    job = yaml.safe_load((ROOT / ".azure-pipelines" / "templates" / "it-gpu-job.yml").read_text())
+    assert f"{job['jobs'][0]['parameters']['artifactPrefix']}-release" == config.artifact_prefix
     container = (ROOT / ".azure-pipelines" / "scripts" / "gpu_job_container.sh").read_text()
     assert f"PHASES_OUT=/evidence/{config.phases_dir}" in container
 
