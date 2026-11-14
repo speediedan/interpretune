@@ -32,7 +32,7 @@ class Holder(nn.Module):
 
     def __init__(self, replacement_model) -> None:
         super().__init__()
-        self.hf_model = replacement_model._model
+        self.hf_model = replacement_model._module
         self.transcoders = replacement_model.transcoders._module
 
     def fsdp_direct_calls(self):
@@ -47,7 +47,7 @@ class Holder(nn.Module):
 def widen_scalars(model) -> None:
     """FSDP2 cannot shard a 0-d parameter, and the toy's JumpReLU threshold is one; trained transcoders carry a
     per-feature threshold, so widen it to one dimension (the same function, by broadcasting)."""
-    for module in model._model.modules():
+    for module in model._module.modules():
         for name, param in list(module.named_parameters(recurse=False)):
             if param.dim() == 0:
                 setattr(module, name, nn.Parameter(param.detach().reshape(1).clone()))
@@ -80,7 +80,7 @@ def toy_meta_build(rank0: bool):
     )
     NNSightReplacementModel.from_pretrained_and_transcoders = classmethod(lambda cls, *args, **kwargs: toy)
     model, source = meta_replacement_model("toy", "toy", torch.float32, load_source=rank0)
-    assert all(p.is_meta for p in model._model.parameters())
+    assert all(p.is_meta for p in model._module.parameters())
     return model, source
 
 
@@ -88,7 +88,7 @@ def readings(model, prompt: torch.Tensor) -> dict[str, torch.Tensor]:
     from tests.core.circuit_tracer_toy import only_token_zero_special
 
     with torch.no_grad():
-        plain = model._model(prompt[None]).logits.clone()
+        plain = model._module(prompt[None]).logits.clone()
         with model.trace(prompt[None]):
             traced = nnsight.save(model.lm_head.output)
     with only_token_zero_special(model):
