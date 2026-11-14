@@ -169,7 +169,7 @@ def gap_after_add(
     target_a_id: int,
     target_b_id: int,
 ) -> float:
-    """The target gap after an ``add``-mode intervention of ``scale * tensor`` at ``site``."""
+    """The target gap after an ``add`` intervention of ``scale * tensor`` at ``site``."""
     module.analysis_cfg = AnalysisCfg(target_op=it.model_fwd_intervention, ignore_manual=True, save_tokens=False)
     init_analysis_cfgs(module, [module.analysis_cfg])
     probe = AnalysisBatch(
@@ -178,7 +178,7 @@ def gap_after_add(
         concept_group_a_token_ids=[target_a_id],
         concept_group_b_token_ids=[target_b_id],
         intervention_hook_pattern=site,
-        intervention_mode="add",
+        intervention_op="add",
         intervention_tensor=tensor,
         intervention_scale_factor=scale,
     )

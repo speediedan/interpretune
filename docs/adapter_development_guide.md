@@ -458,15 +458,15 @@ def capture_support(self, model) -> CaptureSupport:
 ```
 
 The record is keyed by layer-free base spellings (`ln2.hook_out`, `hook_resid_pre`, `unembed.hook_in`) over the
-architecture's inventory (`interpretune.analysis.points.inventory.inventory(component_map)`), with a reason per
-point the backend cannot capture. Derive it from what the backend can actually resolve rather than writing it down:
-the bundled TransformerLens backend probes the wrapper's hook names through the vocabulary's spellings, and the
-nnsight backend asks its hook resolver, so the declaration and the refusal cannot drift apart. `AnalysisCfg` refuses
-a listed point the declaration excludes before any run, and the conformance suite checks the declaration in
-both directions: every declared point is captured, and a declared gap is refused through the runner path. It is not
-a `ModelBackendCapability` member because capture is a base method every backend has; the record says which points, not
-whether at all. It is a method taking the model because the answer belongs to the backend and this model instance as
-it stands: a wrapper's hooks change with what is attached to it, so a consumer re-queries rather than caches.
+architecture's inventory (`interpretune.analysis.points.inventory.inventory(component_map)`), with a reason per point
+the backend cannot capture. Derive it from what the backend can actually resolve rather than writing it down: the
+bundled TransformerLens backend probes the wrapper's hook names through the vocabulary's spellings, and the nnsight
+backend asks its hook resolver, so the declaration and the refusal cannot drift apart. `AnalysisCfg` refuses a listed
+point the declaration excludes before any run, and the conformance suite checks the declaration in both
+directions: every declared point is captured, and a declared gap is refused through the runner path. The backend
+declares `Capability.CAPTURE` beside the record: the member says the surface is provided, the record says which points.
+It is a method taking the model because the answer belongs to the backend and this model instance as it stands: a
+wrapper's hooks change with what is attached to it, so a consumer re-queries rather than caches.
 
 ### NNsight Forward Context
 
