@@ -76,9 +76,9 @@ def tiny_gpt2_dir(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def nnsight_setup(tiny_gpt2_dir):
-    from nnsight import LanguageModel
+    from nnsight import TransformersModel
 
-    lm = LanguageModel(str(tiny_gpt2_dir), device_map="cpu", dispatch=True)
+    lm = TransformersModel(str(tiny_gpt2_dir), task="text-generation", device="cpu", dispatch=True)
     hf_model = NNsightModelBackend._get_hf_model(lm)
     backend = NNsightModelBackend(
         HookNameResolver(hf_model.config.architectures[0]), configs_per_pass=get_default_configs_per_pass()
@@ -95,7 +95,7 @@ def _patch_pair() -> torch.Tensor:
 
 def _spec(scale: float) -> InterventionSpec:
     return _validate_intervention_spec(
-        InterventionSpec(intervention_tensor=_patch_pair(), mode="patch", scale_factor=scale),
+        InterventionSpec(intervention_tensor=_patch_pair(), op="patch", scale_factor=scale),
         target_shape=(D_MODEL,),
         hook_name=f"blocks.{HOOK_LAYER}.hook_resid_post",
     )
@@ -369,7 +369,7 @@ class TestCrossBackendAgreement:
 
     @RunIf(standalone=True)
     def test_tl_and_nnsight_patch_deltas_agree_on_gpt2(self, tmp_path):
-        from nnsight import LanguageModel
+        from nnsight import TransformersModel
 
         from interpretune.adapters.transformer_lens.backends import TLModelBackend
         from tests.utils import boot_no_processing_bridge
@@ -380,7 +380,7 @@ class TestCrossBackendAgreement:
         pair = torch.randn(2, 768)
 
         # --- NNsight path ---
-        lm = LanguageModel("gpt2", device_map="cpu", dispatch=True)
+        lm = TransformersModel("gpt2", task="text-generation", device="cpu", dispatch=True)
         hf_model = NNsightModelBackend._get_hf_model(lm)
         nns_backend = NNsightModelBackend(
             HookNameResolver(hf_model.config.architectures[0]), configs_per_pass=get_default_configs_per_pass()
@@ -388,7 +388,7 @@ class TestCrossBackendAgreement:
         nns_backend.register_model_hooks(lm)
         ids = lm.tokenizer(prompt, return_tensors="pt")["input_ids"]
         spec = _validate_intervention_spec(
-            InterventionSpec(intervention_tensor=pair, mode="patch", scale_factor=1.0),
+            InterventionSpec(intervention_tensor=pair, op="patch", scale_factor=1.0),
             target_shape=(768,),
             hook_name=hook,
         )
@@ -434,7 +434,7 @@ def _gemma_pair_case(model_id: str, jlens_id: str, layer: int) -> dict[str, obje
     """
     from types import SimpleNamespace
 
-    from nnsight import LanguageModel
+    from nnsight import TransformersModel
 
     from interpretune.analysis.optools import (
         jlens_direction_rows,
@@ -442,7 +442,7 @@ def _gemma_pair_case(model_id: str, jlens_id: str, layer: int) -> dict[str, obje
         resolve_unembed_and_norm_scale,
     )
 
-    lm = LanguageModel(model_id, device_map="cuda", dispatch=True)
+    lm = TransformersModel(model_id, task="text-generation", device="cuda", dispatch=True)
     try:
         hf_model = NNsightModelBackend._get_hf_model(lm)
         nns_backend = NNsightModelBackend(
@@ -466,7 +466,7 @@ def _gemma_pair_case(model_id: str, jlens_id: str, layer: int) -> dict[str, obje
 
         hook = f"blocks.{resolved_layer}.hook_resid_post"
         spec = _validate_intervention_spec(
-            InterventionSpec(intervention_tensor=pair, mode="patch", scale_factor=1.0),
+            InterventionSpec(intervention_tensor=pair, op="patch", scale_factor=1.0),
             target_shape=(pair.shape[1],),
             hook_name=hook,
         )
@@ -507,7 +507,7 @@ def _tl_gap_for_pair(model_id: str, case: dict[str, object]) -> dict[str, object
             / torch.linalg.norm(case["scale"]).clamp_min(1e-12)
         )
         spec = _validate_intervention_spec(
-            InterventionSpec(intervention_tensor=case["pair"], mode="patch", scale_factor=1.0),
+            InterventionSpec(intervention_tensor=case["pair"], op="patch", scale_factor=1.0),
             target_shape=(case["pair"].shape[1],),
             hook_name=case["hook"],
         )

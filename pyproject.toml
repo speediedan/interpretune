@@ -219,7 +219,7 @@ git-deps = [
     # shifting every position index in the feature-intervention path. The branch is rebased as the PRs
     # evolve, so VERIFY BY CONTENT, not by SHA:
     #   git log --grep="Canonicalize nnsight trace" <pin>   -> must return exactly one commit
-    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6a278292747293bcc0ce863aaeb26620f198aacc",
+    "circuit-tracer @ git+https://github.com/speediedan/circuit-tracer.git@6f7bc8271c2b041a2b1ae985f9db7a8e6cc42047",
     # sae-lens: pinned to the head of decoderesearch/SAELens#739 (transformer-lens 4.0 support), because
     # every sae-lens release through 6.51.2 fails `import sae_lens` under transformer-lens 4.0
     # (`No module named 'transformer_lens.HookedTransformer'`). RETIRE this pin for a released floor in
@@ -254,7 +254,7 @@ git-deps = [
     # The SHA is venngram main with #56 (a reader passes over registry documents newer than it reads, so the default
     # view survives a registry schema change), over #53 (overlay roles named by adapter, every PEFT tuner family), #51
     # (a base map mounted under a wrapper root), #48 and #45 (base and overlay maps).
-    "venngram @ git+https://github.com/speediedan/venngram@c993c2c3ba8ad943f3d1d2a03cca132236d3196e",
+    "venngram @ git+https://github.com/speediedan/venngram@c0cfc295ba52f87492c3ec312d20af28ecfdec54",
 ]
 
 dev = [
@@ -324,9 +324,12 @@ override-dependencies = [
     # sae-dashboard imports only the annotation types (`Float`, `Int`, `Bool`) and never type-checks at
     # runtime, and every one of its modules imports under jaxtyping 0.3.
     "jaxtyping>=0.3",
-    # keep transitive nnsight (pulled in by sae-lens) at the validated release
-    # (0.7.0 validated: nnsight slice + parity 34/0 + low-RAM mock, both versions)
-    "nnsight==0.7.0",
+    # keep transitive nnsight (pulled in by sae-lens) at the validated release. 0.8.1 is the
+    # oldest client the NDIF server accepts (it refuses older clients by name; 0.7.0 cannot
+    # even complete the websocket handshake), and 0.8 moved Barrier to
+    # nnsight.intervention.barrier and dropped the CROSS_INVOKER/TRACE_CACHING switches, which
+    # is why the circuit-tracer git pin carries its 0.8 compat commit.
+    "nnsight==0.8.2",
     # lift the pinned sae-dashboard's torch ceiling (`>=2.7.1,<2.14`) back to interpretune's own floor. The
     # ceiling is a release-time cap, not a measured incompatibility: without this an install that is not
     # handed requirements/ci/overrides.txt (hosted CI, the gated image, the README flow) silently replaced
@@ -342,7 +345,7 @@ override-dependencies = [
     "finetuning-scheduler @ git+https://github.com/speediedan/finetuning-scheduler@76b250470f67cb942aa37894c47ce611dccca445",
     # venngram by git SHA until 0.1.0 is on PyPI, for the same reason: interpretune and finetuning-scheduler both
     # require it and it is in no release. RETIRE it with the `git-deps` entry once 0.1.0 is published.
-    "venngram @ git+https://github.com/speediedan/venngram@c993c2c3ba8ad943f3d1d2a03cca132236d3196e",
+    "venngram @ git+https://github.com/speediedan/venngram@c0cfc295ba52f87492c3ec312d20af28ecfdec54",
 ]
 # exclude dependencies ignore a dependency altogether (transitive or direct); we also use an excludes
 # FILE (requirements/ci/excludes.txt) for the from-source installs, which uv reads via UV_EXCLUDE.

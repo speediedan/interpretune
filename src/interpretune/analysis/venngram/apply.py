@@ -34,7 +34,7 @@ from its sidecar, relative to the recipe's own directory:
   ``dose`` itself, broadcast over the activation;
 - ``scale``: the ``dose``, as a scalar multiplier;
 - ``project``: onto a vector operand, keeping all of it (``fraction`` 1). A subspace operand, or a fraction below
-  1 (which keeps the span and only part of its complement), has no native mode yet and is refused by name;
+  1 (which keeps the span and only part of its complement), has no native translation yet and is refused by name;
 - ``reject``: the operand's span, removing ``fraction`` of it (``scale_factor`` is the native removal fraction);
 - ``patch``: the operand pair, exchanging its two coordinates;
 - ``clamp``: the operand's pseudoinverse coordinates bounded into ``[min, max]``.
@@ -66,7 +66,7 @@ from typing import Any
 
 import torch
 
-from interpretune.analysis.backends.capabilities import FeatureInterventionSupport, InterventionMode, PositionScope
+from interpretune.analysis.backends.capabilities import FeatureTargetSupport, PositionScope
 from interpretune.analysis.backends.interventions import InterventionSpec
 from interpretune.analysis.venngram.values import Statistic, member_refusal, member_values, target_kind
 from interpretune.utils import MisconfigurationException
@@ -74,22 +74,14 @@ from interpretune.utils import MisconfigurationException
 #: Recipe token scopes by their interpretune position-scope names.
 _POSITION_SCOPES = {"all": PositionScope.ALL_POSITIONS, "last": PositionScope.LAST_TOKEN}
 
-#: The unit-targeted ops, with the native mode each applies as and the value units no dose names keep.
-_UNIT_OPS = {"add": (InterventionMode.ADD, 0.0), "scale": (InterventionMode.SCALE, 1.0)}
+#: The unit-targeted ops, each with the value the units no dose names keep (the op's identity).
+_UNIT_OPS = {"add": 0.0, "scale": 1.0}
 
-#: The whole-activation ops and the native mode each applies as.
-_ACTIVATION_OPS = {
-    "add": InterventionMode.ADD,
-    "replace": InterventionMode.REPLACE,
-    "scale": InterventionMode.SCALE,
-    "project": InterventionMode.PROJECT,
-    "reject": InterventionMode.REJECT,
-    "patch": InterventionMode.PATCH,
-    "clamp": InterventionMode.CLAMP,
-}
+#: The whole-activation ops this path translates; each applies as the interpretune op of the same name.
+_ACTIVATION_OPS = frozenset({"add", "replace", "scale", "project", "reject", "patch", "clamp"})
 
 #: Every recipe op this module translates (for at least one target kind).
-APPLIED_OPS = frozenset(_UNIT_OPS) | frozenset(_ACTIVATION_OPS)
+APPLIED_OPS = frozenset(_UNIT_OPS) | _ACTIVATION_OPS
 
 #: The feature ops a feature tuple's value is computed for: ``replace`` sets the op's value; ``add`` and ``scale`` set a
 #: value relative to the feature's clean activation $a$ ($a + d$ and $a \cdot d$ for the op's value $d$).
@@ -122,10 +114,10 @@ def _member_refusal(recipe: Any, stage: Any, op: Any, kind: str) -> str | None:
     if op.op not in _UNIT_OPS:
         if kind == "features" and op.op == "replace":
             return (
-                "a feature-targeted `replace` has no native mode at a sub-hook: a spec replaces the whole tensor"
+                "a feature-targeted `replace` has no native translation at a sub-hook: a spec replaces the whole tensor"
                 " (`recipe_feature_interventions` gives circuit-tracer's tuples)"
             )
-        return f"a {kind[:-1]}-targeted `{op.op}` has no native mode (supported: {sorted(_UNIT_OPS)})"
+        return f"a {kind[:-1]}-targeted `{op.op}` has no native translation (supported: {sorted(_UNIT_OPS)})"
     if op.operand is not None:
         return f"a {kind[:-1]}-targeted op takes a dose, not an operand"
     if layer is not None:
@@ -135,8 +127,24 @@ def _member_refusal(recipe: Any, stage: Any, op: Any, kind: str) -> str | None:
     return member_refusal(recipe, op)
 
 
+def _gradient_refusal(recipe: Any, op: Any) -> str | None:
+    """Why an op acting on a gradient (its target set is ``of: grad``) cannot be translated: the forward surface
+    writes activation values, so translating it would apply the op to the value instead.
+
+    The backward surface is #970.
+    """
+    if op.target is not None and op.target_of(recipe.book) == "grad":
+        return (
+            "its target addresses the gradient (`of: grad`); interpretune applies recipe ops to activation values "
+            "only, so it is refused rather than applied to the value"
+        )
+    return None
+
+
 def op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     """Why ``op`` (at ``stage`` of ``recipe``) cannot be translated, or ``None`` when it can."""
+    if (refusal := _gradient_refusal(recipe, op)) is not None:
+        return refusal
     layer, _ = split_site(stage.site)
     kind = target_kind(recipe, op)
     if kind in ("units", "features"):
@@ -145,16 +153,16 @@ def op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     if (refusal := _value_refusal(op)) is not None:
         return refusal
     if op.op not in _ACTIVATION_OPS:
-        return f"the op has no native mode (supported: {sorted(_ACTIVATION_OPS)})"
+        return f"the op has no native translation (supported: {sorted(_ACTIVATION_OPS)})"
     if layer is None:
         return f"a whole-activation op names no layer: write its stage's site as `blocks.<layer>.{stage.site}`"
     if value is not None and value.source != "dose":
         return "a whole-activation op takes a single `dose`, not a per-unit table"
     if op.op == "project":
         if recipe.operands[op.operand].kind != "vector":
-            return "projecting onto a subspace has no native mode yet (a vector operand projects)"
+            return "projecting onto a subspace has no native translation yet (a vector operand projects)"
         if op.params.get("fraction", 1.0) != 1.0:
-            return "a `project` fraction below 1 has no native mode yet (fraction 1 projects)"
+            return "a `project` fraction below 1 has no native translation yet (fraction 1 projects)"
     return None
 
 
@@ -167,6 +175,8 @@ def feature_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     """
     if target_kind(recipe, op) != "features":
         return "circuit-tracer's feature tuples act on a feature target only"
+    if (refusal := _gradient_refusal(recipe, op)) is not None:
+        return refusal
     if op.op not in FEATURE_TUPLE_OPS:
         return f"circuit-tracer's feature tuples express {sorted(FEATURE_TUPLE_OPS)}, not `{op.op}`"
     if (op.tokens or stage.tokens).kind != "positions":
@@ -198,20 +208,19 @@ def _operand(recipe: Any, name: str, width: int | None, where: str) -> torch.Ten
 def _member_specs(
     op: Any, values: Mapping[tuple[int, int], float], width: int, scope: PositionScope, where: str
 ) -> dict[int, InterventionSpec]:
-    mode, fill = _UNIT_OPS[op.op]
+    fill = _UNIT_OPS[op.op]
     by_layer: dict[int, dict[int, float]] = {}
     for (layer, unit), value in values.items():
         by_layer.setdefault(layer, {})[unit] = value
     return {
         layer: InterventionSpec(
-            intervention_tensor=_scatter(by_layer[layer], width, fill, where, layer), mode=mode, position_scope=scope
+            intervention_tensor=_scatter(by_layer[layer], width, fill, where, layer), op=op.op, position_scope=scope
         )
         for layer in sorted(by_layer)
     }
 
 
 def _activation_spec(recipe: Any, op: Any, width: int | None, scope: PositionScope, where: str) -> InterventionSpec:
-    mode = _ACTIVATION_OPS[op.op]
     dose = op.value.dose if op.value is not None else 1.0
     tensor = torch.tensor(dose) if op.operand is None else _operand(recipe, op.operand, width, where)
     fields: dict[str, Any] = {}
@@ -223,7 +232,7 @@ def _activation_spec(recipe: Any, op: Any, width: int | None, scope: PositionSco
         fields["scale_factor"] = op.params.get("fraction", 1.0)
     elif op.op == "clamp":
         fields.update(clamp_min=op.params.get("min"), clamp_max=op.params.get("max"))
-    return InterventionSpec(intervention_tensor=tensor, mode=mode, position_scope=scope, **fields)
+    return InterventionSpec(intervention_tensor=tensor, op=op.op, position_scope=scope, **fields)
 
 
 def _require_width(site_widths: Mapping[str, int], site: str, i: int, stage: Any) -> int:
@@ -240,6 +249,7 @@ def recipe_interventions(
     site_widths: Mapping[str, int],
     evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
     statistics: Mapping[str, Statistic] | None = None,
+    weights_applied: bool = False,
 ) -> dict[str, tuple[InterventionSpec, ...]]:
     """Translate a supported ``venngram.recipe.Recipe`` into a backend intervention payload.
 
@@ -250,18 +260,27 @@ def recipe_interventions(
             whole-activation op's site also checks its operand's width.
         evidence: The tables evidence-sourced values read (:mod:`~interpretune.analysis.venngram.values`).
         statistics: The statistics their transforms name.
+        weights_applied: Whether the recipe's ``weights`` section (ops on parameters, which a recipe applies before any
+            stage) has been applied (:func:`~interpretune.tuning.weights.apply_recipe_weights`). A recipe with weights
+            is refused until it has, since its stages alone are a different treatment.
 
     Returns:
         A mapping of hook patterns (``blocks.<layer>.<site>``) to the ordered specs to apply at each, in the raw
         form :func:`~interpretune.analysis.backends.interventions.build_intervention_dict` canonicalizes.
 
     Raises:
-        MisconfigurationException: For anything this module cannot translate (see :func:`op_refusal`), an
-            unmapped token scope, a unit- or feature-targeted site whose width was not supplied, a unit outside its
-            site's width, an operand whose width differs from a supplied site width, or a value the supplied evidence
-            cannot give, naming the stage and op. Run
+        MisconfigurationException: For a recipe whose weights were not applied, anything this module cannot translate
+            (see :func:`op_refusal`), an unmapped token scope, a unit- or feature-targeted site whose width was not
+            supplied, a unit outside its site's width, an operand whose width differs from a supplied site width, or a
+            value the supplied evidence cannot give, naming the stage and op. Run
             :func:`~interpretune.analysis.venngram.support.require_supported` first for the full list at once.
     """
+    if getattr(recipe, "weights", ()) and not weights_applied:
+        raise MisconfigurationException(
+            f"recipe {recipe.name!r} has a `weights` section ({len(recipe.weights)} ops on parameters), applied before "
+            "its stages: apply it first (`interpretune.tuning.weights.apply_recipe_weights`), then pass "
+            "`weights_applied=True`"
+        )
     payload: dict[str, list[InterventionSpec]] = {}
     for i, stage in enumerate(recipe.stages):
         if stage.tokens.kind not in _POSITION_SCOPES:
@@ -300,7 +319,7 @@ def _clean_activation(clean_activations: Any, layer: int, position: int, feature
     return float(clean_activations[layer, position, feature])
 
 
-def _relative_op_refusal(op: Any, support: FeatureInterventionSupport, clean_activations: Any | None) -> str | None:
+def _relative_op_refusal(op: Any, support: FeatureTargetSupport, clean_activations: Any | None) -> str | None:
     """Why a feature op computed from a clean activation cannot be computed here, or ``None``."""
     if op.op not in _RELATIVE_FEATURE_OPS:
         return None
@@ -320,7 +339,7 @@ def _relative_op_refusal(op: Any, support: FeatureInterventionSupport, clean_act
 def recipe_feature_interventions(
     recipe: Any,
     *,
-    support: FeatureInterventionSupport,
+    support: FeatureTargetSupport,
     clean_activations: Any | None = None,
     evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
     statistics: Mapping[str, Statistic] | None = None,
@@ -336,8 +355,9 @@ def recipe_feature_interventions(
 
     Args:
         recipe: The recipe to translate; every op must be one :func:`feature_op_refusal` admits.
-        support: The analysis backend's declaration. The tuples carry computed values, so it must honour ``constant``,
-            and an ``add`` or ``scale`` needs it to declare ``captures_clean_activations``.
+        support: The ``features`` target's detail in the analysis backend's intervention record. The tuples carry
+            computed values, so it must honour ``constant``, and an ``add`` or ``scale`` needs it to declare
+            ``captures_clean_activations``.
         clean_activations: The clean feature activations, indexed ``[layer, position, feature]``: the backend's
             ``capture_feature_activations`` over the prompt the tuples will be applied to, with the same
             ``apply_activation_function`` as the intervention call. Needed only for ``add`` and ``scale``.

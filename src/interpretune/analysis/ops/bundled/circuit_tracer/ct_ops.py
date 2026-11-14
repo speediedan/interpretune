@@ -18,6 +18,7 @@ from interpretune.analysis.backends import (
     apply_feature_selection_filter,
     apply_optional_feature_sign_filter,
     augment_feature_rows_for_selection,
+    get_module_capabilities,
     require_analysis_backend,
     select_top_feature_indices,
 )
@@ -416,6 +417,9 @@ def feature_intervention_forward_impl(
     a canonical feature-target InterventionDict summary for AnalysisStore consumers.
     """
     analysis_backend = require_analysis_backend(module)
+    # The feature tuples are applied by the analysis backend, so the `features` target must be one IT provides: a model
+    # backend reaching a latent model's features at its sub-hook is a different path, and this op names the one it uses.
+    get_module_capabilities(module).intervention_for("features", provider="analysis_backend")
 
     replacement_model = getattr(module, "replacement_model", None)
     if replacement_model is None:

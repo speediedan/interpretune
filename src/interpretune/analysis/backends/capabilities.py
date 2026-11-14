@@ -1,4 +1,4 @@
-"""Backend capability enums, module capability aggregation, and the named-backend registry.
+"""The capability namespace, its support records, module capability aggregation, and the named-backend registry.
 
 Part of the sanctioned :mod:`interpretune.analysis.backends` seam that op implementations (bundled,
 local, or hub) may import. Ops should ask for capabilities rather than branching on backend or
@@ -9,24 +9,42 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from interpretune.analysis.backends.protocols import AnalysisBackend, ModelBackend
 
 
-class ModelBackendCapability(Enum):
-    """The gated METHOD GROUPS of a model backend: one member per ``Supports*`` protocol, no more.
+class Capability(Enum):
+    """The capabilities a composition's components provide: one namespace, whichever component provides them.
 
-    Ops and the dispatcher query ``backend.capabilities`` before calling an optional method group
-    (``require_backend_capability``). A member here answers "does this backend implement that surface";
-    it never answers "which configurations of the surface does it support". Those are a different
-    kind of fact and carry a different shape: a typed support record on the protocol that owns the
-    methods (:class:`InterventionSupport` on ``SupportsIntervention``, :class:`LatentModelSupport` on
-    ``SupportsLatentModels``). Keeping the two apart is what lets a backend truthfully claim a surface
-    while declaring exactly which of its modes it can honour, and lets a gate refuse the rest by name.
+    A composition has components (a model backend that executes the base model, and may have an analysis backend such
+    as circuit-tracer's replacement model), and each declares which of these it provides. The gates ask "who provides
+    capability X", never "does the model backend or the analysis backend declare it", because which capabilities a
+    component offers does not depend on its kind.
+
+    A member answers "is this surface provided"; it never answers "which configurations of the surface". Those are a
+    different kind of fact with a different shape: the typed support record the providing component attaches
+    (:class:`InterventionSupport`, :class:`LatentModelSupport`, :class:`CaptureSupport`,
+    :class:`AttributionGraphSupport`). Keeping the two apart is what lets a component truthfully claim a surface while
+    declaring exactly which configurations of it it honours, and lets a gate refuse the rest by name. What a component
+    needs ANOTHER component to provide is its ``requires`` set, checked when the module's capabilities are aggregated
+    (:func:`get_module_capabilities`).
+
+    .. note:: The members sit at different levels, surfaces (``INTERVENTION``, ``CAPTURE``, ``GRADIENTS``,
+       ``LATENT_MODELS``) beside techniques (``ATTRIBUTION_GRAPH``, ``HEAD_ATTRIBUTION``), and the namespace is under
+       review: it may narrow to the core surfaces, with techniques as registered ops, or become a hierarchy that users
+       and Hub collections extend (interpretune#984).
+    """
+
+    INTERVENTION = "intervention"
+    """An edit applied during a forward pass, on an activation, a unit set or a latent model's features.
+
+    The record
+    (:class:`InterventionSupport`) declares which ops, targets, position scopes, value sources, bases and flows the
+    provider honours; two components providing one target is legitimate and is resolved by naming the provider.
     """
 
     LATENT_MODELS = "latent_models"
@@ -36,11 +54,32 @@ class ModelBackendCapability(Enum):
     GRADIENTS = "gradients"
     """``SupportsGradients``: forward + backward with gradient caching."""
 
-    ACTIVATION_INTERVENTION = "activation_intervention"
-    """``SupportsIntervention``: baseline-vs-intervention paired execution (``fwd_w_intervention``) on an
-    activation at any vocabulary point (the residual stream, attention and MLP points, head-shaped activations) or
-    at a latent model's sub-hook; the analysis-level ``FEATURE_INTERVENTION`` acts on a replacement model's latent
-    feature activations through canonical ``(layer, position, feature_id, value)`` tuples instead."""
+    CAPTURE = "capture"
+    """Caching activations at vocabulary points: the read surface (a latent site's ``observe`` is a capture). Its
+    record, :class:`CaptureSupport`, depends on the model at hand, so the provider attaches it as
+    ``capture_support(model)``."""
+
+    ATTRIBUTION_GRAPH = "attribution_graph"
+    """``SupportsAttributionGraph``: attribution graph construction, storage and scoring."""
+
+    HEAD_ATTRIBUTION = "head_attribution"
+    """``SupportsHeadAttribution``: credit at the level of attention heads."""
+
+
+#: The component slots of a composition, in the order capabilities are aggregated. A provider is named by its slot.
+COMPONENTS: tuple[str, ...] = ("model_backend", "analysis_backend")
+
+#: Intervention targets on activations, as venngram names them (``venngram.ops.ACTIVATION_TARGETS``): a whole
+#: activation, a set of its units, or a latent model's features. Parameter targets (``param``, ``param_units``) are
+#: materialized on the tensor rather than reached by a backend (:mod:`interpretune.tuning.weights`), so a support record
+#: declares them where the caller applies a recipe's weights (``venngram_support(..., weights=True)``).
+INTERVENTION_TARGETS: tuple[str, ...] = ("activation", "units", "features")
+
+#: Value sources, as venngram names them (``venngram.ops.VALUE_SOURCES``).
+VALUE_SOURCES: tuple[str, ...] = ("dose", "doses", "from")
+
+#: What an op may act on: the forward value, or the gradient flowing back through the site.
+FLOWS: tuple[str, ...] = ("value", "grad")
 
 
 class PositionScope(str, Enum):
@@ -58,51 +97,104 @@ class PositionScope(str, Enum):
 
     LAST_TOKEN = "last_token"
     ALL_POSITIONS = "all_positions"
+    POSITIONS = "positions"
+    """Explicit positions the payload names itself (circuit-tracer's feature tuples carry their own position).
 
-
-class InterventionMode(str, Enum):
-    """How an intervention combines its tensor with the activation it targets.
-
-    A ``str`` enum for the same reason as :class:`PositionScope`. The mode is the second axis of the
-    intervention contract (scope is the first): a backend can implement ``fwd_w_intervention`` and still
-    be unable to express most modes. Every mode but ``add`` reads the CURRENT activation, and the
-    additional thing they need is that the READ HAPPENS DURING THE FORWARD PASS: ``patch`` and ``reject``
-    compute coordinates from the activation itself, so no parameter fixed when the spec was built can
-    stand in for them.
-
-    The requirement is therefore sharper than "can observe the activation": **a steering surface whose
-    parameters are all static scalars satisfies that and still expresses none of these modes.** What a
-    backend must support is a parameter COMPUTED AT FORWARD TIME. Stated as a capability rather than by
-    naming a backend, because core must not know which adapters exist, and because a rule about what an
-    implementation needs stays true when the next one appears.
-
-    Such a backend declares ``InterventionSupport(modes={ADD})``; the declaration, not the
-    implementation, is what the dispatcher consults, so the refusal is by name rather than by trial.
-
-    A mode a backend has not declared is refused by
-    :func:`~interpretune.analysis.backends.interventions.require_intervention_mode` rather than applied
-    as a different mode, since every mode returns plausible logits and the substitution is undetectable
-    from the result.
-
-    A payload naming several specs at one hook point applies them SEQUENTIALLY IN DECLARATION ORDER,
-    each seeing the previous spec's output: ``[add(v), reject(v)]`` is not ``[reject(v), add(v)]``,
-    while two ``add`` specs commute. Backends implement this by folding the spec tuple left to right,
-    and adapters must preserve the declaration order rather than grouping by mode.
-    A backend that cannot apply that order refuses the payload by name rather than reordering it.
+    A hook spec carries no positions, so a backend applying hook specs never declares this scope.
     """
 
-    REPLACE = "replace"
-    ADD = "add"
-    PATCH = "patch"
-    PROJECT = "project"
-    REJECT = "reject"
-    CLAMP = "clamp"
-    SCALE = "scale"
+    @classmethod
+    def hook_scopes(cls) -> frozenset[PositionScope]:
+        """The scopes a hook spec can name: the final real token, or every position."""
+        return frozenset({cls.LAST_TOKEN, cls.ALL_POSITIONS})
+
+
+@dataclass(frozen=True)
+class FeatureTargetSupport:
+    """The configurations of the ``features`` target a feature-tuple provider honours (circuit-tracer's replacement
+    model).
+
+    The detail of the ``features`` target in that provider's :class:`InterventionSupport`, because what it adds over
+    the other targets (where a value comes from, whether layers can be constrained, whether the intervened activations
+    are returned, whether norm denominators can be frozen) is configuration of the same surface rather than a surface
+    of its own. The settings ``resolve_feature_intervention_settings`` reads are the configuration space; the record is
+    what lets a caller's settings be refused by name at the seam instead of at the first tensor op that disagrees.
+    """
+
+    value_sources: frozenset[str]
+    """Accepted ``value_source`` spellings (``"constant"`` requires an explicit value)."""
+    constrainable_layers: bool = True
+    """Whether ``constrained_layers`` can restrict the intervention to a layer subset."""
+    returns_activations: bool = False
+    """Whether the intervened activations can be returned beside the logits."""
+    freezable_norms: bool = False
+    """Whether ``freeze_norms`` can hold every residual-stream norm's denominator at its clean value."""
+    captures_clean_activations: bool = False
+    """Whether ``capture_feature_activations`` returns the clean feature activations, so a value relative to one
+    (venngram's feature ``add`` and ``scale``) can be computed before intervening."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "value_sources", frozenset(self.value_sources))
+        if not self.value_sources:
+            raise ValueError("a features-target support record must accept at least one value source")
+
+    def refusal(self, settings: Mapping[str, Any]) -> str | None:
+        """Why ``settings`` cannot be honoured here, or ``None`` when every configuration they name is declared."""
+        source = settings.get("value_source")
+        if source not in self.value_sources:
+            return f"value_source {source!r} is not honoured here; declared: {sorted(self.value_sources)}"
+        if source == "constant" and settings.get("value") is None:
+            return "value_source 'constant' needs an explicit intervention value, and none was given"
+        if settings.get("constrained_layers") is not None and not self.constrainable_layers:
+            return (
+                "constrained_layers was given, and this backend cannot restrict a feature intervention to a"
+                " layer subset"
+            )
+        if settings.get("return_activations") and not self.returns_activations:
+            return "return_activations was requested, and this backend cannot return the intervened activations"
+        if settings.get("freeze_norms") and not self.freezable_norms:
+            return "freeze_norms was requested, and this backend cannot hold norm denominators at their clean values"
+        return None
+
+    def describe(self) -> str:
+        """One line for a card or a report."""
+        return (
+            f"value sources {sorted(self.value_sources)}, constrainable layers {self.constrainable_layers}, "
+            f"returns activations {self.returns_activations}, freezable norms {self.freezable_norms}, "
+            f"captures clean activations {self.captures_clean_activations}"
+        )
+
+
+#: The detail record each target may carry; a target without configuration of its own carries ``None``.
+_TARGET_DETAIL_TYPES: dict[str, type] = {"features": FeatureTargetSupport}
 
 
 @dataclass(frozen=True)
 class InterventionSupport:
-    """Which configurations of ``INTERVENTION`` a backend can honour.
+    """Which configurations of ``INTERVENTION`` a provider can honour, on the axes venngram's ``Support`` names.
+
+    ``ops`` are the ops it executes, by venngram name (``every_registered_op`` instead declares every op with an
+    executor in :mod:`~interpretune.analysis.backends.ops`, including ops registered after the record was built),
+    ``targets`` what they may act on (``activation``, ``units``, ``features``, each with its detail record or ``None``),
+    ``position_scopes`` which positions a payload may edit, ``values`` the value sources a recipe may draw from,
+    ``bases`` the operand bases it honours (``None``: any) and ``of`` whether ops act on the forward value, the
+    gradient, or both. :func:`~interpretune.analysis.venngram.venngram_support` derives venngram's record from this one
+    directly.
+
+    **Which ops a provider can declare depends on when its edit is computed.** Every op but ``add`` reads the CURRENT
+    activation, and what they need is that the READ HAPPENS DURING THE FORWARD PASS: ``patch`` and ``reject`` compute
+    coordinates from the activation itself, so no parameter fixed when the spec was built can stand in for them. A
+    steering surface whose parameters are all static scalars can observe the activation and still express none of
+    them; it declares ``ops={"add"}``, and the declaration, not the implementation, is what the dispatcher consults,
+    so the refusal is by name rather than by trial. Stated as a capability rather than by naming a backend, because
+    core must not know which adapters exist. A provider whose hook computes its edit during the pass hands any op's
+    executor the region and the operand, so it declares ``every_registered_op``.
+
+    A payload naming several specs at one hook point applies them SEQUENTIALLY IN DECLARATION ORDER, each seeing the
+    previous spec's output: ``[add(v), reject(v)]`` is not ``[reject(v), add(v)]``, while two ``add`` specs commute.
+    Backends implement this by folding the spec tuple left to right, and adapters must preserve the declaration order
+    rather than grouping by op. A backend that cannot apply that order refuses the payload by name rather than
+    reordering it.
 
     Declaring the capability without one of these is a contract violation, not a legacy default: the absence of a
     declaration used to mean "assume last-token", which is exactly the silent narrowing the scope field was introduced
@@ -110,26 +202,84 @@ class InterventionSupport:
     """
 
     position_scopes: frozenset[PositionScope]
-    modes: frozenset[InterventionMode]
+    ops: frozenset[str] = frozenset()
+    every_registered_op: bool = False
+    targets: Mapping[str, Any] = field(default_factory=lambda: dict.fromkeys(INTERVENTION_TARGETS))
+    """Every target with no detail by default, as venngram's ``Support`` defaults to every target."""
+    values: frozenset[str] = frozenset(VALUE_SOURCES)
+    bases: frozenset[str] | None = None
+    of: frozenset[str] = frozenset({"value"})
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "position_scopes", frozenset(PositionScope(s) for s in self.position_scopes))
-        object.__setattr__(self, "modes", frozenset(InterventionMode(m) for m in self.modes))
+        from interpretune.analysis.backends.ops import normalize_op
+
+        object.__setattr__(self, "ops", frozenset(normalize_op(m) for m in self.ops))
+        object.__setattr__(self, "targets", dict(self.targets))
+        object.__setattr__(self, "values", frozenset(self.values))
+        object.__setattr__(self, "of", frozenset(self.of))
+        if self.bases is not None:
+            object.__setattr__(self, "bases", frozenset(self.bases))
         if not self.position_scopes:
             raise ValueError("InterventionSupport must declare at least one position scope")
-        if not self.modes:
-            raise ValueError("InterventionSupport must declare at least one intervention mode")
+        if self.every_registered_op and self.ops:
+            raise ValueError(
+                "InterventionSupport either lists its ops or declares every registered op, not both; listing some"
+                f" ({sorted(self.ops)}) beside every_registered_op would read as a narrowing it is not"
+            )
+        if not self.ops and not self.every_registered_op:
+            raise ValueError("InterventionSupport must declare at least one op (or every_registered_op)")
+        if not self.targets:
+            raise ValueError("InterventionSupport must declare at least one target")
+        for axis, declared, known in (
+            ("target", set(self.targets), INTERVENTION_TARGETS),
+            ("value source", set(self.values), VALUE_SOURCES),
+            ("flow (`of`)", set(self.of), FLOWS),
+        ):
+            if unknown := sorted(declared - set(known)):
+                raise ValueError(f"InterventionSupport names unknown {axis}s {unknown}; known: {list(known)}")
+        if not self.of:
+            raise ValueError("InterventionSupport must declare at least one flow (`of`)")
+        for target, detail in self.targets.items():
+            expected = _TARGET_DETAIL_TYPES.get(target)
+            if detail is not None and (expected is None or type(detail).__name__ != expected.__name__):
+                raise ValueError(
+                    f"the {target!r} target carries a {type(detail).__name__} detail; "
+                    + (f"its detail is a {expected.__name__} or None" if expected else "it takes no detail record")
+                )
+
+    @property
+    def declared_ops(self) -> frozenset[str]:
+        """The ops this provider honours now: its list, or every op registered with venngram that has an executor
+        here when it declares ``every_registered_op`` (read at each call, so a later registration is included)."""
+        if self.every_registered_op:
+            from interpretune.analysis.backends.ops import registered_ops
+
+            return registered_ops()
+        return self.ops
+
+    def target_detail(self, target: str) -> Any:
+        """The detail record of ``target``, or ``None`` when it carries none; a target not declared is refused."""
+        if target not in self.targets:
+            raise ValueError(f"the {target!r} target is not declared here; declared: {sorted(self.targets)}")
+        return self.targets[target]
 
     @classmethod
-    def every(cls) -> InterventionSupport:
-        """Every scope and every mode: for a backend whose hook can compute its edit from the activation it
-        sees, during the pass.
+    def every(cls, *, targets: Mapping[str, Any] | None = None) -> InterventionSupport:
+        """Every op and every hook scope: for a backend whose hook can compute its edit from the activation it sees,
+        during the pass.
 
         Seeing the activation is not the criterion, which is worth stating because it reads like one: a
         steering surface can receive the activation and still express only ``add``, if every parameter it
-        takes was fixed before the pass began. See :class:`InterventionMode`.
+        takes was fixed before the pass began. Such a provider declares every registered op, including ops registered
+        after it was built. ``targets`` defaults to every target with no detail: a hook reaches a whole activation, any
+        of its units, and an attached latent model's features at its sub-hook.
         """
-        return cls(position_scopes=frozenset(PositionScope), modes=frozenset(InterventionMode))
+        return cls(
+            every_registered_op=True,
+            position_scopes=PositionScope.hook_scopes(),
+            targets=dict.fromkeys(INTERVENTION_TARGETS) if targets is None else targets,
+        )
 
 
 @dataclass(frozen=True)
@@ -137,7 +287,7 @@ class LatentModelSupport:
     """How ``LATENT_MODELS`` runs on this backend.
 
     ``batched_hooks`` says whether ``fwd_w_hooks_batched`` fuses its hook configs into one execution
-    (nnsight's multi-invoke) or loops. It lives here rather than in :class:`ModelBackendCapability` because it
+    (nnsight's multi-invoke) or loops. It lives here rather than in :class:`Capability` because it
     is a property of HOW a method in that group runs, not a surface of its own: every latent-models
     backend implements the method, and a sequential loop is a valid implementation.
     """
@@ -149,9 +299,9 @@ class LatentModelSupport:
 class CaptureSupport:
     """Which vocabulary points a backend can capture on the model it wraps, as a declaration a case can check.
 
-    Capture is a base method every model backend has, so it is not a :class:`ModelBackendCapability` member: that enum
-    answers "is the surface implemented at all", and a backend that captures 181 of 298 points implements it. What
-    varies is WHICH points, so the shape is a support record beside :class:`InterventionSupport`, keyed by the
+    The record of :attr:`Capability.CAPTURE`. The member answers "is the surface implemented at all", and a backend
+    that captures 181 of 298 points implements it. What varies is WHICH points, so the shape is a support record
+    beside :class:`InterventionSupport`, keyed by the
     vocabulary's layer-free base spellings (``ln2.hook_out``, ``hook_resid_pre``, ``unembed.hook_in``) so one
     declaration covers every layer. ``uncapturable`` carries the reason per base, because a point a backend cannot
     capture must be refused by name with that reason rather than returned as a cache that is silently short.
@@ -248,77 +398,6 @@ class CaptureSupport:
         return (
             f"captures {len(self.capturable)} of {self.inventory_size} base points on {self.architecture} "
             f"({self.n_layers} blocks); cannot capture: {gaps}"
-        )
-
-
-class AnalysisBackendCapability(Enum):
-    """The gated method groups of an analysis backend, layered above a model execution backend.
-
-    Same rule as :class:`ModelBackendCapability`: a member names a ``Supports*`` protocol and answers whether it is
-    implemented; its configurations live in the record on that protocol (:class:`AttributionGraphSupport`,
-    :class:`FeatureInterventionSupport`). ``FEATURE_INTERVENTION`` acts on a replacement model's latent feature
-    activations; the model-level ``ACTIVATION_INTERVENTION`` acts on an activation at any vocabulary point or latent
-    sub-hook.
-    """
-
-    ATTRIBUTION_GRAPH = "attribution_graph"
-    """Module exposes attribution graph analysis support via an attached analysis backend."""
-
-    HEAD_ATTRIBUTION = "head_attribution"
-    """Module exposes credit at the level of attention heads via an attached analysis backend."""
-
-    FEATURE_INTERVENTION = "feature_intervention"
-    """Module exposes feature intervention support via an attached analysis backend."""
-
-
-@dataclass(frozen=True)
-class FeatureInterventionSupport:
-    """Which configurations of the feature-intervention surface an analysis backend honours.
-
-    The settings ``resolve_feature_intervention_settings`` reads are the configuration space; the record is what
-    lets a caller's settings be refused by name at the seam instead of at the first tensor op that disagrees.
-    """
-
-    value_sources: frozenset[str]
-    """Accepted ``value_source`` spellings (``"constant"`` requires an explicit value)."""
-    constrainable_layers: bool = True
-    """Whether ``constrained_layers`` can restrict the intervention to a layer subset."""
-    returns_activations: bool = False
-    """Whether the intervened activations can be returned beside the logits."""
-    freezable_norms: bool = False
-    """Whether ``freeze_norms`` can hold every residual-stream norm's denominator at its clean value."""
-    captures_clean_activations: bool = False
-    """Whether ``capture_feature_activations`` returns the clean feature activations, so a value relative to one
-    (venngram's feature ``add`` and ``scale``) can be computed before intervening."""
-
-    def __post_init__(self) -> None:
-        if not self.value_sources:
-            raise ValueError("a feature-intervention support record must accept at least one value source")
-
-    def refusal(self, settings: Mapping[str, Any]) -> str | None:
-        """Why ``settings`` cannot be honoured here, or ``None`` when every configuration they name is declared."""
-        source = settings.get("value_source")
-        if source not in self.value_sources:
-            return f"value_source {source!r} is not honoured here; declared: {sorted(self.value_sources)}"
-        if source == "constant" and settings.get("value") is None:
-            return "value_source 'constant' needs an explicit intervention value, and none was given"
-        if settings.get("constrained_layers") is not None and not self.constrainable_layers:
-            return (
-                "constrained_layers was given, and this backend cannot restrict a feature intervention to a"
-                " layer subset"
-            )
-        if settings.get("return_activations") and not self.returns_activations:
-            return "return_activations was requested, and this backend cannot return the intervened activations"
-        if settings.get("freeze_norms") and not self.freezable_norms:
-            return "freeze_norms was requested, and this backend cannot hold norm denominators at their clean values"
-        return None
-
-    def describe(self) -> str:
-        """One line for a card or a report."""
-        return (
-            f"value sources {sorted(self.value_sources)}, constrainable layers {self.constrainable_layers}, "
-            f"returns activations {self.returns_activations}, freezable norms {self.freezable_norms}, "
-            f"captures clean activations {self.captures_clean_activations}"
         )
 
 
@@ -421,84 +500,133 @@ class AttributionGraphSupport:
         )
 
 
-Capability: TypeAlias = ModelBackendCapability | AnalysisBackendCapability
-
-
 @dataclass(frozen=True)
 class ModuleCapabilities:
-    """Execution and analysis capabilities exposed by a module, with each surface's support record.
+    """The capabilities a module's components provide, each with its providers and its support record.
 
-    Each support record is present iff its surface is declared, on either level: ``intervention`` with
-    ``ACTIVATION_INTERVENTION``, ``latent_models`` with ``LATENT_MODELS``, ``attribution_graph`` with
-    ``ATTRIBUTION_GRAPH``, ``feature_intervention`` with ``FEATURE_INTERVENTION``. The constructor enforces that, so
-    a consumer rendering this (the adapter card, ``adapter_info``, a conformance report) can rely on the record
-    being there when the surface is.
+    ``providers`` maps each declared capability to the components providing it, named by slot (``model_backend``,
+    ``analysis_backend``). ``intervention`` keeps one record per provider, because two components providing one target
+    is legitimate (a TransformerLens backend reaches an SAE's features at its sub-hook, and circuit-tracer's replacement
+    model reaches its transcoders' features): :meth:`intervention_for` resolves a target to its provider and refuses an
+    unqualified request with two. Every other surface has one provider, and its record is present iff it is declared:
+    ``latent_models`` with ``LATENT_MODELS``, ``attribution_graph`` with ``ATTRIBUTION_GRAPH``. The constructor enforces
+    that, so a consumer rendering this (the adapter card, ``adapter_info``, a conformance report) can rely on the record
+    being there when the surface is. ``capture`` is the one record that may be absent while declared: it is derived from
+    the model at hand, and a module without a model yet has none.
     """
 
-    model: frozenset[ModelBackendCapability]
-    analysis: frozenset[AnalysisBackendCapability]
-    intervention: InterventionSupport | None = None
+    providers: Mapping[Capability, tuple[str, ...]]
+    intervention: Mapping[str, InterventionSupport] = field(default_factory=dict)
+    """Each intervention provider's record, keyed by its slot."""
     latent_models: LatentModelSupport | None = None
     capture: CaptureSupport | None = None
-    """What the attached model backend declares it can capture on this module's model; ``None`` only when no model
-    backend is attached or the backend predates the declaration (a conformance case fails the latter by name)."""
+    """What the capture provider declares it can capture on this module's model; ``None`` when no provider is
+    attached, the module has no model yet, or the provider predates the declaration (a conformance case fails the
+    last by name)."""
     attribution_graph: AttributionGraphSupport | None = None
-    feature_intervention: FeatureInterventionSupport | None = None
+    requires: Mapping[str, frozenset[Capability]] = field(default_factory=dict)
+    """What each component needs another component to provide, as declared (already checked to be met)."""
 
     def __post_init__(self) -> None:
-        for capability, record, name in (
-            (ModelBackendCapability.ACTIVATION_INTERVENTION, self.intervention, "intervention"),
-            (ModelBackendCapability.LATENT_MODELS, self.latent_models, "latent_models"),
-            (AnalysisBackendCapability.ATTRIBUTION_GRAPH, self.attribution_graph, "attribution_graph"),
-            (AnalysisBackendCapability.FEATURE_INTERVENTION, self.feature_intervention, "feature_intervention"),
-        ):
-            declared = capability in self.model or capability in self.analysis
-            if declared and record is None:
+        object.__setattr__(self, "providers", {cap: tuple(names) for cap, names in self.providers.items()})
+        object.__setattr__(self, "intervention", dict(self.intervention))
+        for capability, names in self.providers.items():
+            if len(names) > 1 and capability is not Capability.INTERVENTION:
                 raise ValueError(
-                    f"{capability.name} is declared but no {name} support record accompanies it; a backend "
+                    f"{capability.name} is provided by {list(names)}; a module takes every surface but INTERVENTION"
+                    " from one component, since its record would otherwise be ambiguous"
+                )
+        if set(self.intervention) != set(self.providers.get(Capability.INTERVENTION, ())):
+            raise ValueError(
+                f"INTERVENTION is provided by {list(self.providers.get(Capability.INTERVENTION, ()))} and support"
+                f" records accompany {sorted(self.intervention)}; a component claiming the surface must say which"
+                " configurations of it are supported"
+            )
+        for capability, record, name in (
+            (Capability.LATENT_MODELS, self.latent_models, "latent_models"),
+            (Capability.ATTRIBUTION_GRAPH, self.attribution_graph, "attribution_graph"),
+            (Capability.CAPTURE, self.capture, "capture"),
+        ):
+            declared = capability in self.providers
+            if declared and record is None and capability is not Capability.CAPTURE:
+                raise ValueError(
+                    f"{capability.name} is declared but no {name} support record accompanies it; a component "
                     "claiming the surface must say which configurations of it are supported"
                 )
             if record is not None and not declared:
                 raise ValueError(f"a {name} support record is present but {capability.name} is not declared")
 
     @property
-    def all(self) -> frozenset[Capability]:
-        """Model and analysis capabilities as one set, for checks that do not care which layer supplies them."""
-        return frozenset({*self.model, *self.analysis})
+    def declared(self) -> frozenset[Capability]:
+        """Every capability some component provides."""
+        return frozenset(self.providers)
 
     @property
     def values(self) -> frozenset[str]:
         """The capability names as plain strings, for logging and serialization."""
-        return frozenset(cap.value for cap in self.all)
+        return frozenset(cap.value for cap in self.declared)
 
     def supports(self, capability: Capability) -> bool:
-        """Whether ``capability`` is present, checked against the set its TYPE identifies.
+        """Whether some component provides ``capability``, compared by value (see
+        :func:`get_module_capabilities`)."""
+        return normalize_backend_capability(capability).value in self.values
 
-        A model capability is looked up only among model capabilities and an analysis capability only among analysis
-        ones, so the two namespaces cannot satisfy each other by coincidence.
+    def target_providers(self, target: str) -> tuple[str, ...]:
+        """The components whose intervention record declares ``target``, in slot order."""
+        return tuple(name for name, record in self.intervention.items() if target in record.targets)
+
+    def intervention_for(self, target: str, *, provider: str | None = None) -> InterventionSupport:
+        """The intervention record of the component providing ``target``, refused by name when it is ambiguous.
+
+        An op that needs one provider of a target two components reach names the path it uses (``provider``); an
+        unqualified request is refused rather than resolved by precedence, since either provider returns plausible
+        results and a silent choice cannot be detected from them.
         """
-        if isinstance(capability, ModelBackendCapability):
-            return capability in self.model
-        return capability in self.analysis
+        if target not in INTERVENTION_TARGETS:
+            raise ValueError(f"{target!r} is not an intervention target; known: {list(INTERVENTION_TARGETS)}")
+        found = self.target_providers(target)
+        if provider is not None:
+            if provider not in found:
+                raise ValueError(
+                    f"the {target!r} intervention target is not provided by {provider!r}; providers: {list(found)}"
+                )
+            return self.intervention[provider]
+        if not found:
+            raise ValueError(
+                f"no component of this module provides the {target!r} intervention target"
+                f" (intervention providers: {sorted(self.intervention) or 'none'})"
+            )
+        if len(found) > 1:
+            raise ValueError(
+                f"the {target!r} intervention target is provided by {list(found)}; name the provider the request uses"
+                " rather than relying on a precedence between them"
+            )
+        return self.intervention[next(iter(found))]
+
+    def target_detail(self, target: str, *, provider: str | None = None) -> Any:
+        """The detail record of ``target`` at its provider (see :meth:`intervention_for`)."""
+        return self.intervention_for(target, provider=provider).target_detail(target)
 
 
 #: Spellings that once named a capability and no longer do, each with the spelling that replaced it. Refused by
 #: name rather than translated: a caller carrying the old spelling has a manifest or a config to update, and a
 #: silent translation would leave it carrying a name nothing else in the vocabulary recognizes.
 _RETIRED_CAPABILITY_SPELLINGS: dict[str, str] = {
-    "intervention": ModelBackendCapability.ACTIVATION_INTERVENTION.value,
-    "attribution": AnalysisBackendCapability.ATTRIBUTION_GRAPH.value,
+    "activation_intervention": Capability.INTERVENTION.value,
+    "feature_intervention": Capability.INTERVENTION.value,
+    "attribution": Capability.ATTRIBUTION_GRAPH.value,
 }
 
 
 def normalize_backend_capability(capability: Any) -> Capability:
-    """Normalize capability-like values to the local execution or analysis capability enums.
+    """Normalize a capability-like value to a :class:`Capability` member.
 
-    Accepts a member of either enum, a member's value, or a dotted spelling whose last segment is a member name
-    (``"ModelBackendCapability.GRADIENTS"``). A retired spelling is refused by name with its replacement; an unknown one
-    is refused with both vocabularies listed.
+    Accepts a member, a member's value, or a dotted spelling whose last segment is a member name
+    (``"Capability.GRADIENTS"``). Compared by value, so a member of a second load of this module normalizes to this
+    one's. A retired spelling is refused by name with its replacement; an unknown one is refused with the vocabulary
+    listed.
     """
-    if isinstance(capability, (ModelBackendCapability, AnalysisBackendCapability)):
+    if isinstance(capability, Capability):
         return capability
 
     raw_value = getattr(capability, "value", capability)
@@ -510,15 +638,10 @@ def normalize_backend_capability(capability: Any) -> Capability:
             f" {_RETIRED_CAPABILITY_SPELLINGS[candidate]!r}. Update the declaration rather than relying on a"
             " translation."
         )
-    for enum_cls in (ModelBackendCapability, AnalysisBackendCapability):
-        try:
-            return enum_cls(candidate)
-        except ValueError:
-            continue
-    raise ValueError(
-        f"{spelling!r} is not a capability: model-level spellings are {[m.value for m in ModelBackendCapability]},"
-        f" analysis-level spellings are {[m.value for m in AnalysisBackendCapability]}"
-    )
+    try:
+        return Capability(candidate)
+    except ValueError:
+        raise ValueError(f"{spelling!r} is not a capability: spellings are {[m.value for m in Capability]}") from None
 
 
 def get_model_backend(module: Any) -> ModelBackend | None:
@@ -612,88 +735,82 @@ def require_analysis_backend(module: Any) -> AnalysisBackend:
     return backend
 
 
+def _components(module: Any) -> dict[str, Any]:
+    """The module's attached components by slot (:data:`COMPONENTS`), omitting an empty slot."""
+    found = {"model_backend": get_model_backend(module), "analysis_backend": get_analysis_backend(module)}
+    return {name: component for name, component in found.items() if component is not None}
+
+
+def _declared(component: Any, attr: str) -> frozenset[Capability]:
+    """A component's ``capabilities`` or ``requires`` set, normalized (a component that declares no ``requires``
+    requires nothing)."""
+    raw = getattr(component, attr, None) if attr == "capabilities" else getattr(component, attr, frozenset())
+    return frozenset(normalize_backend_capability(c) for c in (raw or ()))
+
+
 def get_module_capabilities(module: Any) -> ModuleCapabilities:
-    """Aggregate execution and analysis capabilities exposed by a module."""
+    """Aggregate the capabilities a module's components provide, and refuse a requirement nothing meets.
 
-    model_capabilities: set[ModelBackendCapability] = set()
-    analysis_capabilities: set[AnalysisBackendCapability] = set()
-    backend = get_model_backend(module)
-
-    if backend is not None and hasattr(backend, "capabilities"):
-        model_capabilities.update(
-            capability
-            for capability in (normalize_backend_capability(raw_capability) for raw_capability in backend.capabilities)
-            if isinstance(capability, ModelBackendCapability)
-        )
-
-    analysis_backend = get_analysis_backend(module)
-    if analysis_backend is not None and hasattr(analysis_backend, "capabilities"):
-        analysis_capabilities.update(
-            capability
-            for capability in (
-                normalize_backend_capability(raw_capability) for raw_capability in analysis_backend.capabilities
+    Each component (:data:`COMPONENTS`) declares ``capabilities``, a support record per capability, and ``requires``:
+    the capabilities it needs ANOTHER component of the composition to provide (circuit-tracer's analysis backend builds
+    graphs on what the model backend computes). A requirement no other component provides is refused here, naming the
+    component and what is missing, because the alternative is a surface that is declared and cannot run.
+    """
+    components = _components(module)
+    declared = {name: _declared(component, "capabilities") for name, component in components.items()}
+    requires = {name: _declared(component, "requires") for name, component in components.items()}
+    for name, needed in requires.items():
+        elsewhere = {cap for other, caps in declared.items() if other != name for cap in caps}
+        if missing := sorted(cap.name for cap in needed - elsewhere):
+            raise ValueError(
+                f"the {name} ({type(components[name]).__name__}) of {type(module).__name__} requires {missing} from"
+                f" another component, and none provides it (provided elsewhere: {sorted(c.name for c in elsewhere)});"
+                " compose it with a component that does"
             )
-            if isinstance(capability, AnalysisBackendCapability)
-        )
+    providers: dict[Capability, tuple[str, ...]] = {}
+    for name, caps in declared.items():
+        for cap in sorted(caps, key=lambda c: c.value):
+            providers[cap] = (*providers.get(cap, ()), name)
 
-    module_declared = getattr(module, "analysis_capabilities", None)
-    if module_declared and analysis_backend is None:
-        # A capability declared on the module alone has no backend to carry its support record, and a record is
-        # what makes the declaration checkable; refused by name rather than aggregated as a bare set.
-        raise ValueError(
-            f"{type(module).__name__} declares analysis capabilities"
-            f" {sorted(str(getattr(c, 'value', c)) for c in module_declared)}"
-            " on the module with no analysis backend attached; attach the backend that implements them, which"
-            " carries their support records"
-        )
+    def _record(capability: Capability, attr: str) -> Any:
+        names = providers.get(capability, ())
+        return _support_record(components[names[0]], attr) if names else None
 
+    capture_names = providers.get(Capability.CAPTURE, ())
     return ModuleCapabilities(
-        model=frozenset(model_capabilities),
-        analysis=frozenset(analysis_capabilities),
-        intervention=_support_record(
-            backend, ModelBackendCapability.ACTIVATION_INTERVENTION, model_capabilities, "intervention_support"
-        ),
-        latent_models=_support_record(
-            backend, ModelBackendCapability.LATENT_MODELS, model_capabilities, "latent_model_support"
-        ),
-        capture=_capture_record(backend, module),
-        attribution_graph=_support_record(
-            analysis_backend,
-            AnalysisBackendCapability.ATTRIBUTION_GRAPH,
-            analysis_capabilities,
-            "attribution_graph_support",
-        ),
-        feature_intervention=_support_record(
-            analysis_backend,
-            AnalysisBackendCapability.FEATURE_INTERVENTION,
-            analysis_capabilities,
-            "feature_intervention_support",
-        ),
+        providers=providers,
+        intervention={
+            name: _support_record(components[name], "intervention_support")
+            for name in providers.get(Capability.INTERVENTION, ())
+            if _support_record(components[name], "intervention_support") is not None
+        },
+        latent_models=_record(Capability.LATENT_MODELS, "latent_model_support"),
+        capture=_capture_record(components[capture_names[0]], module) if capture_names else None,
+        attribution_graph=_record(Capability.ATTRIBUTION_GRAPH, "attribution_graph_support"),
+        requires={name: needed for name, needed in requires.items() if needed},
     )
 
 
 def _capture_record(backend: Any, module: Any) -> CaptureSupport | None:
-    """The backend's capture declaration for ``module.model``, or ``None`` when the backend has none to give.
+    """The capture provider's declaration for ``module.model``, or ``None`` when it has none to give.
 
     Capturability is a property of the backend AND the model it wraps (a TransformerLens backend captures different
     points on a bridge than on a HookedTransformer), so the declaration is a method taking the model rather than a
-    property. A backend without the method is not refused here, because this aggregation feeds the adapter card and
+    property. A provider without the method is not refused here, because this aggregation feeds the adapter card and
     ``adapter_info`` on a bare install; the conformance suite is where its absence fails by name.
     """
-    declare = getattr(backend, "capture_support", None) if backend is not None else None
+    declare = getattr(backend, "capture_support", None)
     model = getattr(module, "model", None)
     if declare is None or model is None:
         return None
     return declare(model)
 
 
-def _support_record(backend: Any, capability: Capability, declared: set[Any], attr: str) -> Any:
-    """The support record a backend attaches for ``capability``, or ``None`` when it does not declare it.
+def _support_record(component: Any, attr: str) -> Any:
+    """The support record a component attaches under ``attr``, or ``None`` when it attaches none.
 
-    Read with ``getattr`` rather than through the protocol so a backend that declares the surface and
+    Read with ``getattr`` rather than through the protocol so a component that declares the surface and
     forgot the record fails in :class:`ModuleCapabilities`' invariant with a message naming the record,
     instead of as an ``AttributeError`` here.
     """
-    if capability not in declared or backend is None:
-        return None
-    return getattr(backend, attr, None)
+    return getattr(component, attr, None)

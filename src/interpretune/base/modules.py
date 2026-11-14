@@ -6,6 +6,7 @@ from interpretune.config import ITConfig
 from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
 from interpretune.tuning.interventions import attach_configured_interventions, intervention_roles
 from interpretune.tuning.latents import latent_model_roles
+from interpretune.tuning.weights import weight_edit_roles
 from interpretune.tuning.views import attach_tunable_view
 from interpretune.utils import MisconfigurationException
 
@@ -145,9 +146,11 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
 
         Cooperative: mixins add theirs to ``super()``'s. This base declares the roles of the latent models and
         interventions attached to it (``latent:<name>`` and ``intervention:<name>``, or ``instrument`` for a frozen
-        one: :mod:`interpretune.tuning.latents`, :mod:`interpretune.tuning.interventions`).
+        one: :mod:`interpretune.tuning.latents`, :mod:`interpretune.tuning.interventions`), and of the operands of the
+        weight edits applied to its tensors (``adapter:<name>``, ``fitted`` or ``instrument``:
+        :mod:`interpretune.tuning.weights`).
         """
-        return {**latent_model_roles(self), **intervention_roles(self)}
+        return {**latent_model_roles(self), **intervention_roles(self), **weight_edit_roles(self)}
 
     def model_init(self) -> None:
         """Optionally load a custom model ."""

@@ -42,11 +42,11 @@ from typing import Any
 
 import torch
 
-from interpretune.analysis.backends.capabilities import InterventionMode, PositionScope
+from interpretune.analysis.backends.capabilities import PositionScope
 from interpretune.analysis.backends.interventions import (
     InterventionSpec,
     _coerce_shared_intervention_specs,
-    normalize_intervention_mode,
+    normalize_op,
     normalize_position_scope,
 )
 from interpretune.analysis.venngram.apply import op_refusal, split_site
@@ -56,14 +56,15 @@ from interpretune.utils import MisconfigurationException
 #: Interpretune position scopes by their venngram token-scope names, the inverse of the apply path's.
 _TOKENS = {PositionScope.ALL_POSITIONS: "all", PositionScope.LAST_TOKEN: "last"}
 
-#: The operand ranks each operand-bearing mode's op has a kind for: a vector, or a stack of them on a leading axis.
+#: The operand ranks each operand-bearing op has a kind for: a vector, or a stack of them on a leading axis. An op
+#: outside this table (``replace_with_error``, an op a collection registers) has no writer here and is refused by name.
 _OPERAND_RANKS = {
-    InterventionMode.ADD: (1,),
-    InterventionMode.REPLACE: (1,),
-    InterventionMode.PROJECT: (1,),
-    InterventionMode.REJECT: (1, 2),
-    InterventionMode.PATCH: (2,),
-    InterventionMode.CLAMP: (1, 2),
+    "add": (1,),
+    "replace": (1,),
+    "project": (1,),
+    "reject": (1, 2),
+    "patch": (2,),
+    "clamp": (1, 2),
 }
 
 _NOT_SET_NAME = re.compile(r"[^A-Za-z0-9_-]")
@@ -79,13 +80,13 @@ class _BookWriter:
         self.operands: dict[str, torch.Tensor] = {}
         self.stages: list[dict[str, Any]] = []
 
-    def _operand(self, tensor: torch.Tensor, mode: InterventionMode, where: str) -> str:
-        if tensor.ndim not in _OPERAND_RANKS[mode]:
+    def _operand(self, tensor: torch.Tensor, op: str, where: str) -> str:
+        if tensor.ndim not in _OPERAND_RANKS[op]:
             raise MisconfigurationException(
-                f"{where}: venngram's `{mode.value}` takes an operand of rank {_OPERAND_RANKS[mode]}, not a tensor of"
+                f"{where}: venngram's `{op}` takes an operand of rank {_OPERAND_RANKS[op]}, not a tensor of"
                 f" shape {tuple(tensor.shape)}"
             )
-        if mode is InterventionMode.PATCH and tensor.shape[0] != 2:
+        if op == "patch" and tensor.shape[0] != 2:
             raise MisconfigurationException(f"{where}: `patch` needs a pair, not a shape {tuple(tensor.shape)} stack")
         if self.basis is None:
             raise MisconfigurationException(
@@ -109,21 +110,20 @@ class _BookWriter:
 
     def _scale_or_add(self, spec: InterventionSpec, tensor: torch.Tensor, site: str, layer: int, where: str):
         """A scale or add op; returns it and the stage site it needs (a unit set's stage names no layer)."""
-        mode = normalize_intervention_mode(spec.mode)
+        name = normalize_op(spec.op)
         layered = f"blocks.{layer}.{site}"
-        per_unit = mode is InterventionMode.SCALE or site in self.unit_sites
+        per_unit = name == "scale" or site in self.unit_sites
         if tensor.ndim > 1:
             raise MisconfigurationException(
-                f"{where}: venngram's `{mode.value}` takes a dose or a vector, not a tensor of shape"
-                f" {tuple(tensor.shape)}"
+                f"{where}: venngram's `{name}` takes a dose or a vector, not a tensor of shape {tuple(tensor.shape)}"
             )
         constant = tensor.ndim == 0 or (per_unit and bool((tensor == tensor.flatten()[0]).all()))
         if constant:
-            return self._broadcast_op(mode.value, tensor, spec.scale_factor), layered
+            return self._broadcast_op(name, tensor, spec.scale_factor), layered
         if per_unit:
-            fill = 1.0 if mode is InterventionMode.SCALE else 0.0
-            return self._unit_op(mode.value, site, layer, tensor * spec.scale_factor, fill), site
-        op: dict[str, Any] = {"op": mode.value, "operand": self._operand(tensor, mode, where)}
+            fill = 1.0 if name == "scale" else 0.0
+            return self._unit_op(name, site, layer, tensor * spec.scale_factor, fill), site
+        op: dict[str, Any] = {"op": name, "operand": self._operand(tensor, name, where)}
         if spec.scale_factor != 1.0:
             op["value"] = {"dose": spec.scale_factor}
         return op, layered
@@ -131,38 +131,38 @@ class _BookWriter:
     def _replace_op(self, tensor: torch.Tensor, where: str) -> dict[str, Any]:
         if tensor.ndim == 0:
             return self._broadcast_op("replace", tensor, 1.0)  # `replace` ignores `scale_factor`
-        return {"op": "replace", "operand": self._operand(tensor, InterventionMode.REPLACE, where)}
+        return {"op": "replace", "operand": self._operand(tensor, "replace", where)}
 
     def _span_op(self, spec: InterventionSpec, tensor: torch.Tensor, where: str) -> dict[str, Any]:
         """A ``project``, ``reject``, ``patch`` or ``clamp`` op, all of which act through an operand."""
-        mode = normalize_intervention_mode(spec.mode)
-        if mode in (InterventionMode.PROJECT, InterventionMode.PATCH) and spec.scale_factor != 1.0:
-            raise MisconfigurationException(f"{where}: venngram's `{mode.value}` carries no `scale_factor`")
-        if mode is InterventionMode.PROJECT and not spec.use_intervention_tensor_as_basis:
+        name = normalize_op(spec.op)
+        if name in ("project", "patch") and spec.scale_factor != 1.0:
+            raise MisconfigurationException(f"{where}: venngram's `{name}` carries no `scale_factor`")
+        if name == "project" and not spec.use_intervention_tensor_as_basis:
             raise MisconfigurationException(
                 f"{where}: venngram's `project` projects onto its operand; projecting the operand onto the activation"
                 " (`use_intervention_tensor_as_basis=False`) has no spelling"
             )
         params: dict[str, Any] = {}
-        if mode is InterventionMode.REJECT:
-            if not 0.0 <= spec.scale_factor <= 1.0:
+        if name == "reject":
+            if spec.scale_factor < 0.0:  # above 1 over-rejects, which venngram's `fraction` admits
                 raise MisconfigurationException(
-                    f"{where}: venngram's `reject` takes a `fraction` in [0, 1], not {spec.scale_factor}"
+                    f"{where}: venngram's `reject` takes a non-negative `fraction`, not {spec.scale_factor}"
                 )
             if spec.scale_factor != 1.0:
                 params["fraction"] = spec.scale_factor
-        if mode is InterventionMode.CLAMP:
+        if name == "clamp":
             params = {k: v for k, v in (("min", spec.clamp_min), ("max", spec.clamp_max)) if v is not None}
             if not params:
                 raise MisconfigurationException(f"{where}: a `clamp` with neither bound is the identity")
-        op: dict[str, Any] = {"op": mode.value, "operand": self._operand(tensor, mode, where)}
+        op: dict[str, Any] = {"op": name, "operand": self._operand(tensor, name, where)}
         if params:
             op["params"] = params
         return op
 
     def add_spec(self, layer: int, site: str, spec: InterventionSpec, where: str) -> None:
         """Write ``spec`` as one op, in the stage before it when it shares that stage's site and token scope."""
-        mode = normalize_intervention_mode(spec.mode)
+        name = normalize_op(spec.op)
         scope = normalize_position_scope(spec.position_scope)
         if scope not in _TOKENS:
             raise MisconfigurationException(f"{where}: position scope `{scope.value}` has no venngram token scope")
@@ -170,12 +170,16 @@ class _BookWriter:
         if tensor.numel() == 0:
             raise MisconfigurationException(f"{where}: an empty tensor has nothing to write")
         stage_site = f"blocks.{layer}.{site}"
-        if mode in (InterventionMode.ADD, InterventionMode.SCALE):
+        if name in ("add", "scale"):
             op, stage_site = self._scale_or_add(spec, tensor, site, layer, where)
-        elif mode is InterventionMode.REPLACE:
+        elif name == "replace":
             op = self._replace_op(tensor, where)
-        else:
+        elif name in _OPERAND_RANKS:
             op = self._span_op(spec, tensor, where)
+        else:
+            raise MisconfigurationException(
+                f"{where}: op `{name}` has no writer here (written: {sorted({'scale', *_OPERAND_RANKS})})"
+            )
         tokens = _TOKENS[scope]
         if self.stages and (self.stages[-1]["site"], self.stages[-1]["tokens"]) == (stage_site, tokens):
             self.stages[-1]["ops"].append(op)

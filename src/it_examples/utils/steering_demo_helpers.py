@@ -78,7 +78,10 @@ def pole_swap_prediction(
 
 def final_norm_output(module: Any, batch: Any) -> torch.Tensor:
     """The final norm's output at the last position (the unembed's input), from one forward pass, on CPU."""
-    hf = getattr(module.model, "_model", None) or getattr(module.model, "_module", None)
+    # Envoy attribute access is typed as Tensor | Module; the isinstance check is the
+    # runtime discrimination, and hf stays Any so submodule reads do not fight it.
+    _hf = getattr(module.model, "_module", None)
+    hf: Any = _hf if isinstance(_hf, torch.nn.Module) else None
     if hf is not None:
         target = hf.model.norm
 
@@ -120,8 +123,9 @@ def capture_site_gap_gradient(module: Any, batch: Any, layer: int, target_a_id: 
     that produces it: the HF decoder layer under an nnsight model, the TransformerLens hook point otherwise. The
     captured activation is made a graph leaf so autograd reaches it whatever the parameters' grad state.
     """
-    # nnsight wraps the HF module (as `_model`, `_module` on older releases); TL-shaped models carry `blocks`.
-    hf = getattr(module.model, "_model", None) or getattr(module.model, "_module", None)
+    # nnsight wraps the HF module as `_module`; TL-shaped models carry `blocks`.
+    _hf = getattr(module.model, "_module", None)
+    hf: Any = _hf if isinstance(_hf, torch.nn.Module) else None
     forward: Callable[[], torch.Tensor]
     if hf is not None:
         target = hf.model.layers[layer]
@@ -169,7 +173,7 @@ def gap_after_add(
     target_a_id: int,
     target_b_id: int,
 ) -> float:
-    """The target gap after an ``add``-mode intervention of ``scale * tensor`` at ``site``."""
+    """The target gap after an ``add`` intervention of ``scale * tensor`` at ``site``."""
     module.analysis_cfg = AnalysisCfg(target_op=it.model_fwd_intervention, ignore_manual=True, save_tokens=False)
     init_analysis_cfgs(module, [module.analysis_cfg])
     probe = AnalysisBatch(
@@ -178,7 +182,7 @@ def gap_after_add(
         concept_group_a_token_ids=[target_a_id],
         concept_group_b_token_ids=[target_b_id],
         intervention_hook_pattern=site,
-        intervention_mode="add",
+        intervention_op="add",
         intervention_tensor=tensor,
         intervention_scale_factor=scale,
     )

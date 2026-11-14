@@ -18,14 +18,19 @@ from torch import nn
 from interpretune.adapters.circuit_tracer import BaseCircuitTracerModule, CircuitTracerAttributeMixin
 from interpretune.adapters.circuit_tracer.backends import DEFAULT_CT_ANALYSIS_BACKEND
 from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig
-from interpretune.analysis.backends import AnalysisBackendCapability, SupportsHeadAttribution
+from interpretune.analysis.backends import Capability, SupportsHeadAttribution
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.ops.bundled.circuit_tracer.ct_ops import (
     compute_attribution_graph_impl,
     head_conductance_impl,
     head_loadings_impl,
 )
-from tests.core.circuit_tracer_toy import TOY_PROMPT, only_token_zero_special, tiny_gemma2_replacement_model
+from tests.core.circuit_tracer_toy import (
+    TOY_PROMPT,
+    BaseModelBackendStandIn,
+    only_token_zero_special,
+    tiny_gemma2_replacement_model,
+)
 
 BACKEND = DEFAULT_CT_ANALYSIS_BACKEND
 FROZEN = {"freeze_attention": True, "freeze_norms": True}
@@ -42,6 +47,7 @@ def _ct_module(replacement_model, **cfg) -> _CTModule:
     object.__setattr__(module, "it_cfg", SimpleNamespace(circuit_tracer_cfg=CircuitTracerConfig(**cfg)))
     object.__setattr__(module, "_replacement_model", replacement_model)
     object.__setattr__(module, "_analysis_backend", BACKEND)
+    object.__setattr__(module, "_model_backend", BaseModelBackendStandIn())
     object.__setattr__(module, "attribution_graphs", [])
     return module
 
@@ -99,7 +105,7 @@ class TestHeadLoadings:
         return head_loadings_impl(_ct_module(toy), AnalysisBatch(), None, 0, prompt=TOY_PROMPT, head_target=target)
 
     def test_the_backend_declares_it(self):
-        assert AnalysisBackendCapability.HEAD_ATTRIBUTION in BACKEND.capabilities
+        assert Capability.HEAD_ATTRIBUTION in BACKEND.capabilities
         assert isinstance(BACKEND, SupportsHeadAttribution)
 
     def test_every_layer_is_reported_by_default(self, toy, report):
@@ -180,7 +186,7 @@ class TestHeadConductance:
     def test_the_change_is_the_models_own(self, toy, weights, report):
         with torch.no_grad():
             measured = [
-                float(toy._model(input_ids=ids[None]).logits[0, -1] @ weights) for ids in (TOY_PROMPT, self.SWAPPED)
+                float(toy._module(input_ids=ids[None]).logits[0, -1] @ weights) for ids in (TOY_PROMPT, self.SWAPPED)
             ]
         assert [report.head_conductance_t_from, report.head_conductance_t_to] == pytest.approx(measured, rel=1e-5)
         assert measured[0] != pytest.approx(measured[1], abs=1e-2)
@@ -256,7 +262,7 @@ class TestTheTopLevelOps:
         """The op's own check, for a backend the capability gate cannot catch because it declares the
         capability."""
         declared_only = SimpleNamespace(
-            capabilities=frozenset({AnalysisBackendCapability.HEAD_ATTRIBUTION}), supports=lambda capability: True
+            capabilities=frozenset({Capability.HEAD_ATTRIBUTION}), supports=lambda capability: True
         )
         module = _ct_module(toy)
         object.__setattr__(module, "_analysis_backend", declared_only)
@@ -271,7 +277,7 @@ class TestTheTopLevelOps:
         class _NoHeads(type(BACKEND)):
             @property
             def capabilities(self):
-                return frozenset({AnalysisBackendCapability.ATTRIBUTION_GRAPH})
+                return frozenset({Capability.ATTRIBUTION_GRAPH})
 
         module = _ct_module(toy)
         object.__setattr__(module, "_analysis_backend", _NoHeads())

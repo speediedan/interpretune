@@ -89,7 +89,7 @@ use. `embed` and `store` remain for the non-lens bases.
 
 ## Steering and the folding default
 
-The intervention modes (`patch`, `clamp`, `reject` and the rest) are
+The intervention ops (`patch`, `clamp`, `reject` and the rest) are
 basis-agnostic: they apply whatever directions they are given, so the basis is
 chosen where the directions are built. `jlens_concept_probe` and
 `jlens_sparse_inventory` fold by default (`jlens_apply_final_norm`);

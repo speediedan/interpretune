@@ -1,7 +1,7 @@
 """Tests for analysis backend components.
 
 Covers:
-- ModelBackendCapability: enum values and membership checks
+- Capability: enum values and membership checks
 - HookNameResolver: hook name parsing, resolution, SAE sub-hook stripping, architecture registry
 - NNsightActivationCacheAdapter: dict-like interface conformance
 - NNsightModelBackend: protocol conformance, capabilities, _splice_sae helper, fwd_w_hooks_batched
@@ -18,10 +18,8 @@ import pytest
 import torch
 
 from interpretune.analysis.backends import (
-    AnalysisBackendCapability,
-    ModelBackendCapability,
+    Capability,
     InterventionDict,
-    InterventionMode,
     InterventionSpec,
     InterventionSupport,
     LatentModelSupport,
@@ -34,6 +32,7 @@ from interpretune.analysis.backends import (
     expand_intervention_patterns,
     resolve_interventions,
 )
+from interpretune.analysis.backends.ops import registered_ops
 from interpretune.analysis.backends.hook_mapping import (
     ArchitectureMapping,
     HookMapping,
@@ -802,27 +801,30 @@ class TestNNsightEnvoyHelpers:
 
 
 # ==============================================================================
-# ModelBackendCapability enum tests
+# Capability enum tests
 # ==============================================================================
 
 
 class TestBackendCapability:
-    """Tests for the ModelBackendCapability enum values and membership."""
+    """Tests for the Capability enum values and membership."""
 
     def test_latent_models_value(self):
-        assert ModelBackendCapability.LATENT_MODELS.value == "latent_models"
+        assert Capability.LATENT_MODELS.value == "latent_models"
 
     def test_gradients_value(self):
-        assert ModelBackendCapability.GRADIENTS.value == "gradients"
+        assert Capability.GRADIENTS.value == "gradients"
 
     def test_attribution_value(self):
-        assert AnalysisBackendCapability.ATTRIBUTION_GRAPH.value == "attribution_graph"
+        assert Capability.ATTRIBUTION_GRAPH.value == "attribution_graph"
 
-    def test_feature_intervention_value(self):
-        assert AnalysisBackendCapability.FEATURE_INTERVENTION.value == "feature_intervention"
+    def test_intervention_value(self):
+        assert Capability.INTERVENTION.value == "intervention"
+
+    def test_capture_value(self):
+        assert Capability.CAPTURE.value == "capture"
 
     def test_head_attribution_value(self):
-        assert AnalysisBackendCapability.HEAD_ATTRIBUTION.value == "head_attribution"
+        assert Capability.HEAD_ATTRIBUTION.value == "head_attribution"
 
     def test_scopes_and_modes_are_a_support_record_not_members(self):
         """Supporting interventions and being able to SCOPE or MODE one are different kinds of fact.
@@ -831,46 +833,46 @@ class TestBackendCapability:
         record on the group's protocol. A flat member per configuration was tried (two scope members) and could not
         carry the mode axis without a member per mode as well.
         """
-        assert not hasattr(ModelBackendCapability, "INTERVENTION_LAST_TOKEN")
-        assert not hasattr(ModelBackendCapability, "INTERVENTION_ALL_POSITIONS")
-        assert not hasattr(ModelBackendCapability, "BATCHED_HOOKS")
-        support = InterventionSupport(position_scopes={"last_token"}, modes={"add"})
+        assert not hasattr(Capability, "INTERVENTION_LAST_TOKEN")
+        assert not hasattr(Capability, "INTERVENTION_ALL_POSITIONS")
+        assert not hasattr(Capability, "BATCHED_HOOKS")
+        support = InterventionSupport(position_scopes={"last_token"}, ops={"add"})
         assert support.position_scopes == frozenset({PositionScope.LAST_TOKEN})
-        assert support.modes == frozenset({InterventionMode.ADD})
+        assert support.ops == frozenset({"add"})
 
     def test_a_support_record_must_declare_something(self):
         with pytest.raises(ValueError, match="position scope"):
-            InterventionSupport(position_scopes=frozenset(), modes={InterventionMode.ADD})
-        with pytest.raises(ValueError, match="intervention mode"):
-            InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, modes=frozenset())
+            InterventionSupport(position_scopes=frozenset(), ops={"add"})
+        with pytest.raises(ValueError, match="at least one op"):
+            InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, ops=frozenset())
 
     def test_enum_members_count(self):
         """A ratchet, so adding a capability is a conscious act rather than a side effect.
 
-        Three members: one per ``Supports*`` protocol. It was briefly six, when position scope was added as two
-        flat members beside an efficiency flag; those were sub-modes of one surface, and they now live in the
-        surface's support record instead.
+        Six members, one namespace whichever component provides them. Position scope was briefly two flat members
+        beside an efficiency flag; those were configurations of one surface, and they live in the surface's support
+        record instead, as the activation and feature interventions now do as targets of one ``INTERVENTION``.
         """
-        assert len(ModelBackendCapability) == 3
-        assert len(AnalysisBackendCapability) == 3
+        assert len(Capability) == 6
 
     def test_membership_in_frozenset(self):
-        caps = frozenset({ModelBackendCapability.LATENT_MODELS, ModelBackendCapability.GRADIENTS})
-        assert ModelBackendCapability.LATENT_MODELS in caps
-        assert ModelBackendCapability.GRADIENTS in caps
+        caps = frozenset({Capability.LATENT_MODELS, Capability.GRADIENTS})
+        assert Capability.LATENT_MODELS in caps
+        assert Capability.GRADIENTS in caps
 
     def test_module_capabilities_require_a_record_for_each_declared_surface(self):
         """The invariant a card or a conformance report relies on: the record is there iff the surface is."""
-        with pytest.raises(ValueError, match="INTERVENTION is declared but no intervention support record"):
-            ModuleCapabilities(model=frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION}), analysis=frozenset())
+        with pytest.raises(ValueError, match="INTERVENTION is provided by .* and support records accompany"):
+            ModuleCapabilities(providers={Capability.INTERVENTION: ("model_backend",)})
         with pytest.raises(ValueError, match="LATENT_MODELS is not declared"):
-            ModuleCapabilities(model=frozenset(), analysis=frozenset(), latent_models=LatentModelSupport())
+            ModuleCapabilities(providers={}, latent_models=LatentModelSupport())
+        with pytest.raises(ValueError, match="LATENT_MODELS is declared but no latent_models support record"):
+            ModuleCapabilities(providers={Capability.LATENT_MODELS: ("model_backend",)})
         ok = ModuleCapabilities(
-            model=frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION}),
-            analysis=frozenset(),
-            intervention=InterventionSupport.every(),
+            providers={Capability.INTERVENTION: ("model_backend",)},
+            intervention={"model_backend": InterventionSupport.every()},
         )
-        assert ok.intervention is not None and ok.latent_models is None
+        assert ok.intervention_for("activation") is ok.intervention["model_backend"] and ok.latent_models is None
 
 
 # ==============================================================================
@@ -893,13 +895,13 @@ class TestNNsightModelBackendCapabilities:
         assert backend.latent_model_support == LatentModelSupport(batched_hooks=True)
 
     def test_capabilities_includes_gradients(self, backend):
-        assert ModelBackendCapability.GRADIENTS in backend.capabilities
+        assert Capability.GRADIENTS in backend.capabilities
 
     def test_intervention_record_declares_every_scope_and_mode(self, backend):
         assert backend.intervention_support == InterventionSupport.every()
 
     def test_supports_gradients(self, backend):
-        assert backend.supports(ModelBackendCapability.GRADIENTS) is True
+        assert backend.supports(Capability.GRADIENTS) is True
 
 
 class TestNNsightSpliceSae:
@@ -1050,13 +1052,13 @@ class TestTLModelBackendCapabilities:
         assert isinstance(backend.capabilities, frozenset)
 
     def test_capabilities_includes_gradients(self, backend):
-        assert ModelBackendCapability.GRADIENTS in backend.capabilities
+        assert Capability.GRADIENTS in backend.capabilities
 
     def test_batched_hooks_is_not_claimed(self, backend):
         assert backend.latent_model_support == LatentModelSupport(batched_hooks=False)
 
     def test_supports_gradients(self, backend):
-        assert backend.supports(ModelBackendCapability.GRADIENTS) is True
+        assert backend.supports(Capability.GRADIENTS) is True
 
     def test_intervention_record_declares_every_scope_and_mode(self, backend):
         assert backend.intervention_support == InterventionSupport.every()
@@ -1156,7 +1158,7 @@ class TestInterventionSpec:
         from interpretune.analysis.backends import InterventionSpec
 
         spec = InterventionSpec(intervention_tensor=torch.randn(768))
-        assert spec.mode == "replace"
+        assert spec.op == "replace"
 
     def test_default_scale_factor_is_one(self):
         from interpretune.analysis.backends import InterventionSpec
@@ -1167,8 +1169,8 @@ class TestInterventionSpec:
     def test_explicit_add_mode(self):
         from interpretune.analysis.backends import InterventionSpec
 
-        spec = InterventionSpec(intervention_tensor=torch.randn(768), mode="add", scale_factor=3.0)
-        assert spec.mode == "add"
+        spec = InterventionSpec(intervention_tensor=torch.randn(768), op="add", scale_factor=3.0)
+        assert spec.op == "add"
         assert spec.scale_factor == 3.0
 
     def test_is_named_tuple(self):
@@ -1177,16 +1179,16 @@ class TestInterventionSpec:
         spec = InterventionSpec(intervention_tensor=torch.randn(768))
         assert hasattr(spec, "_fields")
         assert "intervention_tensor" in spec._fields
-        assert "mode" in spec._fields
+        assert "op" in spec._fields
         assert "scale_factor" in spec._fields
 
     def test_project_mode(self):
-        spec = InterventionSpec(intervention_tensor=torch.ones(768), mode="project", scale_factor=2.0)
-        assert spec.mode == "project"
+        spec = InterventionSpec(intervention_tensor=torch.ones(768), op="project", scale_factor=2.0)
+        assert spec.op == "project"
         assert spec.scale_factor == 2.0
 
     def test_project_mode_defaults_to_intervention_basis(self):
-        spec = InterventionSpec(intervention_tensor=torch.ones(768), mode="project")
+        spec = InterventionSpec(intervention_tensor=torch.ones(768), op="project")
         assert spec.use_intervention_tensor_as_basis is True
 
     def test_intervention_tensor_attribute_name(self):
@@ -1242,13 +1244,13 @@ class TestInterventionDictHelpers:
             {"blocks.*.hook_resid_post": vector},
             expanded_matches,
             hook_shapes,
-            default_mode="add",
+            default_op="add",
             default_scale_factor=2.0,
         )
 
         for hook_name in expanded_matches["blocks.*.hook_resid_post"]:
             spec = intervention_dict[hook_name][0]
-            assert spec.mode == "add"
+            assert spec.op == "add"
             assert spec.scale_factor == 2.0
             assert torch.equal(spec.intervention_tensor, vector)
 
@@ -1257,7 +1259,7 @@ class TestInterventionDictHelpers:
             "blocks.0.hook_resid_post": torch.ones(4),
             "blocks.0.attn.hook_z": {
                 "intervention_tensor": torch.ones(2, 3),
-                "mode": "add",
+                "op": "add",
                 "scale_factor": 0.5,
                 "use_intervention_tensor_as_basis": False,
             },
@@ -1272,8 +1274,8 @@ class TestInterventionDictHelpers:
         }
 
         intervention_dict = build_intervention_dict(interventions, expanded_matches, hook_shapes)
-        assert intervention_dict["blocks.0.hook_resid_post"][0].mode == "replace"
-        assert intervention_dict["blocks.0.attn.hook_z"][0].mode == "add"
+        assert intervention_dict["blocks.0.hook_resid_post"][0].op == "replace"
+        assert intervention_dict["blocks.0.attn.hook_z"][0].op == "add"
         assert intervention_dict["blocks.0.attn.hook_z"][0].scale_factor == 0.5
         assert intervention_dict["blocks.0.attn.hook_z"][0].use_intervention_tensor_as_basis is False
 
@@ -1296,7 +1298,7 @@ class TestInterventionDictHelpers:
     def test_resolve_interventions_builds_shorthand_project_payload(self):
         field_values = {
             "intervention_hook_pattern": "blocks.0.hook_resid_post",
-            "intervention_mode": "project",
+            "intervention_op": "project",
             "intervention_scale_factor": 0.5,
             "intervention_tensor": torch.tensor([1.0, 0.0]),
             "intervention_use_intervention_tensor_as_basis": False,
@@ -1309,12 +1311,12 @@ class TestInterventionDictHelpers:
             load_json_field=lambda _field_name: None,
         )
 
-        assert resolved["blocks.0.hook_resid_post"]["mode"] == "project"
+        assert resolved["blocks.0.hook_resid_post"]["op"] == "project"
         assert resolved["blocks.0.hook_resid_post"]["scale_factor"] == 0.5
         assert resolved["blocks.0.hook_resid_post"]["use_intervention_tensor_as_basis"] is False
 
     def test_resolve_interventions_preserves_explicit_intervention_mapping(self):
-        explicit = {"blocks.0.hook_resid_post": {"intervention_tensor": torch.ones(4), "mode": "add"}}
+        explicit = {"blocks.0.hook_resid_post": {"intervention_tensor": torch.ones(4), "op": "add"}}
 
         resolved = resolve_interventions(
             analysis_batch={},
@@ -1328,7 +1330,7 @@ class TestInterventionDictHelpers:
         value = torch.tensor([[[0.0, 0.0], [3.0, 4.0]]], dtype=torch.float32)
         spec = InterventionSpec(
             intervention_tensor=torch.tensor([5.0, 0.0]),
-            mode="project",
+            op="project",
             scale_factor=1.0,
         )
 
@@ -1340,7 +1342,7 @@ class TestInterventionDictHelpers:
         value = torch.tensor([[[0.0, 0.0], [3.0, 4.0]]], dtype=torch.float32)
         spec = InterventionSpec(
             intervention_tensor=torch.tensor([5.0, 0.0]),
-            mode="project",
+            op="project",
             scale_factor=1.0,
             use_intervention_tensor_as_basis=False,
         )
@@ -1403,8 +1405,8 @@ class TestFwdWInterventionSignature:
             {"blocks.0.hook_resid_post": torch.randn(1, 5, 100)},
         )
 
-        spec = InterventionSpec(intervention_tensor=torch.randn(100), mode="unknown")
-        with pytest.raises(ValueError, match="Unknown intervention mode"):
+        spec = InterventionSpec(intervention_tensor=torch.randn(100), op="unknown")
+        with pytest.raises(ValueError, match="Unknown op"):
             backend.fwd_w_intervention(
                 model=mock_model,
                 batch={"input": torch.randn(1, 5)},
@@ -1463,7 +1465,7 @@ class TestFwdWInterventionSignature:
         mock_model.run_with_cache.return_value = (logits, {"blocks.0.hook_resid_post": torch.randn(1, 3, 100)})
 
         replacement_vec = torch.ones(100) * 42.0
-        spec = InterventionSpec(intervention_tensor=replacement_vec, mode="replace")
+        spec = InterventionSpec(intervention_tensor=replacement_vec, op="replace")
 
         # Capture the hook that gets built
         def capture_hooks(**kwargs):
@@ -1496,12 +1498,12 @@ class TestFwdWInterventionSignature:
 class _AddOnlyLastTokenBackend:
     """A backend shaped like a hub-delivered steering adapter: INTERVENTION, one scope, one mode."""
 
-    capabilities = frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION})
-    intervention_support = InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, modes={InterventionMode.ADD})
+    capabilities = frozenset({Capability.INTERVENTION})
+    intervention_support = InterventionSupport(position_scopes={PositionScope.LAST_TOKEN}, ops={"add"})
 
 
 class _UndeclaredBackend:
-    capabilities = frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION})
+    capabilities = frozenset({Capability.INTERVENTION})
 
 
 class TestInterventionScopeSurvivesCanonicalization:
@@ -1518,29 +1520,27 @@ class TestInterventionScopeSurvivesCanonicalization:
         return build_intervention_dict({self._HOOK: raw}, {self._HOOK: [self._HOOK]}, {self._HOOK: (4,)})[self._HOOK][0]
 
     def test_a_spec_keeps_its_scope(self):
-        spec = InterventionSpec(intervention_tensor=torch.ones(4), mode="add", position_scope="all_positions")
+        spec = InterventionSpec(intervention_tensor=torch.ones(4), op="add", position_scope="all_positions")
         assert self._canonical(spec).position_scope is PositionScope.ALL_POSITIONS
 
     def test_a_mapping_keeps_its_scope(self):
-        raw = {"intervention_tensor": torch.ones(4), "mode": "add", "position_scope": "all_positions"}
+        raw = {"intervention_tensor": torch.ones(4), "op": "add", "position_scope": "all_positions"}
         assert self._canonical(raw).position_scope is PositionScope.ALL_POSITIONS
 
     def test_the_default_is_still_last_token(self):
         assert self._canonical(torch.ones(4)).position_scope is PositionScope.LAST_TOKEN
 
     def test_mode_is_normalized_to_the_enum(self):
-        assert (
-            self._canonical({"intervention_tensor": torch.ones(4), "mode": "project"}).mode is InterventionMode.PROJECT
-        )
+        assert self._canonical({"intervention_tensor": torch.ones(4), "op": "project"}).op == "project"
 
     def test_an_unknown_mode_is_refused_by_name(self):
-        with pytest.raises(ValueError, match="Unknown intervention mode 'smear'"):
-            self._canonical({"intervention_tensor": torch.ones(4), "mode": "smear"})
+        with pytest.raises(ValueError, match="Unknown op 'smear'"):
+            self._canonical({"intervention_tensor": torch.ones(4), "op": "smear"})
 
     def test_a_per_hook_tensors_mapping_keeps_its_scope(self):
         """The wildcard shape (`intervention_tensors`, one per matched hook) is a second expansion path and dropped
         the scope independently of the first; one shared field reader now serves both."""
-        raw = {"intervention_tensors": [torch.ones(4)], "mode": "add", "position_scope": "all_positions"}
+        raw = {"intervention_tensors": [torch.ones(4)], "op": "add", "position_scope": "all_positions"}
         assert self._canonical(raw).position_scope is PositionScope.ALL_POSITIONS
 
     def test_shorthand_inputs_carry_the_scope(self):
@@ -1549,18 +1549,18 @@ class TestInterventionScopeSurvivesCanonicalization:
         fields = {
             "intervention_hook_pattern": self._HOOK,
             "intervention_tensor": torch.ones(4),
-            "intervention_mode": "add",
+            "intervention_op": "add",
             "intervention_position_scope": "all_positions",
         }
         payload = resolve_interventions(
             analysis_batch={}, resolve_field=fields.get, load_json_field=lambda _name: None, kwargs={}
         )
         assert payload[self._HOOK]["position_scope"] is PositionScope.ALL_POSITIONS
-        assert payload[self._HOOK]["mode"] is InterventionMode.ADD
+        assert payload[self._HOOK]["op"] == "add"
 
     def test_all_positions_reaches_the_edit(self):
         """The consequence, end to end through apply_intervention: every position moves, not only the last."""
-        spec = self._canonical({"intervention_tensor": torch.ones(4), "mode": "add", "position_scope": "all_positions"})
+        spec = self._canonical({"intervention_tensor": torch.ones(4), "op": "add", "position_scope": "all_positions"})
         value = torch.zeros(2, 3, 4)
         out = apply_intervention(value, spec, last_pos=2)
         assert torch.equal(out, torch.ones(2, 3, 4))
@@ -1574,7 +1574,7 @@ class TestStackedSpanCanonicalization:
 
     def _canonical(self, mode, tensor):
         return build_intervention_dict(
-            {self._HOOK: {"intervention_tensor": tensor, "mode": mode}},
+            {self._HOOK: {"intervention_tensor": tensor, "op": mode}},
             {self._HOOK: [self._HOOK]},
             {self._HOOK: (4,)},
         )[self._HOOK][0]
@@ -1587,9 +1587,7 @@ class TestStackedSpanCanonicalization:
         spec = self._canonical("reject", v)
         torch.testing.assert_close(
             apply_intervention(h.clone(), spec, last_pos=0),
-            _apply_span_rejection(
-                InterventionSpec(v, mode="reject", scale_factor=1.0), input_value=h.clone(), target=v
-            ),
+            _apply_span_rejection(InterventionSpec(v, op="reject", scale_factor=1.0), input_value=h.clone(), target=v),
         )
 
     def test_stacked_add_is_still_refused(self):
@@ -1601,24 +1599,24 @@ class TestRequireInterventionSupport:
     """The single gate an op calls, on a RAW payload, before any backend canonicalizes it."""
 
     def test_declared_scope_and_mode_pass(self):
-        payload = {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), mode="add")}
+        payload = {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), op="add")}
         require_intervention_support(_AddOnlyLastTokenBackend(), payload, backend_name="stub")
 
     def test_undeclared_scope_is_refused_naming_the_declared_set(self):
         payload = {
-            "blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), mode="add", position_scope="all_positions")
+            "blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), op="add", position_scope="all_positions")
         }
         with pytest.raises(NotImplementedError, match=r"position_scope='all_positions'.*declares \['last_token'\]"):
             require_intervention_support(_AddOnlyLastTokenBackend(), payload, backend_name="stub")
 
     def test_undeclared_mode_is_refused_on_the_mode_axis(self):
-        payload = {"blocks.0.hook_resid_post": {"intervention_tensor": torch.ones(4), "mode": "replace"}}
-        with pytest.raises(NotImplementedError, match=r"mode='replace'.*declares \['add'\].*MODE axis"):
+        payload = {"blocks.0.hook_resid_post": {"intervention_tensor": torch.ones(4), "op": "replace"}}
+        with pytest.raises(NotImplementedError, match=r"op='replace'.*declares \['add'\].*OP axis"):
             require_intervention_support(_AddOnlyLastTokenBackend(), payload, backend_name="stub")
 
     def test_a_bare_tensor_carries_the_default_mode_and_is_gated_on_it(self):
         """A raw tensor means `replace` by default; a backend that only adds must refuse it, not add it."""
-        with pytest.raises(NotImplementedError, match="mode='replace'"):
+        with pytest.raises(NotImplementedError, match="op='replace'"):
             require_intervention_support(
                 _AddOnlyLastTokenBackend(), {"blocks.0.hook_resid_post": torch.ones(4)}, backend_name="stub"
             )
@@ -1627,7 +1625,7 @@ class TestRequireInterventionSupport:
         payload = {
             "blocks.*.hook_resid_post": {
                 "intervention_tensors": [torch.ones(4)],
-                "mode": "add",
+                "op": "add",
                 "position_scope": "all_positions",
             }
         }
@@ -1637,8 +1635,8 @@ class TestRequireInterventionSupport:
     def test_a_sequence_of_specs_is_gated_entry_by_entry(self):
         payload = {
             "blocks.0.hook_resid_post": [
-                InterventionSpec(torch.ones(4), mode="add"),
-                InterventionSpec(torch.ones(4), mode="add", position_scope="all_positions"),
+                InterventionSpec(torch.ones(4), op="add"),
+                InterventionSpec(torch.ones(4), op="add", position_scope="all_positions"),
             ]
         }
         with pytest.raises(NotImplementedError, match="all_positions"):
@@ -1646,7 +1644,7 @@ class TestRequireInterventionSupport:
 
     def test_claiming_intervention_without_a_record_is_refused(self):
         """No legacy 'assume last-token' path: a backend that claims the surface must say what it supports."""
-        payload = {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), mode="add")}
+        payload = {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), op="add")}
         with pytest.raises(NotImplementedError, match="attaches no `intervention_support` record"):
             require_intervention_support(_UndeclaredBackend(), payload, backend_name="stub")
 
@@ -1656,34 +1654,30 @@ class TestRequireInterventionSupport:
 
         class _LooksLikeARecord:
             position_scopes = frozenset({"last_token"})
-            modes = frozenset({"add"})
+            declared_ops = frozenset({"add"})
 
         class _Backend:
-            capabilities = frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION})
+            capabilities = frozenset({Capability.INTERVENTION})
             intervention_support = _LooksLikeARecord()
 
         require_intervention_support(
-            _Backend(), {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), mode="add")}, backend_name="dup"
+            _Backend(), {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), op="add")}, backend_name="dup"
         )
         with pytest.raises(NotImplementedError, match="all_positions"):
             require_intervention_support(
                 _Backend(),
-                {
-                    "blocks.0.hook_resid_post": InterventionSpec(
-                        torch.ones(4), mode="add", position_scope="all_positions"
-                    )
-                },
+                {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), op="add", position_scope="all_positions")},
                 backend_name="dup",
             )
 
     def test_an_empty_record_is_a_type_error(self):
         class _Backend:
-            capabilities = frozenset({ModelBackendCapability.ACTIVATION_INTERVENTION})
+            capabilities = frozenset({Capability.INTERVENTION})
             intervention_support = object()
 
         with pytest.raises(TypeError, match="must be an InterventionSupport"):
             require_intervention_support(
-                _Backend(), {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), mode="add")}, backend_name="x"
+                _Backend(), {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), op="add")}, backend_name="x"
             )
 
     def test_the_bundled_backends_declare_everything(self):
@@ -1693,9 +1687,9 @@ class TestRequireInterventionSupport:
 
         payload = {
             "blocks.0.hook_resid_post": [
-                InterventionSpec(torch.ones(4), mode=m, position_scope=s)
-                for m in InterventionMode
-                for s in PositionScope
+                InterventionSpec(torch.ones(4), op=m, position_scope=s)
+                for m in registered_ops()
+                for s in PositionScope.hook_scopes()
             ]
         }
         require_intervention_support(TLModelBackend(), payload, backend_name="tl")
@@ -1809,26 +1803,24 @@ class TestCapabilitySpellings:
     def test_a_retired_spelling_is_refused_with_its_replacement(self):
         from interpretune.analysis.backends import normalize_backend_capability
 
-        with pytest.raises(
-            ValueError, match="'intervention' is a retired capability spelling.*'activation_intervention'"
-        ):
-            normalize_backend_capability("intervention")
+        for retired in ("activation_intervention", "feature_intervention"):
+            with pytest.raises(ValueError, match=f"'{retired}' is a retired capability spelling.*'intervention'"):
+                normalize_backend_capability(retired)
         with pytest.raises(ValueError, match="'attribution' is a retired capability spelling.*'attribution_graph'"):
             normalize_backend_capability("attribution")
 
     def test_each_vocabulary_and_the_dotted_form_are_accepted(self):
         from interpretune.analysis.backends import (
-            AnalysisBackendCapability,
-            ModelBackendCapability,
+            Capability,
             normalize_backend_capability,
         )
 
-        assert normalize_backend_capability("activation_intervention") is ModelBackendCapability.ACTIVATION_INTERVENTION
-        assert normalize_backend_capability("ModelBackendCapability.GRADIENTS") is ModelBackendCapability.GRADIENTS
-        assert normalize_backend_capability("feature_intervention") is AnalysisBackendCapability.FEATURE_INTERVENTION
+        assert normalize_backend_capability("intervention") is Capability.INTERVENTION
+        assert normalize_backend_capability("Capability.GRADIENTS") is Capability.GRADIENTS
+        assert normalize_backend_capability("capture") is Capability.CAPTURE
 
-    def test_an_unknown_spelling_lists_both_vocabularies(self):
+    def test_an_unknown_spelling_lists_the_vocabulary(self):
         from interpretune.analysis.backends import normalize_backend_capability
 
-        with pytest.raises(ValueError, match="model-level spellings are .* analysis-level spellings are"):
+        with pytest.raises(ValueError, match="'steering' is not a capability: spellings are .*'head_attribution'"):
             normalize_backend_capability("steering")
