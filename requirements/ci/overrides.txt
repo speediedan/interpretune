@@ -14,7 +14,7 @@ triton==3.9.0 ; platform_system == "Linux" and python_version < "3.16"
 # pull from installing a torchaudio built against a different torch (CUDA-ABI import failure); no
 # dependency in the current tree declares torchaudio, so there is nothing left to guard against.
 torch==2.15.0  # source of truth for the stable torch pin; torch-override.txt is generated from this line
-transformers>=5.5.0
+transformers>=5.5.0,<5.23  # the ceiling restates pyproject's (#1002): an override replaces every requirement on the package
 datasets>=5.0.0
 # An override replaces EVERY requirement on the package, transformers' own `<2.0` ceiling included, so the ceiling
 # is restated here: without it a fresh build_it_env.sh resolved huggingface-hub 2.0.0 and `import transformers`

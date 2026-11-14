@@ -251,6 +251,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- transformers is capped below 5.23 in the package metadata and in `requirements/ci/overrides.txt`: transformers 5.23.0 breaks nnsight 0.8.2's model construction ("Impossible to guess which tokenizer to use"), so a fresh install, the README flow and `build_it_env.sh` alike, could not build any nnsight or circuit-tracer nnsight composition. Hosted CI was unaffected because its lock pins 5.22.1 ([#1002](https://github.com/speediedan/interpretune/issues/1002))
+
 - `recipe_interventions` refuses an op whose target set addresses a gradient (`of: grad`) instead of translating it into an op on the activation value, which applied a different treatment silently when `require_supported` was skipped; `check_recipe` lists it too. `venngram_support` now carries the record's `of` into the declaration, so venngram's own check refuses such a recipe for every backend, since each declares `value` only ([#938](https://github.com/speediedan/interpretune/issues/938))
 
 - `FTSCoreCallback` resolves a `class_path` naming a Hub component's entrypoint (`rte_boolq.ChainCalibrate`, say) for its gates, hooks and other `tuning_scheduler_kwargs` objects, as session configurations do; it raised `ModuleNotFoundError`. Configuration loading also passes a list's scalars through `instantiate_nested`, which raised `TypeError` on `reg_layers: [17, 18]` ([#899](https://github.com/speediedan/interpretune/issues/899))
