@@ -13,7 +13,7 @@ are all interventions on a model's internal variables.
   use, and it is applied exactly as a core op is ([intervention ops](#intervention-ops)). Sharing ops this way is how
   one experiment's technique becomes the next one's starting point. Each core op's meaning is defined once, below.
 - **Targets** are the whole activation, a set of its units, a latent model's features (venngram's `targets`), or a
-  parameter tensor or its units ([#960](https://github.com/speediedan/interpretune/issues/960), planned). A subset of
+  parameter tensor or its units ([parameter targets](#parameter-targets)). A subset of
   an attribution graph, distilled in one context and applied in another, is a planned target too
   ([#966](https://github.com/speediedan/interpretune/issues/966),
   [venngram#78](https://github.com/speediedan/venngram/issues/78)).
@@ -41,8 +41,50 @@ they are attached through the tuning seams ([trainable interventions](tuning_int
 may be scoped to some tokens. On a parameter (such as a weight patch, e.g. scaling or zeroing a column of `mlp.down_proj`)
 it is materialized: applied to the tensor, so it acts on every token and persists into exports. Trained, a parameter
 target's operand is an adapter (a LoRA is a trainable low-rank `add` on a weight, the `adapter` role). The ops,
-addresses and roles are the same for both targets. Parameter targets are planned, not yet applied
-([#960](https://github.com/speediedan/interpretune/issues/960)).
+addresses and roles are the same for both targets ([parameter targets](#parameter-targets)).
+
+### Parameter targets
+
+`interpretune.tuning.weights` materializes ops on parameters
+([#960](https://github.com/speediedan/interpretune/issues/960)):
+
+- `apply_weight_patch(module, patch)` applies a venngram weight patch (`kind: weight_patch`: a low-rank, sparse or dense
+  delta, `add` or `replace`) to the one tensor its `target` addresses, after checking that the tensor hashes to the
+  patch's `base_sha256`, so a patch never lands on a base it was not made for.
+- `apply_recipe_weights(module, recipe)` applies a recipe's `weights` section (venngram recipe schema 3): `scale`,
+  `add` and `replace` on a tensor or on its units, and `reject` and `project` of a direction on its output side. A
+  recipe applies its weights before its stages, so `recipe_interventions` refuses a recipe with weights until they have
+  been applied (`weights_applied=True`).
+- `weight_form(module, recipe)` materializes a per-neuron recipe (unit `scale` and `add` at `mlp.out`'s input, at
+  token scope `all`) as the weight edits it equals, below, and `check_weight_equivalence` compares the two forms of an
+  edit on a batch.
+
+Addresses resolve through the module's tunable view, so a target is written as a schedule's is
+(`component:mlp.out & layers:13 & leaf:weight`). Addressing a tensor's **units** needs its unit axis, which venngram
+measures per component map row (its `layout`, component map schema 5): with a view whose map records none, a unit
+target is refused rather than guessed.
+
+Every edit is reversible by default. It is a `torch.nn.utils.parametrize` parametrization, so the base tensor is kept,
+the gradient reaches the edit's operand, and the returned handle's `remove()` restores the base exactly. With
+`reversible=False` the edited value is written into the tensor instead, for an export. An edit's operand takes a
+role, as an intervention's does: `adapter:<name>` when it is trained, `fitted` when it is computed in the run, and
+`instrument` when it is loaded from a published patch (the default). Every interpretune module declares these roles
+through `tunable_roles()`, so a schedule tunes a trainable patch by role.
+
+At token scope `all`, three weight edits equal an activation op, because a matrix's input and output are activation
+sites. For $y = W x + b$:
+
+| weight-space edit | activation counterpart |
+| --- | --- |
+| scale column $j$ of $W$ by $k$ | `scale` unit $j$ of $x$ by $k$ |
+| $b' = b + d W_{:,j}$ | `add` dose $d$ to unit $j$ of $x$ |
+| $W' = (I - \alpha u u^{\top}) W$ | `reject` $u$ with fraction $\alpha$ from $W x$ |
+| $W' = W - \beta u v^{\top}$ | none at one site: $\Delta y = -\beta u (v^{\top} x)$ reads the input and writes the output |
+
+Ops on one input compose in order, so a later `scale` scales an earlier `add` too: with the ops' combined effect
+$x \mapsto s \odot x + a$, the weight form is $W \operatorname{diag}(s)$ with the bias patch $b + W a$, taken from the
+unedited $W$. A token-scoped op has no weight form, and a general low-rank or dense patch needs a parameter target.
+venngram's parameter op vectors state these equivalences, and interpretune's edits are tested against them.
 
 ## Surfaces
 
