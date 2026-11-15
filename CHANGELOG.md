@@ -211,7 +211,6 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 - CI and the CI images move from the torch 2.15 release candidates to the 2.15.0 release, as finetuning-scheduler did: `requirements/ci/torch-pre.txt` is back to stable, both images install torch from the released indexes (the CUDA image moves from CUDA 13.0.3 to 13.2.1, since torch 2.15.0's stable CUDA wheels are published for `cu132` only, and `build_it_env.sh` defaults to `--torch-backend=cu132` to match), and `requirements/ci/overrides.txt` pins `triton==3.9.0` again with torch's own Linux marker, now that 3.9.0 is on PyPI. torchvision stays excluded, since no release pairs with torch 2.15 yet. The CI lockfiles are regenerated ([#871](https://github.com/speediedan/interpretune/issues/871))
 
-
 - finetuning-scheduler is pinned at `e8cc68eb` (its main with #177: venngram address books, a declared support record and venngram's registry lookup), and venngram, which it now requires, is installed by git SHA at `6e6d7fa6` (venngram #48: one rules kind, a formats support section and treatments in the address book, over #45's base and overlay maps composed by `venngram.view`) through the `git-deps` group and `override-dependencies` until 0.1.0 is published; the lock script leaves venngram out of the universal lock as it does finetuning-scheduler ([#887](https://github.com/speediedan/interpretune/issues/887))
 
 - The tunable view protocol is imported from venngram (`venngram.tuning`, `venngram.roles`), where finetuning-scheduler #162 moved it out of `finetuning_scheduler.tunable_view`. Against finetuning-scheduler's current main the old imports failed and, being guarded, silently switched the tunable-view integration and its tests off; `fts_views_available()` now requires finetuning-scheduler's `core.views` and venngram's protocol. A schedule's `tunable_view.class_path` for the identity view is `venngram.tuning.CanonicalView` ([#896](https://github.com/speediedan/interpretune/issues/896))
@@ -264,6 +263,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 - SAE-Lens adapter expanded from TL-only to dual-backend with hook resolution (455+ lines added)
 
 ### Fixed
+
+- transformers is capped below 5.23 in the package metadata and in `requirements/ci/overrides.txt`: transformers 5.23.0 breaks nnsight 0.8.2's model construction ("Impossible to guess which tokenizer to use"), so a fresh install, the README flow and `build_it_env.sh` alike, could not build any nnsight or circuit-tracer nnsight composition. Hosted CI was unaffected because its lock pins 5.22.1 ([#1002](https://github.com/speediedan/interpretune/issues/1002))
 
 - Capturing a TransformerLens composition's hyperparameters no longer overwrites the user's `lora_cfg` and `bitsandbytesconfig` with `None`, so a checkpoint records what the run was asked for ([#974](https://github.com/speediedan/interpretune/issues/974)).
 
