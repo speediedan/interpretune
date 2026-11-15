@@ -365,6 +365,47 @@ def capture_residual_terms(module: Any, prompt: str, n_layers: int) -> tuple[tor
     return torch.as_tensor(logits).float(), {h: torch.as_tensor(cache[h]).detach() for h in hooks}
 
 
+def capture_resid_post(module: Any, prompt: str, n_layers: int) -> torch.Tensor:
+    """The residual stream after every layer for ``prompt``, ``(n_layers, seq, d_model)``, through the model
+    backend."""
+    from interpretune.analysis.optools import require_model_backend
+
+    hooks = [f"blocks.{layer}.hook_resid_post" for layer in range(n_layers)]
+    model = module.model
+    device = next(_hf_causal_lm(model).parameters()).device
+    batch = {k: v.to(device) for k, v in dict(module.replacement_model.tokenizer(prompt, return_tensors="pt")).items()}
+    _, cache = require_model_backend(module).fwd_w_cache(model=model, batch=batch, names_filter=hooks)
+    return torch.stack([torch.as_tensor(cache[h]).detach()[0] for h in hooks])
+
+
+def logit_lens_contrast(
+    module: Any, residuals: torch.Tensor, token_a: int, token_b: int, with_direction: bool = False
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    """``logit[token_a] - logit[token_b]`` read from residual-stream vectors as if the model stopped there.
+
+    Each vector is read through the model's final norm, its unembedding and, where the model has one, its logit soft
+    cap, in float32. With ``with_direction`` the gradient of each read with respect to its residual is returned too: the
+    direction the read is most sensitive to at that point, which is what a one-direction interchange edits.
+    """
+    hf = _hf_causal_lm(module.model)
+    norm, head = getattr(hf.get_decoder(), "norm", None), hf.get_output_embeddings()
+    if norm is None or head is None:
+        raise ValueError(f"{type(hf).__name__}: no final norm and output embedding to read the residual through")
+    norm = copy.deepcopy(norm).float().to(residuals.device)
+    w = head.weight.float()[[token_a, token_b]].to(residuals.device)
+    cap = getattr(hf.config, "final_logit_softcapping", None)
+    with torch.enable_grad():
+        r = residuals.detach().float().requires_grad_(with_direction)
+        z = norm(r) @ w.T
+        if cap:
+            z = cap * torch.tanh(z / cap)
+        read = z[..., 0] - z[..., 1]
+        if not with_direction:
+            return read.detach()
+        (direction,) = torch.autograd.grad(read.sum(), r)
+    return read.detach(), direction
+
+
 def partition_final_residual(
     module: Any, prompt: str, counterfactual: str, token_a: int, token_b: int, n_steps: int = 64
 ) -> ResidualPartition:
@@ -472,6 +513,8 @@ def apply_last_token_edits(
             out.pre_intervention_logits.float().reshape(-1)[token_a]
             - out.pre_intervention_logits.float().reshape(-1)[token_b]
         ),
+        "pre_logits": out.pre_intervention_logits.float().reshape(-1).cpu(),
+        "post_logits": post.cpu(),
     }
 
 
@@ -483,6 +526,31 @@ def _asinh_axis(title: str, scale: float) -> dict[str, Any]:
         ticktext=[f"{t:g}" for t in ticks],
         zeroline=True,
     )
+
+
+def _stacked_label_offsets(
+    xs: Sequence[float], ys: Sequence[float], span: float, plot_px: float, gap_px: float = 20.0, dx_px: float = 110.0
+) -> list[tuple[float, float]]:
+    """Arrow offsets ``(ax, ay)`` in pixels that keep annotation labels from overlapping.
+
+    Points on the right half get their label to the left and vice versa, toward the emptier side of a diagonal
+    scatter. All labels share one vertical stack, top to bottom at least ``gap_px`` apart and each starting level with
+    its point, so no two labels share a line whichever side they sit on and whatever the figure's width. ``span`` is the
+    half-range of the y axis and ``plot_px`` an estimate of the plot area's height, which converts data to pixels.
+    """
+    to_px = plot_px / (2 * span)
+    order = sorted(range(len(xs)), key=lambda k: -ys[k])  # top of the plot first
+    placed: list[float] = []
+    for k in order:
+        point_px = (span - ys[k]) * to_px  # pixels below the top of the plot area
+        placed.append(max(point_px, placed[-1] + gap_px) if placed else point_px)
+    overflow = (placed[-1] - plot_px) if placed else 0.0
+    if overflow > 0:  # shift the stack up rather than push labels off the bottom
+        placed = [p - overflow for p in placed]
+    offsets: list[tuple[float, float]] = [(0.0, 0.0)] * len(xs)
+    for k, label_px in zip(order, placed):
+        offsets[k] = (-dx_px if xs[k] >= 0 else dx_px, label_px - (span - ys[k]) * to_px)
+    return offsets
 
 
 def plot_regime_edges(
@@ -529,20 +597,29 @@ def plot_regime_edges(
         go.Scatter(x=[-lim, lim], y=[-lim, lim], mode="lines", line=dict(color="gray", dash="dash"), name="no change")
     )
     change = np.abs(live_np - frozen_np)
-    for i in np.argsort(change)[::-1][:annotate]:
+    picked = [int(i) for i in np.argsort(change)[::-1][:annotate]]
+    xs = [float(np.arcsinh(frozen_np[i] / scale)) for i in picked]
+    ys = [float(np.arcsinh(live_np[i] / scale)) for i in picked]
+    span = 1.1 * lim
+    height = 560
+    for i, x, y, (ax, ay) in zip(picked, xs, ys, _stacked_label_offsets(xs, ys, span, height - 220)):
         fig.add_annotation(
-            x=float(np.arcsinh(frozen_np[i] / scale)),
-            y=float(np.arcsinh(live_np[i] / scale)),
-            text=labels[int(i)],
+            x=x,
+            y=y,
+            text=labels[i],
             showarrow=True,
             arrowhead=1,
+            ax=ax,
+            ay=ay,
+            xanchor="right" if ax < 0 else "left",
             font=dict(size=10),
+            bgcolor="rgba(255,255,255,0.75)",
         )
     fig.update_layout(
-        title=f"Edges into {target}: frozen against live patterns",
-        xaxis=_asinh_axis("frozen-pattern edge", scale),
-        yaxis=_asinh_axis("live-pattern edge", scale),
-        height=560,
+        title=f"Edges into '{target}': frozen against live patterns",
+        xaxis={**_asinh_axis("frozen-pattern edge", scale), "range": [-span, span]},
+        yaxis={**_asinh_axis("live-pattern edge", scale), "range": [-span, span]},
+        height=height,
         legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="left", x=0),
         **_LAYOUT,
     )
@@ -567,6 +644,40 @@ def plot_position_change_mass(mass: np.ndarray, tokens: Sequence[str], title: st
         xaxis=dict(title="source position"),
         yaxis=dict(title="target position", autorange="reversed"),
         height=520,
+        **_LAYOUT,
+    )
+    return fig
+
+
+def plot_state_read(
+    reads: Mapping[str, torch.Tensor], positions: Mapping[int, str], title: str, yaxis_title: str
+) -> go.Figure:
+    """One panel per position: each prompt's read, ``(n_layers, seq)``, at that position across layers."""
+    fig = make_subplots(rows=1, cols=len(positions), shared_yaxes=True, subplot_titles=list(positions.values()))
+    colors = ("#2471a3", "#c0392b", "#7d3c98", "#1e8449")
+    for col, pos in enumerate(positions, start=1):
+        for k, (name, read) in enumerate(reads.items()):
+            values = read[:, pos].float().cpu().numpy()
+            fig.add_trace(
+                go.Scatter(
+                    x=np.arange(len(values)),
+                    y=values,
+                    mode="lines+markers",
+                    name=name,
+                    legendgroup=name,
+                    showlegend=col == 1,
+                    line=dict(color=colors[k % len(colors)]),
+                ),
+                row=1,
+                col=col,
+            )
+        fig.update_xaxes(title_text="layer", row=1, col=col)
+    fig.add_hline(y=0, line=dict(color="gray", dash="dot"))
+    fig.update_yaxes(title_text=yaxis_title, row=1, col=1)
+    fig.update_layout(
+        title=title,
+        height=420,
+        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0),
         **_LAYOUT,
     )
     return fig
@@ -694,7 +805,10 @@ def plot_neumann_convergence(traces: Mapping[str, Sequence[torch.Tensor]]) -> go
     fig = go.Figure()
     for name, trace in traces.items():
         mass = neumann_term_mass(trace)
-        fig.add_trace(go.Scatter(x=np.arange(1, len(mass) + 1), y=mass, mode="lines+markers", name=name))
+        # The series stops at its first all-zero term (the graph is acyclic, so paths have a longest length). That term
+        # has no place on a log axis: plotted, its zero drags the line off the bottom of the plot.
+        terms = np.flatnonzero(mass > 0) + 1
+        fig.add_trace(go.Scatter(x=terms, y=mass[terms - 1], mode="lines+markers", name=name))
     fig.update_layout(
         title="Node influence as a Neumann series: the mass each further term adds",
         xaxis=dict(title="term (path length in edges)"),

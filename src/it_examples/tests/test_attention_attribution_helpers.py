@@ -111,7 +111,11 @@ def test_check_next_token_refuses_multi_token_answers():
 def test_neumann_term_mass_and_figures():
     trace = [torch.tensor([1.0, -1.0]), torch.tensor([0.5, 0.0]), torch.tensor([0.0, 0.0])]
     np.testing.assert_allclose(aah.neumann_term_mass(trace), [2.0, 0.5, 0.0])
-    assert len(aah.plot_neumann_convergence({"frozen": trace}).to_dict()["data"]) == 1
+    neumann = aah.plot_neumann_convergence({"frozen": trace}).to_dict()["data"]
+    assert len(neumann) == 1
+    # the terminating all-zero term is not plotted: on a log axis it would drag the line off the plot
+    fig_trace = aah.plot_neumann_convergence({"frozen": trace}).data[0]
+    assert list(fig_trace.x) == [1, 2] and list(fig_trace.y) == [2.0, 0.5]
     ridge = aah.plot_ridgeline([("a", np.array([1e-3, 1e-2, 0.0])), ("b", np.array([0.0]))], "t", "x")
     assert len(ridge.to_dict()["data"]) == 1  # a series with fewer than two values above the floor draws no curve
     kinds = ["feature", "feature", "error", "token"]
@@ -124,6 +128,19 @@ def test_neumann_term_mass_and_figures():
         annotate=1,
     )
     assert {trace["name"].split(" ")[0] for trace in fig.to_dict()["data"]} == {"feature", "error", "token", "no"}
+    assert fig.layout.title.text.startswith("Edges into 'Austin'")
+
+
+def test_stacked_label_offsets_never_share_a_row():
+    # a tight cluster in the upper right plus one point on the left, as the regime scatter produces
+    xs, ys = [7.08, -5.39, 6.08, 5.11, 7.16, 5.02], [6.27, 5.4, 6.73, 6.29, 6.83, 6.06]
+    span, plot_px = 8.8, 340.0
+    offsets = aah._stacked_label_offsets(xs, ys, span, plot_px, gap_px=20.0)
+    rows = sorted((span - y) * plot_px / (2 * span) + ay for y, (_, ay) in zip(ys, offsets))
+    assert all(b - a >= 20.0 - 1e-9 for a, b in zip(rows, rows[1:]))
+    assert all(r <= plot_px + 1e-9 for r in rows)
+    # labels point toward the emptier half: left of a right-half point, right of a left-half one
+    assert [ax < 0 for ax, _ in offsets] == [x >= 0 for x in xs]
 
 
 def test_head_split_parts_add_to_the_bypass_plus_heads():
@@ -232,3 +249,44 @@ def test_residual_partition_reports_what_its_parts_leave_unexplained():
     assert part.change == -14.0
     assert part.total("attn") == -10.0 and part.total("mlp") == -3.5
     assert part.unexplained == pytest.approx(-0.5)
+
+
+class _TinyLM(torch.nn.Module):
+    """Just enough of a Hugging Face causal LM for the logit lens: a final norm, an unembedding and a soft cap."""
+
+    def __init__(self, cap: float | None = None):
+        super().__init__()
+        self.norm = torch.nn.RMSNorm(2, elementwise_affine=False)
+        self.head = torch.nn.Linear(2, 3, bias=False)
+        with torch.no_grad():
+            self.head.weight.copy_(torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]))
+        self.config = type("Cfg", (), {"final_logit_softcapping": cap})()
+
+    def get_decoder(self):
+        return self
+
+    def get_output_embeddings(self):
+        return self.head
+
+
+def test_logit_lens_contrast_reads_through_norm_and_cap():
+    module = type("M", (), {"model": _TinyLM()})()
+    residuals = torch.tensor([[3.0, 0.0], [0.0, 2.0]])
+    # RMSNorm maps (3, 0) to (sqrt 2, 0) and (0, 2) to (0, sqrt 2); token 0 minus token 1 reads +sqrt 2 and -sqrt 2
+    read = aah.logit_lens_contrast(module, residuals, 0, 1)
+    torch.testing.assert_close(read, torch.tensor([2.0**0.5, -(2.0**0.5)]))
+    read, direction = aah.logit_lens_contrast(module, residuals, 0, 1, with_direction=True)
+    assert direction.shape == residuals.shape
+    # a step along the returned direction raises the read; a norm is scale-invariant, so a pure rescale does not
+    step = aah.logit_lens_contrast(module, residuals + 1e-3 * direction, 0, 1)
+    assert bool((step > read).all())
+    torch.testing.assert_close(aah.logit_lens_contrast(module, 5 * residuals, 0, 1), read)
+    capped = aah.logit_lens_contrast(type("M", (), {"model": _TinyLM(cap=1.0)})(), residuals, 0, 1)
+    assert bool((capped.abs() < 1.0).all())  # tanh(sqrt 2) - tanh(0)
+
+
+def test_plot_state_read_one_panel_per_position():
+    reads = {"Dallas": torch.tensor([[0.0, 1.0], [0.5, 2.0]]), "Detroit": torch.tensor([[0.0, -1.0], [0.0, -2.0]])}
+    fig = aah.plot_state_read(reads, {0: "first", 1: "second"}, "t", "y")
+    assert len(fig.data) == 4 and [t.name for t in fig.data if t.showlegend] == ["Dallas", "Detroit"]
+    assert list(fig.data[2].y) == [1.0, 2.0]  # panels in position order, prompts within: Dallas at position 1
