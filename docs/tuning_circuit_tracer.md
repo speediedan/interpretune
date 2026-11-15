@@ -5,7 +5,7 @@
 A circuit-tracer composition's view (`interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`) covers its
 transcoders, whichever backend it runs over:
 
-- **Transcoders start as `instrument`.** Every transcoder tensor is a published artifact: never thawed, optimized or
+- **Transcoders start as `artifact`.** Every transcoder tensor is a published artifact: never thawed, optimized or
   checkpointed, so a fresh view's default schedule is empty. Promote the tensors you want to adapt to
   `latent:transcoder` through Fine-Tuning Scheduler's promotion, and a schedule can then thaw them. Adapting transcoders
   that drift after fine-tuning ([interpretune#709](https://github.com/speediedan/interpretune/issues/709)) works this way.
@@ -31,7 +31,7 @@ the base model too. Without `tune_base` nothing more is registered, so attributi
 submodules and state-dict keys. Where there is no local torch module to register (remote execution, or weights still on
 the meta device), `tune_base` refuses the composition, naming why, rather than tuning nothing of the base.
 
-With the transcoders registered as `transcoders`, every parameter of the module is a transcoder tensor, `instrument`
+With the transcoders registered as `transcoders`, every parameter of the module is a transcoder tensor, `artifact`
 until a promotion, so there is nothing to optimize: a session whose configuration sets `optimizer_init` gets no
 optimizer, with a warning, and analysis sessions run as before.
 
@@ -69,7 +69,7 @@ the view accommodates it rather than refusing it.
 Set `CircuitTracerConfig.lazy_delta_rank` to give each lazily loaded weight $W$ a trainable low-rank correction
 $\Delta = A B$, zero at initialization. Every read circuit-tracer makes then returns $W + \Delta$: a whole-matrix read
 adds $A B$, and a decoder-row read for a feature set $S$ adds $A_S B$, so a sparse read never materializes the full
-correction. The corrections are parameters under each transcoder's `lazy_deltas`, with the same `instrument` role as
+correction. The corrections are parameters under each transcoder's `lazy_deltas`, with the same `artifact` role as
 the rest of it until promoted.
 
 Without a rank, lazily loaded weights are left out of the view, and building the view warns, naming them.

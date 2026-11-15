@@ -199,7 +199,7 @@ class TestRoles:
         assert {n for n, r in roles.items() if r == "latent:sae"} == {
             f"latent_models.sae.{n}" for n in ("enc.weight", "enc.bias", "dec.weight", "dec.bias")
         }
-        assert {r for n, r in roles.items() if n.startswith("latent_models.held.")} == {"instrument"}
+        assert {r for n, r in roles.items() if n.startswith("latent_models.held.")} == {"artifact"}
 
     def test_no_latent_models_no_roles(self):
         assert latent_model_roles(Root()) == {}
@@ -264,7 +264,7 @@ class TestScheduling:
         root, view = self._root(frozen=True)
         schedule = {
             0: {"params": ["role:intervention:steer"], "max_transition_epoch": 1},
-            1: {"params": ["role:latent:sae"], "promote": {"role:instrument": "latent:sae"}},
+            1: {"params": ["role:latent:sae"], "promote": {"role:artifact": "latent:sae"}},
         }
         fts = TuningScheduler(root, schedule, optimizer=partial(torch.optim.SGD, lr=0.1), view=view)
         fts.setup()

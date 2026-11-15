@@ -60,7 +60,7 @@ class BaseITHooks:
         """The parameters the default optimizer is built over.
 
         When a trainable finetuning-scheduler view is attached (``tunable_view``, #758), its root's parameters, less
-        those whose role finetuning-scheduler never optimizes (``fitted``, ``instrument``). The root of every
+        those whose role finetuning-scheduler never optimizes (``fitted``, ``artifact``). The root of every
         interpretune view is this module, so trainable modules registered beside ``self.model`` (interventions, spliced
         SAEs) are stepped with no adapter extending this (#761). The view is bound through finetuning-scheduler, so an
         attached object that is not a view raises finetuning-scheduler's ``TunableViewError`` naming what it lacks.
@@ -91,7 +91,7 @@ class BaseITHooks:
 
         A module with nothing to optimize gets no optimizer (or lr scheduler), with a warning, rather than torch's
         empty-parameter-list error: an attached view whose every tensor has a role finetuning-scheduler never optimizes
-        (a circuit-tracer composition's transcoders are all ``instrument`` until promoted) still serves sessions that
+        (a circuit-tracer composition's transcoders are all ``artifact`` until promoted) still serves sessions that
         do not train, analysis among them, whose configuration sets ``optimizer_init`` (#859).
         """
         self.set_input_require_grads()
@@ -102,7 +102,7 @@ class BaseITHooks:
             else:
                 why = (
                     "every parameter of its tunable view has a role finetuning-scheduler never optimizes"
-                    " (`instrument` or `fitted`) until a schedule promotes it"
+                    " (`artifact` or `fitted`) until a schedule promotes it"
                     if getattr(self, VIEW_ATTR, None) is not None
                     else "it has no parameters"
                 )

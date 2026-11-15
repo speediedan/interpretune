@@ -19,7 +19,7 @@ A *latent model* models a site's activations through latents. Examples:
   - `"replace_with_error"`: the straight-through substitution. The output keeps its value (the reconstruction plus its detached error, as sae_lens's error term does) while gradients reach the latent model through the reconstruction. It is one of venngram's core ops, defined with the others on [Interpretune Intervention APIs](interpretune_intervention_apis.md).
   - `None`: no op. The latents are captured (`last_latents`) and the output is unchanged, a read rather than an intervention.
 - **`attach_latent_model(root, name, latent, site, frozen=False)`**: registers the latent model as `latent_models.<name>` on the module (so it is in the module's state dict and reachable by its view) and splices it in with forward hooks. `detach_latent_model(root, name)` removes it.
-- **Roles:** an attached latent model's tensors take venngram's role `latent:<name>`, so a schedule selects them with `role:latent:<name>`. Every interpretune module declares these roles in its cooperative `tunable_roles()`, which its venngram view reads, so no mixin is needed. A `frozen` latent model is an `instrument`: never thawed or checkpointed until a schedule promotes it.
+- **Roles:** an attached latent model's tensors take venngram's role `latent:<name>`, so a schedule selects them with `role:latent:<name>`. Every interpretune module declares these roles in its cooperative `tunable_roles()`, which its venngram view reads, so no mixin is needed. A `frozen` latent model is an `artifact`: loaded from its source, never thawed or checkpointed until a schedule promotes it.
 
 On a circuit-tracer composition another latent model attaches beside the transcoders, at modules of the model circuit-tracer runs, with its role merged into the view's ([Tuning: circuit-tracer](tuning_circuit_tracer.md#interventions-and-other-latent-models-beside-the-transcoders)); the transcoders themselves are tuned by promoting them. The analysis surface's feature ops (venngram feature targets at an SAE's `hook_sae_acts_post`) reach sae_lens SAEs only, not latent models attached here.
 
@@ -51,7 +51,7 @@ finetuning-scheduler's per-phase keys let each phase be a stage of the experimen
   restore: none
 ```
 
-Attached with `frozen=True`, the same transcoder stays an `instrument`, applied and never trained, until a later stage promotes it:
+Attached with `frozen=True`, the same transcoder stays an `artifact`, applied and never trained, until a later stage promotes it:
 
 ```yaml
 0:
@@ -59,7 +59,7 @@ Attached with `frozen=True`, the same transcoder stays an `instrument`, applied 
   max_transition_epoch: 2
 1:
   params: ["role:latent:mlp3"]
-  promote: {"role:instrument": "latent:mlp3"}
+  promote: {"role:artifact": "latent:mlp3"}
 ```
 
 `layers:3` needs the layer structure a venngram component map gives the module's view; without one, name the layer by regex (`model\.model\.layers\.3\..*`). `promote`, `refreeze` and `restore` run on the core loop; the Lightning callback refuses them.

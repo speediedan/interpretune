@@ -1,4 +1,4 @@
-"""The circuit-tracer composition's tunable view (#787): transcoders as promotable instruments, the base model
+"""The circuit-tracer composition's tunable view (#787): transcoders as promotable artifacts, the base model
 refused by name unless ``tune_base`` asks for it (#813), attribution unaffected by what a schedule thawed, and low-
 rank corrections that let lazily loaded transcoder weights be tuned."""
 
@@ -122,7 +122,7 @@ class TestTranscoderView:
         assert isinstance(view.view, CircuitTracerView) and view.support().trainable
         transcoder_names = [n for n, _ in view.logical_named_parameters()]
         assert transcoder_names and all(".transcoders." in n for n in transcoder_names)
-        assert set(view.roles().values()) == {"instrument"} and set(view.roles()) == set(transcoder_names)
+        assert set(view.roles().values()) == {"artifact"} and set(view.roles()) == set(transcoder_names)
         base = next(n for n, _ in module.named_parameters() if n not in set(transcoder_names))
         with pytest.raises(Unresolvable, match="base-model parameters"):
             view.to_physical([base])
@@ -156,7 +156,7 @@ class TestTranscoderView:
         assert len(keys) == len(set(keys)) and any(k.startswith("hf_model.transcoders.") for k in keys)
 
     def test_nothing_trains_until_promoted(self):
-        """Every transcoder tensor is `instrument`, so the default schedule is empty until a promotion."""
+        """Every transcoder tensor is `artifact`, so the default schedule is empty until a promotion."""
         from finetuning_scheduler.core.compile import view_default_schedule
 
         module = _toy_module()
@@ -190,14 +190,14 @@ def _base_names(module: nn.Module) -> list[str]:
 
 
 class TestBaseTuning:
-    """``tune_base``: the base model's parameters as ``base``, beside transcoders that stay ``instrument``."""
+    """``tune_base``: the base model's parameters as ``base``, beside transcoders that stay ``artifact``."""
 
     def test_base_parameters_resolve_as_base(self):
         module = _toy_module(tune_base=True)
         view = as_view(module.build_tunable_view())
         base = _base_names(module)
         assert base and set(base) <= {n for n, _ in view.logical_named_parameters()}
-        assert set(view.roles().values()) == {"instrument"} and not set(base) & set(view.roles())
+        assert set(view.roles().values()) == {"artifact"} and not set(base) & set(view.roles())
         assert view.to_physical(base[:2]) == {n: (n,) for n in base[:2]}
         assert "base" in view.support().declared_roles
 
@@ -268,7 +268,7 @@ class TestBaseTuning:
 
 class TestDefaultOptimizer:
     """The default optimizer over a composition with no HF module registered (the circuit-tracer notebooks'), whose
-    parameters are all transcoder ``instrument`` tensors until a promotion (#859)."""
+    parameters are all transcoder ``artifact`` tensors until a promotion (#859)."""
 
     @staticmethod
     def _bare_module_with_view(layer: int | None = None) -> _CTModule:
@@ -321,7 +321,7 @@ class TestCooperativeRoles:
         view = as_view(_steered_module().build_tunable_view())
         roles = view.roles()
         assert roles[self.STEER] == "intervention:steer"
-        assert {r for n, r in roles.items() if n != self.STEER} == {"instrument"}
+        assert {r for n, r in roles.items() if n != self.STEER} == {"artifact"}
         assert "intervention" in view.support().declared_roles
         assert view.to_physical([self.STEER]) == {self.STEER: (self.STEER,)}
         assert view.depth_groups()[0] == [self.STEER]
