@@ -1,0 +1,44 @@
+# interpretune component manifest (schema v1)
+# In-repo tree mirrors the Hub tree; scripts/publish_it_module.py copies it and adds the generated card.
+it_schema_version: 1
+kinds:
+- module
+- datamodule
+requires:
+  # dev floor until the alpha releases (PEP 440: 0.1.0.devN sorts BEFORE 0.1a0); tighten to '>=0.1a0' at release
+  interpretune: '>=0.1.dev0'
+  adapters: []
+  pip:
+  - peft
+  - finetuning-scheduler
+module:
+  entrypoint: knowing_using.py
+  task:
+    name: knowing_using
+    description: >-
+      The Knowing-Using Gap (Dai et al., arXiv 2607.08393): models fine-tuned on single-hop biomedical facts memorize
+      them yet fail the two-hop questions they compose into; layer-wise representation self-distillation (LRSD)
+      narrows the gap
+    datasets: []
+    external_data:
+    - name: chaining_tasks.json
+      description: >-
+        The paper's chaining tasks (11,997 items, each two single-hop facts with their questions and one two-hop
+        question), derived from the STaRK benchmark and released with the paper's MIT-licensed code. It has no durable
+        public host yet: the datamodule reads it from a local `data_path`, and samples 1,000 facts from it with the
+        fact seed (848 for Qwen2.5).
+    variants:
+      kug_lrsd:
+        description: LoRA fine-tuning with cross-entropy plus LRSD (`lrsd_lambda` 0 is the plain arm), scored by
+          exact match after every epoch on the core loop (runs/)
+  configs:
+    kug_lrsd.qwen2_5_1_5b.core: configs/kug_lrsd.qwen2_5_1_5b.core.yaml
+datamodules:
+  knowing_using:
+    entrypoint: knowing_using.py
+    config: configs/datamodule.knowing_using.yaml
+# files the component ships for its users: the finetuning-scheduler schedule and the CLI run configuration
+# (`interpretune --config hub://speediedan/knowing-using/runs/<file>`)
+extra_files:
+- ft_schedules
+- runs
