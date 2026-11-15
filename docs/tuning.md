@@ -212,7 +212,7 @@ a fresh session, because cases change parameters and `requires_grad`.
 | [nnsight](tuning_nnsight.md), local and dispatched | venngram's composed view over the HF module, registered as `hf_model` | none: nnsight does not apply a `lora_cfg` ([#942](https://github.com/speediedan/interpretune/issues/942)) |
 | [nnsight](tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; tuning paths tracked in [#814](https://github.com/speediedan/interpretune/issues/814) and [#775](https://github.com/speediedan/interpretune/issues/775) | |
 | [circuit-tracer](tuning_circuit_tracer.md) | `CircuitTracerView`: the transcoders, with base-model tensors refused unless `tune_base` is set; refused when no replacement model is loaded | transcoders as `instrument`, promotable to `latent:transcoder`; base tuning under a frozen replacement is [#813](https://github.com/speediedan/interpretune/issues/813) |
-| [interp-engine (hub adapter)](tuning_interp_engine.md) | Interpretune's default view until the adapter declares its own; its circuit-tracer composition takes the circuit-tracer view | none declared yet |
+| [interp-engine (hub adapter)](tuning_interp_engine.md) | Interpretune's default view, which fits `(core, interp_engine)` with no override (measured by the adapter's tuning conformance); its circuit-tracer composition takes the circuit-tracer view | none declared yet |
 | a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |
 
 Any composition but circuit-tracer can also carry [latent models](tuning_latent_models.md) (SAEs, transcoders
