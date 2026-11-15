@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-import sys
 from copy import deepcopy
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
@@ -12,21 +11,14 @@ from typing import Any, Iterator, Literal, Mapping, cast
 import torch
 import yaml
 
-TESTS_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = TESTS_DIR.parent
-for _path in (REPO_ROOT, TESTS_DIR):
-    _path_str = str(_path)
-    if _path_str not in sys.path:
-        sys.path.insert(0, _path_str)
-
-from interpretune.adapters.nnsight.config import NNsightConfig  # noqa: E402
-from interpretune.adapter_registry import ADAPTER_REGISTRY  # noqa: E402
-import interpretune.harness  # noqa: E402
-from interpretune.utils.resource_mgmt import cleanup_python_cuda, safe_clean_cuda  # noqa: E402
-from tests import load_dotenv  # noqa: E402
-from tests.analysis_resource_utils import clear_nnsight_test_state, serial_test_cleanup  # noqa: E402
-from tests.configuration import config_modules  # noqa: E402
-from tests.conftest import FixtPhase, session_fixture_hook_exec  # noqa: E402
+from interpretune.adapters.nnsight.config import NNsightConfig
+from interpretune.adapter_registry import ADAPTER_REGISTRY
+import interpretune.harness
+from interpretune.utils.resource_mgmt import cleanup_python_cuda, safe_clean_cuda
+from tests import load_dotenv
+from tests.analysis_resource_utils import clear_nnsight_test_state, serial_test_cleanup
+from tests.configuration import config_modules
+from tests.conftest import FixtPhase, session_fixture_hook_exec
 
 
 DebugSessionSurfacePreset = Literal["notebook_default", "parity_surface"]
