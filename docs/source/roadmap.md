@@ -51,28 +51,11 @@ local dev stacks) — subject to the same upstream-ownership framing above.
 
 ### Standardized hub-based dashboard discovery
 
-Streaming a corpus cheaply is solved by the Wave 1 artifact layout. **Finding** one is not: there is
-currently no way to ask the Hub *which published corpus serves a given (model, source set)?* Buckets
-are not indexed by content and bucket names are free text, so guessing from a naming convention would
-download a corpus that imports successfully into the requested source set while containing something
-else — a wrong answer indistinguishable from a right one.
-
-Wave 1 therefore ships a deliberate stopgap: `KNOWN_DASHBOARD_BUCKETS` in
-`interpretune.utils.neuronpedia_hub_fetch`, a hardcoded map covering the two published corpora the
-example notebooks need. It is annotated in-tree as a temporary stub. It does not generalize — a
-client-side registry is frozen at package-build time, forces any third-party publisher to land a
-commit here to become discoverable, and restates metadata each corpus already carries in its own
-`dashboards.json` with nothing keeping the two in agreement.
-
-A replacement needs to: resolve `(model_id, source_set_id)` to zero or more corpora (more than one
-prompt corpus per source set is already the normal case); keep authority in the corpus's own
-`dashboards.json` rather than a second source of truth; let a corpus be registered without a client
-release; expose enough metadata — prompt corpus, layers, prompt count, row-group layout — to choose
-before moving GiB; and answer which publishers a client will import from. Candidate mechanisms, none
-yet evaluated: a dataset-repo collection per model family, a tag convention plus Hub search, an index
-artifact in a well-known repo, or Neuronpedia itself serving the mapping.
-
-Tracked here until a Wave 2 issue is opened for it. The stub should not outlive Wave 2.
+Shipped ([#262](https://github.com/speediedan/interpretune/issues/262)): published corpora are discovered through
+Hub collections whose items are buckets, with each corpus's own `dashboards.json` as the only description of what it
+holds. A client's trust list is the collections it reads (the project's own by default), and a publisher registers a
+corpus by adding its bucket to a collection, with no client release. The pipeline guide's
+[dashboard-corpus collection](../neuronpedia_dashboard_pipeline.md#hub-dashboard-discovery) section has the API.
 
 ## Research directions
 
