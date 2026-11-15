@@ -30,6 +30,7 @@ __all__ = [
     "resolve_interventions",
     "apply_intervention",
     "apply_op",
+    "track_gradient",
     "get_intervention_target_shape",
     "normalize_position_scope",
     "normalize_op",
@@ -820,6 +821,20 @@ def _apply_op_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> to
     """
     target = torch.as_tensor(spec.intervention_tensor, device=input_value.device, dtype=input_value.dtype)
     return executor_for(normalize_op(spec.op))(input_value, target, spec)
+
+
+def track_gradient(value: torch.Tensor) -> torch.Tensor:
+    """Make ``value`` carry gradients when the forward that produced it did not track them, and return it.
+
+    A model whose parameters are frozen (a circuit-tracer composition leaves its model so) computes its activations
+    without a graph when its input does not require grad, so a backward pass from the metric has nothing to
+    differentiate. Marking each site a backward reads makes the first one a leaf and everything downstream of it
+    tracked, and the gradient at every site is still the metric's gradient with respect to that activation. A tensor
+    already tracked is left alone, so a trainable model's graph is unchanged.
+    """
+    if not value.requires_grad:
+        value.requires_grad_(True)
+    return value
 
 
 def apply_intervention(

@@ -34,6 +34,7 @@ from interpretune.analysis.backends import (
     build_intervention_dict,
     expand_intervention_patterns,
     get_intervention_target_shape,
+    track_gradient,
 )
 from interpretune.analysis.backends.hook_mapping import HookNameResolver, ResolvedHook, SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
@@ -620,6 +621,7 @@ class NNsightModelBackend:
         hook_fn: Callable[[Any, _DummyHookPoint], Any] | None = None,
         interventions: Mapping[str, Sequence[InterventionSpec]] | None = None,
         last_pos: int | None = None,
+        track_grad: bool = False,
     ) -> tuple[dict[str, Any], ResolvedHook]:
         """Splice an SAE into the model's activation stream within an NNsight trace.
 
@@ -638,6 +640,8 @@ class NNsightModelBackend:
                 ``_DummyHookPoint`` with the SAE's ``hook_sae_acts_post`` sub-hook name.
             interventions: Optional mapping from SAE subhook suffixes to intervention specs.
             last_pos: Sequence position to modify for intervention application.
+            track_grad: Make the SAE input carry gradients when the forward does not (see
+                :func:`~interpretune.analysis.backends.interventions.track_gradient`), for a backward pass.
 
         Returns:
             Tuple of ``(stage_proxy_map, resolved_hook)``.
@@ -648,6 +652,8 @@ class NNsightModelBackend:
 
         stage_interventions = interventions or {}
         act_input = _read_envoy_activation(envoy, resolved)
+        if track_grad:
+            act_input = track_gradient(act_input)
         if last_pos is not None:
             for spec in stage_interventions.get("hook_sae_input", ()):
                 act_input = apply_intervention(act_input, spec, last_pos=last_pos)
@@ -1326,13 +1332,14 @@ class NNsightModelBackend:
                 proxies: dict[str, Any] = {}
                 for name in ordered:
                     if name in spliced:
-                        stage_values, _ = self._splice_sae(model, latents[name])
+                        stage_values, _ = self._splice_sae(model, latents[name], track_grad=True)
                         for suffix, value in stage_values.items():
                             if f"{name}.{suffix}" in latent_names:
                                 proxies[f"{name}.{suffix}"] = value
                     if name in bases:
                         resolved = self._resolver.resolve_for_envoy(name)
-                        proxies[name] = _read_envoy_activation(_navigate_envoy(model, resolved.module_path), resolved)
+                        envoy = _navigate_envoy(model, resolved.module_path)
+                        proxies[name] = track_gradient(_read_envoy_activation(envoy, resolved))
                 scalar = backward_fn(model.output.logits)
                 saved_metric = _nnsight.save(scalar)
                 with scalar.backward():  # nnsight patches Tensor.backward() to return a BackwardsTracer context manager

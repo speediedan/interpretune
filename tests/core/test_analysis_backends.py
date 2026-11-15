@@ -1852,3 +1852,58 @@ class TestCapabilitySpellings:
 
         with pytest.raises(ValueError, match="'steering' is not a capability: spellings are .*'head_attribution'"):
             normalize_backend_capability("steering")
+
+
+class TestGradientInterventionOnAFrozenModel:
+    """A model whose parameters are frozen, as a circuit-tracer composition leaves it, computes its activations
+    without a graph, so a backward pass from the metric had nothing to differentiate and both model backends
+    failed.
+
+    The backward surface now makes the sites it reads carry gradients: frozen and trainable must report the same
+    gradients, unedited and edited, and the edit must move the one it reaches.
+    """
+
+    SITE, CAPTURE, TOKEN = "blocks.5.hook_in", "blocks.2.hook_out", 1000
+    IDS = torch.tensor([[464, 3139, 286, 4881, 318]])  # gpt2's "The capital of France is"
+
+    def _metric(self, logits: torch.Tensor) -> torch.Tensor:
+        return logits[:, -1, self.TOKEN].sum()
+
+    def _payload(self) -> dict:
+        return {self.SITE: {"intervention_tensor": torch.zeros(768), "op": "replace", "position_scope": "last_token"}}
+
+    def _assert_frozen_matches_trainable(self, run, module: torch.nn.Module) -> None:
+        trainable_pre, trainable_post, _ = run()
+        module.requires_grad_(False)
+        frozen_pre, frozen_post, _ = run()
+        torch.testing.assert_close(frozen_pre[self.CAPTURE], trainable_pre[self.CAPTURE])
+        torch.testing.assert_close(frozen_post[self.CAPTURE], trainable_post[self.CAPTURE])
+        moved = (frozen_post[self.CAPTURE] - frozen_pre[self.CAPTURE]).abs().max().item()
+        assert moved > 0.1, f"the gradient edit at {self.SITE} did not reach {self.CAPTURE} (moved {moved})"
+
+    def test_transformer_lens(self):
+        from transformer_lens.model_bridge import TransformerBridge
+
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+        bridge = TransformerBridge.boot_transformers("gpt2", device="cpu")
+
+        def run():
+            return TLModelBackend().bwd_w_intervention(
+                bridge, {"input": self.IDS}, self._payload(), self._metric, capture=[self.CAPTURE]
+            )
+
+        self._assert_frozen_matches_trainable(run, bridge)
+
+    def test_nnsight(self):
+        from nnsight import LanguageModel
+
+        lm = LanguageModel("gpt2", device_map="cpu", dispatch=True)
+        backend = NNsightModelBackend(HookNameResolver("GPT2LMHeadModel"))
+
+        def run():
+            return backend.bwd_w_intervention(
+                lm, {"input_ids": self.IDS}, self._payload(), self._metric, capture=[self.CAPTURE]
+            )
+
+        self._assert_frozen_matches_trainable(run, lm._module)

@@ -74,6 +74,7 @@ from interpretune.analysis.backends.interventions import (
     expand_intervention_patterns,
     get_intervention_target_shape,
     resolve_interventions,
+    track_gradient,
 )
 from interpretune.analysis.backends.ops import (
     OpExecutor,
@@ -125,6 +126,7 @@ __all__ = [
     "apply_feature_selection_filter",
     "apply_intervention",
     "apply_op",
+    "track_gradient",
     "normalize_position_scope",
     "require_position_scope",
     "require_flow",

@@ -20,6 +20,7 @@ from interpretune.analysis.backends import (
     build_intervention_dict,
     expand_intervention_patterns,
     get_intervention_target_shape,
+    track_gradient,
 )
 from interpretune.analysis.backends.hook_mapping import SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
@@ -241,11 +242,15 @@ def _tl_backward(
 
         return hook
 
+    def track(activation: torch.Tensor, hook: Any) -> torch.Tensor:
+        return track_gradient(activation)
+
     names = list(dict.fromkeys([*specs.keys(), *capture]))
+    fwd_hooks = _normalize_hooks(model, [(name, track) for name in names], latent_model_handles)
     bwd_hooks = _normalize_hooks(model, [(name, make_hook(name)) for name in names], latent_model_handles)
     with torch.set_grad_enabled(True):
         with model.saes(saes=latent_model_handles) if latent_model_handles else contextlib.nullcontext():
-            with model.hooks(fwd_hooks=[], bwd_hooks=bwd_hooks):
+            with model.hooks(fwd_hooks=fwd_hooks, bwd_hooks=bwd_hooks):
                 logits = model(**batch)
                 state["last_pos"] = int(logits.shape[1] - 1)
                 scalar = backward_fn(logits)
