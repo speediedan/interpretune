@@ -38,13 +38,23 @@ parameters:
       nvidia: "speediedan/interpretune:py3.13-pt2.15.0-azpl-init@sha256:fda1c1cd8373da860e38d9aaea5bd1a096dbc1ed886043a3c8054d2b0c7bd7e8"
       amd: "speediedan/interpretune:py3.13-pt2.15.0-rocm10.0-azpl-init@sha256:bd6ef05d876cea67c58b6f108a4ea300227f6272843a8f246c172c7689307283"
 
+# The any-vendor GPU job template shared with finetuning-scheduler, pinned to a gpu-epsilon tag (move it with
+# requirements/ci/gpu_epsilon.txt). templates/it-gpu-job.yml passes interpretune's settings to it.
+resources:
+  repositories:
+    - repository: ci
+      type: github
+      name: speediedan/gpu-epsilon
+      endpoint: speediedan
+      ref: refs/tags/gpu-job-v1
+
 # The any-vendor template (#703), as a vendor-demanded release job: README.md documents a CUDA install (the default
 # index's torch), so the README flow can only pass on an NVIDIA agent until README.md documents a ROCm install too, and
 # this is a release gate, so it takes the release job class. The template starts the container (the approval gate is
 # attached to the self-hosted POOL, so a GPU pipeline structurally cannot ship ungated); every step below runs inside
 # it through .azure-pipelines/scripts/ctr.sh, with its logic in .azure-pipelines/scripts/readme_flow.sh.
 jobs:
-  - template: templates/gpu-job.yml
+  - template: templates/it-gpu-job.yml
     parameters:
       jobName: readme_flow_gpu
       displayName: 'README flow (GPU)'

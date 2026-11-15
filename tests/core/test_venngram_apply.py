@@ -206,3 +206,96 @@ def test_a_sidecar_operand_loads_relative_to_the_recipe(tmp_path):
 def test_untranslatable_activation_ops_refuse_by_name(ops, operands, site, widths, match):
     with pytest.raises(MisconfigurationException, match=match):
         recipe_interventions(_activation_recipe(ops, operands, site=site), site_widths=widths)
+
+
+GRADIENT_RECIPE = {
+    **RECIPE,
+    "book": {
+        **RECIPE["book"],
+        "schema_version": 2,
+        "sets": {"grads": {"point": "mlp.out.hook_in", "layers": [2], "units": [7], "of": "grad"}},
+    },
+    "stages": [
+        {
+            "site": "mlp.out.hook_in",
+            "tokens": "all",
+            "ops": [{"op": "scale", "target": {"set": "grads"}, "value": {"dose": 0.0}}],
+        }
+    ],
+}
+
+
+def test_an_op_on_a_gradient_is_refused_rather_than_applied_to_the_activation_value():
+    """#938: a target set addressing `of: grad` names the gradient through those units; the forward surface writes
+    values, so translating the op would scale the activation instead."""
+    from interpretune.analysis.backends.capabilities import InterventionSupport
+    from interpretune.analysis.venngram import check_recipe, venngram_support
+
+    recipe = _recipe(GRADIENT_RECIPE)
+    with pytest.raises(MisconfigurationException, match="addresses the gradient"):
+        recipe_interventions(recipe, site_widths={"mlp.out.hook_in": 8192})
+    record = InterventionSupport(position_scopes={PositionScope.ALL_POSITIONS}, ops={"scale"})
+    support = venngram_support(record)
+    assert support.of == frozenset({"value"})  # the record's flows are carried into the declaration
+    refusals = check_recipe(recipe, support)
+    assert any("does not act on" in r for r in refusals) and any("addresses the gradient" in r for r in refusals)
+    # declaring `grad` (as no backend does yet) passes venngram's check; the apply path still refuses
+    both = InterventionSupport(position_scopes={PositionScope.ALL_POSITIONS}, ops={"scale"}, of={"value", "grad"})
+    assert venngram_support(both).of == frozenset({"value", "grad"})
+    assert [r for r in check_recipe(recipe, venngram_support(both)) if "addresses the gradient" in r]
+
+
+def _composed_recipe(target, value):
+    """A recipe whose op targets ``target``, a composition of the book's unit sets at one site (#905,
+    venngram#80)."""
+    point = {"point": "mlp.out.hook_in", "layers": [12]}
+    sets = {
+        "a": {**point, "units": {12: [1, 2, 3]}},
+        "b": {**point, "units": {12: [3, 4]}},
+        "both": "@a & @b",
+        "rest": "@a - @b",
+    }
+    doc = {
+        **RECIPE,
+        "book": {**RECIPE["book"], "schema_version": 2, "sets": sets},
+        "stages": [{**RECIPE["stages"][0], "ops": [{"op": "add", "target": {"set": target}, "value": value}]}],
+    }
+    return _recipe(doc)
+
+
+def test_a_composed_unit_target_applies_through_the_native_path():
+    """An intersection dosed once doses exactly its one member; it was refused as a feature target before."""
+    payload = recipe_interventions(_composed_recipe("both", {"dose": 0.5}), site_widths={"mlp.out.hook_in": 16})
+    (spec,) = payload["blocks.12.mlp.out.hook_in"]
+    assert spec.op == "add" and spec.intervention_tensor[3] == 0.5
+    assert torch.count_nonzero(spec.intervention_tensor) == 1
+
+
+def test_a_doses_table_on_a_composed_target_doses_only_its_members():
+    """``@a - @b`` is units 1 and 2: a table entry for unit 4 (in ``b``) is not a member, so nothing doses it."""
+    recipe = _composed_recipe("rest", {"doses": {12: {1: 0.5, 2: -0.25, 4: 9.0}}})
+    (spec,) = recipe_interventions(recipe, site_widths={"mlp.out.hook_in": 16})["blocks.12.mlp.out.hook_in"]
+    assert spec.intervention_tensor[1] == 0.5 and spec.intervention_tensor[2] == -0.25
+    assert spec.intervention_tensor[4] == 0.0 and torch.count_nonzero(spec.intervention_tensor) == 2
+
+
+def test_an_evidence_value_on_a_composed_target_is_refused():
+    """Venngram lists a composition's members through an op's doses, so an evidence-sourced value is refused, as a
+    unit target and not as a feature one."""
+    value = {"from": {"evidence": "scores", "column": "score"}}
+    with pytest.raises(MisconfigurationException, match="composes unit sets") as excinfo:
+        recipe_interventions(_composed_recipe("both", value), site_widths={"mlp.out.hook_in": 16})
+    assert "feature" not in str(excinfo.value)
+
+
+def test_a_composed_gradient_target_is_refused_like_a_single_one():
+    """A composition of ``of: grad`` unit sets addresses the gradient as each of its terms does (#938, #999)."""
+    point = {"point": "mlp.out.hook_in", "layers": [12], "of": "grad"}
+    sets = {"a": {**point, "units": {12: [1, 2, 3]}}, "b": {**point, "units": {12: [3, 4]}}, "both": "@a & @b"}
+    doc = {
+        **RECIPE,
+        "book": {**RECIPE["book"], "schema_version": 2, "sets": sets},
+        "stages": [{**RECIPE["stages"][0], "ops": [{"op": "add", "target": {"set": "both"}, "value": {"dose": 0.5}}]}],
+    }
+    with pytest.raises(MisconfigurationException, match="addresses the gradient"):
+        recipe_interventions(_recipe(doc), site_widths={"mlp.out.hook_in": 16})

@@ -150,7 +150,7 @@ grep "transformer.lens\|sae.lens\|circuit.tracer\|nnsight" /tmp/ci_artifacts_<ru
 
 ```bash
 # Release pins: requirements/ci/overrides.txt and pyproject's [tool.uv] override-dependencies must
-# state the same versions (currently transformer-lens==3.5.1, nnsight==0.7.0)
+# state the same versions (currently transformer-lens==3.5.1, nnsight==0.8.2)
 grep -E '^(transformer-lens|nnsight)==' requirements/ci/overrides.txt
 grep -A10 'override-dependencies' pyproject.toml
 
@@ -426,7 +426,7 @@ diff <(grep "^FAILED" /tmp/ci_artifacts/windows-*/output.txt | sed 's/.*FAILED /
 
 The `override-dependencies` section in `pyproject.toml` serves a specific purpose: it replaces downstream constraints with the versions this project requires so that editable installations work correctly. If it disagrees with the other pin surfaces, CI will install the wrong package version silently.
 
-**Always verify**: `requirements/ci/overrides.txt` and `pyproject.toml`'s `override-dependencies` state the same release pins (`transformer-lens==3.5.1`, `nnsight==0.7.0`), and the `git-deps` entries (circuit-tracer, sae-lens, sae-dashboard, finetuning-scheduler) reference the same fork and commit CI installed.
+**Always verify**: `requirements/ci/overrides.txt` and `pyproject.toml`'s `override-dependencies` state the same release pins (`transformer-lens==3.5.1`, `nnsight==0.8.2`), and the `git-deps` entries (circuit-tracer, sae-lens, sae-dashboard, finetuning-scheduler) reference the same fork and commit CI installed.
 
 ### 2. Don't Chase Symptoms Before Fixing Dependencies
 

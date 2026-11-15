@@ -1,6 +1,6 @@
 transformer-lens==4.0.0  # overrides sae-dashboard's ^2.2.0 cap; sae-lens (>=2.16.1,<5) and circuit-tracer admit it as declared
 jaxtyping>=0.3  # required by transformer-lens 4.0; overrides sae-dashboard's ^0.2.28 cap (annotation-only use)
-nnsight==0.7.0  # released pin (0.7.0 validated: sig-key VAR_KEYWORD resolve-through fix + remote-init gating; nnsight slice + parity 34/0 green on 0.6.3 AND 0.7.0)
+nnsight==0.8.2  # released pin; 0.8.1 is the oldest client the NDIF server accepts, and 0.8 moved Barrier and dropped the CROSS_INVOKER/TRACE_CACHING switches (circuit-tracer git pin carries the matching compat commit)
 # Exactly what torch 2.15.0 requires on Linux. The marker is load-bearing, not decoration: a uv
 # override replaces the target requirement *including its markers*, so an unmarked `triton==3.9.0`
 # overwrites torch's own `triton~=3.9.0; platform_system == "Linux" and python_version < "3.16"` with an

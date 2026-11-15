@@ -165,13 +165,13 @@ def _require_reachable(root: nn.Module, what: str, *targets: nn.Module) -> None:
 
     circuit-tracer runs its replacement
     model's forward (attribution included): on the TransformerLens backend the replacement model is the torch module,
-    and on the nnsight backend it wraps one (``_model``, the HF model), whose modules' hooks fire in its traces. A site
+    and on the nnsight backend it wraps one (``_module``, the HF model), whose modules' hooks fire in its traces. A site
     is reachable when its module is part of that torch module. Matched by class name: circuit-tracer is optional.
     """
     if not any(cls.__name__ == "BaseCircuitTracerModule" for cls in type(root).__mro__):
         return
     replacement = getattr(root, "_replacement_model", None)
-    executed = replacement if isinstance(replacement, nn.Module) else getattr(replacement, "_model", None)
+    executed = replacement if isinstance(replacement, nn.Module) else getattr(replacement, "_module", None)
     if not isinstance(executed, nn.Module):
         raise ValueError(
             f"This circuit-tracer composition cannot take {what}: no torch module runs its replacement model's forward"

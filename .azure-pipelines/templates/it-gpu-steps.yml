@@ -1,6 +1,6 @@
 # The interpretune GPU job's steps, shared by gpu-tests.yml (gates, main and scheduled builds) and gpu-release.yml (the
 # two vendor-demanded release legs). Each runs inside the job's container through .azure-pipelines/scripts/ctr.sh; the
-# template that starts the container is templates/gpu-job.yml.
+# template that starts the container is gpu-epsilon's templates/gpu-job.yml, through templates/it-gpu-job.yml.
 parameters:
   - name: reset_hf_cache
     type: boolean

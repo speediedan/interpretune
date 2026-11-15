@@ -145,9 +145,9 @@ class _BookWriter:
             )
         params: dict[str, Any] = {}
         if name == "reject":
-            if not 0.0 <= spec.scale_factor <= 1.0:
+            if spec.scale_factor < 0.0:  # above 1 over-rejects, which venngram's `fraction` admits
                 raise MisconfigurationException(
-                    f"{where}: venngram's `reject` takes a `fraction` in [0, 1], not {spec.scale_factor}"
+                    f"{where}: venngram's `reject` takes a non-negative `fraction`, not {spec.scale_factor}"
                 )
             if spec.scale_factor != 1.0:
                 params["fraction"] = spec.scale_factor

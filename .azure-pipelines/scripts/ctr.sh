@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run one command inside the any-vendor GPU job's container (.azure-pipelines/templates/gpu-job.yml, #703), from a host
+# Run one command inside the any-vendor GPU job's container (gpu-epsilon's templates/gpu-job.yml, #703), from a host
 # step, with the variables the in-container scripts read forwarded by name.
 #
 #   ctr.sh <command> [args...]

@@ -168,7 +168,7 @@ class TestRefusals:
         with pytest.raises(ValueError, match="no torch module runs its replacement model's forward"):
             attach_latent_model(BaseCircuitTracerModule(), "sae", TinySAE(), LatentSite("model.blocks.0"))
         root = BaseCircuitTracerModule()
-        object.__setattr__(root, "_replacement_model", SimpleNamespace(_model=root.model["blocks"]))  # nnsight's shape
+        object.__setattr__(root, "_replacement_model", SimpleNamespace(_module=root.model["blocks"]))  # nnsight's shape
         with pytest.raises(ValueError, match="only at modules of the model circuit-tracer runs"):
             attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0", write="model.tuple_block"))
         attach_latent_model(root, "sae", TinySAE(), LatentSite("model.blocks.0"))

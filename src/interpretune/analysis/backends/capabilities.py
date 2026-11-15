@@ -69,8 +69,10 @@ class Capability(Enum):
 #: The component slots of a composition, in the order capabilities are aggregated. A provider is named by its slot.
 COMPONENTS: tuple[str, ...] = ("model_backend", "analysis_backend")
 
-#: Intervention targets, as venngram names them (``venngram.ops.TARGETS``): a whole activation, a set of its units, or
-#: a latent model's features.
+#: Intervention targets on activations, as venngram names them (``venngram.ops.ACTIVATION_TARGETS``): a whole
+#: activation, a set of its units, or a latent model's features. Parameter targets (``param``, ``param_units``) are
+#: materialized on the tensor rather than reached by a backend (:mod:`interpretune.tuning.weights`), so a support record
+#: declares them where the caller applies a recipe's weights (``venngram_support(..., weights=True)``).
 INTERVENTION_TARGETS: tuple[str, ...] = ("activation", "units", "features")
 
 #: Value sources, as venngram names them (``venngram.ops.VALUE_SOURCES``).

@@ -190,7 +190,16 @@ class AnalysisStepMixin:
             # bare ``not concrete`` test miss the wrapper, emptying every pruned batch). Resolve through to
             # the underlying model whenever one exists and the visible signature still accepts arbitrary
             # kwargs; models without an underlying handle keep their own signature.
-            underlying = getattr(self.model, "_model", None) or getattr(self.model, "_module", None)
+            # The first candidate that is actually a module wins: an Envoy resolves unknown attributes through
+            # its proxy surface, so a bare truthiness chain can pick up a non-module value.
+            underlying = next(
+                (
+                    c
+                    for c in (getattr(self.model, a, None) for a in ("_module", "_model"))
+                    if isinstance(c, torch.nn.Module)
+                ),
+                None,
+            )
             if underlying is not None:
                 underlying_method = getattr(underlying, target_method, None)
                 if underlying_method is not None:

@@ -106,7 +106,7 @@ class TestAttachment:
     def test_local_nnsight_composition_registers_its_hf_module(self, request):
         """The HF module is registered as `hf_model`, so the identity view tunes it (#774)."""
         module = request.getfixturevalue("get_it_session__ns_gpt2__setup").it_session.module
-        assert module._modules["hf_model"] is module.model._model
+        assert module._modules["hf_model"] is module.model._module
         view = getattr(module, VIEW_ATTR)
         assert as_view(view).support().trainable
         names = [n for n, _ in module.named_parameters()]
@@ -114,7 +114,7 @@ class TestAttachment:
         # the view and `module.model.parameters()` reach the same tensors: the default optimizer lists each once
         opt_params = list(module.optimizer_parameters())
         assert len(opt_params) == len({id(p) for p in opt_params})
-        assert {id(p) for p in opt_params} == {id(p) for p in module.model._model.parameters()}
+        assert {id(p) for p in opt_params} == {id(p) for p in module.model._module.parameters()}
 
     def test_remote_or_undispatched_nnsight_is_refused_with_its_reason(self):
         from types import SimpleNamespace
@@ -147,7 +147,7 @@ class TestAttachment:
         cfg = deepcopy(request.getfixturevalue("get_it_session_cfg__ns_gpt2"))
         cfg.module_cls = NoSuperHook
         module = ITSession(cfg).module
-        assert module._modules["hf_model"] is module.model._model
+        assert module._modules["hf_model"] is module.model._module
         assert as_view(getattr(module, VIEW_ATTR)).support().trainable
 
     def test_a_composition_without_nnsight_cfg_registers_nothing(self):

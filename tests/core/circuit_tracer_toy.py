@@ -58,7 +58,7 @@ def tiny_gemma2_replacement_model(n_layers: int = 3, seed: int = 670):
     model = ReplacementModel.from_config(cfg, transcoder_set, backend="nnsight")
     for param in model.parameters():
         torch.nn.init.uniform_(param, a=-1, b=1)
-    for transcoder in model.transcoders[0]:  # type: ignore[index]
+    for transcoder in transcoders.values():
         torch.nn.init.uniform_(transcoder.activation_function.threshold, a=0, b=1)
     assert isinstance(model, NNSightReplacementModel)
     return model

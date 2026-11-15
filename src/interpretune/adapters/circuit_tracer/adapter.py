@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 #: What a circuit-tracer replacement model may be. `torch.nn.Module`, and it CANNOT be narrower:
 #:
 #: `circuit_tracer.ReplacementModel` is a FACTORY, not a base class. Its products inherit from
-#: UNRELATED bases -- the bundled two extend `HookedTransformer` and `LanguageModel` respectively, and
+#: UNRELATED bases -- the bundled two extend `HookedTransformer` and `TransformersModel` respectively, and
 #: circuit-tracer's own additional backends extend others still -- so the products share no common
 #: ancestor except `nn.Module`. Neither the factory class nor a union of the bundled two is a
 #: supertype of all of them, which is measurable rather than theoretical: type-checking against a
@@ -202,7 +202,7 @@ def meta_replacement_model(
         loaded = NNSightReplacementModel.from_pretrained_and_transcoders(
             model_name, transcoders(), device=torch.device("cpu"), dtype=dtype
         )
-        source = loaded._model
+        source = loaded._module
         assert isinstance(source, nn.Module)  # a locally loaded model, never a remote nnsight envoy
     return model, source
 
@@ -264,7 +264,7 @@ class BaseCircuitTracerModule(BaseITModule):
         low-rank corrections when ``lazy_delta_rank`` is set.
 
         A replacement model that is a torch module is registered as ``model``, which reaches its transcoders already.
-        The nnsight backend's is an nnsight ``LanguageModel``, not a torch module, so its transcoders are registered
+        The nnsight backend's is an nnsight ``TransformersModel``, not a torch module, so its transcoders are registered
         here as ``transcoders`` unless something already registered them. Under ``CircuitTracerConfig.tune_base``
         its torch module is registered first, as ``hf_model``, so the base model is this module's too (#943).
         """
@@ -294,7 +294,7 @@ class BaseCircuitTracerModule(BaseITModule):
         replacement_model = getattr(self, "_replacement_model", None)
         if replacement_model is None or isinstance(replacement_model, nn.Module) or "hf_model" in self._modules:
             return
-        base = getattr(replacement_model, "_model", None)
+        base = getattr(replacement_model, "_module", None)
         if not isinstance(base, nn.Module) or not getattr(replacement_model, "dispatched", True):
             return
         registered = {id(p) for p in self.parameters()}
@@ -666,7 +666,7 @@ class CircuitTracerNNsightModuleMixin(NNsightAttributeMixin):
         # Load the NNsight replacement model
         self._load_replacement_model(pretrained_kwargs=nnsight_kwargs)
 
-        # Apply generation config to the underlying HF model (NNSightReplacementModel extends LanguageModel)
+        # Apply generation config to the underlying HF model (NNSightReplacementModel extends TransformersModel)
         self._apply_generation_config()  # provided by BaseNNsightModule
 
         # The replacement model is now set as self.model

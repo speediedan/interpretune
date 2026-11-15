@@ -27,9 +27,9 @@ backend already publishes, never restated by hand:
   a tensor in the site's own activation coordinates, so a record naming no bases is declared with the bases known to
   be written there: by default interpretune's two J-lens bases (``jlens_folded``, ``jlens_unfolded``), both
   residual-stream directions. A caller whose operands come from elsewhere names their bases explicitly.
-
-venngram's ``Support`` has no ``of`` field in the installed release, so the record's flows are not carried into it;
-a recipe acting on a gradient is refused by the apply path until it does.
+- **of**: what targets may address, ``value`` or ``grad``, from the record. Every model backend declares ``value`` only
+  today, so a recipe acting on a gradient is refused here, and the apply path refuses one too
+  (:func:`~interpretune.analysis.venngram.apply.op_refusal`), rather than applying the op to the activation value.
 
 :func:`venngram_feature_support` is the analysis-backend path's declaration, derived from the provider of the
 ``features`` target that applies feature tuples: a feature ``replace`` at explicit positions, which circuit-tracer's
@@ -85,6 +85,7 @@ def venngram_support(
     bases: frozenset[str] | None = DEFAULT_BASES,
     latent_models: bool = False,
     statistics: frozenset[str] = frozenset(),
+    weights: bool = False,
     name: str = "interpretune",
 ) -> Any:
     """Derive a ``venngram.ops.Support`` from a backend's own support records (see the module docstring).
@@ -100,6 +101,10 @@ def venngram_support(
             any.
         latent_models: Whether a latent model is attached, so feature targets have a sub-hook to act at.
         statistics: The statistics the caller will supply to ``recipe_interventions``; any declares ``statistic``.
+        weights: Whether the caller materializes a recipe's ``weights`` section
+            (:func:`~interpretune.tuning.weights.apply_recipe_weights`), so the parameter targets (``param``,
+            ``param_units``) are declared. Their ops are the declared ops interpretune materializes on a tensor
+            (:data:`~interpretune.tuning.weights.WEIGHT_OPS`).
         name: The consumer name the record carries.
 
     Returns:
@@ -112,12 +117,14 @@ def venngram_support(
     declared = intervention.declared_ops
     return vg_ops.Support(
         ops=frozenset(ops & declared & set(vg_ops.OPS)),
-        targets=frozenset(t for t in intervention.targets if t != "features" or latent_models),
+        targets=frozenset(t for t in intervention.targets if t != "features" or latent_models)
+        | (frozenset(vg_ops.PARAM_TARGETS) if weights else frozenset()),
         tokens=frozenset(_TOKEN_SCOPES[s] for s in intervention.position_scopes),
         values=frozenset(intervention.values),
         transforms=EVALUATED_TRANSFORMS | ({"statistic"} if statistics else frozenset()),
         sites=None if capture is None else _sites(capture.capturable),
         bases=intervention.bases if intervention.bases is not None else bases,
+        of=frozenset(intervention.of),
         name=name,
     )
 

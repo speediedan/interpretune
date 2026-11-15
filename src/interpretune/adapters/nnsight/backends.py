@@ -719,10 +719,12 @@ class NNsightModelBackend:
         NNsight wraps the HF model; ``_module`` holds the underlying module.
         Falls back to returning ``model`` directly if it is already a plain ``nn.Module``.
         """
-        if hasattr(model, "_model"):
-            return model._model
-        if hasattr(model, "_module"):
-            return model._module
+        # isinstance, not hasattr: an Envoy resolves unknown attributes through its proxy
+        # surface, so presence alone does not mean the value is the module.
+        for attr in ("_module", "_model"):
+            value = getattr(model, attr, None)
+            if isinstance(value, torch.nn.Module):
+                return value
         return model
 
     @staticmethod

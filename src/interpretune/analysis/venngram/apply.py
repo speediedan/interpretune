@@ -127,8 +127,24 @@ def _member_refusal(recipe: Any, stage: Any, op: Any, kind: str) -> str | None:
     return member_refusal(recipe, op)
 
 
+def _gradient_refusal(recipe: Any, op: Any) -> str | None:
+    """Why an op acting on a gradient (its target set is ``of: grad``) cannot be translated: the forward surface
+    writes activation values, so translating it would apply the op to the value instead.
+
+    The backward surface is #970.
+    """
+    if op.target is not None and op.target_of(recipe.book) == "grad":
+        return (
+            "its target addresses the gradient (`of: grad`); interpretune applies recipe ops to activation values "
+            "only, so it is refused rather than applied to the value"
+        )
+    return None
+
+
 def op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     """Why ``op`` (at ``stage`` of ``recipe``) cannot be translated, or ``None`` when it can."""
+    if (refusal := _gradient_refusal(recipe, op)) is not None:
+        return refusal
     layer, _ = split_site(stage.site)
     kind = target_kind(recipe, op)
     if kind in ("units", "features"):
@@ -159,6 +175,8 @@ def feature_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     """
     if target_kind(recipe, op) != "features":
         return "circuit-tracer's feature tuples act on a feature target only"
+    if (refusal := _gradient_refusal(recipe, op)) is not None:
+        return refusal
     if op.op not in FEATURE_TUPLE_OPS:
         return f"circuit-tracer's feature tuples express {sorted(FEATURE_TUPLE_OPS)}, not `{op.op}`"
     if (op.tokens or stage.tokens).kind != "positions":
@@ -231,6 +249,7 @@ def recipe_interventions(
     site_widths: Mapping[str, int],
     evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
     statistics: Mapping[str, Statistic] | None = None,
+    weights_applied: bool = False,
 ) -> dict[str, tuple[InterventionSpec, ...]]:
     """Translate a supported ``venngram.recipe.Recipe`` into a backend intervention payload.
 
@@ -241,18 +260,27 @@ def recipe_interventions(
             whole-activation op's site also checks its operand's width.
         evidence: The tables evidence-sourced values read (:mod:`~interpretune.analysis.venngram.values`).
         statistics: The statistics their transforms name.
+        weights_applied: Whether the recipe's ``weights`` section (ops on parameters, which a recipe applies before any
+            stage) has been applied (:func:`~interpretune.tuning.weights.apply_recipe_weights`). A recipe with weights
+            is refused until it has, since its stages alone are a different treatment.
 
     Returns:
         A mapping of hook patterns (``blocks.<layer>.<site>``) to the ordered specs to apply at each, in the raw
         form :func:`~interpretune.analysis.backends.interventions.build_intervention_dict` canonicalizes.
 
     Raises:
-        MisconfigurationException: For anything this module cannot translate (see :func:`op_refusal`), an
-            unmapped token scope, a unit- or feature-targeted site whose width was not supplied, a unit outside its
-            site's width, an operand whose width differs from a supplied site width, or a value the supplied evidence
-            cannot give, naming the stage and op. Run
+        MisconfigurationException: For a recipe whose weights were not applied, anything this module cannot translate
+            (see :func:`op_refusal`), an unmapped token scope, a unit- or feature-targeted site whose width was not
+            supplied, a unit outside its site's width, an operand whose width differs from a supplied site width, or a
+            value the supplied evidence cannot give, naming the stage and op. Run
             :func:`~interpretune.analysis.venngram.support.require_supported` first for the full list at once.
     """
+    if getattr(recipe, "weights", ()) and not weights_applied:
+        raise MisconfigurationException(
+            f"recipe {recipe.name!r} has a `weights` section ({len(recipe.weights)} ops on parameters), applied before "
+            "its stages: apply it first (`interpretune.tuning.weights.apply_recipe_weights`), then pass "
+            "`weights_applied=True`"
+        )
     payload: dict[str, list[InterventionSpec]] = {}
     for i, stage in enumerate(recipe.stages):
         if stage.tokens.kind not in _POSITION_SCOPES:

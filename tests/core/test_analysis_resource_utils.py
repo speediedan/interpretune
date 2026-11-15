@@ -149,20 +149,7 @@ class TestConditionalCleanCpu:
 
 
 class TestSerialTestCleanup:
-    def test_clear_nnsight_test_state_clears_envoy_tree_and_globals(self, monkeypatch):
-        globals_calls = []
-
-        class _DummyGlobals:
-            @staticmethod
-            def clear():
-                globals_calls.append("cleared")
-
-        monkeypatch.setitem(
-            __import__("sys").modules,
-            "nnsight.intervention.tracing.globals",
-            type("_GlobalsModule", (), {"Globals": _DummyGlobals})(),
-        )
-
+    def test_clear_nnsight_test_state_clears_envoy_tree(self):
         child = _DummyEnvoy()
         root = _DummyEnvoy(children=[child])
 
@@ -172,7 +159,6 @@ class TestSerialTestCleanup:
         assert child.clear_edits_calls == 1
         assert root._source is None
         assert child._source is None
-        assert globals_calls == ["cleared"]
 
     def test_serial_test_cleanup_releases_fixture_like_attrs(self, monkeypatch):
         empty_cache_calls = []
