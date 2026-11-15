@@ -133,7 +133,6 @@ from interpretune.utils.neuronpedia_dashboard_hub import (
     COPY_ROWS_STEM,
     DASHBOARDS_TOKEN_ENV_VAR,
     DashboardPublishPlan,
-    MissingPageIndexError,
     PageIndexCoverage,
     build_publish_plan,
     collect_publish_files,
@@ -144,6 +143,7 @@ from interpretune.utils.neuronpedia_dashboard_hub import (
     resolve_dashboards_token,
     summarize_by_table,
 )
+from interpretune.utils.publish_checks import PublishCheckError, PublishedArtifactCheckError
 
 __all__ = [
     "_resolve_env_auth_token",
@@ -269,7 +269,6 @@ __all__ = [
     "COPY_ROWS_STEM",
     "DASHBOARDS_TOKEN_ENV_VAR",
     "DashboardPublishPlan",
-    "MissingPageIndexError",
     "PageIndexCoverage",
     "build_publish_plan",
     "collect_publish_files",
@@ -279,6 +278,9 @@ __all__ = [
     "publish_ignore_patterns",
     "resolve_dashboards_token",
     "summarize_by_table",
+    # publish_checks
+    "PublishCheckError",
+    "PublishedArtifactCheckError",
 ]
 
 

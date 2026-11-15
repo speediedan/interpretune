@@ -246,21 +246,43 @@ def push_analysis_store(
     token: str | None = None,
     provenance: dict | None = None,
     commit_message: str | None = None,
+    skip_checks: frozenset[str] | set[str] | tuple[str, ...] = (),
+    add_checks: frozenset[str] | set[str] | tuple[str, ...] = (),
 ) -> str:
     """Publish an AnalysisStore as a dataset repo: parquet interchange + envelope + generated card.
 
     Returns the resulting repo revision (commit sha). On re-push to an existing artifact repo, the
     envelope's ``identity`` block is read back and preserved verbatim — identity survives
     mutation; only ``provenance``/``artifacts`` refresh.
+
+    The Parquet is written by ``Dataset.push_to_hub``, which page-indexes every file from ``datasets`` 4.1.0 (the
+    floor), so no pre-upload check reads it. After the upload the ``range-read`` check reads one published file back
+    through ``HfFileSystem`` and raises ``PublishedArtifactCheckError`` if it does not decode: the artifact is then
+    already live. ``skip_checks`` / ``add_checks`` name checks to skip or turn on (unknown names are refused before
+    any network call), and skips are recorded in the envelope's ``provenance``.
     """
     import io
 
     from huggingface_hub import HfApi
 
     from interpretune.hub.cards import generate_artifact_card
+    from interpretune.utils.publish_checks import (
+        ANALYSIS_STORE,
+        POST_UPLOAD,
+        PRE_UPLOAD,
+        PublishTarget,
+        run_publish_checks,
+        validate_check_names,
+    )
 
+    validate_check_names(ANALYSIS_STORE, skip_checks, add_checks)
     if store.dataset is None:
         raise ArtifactEnvelopeError("Cannot push an AnalysisStore with no dataset loaded.")
+    target = PublishTarget(kind=ANALYSIS_STORE, destination=repo_id, store="dataset", token=token)
+    run_publish_checks(target, PRE_UPLOAD, skip_checks=skip_checks, add_checks=add_checks)
+    skipped = sorted(set(skip_checks))
+    if skipped:
+        provenance = {**(provenance or {}), "publish_checks_skipped": skipped}
     api = HfApi(token=token)
     api.create_repo(repo_id, repo_type="dataset", private=private, exist_ok=True)
 
@@ -298,6 +320,14 @@ def push_analysis_store(
     )
     sha = api.repo_info(repo_id, repo_type="dataset").sha
     assert sha is not None  # a repo we just committed to always has a head revision
+    published = PublishTarget(
+        kind=ANALYSIS_STORE,
+        destination=repo_id,
+        store="dataset",
+        remote_files=tuple(f"hf://datasets/{repo_id}@{sha}/{name}" for name in parquet_files[:1]),
+        token=token,
+    )
+    run_publish_checks(published, POST_UPLOAD, skip_checks=skip_checks, add_checks=add_checks)
     return sha
 
 
