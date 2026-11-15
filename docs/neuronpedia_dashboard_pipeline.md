@@ -1384,6 +1384,10 @@ says what it holds:
 - **The trust list** is the `collections=` a client reads. It defaults to the project's own public collection,
   [`speediedan/neuronpedia-dashboard-corpora`](https://huggingface.co/collections/speediedan/neuronpedia-dashboard-corpora-6af900009df4b4831ab24069)
   (`DEFAULT_CORPUS_COLLECTIONS`). Pass another publisher's collection to import from them.
+- **The permission model is still evolving.** Trust is per publisher for now: reading a publisher's collection trusts
+  every corpus in it. That is a starting point, and a finer, sub-publisher trust posture may be adopted. AnalysisStores
+  have no discovery path yet; their discovery, the trust model they share with dashboards, and a demonstrated
+  streaming read are tracked in [#1008](https://github.com/speediedan/interpretune/issues/1008).
 - Collections are read anonymously unless `collection_token=` is given: the Hub refuses a fine-grained token without
   `collection.read` even on a public collection. Manifests are read with `token=`.
 - **Registering a corpus needs no client release.** `publish_dashboard_run(..., collection=<slug>)` (or

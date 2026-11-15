@@ -183,7 +183,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Changed
 
-- `resolve_bucket_for` selects from the corpora the collections list instead of the hardcoded `KNOWN_DASHBOARD_BUCKETS`, which is removed; both pairs it covered resolve to the same buckets. Several corpora for one (model, source set) are refused unless `prompt_corpus=` chooses one, which `ensure_dashboards` also takes ([#262](https://github.com/speediedan/interpretune/issues/262))
+- `resolve_bucket_for` selects from the corpora the collections list, in place of the hardcoded `KNOWN_DASHBOARD_BUCKETS` map it read; both pairs that map covered resolve to the same buckets. Several corpora for one (model, source set) are refused unless `prompt_corpus=` chooses one, which `ensure_dashboards` also takes ([#262](https://github.com/speediedan/interpretune/issues/262))
 
 - Publish guards are named checks. `publish_dashboard_run`'s `require_page_index=` and `require_manifest_consistency=` are replaced by `skip_checks=` (`skip_checks={"page-index"}`, `skip_checks={"manifest-consistency"}`), and `scripts/publish_dashboards_to_hub.py`'s `--allow-missing-page-index` and `--allow-manifest-inconsistency` by `--skip-check page-index` and `--skip-check manifest-consistency`. `MissingPageIndexError`, `ManifestReferencesExcludedTableError` and `BucketPrefixUnspecifiedError` are replaced by one `PublishCheckError` listing every failed check, with `.names` saying which ([#262](https://github.com/speediedan/interpretune/issues/262))
 
