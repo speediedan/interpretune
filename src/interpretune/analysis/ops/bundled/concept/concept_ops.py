@@ -1491,6 +1491,7 @@ __all__ = [
     "extract_concept_latent_state_impl",
     "flatten_concept_store_rows",
     "intervention_first_order_check_impl",
+    "model_bwd_intervention_impl",
     "model_fwd_intervention_impl",
     "project_context_enhanced_states",
     "reset_concept_streaming_state",
