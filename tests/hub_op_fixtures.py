@@ -16,6 +16,10 @@ from pathlib import Path
 
 OP_YAML_SUFFIXES = (".yaml", ".yml")
 
+# A cached snapshot directory is named for a full commit hash on the real Hub, and huggingface_hub reads a file from the
+# cache alone only for a full hash: any other revision is a ref it resolves online, which a fake repository fails.
+CACHED_OP_REVISION = "0123456789abcdef0123456789abcdef01234567"
+
 
 def declare_cached_op_files(snapshot_dir: Path, *op_files: str, requires: str | None = None) -> Path:
     """Write the ``it_component.yaml`` that makes ``snapshot_dir`` a well-formed op collection.
@@ -45,7 +49,7 @@ def declare_cached_op_files(snapshot_dir: Path, *op_files: str, requires: str | 
 def write_cached_op_collection(
     hub_cache: Path,
     repo_id: str = "testuser/test",
-    revision: str = "abc123",
+    revision: str = CACHED_OP_REVISION,
     op_files: dict[str, str] | None = None,
     requires: str | None = None,
 ) -> Path:

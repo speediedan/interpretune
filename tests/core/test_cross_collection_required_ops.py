@@ -28,6 +28,7 @@ from interpretune.analysis.ops.compiler.load_policy import IT_STRICT_OP_LOAD_ENV
 # happened to set it, i.e. it passes in isolation and fails inside the suite.
 from interpretune.analysis.ops import dispatcher as dispatcher_module
 from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+from tests.hub_op_fixtures import CACHED_OP_REVISION
 
 # `get_answer_indices` is the real cross-family dependency §3.6a names, defined only by the `core` family.
 BUNDLED_DEPENDENCY = "get_answer_indices"
@@ -107,7 +108,7 @@ class TestCrossCollectionDeclarability:
         would hold for the wrong reason.
         """
         dispatcher = _load(tmp_path, monkeypatch, COLLECTION_YAML)
-        hub_yaml = tmp_path / "hub" / "models--depender--ops" / "snapshots" / "abc123" / "ops.yaml"
+        hub_yaml = tmp_path / "hub" / "models--depender--ops" / "snapshots" / CACHED_OP_REVISION / "ops.yaml"
         assert hub_yaml.is_file(), "fixture layout changed"
 
         namespaced = dispatcher._apply_hub_namespacing(
