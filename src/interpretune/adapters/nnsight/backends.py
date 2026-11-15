@@ -22,6 +22,7 @@ import nnsight as _nnsight
 import torch
 
 from interpretune.analysis.backends import (
+    FLOWS,
     Capability,
     CaptureSupport,
     InterventionSupport,
@@ -527,9 +528,10 @@ class NNsightModelBackend:
 
     @property
     def intervention_support(self) -> InterventionSupport:
-        """Every op and both hook scopes on every target, for the same reason as TL: the traced value is the full
-        activation, and an attached latent model's features are traced at its sub-hook."""
-        return InterventionSupport.every()
+        """Every op and both hook scopes on every target, on values and gradients, for the same reason as TL: the
+        traced value (and its ``.grad`` in the backward tracer) is the full tensor, and an attached latent model's
+        features are traced at its sub-hook."""
+        return InterventionSupport.every(of=frozenset(FLOWS))
 
     @property
     def latent_model_support(self) -> LatentModelSupport:
@@ -1238,6 +1240,116 @@ class NNsightModelBackend:
                 saved_post_logits = _nnsight.save(model.output.logits)
 
         return pre_logits, saved_post_logits
+
+    # ------------------------------------------------------------------
+    # Protocol: bwd_w_intervention
+    # ------------------------------------------------------------------
+
+    def bwd_w_intervention(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        interventions: InterventionDict | Mapping[str, InterventionValue],
+        backward_fn: Callable[[Any], Any],
+        capture: Sequence[str] | None = None,
+        latent_model_handles: list[Any] | None = None,
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
+        """Apply interventions to the gradients at hook points inside NNsight's backward tracer.
+
+        A baseline trace captures the gradients (and gives the hook shapes a raw payload is canonicalized against),
+        then a second applies the edits: each site's ``.grad`` is read, folded through its specs and assigned back, so
+        the edited gradient is the one that flows on. Gradients are requested in reverse forward order, the order the
+        backward pass produces them in.
+        """
+        self._ensure_tuple_calibration(model)
+        available = {
+            name: name
+            for name in _iter_available_hook_names(
+                model, self._resolver, include_latent_subhooks=bool(latent_model_handles)
+            )
+        }
+        if isinstance(interventions, InterventionDict):
+            expanded = {hook_name: [hook_name] for hook_name in interventions.keys()}
+        else:
+            expanded = expand_intervention_patterns(list(interventions.keys()), available)
+        sites = list(dict.fromkeys(name for matches in expanded.values() for name in matches))
+        if capture is None:
+            captured_names = sites
+        else:
+            matched = expand_intervention_patterns(list(capture), available)
+            captured_names = list(dict.fromkeys(name for matches in matched.values() for name in matches))
+
+        pre_grads, metric = self._traced_backward(
+            model, batch, backward_fn, latent_model_handles, {}, [*sites, *captured_names]
+        )
+        if isinstance(interventions, InterventionDict):
+            intervention_dict = interventions
+        else:
+            shapes = {name: get_intervention_target_shape(pre_grads[name]) for name in sites}
+            intervention_dict = build_intervention_dict(interventions, expanded, shapes)
+        post_grads, _ = self._traced_backward(
+            model, batch, backward_fn, latent_model_handles, intervention_dict, captured_names
+        )
+        return {name: pre_grads[name] for name in captured_names}, post_grads, metric
+
+    def _traced_backward(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        backward_fn: Callable[[Any], Any],
+        latent_model_handles: list[Any] | None,
+        specs: Mapping[str, Sequence[InterventionSpec]],
+        capture: Sequence[str],
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        """One traced forward and backward pass applying ``specs`` to the gradient at each named site, returning
+        the gradients at ``capture`` (each after any edit at its own site) and the metric.
+
+        A latent model's sub-hooks are the stage values its splice produces, so a site under an attached latent model is
+        read from its splice and every other site from its envoy, all in forward order.
+        """
+        names = list(dict.fromkeys([*specs.keys(), *capture]))
+        latents = {str(sae.cfg.metadata.hook_name): sae for sae in latent_model_handles or ()}
+        latent_names = {
+            name
+            for name in names
+            if any(name.startswith(f"{base}.") and name[len(base) + 1 :] in SUBHOOK_SUFFIXES for base in latents)
+        }
+        bases = {name for name in names if name not in latent_names}
+        spliced = {base for base in latents if any(name.startswith(f"{base}.") for name in latent_names)}
+        ordered = _forward_order(sorted(bases | spliced), self._resolver)
+        tokens = batch.get("input_ids", batch.get("input"))
+        last_pos = int(torch.as_tensor(tokens).shape[-1] - 1)
+        saved: dict[str, Any] = {}
+
+        with torch.set_grad_enabled(True), model.trace() as tracer:
+            with _invoke_trace(tracer, batch):
+                proxies: dict[str, Any] = {}
+                for name in ordered:
+                    if name in spliced:
+                        stage_values, _ = self._splice_sae(model, latents[name])
+                        for suffix, value in stage_values.items():
+                            if f"{name}.{suffix}" in latent_names:
+                                proxies[f"{name}.{suffix}"] = value
+                    if name in bases:
+                        resolved = self._resolver.resolve_for_envoy(name)
+                        proxies[name] = _read_envoy_activation(_navigate_envoy(model, resolved.module_path), resolved)
+                scalar = backward_fn(model.output.logits)
+                saved_metric = _nnsight.save(scalar)
+                with scalar.backward():  # pyright: ignore[reportOptionalContextManager]  # nnsight patches Tensor.backward() to return a BackwardsTracer context manager
+                    for name in reversed(list(proxies)):
+                        grad = proxies[name].grad
+                        for spec in specs.get(name, ()):
+                            grad = apply_intervention(grad, spec, last_pos=last_pos)
+                        if specs.get(name):
+                            proxies[name].grad = grad
+                        if name in capture:
+                            saved[name] = _nnsight.save(grad)
+
+        if missing := sorted(set(capture) - set(saved)):
+            raise ValueError(f"no gradient was captured at {missing}; none of those names resolved to a traced site")
+        return {name: torch.as_tensor(saved[name]).detach().clone() for name in capture}, torch.as_tensor(
+            saved_metric
+        ).detach()
 
 
 # ==============================================================================

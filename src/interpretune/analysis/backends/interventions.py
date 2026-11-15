@@ -967,6 +967,28 @@ def require_op(backend: Any, spec: InterventionSpec, *, backend_name: str) -> No
         )
 
 
+def require_flow(backend: Any, flow: str, *, backend_name: str) -> None:
+    """Refuse, with the flow named, when a backend does not declare that its ops act on ``flow``.
+
+    An op meant for the gradient and applied to the activation (or the reverse) returns plausible numbers for an edit
+    nobody asked for, so the flow is gated like the scope and the op. A record declares ``value`` unless it says
+    otherwise, and a provider declaring ``grad`` implements ``bwd_w_intervention``.
+    """
+    record = getattr(backend, "intervention_support", None)
+    if record is None:
+        if flow == "value":
+            return  # the scope and op gates refuse a backend with no record, payload entry by payload entry
+        _declared_axes(backend, backend_name=backend_name)
+    flows = {getattr(f, "value", f) for f in getattr(record, "of", None) or {"value"}}
+    if flow not in flows:
+        surface = "bwd_w_intervention" if flow == "grad" else "fwd_w_intervention"
+        raise NotImplementedError(
+            f"backend {backend_name!r} cannot apply ops to the {flow!r} flow ({surface}); it declares "
+            f"{sorted(flows)!r}. Refused rather than applied to the other flow, where the edit would act on a different"
+            " tensor."
+        )
+
+
 def iter_intervention_axes(
     interventions: InterventionDict | Mapping[str, InterventionValue],
     *,
@@ -996,13 +1018,16 @@ def require_intervention_support(
     interventions: InterventionDict | Mapping[str, InterventionValue],
     *,
     backend_name: str,
+    flow: str = "value",
 ) -> None:
-    """Gate every entry of an intervention payload on both axes before it reaches ``fwd_w_intervention``.
+    """Gate every entry of an intervention payload on both axes before it reaches ``fwd_w_intervention``, or, with
+    ``flow="grad"``, ``bwd_w_intervention`` (the flow itself is gated first).
 
     The single entry point ops call. It reads the payload the way the backend will (same coercion), so the axes gated
     here are the axes the backend will see, and a backend never has to re-derive them to refuse; its own refusal table,
     if it keeps one, is the second line of defence for a declaration that has drifted from the implementation.
     """
+    require_flow(backend, flow, backend_name=backend_name)
     for _pattern, spec in iter_intervention_axes(interventions):
         require_position_scope(backend, spec, backend_name=backend_name)
         require_op(backend, spec, backend_name=backend_name)
