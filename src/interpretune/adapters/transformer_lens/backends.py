@@ -575,11 +575,12 @@ class TLModelBackend:
         else:
             expanded = expand_intervention_patterns(list(interventions.keys()), available)
         sites = list(dict.fromkeys(name for matches in expanded.values() for name in matches))
-        if capture is None:
-            captured_names = sites
-        else:
-            matched = expand_intervention_patterns(list(capture), available)
-            captured_names = list(dict.fromkeys(name for matches in matched.values() for name in matches))
+        matched = expanded if capture is None else expand_intervention_patterns(list(capture), available)
+        captured_names = list(dict.fromkeys(name for matches in matched.values() for name in matches))
+        # A capture named exactly, in another spelling the vocabulary maps here (an SAE's own metadata names
+        # `blocks.0.hook_resid_pre.hook_sae_acts_post` where a bridge exposes `blocks.0.hook_in...`), is reported as the
+        # caller spelled it, as the capture path re-keys its cache; a pattern's matches keep the model's names.
+        spelled = {matches[0]: name for name, matches in matched.items() if "*" not in name and len(matches) == 1}
 
         pre_grads, metric = _tl_backward(model, batch, backward_fn, latent_model_handles, {}, [*sites, *captured_names])
         if isinstance(interventions, InterventionDict):
@@ -588,4 +589,8 @@ class TLModelBackend:
             shapes = {name: get_intervention_target_shape(pre_grads[name]) for name in sites}
             intervention_dict = build_intervention_dict(interventions, expanded, shapes)
         post_grads, _ = _tl_backward(model, batch, backward_fn, latent_model_handles, intervention_dict, captured_names)
-        return {name: pre_grads[name] for name in captured_names}, post_grads, metric
+        return (
+            {spelled.get(name, name): pre_grads[name] for name in captured_names},
+            {spelled.get(name, name): post_grads[name] for name in captured_names},
+            metric,
+        )

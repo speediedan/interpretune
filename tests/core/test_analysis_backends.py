@@ -898,7 +898,7 @@ class TestNNsightModelBackendCapabilities:
         assert Capability.GRADIENTS in backend.capabilities
 
     def test_intervention_record_declares_every_scope_and_mode(self, backend):
-        assert backend.intervention_support == InterventionSupport.every()
+        assert backend.intervention_support == InterventionSupport.every(of=frozenset({"value", "grad"}))
 
     def test_supports_gradients(self, backend):
         assert backend.supports(Capability.GRADIENTS) is True
@@ -1061,7 +1061,7 @@ class TestTLModelBackendCapabilities:
         assert backend.supports(Capability.GRADIENTS) is True
 
     def test_intervention_record_declares_every_scope_and_mode(self, backend):
-        assert backend.intervention_support == InterventionSupport.every()
+        assert backend.intervention_support == InterventionSupport.every(of=frozenset({"value", "grad"}))
 
 
 class TestTLFwdWHooksBatched:
@@ -1597,6 +1597,34 @@ class TestStackedSpanCanonicalization:
 
 class TestRequireInterventionSupport:
     """The single gate an op calls, on a RAW payload, before any backend canonicalizes it."""
+
+    def test_the_gradient_flow_is_refused_where_only_values_are_declared(self):
+        """#970: an op meant for the gradient is refused on the flow axis, naming the surface and the
+        declaration."""
+        payload = {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), op="add")}
+        require_intervention_support(_AddOnlyLastTokenBackend(), payload, backend_name="stub")  # value: the default
+        with pytest.raises(NotImplementedError, match=r"'grad' flow \(bwd_w_intervention\).*declares \['value'\]"):
+            require_intervention_support(_AddOnlyLastTokenBackend(), payload, backend_name="stub", flow="grad")
+        with pytest.raises(NotImplementedError, match="attaches no `intervention_support` record"):
+            require_intervention_support(_UndeclaredBackend(), {}, backend_name="stub", flow="grad")
+
+    @pytest.mark.parametrize("which", ["transformer_lens", "nnsight"])
+    def test_both_model_backends_declare_and_implement_the_gradient_flow(self, which):
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
+        from interpretune.analysis.backends import SupportsGradientIntervention
+
+        backend = (
+            TLModelBackend()
+            if which == "transformer_lens"
+            else NNsightModelBackend(HookNameResolver("GPT2LMHeadModel"))
+        )
+        assert backend.intervention_support.of == frozenset({"value", "grad"})
+        assert isinstance(backend, SupportsGradientIntervention)
+        payload = {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), op="scale")}
+        require_intervention_support(backend, payload, backend_name=type(backend).__name__, flow="grad")
+
+    def test_every_declares_values_only_unless_told(self):
+        assert InterventionSupport.every().of == frozenset({"value"})
 
     def test_declared_scope_and_mode_pass(self):
         payload = {"blocks.0.hook_resid_post": InterventionSpec(torch.ones(4), op="add")}

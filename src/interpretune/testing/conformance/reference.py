@@ -205,6 +205,64 @@ class HFReference:
         captured["logits"] = out.logits.detach().clone()
         return captured
 
+    def gradients(
+        self,
+        input_ids: torch.Tensor,
+        metric: Callable[[torch.Tensor], torch.Tensor],
+        *,
+        observe: Sequence[str],
+        edits: Sequence[tuple[str, Callable[[torch.Tensor], torch.Tensor], str]] = (),
+        attention_mask: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """The gradient of ``metric(logits)`` with respect to the tensor at each ``observe`` point, with each
+        ``(point, edit, scope)`` first applied to the gradient at its point, for the positions ``scope`` selects.
+
+        Plain tensor hooks on the module tensors: the gradient a tensor hook receives is the total over every consumer
+        of the tensor, and its return is what flows on. At a point both edited and observed, the edit's hook is
+        registered first, and tensor hooks run in registration order, each on the previous one's result, so the point
+        reports its edited gradient, as the backward surface does.
+        """
+        edits_at: dict[str, list[tuple[Callable[[torch.Tensor], torch.Tensor], str]]] = {}
+        for point, edit, scope in edits:
+            edits_at.setdefault(point, []).append((edit, scope))
+        grads: dict[str, torch.Tensor] = {}
+
+        def attach(name: str, tensor: torch.Tensor) -> None:
+            for edit, scope in edits_at.get(name, ()):
+
+                def apply(grad: torch.Tensor, _edit=edit, _scope=scope) -> torch.Tensor:
+                    grad = grad.clone()
+                    if _scope == "last_token":
+                        grad[:, -1, ...] = _edit(grad[:, -1, ...])
+                    elif _scope == "all_positions":
+                        grad = _edit(grad)
+                    else:
+                        raise ValueError(f"unknown scope {_scope!r}")
+                    return grad
+
+                tensor.register_hook(apply)
+            if name in observe:
+                tensor.register_hook(lambda grad, _name=name: grads.__setitem__(_name, grad.detach().clone()))
+
+        handles = []
+        for name in dict.fromkeys([*edits_at, *observe]):
+            r = self.resolve(name)
+            m = self.model.get_submodule(r.module_path)
+            if r.io == "input":
+                handles.append(m.register_forward_pre_hook(lambda _m, args, _name=name: attach(_name, args[0])))
+            else:
+                handles.append(m.register_forward_hook(lambda _m, _a, out, _name=name: attach(_name, _unwrap(out))))
+        try:
+            with torch.enable_grad():
+                metric(self._forward(input_ids, attention_mask).logits).backward()
+        finally:
+            for h in handles:
+                h.remove()
+            self.model.zero_grad(set_to_none=True)
+        missing = [p for p in observe if p not in grads]
+        assert not missing, f"no gradient reached {missing}; the reference would be vacuous"
+        return grads
+
     # -- internals ---------------------------------------------------------------------------------
 
     def _forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor | None):

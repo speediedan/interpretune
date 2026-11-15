@@ -1335,7 +1335,7 @@ class NNsightModelBackend:
                         proxies[name] = _read_envoy_activation(_navigate_envoy(model, resolved.module_path), resolved)
                 scalar = backward_fn(model.output.logits)
                 saved_metric = _nnsight.save(scalar)
-                with scalar.backward():  # pyright: ignore[reportOptionalContextManager]  # nnsight patches Tensor.backward() to return a BackwardsTracer context manager
+                with scalar.backward():  # nnsight patches Tensor.backward() to return a BackwardsTracer context manager
                     for name in reversed(list(proxies)):
                         grad = proxies[name].grad
                         for spec in specs.get(name, ()):

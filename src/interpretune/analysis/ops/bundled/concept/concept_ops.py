@@ -35,6 +35,7 @@ from interpretune.analysis.optools import (
     require_model_backend,
     resolve_aggregate_input,
     resolve_embedding_weight,
+    resolve_gradient_sites,
     resolve_jlens_layer,
     resolve_tokenizer,
     resolve_unembed_and_norm_scale,
@@ -1202,6 +1203,105 @@ def model_fwd_intervention_impl(
         post_intervention_logits=post_lt.detach().cpu(),
         logit_diff=logit_diff.detach().cpu(),
         intervention_position_effect=position_effect.to(torch.float32).cpu(),
+    )
+    return analysis_batch
+
+
+def _flat_tensors(tensors: Mapping[str, torch.Tensor], names: Sequence[str]) -> tuple[torch.Tensor, torch.Tensor]:
+    """Tensors of differing shapes as one flat float32 sequence and one int64 shape code, ``[n, ndim_0, dims_0...,
+    ndim_1, dims_1..., ...]``, in ``names`` order."""
+    shape_code: list[int] = [len(names)]
+    for name in names:
+        shape_code.append(tensors[name].ndim)
+        shape_code.extend(int(d) for d in tensors[name].shape)
+    flat = [tensors[name].detach().to("cpu", torch.float32).flatten() for name in names]
+    return (torch.cat(flat) if flat else torch.empty(0)), torch.tensor(shape_code, dtype=torch.int64)
+
+
+def model_bwd_intervention_impl(
+    module,
+    analysis_batch: AnalysisBatch,
+    batch: BatchEncoding,
+    batch_idx: int,
+    **kwargs,
+) -> AnalysisBatch:
+    """Apply hook-point interventions to gradients during a backward pass, and store the gradients they change.
+
+    The backward counterpart of ``model_fwd_intervention``: the same payload, delegated to the model backend's
+    ``bwd_w_intervention``, with each spec acting on the gradient at its site. The metric is the summed last-token
+    logit of ``logit_target_ids`` (else the concept groups' ids), or, with neither, of each row's own top prediction.
+    The forward pass is not edited, so the metric is the same with and without the interventions; what changes is the
+    gradient reaching every site upstream of an edit.
+
+    ``grad_capture`` names the sites whose gradients are stored: hook names or patterns, or one venngram site address
+    under ``of: grad`` (``grad_capture_sets`` supplies its book's sets). Without it, the intervention sites are
+    captured, each after its own edit.
+    """
+    model_backend = require_model_backend(module)
+    require_backend_capability(model_backend, Capability.INTERVENTION, "model_bwd_intervention")
+    require_backend_capability(model_backend, Capability.GRADIENTS, "model_bwd_intervention")
+    interventions = resolve_interventions(
+        analysis_batch=analysis_batch,
+        resolve_field=lambda field_name: resolve_aggregate_input(module, analysis_batch, field_name),
+        load_json_field=lambda field_name: load_json_field(module, analysis_batch, field_name),
+        kwargs=kwargs,
+    )
+    require_intervention_support(model_backend, interventions, backend_name=type(model_backend).__name__, flow="grad")
+    use_latent_models = bool(
+        resolve_aggregate_input(module, analysis_batch, "use_latent_models") or kwargs.get("use_latent_models", False)
+    )
+    latent_model_handles = getattr(module, "sae_handles", None) if use_latent_models else None
+    capture = resolve_gradient_sites(
+        module,
+        resolve_aggregate_input(module, analysis_batch, "grad_capture") or kwargs.get("grad_capture"),
+        sets=resolve_aggregate_input(module, analysis_batch, "grad_capture_sets") or kwargs.get("grad_capture_sets"),
+    )
+
+    if (
+        getattr(module, "analysis_cfg", None)
+        and module.analysis_cfg.auto_prune_batch_encoding
+        and isinstance(batch, BatchEncoding)
+    ):
+        batch = module.auto_prune_batch(batch, "forward")
+
+    target_ids = resolve_aggregate_input(module, analysis_batch, "logit_target_ids")
+    if target_ids is None:
+        concept_ids = list(analysis_batch.get("concept_group_a_token_ids") or []) + list(
+            analysis_batch.get("concept_group_b_token_ids") or []
+        )
+        target_ids = concept_ids or None
+    target_ids_tensor = None if target_ids is None else torch.as_tensor(target_ids, dtype=torch.long).reshape(-1)
+
+    def backward_fn(logits: Any) -> Any:
+        last = logits[:, -1, :]
+        if target_ids_tensor is None:
+            return last.max(dim=-1).values.sum()
+        return last[:, target_ids_tensor.to(last.device)].sum()
+
+    # the flow gate above has refused a backend that does not declare `grad`, which is the promise of this method
+    pre_grads, post_grads, metric = model_backend.bwd_w_intervention(
+        model=module.model,
+        batch=batch,
+        interventions=interventions,
+        backward_fn=backward_fn,
+        capture=capture,
+        latent_model_handles=latent_model_handles,
+    )
+    names = sorted(post_grads)
+    pre_values, shape_code = _flat_tensors(pre_grads, names)
+    post_values, _ = _flat_tensors(post_grads, names)
+    # Per-position effect, `[batch, pos]`, the largest change in any captured gradient at each position: the gradient
+    # counterpart of the forward op's position effect, and what tells a last-token edit's reach from a whole-prompt one.
+    position_effect = torch.stack(
+        [(post_grads[n] - pre_grads[n]).detach().abs().flatten(2).amax(dim=-1).to("cpu", torch.float32) for n in names]
+    ).amax(dim=0)
+    analysis_batch.update(
+        grad_point_names=names,
+        grad_shape=shape_code,
+        pre_intervention_grad_values=pre_values,
+        post_intervention_grad_values=post_values,
+        bwd_intervention_metric=torch.as_tensor(metric).detach().to("cpu", torch.float32),
+        intervention_grad_position_effect=position_effect,
     )
     return analysis_batch
 

@@ -18,11 +18,9 @@ are all interventions on a model's internal variables.
   ([#966](https://github.com/speediedan/interpretune/issues/966),
   [venngram#78](https://github.com/speediedan/venngram/issues/78)).
 - **Value or gradient**: an address with `of: grad` names the gradient with respect to what it selects, so an op on a
-  gradient target is a backward-pass intervention. Resolving such sites is
-  [#938](https://github.com/speediedan/interpretune/issues/938), the backward surface that applies ops to them
-  (`model_bwd_intervention`) is [#970](https://github.com/speediedan/interpretune/issues/970), and paths between sites
-  (stopping or routing the gradient from one set to another) are
-  [venngram#67](https://github.com/speediedan/venngram/issues/67).
+  gradient target is a backward-pass intervention, applied by `model_bwd_intervention`
+  ([gradient interventions](#gradient-interventions)). Paths between sites (stopping or routing the gradient from one
+  set to another) are [venngram#67](https://github.com/speediedan/venngram/issues/67).
 
 Kinds of intervention differ in the op and in **where the op's operand comes from**:
 
@@ -95,7 +93,7 @@ kind:
 | Provider | Targets | Object acted on | Entry op | Executed by | Record |
 |---|---|---|---|---|---|
 | Model backend | `activation`, `units`, `features` | an activation at any vocabulary point (residual stream, attention, MLP, head-shaped), a set of its units, or a latent model's features at its sub-hook | `model_fwd_intervention` | `ModelBackend.fwd_w_intervention`, identical math on TransformerLens and NNsight | `InterventionSupport` (ops, targets, position scopes, value sources, bases, `of`) |
-| Model backend, backward pass (planned, [#970](https://github.com/speediedan/interpretune/issues/970)) | `activation`, `units` with `of: grad` | the gradient with respect to an activation, at a site an `of: grad` address names | `model_bwd_intervention` | `ModelBackend.bwd_w_intervention`, through the same op executor as the forward pass | `InterventionSupport` with `of: [value, grad]` |
+| Model backend, backward pass | `activation`, `units`, `features` (in a recipe, targets addressed `of: grad`) | the gradient with respect to an activation (or a latent model's features) at a hook point | `model_bwd_intervention` | `bwd_w_intervention` (`SupportsGradientIntervention`), through the same op executor as the forward pass: TransformerLens backward hooks, NNsight's `.grad` | `InterventionSupport` with `of: [value, grad]` |
 | Analysis backend (e.g. circuit-tracer) | `features` | a replacement model's transcoder feature activations, as `(layer, position, feature_id) -> value` tuples | `feature_intervention_forward` | `ReplacementModel.feature_intervention` through `CircuitTracerAnalysisBackend` | `InterventionSupport` whose `features` target carries a `FeatureTargetSupport` (value sources, constrainable layers, returned activations, freezable norms) |
 
 **Capabilities say what a component provides; support records say how.** A capability member names a surface and
@@ -131,6 +129,10 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
   the ops, targets and position scopes; an op declares the tensor ops it needs in `required_ops` (beside any
   composition ops it depends on) and the scopes in `required_position_scopes`, and the gate compares the two before
   the op runs.
+- `bwd_w_intervention(...)` is its backward counterpart, on both model backends: the same payload, each spec applied to
+  the gradient at its hook point during a backward pass ([gradient interventions](#gradient-interventions)). A backend
+  offers it by declaring `grad` in its record's `of`, and `require_intervention_support(..., flow="grad")` refuses one
+  that does not.
 - `ReplacementModel.feature_intervention(...)` is the model-level primitive the analysis-level feature-intervention
   op executes on. Both circuit-tracer backend implementations consume canonical intervention tuples of the form
   `(layer, position, feature_idx, value)` and support passthrough controls such as constrained layers, sparse
@@ -190,6 +192,45 @@ through `module.replacement_model`, and stores Arrow-safe intervention summaries
 precedence. Concept-direction notebook experiments use this surface for direct-projection phases, including
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
 such as `blocks.0.hook_in` with the `project` op.
+
+## Gradient interventions
+
+`model_bwd_intervention` takes the payload `model_fwd_intervention` takes, and applies each spec to the gradient at its
+hook point while a backward pass runs. The gradient at a point is the gradient of the metric with respect to the
+activation there, summed over every consumer of that activation, so it is what flows on to earlier points: an edit
+replaces it before it does, and every point upstream of the edit sees the effect. The forward pass is not edited, so
+the metric is the same with and without the interventions. Specs at one point fold in declaration order, as on the
+forward pass.
+
+- **The metric** is the summed last-token logit of `logit_target_ids` (else the concept groups' token ids), or, with
+  neither, of each row's own top prediction.
+- **What is stored**: the gradient at every `grad_capture` site from a baseline backward pass and from the intervened
+  one (`pre_intervention_grad_values`, `post_intervention_grad_values`, flattened beside `grad_shape` and
+  `grad_point_names`), the metric, and `intervention_grad_position_effect`, the largest change in any captured gradient
+  at each position. Without `grad_capture`, the intervention sites are captured, each after its own edit.
+- **Sites by address**: `grad_capture` takes hook names or patterns, or one venngram site address, which
+  `interpretune.analysis.venngram.resolve_sites` evaluates over the model's block stack. A site address sets
+  `point` (a spelling of the activation-point vocabulary, such as `hook_resid_post`), `layers` and `of`, and combines
+  terms with `&`, `|`, `-` and `@<set>` references (`grad_capture_sets` supplies the book's sets). An address read for
+  gradients must say `of: grad`.
+- **Recipes**: `recipe_interventions(recipe, ..., flow="grad")` translates a recipe's ops on `of: grad` targets into
+  the same specs a value op becomes, for this op; the default `flow="value"` translates its value ops. A recipe's ops
+  are translated for one flow at a time, and an op on the other flow is refused.
+
+```python
+import interpretune as it
+from interpretune import AnalysisCfg
+
+payload = {"blocks.5.hook_in": {"intervention_tensor": direction, "op": "reject", "position_scope": "all_positions"}}
+cfg = AnalysisCfg(
+    target_op=it.model_bwd_intervention,
+    run_inputs={
+        "interventions": payload,
+        "grad_capture": "point:hook_out & layers:0:5 & of:grad",
+        "logit_target_ids": [answer_id],
+    },
+)
+```
 
 ## Intervention ops
 
