@@ -262,6 +262,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- A Qwen3.5 checkpoint loaded through NNsight resolves its activation points again. Since NNsight 0.8.2 the adapter loads every checkpoint through `TransformersModel` for text generation, which builds Qwen3.5 as the text-only `Qwen3_5ForCausalLM` rather than `Qwen3_5ForConditionalGeneration`, and only the latter had a component map, so any point lookup was refused. `Qwen3_5ForCausalLM` now has its own bundled map, checked against the transformers class and TransformerLens' adapter like the others ([#957](https://github.com/speediedan/interpretune/issues/957))
+
 - transformers is capped below 5.23 in the package metadata and in `requirements/ci/overrides.txt`: transformers 5.23.0 breaks nnsight 0.8.2's model construction ("Impossible to guess which tokenizer to use"), so a fresh install, the README flow and `build_it_env.sh` alike, could not build any nnsight or circuit-tracer nnsight composition. Hosted CI was unaffected because its lock pins 5.22.1 ([#1002](https://github.com/speediedan/interpretune/issues/1002))
 
 - Capturing a TransformerLens composition's hyperparameters no longer overwrites the user's `lora_cfg` and `bitsandbytesconfig` with `None`, so a checkpoint records what the run was asked for ([#974](https://github.com/speediedan/interpretune/issues/974)).
