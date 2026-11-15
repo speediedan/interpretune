@@ -5,7 +5,7 @@
   "pins": {
     "python": "3.13.11",
     "platform": "Linux-6.5.0-1013-gcp-x86_64-with-glibc2.35",
-    "git_sha": "522a9b4d8bc37439426523e866d0eebec214f497",
+    "git_sha": "f3cda2ab8877b4c9ee546408ca953c1bb1d132a7",
     "git_dirty": false,
     "git_dirty_paths": [],
     "torch": "2.15.0+cu132",
@@ -24,7 +24,7 @@
         "src/it_examples/tests"
       ],
       "extra_args": [],
-      "collected": 116,
+      "collected": 118,
       "executed": 0,
       "nodeids": [
         "tests/core/test_adapters_circuit_tracer.py::TestCircuitTracerTLBackend::test_tl_backend_integration",
@@ -95,6 +95,8 @@
         "tests/core/test_debug_generation.py::TestClassDebugGen::test_debug_session_chat[llama3_decode_override_no_skip_special_batch]",
         "tests/core/test_jlens_read_ops.py::TestRealLensSmoke::test_a_published_gpt2_lens_resolves_and_reads",
         "tests/core/test_memprofiler.py::TestClassMemProfiler::test_memprofiler_remove_hooks",
+        "tests/core/test_tuning_packed_storage.py::TestQuantizedBaseRefusal::test_thawing_a_packed_base_tensor_is_refused",
+        "tests/core/test_tuning_packed_storage.py::TestQuantizedBaseAdapters::test_lora_adapters_over_the_packed_base_train",
         "tests/core/test_utils.py::TestClassUtils::test_get_cuda_loading_patch[cuda_loading_warn_unpatched]",
         "tests/core/test_utils.py::TestClassUtils::test_get_cuda_loading_patch[cuda_loading_patched]",
         "tests/core/test_utils.py::TestClassUtils::test_to_device",
