@@ -701,3 +701,88 @@ class TestProtocolClsThreading:
 
         assert _resolve_protocol_path(path) is None
         assert any(expected_warning in str(w.message) for w in recwarn.list)
+
+
+class TestPushPublishChecks:
+    """``push_analysis_store`` against a mocked Hub: name validation, the skip record, and the post-upload read-
+    back."""
+
+    PARQUET = "data/validation-00000-of-00001.parquet"
+
+    @pytest.fixture()
+    def hub(self, small_store, tmp_path, monkeypatch):
+        """A mocked ``HfApi`` plus an ``HfFileSystem`` that serves the store's own parquet as the published
+        copy."""
+        from unittest.mock import MagicMock
+
+        local = tmp_path / "published.parquet"
+        small_store.dataset.to_parquet(str(local))
+        opened: list[str] = []
+
+        class _FS:
+            def __init__(self, token=None):
+                pass
+
+            def size(self, path):
+                return local.stat().st_size
+
+            def open(self, path, mode="rb"):
+                opened.append(path)
+                return local.open(mode)
+
+        api = MagicMock()
+        api.hf_hub_download.side_effect = FileNotFoundError("no envelope yet")
+        api.list_repo_files.return_value = [self.PARQUET, "README.md"]
+        api.repo_info.return_value.sha = "abc123"
+        monkeypatch.setattr("huggingface_hub.HfApi", lambda token=None: api)
+        monkeypatch.setattr("huggingface_hub.HfFileSystem", _FS)
+        monkeypatch.setattr(type(small_store.dataset), "push_to_hub", lambda self, *a, **k: None)
+        return api, opened, _FS
+
+    @staticmethod
+    def _uploaded_envelope(api) -> dict:
+        (call,) = [c for c in api.upload_file.call_args_list if c.kwargs["path_in_repo"] == IT_ARTIFACT_ENVELOPE]
+        return json.loads(call.kwargs["path_or_fileobj"].getvalue())
+
+    def test_reads_back_the_published_parquet_at_the_pushed_revision(self, small_store, hub):
+        from interpretune.hub.artifacts import push_analysis_store
+
+        api, opened, _ = hub
+        assert push_analysis_store(small_store, "me/store") == "abc123"
+        assert opened == [f"hf://datasets/me/store@abc123/{self.PARQUET}"]
+        assert "publish_checks_skipped" not in self._uploaded_envelope(api)["provenance"]
+
+    def test_skip_is_recorded_in_the_envelope(self, small_store, hub):
+        from interpretune.hub.artifacts import push_analysis_store
+
+        api, opened, _ = hub
+        push_analysis_store(small_store, "me/store", skip_checks={"range-read"})
+        assert opened == []
+        assert self._uploaded_envelope(api)["provenance"]["publish_checks_skipped"] == ["range-read"]
+
+    def test_unknown_check_name_is_refused_before_any_network_call(self, small_store, hub):
+        from interpretune.hub.artifacts import push_analysis_store
+        from interpretune.utils.publish_checks import UnknownPublishCheckError
+
+        api, _, _ = hub
+        # page-index is a dashboard-corpus check: push_to_hub page-indexes the store's parquet itself
+        with pytest.raises(UnknownPublishCheckError, match="page-index"):
+            push_analysis_store(small_store, "me/store", skip_checks={"page-index"})
+        api.create_repo.assert_not_called()
+
+    def test_unreadable_published_copy_raises_after_the_upload(self, small_store, hub, monkeypatch):
+        import io
+
+        from interpretune.hub.artifacts import push_analysis_store
+        from interpretune.utils.publish_checks import PublishedArtifactCheckError
+
+        api, _, fs = hub
+
+        class _Rewritten(fs):
+            def open(self, path, mode="rb"):
+                return io.BytesIO(b"PAR1garbage")
+
+        monkeypatch.setattr("huggingface_hub.HfFileSystem", _Rewritten)
+        with pytest.raises(PublishedArtifactCheckError, match="was published"):
+            push_analysis_store(small_store, "me/store")
+        assert api.upload_file.call_count == 2  # envelope and card are already up: the artifact is live
