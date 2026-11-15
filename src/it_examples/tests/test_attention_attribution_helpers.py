@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -114,7 +115,7 @@ def test_neumann_term_mass_and_figures():
     neumann = aah.plot_neumann_convergence({"frozen": trace}).to_dict()["data"]
     assert len(neumann) == 1
     # the terminating all-zero term is not plotted: on a log axis it would drag the line off the plot
-    fig_trace = aah.plot_neumann_convergence({"frozen": trace}).data[0]
+    fig_trace: Any = aah.plot_neumann_convergence({"frozen": trace}).data[0]
     assert list(fig_trace.x) == [1, 2] and list(fig_trace.y) == [2.0, 0.5]
     ridge = aah.plot_ridgeline([("a", np.array([1e-3, 1e-2, 0.0])), ("b", np.array([0.0]))], "t", "x")
     assert len(ridge.to_dict()["data"]) == 1  # a series with fewer than two values above the floor draws no curve
@@ -287,6 +288,6 @@ def test_logit_lens_contrast_reads_through_norm_and_cap():
 
 def test_plot_state_read_one_panel_per_position():
     reads = {"Dallas": torch.tensor([[0.0, 1.0], [0.5, 2.0]]), "Detroit": torch.tensor([[0.0, -1.0], [0.0, -2.0]])}
-    fig = aah.plot_state_read(reads, {0: "first", 1: "second"}, "t", "y")
-    assert len(fig.data) == 4 and [t.name for t in fig.data if t.showlegend] == ["Dallas", "Detroit"]
-    assert list(fig.data[2].y) == [1.0, 2.0]  # panels in position order, prompts within: Dallas at position 1
+    traces: list[Any] = list(aah.plot_state_read(reads, {0: "first", 1: "second"}, "t", "y").data)
+    assert len(traces) == 4 and [t.name for t in traces if t.showlegend] == ["Dallas", "Detroit"]
+    assert list(traces[2].y) == [1.0, 2.0]  # panels in position order, prompts within: Dallas at position 1

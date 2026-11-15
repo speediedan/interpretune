@@ -11,7 +11,7 @@ import copy
 import html
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence, overload
 
 import numpy as np
 import plotly.graph_objects as go
@@ -376,6 +376,18 @@ def capture_resid_post(module: Any, prompt: str, n_layers: int) -> torch.Tensor:
     batch = {k: v.to(device) for k, v in dict(module.replacement_model.tokenizer(prompt, return_tensors="pt")).items()}
     _, cache = require_model_backend(module).fwd_w_cache(model=model, batch=batch, names_filter=hooks)
     return torch.stack([torch.as_tensor(cache[h]).detach()[0] for h in hooks])
+
+
+@overload
+def logit_lens_contrast(
+    module: Any, residuals: torch.Tensor, token_a: int, token_b: int, with_direction: Literal[False] = False
+) -> torch.Tensor: ...
+
+
+@overload
+def logit_lens_contrast(
+    module: Any, residuals: torch.Tensor, token_a: int, token_b: int, with_direction: Literal[True]
+) -> tuple[torch.Tensor, torch.Tensor]: ...
 
 
 def logit_lens_contrast(
