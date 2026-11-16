@@ -7,11 +7,13 @@ batch. Each rank seeds its model differently and the reference is seeded as rank
 weights before placement, and without that broadcast the ranks would not match it.
 
 With ``--phased``, finetuning-scheduler's ``TuningScheduler`` drives two phases through ``FTSCoreCallback``: the
-last block first, then everything before it.
+last block first, then everything before it. With ``--latent-site``, a small latent model replaces the output of the
+module at that path (``tuning.latents``), so it is trained, and its splice is exercised, with the model.
 
 Writes ``<out_dir>/<placement>_rank<rank>.json`` with the per-step training losses, the epoch metrics the callbacks saw,
-each rank's recorded device, the parameter types and FSDP units after placement, and (phased) the final depth and the
-parameters trainable at the end.
+each rank's recorded device, the parameter types and FSDP units after placement, (phased) the final depth and the
+parameters trainable at the end, and (latent) the latent model's parameters after training, or the placement's
+refusal.
 """
 
 from __future__ import annotations
@@ -22,8 +24,23 @@ import os
 from pathlib import Path
 
 import torch
+from torch import nn
 
 PER_RANK_BATCH = 2
+
+
+class TinyLatent(nn.Module):
+    """A small sparse autoencoder: ``encode`` and ``decode`` make it a latent model."""
+
+    def __init__(self, width: int, n_latents: int = 8) -> None:
+        super().__init__()
+        self.enc, self.dec = nn.Linear(width, n_latents), nn.Linear(n_latents, width)
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.relu(self.enc(x))
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        return self.dec(z)
 
 
 class LossRecorder:
@@ -64,10 +81,12 @@ def main() -> None:
     parser.add_argument("--save-checkpoint-dir", default=None, help="save a checkpoint at the first epoch's end")
     parser.add_argument("--resume-from", default=None, help="resume from a checkpoint directory")
     parser.add_argument("--out-name", default=None, help="output record stem (default: <placement>)")
+    parser.add_argument("--latent-site", default=None, help="splice a latent model at this module path")
     args = parser.parse_args()
 
     from interpretune.config import SessionRunnerCfg
     from interpretune.runners import SessionRunner
+    from interpretune.utils import MisconfigurationException
     from tests.configuration import config_modules
     from tests.parity_acceptance.test_it_l import CoreCfg
 
@@ -95,6 +114,14 @@ def main() -> None:
         callbacks.insert(0, fts)
     if args.save_checkpoint_dir:
         callbacks.append(SaveCheckpoint(args.save_checkpoint_dir))
+    latent = None
+    if args.latent_site:
+        from interpretune.tuning.latents import LatentSite, attach_latent_model
+
+        width = it_session.module.get_submodule(args.latent_site.rsplit(".", 1)[0]).w1.out_features
+        latent = attach_latent_model(
+            it_session.module, "probe", TinyLatent(width), LatentSite(args.latent_site, op="replace")
+        )
     runner_cfg = SessionRunnerCfg(
         it_session=it_session,
         max_epochs=test_cfg.max_epochs,
@@ -106,7 +133,14 @@ def main() -> None:
         tp_plan=args.tp_plan,
         resume_from=args.resume_from,
     )
-    runner = SessionRunner(run_cfg=runner_cfg)
+    out_path = out_dir / f"{args.out_name or args.placement}_rank{rank}.json"
+    try:
+        runner = SessionRunner(run_cfg=runner_cfg)
+    except MisconfigurationException as err:
+        if latent is None:
+            raise
+        out_path.write_text(json.dumps({"refused": str(err)}))
+        return
     from torch.distributed.fsdp import FSDPModule
 
     module = it_session.module
@@ -130,11 +164,13 @@ def main() -> None:
         "fsdp_units": fsdp_units,
         "split_params": split_params if args.placement == "tp" else [],
     }
+    if latent is not None:  # whole on every rank: a latent model is never split
+        record["latent_params"] = {n: p.detach().flatten().tolist() for n, p in latent.named_parameters()}
     if fts is not None:
         assert fts.tuning_scheduler is not None
         record["depth"] = fts.tuning_scheduler.curr_depth
         record["trainable"] = sorted(n for n, p in module.named_parameters() if p.requires_grad)
-    (out_dir / f"{args.out_name or args.placement}_rank{rank}.json").write_text(json.dumps(record))
+    out_path.write_text(json.dumps(record))
 
 
 if __name__ == "__main__":

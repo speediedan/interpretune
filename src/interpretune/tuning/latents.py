@@ -45,12 +45,15 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, runtime_checkable
 
 import torch
 from torch import nn
 
 from interpretune.tuning.sites import is_site_address, resolve_site
+
+if TYPE_CHECKING:
+    from torch.distributed.tensor import DTensor
 
 # the `nn.ModuleDict` on the root that holds attached latent models, by name
 LATENT_MODELS_ATTR = "latent_models"
@@ -131,15 +134,43 @@ def _with_first(value: Any, tensor: torch.Tensor) -> Any:
     return (tensor, *value[1:]) if isinstance(value, tuple) else tensor
 
 
+def _split(value: Any) -> TypeGuard[DTensor]:
+    """Whether ``value`` is a ``DTensor``: an activation a tensor-parallel layer split across ranks."""
+    if not torch.distributed.is_available():
+        return False
+    from torch.distributed.tensor import DTensor
+
+    return isinstance(value, DTensor)
+
+
+def _laid_out_as(tensor: torch.Tensor, target: Any) -> Any:
+    """``tensor``, computed whole on every rank, in ``target``'s layout when ``target`` is split across ranks.
+
+    Both this and the gather in :meth:`_Splice.capture` are differentiable, and each rank's gradient of the whole
+    tensor is the same, so a latent model spliced inside a split layer gets the same gradients on every rank.
+    """
+    if not _split(target):
+        return tensor
+    from torch.distributed.tensor import DTensor, Replicate
+
+    whole = DTensor.from_local(tensor, target.device_mesh, [Replicate()] * target.device_mesh.ndim, run_check=False)
+    return whole.redistribute(target.device_mesh, target.placements)
+
+
 class _Splice:
-    """The forward hooks splicing one latent model in at its site."""
+    """The forward hooks splicing one latent model in at its site.
+
+    Under tensor parallelism a site inside a split layer holds a ``DTensor``: it is gathered whole before the latent
+    model reads it, and the reconstruction is laid out as the output it replaces (:func:`_laid_out_as`).
+    """
 
     def __init__(self, latent: LatentModel, site: LatentSite) -> None:
         self.latent, self.site = latent, site
         self.read_value: torch.Tensor | None = None
 
     def capture(self, module: nn.Module, args: tuple[Any, ...], output: Any = None) -> None:
-        self.read_value = _first(args) if self.site.read_from == "input" else _first(output)
+        value = _first(args) if self.site.read_from == "input" else _first(output)
+        self.read_value = value.full_tensor() if _split(value) else value
 
     def rewrite(self, module: nn.Module, args: tuple[Any, ...], output: Any) -> Any:
         x, self.read_value = self.read_value, None
@@ -150,7 +181,7 @@ class _Splice:
             setattr(self.latent, "last_latents", latents.detach())  # the protocol does not declare it
             return output
         target = _first(output)
-        recon = self.latent.decode(latents).to(target.dtype)
+        recon = _laid_out_as(self.latent.decode(latents).to(target.dtype), target)
         if self.site.op == "replace_with_error":
             recon = recon + (target - recon).detach()
         return _with_first(output, recon)

@@ -500,6 +500,44 @@ def test_two_rank_tensor_parallel_matches_one_process_on_the_shared_batch(shared
         ]
 
 
+# a latent model inside each split feed-forward, between its column- and row-split projections
+LATENT_SITE = "model.layers.0.feed_forward.gelu"
+
+
+@pytest.fixture(scope="module")
+def latent_shared_batch_reference(tmp_path_factory):
+    out_dir = tmp_path_factory.mktemp("tp_latent_reference")
+    _launch("single", out_dir, "--world-size", "1", "--latent-site", LATENT_SITE)
+    return json.loads((out_dir / "single_rank0.json").read_text())
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tp_gathers_a_split_activation_for_a_spliced_latent_model(latent_shared_batch_reference, tmp_path):
+    """A latent model spliced inside a split feed-forward reads the whole activation and rewrites each rank's
+    shard: the ranks match one process step for step, and train the latent model to the same weights on every rank.
+
+    The first projection keeps its split output as a ``DTensor`` (``use_local_output: false``), which the splice
+    gathers; a latent model encoding one rank's shard would fail on its width or compute something else. Splicing at
+    a split layer whose output is handed on as a plain local shard is refused, naming the site and the fix.
+    """
+    plan = json.loads(FFN_TP_PLAN[1])
+    plan[r"model\.layers\.\d+\.feed_forward\.w1"]["use_local_output"] = False
+    _launch("tp", tmp_path, "--tp-plan", json.dumps(plan), "--latent-site", LATENT_SITE)
+    reference = latent_shared_batch_reference
+    for rank in range(2):
+        record = json.loads((tmp_path / f"tp_rank{rank}.json").read_text())
+        assert record["losses"] == pytest.approx(reference["losses"], rel=1e-5)
+        assert record["latent_params"].keys() == reference["latent_params"].keys()
+        for name, values in record["latent_params"].items():
+            assert values == pytest.approx(reference["latent_params"][name], rel=1e-4, abs=1e-6), name
+    _launch("tp", tmp_path, *FFN_TP_PLAN, "--latent-site", "model.layers.0.feed_forward.w1", "--out-name", "local")
+    for rank in range(2):
+        refused = json.loads((tmp_path / f"local_rank{rank}.json").read_text())["refused"]
+        assert "spliced at model.layers.0.feed_forward.w1" in refused and "use_local_output: false" in refused
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
 @pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning is finetuning-scheduler's")

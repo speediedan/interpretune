@@ -332,6 +332,33 @@ def _packed_groups(module: torch.nn.Module, styles: Mapping[str, Any], world_siz
     return groups
 
 
+def _refuse_local_splices(module: torch.nn.Module, styles: Mapping[str, Any]) -> None:
+    """Refuse a latent model spliced where a split layer hands it this rank's shard as a plain tensor.
+
+    A latent model reads and rewrites whole activations, and a splice gathers a split activation only when it arrives
+    as a ``DTensor`` (``tuning.latents``). A ``colwise`` or ``rowwise`` layer whose sharded output is converted to its
+    local shard (``use_local_output``, the default) would hand the splice one rank's features with nothing to say so.
+
+    Raises:
+        MisconfigurationException: If a latent model reads or rewrites the sharded local output of a split layer.
+    """
+    from torch.distributed.tensor import Shard
+
+    from interpretune.tuning.latents import latent_model_sites
+
+    for name, site in latent_model_sites(module).items():
+        for path in [site.write_path] + ([site.read] if site.read_from == "output" else []):
+            style = styles.get(path)
+            layouts = getattr(style, "output_layouts", ())
+            if getattr(style, "use_local_output", False) and any(isinstance(layout, Shard) for layout in layouts):
+                raise MisconfigurationException(
+                    f"The latent model {name!r} is spliced at {path}, whose output `tp_plan` shards and hands on as"
+                    " each rank's local shard, so it would read or rewrite one rank's features. Set"
+                    " `use_local_output: false` on that entry, so that the splice receives the split activation and"
+                    " gathers it, or splice the latent model where the activation is whole."
+                )
+
+
 def _split_packed(group: _PackedGroup, mesh: Any, rank: int) -> None:
     """Split a packed parameter by its views' sections, then rebuild each view as a ``DTensor`` over this rank's
     split of it, so views and packed parameter keep sharing storage.
@@ -528,6 +555,7 @@ def _place_tensor_parallel(
         )
     styles = _resolve_tp_plan(module, tp_plan)
     groups = _packed_groups(module, styles, run.world_size)
+    _refuse_local_splices(module, styles)
     with torch.no_grad():
         for tensor in [*module.parameters(), *module.buffers()]:
             if tensor.is_contiguous():
