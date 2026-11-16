@@ -66,51 +66,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -323,51 +324,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -615,51 +617,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -912,51 +915,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -1206,51 +1210,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -1455,51 +1460,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -1738,51 +1744,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -2000,51 +2007,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -2269,51 +2277,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -2537,51 +2546,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -2777,51 +2787,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -3018,51 +3029,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -3302,51 +3314,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -3586,51 +3599,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
@@ -3878,51 +3892,52 @@
       "memprofiler_cfg": {
         "__class__": "interpretune.config.extension_cfgs.MemProfilerCfg",
         "enabled": false,
-        "cuda_allocator_history": false,
+        "collect_funcs": {
+          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
+          "default": [
+            "predict_step",
+            "test_step",
+            "training_step",
+            "validation_step"
+          ],
+          "cpu": [],
+          "accelerator": [],
+          "allocator_history": [],
+          "fsdp": []
+        },
+        "allocator_history": false,
+        "track_fsdp_mem": false,
+        "fsdp_mem_track_module_depth": 2,
+        "fsdp_mem_tracker_tabulate": false,
+        "fsdp_mem_tracker_units": "MiB",
+        "fsdp_mem_tracker_root_module": "",
+        "dump_fsdp_mem_json": true,
+        "aggregate_fsdp_mem_reports": false,
+        "dump_memorystats_pickle": false,
+        "dump_memorystats_yaml": true,
         "schedule": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerSchedule",
-          "warmup_steps": 0,
-          "max_step": null
+          "warmup_iters": 0,
+          "max_iter": null
         },
         "save_dir": null,
-        "enabled_funcs": {
-          "__class__": "interpretune.config.extension_cfgs.MemProfilerFuncs",
-          "cuda": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cpu": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ],
-          "cuda_allocator_history": [
-            "predict_step",
-            "test_step",
-            "training_step",
-            "validation_step"
-          ]
-        },
         "enable_memory_hooks": true,
         "enable_saved_tensors_hooks": true,
         "memory_hooks": {
           "__class__": "interpretune.config.extension_cfgs.MemProfilerHooks",
           "pre_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_pre_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_pre_forward"
           ],
           "post_forward_hooks": [
-            "interpretune.extensions.memprofiler._hook_npp_post_forward"
+            "finetuning_scheduler.profiling.npp_hooks._hook_npp_post_forward"
           ],
           "reset_state_hooks": [
-            "interpretune.extensions.memprofiler._reset_memory_hooks_state"
+            "finetuning_scheduler.profiling.npp_hooks._reset_memory_hooks_state"
           ]
         },
         "saved_tensors_funcs": [
-          "interpretune.extensions.memprofiler._npp_hook",
-          "interpretune.config.extension_cfgs.MemProfilerCfg.<lambda>.<locals>.<lambda>"
+          "finetuning_scheduler.profiling.npp_hooks._npp_hook",
+          "identity_lambda"
         ],
         "save_hook_attrs": [
           "rss_pre_forward",
