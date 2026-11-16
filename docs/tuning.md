@@ -17,7 +17,7 @@ schedule = {
 ```
 
 A schedule can name parameters, as Fine-Tuning Scheduler always has, or say **what** to tune: the role a tensor plays
-(the model's own weights, an adapter, an intervention, a latent model, an instrument), addressed through the model's
+(the model's own weights, an adapter, an intervention, a latent model, a loaded artifact), addressed through the model's
 **tunable view**.
 
 To enable this model addressing abstraction, Fine-Tuning Scheduler and Interpretune use the
@@ -26,7 +26,7 @@ subset of a model: from groups of layers to intersecting sets of individual neur
 activation sites and attribution graphs. Schedules use the part of it that selects tensors to tune. Addressing by
 role means:
 
-- **interpretability experiments** tune, freeze and promote adapters, interventions, latent models and instruments by
+- **interpretability experiments** tune, freeze and promote adapters, interventions, latent models and artifacts by
   role, however many wrappers (TransformerLens, nnsight, SAE Lens) sit around the model;
 - **one schedule runs across backends**: each Interpretune adapter gives its composition a view reporting the same
   roles, so a schedule written by role runs unchanged on the core/HF, TransformerLens and nnsight compositions;
@@ -87,8 +87,9 @@ class MyInterventionMixin:
 ```
 
 Overrides are cooperative: each calls `super()` and adds to its result, so a backend's roles and another mixin's
-compose. The role kinds are venngram's (`base`, `adapter`, `intervention`, `latent`, `fitted`, `instrument`); the default
-optimizer never steps `fitted` or `instrument` tensors.
+compose. The role kinds are venngram's (`base`, `adapter`, `intervention`, `latent`, `fitted`, `artifact`); the default
+optimizer never steps `fitted` or `artifact` tensors. A `fitted` tensor is computed in the run and checkpointed; an
+`artifact` is loaded from a published or saved source, so it is reloaded from that source rather than checkpointed.
 
 venngram publishes an overlay map for each PEFT tuner family whose layers keep their adapters in named containers
 (LoRA and DoRA, AdaLoRA, IA3, LoHa, LoKr, OFT, BOFT, VeRA and FourierFT), so each adapter tensor takes the role of its
@@ -181,7 +182,7 @@ final phase asks for more. A `tuning_scheduler_factory` builds the tuning schedu
   optimizer phase by phase to the saved depth, then loads the module's and that optimizer's state and continues at the
   next epoch.
 
-A research example of a phased run on the core loop, with run-fitted state, `instrument` transcoders, gates and per-phase
+A research example of a phased run on the core loop, with run-fitted state, `artifact` transcoders, gates and per-phase
 `refreeze` and `restore`, is the [sparsity chain on RTE](tuning_sparsity_chain.md).
 
 ## Conformance
@@ -211,7 +212,7 @@ a fresh session, because cases change parameters and `requires_grad`.
 | [sae_lens](tuning_sae_lens.md) with `add_saes_on_init=True` | the backend's view | the spliced SAEs as `latent:sae` |
 | [nnsight](tuning_nnsight.md), local and dispatched | venngram's composed view over the HF module, registered as `hf_model` | none: nnsight does not apply a `lora_cfg` ([#942](https://github.com/speediedan/interpretune/issues/942)) |
 | [nnsight](tuning_nnsight.md), remote (NDIF) or not yet dispatched | refused, with the reason; tuning paths tracked in [#814](https://github.com/speediedan/interpretune/issues/814) and [#775](https://github.com/speediedan/interpretune/issues/775) | |
-| [circuit-tracer](tuning_circuit_tracer.md) | `CircuitTracerView`: the transcoders, with base-model tensors refused unless `tune_base` is set; refused when no replacement model is loaded | transcoders as `instrument`, promotable to `latent:transcoder`; base tuning under a frozen replacement is [#813](https://github.com/speediedan/interpretune/issues/813) |
+| [circuit-tracer](tuning_circuit_tracer.md) | `CircuitTracerView`: the transcoders, with base-model tensors refused unless `tune_base` is set; refused when no replacement model is loaded | transcoders as `artifact`, promotable to `latent:transcoder`; base tuning under a frozen replacement is [#813](https://github.com/speediedan/interpretune/issues/813) |
 | [interp-engine (hub adapter)](tuning_interp_engine.md) | Interpretune's default view, which fits `(core, interp_engine)` with no override (measured by the adapter's tuning conformance); its circuit-tracer composition takes the circuit-tracer view | none declared yet |
 | a composition whose `build_tunable_view()` returns `None` | refused: never assumed trainable | |
 

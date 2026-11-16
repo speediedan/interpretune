@@ -68,7 +68,7 @@ Every edit is reversible by default. It is a `torch.nn.utils.parametrize` parame
 the gradient reaches the edit's operand, and the returned handle's `remove()` restores the base exactly. With
 `reversible=False` the edited value is written into the tensor instead, for an export. An edit's operand takes a
 role, as an intervention's does: `adapter:<name>` when it is trained, `fitted` when it is computed in the run, and
-`instrument` when it is loaded from a published patch (the default). Every interpretune module declares these roles
+`artifact` when it is loaded from a published patch (the default). Every interpretune module declares these roles
 through `tunable_roles()`, so a schedule tunes a trainable patch by role.
 
 At token scope `all`, three weight edits equal an activation op, because a matrix's input and output are activation

@@ -15,7 +15,7 @@ interpretune --run_command train --config hub://speediedan/rte/runs/rte_sparse.g
 
 Each RTE item is asked as a Yes/No question, and the target is the answer gap $y$, the Yes logit minus the No logit at
 the last position. Graphs are circuit-tracer attribution graphs over the published Gemma Scope 2 transcoders, which the
-composition holds as `instrument` tensors: never thawed or checkpointed.
+composition holds as `artifact` tensors: never thawed or checkpointed.
 
 The penalty acts on a per-item first-order attribution $s_i = a_i \partial y / \partial a_i$ over the transcoder
 features of layers 17 to 25 at the answer position. Its sparsity term is the ratio

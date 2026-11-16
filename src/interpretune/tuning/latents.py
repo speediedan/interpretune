@@ -23,7 +23,7 @@ attached at a site and scheduled by role, whichever backend the module wraps:
   straight-through substitution ``replace_with_error``; with no op the latents are only captured;
 - :func:`attach_latent_model` and :func:`detach_latent_model`, which register the model under the root's
   ``latent_models`` and splice it in with forward hooks;
-- :func:`latent_model_roles`, the roles to declare: ``latent:<name>`` for a tunable latent model, or ``instrument`` for
+- :func:`latent_model_roles`, the roles to declare: ``latent:<name>`` for a tunable latent model, or ``artifact`` for
   one held frozen until a schedule promotes it (finetuning-scheduler's ``promote`` phase key, core loop only). Every
   interpretune module declares them through its cooperative ``tunable_roles()``, which its venngram view reads.
 
@@ -192,7 +192,7 @@ def attach_latent_model(
 
     The latent model's parameters become ``root``'s (``latent_models.<name>.<...>``), so they are saved in its state
     dict and reachable by its tunable view. :func:`latent_model_roles` declares them ``latent:<name>``, or
-    ``instrument`` when ``frozen``: an instrument is never thawed or checkpointed until a schedule promotes it to
+    ``artifact`` when ``frozen``: an artifact is never thawed or checkpointed until a schedule promotes it to
     ``latent:<name>``.
 
     Args:
@@ -200,7 +200,8 @@ def attach_latent_model(
         name: The latent model's name, also its role's (``latent:<name>``): letters, digits, ``_`` and ``-``.
         latent: The latent model, an ``nn.Module`` with ``encode`` and ``decode`` (:class:`LatentModel`).
         site: Where it reads and writes.
-        frozen: Declare its parameters ``instrument`` rather than ``latent:<name>``.
+        frozen: Declare its parameters ``artifact`` rather than ``latent:<name>``: for a latent model loaded from a
+            published or saved source, which is reloaded from it rather than checkpointed.
 
     Returns:
         ``latent``.
@@ -267,7 +268,7 @@ def latent_model_roles(root: nn.Module) -> dict[str, str]:
     sites = root.__dict__.get(_SITES_ATTR, {})
     roles: dict[str, str] = {}
     for name, latent in held.items():
-        role = "instrument" if sites.get(name, (None, False))[1] else f"latent:{name}"
+        role = "artifact" if sites.get(name, (None, False))[1] else f"latent:{name}"
         tensors = [*latent.named_parameters(), *latent.named_buffers()]
         roles.update({f"{LATENT_MODELS_ATTR}.{name}.{n}": role for n, _ in tensors})
     return roles

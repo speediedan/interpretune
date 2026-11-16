@@ -293,17 +293,17 @@ class TestDefaultOptimizer:
         object.__setattr__(module, VIEW_ATTR, None)
         assert self._ids(module.optimizer_parameters()) == self._ids(module.model.parameters())
 
-    def test_fitted_and_instrument_tensors_are_not_optimized(self, request):
+    def test_fitted_and_artifact_tensors_are_not_optimized(self, request):
         module = _fresh_module(request, "get_it_session_cfg__core_cust")
         module.fitted = nn.Linear(2, 2)
-        module.instrument = nn.Linear(2, 2)
+        module.artifact = nn.Linear(2, 2)
         module.intervention = nn.Linear(2, 2)
         roles = {f"fitted.{n}": "fitted" for n, _ in module.fitted.named_parameters()}
-        roles |= {f"instrument.{n}": "instrument" for n, _ in module.instrument.named_parameters()}
+        roles |= {f"artifact.{n}": "artifact" for n, _ in module.artifact.named_parameters()}
         object.__setattr__(module, VIEW_ATTR, identity_view(module, roles=roles))
         covered = self._ids(module.optimizer_parameters())
         assert self._ids(module.intervention.parameters()) <= covered
-        assert not covered & self._ids([*module.fitted.parameters(), *module.instrument.parameters()])
+        assert not covered & self._ids([*module.fitted.parameters(), *module.artifact.parameters()])
 
     def test_an_attached_non_view_breaks_the_protocol(self, request):
         module = _fresh_module(request, "get_it_session_cfg__core_cust")
@@ -411,10 +411,10 @@ def test_an_unmapped_model_gets_the_identity_view_and_a_reminder(caplog):
 
     tuning_views._REMINDED.clear()
     with caplog.at_level("INFO"):
-        view = default_view(_Holder(_Unmapped()), roles={"model.proj.weight": "instrument"})
+        view = default_view(_Holder(_Unmapped()), roles={"model.proj.weight": "artifact"})
         default_view(_Holder(_Unmapped()))  # reminded once per composition and model class
     assert isinstance(view, CanonicalView) and not isinstance(view, MappedView)
-    assert as_view(view).roles() == {"model.proj.weight": "instrument"}
+    assert as_view(view).roles() == {"model.proj.weight": "artifact"}
     assert caplog.text.count("Registering a map") == 1 and "_Holder (_Unmapped)" in caplog.text
 
 

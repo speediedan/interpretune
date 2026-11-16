@@ -1,6 +1,6 @@
 # Derived key: rte_sparse.gemma3.core
 # The sparsity chain (interpretune#698 to #700) as one phased run of gemma-3-1b-it (#899), on one 24 GB GPU: the
-# published Gemma Scope 2 transcoders (`mwhanna/gemma-scope-2-1b-it`, width 16k) as instruments at layers 17-25, the
+# published Gemma Scope 2 transcoders (`mwhanna/gemma-scope-2-1b-it`, width 16k) as `artifact` tensors at layers 17-25, the
 # chain's row partition and prompt rendering. `runs/rte_sparse.gemma3.core.yaml` runs it on the core loop.
 task_variant: rte_sparse
 model: gemma3
