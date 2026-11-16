@@ -290,16 +290,24 @@ class TestHookNameResolver:
         assert path == "model.language_model.layers.0"
         assert io_type == "input"
 
+    # NNsight loads a Qwen3.5 checkpoint through the text-only class, so both classes need a map
+    QWEN3_5_STACKS = [
+        ("Qwen3_5ForConditionalGeneration", "model.language_model.layers"),
+        ("Qwen3_5ForCausalLM", "model.layers"),
+    ]
+
+    @pytest.mark.parametrize("architecture, stack", QWEN3_5_STACKS)
     @pytest.mark.parametrize("layer", [6, 7])  # a linear-attention layer and a full-attention one
-    def test_resolve_qwen3_5_resid_post_on_both_layer_types(self, layer):
-        path, io_type = HookNameResolver("Qwen3_5ForConditionalGeneration").resolve(f"blocks.{layer}.hook_resid_post")
-        assert path == f"model.language_model.layers.{layer}"
+    def test_resolve_qwen3_5_resid_post_on_both_layer_types(self, architecture, stack, layer):
+        path, io_type = HookNameResolver(architecture).resolve(f"blocks.{layer}.hook_resid_post")
+        assert path == f"{stack}.{layer}"
         assert io_type == "output"
 
-    def test_qwen3_5_attention_on_a_linear_attention_layer_is_refused(self):
-        resolver = HookNameResolver("Qwen3_5ForConditionalGeneration")
-        assert resolver.resolve("blocks.7.attn.hook_out")[0] == "model.language_model.layers.7.self_attn"
-        assert resolver.resolve("blocks.6.linear_attn.hook_out")[0] == "model.language_model.layers.6.linear_attn"
+    @pytest.mark.parametrize("architecture, stack", QWEN3_5_STACKS)
+    def test_qwen3_5_attention_on_a_linear_attention_layer_is_refused(self, architecture, stack):
+        resolver = HookNameResolver(architecture)
+        assert resolver.resolve("blocks.7.attn.hook_out")[0] == f"{stack}.7.self_attn"
+        assert resolver.resolve("blocks.6.linear_attn.hook_out")[0] == f"{stack}.6.linear_attn"
         with pytest.raises(ValueError, match="not layer 6"):
             resolver.resolve("blocks.6.attn.hook_out")
 
