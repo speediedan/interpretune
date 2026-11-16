@@ -588,6 +588,57 @@ class SupportsIntervention(Protocol):
 
 
 @runtime_checkable
+class SupportsGradientIntervention(Protocol):
+    """The backward half of ``Capability.INTERVENTION``: the ops a provider applies to activations, applied to the
+    gradient at a site while a backward pass runs.
+
+    A provider offers it by declaring ``grad`` in its record's flows (``InterventionSupport.of``), which is what
+    ``require_intervention_support(..., flow="grad")`` reads, and that record's ops and position scopes are the ones it
+    honours on gradients. It is a protocol of its own rather than a member of :class:`SupportsIntervention` because a
+    provider of forward edits need not reach the backward pass at all, and a declared flow is a promise this method
+    keeps.
+
+    **The gradient at a site** is the gradient of the metric with respect to the activation there, summed over every
+    consumer of that activation, which is what flows on to earlier sites. An edit replaces it before it does, so every
+    site upstream of an edit sees the edit's effect, and the forward pass (and therefore the metric) is unchanged.
+    """
+
+    def bwd_w_intervention(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        interventions: InterventionDict | Mapping[str, InterventionValue],
+        backward_fn: Callable[[Any], Any],
+        capture: Sequence[str] | None = None,
+        latent_model_handles: list[Any] | None = None,
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
+        """Run two forward and backward passes and return the gradients at the capture sites from each.
+
+        1. **Baseline**: the gradients ``backward_fn`` produces, with nothing edited.
+        2. **Intervention**: the same backward pass, with each ``InterventionSpec`` in *interventions* applied to the
+           gradient at its site, at the positions its ``position_scope`` names, through the executor its ``op``
+           names. Specs at one site apply in declaration order, each to the previous one's result.
+
+        Args:
+            model: The model to run.
+            batch: Input batch dict.
+            interventions: Hook names (or patterns with ``*``) to intervention payloads, as for
+                ``fwd_w_intervention``; each spec acts on the gradient at that site.
+            backward_fn: ``logits -> scalar``, the metric whose gradient is taken. It must use only standard PyTorch
+                ops, so a traced backend can apply it to a proxy.
+            capture: The sites whose gradients are returned (names or patterns, as for *interventions*). ``None``
+                captures the intervention sites. A captured intervention site reports the gradient after its edit,
+                which is the one that flows on.
+            latent_model_handles: Latent models to attach, so their sub-hooks can be edited or captured.
+
+        Returns:
+            ``(pre_grads, post_grads, metric)``: the gradients at every captured site keyed by concrete hook name, from
+            the baseline and the intervened pass, and the metric's value (the forward pass is the same in both).
+        """
+        ...
+
+
+@runtime_checkable
 class ModelBackend(
     ModelBackendCore,
     SupportsLatentModels,
