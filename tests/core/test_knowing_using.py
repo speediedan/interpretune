@@ -2,10 +2,11 @@
 
 A tiny randomly initialised Qwen2 model and a word-level tokenizer with a ChatML-style template stand in for
 Qwen2.5-1.5B-Instruct, and a synthetic chaining-tasks file for the paper's. The unit tests cover the fact sampler, the
-head-entity span finder and the splits built from them, the LRSD term's gradient path (the teacher's state is detached,
-so only the blocks feeding the student learn from it), exact-match tallying over batches that do not divide the
-questions, and gradient clipping. The end-to-end test runs the shipped run configuration through the CLI for two epochs
-on the tiny model.
+data's source (the pinned Hub download, with the download function replaced, and the local override), the head-entity
+span finder and the splits built from them, the LRSD term's gradient path (the teacher's state is detached, so only the
+blocks feeding the student learn from it), exact-match tallying over batches that do not divide the questions, and
+gradient clipping. The end-to-end test runs the shipped run configuration through the CLI for two epochs on the tiny
+model.
 """
 
 import json
@@ -190,6 +191,54 @@ def test_sampler_reproduces_the_papers_qwen_and_llama_samples(kug):
         sample = kug.sample_chaining_items(items, 1000, seed)
         assert hashlib.sha256(json.dumps(sample, sort_keys=True).encode()).hexdigest()[:12] == digest
         assert len({item["generalization_tasks"][0]["prompt"] for item in sample}) == n_questions
+
+
+# -- the data's source ---------------------------------------------------------------------------------------------
+
+DATA_REPO = "speediedan/knowing-using-gap-chaining"
+DATA_REVISION = "a1bb9cee0bb47bc956df037a8e013a4350d127db"
+
+
+def test_the_data_downloads_from_the_pinned_hub_revision_by_default(kug, tmp_path, monkeypatch):
+    calls = []
+    downloaded = tmp_path / "hub" / "chaining_tasks.json"
+
+    def fake_download(*args, **kwargs):
+        calls.append((args, kwargs))
+        return str(downloaded)
+
+    monkeypatch.setattr(kug, "hf_hub_download", fake_download)
+    cfg = kug.KUGDataModuleConfig(task_name="knowing_using", dataset_path=str(tmp_path / "dataset"))
+    assert cfg.chaining_tasks_path() == downloaded
+    assert calls == [((DATA_REPO, "chaining_tasks.json"), {"repo_type": "dataset", "revision": DATA_REVISION})]
+    # the shipped configurations name the same pin
+    for rel in ("configs/datamodule.knowing_using.yaml", f"configs/{RUN_KEY}.yaml"):
+        shipped = yaml.safe_load((KUG_DIR / rel).read_text())
+        init_args = (shipped.get("registered_cfg", shipped))["datamodule_cfg"]["init_args"]
+        assert (init_args["data_repo_id"], init_args["data_filename"], init_args["data_revision"]) == (
+            DATA_REPO,
+            "chaining_tasks.json",
+            DATA_REVISION,
+        )
+        assert init_args["data_path"] is None
+    (dataset,) = yaml.safe_load((KUG_DIR / "it_component.yaml").read_text())["module"]["task"]["datasets"]
+    assert (dataset["path"], dataset["data_files"], dataset["revision"]) == (
+        DATA_REPO,
+        "chaining_tasks.json",
+        DATA_REVISION,
+    )
+
+
+def test_a_local_data_path_overrides_the_download(kug, tmp_path, monkeypatch):
+    def refuse_download(*args, **kwargs):
+        raise AssertionError("a local data_path must not download")
+
+    monkeypatch.setattr(kug, "hf_hub_download", refuse_download)
+    local = tmp_path / "chaining_tasks.json"
+    cfg = kug.KUGDataModuleConfig(
+        task_name="knowing_using", dataset_path=str(tmp_path / "dataset"), data_path=str(local)
+    )
+    assert cfg.chaining_tasks_path() == local
 
 
 # -- spans and splits ----------------------------------------------------------------------------------------------

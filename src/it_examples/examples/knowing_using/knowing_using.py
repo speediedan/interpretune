@@ -15,8 +15,10 @@ have a span.
 
 The fact sampler, the head-entity span finder and the prompt construction reimplement the authors' MIT-licensed code
 (the chaining sample: seed, shuffle, then a randomized subset-sum to exactly ``n`` memorization tasks); nothing here is
-copied from it. The source data is the paper's ``chaining_tasks.json`` (derived from the STaRK benchmark), read from a
-local path (``KUGDataModuleConfig.data_path``): the sample is deterministic given that file and the fact seed.
+copied from it. The source data is the paper's ``chaining_tasks.json`` (derived from the STaRK benchmark over PrimeKG),
+published unchanged as the Hub dataset ``speediedan/knowing-using-gap-chaining`` (MIT). The datamodule downloads it at a
+pinned revision by default (:data:`KUG_DATA_REPO`, :data:`KUG_DATA_FILENAME`, :data:`KUG_DATA_REVISION`), or reads a
+local copy named by ``KUGDataModuleConfig.data_path``: the sample is deterministic given that file and the fact seed.
 
 Classes reachable by ``class_path`` (``knowing_using.<name>``): :class:`KUGPromptConfig`, :class:`KUGDataModuleConfig`,
 :class:`KUGDataModule`, :class:`KUGLRSDConfig`, :class:`KUGModule` and the core-loop callback
@@ -34,6 +36,7 @@ from typing import Any
 import datasets
 import torch
 import torch.nn.functional as F
+from huggingface_hub import hf_hub_download
 from torch.utils.data import DataLoader
 from transformers.tokenization_utils_base import BatchEncoding
 
@@ -47,6 +50,11 @@ from interpretune import (
     rank_zero_info,
 )
 
+# the paper's chaining tasks on the Hub, unchanged, at the revision this recipe pins (the file's sha256 is
+# 7ea065e4e3ddaa0f6ee100695961ddf8f9a9581938e5b6127168858718598d5d)
+KUG_DATA_REPO = "speediedan/knowing-using-gap-chaining"
+KUG_DATA_FILENAME = "chaining_tasks.json"
+KUG_DATA_REVISION = "a1bb9cee0bb47bc956df037a8e013a4350d127db"
 SYSTEM_PROMPT = "You are a biomedical assistant. Answer the question with the most appropriate entity name."
 # the paper's per-model fact seeds: Qwen2.5 samples with 848 (409 unique two-hop questions), Llama 3.2 with 1340 (427)
 QWEN_FACT_SEED = 848
@@ -227,15 +235,30 @@ class KUGDataModuleConfig(ITDataModuleConfig):
     """The datamodule configuration, with the sample's source and size.
 
     Args:
-        data_path: The paper's ``chaining_tasks.json`` (each item has ``facts``, ``memorization_tasks`` and
-            ``generalization_tasks``). Required: the data has no durable public host, so no default is assumed.
+        data_repo_id: The Hub dataset holding the paper's chaining tasks.
+        data_filename: The chaining-tasks file in that dataset (each item has ``facts``, ``memorization_tasks`` and
+            ``generalization_tasks``).
+        data_revision: The dataset revision the file is downloaded at; the default pins the published commit.
+        data_path: A local copy of the chaining-tasks file. When set it is read instead, and nothing is downloaded.
         fact_seed: The sample's seed (:data:`QWEN_FACT_SEED` for Qwen2.5, :data:`LLAMA_FACT_SEED` for Llama 3.2).
         n_memorization: How many memorization tasks (single-hop facts) the sample holds.
     """
 
+    data_repo_id: str = KUG_DATA_REPO
+    data_filename: str = KUG_DATA_FILENAME
+    data_revision: str = KUG_DATA_REVISION
     data_path: str | None = None
     fact_seed: int = QWEN_FACT_SEED
     n_memorization: int = 1000
+
+    def chaining_tasks_path(self) -> Path:
+        """The chaining-tasks file: ``data_path`` when set, otherwise the Hub dataset's file, downloaded (or read
+        from the Hugging Face cache) at ``data_revision``."""
+        if self.data_path is not None:
+            return Path(self.data_path)
+        return Path(
+            hf_hub_download(self.data_repo_id, self.data_filename, repo_type="dataset", revision=self.data_revision)
+        )
 
 
 class KUGDataModule(ITDataModule):
@@ -256,10 +279,10 @@ class KUGDataModule(ITDataModule):
     def prepare_data(self, target_model: torch.nn.Module | None = None) -> None:
         """Sample the facts, build both splits and save them to ``dataset_path``."""
         cfg = self.itdm_cfg
-        if not isinstance(cfg, KUGDataModuleConfig) or cfg.data_path is None:
+        if not isinstance(cfg, KUGDataModuleConfig):
             raise MisconfigurationException(
-                "KUGDataModule reads the paper's `chaining_tasks.json` from a local path: set the datamodule config's"
-                " `data_path` (a `KUGDataModuleConfig`)."
+                "KUGDataModule needs a KUGDataModuleConfig (the chaining tasks' source and the sample's size), not a"
+                f" {type(cfg).__name__}."
             )
         prompt_cfg = cfg.prompt_cfg
         if not isinstance(prompt_cfg, KUGPromptConfig):
@@ -267,7 +290,7 @@ class KUGDataModule(ITDataModule):
                 f"KUGDataModule builds its prompts with a KUGPromptConfig, not a {type(prompt_cfg).__name__}."
             )
         prompt_cfg.bind_tokenizer(self.tokenizer)
-        items = json.loads(Path(cfg.data_path).read_text(encoding="utf-8"))
+        items = json.loads(cfg.chaining_tasks_path().read_text(encoding="utf-8"))
         sampled = sample_chaining_items(items, cfg.n_memorization, cfg.fact_seed)
         train, evaluation = build_kug_splits(sampled, self.tokenizer, prompt_cfg)
         counts = {kind: sum(row["kind"] == kind for row in evaluation) for kind in ("twohop", "mem")}
@@ -622,6 +645,9 @@ class ExactMatchReport:
 
 
 __all__ = [
+    "KUG_DATA_FILENAME",
+    "KUG_DATA_REPO",
+    "KUG_DATA_REVISION",
     "ExactMatchReport",
     "ExactMatchTally",
     "KUGDataModule",

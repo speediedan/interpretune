@@ -4,8 +4,9 @@
 # clipped to 1, completion cross-entropy plus `lrsd_lambda` times the relative MSE between block 14's head-entity
 # state and block 21's (stop-gradient). `lrsd_lambda: 0.0` is the plain cross-entropy arm. Greedy 64-token generation
 # scores the unique two-hop and single-hop questions by exact match after every epoch. `runs/kug_lrsd.qwen2_5_1_5b.core
-# .yaml` runs it on the core loop (bf16 autocast) for 50 epochs. The data has no public host the configuration could
-# name, so `data_path` must be given (the paper's `chaining_tasks.json`).
+# .yaml` runs it on the core loop (bf16 autocast) for 50 epochs. The data is the paper's `chaining_tasks.json`,
+# downloaded from the Hub dataset `speediedan/knowing-using-gap-chaining` at a pinned revision; `data_path` names a
+# local copy instead.
 task_variant: kug_lrsd
 model: qwen2_5_1_5b
 composition: []
@@ -26,6 +27,9 @@ registered_cfg:
   datamodule_cfg:
     class_path: knowing_using.KUGDataModuleConfig
     init_args:
+      data_repo_id: speediedan/knowing-using-gap-chaining
+      data_filename: chaining_tasks.json
+      data_revision: a1bb9cee0bb47bc956df037a8e013a4350d127db
       data_path: null
       fact_seed: 848
       n_memorization: 1000
