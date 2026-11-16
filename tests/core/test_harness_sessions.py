@@ -21,7 +21,7 @@ def test_known_spec_resolves_with_composition():
 
 
 def test_unknown_selection_refused_by_name():
-    with pytest.raises(ValueError, match="Unsupported model selection nope.nothing"):
+    with pytest.raises(ValueError, match="Unsupported model selection nope.nothing in the bundled model_specs.yaml"):
         resolve_model_spec("nope", "nothing")
 
 
@@ -30,6 +30,64 @@ def test_overrides_replace_base_values():
     assert spec.model_name == "org/other"
     assert spec.use_chat_template is False
     assert spec.transcoder_set == "mwhanna/gemma-scope-2-1b-it/transcoder_all/width_16k_l0_small_affine"
+
+
+class TestSuppliedModelSpecs:
+    """A caller supplies its own specs, so a published experiment does not depend on interpretune's bundled
+    file."""
+
+    _SPECS = {
+        "model_specs": {
+            "toy.tiny": {
+                "model_name": "org/toy-tiny",
+                "transcoder_set": "org/toy-transcoders",
+                "neuronpedia_model": "toy-tiny",
+                "neuronpedia_set": "toy-set",
+                "use_chat_template": False,
+                "composition": ["core", "nnsight"],
+                "module_cls": "interpretune.harness.sessions.NeutralSessionMixin",
+            }
+        }
+    }
+
+    def test_a_mapping_resolves_its_own_entries_and_not_the_bundled_ones(self):
+        spec = resolve_model_spec("toy", "tiny", model_specs=self._SPECS)
+        assert (spec.model_name, spec.composition) == ("org/toy-tiny", ("core", "nnsight"))
+        with pytest.raises(ValueError, match=r"gemma3\.1b_it in the supplied mapping\. Supported: toy\.tiny"):
+            resolve_model_spec("gemma3", "1b_it", model_specs=self._SPECS)
+
+    def test_a_path_is_read_and_named_in_a_refusal(self, tmp_path):
+        import yaml
+
+        path = tmp_path / "specs.yaml"
+        path.write_text(yaml.safe_dump(self._SPECS), encoding="utf-8")
+        assert resolve_model_spec("toy", "tiny", model_specs=path).transcoder_set == "org/toy-transcoders"
+        with pytest.raises(ValueError, match=f"nope.x in {path}"):
+            resolve_model_spec("nope", "x", model_specs=str(path))
+
+    def test_a_hub_reference_resolves_through_the_component_cache(self, tmp_path, monkeypatch):
+        import yaml
+
+        import interpretune.hub.components as components
+
+        path = tmp_path / "model_specs.yaml"
+        path.write_text(yaml.safe_dump(self._SPECS), encoding="utf-8")
+        seen = []
+        monkeypatch.setattr(components, "resolve_component_file", lambda ref: seen.append(ref) or path)
+        ref = "hub://org/experiment@abc123/model_specs.yaml"
+        assert resolve_model_spec("toy", "tiny", model_specs=ref).model_name == "org/toy-tiny"
+        assert seen == [ref]
+        with pytest.raises(ValueError, match=f"nope.x in {ref}"):
+            resolve_model_spec("nope", "x", model_specs=ref)
+
+    def test_a_missing_file_is_refused_by_name(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="is not a file, a mapping, or a hub:// reference"):
+            resolve_model_spec("toy", "tiny", model_specs=tmp_path / "absent.yaml")
+
+    def test_a_malformed_entry_names_its_source(self):
+        bad = {"model_specs": {"toy.tiny": {**self._SPECS["model_specs"]["toy.tiny"], "composition": []}}}
+        with pytest.raises(ValueError, match="'toy.tiny' in the supplied mapping must declare a non-empty"):
+            resolve_model_spec("toy", "tiny", model_specs=bad)
 
 
 def test_every_table_entry_carries_composition():
