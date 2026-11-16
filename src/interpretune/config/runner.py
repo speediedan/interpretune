@@ -211,7 +211,9 @@ class SessionRunnerCfg:
     # the layers 'tp' splits across ranks, in finetuning-scheduler's tensor-parallel plan grammar
     # (`finetuning_scheduler.strategies.plan.parallelize_model`): the same keys as `fsdp_plan`, each mapped to a
     # parallel style (`{'style': 'colwise'}`, `'rowwise'`, `'sequence'`, `'prepare_input'`, ...) and its layouts.
-    # Required under 'tp' and refused under any other placement
+    # Refused under any other placement. Under 'tp' without one, the module's own default is used: a Hugging Face
+    # model's declared plan (its decoder layers split the Megatron way) on the core and nnsight paths; TransformerLens
+    # has none
     tp_plan: Mapping[str, Mapping[str, Any]] | None = None
     # resume training from a core-loop checkpoint taken at the end of an epoch (training continues at the next
     # epoch): under 'single', a `interpretune.runners.core.checkpoint_state` or a path to one saved with

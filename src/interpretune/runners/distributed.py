@@ -428,18 +428,68 @@ def _resolve_plan(
     return dict(sorted(resolved.items(), key=lambda item: item[0].count("."), reverse=True))
 
 
-def _resolve_tp_plan(module: torch.nn.Module, tp_plan: Mapping[str, Mapping[str, Any]] | None) -> dict[str, Any]:
-    """``tp_plan`` expanded to the modules it selects, each with its parallel style.
+# the styles transformers declares for the parts of a model the default plan leaves whole (the embedding and the LM
+# head): splitting them needs a loss that reads split logits, which the core loop's losses do not
+_HF_WHOLE_STYLES = ("embedding_rowwise", "colwise_gather_output")
+
+
+def hf_tp_plan(model: torch.nn.Module, prefix: str, world_size: int) -> dict[str, dict[str, Any]]:
+    """The tensor-parallel plan transformers declares for ``model`` (``model.tp_plan``), as a ``tp_plan`` whose
+    keys select its modules under ``prefix``.
+
+    transformers splits each decoder layer the Megatron way: attention's q, k and v and an MLP's input projections
+    column-wise, their output projections row-wise, so each rank computes its own heads and its own slice of the MLP
+    and one all-reduce per projection pair makes the activation whole again. Those entries are kept. The embedding and
+    LM head are left whole, so the logits are whole for the loss.
 
     Raises:
-        MisconfigurationException: If there is no plan, finetuning-scheduler is not installed, or the plan has a key
-            that selects no module or an entry finetuning-scheduler refuses.
+        MisconfigurationException: If the plan holds a style the plan grammar has no counterpart for, or the model's
+            attention heads (or key-value heads) are not divisible by ``world_size``, which would split a head across
+            ranks.
     """
+    declared = dict(getattr(model, "tp_plan", None) or {})
+    config = getattr(model, "config", None)
+    for attr in ("num_attention_heads", "num_key_value_heads"):
+        heads = getattr(config, attr, None)
+        if declared and isinstance(heads, int) and heads % world_size:
+            raise MisconfigurationException(
+                f"The model's tensor-parallel plan splits attention by heads, but its {attr} ({heads}) is not divisible"
+                f" by the {world_size} ranks. Give `tp_plan` explicitly, or use a world size that divides it."
+            )
+    plan: dict[str, dict[str, Any]] = {}
+    for key, style in declared.items():
+        if style in _HF_WHOLE_STYLES:
+            continue
+        if style not in ("colwise", "rowwise"):
+            raise MisconfigurationException(
+                f"The model's tensor-parallel plan gives {key} the style {style!r}, which interpretune's default plan"
+                " does not translate. Give `tp_plan` explicitly."
+            )
+        pattern = r"\d+".join(re.escape(part) for part in key.split("*"))
+        plan[f"{re.escape(prefix)}\\.{pattern}" if prefix else pattern] = {"style": style}
+    return plan
+
+
+def _resolve_tp_plan(
+    module: torch.nn.Module, tp_plan: Mapping[str, Mapping[str, Any]] | None, world_size: int = 1
+) -> dict[str, Any]:
+    """``tp_plan`` expanded to the modules it selects, each with its parallel style. Without a plan, the module's
+    own default (``default_tp_plan``) is used when it declares one.
+
+    Raises:
+        MisconfigurationException: If there is no plan and the module declares no default, finetuning-scheduler is not
+            installed, or the plan has a key that selects no module or an entry finetuning-scheduler refuses.
+    """
+    if not tp_plan:
+        default = getattr(module, "default_tp_plan", None)
+        declared: Any = default(world_size) if callable(default) else None
+        tp_plan = declared
     if not tp_plan:
         raise MisconfigurationException(
             "Placement 'tp' needs `tp_plan`: the layers to split across ranks, keyed by name, regex or `class:<name>`,"
             " each with a parallel style (for example `{'model.layers.\\d+.mlp.up_proj': {'style': 'colwise'},"
-            " 'model.layers.\\d+.mlp.down_proj': {'style': 'rowwise'}}`)."
+            f" 'model.layers.\\d+.mlp.down_proj': {{'style': 'rowwise'}}}}`). {type(module).__name__} declares no"
+            " default plan."
         )
     if not _FTS_AVAILABLE:
         raise MisconfigurationException(
@@ -553,7 +603,7 @@ def _place_tensor_parallel(
             "Placement 'tp' does not load a model built on the meta device (`meta_init`) yet: build it on each rank's"
             " device, or use placement 'fsdp2', which loads a meta-built model from rank 0."
         )
-    styles = _resolve_tp_plan(module, tp_plan)
+    styles = _resolve_tp_plan(module, tp_plan, run.world_size)
     groups = _packed_groups(module, styles, run.world_size)
     _refuse_local_splices(module, styles)
     with torch.no_grad():

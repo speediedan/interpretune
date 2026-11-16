@@ -29,6 +29,7 @@ from interpretune.runners.distributed import (
     _resolve_plan,
     _resolve_tp_plan,
     distributed_dataloader,
+    hf_tp_plan,
     meta_built,
     resolve_placement,
 )
@@ -40,6 +41,7 @@ META_WORKER = Path(__file__).with_name("distributed_meta_init_worker.py")
 CT_WORKER = Path(__file__).with_name("distributed_ct_worker.py")
 LATENT_WORKER = Path(__file__).with_name("distributed_latent_worker.py")
 TP_BRIDGE_WORKER = Path(__file__).with_name("distributed_tp_bridge_worker.py")
+TP_HF_WORKER = Path(__file__).with_name("distributed_tp_hf_worker.py")
 
 
 def _run(rank: int, world_size: int = 2, placement: str = "ddp") -> DistributedRun:
@@ -308,6 +310,63 @@ class TestPlacementChecks:
             _resolve_tp_plan(model, {"class:Block": {"style": "colwise"}})
         with pytest.raises(MisconfigurationException, match="whose `style` is one of"):
             _resolve_tp_plan(model, {"0": {"style": "diagonal"}})
+
+    @staticmethod
+    def _tiny_llama(heads: int = 2, kv_heads: int = 2, hidden: int = 32):
+        from transformers import LlamaConfig, LlamaForCausalLM
+
+        config = LlamaConfig(
+            num_hidden_layers=2,
+            hidden_size=hidden,
+            intermediate_size=64,
+            num_attention_heads=heads,
+            num_key_value_heads=kv_heads,
+            vocab_size=128,
+        )
+        return LlamaForCausalLM(config)
+
+    def test_default_tp_plan_is_the_hf_models_declared_decoder_plan(self):
+        """Without a ``tp_plan``, an interpretune module offers the plan transformers declares for its model, keyed
+        under the model's path: the decoder layers' entries, with the embedding and LM head left whole."""
+        from interpretune.base.modules import BaseITModule
+
+        stub = nn.Module()
+        stub.model = self._tiny_llama()
+        stub.meta_load_target = lambda: stub.model
+        stub.default_tp_plan = lambda world_size: BaseITModule.default_tp_plan(stub, world_size)  # pyright: ignore
+        plan = BaseITModule.default_tp_plan(stub, 2)  # pyright: ignore[reportArgumentType]
+        assert plan == {
+            rf"model\.model\.layers\.\d+\.{part}": {"style": style}
+            for part, style in (
+                (r"self_attn\.q_proj", "colwise"),
+                (r"self_attn\.k_proj", "colwise"),
+                (r"self_attn\.v_proj", "colwise"),
+                (r"self_attn\.o_proj", "rowwise"),
+                (r"mlp\.gate_proj", "colwise"),
+                (r"mlp\.up_proj", "colwise"),
+                (r"mlp\.down_proj", "rowwise"),
+            )
+        }
+        if _FTS_AVAILABLE:  # every key selects the layers it names, and nothing else
+            styles = _resolve_tp_plan(stub, None, 2)
+            assert len(styles) == 14 and all(".layers." in name for name in styles)
+        # a model declaring no plan (GPT-2) offers none, so the placement asks for one
+        from transformers import GPT2Config, GPT2LMHeadModel
+
+        stub.model = GPT2LMHeadModel(GPT2Config(n_layer=1, n_embd=8, n_head=2, vocab_size=16))
+        assert BaseITModule.default_tp_plan(stub, 2) is None  # pyright: ignore[reportArgumentType]
+        with pytest.raises(MisconfigurationException, match="Module declares no default plan"):
+            _resolve_tp_plan(stub, None, 2)
+
+    def test_default_tp_plan_refuses_what_it_cannot_split_faithfully(self):
+        with pytest.raises(MisconfigurationException, match=r"num_key_value_heads \(1\) is not divisible by the 2"):
+            hf_tp_plan(self._tiny_llama(kv_heads=1), "model", 2)
+        with pytest.raises(MisconfigurationException, match=r"num_attention_heads \(3\) is not divisible by the 2"):
+            hf_tp_plan(self._tiny_llama(heads=3, kv_heads=3, hidden=48), "model", 2)
+        model = self._tiny_llama()
+        model._tp_plan = {**model.tp_plan, "model.layers.*.mlp.experts": "local_colwise"}
+        with pytest.raises(MisconfigurationException, match="experts the style 'local_colwise'"):
+            hf_tp_plan(model, "model", 2)
 
     def test_tp_plan_without_finetuning_scheduler_is_refused(self, monkeypatch):
         import interpretune.runners.distributed as distributed
@@ -750,6 +809,44 @@ def tiny_llama_checkpoint(tmp_path_factory):
     )
     LlamaForCausalLM(config).save_pretrained(path, max_shard_size="20KB")
     return path
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tp_default_plan_splits_hf_attention_heads_and_mlp(tiny_llama_checkpoint, tmp_path):
+    """With no ``tp_plan``, a Hugging Face Llama is split by the plan transformers declares for it: each rank
+    computes its own attention heads and its own slice of the MLP, and the split model computes and steps as the
+    whole one does.
+
+    The embedding and LM head stay whole.
+    """
+    out_dir = tmp_path / "hf"
+    out_dir.mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
+    worker = [str(TP_HF_WORKER), "--checkpoint", str(tiny_llama_checkpoint), "--out-dir", str(out_dir)]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, f"tp hf run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    for rank in range(2):
+        record = json.loads((out_dir / f"rank{rank}.json").read_text())
+        assert record["split_params"] == sorted(
+            f"model.model.layers.{i}.{proj}.weight"
+            for i in range(2)
+            for proj in (
+                "self_attn.q_proj",
+                "self_attn.k_proj",
+                "self_attn.v_proj",
+                "self_attn.o_proj",
+                "mlp.gate_proj",
+                "mlp.up_proj",
+                "mlp.down_proj",
+            )
+        )
+        assert record["forward_diff"] < 1e-5
+        assert record["step_effect"] > 0.1 and record["step_diff"] < 1e-4
 
 
 def _edited_checkpoint(checkpoint: Path, out: Path, drop: str | None = None, add: str | None = None) -> Path:
