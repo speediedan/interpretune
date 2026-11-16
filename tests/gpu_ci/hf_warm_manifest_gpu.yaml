@@ -23,3 +23,9 @@ models:
   # 7.3 GiB), again without `features/`.
   - repo_id: mwhanna/gemma-scope-transcoders
     allow_patterns: ["config.yaml", "layer_*.safetensors"]
+  # The J-space workspace notebook's default model (Qwen3.5-4B in bf16, about 9 GiB) and its two published lenses
+  # (J-lens and J++, about 0.4 GiB each), loaded by `test_jspace_workspace_notebook_default_qwen`.
+  - repo_id: Qwen/Qwen3.5-4B
+    allow_patterns: ["*.json", "*.safetensors", "merges.txt", "vocab.json", "chat_template.jinja"]
+  - repo_id: neuronpedia/jacobian-lens
+    allow_patterns: ["qwen3.5-4b/*"]

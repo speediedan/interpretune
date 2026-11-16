@@ -1,15 +1,18 @@
-import os
-import pickle
-from dataclasses import fields
+"""The memory profiler extension: finetuning-scheduler's framework-neutral profiling core, connected to a module.
+
+Collection, scheduling and reporting are the core's (``finetuning_scheduler.profiling``), so interpretune and
+finetuning-scheduler profile with one implementation: accelerator statistics and allocator history on CUDA, ROCm and
+XPU, host memory, forward and saved-tensor hooks, and FSDP2 memory tracking. This extension keeps the configuration on
+``it_cfg.memprofiler_cfg`` and points the core at the module's torch model.
+"""
+
+from __future__ import annotations
+
+from contextlib import AbstractContextManager
 from typing import Any
-from collections import defaultdict
-from pathlib import Path
 
 import torch
-from psutil import Process
 
-from interpretune.utils import resolve_funcs, _get_rank, rank_zero_only
-from interpretune.protocol import CoreSteps
 from interpretune.config.extension_cfgs import (
     DefaultMemHooks as DefaultMemHooks,
     MemProfilerCfg as MemProfilerCfg,
@@ -19,284 +22,72 @@ from interpretune.config.extension_cfgs import (
 )
 
 
-# TODO: enable once these hooks are added
-# @dataclass(kw_only=True)
-# class PyTorchProfilerCfg(ITSerializableCfg):
-#     # pytorch_profiler_enabled: bool = False
-#     # pytorch_profiler_cfg: dict[str, Any] = field(default_factory=dict)
+class _ProfiledModel:
+    """The core profiler's view of an interpretune module: its torch model, carrying the profiler's configuration.
 
-# accessed in global scope to track non-parameter packed bytes (npp) as a simple proxy (ceiling) for activation memory
-_npp_bytes = 0
+    The core profiles the object it connects to: it reads ``memprofiler_cfg`` from it, registers hooks on its
+    ``modules()`` and reads the hook attributes off it. An interpretune module keeps its configuration on ``it_cfg`` and
+    builds its model after its extensions connect, and an NNsight model wraps the torch module in ``_module``, so the
+    torch model is resolved on every access.
+    """
 
+    def __init__(self, it_module: Any, core_cfg: Any) -> None:
+        self._it_module = it_module
+        self.memprofiler_cfg = core_cfg
 
-def _hook_npp_pre_forward(module, *args, **kwargs):
-    mem = module.mem_info_handle()
-    global _npp_bytes
-    module.npp_pre_forward = _npp_bytes
-    module.rss_pre_forward = mem.rss
-    return None
+    @property
+    def torch_model(self) -> torch.nn.Module:
+        model = self._it_module.model
+        if model is None:
+            raise RuntimeError("The memory profiler collects from the module's model, which is not built yet.")
+        return getattr(model, "_module", model)
 
+    def modules(self):
+        return self.torch_model.modules()
 
-def _hook_npp_post_forward(module, *args, **kwargs):
-    global _npp_bytes
-    module.npp_post_forward = _npp_bytes
-    module.npp_diff = module.npp_post_forward - module.npp_pre_forward
-    mem = module.mem_info_handle()
-    module.rss_post_forward = mem.rss
-    rss_diff = module.rss_post_forward - module.rss_pre_forward
-    module.rss_diff = rss_diff + (module.rss_diff if hasattr(module, "rss_diff") else 0)
-    return None
+    def get_submodule(self, target: str) -> torch.nn.Module:
+        return self.torch_model.get_submodule(target)
 
-
-def _reset_memory_hooks_state(model, reset_attrs: list[str]):
-    global _npp_bytes
-    _npp_bytes = 0
-    for module in model.modules():
-        for attr in reset_attrs:
-            setattr(module, attr, 0)
-
-
-def _npp_hook(x):
-    global _npp_bytes
-    if not isinstance(x, torch.nn.Parameter):
-        _npp_bytes += x.nbytes
-    return x
+    def __getattr__(self, name: str) -> Any:
+        # the hook attributes the core collects (`save_hook_attrs`) live on the torch model's root module
+        return getattr(self.torch_model, name)
 
 
 class MemProfiler:
-    """Collects per-step memory statistics via forward hooks and CUDA allocator snapshots.
+    """The memory profiler extension, delegating to finetuning-scheduler's ``MemProfiler``.
 
-    Attaches to a module (:meth:`connect`), installs hooks lazily on first collection, and keys every
-    sample by ``rank.phase.epoch_idx.step_idx.step_ctx`` so samples from different phases and steps
-    remain distinguishable in one flat store.
+    Attributes the extension does not define (``memory_stats``, ``memprofiler_cfg``, ``schedule``, ...) are the core
+    profiler's. ``memprofiler_cfg`` is therefore the core's validated configuration, built from ``it_cfg`` at
+    :meth:`connect`.
     """
 
-    MODEL_MISSING_MSG = "Module or model is not available"
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__()
-        self.memory_stats = defaultdict(dict)
-        self._enabled = {}
-        self._module = None
-        self._cuda_snapshot_dir = None
-        self._curr_pid = None
-        self._rank = _get_rank() or 0  # for future use, currently only single rank supported
-        self._snap_indices = {}
-        self._configured_hooks = {}
-        self._saved_tensors_funcs = []
-        self._hook_handles = defaultdict(list)
-        self._done_prof_funcs = []
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._core: Any = None
 
     def connect(self, obj_ref: Any) -> None:
-        """Bind the profiler to a module and capture the current process handle."""
-        self._module = obj_ref
-        self._curr_pid = Process(os.getpid())
-        if self.memprofiler_cfg.enable_saved_tensors_hooks:
-            self._saved_tensors_funcs = resolve_funcs(cfg_obj=self.memprofiler_cfg, func_type="saved_tensors_funcs")
+        """Connect the core profiler to ``obj_ref``'s model, configured from ``obj_ref.it_cfg.memprofiler_cfg``."""
+        from finetuning_scheduler.profiling import MemProfiler as CoreMemProfiler
 
-    @property
-    def memprofiler_cfg(self) -> MemProfilerCfg:
-        """The connected module's profiler configuration.
-
-        Raises:
-            AssertionError: :meth:`connect` has not run, so there is no configuration to read.
-        """
-        assert self._module is not None and self._module.it_cfg is not None, "Module or IT config is not available"
-        return self._module.it_cfg.memprofiler_cfg
-
-    @property
-    def schedule(self) -> MemProfilerSchedule:
-        """The configured warmup/max-step schedule."""
-        assert self._module is not None and self._module.it_cfg is not None, "Module or IT config is not available"
-        return self._module.it_cfg.memprofiler_cfg.schedule
-
-    def _get_pytorch_model(self) -> torch.nn.Module:
-        """Get the actual PyTorch module for hook registration and attribute access.
-
-        For NNsight LanguageModel, we need to access the underlying _module. For other models (TransformerLens, plain
-        HF), we use the model directly.
-        """
-        # TODO: refactor this to property wrapping to be a property/part of our adapter/model abstraction system
-        # in our NNsight adapter attribute mixin
-        assert self._module is not None and self._module.model is not None, self.MODEL_MISSING_MSG
-        model = self._module.model
-        if hasattr(model, "_module"):
-            # NNsight LanguageModel wraps the actual model in _module
-            return model._module
-        return model
-
-    def remove_memprofiler_hooks(self) -> None:
-        """Remove every installed forward hook."""
-        for handle_list in self._hook_handles.values():
-            for handle in handle_list:
-                handle.remove()
-
-    def exec_reset_state_hooks(self) -> None:
-        """Run the reset-state hooks, clearing the per-module attributes collection reads."""
-        for hook in self._configured_hooks["reset_state_hooks"]:
-            hook(self._get_pytorch_model(), self.memprofiler_cfg.save_hook_attrs)
-
-    def add_memprofiler_hooks(self) -> None:
-        """Resolve configured hooks and register them on every submodule, then reset hook state.
-
-        Each submodule also gets a ``mem_info_handle`` so a hook can sample process memory without
-        reaching back through the profiler.
-        """
-        # TODO: extend supported hook points (e.g. backward, etc.) and if/once supporting additional hook points,
-        # use a hook_type to registration function mapping
-        memory_hooks_cfg = self.memprofiler_cfg.memory_hooks
-        for supported_hooks in fields(memory_hooks_cfg):
-            if getattr(memory_hooks_cfg, supported_hooks.name):
-                self._configured_hooks[supported_hooks.name] = resolve_funcs(
-                    cfg_obj=memory_hooks_cfg, func_type=supported_hooks.name
-                )
-
-        assert self._curr_pid is not None, "Memory profiling process not initialized"
-        pytorch_model = self._get_pytorch_model()
-
-        for module in pytorch_model.modules():
-            module.mem_info_handle = self._curr_pid.memory_info  # pyright: ignore[reportArgumentType]
-            for hook_func in self._configured_hooks["pre_forward_hooks"]:
-                self._hook_handles[hook_func].append(module.register_forward_pre_hook(hook_func))
-            for hook_func in self._configured_hooks["post_forward_hooks"]:
-                self._hook_handles[hook_func].append(module.register_forward_hook(hook_func))
-
-        self.exec_reset_state_hooks()
-
-    def init_cuda_snapshots_dir(self) -> None:
-        """Create the snapshot directory: the configured ``save_dir``, else ``<core_log_dir>/memprofiler``."""
-        assert self._module is not None and self._module.core_log_dir is not None, (
-            "Module or core log directory is not available"
+        self._core = CoreMemProfiler()
+        target = _ProfiledModel(obj_ref, obj_ref.it_cfg.memprofiler_cfg.to_core())
+        self._core.connect(
+            target,
+            optimizer=lambda: (getattr(obj_ref, "optimizers", None) or [None])[0],
+            log_dir=lambda: getattr(obj_ref, "core_log_dir", None),
         )
 
-        save_dir = self.memprofiler_cfg.save_dir
-        if save_dir is not None:
-            self._cuda_snapshot_dir = Path(save_dir)
-        else:
-            self._cuda_snapshot_dir = Path(self._module.core_log_dir) / "memprofiler"
+    def profile(self, fn_name: str) -> AbstractContextManager:
+        """Profile one call of ``fn_name``: snapshots at its start and end, and FSDP2 tracking where configured."""
+        return type(self._core).memprofile_ctx(self._core, fn_name=fn_name)
 
-        self._cuda_snapshot_dir.mkdir(exist_ok=True, parents=True)
-
-    def cuda_allocator_history_snap(self, snap_key: str) -> dict:
-        """Dump the CUDA allocator history for ``snap_key`` and return the file it was written to."""
-        assert self._cuda_snapshot_dir is not None, "CUDA snapshot directory not initialized"
-        cuda_snapshot_file = self._cuda_snapshot_dir / f"cuda_alloc_{snap_key}.pickle"
-        torch.cuda.memory._dump_snapshot(str(cuda_snapshot_file))
-        return {"cuda_snapshot_file": str(cuda_snapshot_file)}
-
-    def done(self, step_idx: int) -> bool:
-        """Whether profiling has passed ``max_step``.
-
-        Always False when no max step is configured.
-        """
-        return bool(self.schedule.max_step and step_idx >= self.schedule.max_step)
-
-    def _process_hooks(self, snap_key) -> None:
-        if self.memprofiler_cfg.enable_memory_hooks:
-            if len(self._hook_handles) == 0:
-                self.add_memprofiler_hooks()
-            pytorch_model = self._get_pytorch_model()
-            collected = {attr: getattr(pytorch_model, attr, None) for attr in self.memprofiler_cfg.save_hook_attrs}
-            self.memory_stats[snap_key].update(collected)
-
-    def _collect_snap(self, snap_key, reset_mem_hooks: bool = False) -> None:
-        _, phase, *_ = snap_key
-        snap_key = ".".join(map(str, snap_key))
-        mem_cfg = self.memprofiler_cfg
-        self._process_hooks(snap_key)
-        if phase in mem_cfg.enabled_funcs.cpu:
-            assert self._curr_pid is not None, "Memory profiling process not initialized"
-            mem = self._curr_pid.memory_info()
-            self.memory_stats[snap_key].update({"rss": mem.rss, "vms": mem.vms})
-        if phase in mem_cfg.enabled_funcs.cuda:
-            self.memory_stats[snap_key].update(torch.cuda.memory_stats())
-        if phase in mem_cfg.enabled_funcs.cuda_allocator_history and mem_cfg.cuda_allocator_history:
-            self.cuda_allocator_history_snap(snap_key)
-        if mem_cfg.enable_memory_hooks and reset_mem_hooks:
-            self.exec_reset_state_hooks()
-
-    @property
-    def _should_remove_hooks(self) -> bool:
-        return all(func in self._done_prof_funcs for func in self.memprofiler_cfg.retain_hooks_for_funcs)
-
-    def teardown_prof(self, phase: str, step_ctx: str) -> None:
-        """Disable profiling for one (phase, step context), removing hooks once both ends are done.
-
-        Hooks are only removed once neither the start nor the end of the phase is still collecting, since removing them
-        early would silently truncate the other half of the pair.
-        """
-        self._enabled[(phase, step_ctx)] = False
-        if not any(self._enabled[(phase, step_ctx)] for step_ctx in ["start", "end"]):
-            self._done_prof_funcs.append(CoreSteps[phase])
-        if self.memprofiler_cfg.retain_hooks_for_funcs and self._should_remove_hooks:
-            self.remove_memprofiler_hooks()
-            self.memprofiler_cfg.enable_memory_hooks = False
-
-    def gen_snap_keys(
-        self, phase: str, step_ctx: str, epoch_idx: int | None = None, step_idx: int | None = None
-    ) -> tuple[int, int, tuple]:
-        """Resolve the epoch/step indices and build this sample's key.
-
-        Key format is ``rank.phase.epoch_idx.step_idx.step_ctx`` (see NOTE [Memprofiler Key Format]),
-        which is what keeps samples from different ranks, phases and steps distinct in one flat store.
-        Indices default to the module's current epoch and the profiler's own per-phase counter.
-        """
-        # NOTE [Memprofiler Key Format]:
-        # snap key format is rank.phase.epoch_idx.step_idx.step_ctx
-        # e.g. 0.training_step.0.0.end keys hook output for the end of training step 0, epoch 0 for rank 0
-        # 0.training_step.1.2.start keys mem stats for the start of training step 2, epoch 1 for rank 0
-        assert self._module is not None, "Module not connected"
-        epoch_idx = next(e_idx for e_idx in (epoch_idx, self._module.current_epoch) if e_idx is not None)
-        if step_idx is None:
-            step_idx = self._snap_indices.get((phase, step_ctx), 0)
-        # epoch_idx or step_idx should not be None
-        assert epoch_idx is not None, "Epoch index is None"
-        assert step_idx is not None, "Step index is None"
-
-        return epoch_idx, step_idx, (self._rank, phase, epoch_idx, step_idx, step_ctx)
-
-    def maybe_init_phase(self, phase: str, step_ctx: str) -> None:
-        """Start tracking a (phase, step context) pair if it is not already being tracked."""
-        if not self._snap_indices.get((phase, step_ctx), None):
-            self._snap_indices[(phase, step_ctx)] = 0
-            self._enabled[(phase, step_ctx)] = True
-
-    def snap(
-        self,
-        phase: str,
-        step_ctx: str,
-        epoch_idx: int | None = None,
-        step_idx: int | None = None,
-        reset_mem_hooks: bool = False,
-    ) -> None:
-        """Take one memory sample, honoring warmup and the max-step schedule.
-
-        Samples before ``warmup_steps`` are skipped but still counted, so step indices stay aligned with
-        the run; reaching ``max_step`` tears the phase down rather than continuing to collect.
-        """
-        self.maybe_init_phase(phase, step_ctx)
-        if not self._enabled[(phase, step_ctx)]:
-            return
-        epoch_idx, step_idx, snap_key = self.gen_snap_keys(phase, step_ctx, epoch_idx, step_idx)
-        if step_idx >= self.schedule.warmup_steps:
-            if not self.done(step_idx):
-                self._collect_snap(snap_key, reset_mem_hooks)
-            else:
-                self.teardown_prof(phase, step_ctx)
-        if self._enabled[(phase, step_ctx)]:
-            self._snap_indices[(phase, step_ctx)] += 1
-
-    @rank_zero_only
     def dump_memory_stats(self) -> None:
-        """Pickle collected statistics to the snapshot directory.
+        """Save the collected statistics (and FSDP2 reports) under the profiler's artifact directory."""
+        if self._core.memprof_log_dir is None:
+            self._core.init_memprof_log_dir()
+        self._core.dump_memory_stats()
 
-        Rank zero only.
-        """
-        # TODO: all gather memory stats in the future if/when multiple ranks are supported
-        # the directory is created at setup only for CUDA allocator history, which is disabled when CUDA is unavailable
-        if self._cuda_snapshot_dir is None:
-            self.init_cuda_snapshots_dir()
-        assert self._cuda_snapshot_dir is not None, "CUDA snapshot directory not initialized"
-        filename = self._cuda_snapshot_dir / "memory_stats.pickle"
-        with open(filename, "wb") as f:
-            pickle.dump(self.memory_stats, f)
+    def __getattr__(self, name: str) -> Any:
+        core = self.__dict__.get("_core")
+        if core is None:
+            raise AttributeError(f"{type(self).__name__} has no attribute {name!r} before it is connected")
+        return getattr(core, name)

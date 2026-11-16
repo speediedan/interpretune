@@ -5,7 +5,8 @@ venngram Integration
 Interpretune's side of venngram's consumer-owned integration (interpretune#887): what this package honours of a
 venngram recipe, declared as a ``venngram.ops.Support`` record derived from a backend's own support records, and
 the refuse-by-name check a recipe runs against it before anything is applied. Applying a recipe translates its
-treatments into intervention specs, or a feature treatment into circuit-tracer's feature tuples, and exporting writes
+treatments into intervention specs (for activation values, or for gradients under ``of: grad``), or a feature treatment
+into circuit-tracer's feature tuples; a site address resolves to the hook names it selects; and exporting writes
 intervention specs back as a book carrying a treatment; nothing here executes a treatment.
 
 venngram is imported on first use, so importing interpretune does not import it.
@@ -16,6 +17,7 @@ venngram is imported on first use, so importing interpretune does not import it.
 from interpretune.analysis.venngram.apply import recipe_feature_interventions, recipe_interventions
 from interpretune.analysis.venngram.export import export_book
 from interpretune.analysis.venngram.fetch import FetchedRecipe, load_recipe
+from interpretune.analysis.venngram.sites import SiteSelection, resolve_sites
 from interpretune.analysis.venngram.support import (
     check_recipe,
     require_supported,
@@ -26,12 +28,14 @@ from interpretune.analysis.venngram.support import (
 
 __all__ = [
     "FetchedRecipe",
+    "SiteSelection",
     "check_recipe",
     "export_book",
     "load_recipe",
     "recipe_feature_interventions",
     "recipe_interventions",
     "require_supported",
+    "resolve_sites",
     "support_mapping",
     "venngram_feature_support",
     "venngram_support",

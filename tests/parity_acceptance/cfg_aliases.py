@@ -58,20 +58,20 @@ req_det_cuda_bf16_l = {"req_deterministic": True, **cuda, **bf16, **w_lit}
 ################################################################################
 # Extension cfg aliases
 ################################################################################
-enable_memprofiler_kwargs = {"enabled": True, "cuda_allocator_history": True}
+enable_memprofiler_kwargs = {"enabled": True, "allocator_history": True}
 bs_override = {"train_batch_size": default_prof_bs, "eval_batch_size": default_prof_bs}
 memprofiler_cfg = MemProfilerCfg(**enable_memprofiler_kwargs)
 no_savedt_memprofiler_cfg = MemProfilerCfg(**enable_memprofiler_kwargs, enable_saved_tensors_hooks=False)
 warm_maxstep_memprof_cfg = MemProfilerCfg(
-    **enable_memprofiler_kwargs, **{"schedule": MemProfilerSchedule(warmup_steps=2, max_step=4)}
+    **enable_memprofiler_kwargs, **{"schedule": MemProfilerSchedule(warmup_iters=2, max_iter=4)}
 )
 nowarm_maxstep_memprof_cfg = MemProfilerCfg(
-    **enable_memprofiler_kwargs, **{"schedule": MemProfilerSchedule(max_step=4)}
+    **enable_memprofiler_kwargs, **{"schedule": MemProfilerSchedule(max_iter=4)}
 )
 nowarm_maxstep_hk_memprof_cfg = MemProfilerCfg(
     retain_hooks_for_funcs=["training_step"],
     **enable_memprofiler_kwargs,
-    **{"schedule": MemProfilerSchedule(max_step=4)},
+    **{"schedule": MemProfilerSchedule(max_iter=4)},
 )
 memprof_steps = {"limit_train_batches": 5, "limit_val_batches": 3}
 bs1_memprof_steps = {"dm_override_cfg": bs_override, **memprof_steps}

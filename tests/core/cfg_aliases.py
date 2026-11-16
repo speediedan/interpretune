@@ -27,7 +27,7 @@ from interpretune.config import (
     ITLensCfg,
     NNsightConfig,
 )
-from interpretune.extensions import DebugLMConfig, MemProfilerCfg
+from interpretune.extensions import DebugLMConfig, MemProfilerCfg, MemProfilerSchedule
 from interpretune.analysis import LatentAnalysisTargets, AnalysisOp
 from tests.rte_component import RTEBoolqEntailmentMapping
 from tests.base_defaults import BaseAugTest, BaseCfg, AnalysisBaseCfg
@@ -173,7 +173,9 @@ class CoreGPT2PEFTSeqCfg(CoreGPT2PEFTCfg):
 @dataclass(kw_only=True)
 class CoreMemProfCfg(BaseCfg):
     memprofiler_cfg: MemProfilerCfg | None = field(
-        default_factory=lambda: MemProfilerCfg(enabled=True, cuda_allocator_history=True)
+        default_factory=lambda: MemProfilerCfg(
+            enabled=True, allocator_history=True, schedule=MemProfilerSchedule(max_iter=5)
+        )
     )
     dm_override_cfg: dict | None = field(default_factory=lambda: {"train_batch_size": 1, "eval_batch_size": 1})
     limit_train_batches: int | None = 5

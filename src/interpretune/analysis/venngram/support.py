@@ -27,9 +27,11 @@ backend already publishes, never restated by hand:
   a tensor in the site's own activation coordinates, so a record naming no bases is declared with the bases known to
   be written there: by default interpretune's two J-lens bases (``jlens_folded``, ``jlens_unfolded``), both
   residual-stream directions. A caller whose operands come from elsewhere names their bases explicitly.
-- **of**: what targets may address, ``value`` or ``grad``, from the record. Every model backend declares ``value`` only
-  today, so a recipe acting on a gradient is refused here, and the apply path refuses one too
-  (:func:`~interpretune.analysis.venngram.apply.op_refusal`), rather than applying the op to the activation value.
+- **of**: what targets may address, ``value`` or ``grad``, from the record. Both model backends declare ``grad`` beside
+  ``value``, since each applies its ops to gradients through ``bwd_w_intervention``; a provider declaring ``value``
+  alone has a recipe acting on a gradient refused here. Declaring both flows does not let one translation apply both:
+  :func:`check_recipe` checks the ops for the one flow its caller applies, as the apply path does
+  (:func:`~interpretune.analysis.venngram.apply.op_refusal`).
 
 :func:`venngram_feature_support` is the analysis-backend path's declaration, derived from the provider of the
 ``features`` target that applies feature tuples: a feature ``replace`` at explicit positions, which circuit-tracer's
@@ -189,7 +191,7 @@ def support_mapping(support: Any) -> dict[str, Any]:
     return importlib.import_module("venngram.support").as_record(support).to_mapping()
 
 
-def check_recipe(recipe: Any, support: Any, *, analysis_backend: bool = False) -> list[str]:
+def check_recipe(recipe: Any, support: Any, *, analysis_backend: bool = False, flow: str = "value") -> list[str]:
     """Every way ``recipe`` (a ``venngram.recipe.Recipe``) asks for something interpretune does not honour.
 
     Venngram's own ``check_support`` covers the declared record (ops, targets, token scopes, value sources,
@@ -197,27 +199,29 @@ def check_recipe(recipe: Any, support: Any, *, analysis_backend: bool = False) -
     would raise (:func:`~interpretune.analysis.venngram.apply.op_refusal`): an op on a target kind it has no native
     mode for, a whole-activation op at a layer-free site, a unit set at a layered one, or an operand shape or
     parameter no native translation expresses yet. With ``analysis_backend``, the refusals are those of
-    :func:`~interpretune.analysis.venngram.apply.recipe_feature_interventions` instead.
+    :func:`~interpretune.analysis.venngram.apply.recipe_feature_interventions` instead. ``flow`` is the flow the
+    caller will apply (``value`` through ``fwd_w_intervention``, ``grad`` through ``bwd_w_intervention``), and an op on
+    the other flow is a refusal.
 
     Evidence is supplied when the recipe is applied, so whether it has what a value reads is decided then.
     """
     vg_ops = _require_venngram()
-    refuse = feature_op_refusal if analysis_backend else op_refusal
     refusals = list(vg_ops.check_support(recipe, support))
     for i, stage in enumerate(recipe.stages):
         for j, op in enumerate(stage.ops):
-            if (refusal := refuse(recipe, stage, op)) is not None:
+            refusal = feature_op_refusal(recipe, stage, op) if analysis_backend else op_refusal(recipe, stage, op, flow)
+            if refusal is not None:
                 refusals.append(f"stage {i} ({stage.site}) op {j} (`{op.op}`): {refusal}")
     return refusals
 
 
-def require_supported(recipe: Any, support: Any, *, analysis_backend: bool = False) -> None:
+def require_supported(recipe: Any, support: Any, *, analysis_backend: bool = False, flow: str = "value") -> None:
     """Refuse a recipe this consumer cannot honour in full, by name, before anything runs.
 
     Raises:
         MisconfigurationException: Listing every refusal :func:`check_recipe` finds.
     """
-    if refusals := check_recipe(recipe, support, analysis_backend=analysis_backend):
+    if refusals := check_recipe(recipe, support, analysis_backend=analysis_backend, flow=flow):
         raise MisconfigurationException(
             "This recipe asks for more than interpretune honours:\n" + "\n".join(f"- {r}" for r in refusals)
         )

@@ -4,7 +4,7 @@ CLI.
 
 The boundary's graphs come from a test-side stand-in (the research configuration builds them with circuit-tracer on a
 GPU); everything else is the component's: the chain's row partition, the penalty and its calibrated normalizer, the
-roles (transcoders ``instrument``, enforcement ``fitted``), the payload and fill hooks, and the enforced recovery
+roles (transcoders ``artifact``, enforcement ``fitted``), the payload and fill hooks, and the enforced recovery
 phases. Recovery re-thaws in two steps with finetuning-scheduler's per-phase ``refreeze`` (#936).
 """
 
@@ -140,7 +140,7 @@ def test_the_sparse_chain_runs_its_three_stages_and_resumes_after_the_refreeze(
     assert all(torch.equal(starts[2][n], params[1][n]) for n in params[1])
 
     best = load_payload(next((run_dir / "checkpoints" / "rte_sparse.gpt2.core").glob("best-*.pt")))
-    assert not any(k.startswith("sparse_tcs.") for k in best["model"])  # instruments are never checkpointed
+    assert not any(k.startswith("sparse_tcs.") for k in best["model"])  # artifacts are never checkpointed
     assert sum(k.startswith("sparse_enforce_") for k in best["model"]) == 15  # fitted state is
     assert best["statefuls"]["sparse_normalizer"]["value"] > 0
 

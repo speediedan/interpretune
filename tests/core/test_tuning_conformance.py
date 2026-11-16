@@ -45,8 +45,8 @@ class TestLightningNNsightTuning(TuningConformance):
         assert probe.support().trainable, probe.support().reason
 
 
-def test_a_frozen_spliced_sae_is_an_instrument(request):
-    """An SAE configured ``frozen`` is spliced and applied but declared ``instrument``; the others stay
+def test_a_frozen_spliced_sae_is_an_artifact(request):
+    """An SAE configured ``frozen`` is spliced and applied but declared ``artifact``; the others stay
     ``latent:sae`` (#812)."""
     from copy import deepcopy
     from dataclasses import replace
@@ -62,4 +62,4 @@ def test_a_frozen_spliced_sae_is_an_instrument(request):
     roles = module.tunable_roles()
     frozen_key, other_key = (module.attached_sae_key(s.sae_id) for s in sae_cfgs[:2])
     by_key = {k: {r for n, r in roles.items() if n.startswith(f"attached_saes.{k}.")} for k in (frozen_key, other_key)}
-    assert by_key == {frozen_key: {"instrument"}, other_key: {"latent:sae"}}
+    assert by_key == {frozen_key: {"artifact"}, other_key: {"latent:sae"}}

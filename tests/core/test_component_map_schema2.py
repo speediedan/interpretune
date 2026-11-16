@@ -346,7 +346,18 @@ def _tiny(architecture: str):
             )
         ),
         # 32 layers so the default `layer_types` is Qwen3.5-4B's own (full attention at 3, 7, ..., 31), which is what
-        # the document's layer lists are checked against
+        # the documents' layer lists are checked against
+        "Qwen3_5ForCausalLM": lambda: tr.Qwen3_5ForCausalLM(
+            tr.Qwen3_5TextConfig(
+                num_hidden_layers=32,
+                head_dim=8,
+                linear_num_key_heads=2,
+                linear_num_value_heads=2,
+                linear_key_head_dim=8,
+                linear_value_head_dim=8,
+                **small,
+            )
+        ),
         "Qwen3_5ForConditionalGeneration": lambda: tr.Qwen3_5ForConditionalGeneration(
             tr.Qwen3_5Config(
                 text_config=dict(
@@ -378,6 +389,7 @@ EXPECTED_RMSNORM_OFFSET = {
     "Gemma2ForCausalLM": True,
     "Gemma3ForCausalLM": True,
     "Gemma3ForConditionalGeneration": True,
+    "Qwen3_5ForCausalLM": True,
     "Qwen3_5ForConditionalGeneration": True,
 }
 
@@ -537,6 +549,7 @@ EXPECTED_WITHOUT_TL_COUNTERPART = {
     },
     # TransformerLens' gated delta net bridge exposes no output-projection submodule; the row is checked against the
     # class by TestEveryBundledMapDescribesItsModel instead
+    "Qwen3_5ForCausalLM": {"blocks.{i}.linear_attn.o"},
     "Qwen3_5ForConditionalGeneration": {"blocks.{i}.linear_attn.o"},
 }
 
