@@ -183,6 +183,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Changed
 
+- The core package and its tests import nothing from `it_examples`, and a test enforces it. `speediedan/prompt-configs` is resolved from the components cache like `speediedan/rte` (the CI warm manifest pins it), so `it_examples.seeds.SEED_COMPONENTS` is empty and `ensure_local_seeds` does nothing; a dev checkout fetches it once with `it.hub.pull('speediedan/prompt-configs')`. The conformance inputs' `seed_config` no longer seeds the cache, and the test suite's session harness moves to `tests/notebook_harness` ([#1015](https://github.com/speediedan/interpretune/issues/1015))
+
 - `resolve_bucket_for` selects from the corpora the collections list, in place of the hardcoded `KNOWN_DASHBOARD_BUCKETS` map it read; both pairs that map covered resolve to the same buckets. Several corpora for one (model, source set) are refused unless `prompt_corpus=` chooses one, which `ensure_dashboards` also takes ([#262](https://github.com/speediedan/interpretune/issues/262))
 
 - Publish guards are named checks. `publish_dashboard_run`'s `require_page_index=` and `require_manifest_consistency=` are replaced by `skip_checks=` (`skip_checks={"page-index"}`, `skip_checks={"manifest-consistency"}`), and `scripts/publish_dashboards_to_hub.py`'s `--allow-missing-page-index` and `--allow-manifest-inconsistency` by `--skip-check page-index` and `--skip-check manifest-consistency`. `MissingPageIndexError`, `ManifestReferencesExcludedTableError` and `BucketPrefixUnspecifiedError` are replaced by one `PublishCheckError` listing every failed check, with `.names` saying which ([#262](https://github.com/speediedan/interpretune/issues/262))
