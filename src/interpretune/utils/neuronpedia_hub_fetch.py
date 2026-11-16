@@ -28,12 +28,14 @@ from interpretune.utils.neuronpedia_source_conflicts import (
 
 __all__ = [
     "CORPUS_MANIFEST",
-    "KNOWN_DASHBOARD_BUCKETS",
+    "DEFAULT_CORPUS_COLLECTIONS",
+    "CorpusListing",
     "CorpusPlan",
     "dashboards_present",
     "default_corpus_dest",
     "ensure_dashboards",
     "fetch_dashboards",
+    "find_dashboard_corpora",
     "read_remote_manifest",
     "resolve_bucket_for",
     "resolve_corpus_config",
@@ -46,39 +48,34 @@ CORPUS_MANIFEST = "dashboards.json"
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "it_examples/neuronpedia_dashboard"
 
-# TEMPORARY STUB -- a hardcoded stand-in for a dashboard repository that does not exist yet.
-#
-# A client-side registry of published corpora is an anti-pattern and is not what this should be. It
-# cannot see a corpus published after the release that shipped it, every publisher would need a patch
-# merged here to be discoverable, and the mapping duplicates -- with no mechanism keeping it honest --
-# metadata each corpus already carries about itself in ``dashboards.json``.
-#
-# It exists because there is currently no way to ASK the Hub "which published corpus serves
-# (model, source set)?". Buckets are not indexed by content, bucket names are free text, and guessing
-# one from a naming convention would download a corpus that imports into the requested source set
-# while containing something else entirely -- a wrong answer that looks exactly like a right one. So
-# the mapping is stated explicitly and the two entries below are the two corpora the example notebooks
-# need; anything else must pass ``bucket=``.
-#
-# Standardized hub-based discovery replaces this wholesale -- corpora self-register (a dataset-repo
-# collection, a tag convention, or an index artifact) and ``resolve_bucket_for`` becomes a query.
-#
-# TRACKED IN: docs/source/roadmap.md, "Standardized hub-based dashboard discovery" (under
-# "Following: hub-resident, streamable dashboards"), which records the requirements a replacement
-# must meet and the candidate mechanisms; docs/neuronpedia_dashboard_pipeline.md carries the same
-# under "Wave 2 requirement: standardized hub-based dashboard discovery". A Wave 2 issue will be
-# opened to track the work formally -- until then those sections ARE the tracking record, so update
-# them alongside any change here.
-#
-# Treat any addition here as a stopgap, not as the extension point.
-KNOWN_DASHBOARD_BUCKETS: dict[tuple[str, str], str] = {
-    ("gemma-3-1b-it", "gemmascope-2-transcoder-16k"): (
-        "speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__monology__dashboards"
-    ),
-    ("gemma-3-1b-it", "gemmascope-2-transcoder-16k-rte"): (
-        "speediedan/gemma-3-1b-it__gemmascope-2-transcoder-16k__rte__dashboards"
-    ),
-}
+#: The Hub collections a client reads to discover published corpora: the trust list. Each item is a bucket whose own
+#: ``dashboards.json`` says what it holds, so a collection names corpora and never describes them. It defaults to the
+#: project's collection; pass ``collections=`` to read another publisher's.
+DEFAULT_CORPUS_COLLECTIONS: tuple[str, ...] = ("speediedan/neuronpedia-dashboard-corpora-6af900009df4b4831ab24069",)
+
+
+@dataclass(frozen=True)
+class CorpusListing:
+    """One discoverable corpus, described by its own manifest, enough to choose it before any GiB moves."""
+
+    bucket: str
+    collection: str
+    model_id: str | None
+    source_set_id: str | None
+    prompt_corpus: str | None
+    n_prompts: int | None
+    n_tokens: int | None
+    layers: int
+    page_index: bool | None
+
+
+def _prompt_corpus_label(corpus: dict[str, Any]) -> str | None:
+    """``<hf_dataset_path>`` or ``<hf_dataset_path>:<config>``, the name a caller selects a corpus by."""
+    path = corpus.get("hf_dataset_path")
+    if not path:
+        return None
+    config = corpus.get("hf_dataset_config_name")
+    return f"{path}:{config}" if config else path
 
 
 @dataclass(frozen=True)
@@ -133,24 +130,90 @@ def dashboards_present(
     return occupancy.source_count >= min_sources and occupancy.neuron_count > 0
 
 
-def resolve_bucket_for(model_id: str, source_set_id: str) -> str:
-    """The published bucket serving a (model, source set), or a loud failure.
+def find_dashboard_corpora(
+    model_id: str | None = None,
+    source_set_id: str | None = None,
+    *,
+    collections: tuple[str, ...] | list[str] = DEFAULT_CORPUS_COLLECTIONS,
+    token: str | bool | None = None,
+    collection_token: str | bool | None = False,
+) -> list[CorpusListing]:
+    """The published corpora the ``collections`` list, optionally only those serving a (model, source set).
 
-    Backed by :data:`KNOWN_DASHBOARD_BUCKETS`, a temporary hardcoded stub; see the note there. This
-    becomes a Hub query once standardized dashboard discovery exists, so callers should treat the
-    lookup as authoritative and the table behind it as not.
+    Reads each collection's bucket items and each bucket's ``dashboards.json`` (about 3 KB, with ``token``); nothing
+    else is downloaded. The match is on what the corpus says about itself, never on the bucket's name.
+
+    Collections are read anonymously unless ``collection_token`` is given (for a private collection): the Hub refuses
+    a fine-grained token without ``collection.read`` even on a public collection, and the default one is public.
     """
-    try:
-        return KNOWN_DASHBOARD_BUCKETS[(model_id, source_set_id)]
-    except KeyError:
-        known = ", ".join(f"{m}/{s}" for m, s in sorted(KNOWN_DASHBOARD_BUCKETS))
+    from huggingface_hub import HfApi
+
+    found: list[CorpusListing] = []
+    for slug in collections:
+        for item in HfApi(token=collection_token).get_collection(slug, token=collection_token).items:
+            if item.item_type != "bucket":
+                log.debug(
+                    "skipping %s item %s of %s: corpora are discovered as buckets", item.item_type, item.item_id, slug
+                )
+                continue
+            manifest = read_remote_manifest(item.item_id, token)
+            corpus = manifest.get("prompt_corpus") or {}
+            listing = CorpusListing(
+                bucket=item.item_id,
+                collection=slug,
+                model_id=(manifest.get("model") or {}).get("name"),
+                source_set_id=(manifest.get("source_set") or {}).get("id"),
+                prompt_corpus=_prompt_corpus_label(corpus),
+                n_prompts=corpus.get("n_prompts"),
+                n_tokens=corpus.get("n_tokens_in_prompt"),
+                layers=len((manifest.get("layers") or {}).get("generated") or []),
+                page_index=(manifest.get("artifacts") or {}).get("page_index"),
+            )
+            if model_id is not None and listing.model_id != model_id:
+                continue
+            if source_set_id is not None and listing.source_set_id != source_set_id:
+                continue
+            found.append(listing)
+    return found
+
+
+def resolve_bucket_for(
+    model_id: str,
+    source_set_id: str,
+    *,
+    prompt_corpus: str | None = None,
+    collections: tuple[str, ...] | list[str] = DEFAULT_CORPUS_COLLECTIONS,
+    token: str | bool | None = None,
+    collection_token: str | bool | None = False,
+) -> str:
+    """The published bucket serving a (model, source set), chosen from the ``collections``.
+
+    One prompt corpus per source set is not guaranteed, so several matches are refused unless ``prompt_corpus``
+    (``<hf_dataset_path>`` or ``<hf_dataset_path>:<config>``) picks one, and no match is refused with what the
+    collections do serve.
+    """
+    discover = {"collections": collections, "token": token, "collection_token": collection_token}
+    matches = find_dashboard_corpora(model_id, source_set_id, **discover)
+    if prompt_corpus is not None:
+        matches = [m for m in matches if prompt_corpus in (m.prompt_corpus, (m.prompt_corpus or "").split(":")[0])]
+    if len(matches) == 1:
+        return matches[0].bucket
+    if not matches:
+        served = sorted(
+            {f"{c.model_id}/{c.source_set_id} ({c.prompt_corpus})" for c in find_dashboard_corpora(**discover)}
+        )
+        wanted = f"{model_id!r}/{source_set_id!r}" + (f" with prompt corpus {prompt_corpus!r}" if prompt_corpus else "")
         raise LookupError(
-            f"no published corpus is registered for {model_id!r}/{source_set_id!r}. "
-            f"Known: {known}. Pass bucket= explicitly, or generate the dashboards locally."
-        ) from None
+            f"no corpus in {list(collections)} serves {wanted}. They serve: {', '.join(served) or 'nothing'}. Pass"
+            " bucket= explicitly, another collections=, or generate the dashboards locally."
+        )
+    options = ", ".join(f"{m.prompt_corpus} ({m.bucket})" for m in matches)
+    raise LookupError(
+        f"several corpora serve {model_id!r}/{source_set_id!r}: {options}. Pass prompt_corpus= to choose one."
+    )
 
 
-def read_remote_manifest(bucket: str, token: str | None = None) -> dict[str, Any]:
+def read_remote_manifest(bucket: str, token: str | bool | None = None) -> dict[str, Any]:
     """Fetch just ``dashboards.json`` (~3 KB) so a plan is known before any GiB moves."""
     import json
     import tempfile
@@ -318,6 +381,7 @@ def ensure_dashboards(
     model_id: str,
     source_set_id: str,
     bucket: str | None = None,
+    prompt_corpus: str | None = None,
     min_sources: int = 1,
     dest: Path | None = None,
     token: str | None = None,
@@ -336,7 +400,7 @@ def ensure_dashboards(
         log.info("dashboards for %s/%s already present", model_id, source_set_id)
         return True
 
-    bucket = bucket or resolve_bucket_for(model_id, source_set_id)
+    bucket = bucket or resolve_bucket_for(model_id, source_set_id, prompt_corpus=prompt_corpus, token=token)
     if not allow_fetch:
         raise RuntimeError(
             f"no dashboards for {model_id}/{source_set_id} in the local database, and allow_fetch is off.\n"

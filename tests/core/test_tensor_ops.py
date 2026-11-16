@@ -22,6 +22,7 @@ from interpretune.analysis.backends import (
 from interpretune.analysis.backends import ops as op_registry
 from interpretune.analysis.ops import dispatcher as dispatcher_module
 from interpretune.analysis.ops.dispatcher import AnalysisOpDispatcher
+from tests.hub_op_fixtures import CACHED_OP_REVISION
 
 CORE_OPS = {"replace", "add", "scale", "project", "reject", "patch", "clamp", "replace_with_error"}
 
@@ -239,7 +240,7 @@ class TestTensorOpsInACollection:
         assert OPS["soft_add"].composition == "sum" and OPS["soft_add"].operand == ("vector",)
         record = op_registry.executor_record("soft_add")
         assert record.source == "hub:tensorer.ops" and record.collection == "tensor_op_collection"
-        assert record.version == "0.1.0" and record.revision == "abc123"
+        assert record.version == "0.1.0" and record.revision == CACHED_OP_REVISION
         out = apply_op(
             torch.zeros(2, 4), InterventionSpec(torch.ones(4), op="soft_add", position_scope="all_positions")
         )
