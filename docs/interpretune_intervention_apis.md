@@ -217,20 +217,81 @@ forward pass.
   the same specs a value op becomes, for this op; the default `flow="value"` translates its value ops. A recipe's ops
   are translated for one flow at a time, and an op on the other flow is refused.
 
+### Example
+
+The model-level surface, runnable as written (gpt2, CPU). It zeroes the gradient that reaches block 6's input at the
+last position, and reads the gradient at the output of blocks 0 to 4, picked with a venngram site address:
+
 ```python
+import torch
+from transformer_lens.model_bridge import TransformerBridge
+
+from interpretune.adapters.transformer_lens.backends import TLModelBackend
+from interpretune.analysis.venngram import resolve_sites
+
+model = TransformerBridge.boot_transformers("gpt2", device="cpu")
+tokens = model.to_tokens("The Eiffel Tower is in the city of")
+paris = model.to_single_token(" Paris")
+
+
+def metric(logits: torch.Tensor) -> torch.Tensor:
+    return logits[:, -1, paris].sum()  # the logit of " Paris" at the last position
+
+
+payload = {
+    "blocks.6.hook_in": {
+        "intervention_tensor": torch.zeros(model.cfg.d_model),
+        "op": "replace",
+        "position_scope": "last_token",
+    }
+}
+capture = resolve_sites("point:hook_out & layers:0:5 & of:grad", n_layers=model.cfg.n_layers)
+
+pre, post, value = TLModelBackend().bwd_w_intervention(
+    model, {"input": tokens}, payload, metric, capture=list(capture.sites)
+)
+for site in capture.sites:  # gradient norms, baseline -> intervened
+    last = f"{pre[site][:, -1].norm():.2f} -> {post[site][:, -1].norm():.2f}"
+    earlier = f"{pre[site][:, :-1].norm():.2f} -> {post[site][:, :-1].norm():.2f}"
+    print(f"{site}  last position {last}  earlier positions {earlier}")
+```
+
+```text
+blocks.0.hook_out  last position 2.48 -> 0.00  earlier positions 4.06 -> 2.02
+blocks.1.hook_out  last position 3.96 -> 0.00  earlier positions 7.14 -> 2.70
+blocks.2.hook_out  last position 4.18 -> 0.00  earlier positions 4.56 -> 2.66
+blocks.3.hook_out  last position 3.97 -> 0.00  earlier positions 3.59 -> 2.43
+blocks.4.hook_out  last position 3.79 -> 0.00  earlier positions 2.97 -> 2.37
+```
+
+The last position's gradient is zero at every earlier block: below block 6 it comes only from the last position
+itself, whose gradient the edit zeroed. The earlier positions keep what attention in blocks 6 to 11 had already moved to
+them, and lose what attention below block 6 would have brought from the last position. An NNsight `LanguageModel` gives
+the same gradients, to float32 rounding, through `NNsightModelBackend(HookNameResolver("GPT2LMHeadModel"))`, which takes
+`{"input_ids": tokens}`.
+
+In an analysis session, the same edit is the `model_bwd_intervention` op, run like any other
+([Analysis Runner Usage](analysis_runner_usage.md)):
+
+```python
+import torch
+
 import interpretune as it
 from interpretune import AnalysisCfg
 
-payload = {"blocks.5.hook_in": {"intervention_tensor": direction, "op": "reject", "position_scope": "all_positions"}}
+payload = {"blocks.6.hook_in": {"intervention_tensor": torch.zeros(768), "op": "replace", "position_scope": "last_token"}}
 cfg = AnalysisCfg(
     target_op=it.model_bwd_intervention,
     run_inputs={
         "interventions": payload,
         "grad_capture": "point:hook_out & layers:0:5 & of:grad",
-        "logit_target_ids": [answer_id],
+        "logit_target_ids": [6342],  # gpt2's " Paris"
     },
 )
 ```
+
+Each stored row holds both gradients at every captured site, flattened beside `grad_shape` (the shape code) and
+`grad_point_names`, the metric, and `intervention_grad_position_effect`.
 
 ## Intervention ops
 

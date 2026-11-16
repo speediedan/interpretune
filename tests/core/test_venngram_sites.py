@@ -56,3 +56,52 @@ def test_references_follow_the_books_sets():
 def test_what_has_no_site_reading_is_refused_by_name(address, sets, match):
     with pytest.raises(MisconfigurationException, match=match):
         resolve_sites(address, n_layers=4, sets=sets)
+
+
+class _Backend:
+    def capture_support(self, model):
+        return type("_Support", (), {"n_layers": 6})()
+
+
+class _Module:
+    """What ``resolve_gradient_sites`` reads of a module: its model backend and the model it is asked about."""
+
+    def __init__(self):
+        self._model_backend = _Backend()
+        self.model = object()
+
+
+class TestGradientSitesForTheOp:
+    """``grad_capture`` takes hook names, which pass through, or one address, resolved over the model's depth."""
+
+    def test_names_and_patterns_pass_through(self):
+        from interpretune.analysis.optools import resolve_gradient_sites
+
+        assert resolve_gradient_sites(_Module(), ["blocks.2.hook_out", "blocks.*.attn.hook_out"]) == [
+            "blocks.2.hook_out",
+            "blocks.*.attn.hook_out",
+        ]
+        assert resolve_gradient_sites(_Module(), None) is None
+
+    def test_an_address_resolves_over_the_models_depth(self):
+        from interpretune.analysis.optools import resolve_gradient_sites
+
+        assert resolve_gradient_sites(_Module(), f"point:{POINT} & layers:-2: & of:grad") == [
+            f"blocks.4.{POINT}",
+            f"blocks.5.{POINT}",
+        ]
+        sets = {"late": {"point": POINT, "layers": "-1:"}}
+        assert resolve_gradient_sites(_Module(), "@late & of:grad", sets=sets) == [f"blocks.5.{POINT}"]
+
+    @pytest.mark.parametrize(
+        "sites, match",
+        [
+            (f"point:{POINT} & layers:1", "acts on values, and these sites are read for their gradients"),
+            (["blocks.1.hook_out", f"point:{POINT} & of:grad"], "ONE venngram address"),
+        ],
+    )
+    def test_a_value_address_or_a_mixed_list_is_refused(self, sites, match):
+        from interpretune.analysis.optools import resolve_gradient_sites
+
+        with pytest.raises(MisconfigurationException, match=match):
+            resolve_gradient_sites(_Module(), sites)
