@@ -50,8 +50,6 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         return it_cfg
 
     def _dispatch_model_init(self) -> None:
-        if self.cuda_allocator_history:
-            torch.cuda.memory._record_memory_history()
         self.auto_model_init()
         self._refuse_unbuilt_meta_init()
         # Use `is not None` to avoid triggering __bool__/__len__ on special model wrappers

@@ -23,6 +23,10 @@ HF_EXPECTED_WARNS = [
     "The `use_auth_token` argument is deprecated",  # TODO: need to use `token` instead of `use_auth_token`
 ]
 
+# The profiling configurations request accelerator collection, which the profiler disables with this warning on a host
+# without an accelerator, so a CPU profiling run expects it.
+MEMPROF_NO_ACCELERATOR_WARN = "Disabling accelerator memory profiling"
+
 CORE_CTX_WARNS = (
     EXPECTED_WARNS
     + HF_EXPECTED_WARNS
