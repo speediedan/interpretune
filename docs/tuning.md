@@ -183,6 +183,8 @@ final phase asks for more. A `tuning_scheduler_factory` builds the tuning schedu
 
 A research example of a phased run on the core loop, with run-fitted state, `instrument` transcoders, gates and per-phase
 `refreeze` and `restore`, is the [sparsity chain on RTE](tuning_sparsity_chain.md).
+A one-phase LoRA run with an auxiliary representation loss and a per-epoch evaluation callback is the
+[Knowing-Using Gap example](tuning_knowing_using.md).
 
 ## Conformance
 
