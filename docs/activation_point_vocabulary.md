@@ -204,6 +204,10 @@ lookup refuses it, and after its stated horizon the document is deleted. From th
 bundled map: a lookup refuses, listing what is known, and a map pulled as a `hookmaps` component becomes
 the source for it with nothing to conflict against.
 
+**Pending: one source for the maps.** The bundled documents repeat facts venngram's registry also publishes, in a
+different schema, so the two can drift. [#1026](https://github.com/speediedan/interpretune/issues/1026) proposes
+reading the maps from the registry and retiring the bundled set; until it lands, new architectures still enter here.
+
 **While both exist.** Precedence is enforced at load, not by order: a pulled map for an architecture that already
 has a registered one must be identical (same rows, same properties) or the load is refused naming both sources;
 `replace=True` shadows the registered map deliberately. An identical pull is a no-op. A cached third-party map

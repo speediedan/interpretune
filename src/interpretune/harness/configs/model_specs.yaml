@@ -1,3 +1,5 @@
+# Per-model session specs for the example notebooks. These are example data rather than library rails, and are
+# pending a move into the example components that use them (#1025); until then a new example model adds its entry here.
 model_specs:
   qwen3_5.4b:
     model_name: Qwen/Qwen3.5-4B

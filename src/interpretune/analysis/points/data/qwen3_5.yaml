@@ -1,3 +1,6 @@
+# Bundled until the maps are read from venngram's registry instead (#1026, pending), which does not yet publish this
+# class.
+#
 # Qwen3.5 text (`Qwen3_5ForCausalLM`): the multimodal document's language model at the top level. NNsight loads a
 # Qwen3.5 checkpoint through this class for text generation, and every weight of the multimodal checkpoint except the
 # vision tower's loads into it. Pre-norm blocks with a gated MLP, and no post-sublayer norms.
