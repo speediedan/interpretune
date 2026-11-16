@@ -472,6 +472,12 @@ model_bwd_intervention:
       datasets_dtype: int64
       required: false
       sequence_type: true
+    # The scalar the gradient is taken of (a Readout, or a callable of the logits), for in-process use; refused beside
+    # logit_target_ids, which only the default readout reads.
+    readout:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
     grad_capture:
       datasets_dtype: object
       required: false

@@ -742,6 +742,7 @@ def model_bwd_intervention(
         concept_cache_key (string)
         direction_scale_factor (float32)
         logit_target_ids (int64)
+        readout (object)
         grad_capture (object)
         grad_capture_sets (object)
 

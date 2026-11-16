@@ -17,8 +17,10 @@ from transformers import BatchEncoding
 
 from interpretune.analysis.backends import (
     apply_intervention,
+    as_readout,
     build_intervention_dict,
     get_intervention_target_shape,
+    last_token_logit_readout,
     require_intervention_support,
     resolve_interventions,
 )
@@ -1228,10 +1230,13 @@ def model_bwd_intervention_impl(
     """Apply hook-point interventions to gradients during a backward pass, and store the gradients they change.
 
     The backward counterpart of ``model_fwd_intervention``: the same payload, delegated to the model backend's
-    ``bwd_w_intervention``, with each spec acting on the gradient at its site. The metric is the summed last-token
-    logit of ``logit_target_ids`` (else the concept groups' ids), or, with neither, of each row's own top prediction.
-    The forward pass is not edited, so the metric is the same with and without the interventions; what changes is the
-    gradient reaching every site upstream of an edit.
+    ``bwd_w_intervention``, with each spec acting on the gradient at its site. The gradient is taken of ``readout``, a
+    :class:`~interpretune.analysis.backends.readouts.Readout` (or a callable of the logits), which may read the
+    activations at sites it names; without one, of the summed last-token logit of ``logit_target_ids`` (else the
+    concept groups' ids), or, with neither, of each row's own top prediction. A readout and ``logit_target_ids``
+    together are refused, since the readout would leave the ids unread. The forward pass is not edited, so the readout
+    is the same with and without the interventions; what changes is the gradient reaching every site upstream of an
+    edit.
 
     ``grad_capture`` names the sites whose gradients are stored: hook names or patterns, or one venngram site address
     under ``of: grad`` (``grad_capture_sets`` supplies its book's sets). Without it, the intervention sites are
@@ -1265,25 +1270,28 @@ def model_bwd_intervention_impl(
         batch = module.auto_prune_batch(batch, "forward")
 
     target_ids = resolve_aggregate_input(module, analysis_batch, "logit_target_ids")
-    if target_ids is None:
-        concept_ids = list(analysis_batch.get("concept_group_a_token_ids") or []) + list(
-            analysis_batch.get("concept_group_b_token_ids") or []
-        )
-        target_ids = concept_ids or None
-    target_ids_tensor = None if target_ids is None else torch.as_tensor(target_ids, dtype=torch.long).reshape(-1)
-
-    def backward_fn(logits: Any) -> Any:
-        last = logits[:, -1, :]
-        if target_ids_tensor is None:
-            return last.max(dim=-1).values.sum()
-        return last[:, target_ids_tensor.to(last.device)].sum()
+    readout = resolve_aggregate_input(module, analysis_batch, "readout") or kwargs.get("readout")
+    if readout is not None:
+        if target_ids is not None:
+            raise ValueError(
+                "model_bwd_intervention was given both a `readout` and `logit_target_ids`; the readout defines the "
+                "scalar the gradient is taken of and would leave the ids unread, so pass one of them"
+            )
+        readout = as_readout(readout)
+    else:
+        if target_ids is None:
+            concept_ids = list(analysis_batch.get("concept_group_a_token_ids") or []) + list(
+                analysis_batch.get("concept_group_b_token_ids") or []
+            )
+            target_ids = concept_ids or None
+        readout = last_token_logit_readout(target_ids)
 
     # the flow gate above has refused a backend that does not declare `grad`, which is the promise of this method
     pre_grads, post_grads, metric = model_backend.bwd_w_intervention(
         model=module.model,
         batch=batch,
         interventions=interventions,
-        backward_fn=backward_fn,
+        readout=readout,
         capture=capture,
         latent_model_handles=latent_model_handles,
     )

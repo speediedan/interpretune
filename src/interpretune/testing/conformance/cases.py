@@ -1398,6 +1398,114 @@ class ModelBackendConformance:
             assert pre.abs().max().item() > CHANGED_ATOL, f"batch {i}: no baseline gradient reached {hook}"
             assert post.abs().max().item() == 0.0, f"batch {i}: the zeroed gradient at {hook} is not zero"
 
+    @conformance_case(
+        capability=Capability.GRADIENTS,
+        flow="grad",
+        scope=PositionScope.LAST_TOKEN,
+        op="add",
+        family="hf_native",
+    )
+    def test_a_readout_of_an_activation_matches_a_manual_backward_hook(self, suite, hf):
+        """A readout of an intermediate activation, its last-token projection onto a direction, is differentiated as an
+        HF reference reading the same module tensor is: unedited, and with a vector added to the gradient at the
+        intervention point. The scalar a gradient is taken of need not be a function of the logits.
+
+        The readout reads the output of the intervention point's block, downstream of the edit, so the edited gradient
+        reaches the earlier capture through the readout alone; the case asserts the edit moved it before comparing.
+        """
+        import interpretune as it
+        from interpretune import AnalysisCfg
+        from interpretune.analysis.backends.readouts import Readout
+
+        point = suite.inputs.intervention_point
+        layer = int(point.split(".")[1])
+        read, upstream = f"blocks.{layer}.hook_out", f"blocks.{layer - 2}.hook_out"
+        vector = self._vector(suite)
+        vector = vector / vector.norm()
+        direction = torch.randn(vector.numel(), generator=torch.Generator().manual_seed(0))
+        direction = direction / direction.norm()
+
+        # everything the readout uses is bound as a default, so the case's inputs fingerprint by value
+        def projection(logits, activations, _read=read, _direction=direction):
+            value = activations[_read][:, -1, :]
+            return (value @ _direction.to(value.device, value.dtype)).sum()
+
+        readout = Readout(projection, sites=(read,))
+        payload = {
+            point: {"intervention_tensor": vector, "op": "add", "scale_factor": 1.0, "position_scope": "last_token"}
+        }
+        run_inputs = {"interventions": payload, "grad_capture": [point, upstream], "readout": readout}
+        store = suite.run(AnalysisCfg(target_op=it.model_bwd_intervention, run_inputs=run_inputs, save_tokens=True))
+        for i in range(len(store["grad_point_names"])):
+            ids, mask = suite.batch_inputs(i)
+            pre, post = stored_gradients(store, i, "pre"), stored_gradients(store, i, "post")
+            clean = hf.gradients(ids, readout, observe=[point, upstream], attention_mask=mask)
+            edited = hf.gradients(
+                ids,
+                readout,
+                observe=[point, upstream],
+                edits=[(point, lambda g: g + vector.to(g.dtype), "last_token")],
+                attention_mask=mask,
+            )
+            moved = (edited[upstream] - clean[upstream]).abs().max().item()
+            assert moved > CHANGED_ATOL, (
+                f"batch {i}: the reference edit moved the upstream gradient by only {moved:.3e}"
+            )
+            for name in (point, upstream):
+                _assert_close_padded(pre[name], clean[name], what=f"batch {i}: the baseline gradient at {name}")
+                _assert_close_padded(post[name], edited[name], what=f"batch {i}: the edited gradient at {name}")
+
+    @conformance_case(
+        capability=Capability.LATENT_MODELS,
+        target="features",
+        provider="model_backend",
+        flow="grad",
+        scope=PositionScope.ALL_POSITIONS,
+        op="scale",
+    )
+    def test_a_readout_of_a_latent_feature_reaches_the_latent_models_input(self, suite):
+        """A readout of an attached latent model's most active feature at the last token is differentiated through
+        the latent model.
+
+        It is linear in the feature activations, so its gradient there is, in each row, 1 at that feature and last token
+        and 0 everywhere else; it reaches the latent model's input; and zeroing the gradient at the feature activations
+        leaves none at the input, which the readout reaches only through them.
+        """
+        import interpretune as it
+        from interpretune import AnalysisCfg
+        from interpretune.analysis.backends.readouts import Readout
+
+        handle, hook = self._latent_hook(suite)
+        source = f"{handle.cfg.metadata.hook_name}.hook_sae_input"
+        width = int(handle.cfg.d_sae)
+
+        def most_active_feature(logits, activations, _hook=hook):
+            return activations[_hook][:, -1, :].max(dim=-1).values.sum()
+
+        payload = {hook: {"intervention_tensor": torch.zeros(width), "op": "scale", "position_scope": "all_positions"}}
+        run_inputs = {
+            "interventions": payload,
+            "use_latent_models": True,
+            "grad_capture": [hook, source],
+            "readout": Readout(most_active_feature, sites=(hook,)),
+        }
+        store = suite.run(AnalysisCfg(target_op=it.model_bwd_intervention, run_inputs=run_inputs, save_tokens=True))
+        for i in range(len(store["grad_point_names"])):
+            pre, post = stored_gradients(store, i, "pre"), stored_gradients(store, i, "post")
+            features = pre[hook].to(torch.float32)
+            assert features.shape[-1] == width, f"batch {i}: the gradient at {hook} has width {features.shape[-1]}"
+            last = features[..., -1, :].reshape(-1, width)
+            assert torch.equal((last == 1).sum(dim=-1), torch.ones(last.shape[0], dtype=torch.long)), (
+                f"batch {i}: the readout's gradient at {hook} is not one feature's indicator at the last token"
+            )
+            assert last.abs().sum().item() == last.shape[0], f"batch {i}: the gradient at {hook} has stray mass"
+            assert features[..., :-1, :].abs().max().item() == 0.0, (
+                f"batch {i}: the readout reads only the last token, yet earlier positions carry a gradient at {hook}"
+            )
+            assert pre[source].abs().max().item() > CHANGED_ATOL, f"batch {i}: no baseline gradient reached {source}"
+            for name in (hook, source):
+                assert post[name].abs().max().item() == 0.0, f"batch {i}: the zeroed readout left a gradient at {name}"
+
     # -- analysis backend: ATTRIBUTION_GRAPH / INTERVENTION on features -------------------------------
     #
     # The graph ops take a prompt rather than a datamodule batch, so these cases call the ops the way every caller

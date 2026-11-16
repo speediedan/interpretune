@@ -26,7 +26,10 @@ from interpretune.analysis.backends import (
     ModelBackend,
     ModuleCapabilities,
     PositionScope,
+    Readout,
+    as_readout,
     require_intervention_support,
+    resolve_readout_sites,
     apply_intervention,
     build_intervention_dict,
     expand_intervention_patterns,
@@ -1915,3 +1918,148 @@ class TestGradientInterventionOnAFrozenModel:
             )
 
         self._assert_frozen_matches_trainable(run, lm._module)
+
+
+class TestGradientReadouts:
+    """A readout names the scalar a gradient is taken of, and may read activations from the forward pass the
+    backward runs from.
+
+    Both model backends must differentiate it as a hand-written HuggingFace reference does, unedited and
+    with a gradient edit between what it reads and an earlier capture: a logit difference, and the projection of an
+    intermediate activation onto a direction, which no function of the logits alone can express.
+    """
+
+    READ, EDIT, CAPTURE = "blocks.5.hook_in", "blocks.3.hook_out", "blocks.2.hook_out"
+    A, B = 1000, 2000
+    IDS = torch.tensor([[464, 3139, 286, 4881, 318]])  # gpt2's "The capital of France is"
+
+    @staticmethod
+    def _unit(seed: int) -> torch.Tensor:
+        vector = torch.randn(768, generator=torch.Generator().manual_seed(seed))
+        return vector / vector.norm()
+
+    def _readouts(self) -> dict[str, Readout]:
+        direction = self._unit(0)
+
+        def logit_difference(logits, activations):
+            return (logits[:, -1, self.A] - logits[:, -1, self.B]).sum()
+
+        def projection(logits, activations):
+            return (activations[self.READ][:, -1, :] @ direction.to(activations[self.READ].dtype)).sum()
+
+        return {"logit_difference": Readout(logit_difference), "projection": Readout(projection, sites=(self.READ,))}
+
+    def _payload(self) -> dict:
+        vector = self._unit(1)
+        return {
+            self.EDIT: {"intervention_tensor": vector, "op": "add", "scale_factor": 1.0, "position_scope": "last_token"}
+        }
+
+    @pytest.fixture(scope="class")
+    def hf(self):
+        from interpretune.testing.conformance.reference import HFReference
+
+        return HFReference("gpt2")
+
+    @pytest.fixture(scope="class")
+    def bridge(self):
+        from transformer_lens.model_bridge import TransformerBridge
+
+        return TransformerBridge.boot_transformers("gpt2", device="cpu")
+
+    @pytest.fixture(scope="class")
+    def lm(self):
+        from nnsight import LanguageModel
+
+        return LanguageModel("gpt2", device_map="cpu", dispatch=True)
+
+    def _backend(self, backend_name: str, request):
+        """The backend, its model and a batch in the form that backend takes."""
+        if backend_name == "transformer_lens":
+            from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+            return TLModelBackend(), request.getfixturevalue("bridge"), {"input": self.IDS}
+        backend = NNsightModelBackend(HookNameResolver("GPT2LMHeadModel"))
+        return backend, request.getfixturevalue("lm"), {"input_ids": self.IDS}
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    @pytest.mark.parametrize("name", ["logit_difference", "projection"])
+    def test_a_readout_matches_the_reference(self, name, backend_name, hf, request):
+        """Captured at the site the projection reads as well, where its gradient enters beside the logits'."""
+        readout = self._readouts()[name]
+        vector = self._unit(1)
+        points = [self.READ, self.EDIT, self.CAPTURE]
+        clean = hf.gradients(self.IDS, readout, observe=points)
+        edited = hf.gradients(
+            self.IDS,
+            readout,
+            observe=points,
+            edits=[(self.EDIT, lambda g: g + vector.to(g.dtype), "last_token")],
+        )
+        backend, model, batch = self._backend(backend_name, request)
+        pre, post, value = backend.bwd_w_intervention(model, batch, self._payload(), readout, capture=points)
+        assert value.ndim == 0 and torch.isfinite(value), f"the readout's value is {value!r}"
+        moved = (edited[self.CAPTURE] - clean[self.CAPTURE]).abs().max().item()
+        assert moved > 1e-3, f"the reference edit moved the gradient at {self.CAPTURE} by only {moved:.3e}"
+        for point in points:
+            torch.testing.assert_close(pre[point], clean[point], rtol=1e-4, atol=1e-5)
+            torch.testing.assert_close(post[point], edited[point], rtol=1e-4, atol=1e-5)
+
+    def test_the_two_readouts_take_different_gradients(self, hf):
+        """The projection reads an activation the logit difference does not, so a backend that dropped the reads
+        and fell back to the logits would miss the reference above; this pins that the two references differ."""
+        grads = {
+            name: hf.gradients(self.IDS, readout, observe=[self.CAPTURE])[self.CAPTURE]
+            for name, readout in self._readouts().items()
+        }
+        assert not torch.allclose(grads["logit_difference"], grads["projection"], atol=1e-4)
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_a_readout_returning_a_tensor_is_refused(self, backend_name, request):
+        backend, model, batch = self._backend(backend_name, request)
+        with pytest.raises(ValueError, match="a readout must return a scalar tensor"):
+            backend.bwd_w_intervention(model, batch, self._payload(), lambda logits: logits[:, -1, :5])
+
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_a_readout_site_the_model_lacks_is_refused(self, backend_name, request):
+        backend, model, batch = self._backend(backend_name, request)
+        readout = Readout(lambda logits, activations: logits.sum(), sites=("blocks.5.hook_nowhere",))
+        with pytest.raises(ValueError, match="'blocks.5.hook_nowhere' did not match"):
+            backend.bwd_w_intervention(model, batch, self._payload(), readout)
+
+
+class TestReadout:
+    """The readout type itself: what it accepts, what it refuses, and how its sites key the activations."""
+
+    def test_a_bare_callable_is_a_readout_of_the_logits(self):
+        readout = as_readout(lambda logits: logits.sum())
+        assert readout.sites == () and readout(torch.ones(2, 3)).item() == 6.0
+        assert as_readout(readout) is readout
+
+    def test_a_site_given_as_a_string_is_one_site(self):
+        assert Readout(lambda logits, activations: logits.sum(), sites="blocks.0.hook_in").sites == (
+            "blocks.0.hook_in",
+        )
+
+    @pytest.mark.parametrize(
+        "make, match",
+        [
+            (lambda: Readout(3), "must be callable"),
+            (lambda: Readout(lambda logits, activations: logits.sum(), sites=("",)), "hook names or patterns"),
+            (lambda: as_readout("blocks.0.hook_in"), "a Readout or a callable of the logits"),
+        ],
+    )
+    def test_malformed_readouts_are_refused(self, make, match):
+        with pytest.raises(TypeError, match=match):
+            make()
+
+    def test_a_non_tensor_result_is_refused(self):
+        with pytest.raises(ValueError, match="returned float"):
+            Readout(lambda logits, activations: 1.0)(torch.ones(1))
+
+    def test_sites_key_by_spelling_for_names_and_by_match_for_patterns(self):
+        available = {f"blocks.{i}.hook_in": f"blocks.{i}.hook_in" for i in range(3)}
+        exact = Readout(lambda logits, activations: logits.sum(), sites=("blocks.1.hook_resid_pre",))
+        assert resolve_readout_sites(exact, available) == {"blocks.1.hook_in": "blocks.1.hook_resid_pre"}
+        pattern = Readout(lambda logits, activations: logits.sum(), sites=("blocks.*.hook_in",))
+        assert resolve_readout_sites(pattern, available) == {name: name for name in available}

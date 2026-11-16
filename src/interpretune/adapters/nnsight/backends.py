@@ -30,10 +30,13 @@ from interpretune.analysis.backends import (
     InterventionDict,
     InterventionSpec,
     InterventionValue,
+    Readout,
     apply_intervention,
+    as_readout,
     build_intervention_dict,
     expand_intervention_patterns,
     get_intervention_target_shape,
+    resolve_readout_sites,
     track_gradient,
 )
 from interpretune.analysis.backends.hook_mapping import HookNameResolver, ResolvedHook, SUBHOOK_SUFFIXES
@@ -1256,7 +1259,7 @@ class NNsightModelBackend:
         model: Any,
         batch: dict[str, Any],
         interventions: InterventionDict | Mapping[str, InterventionValue],
-        backward_fn: Callable[[Any], Any],
+        readout: Readout | Callable[[Any], Any],
         capture: Sequence[str] | None = None,
         latent_model_handles: list[Any] | None = None,
     ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
@@ -1265,8 +1268,9 @@ class NNsightModelBackend:
         A baseline trace captures the gradients (and gives the hook shapes a raw payload is canonicalized against),
         then a second applies the edits: each site's ``.grad`` is read, folded through its specs and assigned back, so
         the edited gradient is the one that flows on. Gradients are requested in reverse forward order, the order the
-        backward pass produces them in.
+        backward pass produces them in. The activations a readout reads are read inside the same trace.
         """
+        readout = as_readout(readout)
         self._ensure_tuple_calibration(model)
         available = {
             name: name
@@ -1284,9 +1288,10 @@ class NNsightModelBackend:
         else:
             matched = expand_intervention_patterns(list(capture), available)
             captured_names = list(dict.fromkeys(name for matches in matched.values() for name in matches))
+        reads = resolve_readout_sites(readout, available)
 
-        pre_grads, metric = self._traced_backward(
-            model, batch, backward_fn, latent_model_handles, {}, [*sites, *captured_names]
+        pre_grads, value = self._traced_backward(
+            model, batch, readout, latent_model_handles, {}, [*sites, *captured_names], reads
         )
         if isinstance(interventions, InterventionDict):
             intervention_dict = interventions
@@ -1294,26 +1299,30 @@ class NNsightModelBackend:
             shapes = {name: get_intervention_target_shape(pre_grads[name]) for name in sites}
             intervention_dict = build_intervention_dict(interventions, expanded, shapes)
         post_grads, _ = self._traced_backward(
-            model, batch, backward_fn, latent_model_handles, intervention_dict, captured_names
+            model, batch, readout, latent_model_handles, intervention_dict, captured_names, reads
         )
-        return {name: pre_grads[name] for name in captured_names}, post_grads, metric
+        return {name: pre_grads[name] for name in captured_names}, post_grads, value
 
     def _traced_backward(
         self,
         model: Any,
         batch: dict[str, Any],
-        backward_fn: Callable[[Any], Any],
+        readout: Readout,
         latent_model_handles: list[Any] | None,
         specs: Mapping[str, Sequence[InterventionSpec]],
         capture: Sequence[str],
+        reads: Mapping[str, str],
     ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
         """One traced forward and backward pass applying ``specs`` to the gradient at each named site, returning
-        the gradients at ``capture`` (each after any edit at its own site) and the metric.
+        the gradients at ``capture`` (each after any edit at its own site) and the readout's value.
 
         A latent model's sub-hooks are the stage values its splice produces, so a site under an attached latent model is
-        read from its splice and every other site from its envoy, all in forward order.
+        read from its splice and every other site from its envoy, all in forward order. ``reads`` maps each site the
+        readout reads to the key it is handed under; a site only read is not marked to carry gradients, and its
+        gradient is never requested, since the backward pass reaches it only through the sites that are.
         """
-        names = list(dict.fromkeys([*specs.keys(), *capture]))
+        graded = list(dict.fromkeys([*specs.keys(), *capture]))
+        names = list(dict.fromkeys([*graded, *reads]))
         latents = {str(sae.cfg.metadata.hook_name): sae for sae in latent_model_handles or ()}
         latent_names = {
             name
@@ -1339,11 +1348,12 @@ class NNsightModelBackend:
                     if name in bases:
                         resolved = self._resolver.resolve_for_envoy(name)
                         envoy = _navigate_envoy(model, resolved.module_path)
-                        proxies[name] = track_gradient(_read_envoy_activation(envoy, resolved))
-                scalar = backward_fn(model.output.logits)
+                        value = _read_envoy_activation(envoy, resolved)
+                        proxies[name] = track_gradient(value) if name in graded else value
+                scalar = readout(model.output.logits, {key: proxies[name] for name, key in reads.items()})
                 saved_metric = _nnsight.save(scalar)
                 with scalar.backward():  # nnsight patches Tensor.backward() to return a BackwardsTracer context manager
-                    for name in reversed(list(proxies)):
+                    for name in reversed([name for name in proxies if name in graded]):
                         grad = proxies[name].grad
                         for spec in specs.get(name, ()):
                             grad = apply_intervention(grad, spec, last_pos=last_pos)

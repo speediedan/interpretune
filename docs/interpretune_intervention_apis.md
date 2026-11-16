@@ -196,18 +196,20 @@ such as `blocks.0.hook_in` with the `project` op.
 ## Gradient interventions
 
 `model_bwd_intervention` takes the payload `model_fwd_intervention` takes, and applies each spec to the gradient at its
-hook point while a backward pass runs. The gradient at a point is the gradient of the metric with respect to the
-activation there, summed over every consumer of that activation, so it is what flows on to earlier points: an edit
-replaces it before it does, and every point upstream of the edit sees the effect. The forward pass is not edited, so
-the metric is the same with and without the interventions. Specs at one point fold in declaration order, as on the
-forward pass.
+hook point while a backward pass runs. The gradient at a point is the gradient of the readout (the scalar the backward
+pass starts from) with respect to the activation there, summed over every consumer of that activation, so it is what
+flows on to earlier points: an edit replaces it before it does, and every point upstream of the edit sees the effect.
+The forward pass is not edited, so the readout is the same with and without the interventions. Specs at one point fold
+in declaration order, as on the forward pass.
 
-- **The metric** is the summed last-token logit of `logit_target_ids` (else the concept groups' token ids), or, with
-  neither, of each row's own top prediction.
+- **The readout** is `readout` when given (see [Readouts](#readouts)); otherwise the summed last-token logit of
+  `logit_target_ids` (else the concept groups' token ids), or, with neither, of each row's own top prediction. A
+  `readout` beside `logit_target_ids` is refused, since only the default reads the ids.
 - **What is stored**: the gradient at every `grad_capture` site from a baseline backward pass and from the intervened
   one (`pre_intervention_grad_values`, `post_intervention_grad_values`, flattened beside `grad_shape` and
-  `grad_point_names`), the metric, and `intervention_grad_position_effect`, the largest change in any captured gradient
-  at each position. Without `grad_capture`, the intervention sites are captured, each after its own edit.
+  `grad_point_names`), the readout's value (`bwd_intervention_metric`), and `intervention_grad_position_effect`, the
+  largest change in any captured gradient at each position. Without `grad_capture`, the intervention sites are
+  captured, each after its own edit.
 - **Sites by address**: `grad_capture` takes hook names or patterns, or one venngram site address, which
   `interpretune.analysis.venngram.resolve_sites` evaluates over the model's block stack. A site address sets
   `point` (a spelling of the activation-point vocabulary, such as `hook_resid_post`), `layers` and `of`, and combines
@@ -291,7 +293,72 @@ cfg = AnalysisCfg(
 ```
 
 Each stored row holds both gradients at every captured site, flattened beside `grad_shape` (the shape code) and
-`grad_point_names`, the metric, and `intervention_grad_position_effect`.
+`grad_point_names`, the readout's value, and `intervention_grad_position_effect`.
+
+### Readouts
+
+Which scalar a gradient is taken of decides what an edit to it means, since a vector added to a gradient is scaled by
+it. A `Readout` names that scalar as `fn(logits, activations)`, where `activations` holds the activation at each site
+in `sites` from the same forward pass the backward runs from, so the scalar can be a logit difference, an intermediate
+activation's projection onto a probe or concept direction, or a latent model's feature activation
+(`<hook>.hook_sae_acts_post`, with the latent model attached). It must return a scalar tensor, and use only standard
+PyTorch ops, so a traced backend can apply it to its proxies. A plain callable of the logits is a readout reading no
+sites, as `metric` is in the example above. Sites are hook names or `*` patterns: an exact name is handed back under
+the name as written, and each match of a pattern under its concrete name.
+
+```python
+import torch
+from transformer_lens.model_bridge import TransformerBridge
+
+from interpretune.adapters.transformer_lens.backends import TLModelBackend
+from interpretune.analysis.backends import Readout
+
+model = TransformerBridge.boot_transformers("gpt2", device="cpu")
+tokens = model.to_tokens("The Eiffel Tower is in the city of")
+paris, london = model.to_single_token(" Paris"), model.to_single_token(" London")
+# the unembedding direction that separates the two answers, read at block 8's output instead of at the logits
+direction = (model.W_U[:, paris] - model.W_U[:, london]).detach()
+
+
+def logit_difference(logits, activations):
+    return (logits[:, -1, paris] - logits[:, -1, london]).sum()
+
+
+def block_8_projection(logits, activations):
+    return (activations["blocks.8.hook_out"][:, -1] @ direction).sum()
+
+
+readouts = {
+    "logit difference": Readout(logit_difference),
+    "block 8 projection": Readout(block_8_projection, sites=("blocks.8.hook_out",)),
+}
+for name, readout in readouts.items():
+    pre, _, value = TLModelBackend().bwd_w_intervention(
+        model, {"input": tokens}, {}, readout, capture=["blocks.2.hook_out", "blocks.8.hook_out"]
+    )
+    norms = "  ".join(f"{site} {pre[site][:, -1].norm():.2f}" for site in pre)
+    print(f"{name:<19} value {value.item():6.2f}  last-position gradient norm: {norms}")
+```
+
+```text
+logit difference    value  -0.16  last-position gradient norm: blocks.2.hook_out 0.51  blocks.8.hook_out 0.37
+block 8 projection  value  -9.79  last-position gradient norm: blocks.2.hook_out 3.51  blocks.8.hook_out 3.02
+```
+
+The projection's gradient at block 8's output is the direction itself (its norm is the direction's), since nothing
+after block 8 reaches it; below block 8 the two readouts differ by everything blocks 9 to 11 and the final norm do to
+the difference. A gradient captured at a site the readout reads includes the readout's own contribution, beside what
+flows back from the logits.
+
+In an analysis session, pass the readout as the op's `readout` input (for in-process use; a readout declared in a
+venngram book is to follow, [speediedan/venngram#93](https://github.com/speediedan/venngram/issues/93)):
+
+```python
+cfg = AnalysisCfg(
+    target_op=it.model_bwd_intervention,
+    run_inputs={"interventions": payload, "grad_capture": ["blocks.2.hook_out"], "readout": readouts["block 8 projection"]},
+)
+```
 
 ## Intervention ops
 
