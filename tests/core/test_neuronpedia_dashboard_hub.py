@@ -671,6 +671,54 @@ class TestManifestConsistency:
         api.return_value.upload_folder.assert_called_once()
 
 
+class TestCollectionRegistration:
+    """``collection=`` is how a corpus becomes discoverable, so it must only ever name a corpus that published
+    whole."""
+
+    def test_a_published_bucket_is_added_to_the_collection(self, tmp_path: Path, _local_hf_filesystem) -> None:
+        with patch("huggingface_hub.HfApi") as api:
+            publish_dashboard_run(
+                _build_run(tmp_path, page_index=True),
+                "ns/bkt",
+                store="bucket",
+                revision="pfx",
+                token="t",
+                collection="ns/corpora-1",
+                collection_token="ct",
+            )
+        api.return_value.add_collection_item.assert_called_once_with(
+            "ns/corpora-1", "ns/bkt", "bucket", exists_ok=True, token="ct"
+        )
+
+    def test_a_failed_read_back_registers_nothing(self, tmp_path: Path, monkeypatch) -> None:
+        class _Rewritten(_LocalHfFileSystem):
+            def open(self, path: str, mode: str = "rb"):
+                import io
+
+                return io.BytesIO(b"PAR1" + b"x" * 64)
+
+            def size(self, path: str) -> int:
+                return 68
+
+        monkeypatch.setattr("huggingface_hub.HfFileSystem", _Rewritten)
+        with patch("huggingface_hub.HfApi") as api:
+            with pytest.raises(PublishedArtifactCheckError):
+                publish_dashboard_run(
+                    _build_run(tmp_path, page_index=True), "ns/bkt", store="bucket", revision="p", collection="ns/c-1"
+                )
+        api.return_value.add_collection_item.assert_not_called()
+
+    def test_a_dataset_store_publish_naming_a_collection_is_refused_before_upload(self, tmp_path: Path) -> None:
+        """Discovery reads bucket items, so a dataset repo in the collection would never be found."""
+        with patch("huggingface_hub.HfApi") as api:
+            with pytest.raises(ValueError, match="reads bucket items only"):
+                publish_dashboard_run(
+                    _build_run(tmp_path, page_index=True), "ns/ds", store="dataset", token="t", collection="ns/c-1"
+                )
+        api.return_value.upload_folder.assert_not_called()
+        api.return_value.add_collection_item.assert_not_called()
+
+
 class TestRangeRead:
     """The post-upload check reads the published copy back, so it is the one that sees a transport rewrite."""
 

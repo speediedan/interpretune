@@ -812,6 +812,8 @@ def publish_dashboard_run(
     add_checks: frozenset[str] | set[str] | tuple[str, ...] = (),
     token: str | None = None,
     store: str | None = None,
+    collection: str | None = None,
+    collection_token: str | None = None,
 ) -> DashboardPublishPlan:
     """Upload a dashboard run to the Hub. Returns the plan that was executed, with its check report.
 
@@ -827,11 +829,22 @@ def publish_dashboard_run(
     raises ``PublishedArtifactCheckError``, which means the corpus is already live. ``skip_checks`` and
     ``add_checks`` name checks to skip or to turn on; an unknown name is refused. Skips are recorded in
     the returned plan's ``checks`` and, for the dataset store, in the commit message.
+
+    ``collection`` (a Hub collection slug) registers the published bucket there once every check has passed, which is
+    how clients discover it (``interpretune.utils.neuronpedia_hub_fetch.find_dashboard_corpora``). Discovery reads
+    bucket items, so a dataset-store publish naming a collection is refused before the upload. Adding an item needs
+    ``collection.write``, which the dashboards token usually lacks, so ``collection_token`` is separate (default:
+    ``token``).
     """
     validate_check_names(DASHBOARD_CORPUS, skip_checks, add_checks)
     plan = build_publish_plan(run_root, include_copy_rows)
     token = token or resolve_dashboards_token()
     backend = get_dashboard_store(store)
+    if collection is not None and backend.name != "bucket":
+        raise ValueError(
+            f"collection={collection!r} registers a corpus for discovery, which reads bucket items only; the"
+            f" {backend.name!r} store publishes a dataset repo. Publish to the bucket store, or drop collection=."
+        )
 
     target = PublishTarget(
         kind=DASHBOARD_CORPUS,
@@ -861,6 +874,11 @@ def publish_dashboard_run(
     )
     published = replace(target, remote_files=_published_parquet_paths(plan, repo_id, backend, revision, path_in_repo))
     report = report.merged(run_publish_checks(published, POST_UPLOAD, skip_checks=skip_checks, add_checks=add_checks))
+    if collection is not None:
+        from huggingface_hub import HfApi
+
+        api = HfApi(token=collection_token or token)
+        api.add_collection_item(collection, repo_id, "bucket", exists_ok=True, token=collection_token or token)
     return replace(plan, checks=report)
 
 
