@@ -2,7 +2,7 @@
 are, and they can be read by a consumer who has the published package and nothing else.
 
 Subclass ``NotebookFormConformance`` and set ``root`` (the directory holding the ``pyproject.toml`` whose
-``[tool.notebook-publishing]`` table describes the layout). Nothing here executes a notebook; the adapter
+``[tool.nbpress]`` table describes the layout). Nothing here executes a notebook; the adapter
 repository's own CI does that. These cases are the ones that hold without a kernel: sync, shape, and imports.
 """
 
@@ -15,7 +15,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from interpretune.utils.notebook_publishing import (
+from interpretune.utils.notebook_config import (
     PublisherConfig,
     changed_files,
     load_notebook,
@@ -78,9 +78,7 @@ class NotebookFormConformance:
     def test_published_copies_are_in_sync_with_dev(self, cfg):
         """Every dev file's stored hash matches its content: nothing was edited without republishing."""
         stale = changed_files(cfg, load_notebook_hashes(cfg.publish_dir))
-        assert not stale, "run interpretune-publish-notebooks; out of date: " + ", ".join(
-            cfg.hash_key(p) for p in stale
-        )
+        assert not stale, "run nbpress-publish; out of date: " + ", ".join(cfg.hash_key(p) for p in stale)
 
     def test_every_dev_notebook_has_a_published_copy(self, cfg, published):
         """No dev notebook is missing from the publish tree."""

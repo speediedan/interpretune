@@ -90,8 +90,7 @@ ignore:
   - src/interpretune/hub/cards.py
   - src/interpretune/utils/neuronpedia_*
   - src/interpretune/utils/_neuronpedia_utils_fallbacks.py
-  - src/interpretune/utils/notebook_publishing.py
-  - src/interpretune/utils/notebook_docs.py
+  - src/interpretune/utils/notebook_config.py
   - src/interpretune/utils/schema_validation.py
   - src/interpretune/utils/requirements.py
   - src/it_examples/neuronpedia_dashboard/**

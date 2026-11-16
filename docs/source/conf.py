@@ -128,22 +128,14 @@ _NOTEBOOK_STAGE_DIR = Path(__file__).parent / "notebooks"
 
 
 def _load_notebook_docs_helpers():
-    """Reuse the cell-exclusion rules from the docs-artifact renderer (src/interpretune/utils/notebook_docs.py).
+    """Reuse the cell-exclusion rules from nbpress's docs-artifact renderer (pinned in requirements/docs.txt).
 
-    Imported rather than duplicated so DOCS_EXCLUDED_CELL_IDS has exactly one definition. It is loaded from its file
-    rather than through the package, which would import torch; its only non-stdlib import (papermill) is deferred into
-    its execute() path, so loading it here is cheap and safe.
+    Imported rather than duplicated so the excluded cells have exactly one definition. The renderer imports only the
+    standard library until it executes a notebook, so importing it here is cheap.
     """
-    import importlib.util
-    import sys
+    from nbpress import render
 
-    spec = importlib.util.spec_from_file_location(
-        "_it_notebook_docs", _REPO_ROOT / "src" / "interpretune" / "utils" / "notebook_docs.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # dataclasses resolve `from __future__` annotations through sys.modules
-    spec.loader.exec_module(module)
-    return module
+    return render
 
 
 def _stage_example_notebooks() -> None:

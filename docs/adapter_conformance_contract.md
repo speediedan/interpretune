@@ -257,23 +257,25 @@ through untouched, and a `fixture` key beside siblings is refused rather than ha
 ## Adapter example notebooks
 
 An adapter repository ships a notebook per declared capability group under its own examples tree, a dev copy and
-a published copy, and publishes them with the engine Interpretune uses for its own: the console script
-`interpretune-publish-notebooks`, parameterized from the repository's `pyproject.toml`:
+a published copy, and publishes them with the tool Interpretune uses for its own,
+[nbpress](https://github.com/speediedan/nbpress) (`nbpress-publish`, a development dependency pinned by commit),
+configured from the repository's `pyproject.toml`:
 
 ```toml
-[tool.notebook-publishing]
+[tool.nbpress]
 dev_dir = "examples/dev"
 publish_dir = "examples/publish"
 colab_repo = "org/my-adapter"
 install_cell = ["# %pip install my-adapter[examples]"]
 colab_branch = "main"                                  # optional
-[tool.notebook-publishing.import_rewrites]             # optional substring rewrites for code cells
+[tool.nbpress.import_rewrites]                         # optional substring rewrites for code cells
 "examples.dev." = "examples.publish."
 ```
 
-The first four keys are required, and a key the tools do not read is refused. The table's earlier name,
-`[tool.interpretune.notebooks]`, is still read; a pyproject carrying both is refused. Nothing is copied from
-interpretune. `NotebookFormConformance` holds the published copies to their static form
+The first four keys are required, and nbpress refuses a key no nbpress tool reads. The table's earlier names,
+`[tool.notebook-publishing]` and `[tool.interpretune.notebooks]`, are still read; a pyproject carrying more than
+one is refused. Nothing is copied from interpretune, and the conformance cases below read the table without
+nbpress installed. `NotebookFormConformance` holds the published copies to their static form
 without a kernel: in sync with dev (the stored hashes match), every dev notebook published, badge and install cell
 first, no `remove-cell` survivors, every import resolvable in the environment the adapter's CI runs in, and no
 direct import of the adapter's pip form where the hub form is the subject (`forbidden_imports`, spelled as the
