@@ -128,7 +128,7 @@ def _evaluate(case):
     w = torch.tensor(i["w"]).reshape([int(d) for d in i["shape"]])
     if case.op == "scale":
         dim, units = int(i["dim"][0]), [int(u) for u in i["units"]]
-        edited = _Units("v", "instrument", "scale", dim, units, [i["dose"][0]] * len(units))(w)
+        edited = _Units("v", "artifact", "scale", dim, units, [i["dose"][0]] * len(units))(w)
         out = {"w": edited.flatten().tolist()}
         if "x" in i:
             x = torch.tensor(i["x"])
@@ -139,7 +139,7 @@ def _evaluate(case):
         return out
     if case.op == "add" and "b" in i:
         b, x, j, d = torch.tensor(i["b"]), torch.tensor(i["x"]), int(i["units"][0]), i["dose"][0]
-        patched = _Vector("v", "instrument", "add", bias_patch(w, {j: d}, dim=1))(b)
+        patched = _Vector("v", "artifact", "add", bias_patch(w, {j: d}, dim=1))(b)
         dose = torch.zeros_like(x).index_fill(0, torch.tensor([j]), d)
         shifted = apply_op(
             x.reshape(1, 1, -1), InterventionSpec(dose, op="add", position_scope=PositionScope.ALL_POSITIONS)
@@ -151,12 +151,12 @@ def _evaluate(case):
         }
     if case.op == "add":
         u, v = torch.tensor(i["u"]).reshape(-1, 1), torch.tensor(i["v"]).reshape(-1, 1)
-        return {"w": _Delta("v", "instrument", "add", "low_rank", {"u": u, "v": v})(w).flatten().tolist()}
+        return {"w": _Delta("v", "artifact", "add", "low_rank", {"u": u, "v": v})(w).flatten().tolist()}
     if case.op == "reject":
-        edited = _Span("v", "instrument", "reject", torch.tensor(i["u"]), i["fraction"][0], dim=0)(w)
+        edited = _Span("v", "artifact", "reject", torch.tensor(i["u"]), i["fraction"][0], dim=0)(w)
         return {"w": edited.flatten().tolist()}
     sparse = {"indices": torch.tensor([int(k) for k in i["indices"]]), "values": torch.tensor(i["values"])}
-    return {"w": _Delta("v", "instrument", "replace", "sparse", sparse)(w).flatten().tolist()}
+    return {"w": _Delta("v", "artifact", "replace", "sparse", sparse)(w).flatten().tolist()}
 
 
 @pytest.mark.parametrize("target", ["param", "param_units"])
@@ -201,10 +201,10 @@ def test_a_weight_patch_applies_reversibly_after_its_base_is_checked(tmp_path, m
     delta = torch.arange(1.0, D + 1).reshape(-1, 1) @ torch.tensor([[0.0] * (H - 1) + [0.5]])
     torch.testing.assert_close(down.weight, base + delta)
     assert handle.target == "layers.1.mlp.down.weight" and handle.edit.edit_name == "neuron_write"
-    # the operand is an instrument (loaded from an artifact): never trained
+    # the operand is an artifact (loaded from a published patch): never trained
     assert weight_edit_roles(model) == {
-        "layers.1.mlp.down.parametrizations.weight.0.u": "instrument",
-        "layers.1.mlp.down.parametrizations.weight.0.v": "instrument",
+        "layers.1.mlp.down.parametrizations.weight.0.u": "artifact",
+        "layers.1.mlp.down.parametrizations.weight.0.v": "artifact",
     }
     assert not any(p.requires_grad for p in handle.edit.parameters())
     handle.remove()

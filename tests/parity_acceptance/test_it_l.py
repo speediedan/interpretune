@@ -41,7 +41,7 @@ from tests.parity_acceptance.cfg_aliases import (
     bs1_nowarm_hk_mem,
     bs1_warm_mem,
 )
-from tests.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WARNS
+from tests.warns import unexpected_warns, CORE_CTX_WARNS, LIGHTING_CTX_WARNS, MEMPROF_NO_ACCELERATOR_WARN
 
 
 @dataclass(kw_only=True)
@@ -166,7 +166,10 @@ EXPECTED_PROFILING_PARITY = {cfg.alias: cfg.expected for cfg in L_PROFILING_CONF
 def test_l_profiling(recwarn, tmp_path, test_alias, test_cfg):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PROFILING_PARITY[test_alias] or {}
-    expected_warnings = LIGHTING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else CORE_CTX_WARNS
+    expected_warnings = [
+        *(LIGHTING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else CORE_CTX_WARNS),
+        MEMPROF_NO_ACCELERATOR_WARN,
+    ]
     parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)
     unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)

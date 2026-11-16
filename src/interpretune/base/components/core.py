@@ -66,7 +66,6 @@ class BaseConfigImpl:
     it_cfg: ITConfig
     memprofiler: MemProfiler
     model: torch.nn.Module
-    cuda_allocator_history: bool
     _it_state: ITState
 
     @staticmethod
@@ -175,8 +174,8 @@ class BaseConfigImpl:
 
     def _make_setup_dirs(self) -> None:
         """Create minimal setup directories."""
-        if self.cuda_allocator_history:
-            self.memprofiler.init_cuda_snapshots_dir()
+        if self.memprofiler:
+            self.memprofiler.init_memprof_log_dir()
         # TODO: add save_hyperparameters/basic logging func for raw pytorch
         # (override w/ a framework-specific version where appropriate)
         # self.save_hyperparameters(self._it_state._init_hparams)
@@ -342,11 +341,6 @@ class PropertyDispatcher:
     def session_complete(self) -> bool:
         """Whether the session has finished, so end hooks are not dispatched twice."""
         return self._it_state._session_complete
-
-    @property
-    def cuda_allocator_history(self) -> bool:
-        """Whether CUDA allocator history capture is active -- requires profiling enabled AND that option."""
-        return self.it_cfg.memprofiler_cfg.enabled and self.it_cfg.memprofiler_cfg.cuda_allocator_history
 
     @property
     def dtype(self) -> "torch.dtype | str | None":
@@ -597,7 +591,7 @@ class OptimizerScheduler:
         return optimizers, lr_schedulers
 
 
-class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler):  # pyright: ignore[reportIncompatibleVariableOverride]
+class BaseITComponents(BaseConfigImpl, PropertyDispatcher, OptimizerScheduler):
     """The composed base component surface: configuration, property dispatch, and optimization."""
 
     ...

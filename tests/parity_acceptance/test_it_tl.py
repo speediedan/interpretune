@@ -32,7 +32,7 @@ from tests.parity_acceptance.cfg_aliases import (
 from tests.parity_acceptance.expected import tl_parity_results, profiling_results
 from tests.results import collect_results
 from tests.runif import RunIf
-from tests.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS
+from tests.warns import unexpected_warns, TL_CTX_WARNS, TL_LIGHTNING_CTX_WARNS, MEMPROF_NO_ACCELERATOR_WARN
 
 # TODO: add tl and tl_profiling bf16 tests if/when support vetted
 # TODO: add tl activation checkpointing tests if/when support vetted
@@ -137,7 +137,10 @@ EXPECTED_PARITY_TL_PROFILING = {cfg.alias: cfg.expected for cfg in TL_PROFILING_
 def test_tl_profiling(recwarn, tmp_path, test_alias, test_cfg):
     state_log_mode = IT_GLOBAL_STATE_LOG_MODE  # one can manually set this to True for a local test override
     expected_results = EXPECTED_PARITY_TL_PROFILING[test_alias] or {}
-    expected_warnings = TL_LIGHTNING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else TL_CTX_WARNS
+    expected_warnings = [
+        *(TL_LIGHTNING_CTX_WARNS if Adapter.lightning in test_cfg.adapter_ctx else TL_CTX_WARNS),
+        MEMPROF_NO_ACCELERATOR_WARN,
+    ]
     parity_test(test_cfg, test_alias, expected_results, tmp_path, state_log_mode=state_log_mode)
     unexpected = unexpected_warns(rec_warns=recwarn.list, expected_warns=expected_warnings)
     assert not unexpected, tuple(w.message.args[0] + ":" + w.filename + ":" + str(w.lineno) for w in unexpected)

@@ -209,7 +209,7 @@ def _resolve_plan(
     """``fsdp_plan`` expanded to the modules it selects, each with its ``fully_shard`` kwargs, deepest first.
 
     finetuning-scheduler applies a plan in the order its keys first select modules and refuses a module whose ancestor
-    is already sharded, so ``class:Block`` listed before ``class:Instrument`` would fail for an instrument spliced
+    is already sharded, so ``class:Block`` listed before ``class:Transcoder`` would fail for a transcoder spliced
     inside a block. Ordering by depth makes the plan's key order immaterial. The module itself is sharded last, as the
     root.
     """
@@ -218,9 +218,9 @@ def _resolve_plan(
             return {}
         raise MisconfigurationException(
             "Placement 'fsdp2' needs `fsdp_plan`: the modules to shard as their own units, keyed by name, regex or"
-            " `class:<name>` (for example `{'class:GPT2Block': {}}`, plus each spliced instrument's class so that it is"
-            " gathered on its own). An empty plan shards the module as one unit, which gathers every parameter for the"
-            " whole forward."
+            " `class:<name>` (for example `{'class:GPT2Block': {}}`, plus each spliced latent model's class so that it"
+            " is gathered on its own). An empty plan shards the module as one unit, which gathers every parameter for"
+            " the whole forward."
         )
     if not fsdp_plan:
         return {}

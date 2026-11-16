@@ -186,13 +186,36 @@ class TestRoles:
         root = Root()
         attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.0")
         attach_intervention(root, "edit", nn.Linear(D, D), "model.blocks.1")
-        attach_intervention(root, "held", OpIntervention("add", D), "model.tuple_block", frozen=True)
+        attach_intervention(root, "held", OpIntervention("add", D), "model.tuple_block", frozen="artifact")
+        attach_intervention(root, "mean", OpIntervention("add", D), "model.blocks.0", frozen="fitted")
         assert intervention_roles(root) == {
             "interventions.steer.operand.value": "intervention:steer",
             "interventions.edit.weight": "intervention:edit",
             "interventions.edit.bias": "intervention:edit",
-            "interventions.held.operand.value": "instrument",
+            "interventions.held.operand.value": "artifact",
+            "interventions.mean.operand.value": "fitted",
         }
+
+    @pytest.mark.parametrize("frozen", [True, "instrument", "latent"])
+    def test_frozen_must_say_whether_the_value_is_saved(self, frozen):
+        """``True`` is refused: a value computed in the run (``fitted``) is checkpointed, a loaded one
+        (``artifact``) is not, and guessing loses one or the other on a resumed run."""
+        root = Root()
+        with pytest.raises(ValueError, match="'fitted'.*'artifact'"):
+            attach_intervention(root, "held", OpIntervention("add", D), "model.blocks.0", frozen=frozen)
+        assert intervention_roles(root) == {}
+
+    def test_a_fitted_intervention_is_checkpointed_and_an_artifact_is_not(self):
+        """A value computed in the run survives a resume through the checkpoint; a loaded one is reloaded
+        instead."""
+        from venngram.tuning import CanonicalView
+
+        root = SteeredRoot()
+        attach_intervention(root, "mean", OpIntervention("add", D), "model.blocks.0", frozen="fitted")
+        attach_intervention(root, "held", OpIntervention("add", D), "model.blocks.1", frozen="artifact")
+        saved = CanonicalView(root, roles=root.tunable_roles()).checkpoint_state_dict()
+        assert "interventions.mean.operand.value" in saved
+        assert "interventions.held.operand.value" not in saved
 
     def test_no_interventions_no_roles(self):
         assert intervention_roles(Root()) == {}
@@ -282,11 +305,12 @@ class TestScheduling:
         assert trained is not None and trained.abs().sum() > 0  # the steering stage moved it
         assert torch.equal(steer.operand.value, trained)  # and the block stage held it fixed
 
-    def test_a_frozen_intervention_steers_and_never_trains(self):
+    @pytest.mark.parametrize("frozen", ["fitted", "artifact"])
+    def test_a_frozen_intervention_steers_and_never_trains(self, frozen):
         from finetuning_scheduler import CanonicalView, TuningScheduler
 
         root = SteeredRoot()
-        steer = attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.1", frozen=True)
+        steer = attach_intervention(root, "steer", OpIntervention("add", D), "model.blocks.1", frozen=frozen)
         with torch.no_grad():
             steer.operand.value.fill_(0.25)  # a precomputed direction, applied from the start
         schedule = {
@@ -298,7 +322,7 @@ class TestScheduling:
         fts.setup()
         seen = self._train(fts, root, 2)
         assert all("interventions.steer.operand.value" not in trainable for _, trainable in seen)
-        assert fts.roles["interventions.steer.operand.value"] == "instrument"
+        assert fts.roles["interventions.steer.operand.value"] == frozen
         assert torch.equal(steer.operand.value, torch.full((D,), 0.25))
 
 

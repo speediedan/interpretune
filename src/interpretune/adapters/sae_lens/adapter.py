@@ -148,7 +148,7 @@ class BaseSAELensModule(BaseITModule):
         return hook_name.replace(".", "__")
 
     def _register_attached_sae(self, handle: SAE, frozen: bool = False) -> None:
-        """Register a spliced SAE as a submodule of this module (an ``instrument`` when ``frozen``).
+        """Register a spliced SAE as a submodule of this module (an ``artifact`` when ``frozen``).
 
         ``SAETransformerBridge.add_sae`` keeps the SAE outside the module tree (its wrapper holds it in
         ``__dict__``, so hook names carry no ``.sae.`` segment), and the bridge's ``parameters()`` delegate to the
@@ -201,14 +201,14 @@ class BaseSAELensModule(BaseITModule):
                     yield param
 
     def tunable_roles(self) -> dict[str, str]:
-        """Spliced SAEs' parameters take the ``latent:sae`` role (#758), or ``instrument`` for one configured
+        """Spliced SAEs' parameters take the ``latent:sae`` role (#758), or ``artifact`` for one configured
         ``frozen`` (#812)."""
         roles = super().tunable_roles()  # cooperative, provided by BaseITModule
         attached = self._attached_saes()
         if attached is not None:
             frozen_keys = self.__dict__.get("_frozen_attached_saes", set())
             for key, sae in attached.items():
-                role = "instrument" if key in frozen_keys else "latent:sae"
+                role = "artifact" if key in frozen_keys else "latent:sae"
                 roles.update({f"attached_saes.{key}.{n}": role for n, _ in sae.named_parameters()})
         return roles
 
