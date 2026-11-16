@@ -23,6 +23,7 @@ from jaxtyping import Float
 from interpretune.analysis.backends import get_analysis_backend, get_model_backend
 from interpretune.analysis.inputs import _resolve_attr_path
 from interpretune.protocol import ClassificationModuleProtocol, DefaultAnalysisBatchProtocol
+from interpretune.utils import MisconfigurationException
 
 
 FEATURE_SCORE_SOURCE_ALIASES: dict[str, str] = {
@@ -1071,6 +1072,45 @@ def resolve_aggregate_input(module: Any, analysis_batch: Any, field_name: str) -
     return None
 
 
+def resolve_gradient_sites(module: Any, sites: Any, *, sets: Any = None) -> list[str] | None:
+    """The hook names (or ``*`` patterns) an op reads gradients at, from the names themselves or a venngram
+    address.
+
+    A venngram site address (``point:hook_resid_post & layers:-4: & of:grad``, its mapping form, or an ``@<set>``
+    reference into ``sets``) is resolved with :func:`~interpretune.analysis.venngram.sites.resolve_sites` over the
+    model's block stack, so one address book can drive both capture and gradient reads. It must say ``of: grad``: an
+    address acting on values names what a consumer edits or reads forward, and reading gradients there would read a
+    different tensor than the address states. ``None`` passes through, for an op whose default is its own sites.
+
+    Raises:
+        MisconfigurationException: If the address resolves to value sites, or cannot be resolved.
+    """
+    if sites is None:
+        return None
+    names = [sites] if isinstance(sites, str) else sites
+    if isinstance(names, (list, tuple)) and all(isinstance(n, str) for n in names):
+        from venngram.address import is_address
+
+        if not any(is_address(n) for n in names):
+            return list(names)
+        if len(names) != 1:
+            raise MisconfigurationException(
+                "gradient sites are hook names or ONE venngram address (combine sets with `|` inside it), not a list"
+                f" mixing them: {names!r}"
+            )
+        sites = names[0]
+    from interpretune.analysis.venngram.sites import resolve_sites
+
+    backend = require_model_backend(module)
+    selection = resolve_sites(sites, n_layers=backend.capture_support(module.model).n_layers, sets=sets)
+    if selection.flow != "grad":
+        raise MisconfigurationException(
+            f"the address {sites!r} acts on values, and these sites are read for their gradients: write it with "
+            "`of: grad` (for example `@sites & of:grad`)"
+        )
+    return list(selection.sites)
+
+
 def load_json_field(module: Any, analysis_batch: Any, field_name: str) -> Any:
     """Resolve an aggregate input field and decode JSON string payloads when present."""
 
@@ -1110,6 +1150,7 @@ __all__ = [
     "resolve_unembed_and_norm_scale",
     "UnembedNormInfo",
     "resolve_feature_score_source",
+    "resolve_gradient_sites",
     "resolve_tokenizer",
     "stack_column_tensors",
     "token_strings_to_ids",
