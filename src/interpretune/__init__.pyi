@@ -722,6 +722,41 @@ def model_ablation(
     """
     ...
 
+def model_bwd_intervention(
+    module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
+) -> AnalysisBatch:
+    """Apply hook-point interventions to gradients during a backward pass and return the gradients they change
+
+    Input Schema:
+        interventions (object)
+        interventions_json (string)
+        intervention_hook_pattern (string)
+        intervention_tensor (float32)
+        intervention_tensors_json (string)
+        intervention_op (string)
+        intervention_use_intervention_tensor_as_basis (bool)
+        intervention_scale_factor (float32)
+        intervention_position_scope (string)
+        use_latent_models (bool)
+        concept_direction (float32)
+        concept_cache_key (string)
+        direction_scale_factor (float32)
+        logit_target_ids (int64)
+        grad_capture (object)
+        grad_capture_sets (object)
+
+    Output Schema:
+        grad_point_names (string)
+        grad_shape (int64)
+        pre_intervention_grad_values (float32)
+        post_intervention_grad_values (float32)
+        bwd_intervention_metric (float32)
+        intervention_grad_position_effect (float32)
+    """
+    ...
+
+gradient_intervention = model_bwd_intervention
+
 def model_fwd(
     module, analysis_batch: DefaultAnalysisBatchProtocol, batch: BatchEncoding, batch_idx: int
 ) -> DefaultAnalysisBatchProtocol:

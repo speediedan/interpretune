@@ -23,6 +23,7 @@ from interpretune.analysis.backends import (
     SupportsAttributionGraph,
     SupportsFeatureInterventions,
     SupportsHeadAttribution,
+    SupportsGradientIntervention,
     SupportsGradients,
     SupportsIntervention,
     SupportsLatentModels,
@@ -43,7 +44,7 @@ from .oracles import (
     expected_positions,
     steering_vector,
 )
-from .ops import captured_points
+from .ops import captured_points, stored_gradients
 from .reference import HFReference
 from .session import build_conformance_session, tokenized_prompts
 
@@ -349,6 +350,12 @@ class ModelBackendConformance:
                 assert isinstance(component, protocols), (
                     f"the {name} declares {cap.name} but is none of {[p.__name__ for p in protocols]}"
                 )
+                record = getattr(component, "intervention_support", None)
+                flows = {getattr(f, "value", f) for f in getattr(record, "of", None) or ()}
+                if cap is Capability.INTERVENTION and "grad" in flows:
+                    assert isinstance(component, SupportsGradientIntervention), (
+                        f"the {name} declares the `grad` flow but implements no bwd_w_intervention"
+                    )
             # the present-iff-declared invariant, from the live objects rather than the enum
             assert (name in suite.capabilities.intervention) == (Capability.INTERVENTION in component.capabilities)
             for need in getattr(component, "requires", frozenset()):
@@ -1293,6 +1300,103 @@ class ModelBackendConformance:
         assert abs(measured - predicted) <= 0.1 * abs(predicted) + CONVERGENCE_ATOL, (
             f"first-order prediction {predicted:.4e} vs measured {measured:.4e} for latent {latent} (eps={eps})"
         )
+
+    # -- INTERVENTION on the gradient flow: bwd_w_intervention ----------------------------------------
+
+    #: The logit the gradient cases differentiate, fixed so the reference and the op take one metric.
+    GRADIENT_TARGET_ID: ClassVar[int] = 1000
+
+    def _gradient_store(self, suite, upstream: str, *, scope: str, vector: torch.Tensor):
+        """``model_bwd_intervention`` adding ``vector`` to the gradient at the intervention point, capturing it
+        there and at ``upstream``."""
+        import interpretune as it
+        from interpretune import AnalysisCfg
+
+        point = suite.inputs.intervention_point
+        payload = {point: {"intervention_tensor": vector, "op": "add", "scale_factor": 1.0, "position_scope": scope}}
+        run_inputs = {
+            "interventions": payload,
+            "grad_capture": [point, upstream],
+            "logit_target_ids": [self.GRADIENT_TARGET_ID],
+        }
+        return suite.run(AnalysisCfg(target_op=it.model_bwd_intervention, run_inputs=run_inputs, save_tokens=True))
+
+    @conformance_case(
+        capability=Capability.GRADIENTS,
+        flow="grad",
+        scope=PositionScope.LAST_TOKEN,
+        op="add",
+        family="hf_native",
+    )
+    def test_a_gradient_edit_matches_a_manual_backward_hook(self, suite, hf):
+        """Adding a vector to the gradient at the intervention point, at the last token, matches an HF tensor hook
+        doing the same: at the edited point (which reports its edited gradient), and at an earlier point the edit
+        reaches through the backward pass. The baseline half is the unedited gradient at both.
+
+        The upstream point is two blocks earlier, so the edit reaches it through two blocks of attention rather than
+        through a residual identity alone, and the case asserts the edit moved it before comparing, so a backend
+        ignoring the payload cannot pass by matching an unedited reference.
+        """
+        layer = int(suite.inputs.intervention_point.split(".")[1])
+        upstream = f"blocks.{layer - 2}.hook_out"
+        vector = self._vector(suite)
+        vector = vector / vector.norm()
+        store = self._gradient_store(suite, upstream, scope="last_token", vector=vector)
+        point = suite.inputs.intervention_point
+
+        def metric(logits: torch.Tensor) -> torch.Tensor:
+            return logits[:, -1, self.GRADIENT_TARGET_ID].sum()
+
+        for i in range(len(store["grad_point_names"])):
+            ids, mask = suite.batch_inputs(i)
+            pre, post = stored_gradients(store, i, "pre"), stored_gradients(store, i, "post")
+            clean = hf.gradients(ids, metric, observe=[point, upstream], attention_mask=mask)
+            edited = hf.gradients(
+                ids,
+                metric,
+                observe=[point, upstream],
+                edits=[(point, lambda g: g + vector.to(g.dtype), "last_token")],
+                attention_mask=mask,
+            )
+            moved = (edited[upstream] - clean[upstream]).abs().max().item()
+            assert moved > CHANGED_ATOL, (
+                f"batch {i}: the reference edit moved the upstream gradient by only {moved:.3e}"
+            )
+            for name in (point, upstream):
+                _assert_close_padded(pre[name], clean[name], what=f"batch {i}: the baseline gradient at {name}")
+                _assert_close_padded(post[name], edited[name], what=f"batch {i}: the edited gradient at {name}")
+
+    @conformance_case(
+        capability=Capability.LATENT_MODELS,
+        target="features",
+        provider="model_backend",
+        flow="grad",
+        scope=PositionScope.ALL_POSITIONS,
+        op="scale",
+    )
+    def test_a_gradient_edit_reaches_a_latent_sub_hook(self, suite):
+        """Zeroing the gradient at an attached latent model's feature activations leaves a zero gradient captured
+        there, where the baseline's is not: the backward surface reaches a latent model's sub-hook, as the forward
+        surface does."""
+        import interpretune as it
+        from interpretune import AnalysisCfg
+
+        handle, hook = self._latent_hook(suite)
+        width = int(handle.cfg.d_sae)
+        payload = {hook: {"intervention_tensor": torch.zeros(width), "op": "scale", "position_scope": "all_positions"}}
+        run_inputs = {
+            "interventions": payload,
+            "use_latent_models": True,
+            "logit_target_ids": [self.GRADIENT_TARGET_ID],
+        }
+        store = suite.run(AnalysisCfg(target_op=it.model_bwd_intervention, run_inputs=run_inputs, save_tokens=True))
+        for i in range(len(store["grad_point_names"])):
+            pre, post = stored_gradients(store, i, "pre")[hook], stored_gradients(store, i, "post")[hook]
+            assert pre.shape[-1] == width, f"batch {i}: the captured gradient at {hook} has width {pre.shape[-1]}"
+            nonfinite = int((~torch.isfinite(pre)).sum())
+            assert nonfinite == 0, f"batch {i}: {nonfinite} of {pre.numel()} baseline gradient elements are non-finite"
+            assert pre.abs().max().item() > CHANGED_ATOL, f"batch {i}: no baseline gradient reached {hook}"
+            assert post.abs().max().item() == 0.0, f"batch {i}: the zeroed gradient at {hook} is not zero"
 
     # -- analysis backend: ATTRIBUTION_GRAPH / INTERVENTION on features -------------------------------
     #

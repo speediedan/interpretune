@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Mapping, Sequence
 from typing import Any, Callable, cast
 
 import torch
 
 from interpretune.analysis.backends import (
+    FLOWS,
     Capability,
     CaptureSupport,
     InterventionSupport,
@@ -18,6 +20,7 @@ from interpretune.analysis.backends import (
     build_intervention_dict,
     expand_intervention_patterns,
     get_intervention_target_shape,
+    track_gradient,
 )
 from interpretune.analysis.backends.hook_mapping import SUBHOOK_SUFFIXES
 from interpretune.protocol import NamesFilter
@@ -208,6 +211,58 @@ def _build_available_hook_map(model: Any, latent_model_handles: list[Any] | None
     return candidate_map
 
 
+def _tl_backward(
+    model: Any,
+    batch: dict[str, Any],
+    backward_fn: Callable[[torch.Tensor], torch.Tensor],
+    latent_model_handles: list[Any] | None,
+    specs: Mapping[str, Sequence[Any]],
+    capture: Sequence[str],
+) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+    """One forward and backward pass applying ``specs`` to the gradient at each named site, returning the gradients
+    at ``capture`` (each after any edit at its own site) and the metric.
+
+    A captured site the backward pass never reaches has no gradient to report, and is refused rather than reported as
+    zero, which would read as a measured absence of influence.
+    """
+    wanted = set(capture)
+    captured: dict[str, torch.Tensor] = {}
+    state: dict[str, int] = {}
+
+    def make_hook(name: str) -> Callable[..., torch.Tensor | None]:
+        site_specs = tuple(specs.get(name, ()))
+
+        def hook(grad: torch.Tensor, hook: Any) -> torch.Tensor | None:
+            edited = grad
+            for spec in site_specs:
+                edited = apply_intervention(edited, spec, last_pos=state["last_pos"])
+            if name in wanted:
+                captured[name] = edited.detach().clone()
+            return edited if site_specs else None
+
+        return hook
+
+    def track(activation: torch.Tensor, hook: Any) -> torch.Tensor:
+        return track_gradient(activation)
+
+    names = list(dict.fromkeys([*specs.keys(), *capture]))
+    fwd_hooks = _normalize_hooks(model, [(name, track) for name in names], latent_model_handles)
+    bwd_hooks = _normalize_hooks(model, [(name, make_hook(name)) for name in names], latent_model_handles)
+    with torch.set_grad_enabled(True):
+        with model.saes(saes=latent_model_handles) if latent_model_handles else contextlib.nullcontext():
+            with model.hooks(fwd_hooks=fwd_hooks, bwd_hooks=bwd_hooks):
+                logits = model(**batch)
+                state["last_pos"] = int(logits.shape[1] - 1)
+                scalar = backward_fn(logits)
+                scalar.backward()
+    if missing := sorted(wanted - set(captured)):
+        raise ValueError(
+            f"no gradient reached {missing}: the metric does not depend on the activation there, so there is no "
+            "gradient to report or edit"
+        )
+    return {name: captured[name] for name in capture}, scalar.detach()
+
+
 def _hf_architecture(model: Any) -> str:
     """The HuggingFace class name the component maps are keyed by, from either TransformerLens wrapper."""
     cfg = getattr(model, "cfg", None)
@@ -254,10 +309,11 @@ class TLModelBackend:
 
     @property
     def intervention_support(self) -> InterventionSupport:
-        """Every op and both hook scopes on every target: a TL hook receives the whole activation, so restricting an
-        edit to the final token and editing every position are equally expressible, every op sees the current value,
-        and an attached latent model's features are reached at its sub-hook."""
-        return InterventionSupport.every()
+        """Every op and both hook scopes on every target, on values and gradients: a TL hook receives the whole
+        activation (or, as a backward hook, the whole gradient), so restricting an edit to the final token and
+        editing every position are equally expressible, every op sees the current tensor, and an attached latent
+        model's features are reached at its sub-hook."""
+        return InterventionSupport.every(of=frozenset(FLOWS))
 
     @property
     def latent_model_support(self) -> LatentModelSupport:
@@ -500,3 +556,46 @@ class TLModelBackend:
         else:
             post_logits = model.run_with_hooks(**batch, fwd_hooks=fwd_hooks)
         return pre_logits, post_logits
+
+    def bwd_w_intervention(
+        self,
+        model: Any,
+        batch: dict[str, Any],
+        interventions: InterventionDict | Mapping[str, InterventionValue],
+        backward_fn: Callable[[torch.Tensor], torch.Tensor],
+        capture: Sequence[str] | None = None,
+        latent_model_handles: list[Any] | None = None,
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], torch.Tensor]:
+        """Apply interventions to the gradients at hook points via TransformerLens backward hooks.
+
+        A baseline backward pass captures the gradients (and gives the hook shapes a raw payload is canonicalized
+        against), then a second applies the edits. TransformerLens hands every backward hook at a hook point the
+        gradient that arrived there and passes the hook's return on upstream, so a second hook at one point would see
+        the original gradient rather than the first one's edit: the specs at a site are folded in one hook for that
+        reason, and a capture there records the folded result.
+        """
+        available = _build_available_hook_map(model, latent_model_handles=latent_model_handles)
+        if isinstance(interventions, InterventionDict):
+            expanded = {hook_name: [hook_name] for hook_name in interventions.keys()}
+        else:
+            expanded = expand_intervention_patterns(list(interventions.keys()), available)
+        sites = list(dict.fromkeys(name for matches in expanded.values() for name in matches))
+        matched = expanded if capture is None else expand_intervention_patterns(list(capture), available)
+        captured_names = list(dict.fromkeys(name for matches in matched.values() for name in matches))
+        # A capture named exactly, in another spelling the vocabulary maps here (an SAE's own metadata names
+        # `blocks.0.hook_resid_pre.hook_sae_acts_post` where a bridge exposes `blocks.0.hook_in...`), is reported as the
+        # caller spelled it, as the capture path re-keys its cache; a pattern's matches keep the model's names.
+        spelled = {matches[0]: name for name, matches in matched.items() if "*" not in name and len(matches) == 1}
+
+        pre_grads, metric = _tl_backward(model, batch, backward_fn, latent_model_handles, {}, [*sites, *captured_names])
+        if isinstance(interventions, InterventionDict):
+            intervention_dict = interventions
+        else:
+            shapes = {name: get_intervention_target_shape(pre_grads[name]) for name in sites}
+            intervention_dict = build_intervention_dict(interventions, expanded, shapes)
+        post_grads, _ = _tl_backward(model, batch, backward_fn, latent_model_handles, intervention_dict, captured_names)
+        return (
+            {spelled.get(name, name): pre_grads[name] for name in captured_names},
+            {spelled.get(name, name): post_grads[name] for name in captured_names},
+            metric,
+        )
