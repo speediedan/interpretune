@@ -1,5 +1,6 @@
-"""Data-parallel placement for the core loop (``SessionRunnerCfg.placement``): the refusals, the loader rebuild,
-and two-rank CPU runs of ``ddp`` and ``fsdp2`` against one process training on their combined batch."""
+"""Distributed placement for the core loop (``SessionRunnerCfg.placement``): the refusals, the loader rebuild, two-
+rank CPU runs of ``ddp`` and ``fsdp2`` against one process training on their combined batch, and of ``tp`` against
+one process training on the batch every rank shares."""
 
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from interpretune.runners.distributed import (
     _refuse_unshardable,
     _require_fts,
     _resolve_plan,
+    _resolve_tp_plan,
     distributed_dataloader,
     meta_built,
     resolve_placement,
@@ -66,10 +68,26 @@ class TestResolvePlacement:
         assert run == DistributedRun("fsdp2", 3, 1, 4) and not run.is_rank_zero
 
     def test_unknown_placement_is_refused(self):
-        with pytest.raises(MisconfigurationException, match="Unknown placement 'tp'"):
-            resolve_placement("tp", env={})
-        with pytest.raises(MisconfigurationException, match="Unknown placement 'tp'"):
-            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="tp")  # type: ignore[arg-type]
+        with pytest.raises(MisconfigurationException, match="Unknown placement 'pp'"):
+            resolve_placement("pp", env={})
+        with pytest.raises(MisconfigurationException, match="Unknown placement 'pp'"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="pp")  # type: ignore[arg-type]
+
+    def test_tensor_parallel_is_not_data_parallel(self):
+        run = resolve_placement("tp", env={"WORLD_SIZE": "2", "RANK": "1", "LOCAL_RANK": "1"})
+        assert run == DistributedRun("tp", 1, 1, 2) and not run.data_parallel
+        assert _run(0, placement="fsdp2").data_parallel and _run(0, placement="ddp").data_parallel
+
+    def test_plans_must_match_the_placement(self):
+        """A tensor-parallel plan means nothing to a data-parallel placement, and an FSDP2 plan nothing to 'tp'."""
+        plan = {"model.layers.0.mlp": {"style": "colwise"}}
+        with pytest.raises(MisconfigurationException, match="but the placement is 'fsdp2'"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="fsdp2", tp_plan=plan)
+        with pytest.raises(MisconfigurationException, match="but the placement is 'single'"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), tp_plan=plan)
+        with pytest.raises(MisconfigurationException, match="but the placement is 'tp'"):
+            SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="tp", fsdp_plan={})
+        SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), placement="tp", tp_plan=plan)
 
     @pytest.mark.parametrize("placement", ["ddp", "fsdp2"])
     def test_resuming_a_data_parallel_run_needs_the_distributed_form(self, placement, tmp_path):
@@ -111,6 +129,16 @@ class TestDistributedDataloader:
         assert (rebuilt.batch_size, rebuilt.collate_fn, rebuilt.drop_last) == (3, collate, True)
         assert rebuilt.sampler.num_replicas == 2 and rebuilt.sampler.rank == 1 and not rebuilt.sampler.shuffle
 
+    def test_tensor_parallel_ranks_take_the_same_batches(self):
+        """Under 'tp' the ranks compute one forward together, so each takes the whole dataset in one shared order,
+        even when the loader shuffles and the ranks' own random streams differ."""
+        loader = DataLoader(list(range(8)), batch_size=2, shuffle=True)
+        per_rank = []
+        for rank in range(2):
+            torch.manual_seed(rank)
+            per_rank.append([batch.tolist() for batch in distributed_dataloader(loader, _run(rank, placement="tp"))])
+        assert per_rank[0] == per_rank[1] and sorted(sum(per_rank[0], [])) == list(range(8))
+
     def test_shuffled_loader_shuffles_every_rank_alike(self):
         loader = DataLoader(list(range(8)), batch_size=4, shuffle=True)
         samplers = [distributed_dataloader(loader, _run(rank)).sampler for rank in range(2)]
@@ -126,7 +154,7 @@ class TestDistributedDataloader:
             def __iter__(self):
                 return iter(range(4))
 
-        with pytest.raises(MisconfigurationException, match="cannot shard an `IterableDataset` \\(Stream\\)"):
+        with pytest.raises(MisconfigurationException, match="cannot rebuild an `IterableDataset` \\(Stream\\)"):
             distributed_dataloader(DataLoader(Stream()), _run(0))
 
     @pytest.mark.parametrize(
@@ -169,7 +197,10 @@ class TestPlacementChecks:
         module.packed = nn.Parameter(torch.zeros(4, 6))
         module.q = nn.Parameter(module.packed.data[:, :3].T)  # a transposed view, as a split of a packed weight
         with pytest.raises(MisconfigurationException, match="non-contiguous parameters, and this module has 1: q"):
-            _refuse_unshardable(module)
+            _refuse_unshardable(module, "fsdp2")
+        # a tensor-parallel split of a view would cut it from the weight it aliases
+        with pytest.raises(MisconfigurationException, match="'tp' cannot split non-contiguous parameters.*: q"):
+            _refuse_unshardable(module, "tp")
 
     @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
     def test_plan_units_are_ordered_children_first(self):
@@ -210,6 +241,24 @@ class TestPlacementChecks:
             _resolve_plan(model, None, None, "fsdp2")
         with pytest.raises(MisconfigurationException, match="'class:Block' specified in `fsdp_plan` did not match"):
             _resolve_plan(model, {"class:Linear": {}, "class:Block": {}}, None, "fsdp2")
+
+    @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan grammar is finetuning-scheduler's")
+    def test_tp_needs_a_plan_whose_keys_select_modules(self):
+        model = nn.Sequential(nn.Linear(2, 4), nn.Linear(4, 2))
+        assert list(_resolve_tp_plan(model, {"0": {"style": "colwise"}, "1": {"style": "rowwise"}})) == ["0", "1"]
+        with pytest.raises(MisconfigurationException, match="Placement 'tp' needs `tp_plan`"):
+            _resolve_tp_plan(model, None)
+        with pytest.raises(MisconfigurationException, match="'class:Block' specified in `tp_plan` did not match"):
+            _resolve_tp_plan(model, {"class:Block": {"style": "colwise"}})
+        with pytest.raises(MisconfigurationException, match="whose `style` is one of"):
+            _resolve_tp_plan(model, {"0": {"style": "diagonal"}})
+
+    def test_tp_plan_without_finetuning_scheduler_is_refused(self, monkeypatch):
+        import interpretune.runners.distributed as distributed
+
+        monkeypatch.setattr(distributed, "_FTS_AVAILABLE", False)
+        with pytest.raises(MisconfigurationException, match="tensor-parallel plan, which is not installed"):
+            _resolve_tp_plan(nn.Linear(2, 2), {"": {"style": "colwise"}})
 
     def test_plan_without_finetuning_scheduler_is_refused(self, monkeypatch):
         import interpretune.runners.distributed as distributed
@@ -348,6 +397,51 @@ def test_two_rank_core_loop_matches_global_batch(placement, extra, global_batch_
         n_units = 3 if placement == "fsdp2" else 1
         assert len(record["fsdp_units"]) == n_units and "" in record["fsdp_units"]
     assert global_batch_reference["param_types"] == ["Parameter"]
+
+
+# each block's feed-forward split across the ranks: the first projection by output features, the second by input
+# features, so the pair needs one all-reduce and the block's output is whole again on every rank
+FFN_TP_PLAN = (
+    "--tp-plan",
+    json.dumps(
+        {
+            r"model\.layers\.\d+\.feed_forward\.w1": {"style": "colwise"},
+            r"model\.layers\.\d+\.feed_forward\.w2": {"style": "rowwise"},
+        }
+    ),
+)
+
+
+@pytest.fixture(scope="module")
+def shared_batch_reference(tmp_path_factory):
+    out_dir = tmp_path_factory.mktemp("tp_reference")
+    _launch("single", out_dir, "--world-size", "1")
+    return json.loads((out_dir / "single_rank0.json").read_text())
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tensor_parallel_matches_one_process_on_the_shared_batch(shared_batch_reference, tmp_path):
+    """Two tensor-parallel ranks compute the one-process run on their shared batch, step for step, on every rank.
+
+    The ranks match the reference only if every rank sees the reference's batches in its order, the split layers are
+    cut from rank 0's weights (the ranks are seeded differently), and the split feed-forward's partial outputs are
+    reduced back to the whole activation. Only the planned layers become ``DTensor``\\ s.
+    """
+    _launch("tp", tmp_path, *FFN_TP_PLAN)
+    records = [json.loads((tmp_path / f"tp_rank{rank}.json").read_text()) for rank in range(2)]
+    assert len(shared_batch_reference["losses"]) == 3
+    for record in records:
+        assert record["losses"] == pytest.approx(shared_batch_reference["losses"], rel=1e-5)
+        assert record["epoch_metrics"][0] == pytest.approx(shared_batch_reference["epoch_metrics"][0], rel=1e-5)
+        assert record["devices"] == ["cpu", "cpu"]
+        assert record["param_types"] == ["DTensor", "Parameter"] and record["fsdp_units"] == []
+        assert record["split_params"] == [
+            f"model.layers.{i}.feed_forward.{w}.{p}"
+            for i in range(2)
+            for w, p in (("w1", "bias"), ("w1", "weight"), ("w2", "bias"), ("w2", "weight"))
+        ]
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")

@@ -1,8 +1,9 @@
 """One process of the core loop's distributed parity runs (``tests/core/test_core_loop_distributed.py``).
 
-Run under ``torch.distributed.run`` as one rank of a ``ddp`` or ``fsdp2`` run, or with ``--placement single`` as the
-one-process reference, which trains on the global batch (the per-rank batch times the world size) that the ranks
-share out. Each rank seeds its model differently and the reference is seeded as rank 0: the runner broadcasts rank 0's
+Run under ``torch.distributed.run`` as one rank of a ``ddp``, ``fsdp2`` or ``tp`` run, or with ``--placement single``
+as the one-process reference, which trains on the global batch (the per-rank batch times ``--world-size``) that
+data-parallel ranks share out; a tensor-parallel run's reference passes ``--world-size 1``, since its ranks share one
+batch. Each rank seeds its model differently and the reference is seeded as rank 0: the runner broadcasts rank 0's
 weights before placement, and without that broadcast the ranks would not match it.
 
 With ``--phased``, finetuning-scheduler's ``TuningScheduler`` drives two phases through ``FTSCoreCallback``: the
@@ -57,6 +58,7 @@ def main() -> None:
     parser.add_argument("--world-size", type=int, default=2, help="the ranks the reference's global batch stands for")
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--fsdp-plan", type=json.loads, default=None, help="the FSDP2 plan, as JSON")
+    parser.add_argument("--tp-plan", type=json.loads, default=None, help="the tensor-parallel plan, as JSON")
     parser.add_argument("--phased", action="store_true", help="tune in two phases with FTSCoreCallback")
     parser.add_argument("--max-epochs", type=int, default=None, help="override the run's epoch count")
     parser.add_argument("--save-checkpoint-dir", default=None, help="save a checkpoint at the first epoch's end")
@@ -101,6 +103,7 @@ def main() -> None:
         callbacks=callbacks,
         placement=args.placement,
         fsdp_plan=args.fsdp_plan,
+        tp_plan=args.tp_plan,
         resume_from=args.resume_from,
     )
     runner = SessionRunner(run_cfg=runner_cfg)
@@ -109,6 +112,7 @@ def main() -> None:
     module = it_session.module
     param_types = sorted({type(p).__name__ for p in module.parameters()})
     fsdp_units = [name for name, sub in module.named_modules() if isinstance(sub, FSDPModule)]
+    split_params = sorted(n for n, p in module.named_parameters() if type(p).__name__ == "DTensor")
     if fts is not None:
         trainable = [n for n, p in module.named_parameters() if p.requires_grad]
         last_block = max({n.rsplit(".", 2)[0] for n in trainable if ".layers." in n})
@@ -124,6 +128,7 @@ def main() -> None:
         "devices": list(runner.dist_run.devices) if runner.dist_run else [],
         "param_types": param_types,
         "fsdp_units": fsdp_units,
+        "split_params": split_params if args.placement == "tp" else [],
     }
     if fts is not None:
         assert fts.tuning_scheduler is not None
