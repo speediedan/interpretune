@@ -12,7 +12,8 @@
 - ``tp``: tensor parallelism over a one-dimensional mesh of every rank. The layers ``SessionRunnerCfg.tp_plan`` selects
   are split across ranks with ``parallelize_module`` (finetuning-scheduler's ``parallelize_model``), so a model whose
   weights do not fit on one device can be tuned. Every rank sees the same batch, in the same order: the ranks compute
-  one forward together rather than each its own share of the data.
+  one forward together rather than each its own share of the data. A packed weight whose views the plan splits (a
+  TransformerLens bridge's joint ``qkv``) is split with them, so they keep sharing its storage.
 
 The plan is finetuning-scheduler's FSDP2 plan (``finetuning_scheduler.strategies.plan.shard_model``), so the core loop
 takes the same keys (module names, regexes and ``class:`` selectors), per-unit ``fully_shard`` kwargs and aliases
@@ -205,21 +206,164 @@ def _check_devices(per_rank: Sequence[Sequence[str]], placement: str) -> tuple[s
 
 
 def _refuse_unshardable(module: torch.nn.Module, placement: str) -> None:
+    """Refuse a module ``fully_shard`` cannot shard (``ddp`` and ``fsdp2``); ``tp`` checks only the parameters its
+    plan splits, in :func:`_packed_groups`."""
     if names := [name for name, param in module.named_parameters() if not param.is_contiguous()]:
         shown = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
-        if placement == "tp":
-            # measured: `parallelize_module` shards such a view without complaint, but the shard no longer aliases the
-            # packed weight, so the view and the weight it was cut from silently diverge in training
-            raise MisconfigurationException(
-                f"Placement 'tp' cannot split non-contiguous parameters, and this module has {len(names)}: {shown}."
-                " They are usually views of a packed weight (TransformerLens's split q/k/v, for one), and splitting a"
-                " view cuts it from the weight it aliases. Leave those modules out of `tp_plan`."
-            )
         raise MisconfigurationException(
             f"`fully_shard` cannot shard non-contiguous parameters, and this module has {len(names)}: {shown}. They are"
             " usually transposed views of a packed weight (TransformerLens's split q/k/v, for one); this backend"
-            " cannot be placed with 'ddp' or 'fsdp2' until they are contiguous."
+            f" cannot be placed with '{placement}' until they are contiguous."
         )
+
+
+@dataclass
+class _PackedGroup:
+    """A packed parameter and the column-parallel views cut from it, each view one equal section of ``dim``.
+
+    Attributes:
+        packed: ``(owner, attribute)`` of the packed parameter (TransformerLens's joint ``qkv``, for one).
+        dim: The packed parameter's dimension the views divide.
+        views: ``(owner, attribute, transposed)`` per view, in section order; ``transposed`` when the view is a section
+            transposed (a ``Conv1D``'s ``[in, out]`` section read as a ``Linear``'s ``[out, in]`` weight).
+    """
+
+    packed: tuple[torch.nn.Module, str]
+    dim: int
+    views: list[tuple[torch.nn.Module, str, bool]]
+
+
+def _section(packed: torch.Tensor, view: torch.Tensor) -> tuple[int, int, bool] | None:
+    """``(dim, start, transposed)`` when ``view`` is ``packed.narrow(dim, start, n)`` along dimension 0 of the view
+    (transposed or not), else ``None``."""
+    offset = view.storage_offset() - packed.storage_offset()
+    for dim in range(packed.ndim):
+        if offset % packed.stride(dim):
+            continue
+        start = offset // packed.stride(dim)
+        for transposed in (False, True) if packed.ndim == 2 else (False,):
+            length = view.shape[0]
+            if start + length > packed.shape[dim]:
+                continue
+            section = packed.narrow(dim, start, length)
+            section = section.T if transposed else section
+            if (section.shape, section.stride(), section.storage_offset()) == (
+                view.shape,
+                view.stride(),
+                view.storage_offset(),
+            ) and (dim == 1) == transposed:
+                return dim, int(start), transposed
+    return None
+
+
+def _packed_groups(module: torch.nn.Module, styles: Mapping[str, Any], world_size: int) -> list[_PackedGroup]:
+    """The packed parameters whose views ``styles`` splits, after refusing every split that would cut a parameter
+    from storage it shares.
+
+    ``parallelize_module`` splits a parameter into a new tensor, so a view of a packed weight (TransformerLens's split
+    q/k/v are views of its joint ``qkv``) would silently stop aliasing it: training would move the view and leave the
+    weight it was cut from behind. A packed weight whose views a plan splits by output features is split with them
+    (:func:`_split_packed`), so they keep sharing storage; every other split of shared storage is refused by name.
+
+    Raises:
+        MisconfigurationException: If the plan splits a non-contiguous parameter that is not a view of another, the
+            packed parameter itself, only some of a packed parameter's views, a view with any style but ``colwise``,
+            or views that are not equal sections of the packed parameter divisible by the world size.
+    """
+    from torch.distributed.tensor.parallel import ColwiseParallel
+
+    owners = {id(p): (m, n) for m in module.modules() for n, p in m.named_parameters(recurse=False)}
+    names = {id(p): n for n, p in module.named_parameters()}
+    split = {
+        id(p): style for prefix, style in styles.items() for p in module.get_submodule(prefix).parameters(recurse=False)
+    }
+    by_storage: dict[int, list[torch.nn.Parameter]] = {}
+    for param in module.parameters():
+        if param.device.type != "meta":
+            by_storage.setdefault(param.untyped_storage().data_ptr(), []).append(param)
+    groups = []
+    for params in by_storage.values():
+        if len(params) == 1:
+            param = params[0]
+            if id(param) in split and not param.is_contiguous():
+                raise MisconfigurationException(
+                    f"Placement 'tp' cannot split the non-contiguous parameter {names[id(param)]}: it is a view of"
+                    " storage no other parameter owns. Leave its module out of `tp_plan`."
+                )
+            continue
+        if not any(id(p) in split for p in params):
+            continue
+        packed = max(params, key=lambda p: p.numel())
+        views = [p for p in params if p is not packed]
+        shown = ", ".join(names[id(p)] for p in views)
+        if id(packed) in split:
+            raise MisconfigurationException(
+                f"`tp_plan` splits {names[id(packed)]}, whose storage {shown} are views of. Split the views (with"
+                " 'colwise') and leave the packed parameter's module out of the plan: it is split with them."
+            )
+        if missing := [names[id(p)] for p in views if id(p) not in split]:
+            raise MisconfigurationException(
+                f"`tp_plan` splits only some of the views of {names[id(packed)]} ({shown}); {', '.join(missing)} would"
+                " stop sharing its storage. Split all of them, or none."
+            )
+        if other := [names[id(p)] for p in views if not isinstance(split[id(p)], ColwiseParallel)]:
+            raise MisconfigurationException(
+                f"Placement 'tp' splits views of the packed parameter {names[id(packed)]} only with 'colwise', but"
+                f" `tp_plan` gives {', '.join(other)} another style."
+            )
+        found = sorted(
+            ((section, p) for p in views if (section := _section(packed, p)) is not None), key=lambda item: item[0]
+        )
+        dim = found[0][0][0] if found else 0
+        length = packed.shape[dim] // len(views)
+        if len(found) != len(views) or any(
+            (d, start) != (dim, i * length) or p.shape[0] != length for i, ((d, start, _), p) in enumerate(found)
+        ):
+            raise MisconfigurationException(
+                f"Placement 'tp' splits a packed parameter's views only when they are equal sections of one of its"
+                f" dimensions, in order, and {shown} are not such sections of {names[id(packed)]}."
+            )
+        if length % world_size:
+            raise MisconfigurationException(
+                f"The views of {names[id(packed)]} ({shown}) have {length} output features each, which"
+                f" {world_size} ranks cannot split evenly."
+            )
+        groups.append(_PackedGroup(owners[id(packed)], dim, [(*owners[id(p)], t) for (_, _, t), p in found]))
+    return groups
+
+
+def _split_packed(group: _PackedGroup, mesh: Any, rank: int) -> None:
+    """Split a packed parameter by its views' sections, then rebuild each view as a ``DTensor`` over this rank's
+    split of it, so views and packed parameter keep sharing storage.
+
+    Each rank holds its slice of every section, concatenated in section order: the layout of torch's
+    ``_StridedShard`` (the strided sharding FSDP2 uses under tensor parallelism), so the packed parameter's
+    ``full_tensor()`` is the packed weight. The views' placements are ``ColwiseParallel``'s, ``Shard(0)``, so the
+    module's input and output hooks read them as they would its own split.
+    """
+    from torch.distributed.tensor import DTensor, Shard
+    from torch.distributed.tensor.placement_types import _StridedShard
+
+    owner, attr = group.packed
+    packed = getattr(owner, attr)
+    n_sections = len(group.views)
+    length = packed.shape[group.dim] // n_sections
+    chunk = length // mesh.size()
+    with torch.no_grad():
+        local = torch.cat(
+            [packed.narrow(group.dim, i * length + rank * chunk, chunk) for i in range(n_sections)], dim=group.dim
+        )
+    placement = _StridedShard(group.dim, split_factor=n_sections)
+    split = DTensor.from_local(local, mesh, [placement], run_check=False, shape=packed.shape, stride=packed.stride())
+    setattr(owner, attr, torch.nn.Parameter(split, requires_grad=packed.requires_grad))
+    for i, (view_owner, view_attr, transposed) in enumerate(group.views):
+        view = getattr(view_owner, view_attr)  # ColwiseParallel's split, a copy; only its shape and flags are kept
+        section = local.narrow(group.dim, i * chunk, chunk)
+        section = section.T if transposed else section
+        shape, stride = view.shape, packed.narrow(group.dim, i * length, length)
+        stride = (stride.T if transposed else stride).stride()
+        rebuilt = DTensor.from_local(section, mesh, [Shard(0)], run_check=False, shape=shape, stride=stride)
+        setattr(view_owner, view_attr, torch.nn.Parameter(rebuilt, requires_grad=view.requires_grad))
 
 
 def _resolve_plan(
@@ -327,10 +471,10 @@ def place_module(
     per_rank: list[Any] = [None] * run.world_size
     dist.all_gather_object(per_rank, local)
     run.devices = _check_devices(per_rank, run.placement)
-    _refuse_unshardable(module, run.placement)
     if run.placement == "tp":
         _place_tensor_parallel(module, run, tp_plan, on_meta)
         return
+    _refuse_unshardable(module, run.placement)
     _require_fts(fsdp_plan, fsdp_default_kwargs)
     units = _resolve_plan(module, fsdp_plan, fsdp_default_kwargs, run.placement)
     if not on_meta:
@@ -373,7 +517,7 @@ def _place_tensor_parallel(
 ) -> None:
     """Split the layers ``tp_plan`` selects across a one-dimensional mesh of every rank, after broadcasting rank
     0's weights (each rank's split is cut from its own copy, so differing copies would assemble a model nobody
-    built)."""
+    built), and split each packed parameter whose views the plan splits with them (see :func:`_packed_groups`)."""
     import torch.distributed as dist
     from torch.distributed.device_mesh import init_device_mesh
 
@@ -383,14 +527,22 @@ def _place_tensor_parallel(
             " device, or use placement 'fsdp2', which loads a meta-built model from rank 0."
         )
     styles = _resolve_tp_plan(module, tp_plan)
+    groups = _packed_groups(module, styles, run.world_size)
     with torch.no_grad():
         for tensor in [*module.parameters(), *module.buffers()]:
-            dist.broadcast(tensor, src=0)
+            if tensor.is_contiguous():
+                dist.broadcast(tensor, src=0)
+            else:  # a view of a packed weight: collectives take contiguous tensors only
+                whole = tensor.contiguous()
+                dist.broadcast(whole, src=0)
+                tensor.copy_(whole)
     device_type = torch.device(run.devices[run.rank]).type
     mesh = init_device_mesh(device_type, (run.world_size,), mesh_dim_names=("tp",))
     from torch.distributed.tensor.parallel import parallelize_module
 
     parallelize_module(module, mesh, styles)
+    for group in groups:
+        _split_packed(group, mesh, run.rank)
     run.mesh = mesh
 
 

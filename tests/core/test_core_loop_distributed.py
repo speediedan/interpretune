@@ -23,6 +23,7 @@ from interpretune.runners.distributed import (
     DistributedRun,
     _check_devices,
     _meta_offloads,
+    _packed_groups,
     _refuse_unshardable,
     _require_fts,
     _resolve_plan,
@@ -38,6 +39,7 @@ WORKER = Path(__file__).with_name("distributed_core_loop_worker.py")
 META_WORKER = Path(__file__).with_name("distributed_meta_init_worker.py")
 CT_WORKER = Path(__file__).with_name("distributed_ct_worker.py")
 LATENT_WORKER = Path(__file__).with_name("distributed_latent_worker.py")
+TP_BRIDGE_WORKER = Path(__file__).with_name("distributed_tp_bridge_worker.py")
 
 
 def _run(rank: int, world_size: int = 2, placement: str = "ddp") -> DistributedRun:
@@ -198,9 +200,63 @@ class TestPlacementChecks:
         module.q = nn.Parameter(module.packed.data[:, :3].T)  # a transposed view, as a split of a packed weight
         with pytest.raises(MisconfigurationException, match="non-contiguous parameters, and this module has 1: q"):
             _refuse_unshardable(module, "fsdp2")
-        # a tensor-parallel split of a view would cut it from the weight it aliases
-        with pytest.raises(MisconfigurationException, match="'tp' cannot split non-contiguous parameters.*: q"):
-            _refuse_unshardable(module, "tp")
+
+    @staticmethod
+    def _packed(conv1d_layout: bool, sections: tuple[int, ...] = (4, 4, 4)) -> nn.Module:
+        """A packed weight and bias with one ``Linear`` view per section, as TransformerLens splits a joint qkv:
+
+        the weight in a ``Conv1D``'s ``[in, out]`` layout (each view a transposed section) or a ``Linear``'s
+        ``[out, in]``.
+        """
+        module = nn.Module()
+        module.qkv = nn.Linear(3, sum(sections))
+        if conv1d_layout:
+            module.qkv.weight = nn.Parameter(torch.randn(3, sum(sections)))
+        start = 0
+        for name, length in zip("qkv", sections):
+            view = nn.Linear(3, length)
+            packed = module.qkv.weight
+            weight = packed[:, start : start + length].T if conv1d_layout else packed[start : start + length]
+            view.weight = nn.Parameter(weight)
+            view.bias = nn.Parameter(module.qkv.bias[start : start + length])
+            setattr(module, name, view)
+            start += length
+        return module
+
+    @pytest.mark.parametrize("conv1d_layout", [True, False], ids=["conv1d", "linear"])
+    def test_tp_splits_a_packed_weight_with_its_views(self, conv1d_layout):
+        """A plan splitting every view of a packed weight by output features splits the packed weight with them, in
+        either layout, while a non-contiguous parameter the plan leaves whole is no concern of 'tp'."""
+        from torch.distributed.tensor.parallel import ColwiseParallel
+
+        module = self._packed(conv1d_layout)
+        module.other = nn.Linear(2, 2)
+        module.other.weight = nn.Parameter(torch.zeros(2, 4)[:, :2])  # non-contiguous, but not split
+        groups = _packed_groups(module, {n: ColwiseParallel() for n in "qkv"}, world_size=2)
+        assert len(groups) == 2  # the weight and the bias
+        weight, bias = sorted(groups, key=lambda g: g.packed[1], reverse=True)
+        assert weight.packed == (module.qkv, "weight") and bias.packed == (module.qkv, "bias")
+        assert weight.dim == (1 if conv1d_layout else 0) and bias.dim == 0
+        assert weight.views == [(getattr(module, n), "weight", conv1d_layout) for n in "qkv"]
+        assert bias.views == [(getattr(module, n), "bias", False) for n in "qkv"]
+
+    def test_tp_refuses_splits_that_cut_shared_storage(self):
+        from torch.distributed.tensor.parallel import ColwiseParallel, RowwiseParallel
+
+        def refused(module, styles, match, world_size=2):
+            with pytest.raises(MisconfigurationException, match=match):
+                _packed_groups(module, styles, world_size)
+
+        colwise = {n: ColwiseParallel() for n in "qkv"}
+        refused(self._packed(True), {"q": ColwiseParallel()}, r"only some of the views of qkv.weight.*k.weight")
+        refused(self._packed(True), {"qkv": ColwiseParallel()}, r"splits qkv.weight, whose storage")
+        refused(self._packed(True), {**colwise, "v": RowwiseParallel()}, r"only with 'colwise'.*v.weight")
+        refused(self._packed(True, (4, 2, 2)), colwise, "are not such sections of qkv.weight")
+        refused(self._packed(True, (3, 3, 3)), colwise, "have 3 output features each, which 2 ranks cannot split")
+        lone = nn.Module()
+        lone.proj = nn.Linear(2, 2)
+        lone.proj.weight = nn.Parameter(torch.zeros(2, 4)[:, :2])
+        refused(lone, {"proj": ColwiseParallel()}, "cannot split the non-contiguous parameter proj.weight")
 
     @pytest.mark.skipif(not _FTS_AVAILABLE, reason="the FSDP2 plan grammar is finetuning-scheduler's")
     def test_plan_units_are_ordered_children_first(self):
@@ -579,6 +635,61 @@ def test_a_meta_built_model_is_sharded_then_loaded_from_rank_zero(tiny_gpt2_chec
         assert record["step_diff"] < 1e-6 and record["step_effect"] > 0.01
         assert record["trainable"] == ["default"] and record["param_types"] == ["DTensor"]
         assert record["tied"] and record["source_dropped"]
+
+
+# the bridge's split q, k and v in every block, by output features, each output gathered so that the attention reads
+# every head (TransformerLens's attention reshapes q, k and v by the model's head count)
+JOINT_QKV_TP_PLAN = {
+    r"blocks\.\d+\._original_component\.attn\.[qkv]\._original_component": {
+        "style": "colwise",
+        "output_layouts": "replicate",
+    }
+}
+
+
+def _launch_tp_bridge(checkpoint: Path, out_dir: Path, plan: dict, *extra: str) -> list[dict]:
+    out_dir.mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(REPO_ROOT), env.get("PYTHONPATH")) if p)
+    worker = [str(TP_BRIDGE_WORKER), "--checkpoint", str(checkpoint), "--out-dir", str(out_dir)]
+    worker += ["--tp-plan", json.dumps(plan), *extra]
+    cmd = [sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "2", *worker]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, f"tp bridge run failed:\n{proc.stdout[-3000:]}\n{proc.stderr[-6000:]}"
+    return [json.loads((out_dir / f"rank{rank}.json").read_text()) for rank in range(2)]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's")
+def test_two_rank_tp_splits_a_bridge_joint_qkv_and_keeps_its_views_aliased(tiny_gpt2_checkpoint, tmp_path):
+    """Splitting a TransformerLens bridge's q, k and v splits its packed ``qkv`` with them: the split bridge
+    computes and steps as the whole one does, and views and packed weight still share storage after an SGD step, so
+    the packed weight's ``full_tensor()`` is the stepped reference's.
+
+    The control leaves the packed weight whole. Its outputs still match (no forward reads the packed weight), but the
+    views stop sharing its storage and it falls behind the step: the silent divergence the split exists to prevent.
+    """
+    for record in _launch_tp_bridge(tiny_gpt2_checkpoint, tmp_path / "split", JOINT_QKV_TP_PLAN):
+        assert record["split_params"] == [
+            f"transformer.h.{i}._original_component.attn.{m}._original_component.{p}"
+            for i in range(2)
+            for m in ("k", "q", "qkv", "v")
+            for p in ("bias", "weight")
+        ]
+        assert record["forward_diff"] == 0.0 and record["packed_diff_before_step"] == 0.0
+        assert record["step_effect"] > 0.1 and record["step_diff"] < 1e-5
+        assert record["aliased_before_step"] and record["aliased_after_step"]
+        assert record["packed_diff_after_step"] < 1e-6
+    control = _launch_tp_bridge(tiny_gpt2_checkpoint, tmp_path / "control", JOINT_QKV_TP_PLAN, "--no-packed-split")
+    for record in control:
+        assert record["step_diff"] < 1e-5 and not record["aliased_after_step"]
+        assert record["packed_diff_after_step"] > 1e-3
+    # a plan splitting only q would cut it from the packed weight k and v still share: refused on every rank
+    only_q = {r"blocks\.\d+\._original_component\.attn\.q\._original_component": {"style": "colwise"}}
+    for record in _launch_tp_bridge(tiny_gpt2_checkpoint, tmp_path / "only_q", only_q):
+        assert "splits only some of the views of" in record["refused"]
 
 
 @pytest.fixture(scope="module")
