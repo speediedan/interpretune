@@ -12,14 +12,14 @@
 r"""A finetuning-scheduler ``TunableView`` over a circuit-tracer composition's transcoders (#787).
 
 The view's logical names are the interpretune module's own parameter names for the transcoders (``physical``
-naming). Every transcoder tensor starts as ``instrument`` (a published artifact: never thawed, optimized or
+naming). Every transcoder tensor starts as ``artifact`` (a published artifact: never thawed, optimized or
 checkpointed) and may be promoted to ``latent:<name>`` through finetuning-scheduler's promotion, after which a
 schedule can thaw it.
 
 **The base model is refused by name unless asked for.** The transcoders were trained on the base model's activations,
 so tuning the base model under them changes what they are asked to reconstruct. By default a schedule naming a
 base-model parameter gets an ``Unresolvable`` naming that reason. With ``CircuitTracerConfig.tune_base`` the base
-model's parameters join the view as ``base`` (the transcoders stay ``instrument`` unless promoted), and a generated
+model's parameters join the view as ``base`` (the transcoders stay ``artifact`` unless promoted), and a generated
 schedule thaws them in pairs from the last, ahead of the transcoder groups, which only a promotion makes trainable.
 Attribution after base tuning stays complete, since circuit-tracer's error nodes absorb whatever the transcoders no
 longer reconstruct, so the cost of the drift is interpretability rather than correctness:
@@ -283,10 +283,10 @@ def offload_keeps_parameters(offload: str | None) -> Iterator[None]:
 
 
 class CircuitTracerView:
-    """A ``TunableView`` over a circuit-tracer composition: its transcoders, as ``instrument`` tensors.
+    """A ``TunableView`` over a circuit-tracer composition: its transcoders, as ``artifact`` tensors.
 
     It does not inherit from a finetuning-scheduler class: finetuning-scheduler supplies the members it lacks
-    (``checkpoint_state_dict``, which leaves the ``instrument`` tensors out, and its loader).
+    (``checkpoint_state_dict``, which leaves the ``artifact`` tensors out, and its loader).
 
     Args:
         root: The interpretune module.
@@ -328,13 +328,13 @@ class CircuitTracerView:
                 f" {type(root).__name__}; register the transcoders on the interpretune module before building its view."
             )
         self._roles = validate_roles(
-            dict.fromkeys(self._names, "instrument"),
+            dict.fromkeys(self._names, "artifact"),
             (n for n, _ in root.named_parameters()),
             (n for n, _ in root.named_buffers()),
         )
 
     def support(self) -> TunableSupport:
-        """Trainable through the transcoders (``instrument`` until promoted)."""
+        """Trainable through the transcoders (``artifact`` until promoted)."""
         from venngram.tuning import TunableSupport
         from venngram.roles import declared_kinds
 
@@ -346,7 +346,7 @@ class CircuitTracerView:
         return TunableSupport(trainable=True, naming_scheme="physical", declared_roles=roles)
 
     def roles(self) -> Mapping[str, str]:
-        """``instrument`` for every transcoder tensor; base-model tensors are unlisted, which is ``base``."""
+        """``artifact`` for every transcoder tensor; base-model tensors are unlisted, which is ``base``."""
         return dict(self._roles)
 
     def logical_named_parameters(self) -> Iterator[tuple[str, Tensor]]:

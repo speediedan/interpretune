@@ -13,7 +13,7 @@ r"""A CPU-sized sparsity chain (#698 to #700) as one phased run on the core loop
 
 The composition is a small residual MLP classifier whose answer is the gap between two logits, with a JumpReLU
 transcoder reading the input and reconstructing the output of the MLP at each regularized layer. The transcoders are
-published artifacts (``instrument``); the enforcement means and keep masks are run-fitted state (``fitted``).
+published artifacts (``artifact``); the enforcement means and keep masks are run-fitted state (``fitted``).
 
 Phase 0 tunes the base model against the task loss plus an attribution-sparsity penalty: the $\ell_1 / \ell_2$ ratio
 of the per-feature attributions $a_f (W_{dec} g)_f$, where $g$ is the gap's gradient at the MLP output, normalized by
@@ -286,8 +286,8 @@ class DrawNoise:
 
 
 def roles(module: ChainModule) -> dict[str, str]:
-    """The composition's roles: transcoders ``instrument``, enforcement buffers ``fitted``, the rest ``base``."""
-    names = {n: "instrument" for n, _ in module.named_parameters() if n.startswith("model.tcs.")}
+    """The composition's roles: transcoders ``artifact``, enforcement buffers ``fitted``, the rest ``base``."""
+    names = {n: "artifact" for n, _ in module.named_parameters() if n.startswith("model.tcs.")}
     names.update({n: "fitted" for n, _ in module.named_buffers() if n.startswith("model.enforce_")})
     return names
 

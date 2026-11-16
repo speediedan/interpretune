@@ -106,7 +106,7 @@ class CircuitTracerConfig(ITSerializableCfg):
     """
     lazy_delta_rank: int | None = None
     """Let the tunable view tune the base model's parameters (role ``base``) under the replacement model's
-    transcoders, which stay ``instrument`` unless promoted.
+    transcoders, which stay ``artifact`` unless promoted.
 
     ``False`` (default) refuses base-model names by name. The transcoders were trained on the untuned base model's
     activations, so tuning the base moves what they are asked to reconstruct: attribution graphs stay complete (the

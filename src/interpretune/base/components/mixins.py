@@ -2,7 +2,6 @@ from __future__ import annotations
 import os
 import inspect
 from typing import Any, TYPE_CHECKING, Dict, cast
-from contextlib import contextmanager
 from functools import wraps
 
 
@@ -56,46 +55,21 @@ class ITStateMixin:
 class MemProfilerHooks:
     """Memory-profiling hooks a module composes in when profiling is enabled."""
 
-    @contextmanager
-    @staticmethod
-    def memprofile_ctx(memprofiler, phase: str, epoch_idx: int | None = None, step_idx: int | None = None):
-        """Snapshot memory around a phase, taking a start and an end sample.
-
-        The end sample resets the memory hooks, so per-step hook attributes do not accumulate across steps.
-        A ``finally`` guarantees the end snapshot even when the wrapped phase raises -- an aborted step is
-        exactly when the memory picture matters most.
-        """
-        try:
-            memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="start")
-            yield
-        finally:
-            memprofiler.snap(phase=phase, epoch_idx=epoch_idx, step_idx=step_idx, step_ctx="end", reset_mem_hooks=True)
-
     @staticmethod
     def memprofilable(func):
         """Decorator profiling a step method, a no-op when no profiler is attached.
 
-        Derives the step index from the profiler's own counter rather than parsing ``args`` for a
-        ``batch_idx``, so it works across step signatures that differ between frameworks.
+        Each call is one iteration of the method's name in the profiler's schedule (``collect_funcs`` names the methods
+        it collects for), so the decorator reads nothing from the step's arguments and works across step signatures
+        that differ between frameworks.
         """
 
         @wraps(func)
         def wrapper(self, *args, **kwargs):
             if not self.memprofiler:
                 return func(self, *args, **kwargs)
-            phase = func.__name__
-            # for increased generality, we derive a profile `step_idx` based on a profiler snap counter rather than
-            # parsing `args` if a `batch_idx` kwarg isn't found
-            step_idx = kwargs.get("batch_idx", None)
-            with MemProfilerHooks.memprofile_ctx(self.memprofiler, phase=phase, step_idx=step_idx):
-                if (
-                    self.memprofiler.memprofiler_cfg.enable_saved_tensors_hooks
-                    and self.memprofiler._enabled[(phase, "start")]
-                ):
-                    with torch.autograd.graph.saved_tensors_hooks(*self.memprofiler._saved_tensors_funcs):
-                        return func(self, *args, **kwargs)
-                else:
-                    return func(self, *args, **kwargs)
+            with self.memprofiler.profile(func.__name__):
+                return func(self, *args, **kwargs)
 
         return wrapper
 

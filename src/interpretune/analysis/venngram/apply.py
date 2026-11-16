@@ -50,6 +50,11 @@ explicit positions becomes circuit-tracer's ``(layer, position, feature_idx, val
 (``capture_feature_activations``, declared by ``captures_clean_activations``). The values are computed here and passed
 as constants, so a backend must honour the ``constant`` value source.
 
+**Gradient-targeted ops** are unit- or feature-targeted ops whose target set addresses ``of: grad``: the gradient with
+respect to those units of the activation at the site. ``recipe_interventions(..., flow="grad")`` translates them into
+the same specs, for the backward surface (``bwd_w_intervention``, the ``model_bwd_intervention`` op), and refuses the
+recipe's value ops there, as the default ``flow="value"`` refuses its gradient ops: one translation, one flow.
+
 Anything the declaration does not cover is refused by
 :func:`~interpretune.analysis.venngram.support.require_supported`, which lists every refusal this module would
 raise (:func:`op_refusal`) at once; this module refuses again what it cannot translate, by name, so a caller that
@@ -66,7 +71,7 @@ from typing import Any
 
 import torch
 
-from interpretune.analysis.backends.capabilities import FeatureTargetSupport, PositionScope
+from interpretune.analysis.backends.capabilities import FLOWS, FeatureTargetSupport, PositionScope
 from interpretune.analysis.backends.interventions import InterventionSpec
 from interpretune.analysis.venngram.values import Statistic, member_refusal, member_values, target_kind
 from interpretune.utils import MisconfigurationException
@@ -127,23 +132,30 @@ def _member_refusal(recipe: Any, stage: Any, op: Any, kind: str) -> str | None:
     return member_refusal(recipe, op)
 
 
-def _gradient_refusal(recipe: Any, op: Any) -> str | None:
-    """Why an op acting on a gradient (its target set is ``of: grad``) cannot be translated: the forward surface
-    writes activation values, so translating it would apply the op to the value instead.
-
-    The backward surface is #970.
+def _flow_refusal(recipe: Any, op: Any, flow: str) -> str | None:
+    """Why an op acting on one flow cannot be translated for the surface applying the other: the forward surface writes
+    activation values and the backward surface writes gradients, so translating it would apply the op to a different
+    tensor. A target set addressing ``of: grad`` names the gradient through those units; an op with no target acts on
+    the value.
     """
-    if op.target is not None and op.target_of(recipe.book) == "grad":
+    acts_on = "value" if op.target is None else op.target_of(recipe.book)
+    if acts_on == flow:
+        return None
+    if acts_on == "grad":
         return (
-            "its target addresses the gradient (`of: grad`); interpretune applies recipe ops to activation values "
-            "only, so it is refused rather than applied to the value"
+            "its target addresses the gradient (`of: grad`), and this translation is for activation values: translate "
+            "it with `flow='grad'` and apply it through `bwd_w_intervention`, rather than to the value"
         )
-    return None
+    return (
+        "it acts on the activation value, and this translation is for gradients: a recipe's ops are applied one flow "
+        "at a time, so translate it with `flow='value'` and apply it through `fwd_w_intervention`"
+    )
 
 
-def op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
-    """Why ``op`` (at ``stage`` of ``recipe``) cannot be translated, or ``None`` when it can."""
-    if (refusal := _gradient_refusal(recipe, op)) is not None:
+def op_refusal(recipe: Any, stage: Any, op: Any, flow: str = "value") -> str | None:
+    """Why ``op`` (at ``stage`` of ``recipe``) cannot be translated for the ``flow`` surface (``value`` for
+    ``fwd_w_intervention``, ``grad`` for ``bwd_w_intervention``), or ``None`` when it can."""
+    if (refusal := _flow_refusal(recipe, op, flow)) is not None:
         return refusal
     layer, _ = split_site(stage.site)
     kind = target_kind(recipe, op)
@@ -175,7 +187,7 @@ def feature_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     """
     if target_kind(recipe, op) != "features":
         return "circuit-tracer's feature tuples act on a feature target only"
-    if (refusal := _gradient_refusal(recipe, op)) is not None:
+    if (refusal := _flow_refusal(recipe, op, "value")) is not None:
         return refusal
     if op.op not in FEATURE_TUPLE_OPS:
         return f"circuit-tracer's feature tuples express {sorted(FEATURE_TUPLE_OPS)}, not `{op.op}`"
@@ -250,8 +262,13 @@ def recipe_interventions(
     evidence: Mapping[str, Mapping[str, Mapping[tuple[int, int], float]]] | None = None,
     statistics: Mapping[str, Statistic] | None = None,
     weights_applied: bool = False,
+    flow: str = "value",
 ) -> dict[str, tuple[InterventionSpec, ...]]:
     """Translate a supported ``venngram.recipe.Recipe`` into a backend intervention payload.
+
+    With ``flow="grad"``, the payload is for ``bwd_w_intervention``: each unit- or feature-targeted op whose target set
+    addresses ``of: grad`` acts on the gradient at its site, through the same specs a value op becomes. A recipe's ops
+    are translated for one flow at a time, and an op on the other flow is refused (see :func:`op_refusal`).
 
     Args:
         recipe: The recipe to translate.
@@ -263,6 +280,7 @@ def recipe_interventions(
         weights_applied: Whether the recipe's ``weights`` section (ops on parameters, which a recipe applies before any
             stage) has been applied (:func:`~interpretune.tuning.weights.apply_recipe_weights`). A recipe with weights
             is refused until it has, since its stages alone are a different treatment.
+        flow: ``value`` (the default) for ``fwd_w_intervention``, or ``grad`` for ``bwd_w_intervention``.
 
     Returns:
         A mapping of hook patterns (``blocks.<layer>.<site>``) to the ordered specs to apply at each, in the raw
@@ -275,6 +293,8 @@ def recipe_interventions(
             value the supplied evidence cannot give, naming the stage and op. Run
             :func:`~interpretune.analysis.venngram.support.require_supported` first for the full list at once.
     """
+    if flow not in FLOWS:
+        raise MisconfigurationException(f"flow {flow!r} is not a flow; a recipe is translated for one of {list(FLOWS)}")
     if getattr(recipe, "weights", ()) and not weights_applied:
         raise MisconfigurationException(
             f"recipe {recipe.name!r} has a `weights` section ({len(recipe.weights)} ops on parameters), applied before "
@@ -292,7 +312,7 @@ def recipe_interventions(
         layer, site = split_site(stage.site)
         for j, op in enumerate(stage.ops):
             where = f"stage {i} ({stage.site}) op {j} (`{op.op}`)"
-            if (refusal := op_refusal(recipe, stage, op)) is not None:
+            if (refusal := op_refusal(recipe, stage, op, flow)) is not None:
                 raise MisconfigurationException(f"{where}: {refusal}")
             kind = target_kind(recipe, op)
             if kind == "activation":

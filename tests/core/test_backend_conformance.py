@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from interpretune.analysis.backends import Capability
+from interpretune.analysis.backends import Capability, PositionScope
 from interpretune.testing.conformance import ConformanceTarget, ModelBackendConformance, OpCollectionConformance
 from interpretune.testing.conformance.gates import conformance_case
 from interpretune.testing.conformance.inputs import CAPTURE_LAYER, ConformanceInputs
@@ -165,6 +165,20 @@ class TestCompatibilityModeConformance(ModelBackendConformance):
     @conformance_case(capability=Capability.GRADIENTS)
     def test_gradient_predicts_a_small_perturbation_to_first_order(self, suite):
         super().test_gradient_predicts_a_small_perturbation_to_first_order(suite)
+
+    # Measured on this target: every element of the baseline gradient at the SAE's feature activations is non-finite
+    # on the suite's padded batch, before any edit is applied.
+    @pytest.mark.xfail(strict=True, reason=_TL4_MASKED_GRADIENTS)
+    @conformance_case(
+        capability=Capability.LATENT_MODELS,
+        target="features",
+        provider="model_backend",
+        flow="grad",
+        scope=PositionScope.ALL_POSITIONS,
+        op="scale",
+    )
+    def test_a_gradient_edit_reaches_a_latent_sub_hook(self, suite):
+        super().test_a_gradient_edit_reaches_a_latent_sub_hook(suite)
 
     def test_the_family_label_is_true_of_the_model(self, suite):
         """Positive control on the label: this target's weights really are processed, not raw HF weights.

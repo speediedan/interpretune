@@ -22,7 +22,7 @@ operands, addresses and roles are the same in both spaces:
   ``replace`` on a tensor or on its units, and ``reject`` and ``project`` of a direction on its output side;
 - :func:`weight_edit_roles`, the roles to declare for each edit's operand: ``adapter:<name>`` for a trainable one
   (a LoRA is a trainable low-rank ``add`` on a weight), ``fitted`` for one computed in the run (checkpointed, never
-  optimized), or ``instrument`` for one loaded from a published artifact (never checkpointed: it is reloaded from its
+  optimized), or ``artifact`` for one loaded from a published artifact (never checkpointed: it is reloaded from its
   source). Every interpretune module declares them through its cooperative ``tunable_roles()``.
 
 An edit is reversible by default: it is a ``torch.nn.utils.parametrize`` parametrization, so the base tensor is kept
@@ -60,7 +60,7 @@ from torch import nn
 from torch.nn.utils import parametrize
 
 #: The roles an edit's operand may take (see the module docstring).
-EDIT_ROLES = ("instrument", "fitted", "adapter")
+EDIT_ROLES = ("artifact", "fitted", "adapter")
 
 #: The ops :func:`apply_recipe_weights` materializes: every op venngram allows on a parameter target.
 WEIGHT_OPS = frozenset({"replace", "add", "scale", "project", "reject"})
@@ -390,7 +390,7 @@ def apply_weight_patch(
     *,
     op: str = "add",
     name: str | None = None,
-    role: str = "instrument",
+    role: str = "artifact",
     reversible: bool = True,
     view: Any | None = None,
     sets: Mapping[str, Any] | None = None,
@@ -403,7 +403,7 @@ def apply_weight_patch(
         op: ``add`` (:math:`W + \\Delta`) or ``replace``.
         name: The edit's name (letters, digits, ``_`` and ``-``); the patch's name by default, with other characters
             replaced by ``_``.
-        role: The operand's role: ``instrument`` (loaded from an artifact, the default), ``fitted`` (computed in the
+        role: The operand's role: ``artifact`` (loaded from an artifact, the default), ``fitted`` (computed in the
             run), or ``adapter`` (trainable, declared ``adapter:<name>``).
         reversible: Parametrize the tensor (the default), or write the edited value into it (for an export).
         view: The view addresses resolve through; ``root``'s attached view, else its default view.
@@ -519,7 +519,7 @@ def apply_recipe_weights(
     root: nn.Module,
     recipe: Any,
     *,
-    role: str = "instrument",
+    role: str = "artifact",
     name: str | None = None,
     reversible: bool = True,
     view: Any | None = None,
@@ -603,7 +603,7 @@ def weight_form(
     root: nn.Module,
     recipe: Any,
     *,
-    role: str = "instrument",
+    role: str = "artifact",
     name: str | None = None,
     view: Any | None = None,
 ) -> list[WeightEditHandle]:

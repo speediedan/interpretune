@@ -41,6 +41,9 @@ class Gate:
     op: str | None = None
     ops: tuple[str, ...] = ()
     """Every op a case needs declared at once (a mixed-op payload); ``op`` is the one-op form."""
+    flow: str | None = None
+    """The flow a case's ops act on (``value``, or ``grad`` for the backward surface), which the target's provider
+    must declare in its record's ``of``."""
     batched_hooks: bool | None = None
     family: str | None = None
     single_prompt: bool | None = None
@@ -54,8 +57,10 @@ class Gate:
         parts = []
         if self.capability is not None:
             parts.append(self.capability.name)
-        if self.capability is Capability.INTERVENTION or self.scope or self.scopes or self.op or self.ops:
+        if self.capability is Capability.INTERVENTION or self.scope or self.scopes or self.op or self.ops or self.flow:
             parts.append(f"target={self.target}" + (f"@{self.provider}" if self.provider else ""))
+        if self.flow is not None:
+            parts.append(f"flow={self.flow}")
         if self.scope is not None:
             parts.append(f"scope={self.scope.value}")
         if self.scopes:
@@ -84,7 +89,7 @@ class Gate:
         # value-equal, identity-distinct members on either side.
         needed = tuple(self.scopes) + ((self.scope,) if self.scope is not None else ())
         ops = tuple(self.ops) + ((self.op,) if self.op is not None else ())
-        if self.capability is Capability.INTERVENTION or needed or ops:
+        if self.capability is Capability.INTERVENTION or needed or ops or self.flow is not None:
             providers = caps.target_providers(self.target)
             if (self.provider not in providers) if self.provider is not None else not providers:
                 return False
@@ -93,6 +98,8 @@ class Gate:
             if any(s.value not in {d.value for d in record.position_scopes} for s in needed):
                 return False
             if any(op not in record.declared_ops for op in ops):
+                return False
+            if self.flow is not None and self.flow not in {getattr(f, "value", f) for f in record.of}:
                 return False
         if self.batched_hooks is not None:
             if caps.latent_models is None or caps.latent_models.batched_hooks is not self.batched_hooks:

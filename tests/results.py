@@ -83,24 +83,22 @@ def get_exp_token_ids(ds_cfg: str, task_name: str, tokenizer_cls_name: str):
 # approach seems like overkill given the current codebase.
 ########################################################################################################################
 class MemProfResult(NamedTuple):
-    # encapsulate memprofiler result defaults
-    # we default to step:
-    #   - 3 for cuda in the train phase
-    #   - 0 for all other tests (e.g. hook-based (by default, cpu/rss-based) and all test phase assessment)
-    # all tests currently default to test epoch 0 to minimize TTS
-    epoch = 0
+    # encapsulate memprofiler result defaults; keys are the profiler's `rank.fn_name.iter_idx.iter_ctx`, with
+    # iterations counted from 1. We default to iteration:
+    #   - 4 for cuda in the train phase
+    #   - 1 for all other tests (e.g. hook-based (by default, cpu/rss-based) and all test phase assessment)
     rank = 0
-    default_step = 0
-    cuda_train_step = 3
+    default_iter = 1
+    cuda_train_iter = 4
     cuda_mem_keys = ("allocated_bytes.all.current", "allocated_bytes.all.peak", "reserved_bytes.all.peak", "npp_diff")
     cpu_mem_keys = {
         "test": ("rss_diff",),
         "train": ("rss_diff", "npp_diff"),
     }
-    test_key = f"{rank}.test_step.{epoch}.{default_step}.end"
+    test_key = f"{rank}.test_step.{default_iter}.end"
     train_keys = {
-        "cuda": f"{rank}.training_step.{epoch}.{cuda_train_step}.end",
-        "cpu": f"{rank}.training_step.{epoch}.{default_step}.end",
+        "cuda": f"{rank}.training_step.{cuda_train_iter}.end",
+        "cpu": f"{rank}.training_step.{default_iter}.end",
     }
 
 
@@ -137,7 +135,7 @@ ROCM_MEM_KEY = "expected_mem_rocm"
 def mem_results(results: Dict, test_alias: str):
     """Result generation function for memory profiling tests."""
     # See NOTE [Memprofiler Key Format]
-    # snap keys are rank.phase.epoch_idx.step_idx.step_ctx
+    # snap keys are rank.fn_name.iter_idx.iter_ctx, with iterations counted from 1
     expected_results = results[test_alias]
     src, phase, expected_mem = expected_results["src"], expected_results["phase"], expected_results["expected_mem"]
     if src == "cuda" and on_rocm():

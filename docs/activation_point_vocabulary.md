@@ -88,7 +88,7 @@ evolution policy below.
 Kinds: `block`, `attn`, `mlp`, `norm`, `linear`, `embed`, `unembed`. A sandwich-norm architecture adds
 `ln1_post` and `ln2_post` rows and sets `facts.sandwich_norms`, which is what routes the contribution points.
 
-Sources, in precedence order: a bundled document (six architectures ship with Interpretune), a document pulled
+Sources, in precedence order: a bundled document (seven architectures ship with Interpretune), a document pulled
 as a `hookmaps` hub component (data, no trust gate; `it.hub.pull_hookmaps("<org>/<repo>")` fetches and registers,
 `it.hub.load_hookmaps` registers from the cache), and a map derived from TransformerLens' own per-architecture
 component mapping. Two sources for one architecture must agree, and a test says so. The TransformerLens-derived
@@ -203,6 +203,10 @@ on seven rows of fourteen while the oracle reported agreement over the whole.
 lookup refuses it, and after its stated horizon the document is deleted. From then on the architecture has no
 bundled map: a lookup refuses, listing what is known, and a map pulled as a `hookmaps` component becomes
 the source for it with nothing to conflict against.
+
+**Pending: one source for the maps.** The bundled documents repeat facts venngram's registry also publishes, in a
+different schema, so the two can drift. [#1026](https://github.com/speediedan/interpretune/issues/1026) proposes
+reading the maps from the registry and retiring the bundled set; until it lands, new architectures still enter here.
 
 **While both exist.** Precedence is enforced at load, not by order: a pulled map for an architecture that already
 has a registered one must be identical (same rows, same properties) or the load is refused naming both sources;

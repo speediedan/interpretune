@@ -402,6 +402,110 @@ model_fwd_intervention:
       required: false
       sequence_type: false
 
+model_bwd_intervention:
+  description: Apply hook-point interventions to gradients during a backward pass and return the gradients they change
+  implementation: interpretune.analysis.ops.bundled.concept.concept_ops.model_bwd_intervention_impl
+  # The payload is the forward op's, read by the same resolver; every spec acts on the gradient at its site, so the
+  # backend must declare the `grad` flow (checked by name before anything runs).
+  required_capabilities: [intervention, gradients]
+  aliases: [gradient_intervention]
+  input_schema:
+    interventions:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+    interventions_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_hook_pattern:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_tensor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    intervention_tensors_json:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_op:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    intervention_use_intervention_tensor_as_basis:
+      datasets_dtype: bool
+      required: false
+      sequence_type: false
+    intervention_scale_factor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    intervention_position_scope:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    use_latent_models:
+      datasets_dtype: bool
+      required: false
+      sequence_type: false
+    concept_direction:
+      datasets_dtype: float32
+      required: false
+      sequence_type: true
+    concept_cache_key:
+      datasets_dtype: string
+      required: false
+      non_tensor: true
+      sequence_type: false
+    direction_scale_factor:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    logit_target_ids:
+      datasets_dtype: int64
+      required: false
+      sequence_type: true
+    grad_capture:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+    grad_capture_sets:
+      datasets_dtype: object
+      required: false
+      non_tensor: true
+  output_schema:
+    grad_point_names:
+      datasets_dtype: string
+      sequence_type: true
+      non_tensor: true
+    grad_shape:
+      datasets_dtype: int64
+      sequence_type: true
+    pre_intervention_grad_values:
+      datasets_dtype: float32
+      sequence_type: true
+    post_intervention_grad_values:
+      datasets_dtype: float32
+      sequence_type: true
+    bwd_intervention_metric:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+    intervention_grad_position_effect:
+      datasets_dtype: float32
+      required: false
+      sequence_type: false
+      dyn_dim: 1
+      dyn_dim_ceil: max_seq_len
+      array_shape: [null, batch_size]
+
 intervention_first_order_check:
   description: Check an applied intervention against its first-order prediction per basis
   implementation: interpretune.analysis.ops.bundled.concept.concept_ops.intervention_first_order_check_impl

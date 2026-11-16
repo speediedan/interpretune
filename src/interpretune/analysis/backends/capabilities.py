@@ -40,7 +40,9 @@ class Capability(Enum):
     """
 
     INTERVENTION = "intervention"
-    """An edit applied during a forward pass, on an activation, a unit set or a latent model's features.
+    """An edit applied during a forward pass, on an activation, a unit set or a latent model's features, and, where
+    the record's flows (``of``) include ``grad``, the same edit applied to the gradient at a site during a backward
+    pass (:class:`~interpretune.analysis.backends.protocols.SupportsGradientIntervention`).
 
     The record
     (:class:`InterventionSupport`) declares which ops, targets, position scopes, value sources, bases and flows the
@@ -265,7 +267,9 @@ class InterventionSupport:
         return self.targets[target]
 
     @classmethod
-    def every(cls, *, targets: Mapping[str, Any] | None = None) -> InterventionSupport:
+    def every(
+        cls, *, targets: Mapping[str, Any] | None = None, of: frozenset[str] = frozenset({"value"})
+    ) -> InterventionSupport:
         """Every op and every hook scope: for a backend whose hook can compute its edit from the activation it sees,
         during the pass.
 
@@ -273,12 +277,15 @@ class InterventionSupport:
         steering surface can receive the activation and still express only ``add``, if every parameter it
         takes was fixed before the pass began. Such a provider declares every registered op, including ops registered
         after it was built. ``targets`` defaults to every target with no detail: a hook reaches a whole activation, any
-        of its units, and an attached latent model's features at its sub-hook.
+        of its units, and an attached latent model's features at its sub-hook. ``of`` adds ``grad`` for a provider that
+        also applies its ops to the gradient during a backward pass (``bwd_w_intervention``). It is never implied: what
+        a forward hook can reach says nothing about the backward pass.
         """
         return cls(
             every_registered_op=True,
             position_scopes=PositionScope.hook_scopes(),
             targets=dict.fromkeys(INTERVENTION_TARGETS) if targets is None else targets,
+            of=of,
         )
 
 
