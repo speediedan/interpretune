@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from interpretune.harness.sessions import (
@@ -62,7 +64,7 @@ class TestSuppliedModelSpecs:
         path = tmp_path / "specs.yaml"
         path.write_text(yaml.safe_dump(self._SPECS), encoding="utf-8")
         assert resolve_model_spec("toy", "tiny", model_specs=path).transcoder_set == "org/toy-transcoders"
-        with pytest.raises(ValueError, match=f"nope.x in {path}"):
+        with pytest.raises(ValueError, match=re.escape(f"nope.x in {path}")):
             resolve_model_spec("nope", "x", model_specs=str(path))
 
     def test_a_hub_reference_resolves_through_the_component_cache(self, tmp_path, monkeypatch):
@@ -77,7 +79,7 @@ class TestSuppliedModelSpecs:
         ref = "hub://org/experiment@abc123/model_specs.yaml"
         assert resolve_model_spec("toy", "tiny", model_specs=ref).model_name == "org/toy-tiny"
         assert seen == [ref]
-        with pytest.raises(ValueError, match=f"nope.x in {ref}"):
+        with pytest.raises(ValueError, match=re.escape(f"nope.x in {ref}")):
             resolve_model_spec("nope", "x", model_specs=ref)
 
     def test_a_missing_file_is_refused_by_name(self, tmp_path):
