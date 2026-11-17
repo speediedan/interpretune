@@ -57,7 +57,7 @@ class TestRootDiscovery:
 
 
 def _find_root_from(start: Path) -> Path:
-    from interpretune.utils.notebook_publishing import find_root
+    from interpretune.utils.notebook_config import find_root
 
     return find_root(start)
 
