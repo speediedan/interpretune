@@ -358,12 +358,19 @@ class TLModelBackend:
         them where the tensor is the same, and deliberately does not map where it is not (its `hook_mlp_out` /
         `hook_attn_out` are the post-norm outputs on a sandwich-norm architecture, so `mlp.hook_out` / `attn.hook_out`
         stay unaliased and are uncapturable there by those spellings). The declaration reports that gap by name.
+
+        The component map is bound to the HF model the bridge wraps, so a hybrid stack's attention is probed on a layer
+        that has it; a wrapper that carries no HF model is read against the unbound map, which refuses an optional row
+        by name.
         """
-        from interpretune.analysis.points import component_map_for
+        from interpretune.analysis.points import bind_component_map, component_map_for
         from interpretune.analysis.points.inventory import inventory, spelled_at
 
         architecture = _hf_architecture(model)
         cmap = component_map_for(architecture)
+        original = getattr(model, "original_model", None)
+        if original is not None:
+            cmap = bind_component_map(cmap, original)
         available = _build_available_hook_map(model)
         capturable: set[str] = set()
         uncapturable: dict[str, str] = {}
