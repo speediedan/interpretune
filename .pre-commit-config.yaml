@@ -96,23 +96,20 @@ repos:
   #         - mdformat_frontmatter
   #       exclude: "CHANGELOG.md", "**/*.prompt.md"
 
-  - repo: local
+  # The same commit as nbpress's git-deps pin in pyproject.toml and its line in requirements/docs.txt.
+  - repo: https://github.com/speediedan/nbpress
+    rev: b4a62204ac84578baaa1d7373d39f2d8a9090de5  # frozen: v0.1.0
     hooks:
-      - id: nbstripout
-        name: nbstripout
-        entry: python scripts/run_nbstripout_hook.py
-        language: system
-        files: \.ipynb$
+      - id: nbpress-strip
         # docs/notebook_artifacts holds EXECUTED copies whose outputs are the entire point --
         # they are what the docs site renders. Stripping them would silently empty every
         # example page. They are excluded from the sdist via `prune docs` in MANIFEST.in.
         exclude: ^docs/notebook_artifacts/
-      - id: publish-notebooks
-        name: Publish notebooks if changed
-        entry: python scripts/publish_notebooks.py
-        language: system
+      - id: nbpress-publish
         files: ^src/it_examples/notebooks/dev/.*\.ipynb$
-        pass_filenames: false
+
+  - repo: local
+    hooks:
       - id: check-benchmark-registry-isolation
         name: Benchmark registry must be committed in isolation
         entry: python scripts/check_benchmark_registry_isolation.py
