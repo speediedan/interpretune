@@ -3,16 +3,27 @@
 The signature reads a feature's decoder vector through the folded J-lens; the decoupling score compares that disposition
 against the input-side concept share. CPU-synthetic throughout (stub graph, stub transcoders, tiny random lens): the
 consultation with real artifacts belongs to the GPU lanes, and nothing here needs it.
+
+The environment helpers (``validate_env_vars``, ``required_os_env``) and ``concept_token_positions`` are tested at the
+end of the file: environment variables are set per test through ``monkeypatch``, ``.env`` files live in ``tmp_path``,
+and auto-discovery is replaced by a recorder so no test reads a real ``.env``.
 """
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import pytest
 import torch
 
-from it_examples.utils.example_helpers import feature_io_profiles
+from interpretune.harness import notebook_inputs
+from interpretune.harness.notebook_inputs import (
+    concept_token_positions,
+    feature_io_profiles,
+    required_os_env,
+    validate_env_vars,
+)
 
 
 class _StubGraph:
@@ -153,7 +164,7 @@ class TestFeatureIOSignatures:
 
 class TestSignatureDisplay:
     def test_table_renders_signature_column_when_present(self) -> None:
-        from it_examples.utils import nb_ui_utils
+        from interpretune.harness import notebook_ui
 
         artifact, info = _lens_parts()
         profiles = _profiles(
@@ -162,20 +173,136 @@ class TestSignatureDisplay:
             tokenizer=_StubTokenizer(),
             concept_token_ids=[5],
         )
-        nb_ui_utils.display_feature_decoupling_table(profiles)
+        notebook_ui.display_feature_decoupling_table(profiles)
 
     def test_table_renders_without_signatures(self) -> None:
-        from it_examples.utils import nb_ui_utils
+        from interpretune.harness import notebook_ui
 
-        nb_ui_utils.display_feature_decoupling_table(_profiles())
+        notebook_ui.display_feature_decoupling_table(_profiles())
 
     def test_projection_map_refuses_unknown_coloring(self) -> None:
-        from it_examples.utils import nb_ui_utils
+        from interpretune.harness import notebook_ui
 
         with pytest.raises(ValueError, match="not a coloring"):
-            nb_ui_utils.plot_decoder_projection_map(
+            notebook_ui.plot_decoder_projection_map(
                 _profiles(),
                 torch.randn(3, 8),
                 torch.randn(20, 8),
                 color_by="bogus",
             )
+
+
+_PRESENT, _EMPTY, _ABSENT = "IT_TEST_NB_PRESENT", "IT_TEST_NB_EMPTY", "IT_TEST_NB_ABSENT"
+
+
+@pytest.fixture
+def env(monkeypatch) -> None:
+    monkeypatch.setenv(_PRESENT, "hf_abc123")
+    monkeypatch.setenv(_EMPTY, "")
+    monkeypatch.delenv(_ABSENT, raising=False)
+
+
+class TestValidateEnvVars:
+    def test_present_accepts_empty_but_not_absent(self, env) -> None:
+        assert validate_env_vars([(_PRESENT, "present"), (_EMPTY, "present")]) is True
+        assert validate_env_vars([(_PRESENT, "present"), (_ABSENT, "present")]) is False
+
+    def test_non_empty_rejects_empty_and_absent(self, env) -> None:
+        assert validate_env_vars([(_PRESENT, "non-empty")]) is True
+        assert validate_env_vars([(_EMPTY, "non-empty")]) is False
+        assert validate_env_vars([(_ABSENT, "non-empty")]) is False
+
+    def test_callable_receives_the_value_and_is_skipped_when_absent(self, env) -> None:
+        seen: list[str] = []
+
+        def check(value: str) -> bool:
+            seen.append(value)
+            return value.startswith("hf_")
+
+        assert validate_env_vars([(_PRESENT, check)]) is True
+        assert validate_env_vars([(_EMPTY, check)]) is False
+        assert validate_env_vars([(_ABSENT, check)]) is False
+        assert seen == ["hf_abc123", ""]
+
+    def test_every_spec_must_pass(self, env) -> None:
+        assert validate_env_vars([]) is True
+        assert validate_env_vars([(_PRESENT, "non-empty"), (_EMPTY, "non-empty")]) is False
+
+    def test_unknown_mode_is_refused_by_name(self, env) -> None:
+        with pytest.raises(ValueError, match=f"Invalid mode for {_PRESENT}: required"):
+            validate_env_vars([(_PRESENT, "required")])
+
+
+class TestRequiredOsEnv:
+    _FROM_FILE = "IT_TEST_NB_FROM_DOTENV"
+
+    @pytest.fixture
+    def clean_var(self, monkeypatch) -> None:
+        # set then delete, so monkeypatch also removes whatever load_dotenv writes into os.environ
+        monkeypatch.setenv(self._FROM_FILE, "placeholder")
+        monkeypatch.delenv(self._FROM_FILE)
+
+    @pytest.fixture
+    def recorded_loads(self, monkeypatch) -> list[tuple]:
+        calls: list[tuple] = []
+        monkeypatch.setattr(notebook_inputs, "load_dotenv", lambda *args: calls.append(args) or False)
+        return calls
+
+    def test_loads_the_named_file_then_validates(self, tmp_path, clean_var) -> None:
+        pytest.importorskip("dotenv")
+        env_file = tmp_path / "nb.env"
+        env_file.write_text(f"{self._FROM_FILE}=from_file\n")
+        assert required_os_env(env_file, [(self._FROM_FILE, "non-empty")]) is True
+        assert os.environ[self._FROM_FILE] == "from_file"
+
+    def test_failed_requirement_is_reported_after_loading(self, tmp_path, clean_var, env) -> None:
+        pytest.importorskip("dotenv")
+        env_file = tmp_path / "nb.env"
+        env_file.write_text(f"{self._FROM_FILE}=from_file\n")
+        assert required_os_env(env_file, [(self._FROM_FILE, "present"), (_ABSENT, "present")]) is False
+
+    def test_missing_file_falls_back_to_auto_discovery(self, tmp_path, recorded_loads) -> None:
+        assert required_os_env(tmp_path / "missing.env") is True
+        assert recorded_loads == [()]
+
+    def test_no_path_auto_discovers(self, recorded_loads) -> None:
+        required_os_env()
+        assert recorded_loads == [()]
+
+    def test_existing_file_is_passed_as_a_string(self, tmp_path, recorded_loads) -> None:
+        env_file = tmp_path / "nb.env"
+        env_file.write_text("")
+        required_os_env(env_file)
+        assert recorded_loads == [(str(env_file),)]
+
+    def test_without_dotenv_still_validates(self, monkeypatch, env) -> None:
+        monkeypatch.setattr(notebook_inputs, "load_dotenv", None)
+        assert required_os_env(None, [(_PRESENT, "non-empty")]) is True
+        assert required_os_env(None, [(_ABSENT, "present")]) is False
+        assert required_os_env(None, None) is True
+
+
+class _DecodeTokenizer:
+    def __init__(self, pieces: list[str]) -> None:
+        self.pieces = pieces
+        self.decoded: list[list[int]] = []
+
+    def decode(self, token_ids: list[int]) -> str:
+        self.decoded.append(token_ids)
+        return self.pieces[token_ids[0]]
+
+
+class TestConceptTokenPositions:
+    def test_matches_case_space_and_sentencepiece_insensitively(self) -> None:
+        tok = _DecodeTokenizer([" Fruit", "▁color", "FRUIT", "fruity", "the", "Color "])
+        positions = concept_token_positions(tok, [0, 1, 2, 3, 4, 5], [" fruit ", "Color"])
+        assert positions == {0, 1, 2, 5}
+
+    def test_positions_index_the_prompt_not_the_vocab(self) -> None:
+        tok = _DecodeTokenizer(["the", "Fruit"])
+        assert concept_token_positions(tok, torch.tensor([0, 0, 1, 0, 1]), ["fruit"]) == {2, 4}
+        # each id is decoded alone, as a plain int
+        assert all(len(ids) == 1 and type(ids[0]) is int for ids in tok.decoded)
+
+    def test_no_concept_words_matches_nothing(self) -> None:
+        assert concept_token_positions(_DecodeTokenizer(["fruit"]), [0, 0], []) == set()

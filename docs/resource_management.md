@@ -58,12 +58,6 @@ fragmentation-related OOM on GPUs with ≤ 24 GiB VRAM.
 `torch.cuda.empty_cache()` between every notebook execution to reclaim
 VRAM before the next experiment starts.
 
-## Matplotlib Figure Cleanup
-
-`display_ablation_chart()` in `nb_ui_utils.py` closes figures with
-`plt.close(fig)` after `plt.show()` to prevent figure accumulation
-across long notebook sequences.
-
 ## Utilities
 
 `src/interpretune/utils/resource_mgmt.py` provides:
