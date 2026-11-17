@@ -359,23 +359,25 @@ def test_parameter_targets_are_declared_only_where_weights_are_materialized():
     assert {"param", "param_units"} <= supported.targets and check_support(recipe, supported) == []
 
 
+def _stage_doc(ops, tokens="all", site="mlp.out.hook_in"):
+    return {
+        "schema_version": 2,
+        "kind": "recipe",
+        "name": "neurons",
+        "model": {"id": "tiny", "revision": "r1"},
+        "book": {
+            "schema_version": 1,
+            "name": "tiny",
+            "portability": "checkpoint",
+            "applies_to": {"models": [{"id": "tiny", "revision": "r1"}]},
+            "sets": {"units": {"point": "mlp.out.hook_in", "layers": [0, 1], "units": {0: [3], 1: [2, 7]}}},
+        },
+        "stages": [{"site": site, "tokens": tokens, "ops": ops}],
+    }
+
+
 def _stage_recipe(ops, tokens="all", site="mlp.out.hook_in"):
-    return load_recipe(
-        {
-            "schema_version": 2,
-            "kind": "recipe",
-            "name": "neurons",
-            "model": {"id": "tiny", "revision": "r1"},
-            "book": {
-                "schema_version": 1,
-                "name": "tiny",
-                "portability": "checkpoint",
-                "applies_to": {"models": [{"id": "tiny", "revision": "r1"}]},
-                "sets": {"units": {"point": "mlp.out.hook_in", "layers": [0, 1], "units": {0: [3], 1: [2, 7]}}},
-            },
-            "stages": [{"site": site, "tokens": tokens, "ops": ops}],
-        }
-    ).recipe
+    return load_recipe(_stage_doc(ops, tokens=tokens, site=site)).recipe
 
 
 def _hooked(model, recipe):

@@ -80,9 +80,21 @@ sites. For $y = W x + b$:
 | $W' = W - \beta u v^{\top}$ | none at one site: $\Delta y = -\beta u (v^{\top} x)$ reads the input and writes the output |
 
 Ops on one input compose in order, so a later `scale` scales an earlier `add` too: with the ops' combined effect
-$x \mapsto s \odot x + a$, the weight form is $W \operatorname{diag}(s)$ with the bias patch $b + W a$, taken from the
+$x \mapsto s \odot x + a$, the weight form is $W \mathrm{diag}(s)$ with the bias patch $b + W a$, taken from the
 unedited $W$. A token-scoped op has no weight form, and a general low-rank or dense patch needs a parameter target.
 venngram's parameter op vectors state these equivalences, and interpretune's edits are tested against them.
+
+The `weight_equivalence_check` analysis op checks the equivalence on a model, batch by batch: it applies a per-neuron
+recipe's weight form and runs the forward, takes the form back, then runs the recipe's activation form through the
+model backend's own intervention path (`fwd_w_intervention`), and records the greatest absolute logit difference
+(`we_max_abs_diff`), the greatest logit magnitude (`we_max_abs`) and the verdict (`we_equivalent`). A recipe with no
+exact weight form is refused with the reason before any forward runs. The weight form needs the unit axis of
+`mlp.out`'s weight, so it resolves through the module's view when that view places units, else through venngram's
+registry map for the model the module carries, and a model whose map records no `layout` is refused by name. A
+`TransformerBridge` renames the modules of the model it wraps, so no published map describes it and the op refuses it;
+an nnsight composition registers the model's own modules and is described by its map. The model-backend conformance
+suite runs the same comparison on every target whose view places units, together with a check that taking the weight
+form back restores the base logits exactly.
 
 ## Surfaces
 
@@ -333,7 +345,7 @@ What each core op preserves and what it moves, in one place:
   tensor times `scale_factor` (a scalar, or a per-unit multiplier with ones where units are left
   alone), so a tensor of ones is the identity.
 - `replace_with_error`: preserves the forward value exactly and moves only the gradient. For an operand $o$ (a latent
-  model's reconstruction) at an activation $x$ it gives $o + \operatorname{sg}(x - o)$, where $\operatorname{sg}$
+  model's reconstruction) at an activation $x$ it gives $o + \mathrm{sg}(x - o)$, where $\mathrm{sg}$
   stops the gradient: the forward value is $x$, and the gradient reaches $o$ rather than $x$. It is the straight-through
   substitution a spliced latent model trains with ([latent models](tuning_latent_models.md)); in an analysis pass,
   where nothing differentiates, it is the identity.
@@ -374,6 +386,8 @@ The registered analysis ops (all callable as `it.<name>(...)`):
 - `intervention_first_order_check`: checks an applied intervention against its first-order prediction per basis.
   The prediction is the linearization attribution patching uses to estimate an activation patch without applying it;
   this op applies the intervention and compares the measured change with that estimate.
+- `weight_equivalence_check`: checks that a per-neuron recipe's weight form gives the same logits as its activation
+  form through the model backend ([parameter targets](#parameter-targets)).
 - `compute_attribution_graph` (`ct_graph`), `graph_node_influence` (`ct_node_influence`),
   `extract_top_features` (`ct_top_features`), `feature_intervention_forward` (`ct_feature_intervention`),
   `model_fwd_intervention` (`direction_intervention` / `direct_concept_direction_intervention`).

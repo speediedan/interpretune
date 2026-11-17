@@ -41,8 +41,10 @@ sites. For $y = W x + b$:
 - $W' = (I - \alpha u u^{\top}) W$ is ``reject`` of $u$ with fraction $\alpha$ from $W x$, at the output.
 
 :func:`weight_form` materializes a recipe's unit ops at ``mlp.out``'s input in these weight forms (:func:`bias_patch`
-builds the second), and :func:`check_weight_equivalence` compares the two forms of an edit on a batch. A token-scoped
-op has no weight form, and a general low-rank or dense patch has no activation form at one site.
+builds the second), :func:`weight_form_site_widths` gives the site width the recipe's activation form is built with,
+and :func:`check_weight_equivalence` compares the two forms of an edit on a batch (the ``weight_equivalence_check``
+analysis op runs that comparison through a model backend). A token-scoped op has no weight form, and a general low-rank
+or dense patch has no activation form at one site.
 
 .. warning:: This is an experimental API and may change in a future release.
 """
@@ -233,6 +235,40 @@ def _view(root: nn.Module, view: Any | None) -> Any:
 
     attached = root.__dict__.get(VIEW_ATTR)
     return attached if attached is not None else default_view(root)
+
+
+def _places_units(view: Any) -> bool:
+    structure = getattr(view, "structure", None)
+    return callable(structure) and callable(getattr(structure(), "unit_dim", None))
+
+
+def _unit_view(root: nn.Module, view: Any | None) -> Any:
+    """The view a unit target resolves through: ``view``, else ``root``'s attached view when its structure places
+    units (a venngram ``MappedView``), else ``root``'s default view (venngram's registry map for the model it carries).
+
+    An attached view that names tensors without placing them (an identity view, or the TransformerLens-named view of a
+    ``TransformerBridge``) addresses the same tensors under the same root, so the default view is asked instead; where
+    no map describes the root's module names either, the unit target is refused when it resolves.
+    """
+    if view is not None:
+        return view
+    attached = _view(root, None)
+    if _places_units(attached):
+        return attached
+    from interpretune.tuning.views import default_view
+
+    return default_view(root)
+
+
+def _structure(view: Any) -> Any:
+    structure = getattr(view, "structure", None)
+    if not callable(structure):
+        raise ValueError(
+            f"{type(view).__name__} gives no structure, so no tensor's unit axis is known. Units of a tensor are "
+            "addressed through a venngram MappedView whose component map records each row's `layout` (component map "
+            "schema 5)."
+        )
+    return structure()
 
 
 _PARAMETRIZED = ".parametrizations."
@@ -599,45 +635,17 @@ def bias_patch(weight: torch.Tensor, units: Mapping[int, float], *, dim: int = 1
 WEIGHT_FORM_SITE = "mlp.out.hook_in"
 
 
-def weight_form(
-    root: nn.Module,
-    recipe: Any,
-    *,
-    role: str = "artifact",
-    name: str | None = None,
-    view: Any | None = None,
-) -> list[WeightEditHandle]:
-    """Materialize a recipe's activation stages as the weight edits they equal, at token scope ``all``: a unit
-    ``scale`` at ``mlp.out``'s input as a scale of those units of its weight, and a unit ``add`` as the bias patch
-    :math:`b + \\sum_j d_j W_{:,j}` (:func:`bias_patch`).
+def _as_recipe(recipe: Any) -> Any:
+    if hasattr(recipe, "stages"):
+        return recipe
+    from interpretune.analysis.venngram import load_recipe
 
-    This is the weight form of a per-neuron recipe (neuronary's, for example), so it can be exported or compared with
-    the hooked form (:func:`check_weight_equivalence`).
+    return load_recipe(recipe).recipe
 
-    Args:
-        root: The module the targets resolve under.
-        recipe: A ``venngram.recipe.Recipe`` (or a document :func:`~interpretune.analysis.venngram.load_recipe` reads).
-        role: Every edit's operand role (see :func:`apply_weight_patch`).
-        name: The edits' name stem (``<name>-<layer>-scale`` and ``<name>-<layer>-shift``); the recipe's name by
-            default.
-        view: The view addresses resolve through; ``root``'s attached view, else its default view.
 
-    Returns:
-        One :class:`WeightEditHandle` per edited tensor (each layer's weight, then its bias), in application order.
-
-    Raises:
-        ValueError: For anything with no exact weight form: a stage at another site or token scope, an op other than a
-            unit ``scale`` or ``add`` with a ``dose`` or ``doses`` value, or an ``add`` at a layer whose ``mlp.out`` has
-            no bias. Edits applied before the failing one are taken back.
-    """
-    if not hasattr(recipe, "stages"):
-        from interpretune.analysis.venngram import load_recipe
-
-        recipe = load_recipe(recipe).recipe
-    stem = re.sub(r"[^A-Za-z0-9_\-]", "_", name or recipe.name)
-    bound = _view(root, view)
-    structure = bound.structure()
-    _check_role(f"{stem}-0", role)
+def _affine_by_layer(recipe: Any) -> dict[int, tuple[dict[int, float], dict[int, float]]]:
+    """A recipe's unit ops at ``mlp.out``'s input, composed per layer into the affine map they apply, as its unit
+    scales and its unit shifts; anything with no exact weight form is refused (see :func:`weight_form`)."""
     # The ops on mlp.out's input compose, in order, into one affine map per layer, x -> s * x + a (a later scale also
     # scales an earlier add), and W (s * x + a) + b = (W diag(s)) x + (W a + b): a scale of W's units and a bias patch
     # taken from the unedited W.
@@ -662,6 +670,86 @@ def weight_form(
                         shift[unit] *= dose
                 else:
                     shift[unit] = shift.get(unit, 0.0) + dose
+    return affine
+
+
+def weight_form_site_widths(root: nn.Module, recipe: Any, *, view: Any | None = None) -> dict[str, int]:
+    """The width of the site a recipe's weight form acts at, as
+    :func:`~interpretune.analysis.venngram.recipe_interventions` takes it for the recipe's activation form: the
+    size of ``mlp.out``'s weight along its unit axis, at the layers the recipe edits.
+
+    The width is read from the checkpoint through the view, rather than from a model configuration, so the activation
+    form is built against the same units the weight form edits.
+
+    Args:
+        root: The module the targets resolve under.
+        recipe: A ``venngram.recipe.Recipe`` (or a document :func:`~interpretune.analysis.venngram.load_recipe` reads).
+        view: The view addresses resolve through; ``root``'s attached view when its structure places units, else
+            its default view (venngram's registry map for the model it carries).
+
+    Returns:
+        ``{WEIGHT_FORM_SITE: width}``.
+
+    Raises:
+        ValueError: For a recipe with no exact weight form (the reasons :func:`weight_form` gives), a view whose
+            structure gives ``mlp.out``'s weight no unit axis, or layers whose ``mlp.out`` widths differ (an activation
+            payload takes one width per site).
+    """
+    recipe = _as_recipe(recipe)
+    bound = _unit_view(root, view)
+    structure = _structure(bound)
+    widths: dict[int, int] = {}
+    for layer in sorted(_affine_by_layer(recipe)):
+        (weight,) = resolve_weight_targets(
+            root, {"component": "mlp.out", "layers": [layer], "leaf": "weight"}, view=bound
+        )
+        w = _tensor(root, weight)
+        widths[layer] = int(w.shape[_unit_dim(structure, weight, w.ndim)])
+    if len(set(widths.values())) > 1:
+        raise ValueError(f"`mlp.out`'s unit width differs across the recipe's layers ({widths}), so no one site width")
+    if not widths:
+        raise ValueError(f"recipe {recipe.name!r} edits no unit at `{WEIGHT_FORM_SITE}`, so it has no site width")
+    return {WEIGHT_FORM_SITE: next(iter(widths.values()))}
+
+
+def weight_form(
+    root: nn.Module,
+    recipe: Any,
+    *,
+    role: str = "artifact",
+    name: str | None = None,
+    view: Any | None = None,
+) -> list[WeightEditHandle]:
+    """Materialize a recipe's activation stages as the weight edits they equal, at token scope ``all``: a unit
+    ``scale`` at ``mlp.out``'s input as a scale of those units of its weight, and a unit ``add`` as the bias patch
+    :math:`b + \\sum_j d_j W_{:,j}` (:func:`bias_patch`).
+
+    This is the weight form of a per-neuron recipe (neuronary's, for example), so it can be exported or compared with
+    the hooked form (:func:`check_weight_equivalence`).
+
+    Args:
+        root: The module the targets resolve under.
+        recipe: A ``venngram.recipe.Recipe`` (or a document :func:`~interpretune.analysis.venngram.load_recipe` reads).
+        role: Every edit's operand role (see :func:`apply_weight_patch`).
+        name: The edits' name stem (``<name>-<layer>-scale`` and ``<name>-<layer>-shift``); the recipe's name by
+            default.
+        view: The view addresses resolve through; ``root``'s attached view when its structure places units, else
+            its default view (venngram's registry map for the model it carries).
+
+    Returns:
+        One :class:`WeightEditHandle` per edited tensor (each layer's weight, then its bias), in application order.
+
+    Raises:
+        ValueError: For anything with no exact weight form: a stage at another site or token scope, an op other than a
+            unit ``scale`` or ``add`` with a ``dose`` or ``doses`` value, or an ``add`` at a layer whose ``mlp.out`` has
+            no bias. Edits applied before the failing one are taken back.
+    """
+    recipe = _as_recipe(recipe)
+    stem = re.sub(r"[^A-Za-z0-9_\-]", "_", name or recipe.name)
+    bound = _unit_view(root, view)
+    structure = _structure(bound)
+    _check_role(f"{stem}-0", role)
+    affine = _affine_by_layer(recipe)
     handles: list[WeightEditHandle] = []
     try:
         for layer, (scale, shift) in sorted(affine.items()):
@@ -759,4 +847,5 @@ __all__ = [
     "WEIGHT_FORM_SITE",
     "weight_edit_roles",
     "weight_form",
+    "weight_form_site_widths",
 ]

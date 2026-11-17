@@ -67,4 +67,4 @@ venngram:
   # and the warm step fetches every map and overlay it indexes into venngram's cache (VENNGRAM_CACHE, else
   # ~/.cache/venngram, which the actions cache saves beside the Hub cache).
   registries:
-    - hub-dataset:speediedan/venngram-registry/index@aaa1c0a47949a553a6e95471e0bad5ece9efc86e
+    - hub-dataset:speediedan/venngram-registry/index@9adb204a81e8c5fd16b754c4357b4b268b463f18
