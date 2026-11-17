@@ -72,7 +72,7 @@ one map whatever reads it. That lookup takes, in order, a map registered in the 
 (`venngram.maps.register`, or a pulled `hookmaps` component, below), then the best row the configured registries
 index ([`speediedan/venngram-registry`](https://huggingface.co/datasets/speediedan/venngram-registry) by default). The
 offline path is venngram's cache: the last registry revision read is served with a warning when the registry cannot
-be reached, and a registry never read before is refused by name. There is no bundled fallback.
+be reached, and a registry never read before is refused. There is no bundled fallback.
 
 Row names follow the registry. Qwen3.5's linear-attention output projection is `blocks.{i}.linear_attn.out`; the
 old spelling `linear_attn.o` is refused with the new name in the message, and has no alias.
@@ -118,7 +118,7 @@ run, and the oracle comparison against TransformerLens' adapter for the architec
 with no weights and no Hub call, compares every row both sides name. Rows TransformerLens has no counterpart for are
 listed with the reason: the multimodal maps' vision stacks and projectors, which TransformerLens bridges as one opaque
 component, and Qwen3.5's linear-attention submodules, which its gated delta net bridge does not expose. A supported
-architecture without a verified registry row at the CI warm generation fails the suite by name, so a registry
+architecture without a verified registry row at the CI warm generation fails the suite, naming it, so a registry
 regression is a named failure rather than a fallback.
 
 **Leaving.** An architecture leaves through the registry's deprecation: its map gains `deprecated_since` and
