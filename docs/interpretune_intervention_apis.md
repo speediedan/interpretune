@@ -360,6 +360,27 @@ cfg = AnalysisCfg(
 )
 ```
 
+### Changing the readout, or editing its gradient
+
+Two things move the gradient an upstream site receives, and they answer different questions:
+
+- **Changing the readout** changes which scalar is differentiated: a loss, a logit difference in place of one logit, a
+  probe's projection in place of the logits. Every gradient then follows from the new scalar through the unchanged
+  graph. It answers "what drives this quantity?".
+- **Editing the gradient at a site** keeps the scalar, and changes how its derivative propagates past that site, at
+  the positions the edit's scope selects, with the forward pass untouched. It answers "what reaches the earlier sites
+  through this one, and what changes if it does not?".
+
+The two coincide in one case. An `add` edit of a vector $v$ at site $s$ gives every site upstream of $s$ the gradient
+of $R + \langle v, h_s \rangle$, the readout $R$ plus a linear term in the activation $h_s$, with $v$ held constant: on
+the example's prompt the two agree at `blocks.2.hook_out` to float32 rounding. A zeroing (`replace` with zeros),
+`scale` or `project` edit has no such counterpart. Zeroing the gradient at $s$ for the last token is a stop-gradient on
+that position's activation: it removes every path from the readout through it and keeps every other path, which no
+choice of scalar differentiated through the same graph does. With the logit difference as the readout, zeroing the
+gradient at `blocks.5.hook_in` for the last token takes the last position's gradient at `blocks.2.hook_out` from 0.51
+to 0, while the earlier positions' falls only from 0.94 to 0.89: what attention at block 5 and above carried from them
+to the last token still reaches them.
+
 ## Intervention ops
 
 An intervention applies an op, and an op is a name in venngram's federated registry (`venngram.ops.OPS`), applied
