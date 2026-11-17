@@ -43,7 +43,7 @@ jobs:
         run: python -m pip install --upgrade pip pre-commit==4.6.1
 
       # No repo dependencies are installed: every `language: system` hook here
-      # (run_nbstripout_hook.py, publish_notebooks.py, check_benchmark_registry_isolation.py) is
+      # (check_benchmark_registry_isolation.py and the other local scripts) is
       # stdlib-plus-git only, and pre-commit builds isolated envs for the rest. If a future hook
       # needs the package, this job needs an install step -- it will fail loudly rather than skip.
       - name: Run pre-commit

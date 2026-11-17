@@ -1,8 +1,8 @@
-"""The docs-artifact renderer (``interpretune.utils.notebook_docs``) and interpretune's hooks for it.
+"""Interpretune's hooks for nbpress's docs-artifact renderer, and interpretune's use of the renderer.
 
-The engine is repository-neutral and configured from ``[tool.notebook-publishing]``; most cases here drive it
-against a throwaway repository, so the case of a vendoring repository with no hooks at all is exercised. The
-op-surface cases test ``scripts/notebook_docs_hooks.py``, interpretune's implementation of the hook interface.
+The renderer is nbpress's (a git-deps pin) and is tested there; these cases cover ``scripts/notebook_docs_hooks.py``,
+interpretune's implementation of its hook interface, the parts of interpretune's configuration it reads, and the
+docs workflow that branches on its exit code.
 
 `--check-stale` can see output-only drift, not just source drift: the engine's comparator builds its signature from
 ``(cell_type, source)``, so output drift is unrepresentable there, and the op-surface hooks exist to close that.
@@ -14,17 +14,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
-from interpretune.utils import notebook_docs as engine
+from nbpress import render as engine
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 HOOKS_PATH = PROJECT_ROOT / "scripts" / "notebook_docs_hooks.py"
-SHIM = PROJECT_ROOT / "scripts" / "render_notebook_docs_artifacts.py"
 
 
 @pytest.fixture(scope="module")
@@ -72,7 +69,7 @@ def _repo(tmp_path: Path, *, extra: str = "", hooks_path: Path | None = None) ->
     (root / "publish" / "lane").mkdir(parents=True)
     (root / "artifacts").mkdir()
     table = (
-        '[tool.notebook-publishing]\ndev_dir = "dev"\npublish_dir = "publish"\ncolab_repo = "org/consumer"\n'
+        '[tool.nbpress]\ndev_dir = "dev"\npublish_dir = "publish"\ncolab_repo = "org/consumer"\n'
         'install_cell = ["# %pip install consumer"]\ndocs_artifact_dir = "artifacts"\n'
         'docs_render_command = "python scripts/notebook_docs.py"\n'
     )
@@ -177,27 +174,6 @@ class TestDriftExitCodeContract:
     say WHICH happened, so the code IS the contract, and it spans two files that must agree.
     """
 
-    def test_drift_code_avoids_the_codes_it_must_be_distinguishable_from(self):
-        """0/1/2 are already spoken for, and 2 (argparse's usage error, which runs before `main()`) is easy to
-        miss."""
-        assert engine.DRIFT_EXIT_CODE not in (0, 1, 2)
-
-    def test_argparse_usage_error_is_not_reported_as_drift(self):
-        """The collision above, measured rather than assumed, through the shim docs-build actually runs."""
-        result = subprocess.run([sys.executable, str(SHIM), "--bogus-flag"], capture_output=True)
-        assert result.returncode == 2, "argparse's usage convention changed; re-check DRIFT_EXIT_CODE"
-        assert result.returncode != engine.DRIFT_EXIT_CODE
-
-    def test_the_shim_runs_without_importing_interpretune(self):
-        """Docs-build runs the shim before installing anything; importing the package would pull in torch."""
-        probe = (
-            "import runpy, sys; sys.argv = ['x', '--list']\n"
-            "try:\n    runpy.run_path(sys.argv_path, run_name='__main__')\nexcept SystemExit:\n    pass\n"
-            "assert 'interpretune' not in sys.modules, sorted(m for m in sys.modules if m.startswith('interp'))\n"
-        ).replace("sys.argv_path", repr(str(SHIM)))
-        result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, cwd=PROJECT_ROOT)
-        assert result.returncode == 0, result.stderr
-
     def test_workflow_branches_on_the_code_the_script_actually_returns(self):
         """The engine and `docs-build.yml` must agree, and nothing else checks that they do."""
         workflow = (PROJECT_ROOT / ".github" / "workflows" / "docs-build.yml").read_text()
@@ -206,69 +182,6 @@ class TestDriftExitCodeContract:
         )
         # The wildcard arm must say plainly that it is NOT a drift report; that sentence is the fix.
         assert "NOT a drift report" in workflow
-
-
-class TestMissingArtifactIsDrift:
-    """A published notebook with no artifact renders code-only on the site with no error anywhere, which is the
-    state the artifact mandate exists to prevent.
-
-    Measured before this landed: `--check-stale` exited 0 with one notebook reported MISSING by `--list`.
-    """
-
-    def test_a_published_notebook_with_no_artifact_fails_the_check_by_name(self, tmp_path, capsys):
-        """Positive control: the check can fire on exactly the planted absence, naming the configured command."""
-        root = _repo(tmp_path)
-        _write(root / "publish" / "lane" / "nb.ipynb", _notebook())
-        assert engine.main(["--check-stale"], root=root) == engine.DRIFT_EXIT_CODE
-        err = capsys.readouterr().err
-        # The path is printed in the platform's own spelling (a backslash on Windows), so compare that form.
-        assert "MISSING artifact" in err and str(Path("lane") / "nb.ipynb") in err
-        assert "python scripts/notebook_docs.py --notebook nb" in err
-
-    def test_a_present_matching_artifact_passes(self, tmp_path, capsys):
-        """Negative control on the same fixture: presence is the only thing that changed."""
-        root = _repo(tmp_path)
-        _write(root / "publish" / "lane" / "nb.ipynb", _notebook())
-        _write(root / "artifacts" / "lane" / "nb.ipynb", _notebook())
-        assert engine.main(["--check-stale"], root=root) == 0
-        assert "MISSING artifact" not in capsys.readouterr().err
-
-
-class TestSkippedSectionIsDrift:
-    """An enabled section that skipped at render time ships as a `[SKIPPED]` line where the docs show its output,
-    with no error anywhere.
-
-    Measured on the local-Neuronpedia steering demo, whose J-space section rendered as a skip line (the render host's
-    token could not see the private collection) and stayed that way until someone read the page.
-    """
-
-    SKIP_LINE = "[SKIPPED] J-space section: could not pull owner/collection: 404"
-    # The SOURCE carries the print that produces the marker in every case, so the check can only be keyed on outputs.
-    SOURCE = 'print("[SKIPPED] J-space section: ...")\n'
-
-    def _plant(self, tmp_path: Path, artifact_output: list[str]) -> Path:
-        root = _repo(tmp_path)
-        _write(root / "publish" / "lane" / "nb.ipynb", _notebook([], self.SOURCE))
-        _write(root / "artifacts" / "lane" / "nb.ipynb", _notebook(artifact_output, self.SOURCE))
-        return root
-
-    def test_a_skipped_section_in_the_outputs_fails_the_check_by_name(self, tmp_path, capsys):
-        """Positive control: the check fires on exactly the planted skip line and names the section."""
-        root = self._plant(tmp_path, ["pulled nothing\n", self.SKIP_LINE + "\n"])
-        assert engine.main(["--check-stale"], root=root) == engine.DRIFT_EXIT_CODE
-        err = capsys.readouterr().err
-        assert "SKIPPED section in artifact" in err and self.SKIP_LINE in err and str(Path("lane") / "nb.ipynb") in err
-
-    def test_the_marker_in_source_alone_passes(self, tmp_path, capsys):
-        """Negative control on the same fixture: the source's print is not evidence the skip fired."""
-        root = self._plant(tmp_path, ["pulled owner/collection @ 872760c7\n"])
-        assert engine.main(["--check-stale"], root=root) == 0
-        assert "SKIPPED section" not in capsys.readouterr().err
-
-    def test_the_marker_inside_a_line_does_not_count(self, tmp_path):
-        """Only a line that STARTS with the marker is a skip announcement; prose quoting it is not."""
-        root = self._plant(tmp_path, ["the cell prints [SKIPPED] when the pull fails\n"])
-        assert engine.main(["--check-stale"], root=root) == 0
 
 
 class TestStampUnderRecording:
@@ -365,200 +278,29 @@ class TestStampUnderRecording:
         ]
 
 
-class TestHostPathNormalization:
-    """An artifact must not publish the identity of whoever rendered it.
-
-    The renderer bakes absolute paths into published docs twice over: papermill records its own input/output paths in
-    metadata, and captured warnings carry the file they fired from. Both name the working copy of whoever ran the
-    render host that day, which for this project has included scratch worktrees (`.../worktrees/it-stale/...`).
-    """
-
-    MARKERS = ("src/it_examples/notebooks/publish/", "docs/notebook_artifacts/")
-
-    def test_rewrites_the_users_root_wherever_it_lives(self):
-        """A `/home`-only rule misses most of them, which is how the first version of this passed while leaving 22
-        paths in place."""
-        rx = engine._user_root_pattern("someuser")
-        for original in (
-            "/home/someuser/repos/interpretune/src/interpretune/config/shared.py:222: UserWarning",
-            "/mnt/cache/someuser/worktrees/it-opdocs/src/interpretune/analysis/core.py",
-            "/mnt/cache_extended/someuser/.cache/huggingface/hub",
-            "/mnt/cache/someuser/.venvs/it_latest/lib/python3.13/site-packages/x.py",
-            '  File "/home/someuser/repos/x/y.py", line 3',
-        ):
-            assert rx.sub("~/", original) != original, original
-            assert "someuser" not in rx.sub("~/", original)
-
-    def test_leaves_hub_and_git_references_alone(self):
-        """`owner/repo` names real published repositories the examples depend on; rewriting them would break
-        working references in order to fix a cosmetic one."""
-        rx = engine._user_root_pattern("someuser")
-        for untouched in (
-            "Downloading from huggingface.co/someuser/rte to cache",
-            "https://huggingface.co/someuser/jlens_steering_ops",
-            "see https://github.com/someuser/interpretune/pull/1",
-            "resolves to someuser.concept_direction_ops.concept",
-            "models--someuser--concept_direction_ops/116271f2",
-            "repo_id='someuser/trivial_op_repo'",
-        ):
-            assert rx.sub("~/", untouched) == untouched, untouched
-
-    def test_a_url_is_not_a_path_even_after_a_double_slash(self):
-        """REGRESSION: excluding a preceding word character and colon but not another SLASH let
-        `https://github.com/<user>/interpretune` match from the second slash and become `https:/~/interpretune`."""
-        rx = engine._user_root_pattern("someuser")
-        url = "see https://github.com/someuser/interpretune/pull/1"
-        assert rx.sub("~/", url) == url
-
-    def test_papermill_metadata_becomes_repo_relative(self):
-        notebook = {
-            "cells": [],
-            "metadata": {
-                "papermill": {
-                    "input_path": "/mnt/cache/someuser/worktrees/it-stale/src/it_examples/notebooks/publish/a.ipynb",
-                    "output_path": "/home/someuser/repos/interpretune/docs/notebook_artifacts/a.ipynb",
-                }
-            },
-        }
-        assert engine.normalize_host_paths(notebook, markers=self.MARKERS, user="someuser") == 2
-        pm = notebook["metadata"]["papermill"]
-        assert pm["input_path"] == "src/it_examples/notebooks/publish/a.ipynb"
-        assert pm["output_path"] == "docs/notebook_artifacts/a.ipynb"
-
-    def test_normalizes_output_text_and_is_idempotent(self):
-        """Idempotence is what lets this run on EVERY write, including `--no-execute`, without churn."""
-        notebook = {
-            "cells": [
-                {
-                    "cell_type": "code",
-                    "outputs": [{"text": ["/home/someuser/repos/interpretune/src/x.py:9: UserWarning\n"]}],
-                }
-            ],
-            "metadata": {},
-        }
-        assert engine.normalize_host_paths(notebook, markers=self.MARKERS, user="someuser") == 1
-        assert notebook["cells"][0]["outputs"][0]["text"] == ["~/repos/interpretune/src/x.py:9: UserWarning\n"]
-        assert engine.normalize_host_paths(notebook, markers=self.MARKERS, user="someuser") == 0
+class TestInterpretuneConfiguration:
+    """What the renderer reads from interpretune's table, and what it finds in interpretune's artifacts."""
 
     def test_interpretunes_markers_come_from_its_table(self):
-        """The engine holds no repository paths: interpretune's markers are derived from its configured lanes."""
+        """The renderer holds no repository paths: interpretune's markers are derived from its configured lanes."""
         cfg = engine.DocsConfig.from_pyproject(PROJECT_ROOT)
-        assert cfg.path_markers == self.MARKERS
+        assert cfg.path_markers == ("src/it_examples/notebooks/publish/", "docs/notebook_artifacts/")
 
+    def test_no_artifact_names_a_checkout_path(self):
+        """Warning locations once carried whichever working copy rendered an artifact (scratch and agent
+        worktrees).
 
-class TestGenericConsumer:
-    """A vendoring repository with no hooks gets the generic behavior and nothing of interpretune's."""
-
-    def test_strip_only_render_drops_excluded_cells_and_adds_no_repository_metadata(self, tmp_path):
-        root = _repo(tmp_path)
-        source = _notebook()
-        source["cells"][:0] = [
-            {"cell_type": "code", "metadata": {"id": "install-deps"}, "source": ["# %pip install x"], "outputs": []},
-            {"cell_type": "code", "metadata": {"tags": ["injected-parameters"]}, "source": ["n = 2"], "outputs": []},
-        ]
-        _write(root / "publish" / "lane" / "nb.ipynb", source)
-        (root / "publish" / "lane" / "asset.png").write_bytes(b"\x89PNG")
-        assert engine.main(["--no-execute"], root=root) == 0
-        written = json.loads((root / "artifacts" / "lane" / "nb.ipynb").read_text())
-        assert [c["source"] for c in written["cells"]] == [["x = 1\n"]]
-        assert written["metadata"] == {}, "no hooks, so no stamp"
-        assert (root / "artifacts" / "lane" / "asset.png").read_bytes() == b"\x89PNG"
-        assert engine.main(["--check-stale"], root=root) == 0
-
-    def test_restamp_without_a_restamp_hook_is_refused_by_name(self, tmp_path, capsys):
-        root = _repo(tmp_path)
-        _write(root / "publish" / "lane" / "nb.ipynb", _notebook())
-        assert engine.main(["--restamp"], root=root) == 1
-        assert "needs a docs_hooks file whose HOOKS define restamp" in capsys.readouterr().err
-
-    def test_a_missing_artifact_dir_key_is_refused_by_name(self, tmp_path, capsys):
-        root = tmp_path / "bare"
-        root.mkdir()
-        (root / "pyproject.toml").write_text('[tool.notebook-publishing]\npublish_dir = "publish"\n')
-        assert engine.main(["--check-stale"], root=root) == 1
-        assert "docs_artifact_dir" in capsys.readouterr().err
-
-
-class TestHookContract:
-    """A hook the engine would never call is refused, or its check would pass forever."""
-
-    @staticmethod
-    def _hooks_file(tmp_path: Path, body: str) -> Path:
-        path = tmp_path / "hooks.py"
-        path.write_text(body)
-        return path
-
-    @pytest.mark.parametrize(
-        ("body", "message"),
-        [
-            ("HOOKS = {'chek': lambda *a, **k: []}\n", "unknown hook(s) ['chek']"),
-            ("def check(*a, **k):\n    return []\n", "defines no HOOKS dict"),
-            ("HOOKS = {'check': 'not a function'}\n", "are not callable"),
-        ],
-    )
-    def test_malformed_hooks_are_refused_by_name(self, tmp_path, capsys, body, message):
-        root = _repo(tmp_path, hooks_path=self._hooks_file(tmp_path, body))
-        _write(root / "publish" / "lane" / "nb.ipynb", _notebook())
-        assert engine.main(["--check-stale"], root=root) == 1
-        assert message in capsys.readouterr().err
-
-    def test_a_hooks_path_that_is_not_a_file_is_refused(self, tmp_path, capsys):
-        root = _repo(tmp_path, hooks_path=tmp_path / "absent.py")
-        _write(root / "publish" / "lane" / "nb.ipynb", _notebook())
-        assert engine.main(["--check-stale"], root=root) == 1
-        assert "which is not a file" in capsys.readouterr().err
-
-    def test_hook_findings_fail_or_note_by_kind_and_stamp_runs_on_write(self, tmp_path, capsys):
-        body = (
-            "def check(artifact, *, rel, output_text):\n"
-            "    return [('drift', f'CUSTOM drift: {rel}')] if 'bad' in output_text else [('note', f'note: {rel}')]\n"
-            "def stamp(notebook):\n"
-            "    notebook.setdefault('metadata', {})['consumer_stamp'] = 1\n"
-            "HOOKS = {'check': check, 'stamp': stamp}\n"
-        )
-        root = _repo(tmp_path, hooks_path=self._hooks_file(tmp_path, body))
-        _write(root / "publish" / "lane" / "nb.ipynb", _notebook())
-        assert engine.main(["--no-execute"], root=root) == 0
-        assert json.loads((root / "artifacts" / "lane" / "nb.ipynb").read_text())["metadata"] == {"consumer_stamp": 1}
-        assert engine.main(["--check-stale"], root=root) == 0, "a note alone must not fail the check"
-        assert "note: " in capsys.readouterr().err
-        _write(root / "artifacts" / "lane" / "nb.ipynb", _notebook(["bad\n"]))
-        assert engine.main(["--check-stale"], root=root) == engine.DRIFT_EXIT_CODE
-        assert "CUSTOM drift" in capsys.readouterr().err
-
-    def test_a_check_finding_of_unknown_kind_is_refused(self, tmp_path):
-        body = "HOOKS = {'check': lambda artifact, *, rel, output_text: [('warning', 'x')]}\n"
-        root = _repo(tmp_path, hooks_path=self._hooks_file(tmp_path, body))
-        _write(root / "publish" / "lane" / "nb.ipynb", _notebook())
-        _write(root / "artifacts" / "lane" / "nb.ipynb", _notebook())
-        with pytest.raises(engine.NotebookConfigError, match="kind 'warning'"):
-            engine.main(["--check-stale"], root=root)
+        nbpress writes them repository-relative and its stale check refuses a survivor; this runs that detector over
+        interpretune's own artifacts, so a hand-committed or old-renderer artifact fails here as well as in docs-build.
+        """
+        cfg = engine.DocsConfig.from_pyproject(PROJECT_ROOT)
+        found = {
+            str(path.relative_to(cfg.artifact_dir)): paths
+            for path in sorted(cfg.artifact_dir.rglob("*.ipynb"))
+            if (paths := engine.artifact_checkout_paths(engine.load_notebook(path), cfg.root))
+        }
+        assert not found, f"checkout paths in artifact outputs (run nbpress-render --no-execute): {found}"
 
     def test_interpretunes_hooks_load_through_its_table(self):
         cfg = engine.DocsConfig.from_pyproject(PROJECT_ROOT)
         assert set(cfg.hooks) == set(engine.HOOK_NAMES)
-
-
-class TestDocsParameters:
-    """A consumer supplies papermill parameters per notebook from its table, and the CLI overrides them."""
-
-    def test_table_parameters_reach_papermill_and_the_cli_overrides_them(self, tmp_path, monkeypatch):
-        root = _repo(tmp_path, extra='[tool.notebook-publishing.docs_parameters."lane/nb"]\nepochs = 1\nname = "m"\n')
-        _write(root / "publish" / "lane" / "nb.ipynb", _notebook())
-        _write(root / "publish" / "lane" / "other.ipynb", _notebook())
-        seen: dict[str, dict] = {}
-
-        def fake_execute(source, target, timeout, parameters):
-            seen[source.stem] = parameters
-            _write(target, _notebook(["ran\n"]))
-
-        monkeypatch.setattr(engine, "execute", fake_execute)
-        assert engine.main(["--parameters", '{"epochs": 3}'], root=root) == 0
-        assert seen == {"nb": {"epochs": 3, "name": "m"}, "other": {"epochs": 3}}
-
-    def test_a_parameter_key_naming_no_notebook_is_refused(self, tmp_path, capsys):
-        """A typo would otherwise render the docs with the notebook's defaults and no error anywhere."""
-        root = _repo(tmp_path, extra='[tool.notebook-publishing.docs_parameters."lane/nbb"]\nepochs = 1\n')
-        _write(root / "publish" / "lane" / "nb.ipynb", _notebook())
-        assert engine.main(["--check-stale"], root=root) == 1
-        assert "['lane/nbb']" in capsys.readouterr().err

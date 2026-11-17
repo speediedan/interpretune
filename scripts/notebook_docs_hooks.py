@@ -1,6 +1,6 @@
 """Interpretune's hooks for the docs-artifact renderer: the analysis-op surface an artifact was rendered against.
 
-The renderer (``src/interpretune/utils/notebook_docs.py``) is repository-neutral; ``[tool.notebook-publishing]``
+The renderer (nbpress's ``nbpress-render``) is repository-neutral; ``[tool.nbpress]``
 names this file as ``docs_hooks``. What lives here is the part only interpretune has: every artifact is stamped
 with the bundled op names it was rendered against, so ``--check-stale`` can tell when its captured OUTPUTS mention
 an op that no longer exists even though its sources have not changed.
@@ -18,7 +18,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BUNDLED_OPS_DIR = REPO_ROOT / "src" / "interpretune" / "analysis" / "ops" / "bundled"
-RENDER_COMMAND = "python scripts/render_notebook_docs_artifacts.py"
+RENDER_COMMAND = "nbpress-render"
 
 # Where the rendered op surface is stamped, so `--check-stale` can tell whether an artifact's captured
 # OUTPUTS have gone stale even when its sources have not.
