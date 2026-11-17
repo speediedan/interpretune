@@ -624,6 +624,34 @@ def _place_tensor_parallel(
     run.mesh = mesh
 
 
+def step_per_tensor(optimizers: Iterable[Any], run: DistributedRun | None) -> None:
+    """Under ``tp``, have each optimizer step its parameters one tensor at a time.
+
+    The layers a plan splits hold ``DTensor`` parameters and the rest plain tensors, and a parameter group can hold
+    both. torch's multi-tensor (``foreach``) and fused kernels, the default for CUDA parameters, take a group's tensors
+    in one call, which ``DTensor`` refuses when it mixes the two kinds. So ``foreach`` is turned off on every group and
+    on the optimizer's defaults, which the groups a tuning scheduler adds at a phase transition take. Other placements
+    are left alone: under them every parameter is a ``DTensor``.
+
+    Raises:
+        MisconfigurationException: An optimizer asks for ``foreach`` or ``fused`` explicitly.
+    """
+    if run is None or run.placement != "tp":
+        return
+    for optimizer in optimizers:
+        for where, group in (("defaults", optimizer.defaults), *enumerate(optimizer.param_groups)):
+            for kernel in ("foreach", "fused"):
+                if group.get(kernel):
+                    where = where if where == "defaults" else f"parameter group {where}"
+                    raise MisconfigurationException(
+                        f"{type(optimizer).__name__} asks for `{kernel}=True` ({where}), but under placement 'tp' a"
+                        " parameter group can hold split (DTensor) and whole parameters, which those kernels cannot"
+                        f" take in one call: leave `{kernel}` unset."
+                    )
+            if "foreach" in group:
+                group["foreach"] = False
+
+
 def _offloads(kwargs: Mapping[str, Any] | None) -> bool:
     """Whether a unit's ``fully_shard`` kwargs (plan grammar) offload its parameters to the CPU."""
     from torch.distributed.fsdp import CPUOffloadPolicy

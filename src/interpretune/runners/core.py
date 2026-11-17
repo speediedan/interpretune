@@ -20,6 +20,7 @@ from interpretune.runners.distributed import (
     rank_device,
     reduce_metrics,
     resolve_placement,
+    step_per_tensor,
 )
 from interpretune.utils import MisconfigurationException, rank_zero_only, rank_zero_warn
 
@@ -813,6 +814,7 @@ class SessionRunner:
             tp_plan=self.run_cfg.tp_plan,
         )
         it_configure_optimizers(self.run_cfg.module)
+        step_per_tensor(self.run_cfg.module.optimizers or (), self.dist_run)
 
     def it_session_end(self):
         """Dispatch any phase-specific session end hooks."""

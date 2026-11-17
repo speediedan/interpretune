@@ -8,7 +8,9 @@ weights before placement, and without that broadcast the ranks would not match i
 
 With ``--phased``, finetuning-scheduler's ``TuningScheduler`` drives two phases through ``FTSCoreCallback``: the
 last block first, then everything before it. With ``--latent-site``, a small latent model replaces the output of the
-module at that path (``tuning.latents``), so it is trained, and its splice is exercised, with the model.
+module at that path (``tuning.latents``), so it is trained, and its splice is exercised, with the model. With
+``--transcoder-site``, it reads that module's input and replaces its output instead (a transcoder), and a phased run
+tunes it alone first, then everything else. ``--device-type cuda`` places each rank (and the reference) on its own GPU.
 
 Writes ``<out_dir>/<placement>_rank<rank>.json`` with the per-step training losses, the epoch metrics the callbacks saw,
 each rank's recorded device, the parameter types and FSDP units after placement, (phased) the final depth and the
@@ -82,6 +84,8 @@ def main() -> None:
     parser.add_argument("--resume-from", default=None, help="resume from a checkpoint directory")
     parser.add_argument("--out-name", default=None, help="output record stem (default: <placement>)")
     parser.add_argument("--latent-site", default=None, help="splice a latent model at this module path")
+    parser.add_argument("--transcoder-site", default=None, help="splice a transcoder over this module")
+    parser.add_argument("--device-type", default="cpu", help="cuda places each rank on its own device (LOCAL_RANK)")
     args = parser.parse_args()
 
     from interpretune.config import SessionRunnerCfg
@@ -93,6 +97,7 @@ def main() -> None:
     rank = int(os.environ.get("RANK", "0"))
     batch_size = PER_RANK_BATCH * (args.world_size if args.placement == "single" else 1)
     test_cfg = CoreCfg(
+        device_type=args.device_type,
         force_prepare_data=False,
         max_epochs=args.max_epochs or (2 if args.phased else 1),
         limit_train_batches=3,
@@ -103,6 +108,9 @@ def main() -> None:
     )
     out_dir = Path(args.out_dir)
     torch.manual_seed(1 + rank)  # ranks initialize differently; placement must broadcast rank 0's weights
+    if args.device_type == "cuda":
+        # the session is built here, before the runner would make this rank's device current
+        torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
     it_session = config_modules(test_cfg, f"dist_{args.placement}", {}, out_dir / f"{args.placement}_rank{rank}")
     recorder = LossRecorder()
     callbacks: list = [recorder]
@@ -122,6 +130,12 @@ def main() -> None:
         latent = attach_latent_model(
             it_session.module, "probe", TinyLatent(width), LatentSite(args.latent_site, op="replace")
         )
+    elif args.transcoder_site:
+        from interpretune.tuning.latents import LatentSite, attach_latent_model
+
+        width = it_session.module.get_submodule(args.transcoder_site).w1.in_features
+        site = LatentSite(args.transcoder_site, read_from="input", op="replace")
+        latent = attach_latent_model(it_session.module, "transcoder", TinyLatent(width).to(args.device_type), site)
     runner_cfg = SessionRunnerCfg(
         it_session=it_session,
         max_epochs=test_cfg.max_epochs,
@@ -144,16 +158,21 @@ def main() -> None:
     from torch.distributed.fsdp import FSDPModule
 
     module = it_session.module
+    # after placement, so every rank holds rank 0's broadcast weights
+    latent_init = {n: p.detach().flatten().tolist() for n, p in latent.named_parameters()} if latent else None
     param_types = sorted({type(p).__name__ for p in module.parameters()})
     fsdp_units = [name for name, sub in module.named_modules() if isinstance(sub, FSDPModule)]
     split_params = sorted(n for n, p in module.named_parameters() if type(p).__name__ == "DTensor")
     if fts is not None:
         trainable = [n for n, p in module.named_parameters() if p.requires_grad]
-        last_block = max({n.rsplit(".", 2)[0] for n in trainable if ".layers." in n})
-        last = [n for n in trainable if n.startswith(last_block + ".")]
+        if args.transcoder_site:
+            first = [n for n in trainable if n.startswith("latent_models.")]
+        else:
+            last_block = max({n.rsplit(".", 2)[0] for n in trainable if ".layers." in n})
+            first = [n for n in trainable if n.startswith(last_block + ".")]
         fts.schedule = {
-            0: {"params": last, "max_transition_epoch": 1},
-            1: {"params": [n for n in trainable if n not in last]},
+            0: {"params": first, "max_transition_epoch": 1},
+            1: {"params": [n for n in trainable if n not in first]},
         }
     runner.train()
     record = {
@@ -164,8 +183,11 @@ def main() -> None:
         "fsdp_units": fsdp_units,
         "split_params": split_params if args.placement == "tp" else [],
     }
+    if args.device_type == "cuda":
+        record["peak_allocated_gb"] = torch.cuda.max_memory_allocated() / 2**30
     if latent is not None:  # whole on every rank: a latent model is never split
         record["latent_params"] = {n: p.detach().flatten().tolist() for n, p in latent.named_parameters()}
+        record["latent_init"] = latent_init
     if fts is not None:
         assert fts.tuning_scheduler is not None
         record["depth"] = fts.tuning_scheduler.curr_depth

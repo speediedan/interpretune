@@ -32,8 +32,10 @@ from interpretune.runners.distributed import (
     hf_tp_plan,
     meta_built,
     resolve_placement,
+    step_per_tensor,
 )
 from interpretune.utils import _CT_AVAILABLE, _FTS_AVAILABLE, MisconfigurationException
+from tests.runif import RunIf
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKER = Path(__file__).with_name("distributed_core_loop_worker.py")
@@ -442,6 +444,24 @@ class TestPlacementChecks:
         no_hf_cfg = SimpleNamespace(it_cfg=SimpleNamespace(hf_from_pretrained_cfg=None))
         BaseITModule._refuse_unbuilt_meta_init(no_hf_cfg)
 
+    def test_tp_optimizers_step_one_tensor_at_a_time(self):
+        # CUDA optimizers default to multi-tensor kernels, which refuse a group mixing split and whole parameters
+        run = DistributedRun("tp", rank=0, local_rank=0, world_size=2)
+        optimizer = torch.optim.AdamW(nn.Linear(2, 2).parameters())
+        step_per_tensor([optimizer], run)
+        assert optimizer.defaults["foreach"] is False and optimizer.param_groups[0]["foreach"] is False
+        optimizer.add_param_group({"params": nn.Linear(2, 2).parameters()})  # a tuning scheduler's next phase
+        assert optimizer.param_groups[1]["foreach"] is False
+        untouched = torch.optim.AdamW(nn.Linear(2, 2).parameters())
+        step_per_tensor([untouched], DistributedRun("fsdp2", rank=0, local_rank=0, world_size=2))
+        assert untouched.defaults["foreach"] is None
+
+    @pytest.mark.parametrize("kernel", ["foreach", "fused"])
+    def test_tp_refuses_an_explicit_multi_tensor_kernel(self, kernel):
+        optimizer = torch.optim.AdamW(nn.Linear(2, 2).parameters(), **{kernel: True})
+        with pytest.raises(MisconfigurationException, match=f"`{kernel}=True` \\(defaults\\).*placement 'tp'"):
+            step_per_tensor([optimizer], DistributedRun("tp", rank=0, local_rank=0, world_size=2))
+
     def test_plan_under_single_placement_is_refused(self):
         with pytest.raises(MisconfigurationException, match="but the placement is 'single'"):
             SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), fsdp_plan={"class:Block": {}})
@@ -449,15 +469,16 @@ class TestPlacementChecks:
             SessionRunnerCfg(module=MagicMock(), datamodule=MagicMock(), fsdp_default_kwargs={"x": 1})
 
 
-def _launch(placement: str, out_dir: Path, *extra: str) -> None:
+def _launch(placement: str, out_dir: Path, *extra: str, devices: str = "") -> None:
     env = {k: v for k, v in os.environ.items() if k not in ("WORLD_SIZE", "RANK", "LOCAL_RANK")}
     # the worker imports `tests.*` and the test tree's bare modules, which a subprocess finds only through PYTHONPATH
     env["PYTHONPATH"] = os.pathsep.join(
         p for p in (str(REPO_ROOT), str(REPO_ROOT / "tests"), env.get("PYTHONPATH")) if p
     )
-    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["CUDA_VISIBLE_DEVICES"] = devices
     env["IT_TRUST_REMOTE_CODE"] = "1"
     worker = [str(WORKER), "--placement", placement, "--out-dir", str(out_dir), *extra]
+    worker += ["--device-type", "cuda"] if devices else []
     if placement == "single":
         cmd = [sys.executable, *worker]
     else:
@@ -738,6 +759,61 @@ def test_two_rank_phased_tp_resume_across_the_transition_matches(phased_shared_b
         assert record["losses"] == pytest.approx(reference["losses"][3:], rel=1e-5)
         assert record["depth"] == reference["depth"] == 1
         assert record["trainable"] == reference["trainable"]
+
+
+# a transcoder over the first block's split feed-forward: it reads the block's whole input and replaces the reduced
+# output, while the second block's split feed-forward keeps training
+TRANSCODER = ("--transcoder-site", "model.layers.0.feed_forward")
+
+
+def _phased_transcoder_records(out_dir: Path, devices: tuple[str, str] = ("", "")) -> tuple[dict, list[dict]]:
+    """The one-process reference (on ``devices[0]``) and the two tensor-parallel ranks (on ``devices[1]``) of a
+    phased run that tunes the transcoder first, then everything else."""
+    _launch("single", out_dir, "--world-size", "1", "--phased", *TRANSCODER, devices=devices[0])
+    _launch("tp", out_dir, *FFN_TP_PLAN, "--phased", *TRANSCODER, devices=devices[1])
+    reference = json.loads((out_dir / "single_rank0.json").read_text())
+    return reference, [json.loads((out_dir / f"tp_rank{rank}.json").read_text()) for rank in range(2)]
+
+
+def _check_phased_transcoder(reference: dict, records: list[dict]) -> None:
+    transcoder = sorted(reference["latent_params"])
+    assert reference["depth"] == 1 and len(reference["losses"]) == 6
+    # positive control: the transcoder is on the loss's path, so tuning moved it (an inert splice would match too)
+    moved = [n for n in transcoder if reference["latent_params"][n] != pytest.approx(reference["latent_init"][n])]
+    assert moved == transcoder
+    # phase 1 thawed the rest: the transcoder and the model are both trainable at the end
+    assert {f"latent_models.transcoder.{n}" for n in transcoder} < set(reference["trainable"])
+    for record in records:
+        assert record["losses"] == pytest.approx(reference["losses"], rel=1e-5)
+        assert record["depth"] == reference["depth"] and record["trainable"] == reference["trainable"]
+        assert any(".layers.1.feed_forward." in n for n in record["split_params"])
+        assert sorted(record["latent_params"]) == transcoder
+        for name, values in record["latent_params"].items():
+            assert values == pytest.approx(reference["latent_params"][name], rel=1e-4, abs=1e-6), name
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning and the tensor-parallel plan are finetuning-scheduler's")
+def test_two_rank_tp_tunes_a_spliced_transcoder_in_phases_like_one_process(tmp_path):
+    """Two tensor-parallel ranks tune a transcoder spliced over a split feed-forward, then the whole model, and
+    match one process step for step, with the same transcoder weights on every rank."""
+    _check_phased_transcoder(*_phased_transcoder_records(tmp_path))
+
+
+@RunIf(min_cuda_gpus=2, min_gpu_mem_gb=1.5)
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning and the tensor-parallel plan are finetuning-scheduler's")
+def test_two_gpu_tp_transcoder_tuning_matches_one_gpu(tmp_path):
+    """On two GPUs, two-phase latent tuning with a spliced transcoder matches the one-GPU run.
+
+    The ranks run over NCCL, each on its own device, and the reference on the first device alone. CUDA optimizers
+    default to multi-tensor kernels, which the second phase's group of split and whole parameters would fail (CPU
+    optimizers do not, so only this run can catch it). Measured on an RTX 4090 paired with an RTX 2070 SUPER: losses
+    within 7e-8 relative, transcoder weights within 1e-8.
+    """
+    reference, records = _phased_transcoder_records(tmp_path, devices=("0", "0,1"))
+    assert [record["devices"] for record in records] == [["cuda:0", "cuda:1"]] * 2
+    _check_phased_transcoder(reference, records)
 
 
 def _launch_meta(checkpoint: Path, out_dir: Path, *extra: str) -> list[dict]:
