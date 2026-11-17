@@ -263,6 +263,36 @@ def _tl_backward(
     return {name: captured[name] for name in capture}, scalar.detach()
 
 
+#: Bridge components whose hooks exist but never fire, by the parent bridge class and the child's name, with the
+#: reason. A hook name alone cannot tell a capturable tensor from one of these, so each is refused by name rather than
+#: declared capturable and then returned missing from every cache.
+_UNFIRED_BRIDGE_CHILDREN: dict[str, dict[str, str]] = {
+    "JointQKVAttentionBridge": {
+        "qkv": (
+            "the bridge splits the fused qkv projection into q, k and v at load and runs those, so the fused module's "
+            "hooks never fire; capture `attn.q`, `attn.k` and `attn.v` instead"
+        ),
+    },
+}
+
+
+def _unfired_reason(model: Any, point: str) -> str | None:
+    """Why a block-relative component point's hook never fires on this bridge, or ``None`` when nothing says so."""
+    from interpretune.analysis.points.vocabulary import parse
+
+    parsed = parse(point)
+    parent_path, _, child = parsed.component.rpartition(".")
+    blocks = getattr(model, "blocks", None)
+    if parsed.layer is None or not parent_path or blocks is None or parsed.layer >= len(blocks):
+        return None
+    parent: Any = blocks[parsed.layer]
+    for part in parent_path.split("."):
+        parent = getattr(parent, part, None)
+        if parent is None:
+            return None
+    return _UNFIRED_BRIDGE_CHILDREN.get(type(parent).__name__, {}).get(child)
+
+
 def _hf_architecture(model: Any) -> str:
     """The HuggingFace class name the component maps are keyed by, from either TransformerLens wrapper."""
     cfg = getattr(model, "cfg", None)
@@ -339,6 +369,10 @@ class TLModelBackend:
         uncapturable: dict[str, str] = {}
         for base in inventory(cmap):
             name = spelled_at(base, cmap)
+            unfired = _unfired_reason(model, name)
+            if unfired is not None:
+                uncapturable[base] = unfired
+                continue
             try:
                 expand_intervention_patterns([name], available)
                 capturable.add(base)
