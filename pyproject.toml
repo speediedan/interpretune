@@ -80,10 +80,6 @@ dependencies = [
 
 [project.entry-points."console_scripts"]
 interpretune = "interpretune.base.components.cli:bootstrap_cli"
-# The notebook publishing engine and docs-artifact renderer, parameterized from a consuming repository's
-# [tool.notebook-publishing] table, so another repository publishes its notebooks with them rather than a copy.
-interpretune-publish-notebooks = "interpretune.utils.notebook_publishing:main"
-interpretune-render-notebook-docs = "interpretune.utils.notebook_docs:main"
 
 # Bundled adapters announce themselves through the SAME discovery mechanism a third-party adapter uses.
 # The rails may depend only on what a component DECLARES, never on WHICH package it is -- a hardcoded list
@@ -262,6 +258,10 @@ git-deps = [
     # default view survives a registry schema change), over #53 (overlay roles named by adapter, every PEFT tuner
     # family), #51 (a base map mounted under a wrapper root), #48 and #45 (base and overlay maps).
     "venngram @ git+https://github.com/speediedan/venngram@4b373919c1656f697a1ef7fc2fa35e04d14bd881",
+    # nbpress publishes and renders the example notebooks (#778): a development dependency only, never package
+    # metadata. The same commit is the `rev` of its hooks in .pre-commit-config.yaml and a line in
+    # requirements/docs.txt; tests/core/test_notebook_publishing.py fails when the three differ.
+    "nbpress @ git+https://github.com/speediedan/nbpress@b4a62204ac84578baaa1d7373d39f2d8a9090de5",
 ]
 
 dev = [
@@ -542,7 +542,7 @@ tmp_path_retention_count = 30  # allow retention of more successful runs during 
 
 # [tool.jupytext] removed 2026-08-25 with the jupytext dependency (#287). It paired
 # `"notebooks/" = "ipynb"` with `"scripts/" = "py"`, a layout this repo does not use: the notebook
-# lane is dev/*.ipynb -> publish/*.ipynb via scripts/publish_notebooks.py, and the .py files under
+# lane is dev/*.ipynb -> publish/*.ipynb via nbpress-publish, and the .py files under
 # notebooks/ are helper modules the notebooks import, not paired sources (none carries a jupytext
 # header). The config was inert, but inert config for an uninstalled tool is a landmine, so it goes
 # with the dependency rather than after it.
@@ -747,10 +747,9 @@ paths = ["tests", "src/it_examples/tests"]
 selection-env = { IT_RUN_PROFILING_TESTS = "1" }
 command = "python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type=profile_ci --allow-failures --allow-empty"
 
-[tool.notebook-publishing]
-# interpretune's own example notebooks, read by the publisher (src/interpretune/utils/notebook_publishing.py) and the
-# docs-artifact renderer (src/interpretune/utils/notebook_docs.py). Both are repository-neutral, so another
-# repository vendors them unmodified and writes this table for its own layout.
+[tool.nbpress]
+# interpretune's own example notebooks, read by nbpress (the git-deps pin): nbpress-publish publishes the dev lane,
+# nbpress-render executes the published notebooks into docs artifacts, and nbpress-render --check-stale gates them.
 dev_dir = "src/it_examples/notebooks/dev"
 publish_dir = "src/it_examples/notebooks/publish"
 colab_repo = "speediedan/interpretune"
@@ -772,8 +771,8 @@ install_cell = [
 docs_artifact_dir = "docs/notebook_artifacts"
 # interpretune's op-surface stamping and output-drift checks, which the renderer runs as repository hooks
 docs_hooks = "scripts/notebook_docs_hooks.py"
-docs_render_command = "python scripts/render_notebook_docs_artifacts.py"
+docs_render_command = "nbpress-render"
 
-[tool.notebook-publishing.import_rewrites]
+[tool.nbpress.import_rewrites]
 "it_examples.notebooks.dev." = "it_examples.notebooks.publish."
 '"notebooks" / "dev"' = '"notebooks" / "publish"'
