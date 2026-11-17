@@ -50,8 +50,6 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         return it_cfg
 
     def _dispatch_model_init(self) -> None:
-        if self.cuda_allocator_history:
-            torch.cuda.memory._record_memory_history()
         self.auto_model_init()
         self._refuse_unbuilt_meta_init()
         # Use `is not None` to avoid triggering __bool__/__len__ on special model wrappers
@@ -145,9 +143,9 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         """Roles for this module's parameters and buffers, by name.
 
         Cooperative: mixins add theirs to ``super()``'s. This base declares the roles of the latent models and
-        interventions attached to it (``latent:<name>`` and ``intervention:<name>``, or ``instrument`` for a frozen
-        one: :mod:`interpretune.tuning.latents`, :mod:`interpretune.tuning.interventions`), and of the operands of the
-        weight edits applied to its tensors (``adapter:<name>``, ``fitted`` or ``instrument``:
+        interventions attached to it (``latent:<name>`` and ``intervention:<name>``, or ``fitted`` or ``artifact``
+        for a frozen one: :mod:`interpretune.tuning.latents`, :mod:`interpretune.tuning.interventions`), and of the
+        operands of the weight edits applied to its tensors (``adapter:<name>``, ``fitted`` or ``artifact``:
         :mod:`interpretune.tuning.weights`).
         """
         return {**latent_model_roles(self), **intervention_roles(self), **weight_edit_roles(self)}

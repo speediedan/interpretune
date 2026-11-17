@@ -239,10 +239,27 @@ def test_an_op_on_a_gradient_is_refused_rather_than_applied_to_the_activation_va
     assert support.of == frozenset({"value"})  # the record's flows are carried into the declaration
     refusals = check_recipe(recipe, support)
     assert any("does not act on" in r for r in refusals) and any("addresses the gradient" in r for r in refusals)
-    # declaring `grad` (as no backend does yet) passes venngram's check; the apply path still refuses
+    # declaring `grad` (as both model backends do) passes venngram's check; translating for values still refuses
     both = InterventionSupport(position_scopes={PositionScope.ALL_POSITIONS}, ops={"scale"}, of={"value", "grad"})
     assert venngram_support(both).of == frozenset({"value", "grad"})
     assert [r for r in check_recipe(recipe, venngram_support(both)) if "addresses the gradient" in r]
+    assert check_recipe(recipe, venngram_support(both), flow="grad") == []
+
+
+def test_an_op_on_a_gradient_translates_for_the_backward_surface():
+    """#970: with `flow="grad"` the same unit op becomes the spec it would be on values, for
+    `bwd_w_intervention`."""
+    payload = recipe_interventions(_recipe(GRADIENT_RECIPE), site_widths={"mlp.out.hook_in": 16}, flow="grad")
+    (spec,) = payload["blocks.2.mlp.out.hook_in"]
+    assert spec.op == "scale" and spec.position_scope is PositionScope.ALL_POSITIONS
+    assert spec.intervention_tensor[7] == 0.0 and int((spec.intervention_tensor == 1.0).sum()) == 15
+
+
+def test_a_value_op_is_refused_by_the_backward_translation_and_an_unknown_flow_by_name():
+    with pytest.raises(MisconfigurationException, match="acts on the activation value, and this translation is for"):
+        recipe_interventions(_recipe(), site_widths={"mlp.out.hook_in": 8192}, flow="grad")
+    with pytest.raises(MisconfigurationException, match="flow 'gradient' is not a flow"):
+        recipe_interventions(_recipe(), site_widths={"mlp.out.hook_in": 8192}, flow="gradient")
 
 
 def _composed_recipe(target, value):

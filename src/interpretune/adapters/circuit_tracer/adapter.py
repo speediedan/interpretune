@@ -218,7 +218,7 @@ class BaseCircuitTracerModule(BaseITModule):
 
     def build_tunable_view(self) -> Any | None:
         """The transcoders' view (:class:`~interpretune.adapters.circuit_tracer.tunable_view.CircuitTracerView`),
-        bound with this module's declared roles: every transcoder tensor ``instrument`` until promoted, attached
+        bound with this module's declared roles: every transcoder tensor ``artifact`` until promoted, attached
         interventions and latent models with the roles ``tunable_roles()`` declares, and base-model tensors refused
         by name unless ``CircuitTracerConfig.tune_base`` makes them ``base``.
 

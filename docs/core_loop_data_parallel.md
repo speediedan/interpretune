@@ -66,9 +66,9 @@ and keeps the shards pinned. On the circuit-tracer walkthrough below, it brings 
 for a forward-only run, whose offloaded shards are allocated once; whether a training run's repeated pinned
 allocations reuse memory less well without the rounding has not been measured.
 
-A plan is usually the model's block class, plus each spliced instrument's class, so that an instrument is gathered on
-its own rather than with the block around it. Units are sharded deepest first whatever the plan's key order, so an
-instrument spliced inside a block can be listed after the block, and then the Interpretune module itself is sharded as
+A plan is usually the model's block class, plus each spliced latent model's class, so that a latent model is gathered
+on its own rather than with the block around it. Units are sharded deepest first whatever the plan's key order, so a
+latent model spliced inside a block can be listed after the block, and then the Interpretune module itself is sharded as
 the root unit. An empty plan (`{}`) shards the whole module as one unit, which gathers every parameter for the entire
 forward pass. Under `ddp` a plan is optional; without one the module is the only unit.
 

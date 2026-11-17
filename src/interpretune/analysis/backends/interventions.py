@@ -30,6 +30,7 @@ __all__ = [
     "resolve_interventions",
     "apply_intervention",
     "apply_op",
+    "track_gradient",
     "get_intervention_target_shape",
     "normalize_position_scope",
     "normalize_op",
@@ -822,6 +823,20 @@ def _apply_op_to_region(input_value: torch.Tensor, spec: InterventionSpec) -> to
     return executor_for(normalize_op(spec.op))(input_value, target, spec)
 
 
+def track_gradient(value: torch.Tensor) -> torch.Tensor:
+    """Make ``value`` carry gradients when the forward that produced it did not track them, and return it.
+
+    A model whose parameters are frozen (a circuit-tracer composition leaves its model so) computes its activations
+    without a graph when its input does not require grad, so a backward pass from the metric has nothing to
+    differentiate. Marking each site a backward reads makes the first one a leaf and everything downstream of it
+    tracked, and the gradient at every site is still the metric's gradient with respect to that activation. A tensor
+    already tracked is left alone, so a trainable model's graph is unchanged.
+    """
+    if not value.requires_grad:
+        value.requires_grad_(True)
+    return value
+
+
 def apply_intervention(
     value: torch.Tensor,
     spec: InterventionSpec,
@@ -967,6 +982,28 @@ def require_op(backend: Any, spec: InterventionSpec, *, backend_name: str) -> No
         )
 
 
+def require_flow(backend: Any, flow: str, *, backend_name: str) -> None:
+    """Refuse, with the flow named, when a backend does not declare that its ops act on ``flow``.
+
+    An op meant for the gradient and applied to the activation (or the reverse) returns plausible numbers for an edit
+    nobody asked for, so the flow is gated like the scope and the op. A record declares ``value`` unless it says
+    otherwise, and a provider declaring ``grad`` implements ``bwd_w_intervention``.
+    """
+    record = getattr(backend, "intervention_support", None)
+    if record is None:
+        if flow == "value":
+            return  # the scope and op gates refuse a backend with no record, payload entry by payload entry
+        _declared_axes(backend, backend_name=backend_name)
+    flows = {getattr(f, "value", f) for f in getattr(record, "of", None) or {"value"}}
+    if flow not in flows:
+        surface = "bwd_w_intervention" if flow == "grad" else "fwd_w_intervention"
+        raise NotImplementedError(
+            f"backend {backend_name!r} cannot apply ops to the {flow!r} flow ({surface}); it declares "
+            f"{sorted(flows)!r}. Refused rather than applied to the other flow, where the edit would act on a different"
+            " tensor."
+        )
+
+
 def iter_intervention_axes(
     interventions: InterventionDict | Mapping[str, InterventionValue],
     *,
@@ -996,13 +1033,16 @@ def require_intervention_support(
     interventions: InterventionDict | Mapping[str, InterventionValue],
     *,
     backend_name: str,
+    flow: str = "value",
 ) -> None:
-    """Gate every entry of an intervention payload on both axes before it reaches ``fwd_w_intervention``.
+    """Gate every entry of an intervention payload on both axes before it reaches ``fwd_w_intervention``, or, with
+    ``flow="grad"``, ``bwd_w_intervention`` (the flow itself is gated first).
 
     The single entry point ops call. It reads the payload the way the backend will (same coercion), so the axes gated
     here are the axes the backend will see, and a backend never has to re-derive them to refuse; its own refusal table,
     if it keeps one, is the second line of defence for a declaration that has drifted from the implementation.
     """
+    require_flow(backend, flow, backend_name=backend_name)
     for _pattern, spec in iter_intervention_axes(interventions):
         require_position_scope(backend, spec, backend_name=backend_name)
         require_op(backend, spec, backend_name=backend_name)

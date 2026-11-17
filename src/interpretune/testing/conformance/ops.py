@@ -51,9 +51,24 @@ def store_capture_points_impl(module, analysis_batch, batch, batch_idx: int, **_
 def captured_points(store: Any, index: int) -> dict[str, torch.Tensor]:
     """Rebuild ``{point name: tensor}`` for batch ``index`` from the three flat columns."""
     # Item access: the store serves only protocol-declared columns as attributes, and these are the suite's own.
-    values = torch.as_tensor(store["captured_values"][index], dtype=torch.float32)
-    code = [int(d) for d in torch.as_tensor(store["captured_shape"][index]).flatten().tolist()]
-    names = list(store["captured_point_names"][index])
+    return decode_points(
+        store["captured_values"][index], store["captured_shape"][index], store["captured_point_names"][index]
+    )
+
+
+def stored_gradients(store: Any, index: int, which: str) -> dict[str, torch.Tensor]:
+    """Rebuild ``{site: gradient}`` for batch ``index`` from ``model_bwd_intervention``'s flat columns, from the
+    baseline (``which="pre"``) or the intervened (``"post"``) backward pass."""
+    return decode_points(
+        store[f"{which}_intervention_grad_values"][index], store["grad_shape"][index], store["grad_point_names"][index]
+    )
+
+
+def decode_points(values: Any, shape: Any, names: Any) -> dict[str, torch.Tensor]:
+    """Split one flat value sequence into named tensors by its shape code, ``[n, ndim_0, dims_0..., ...]``."""
+    values = torch.as_tensor(values, dtype=torch.float32)
+    code = [int(d) for d in torch.as_tensor(shape).flatten().tolist()]
+    names = list(names)
     if not names:
         return {}
     n_points, pos = code[0], 1
@@ -62,11 +77,11 @@ def captured_points(store: Any, index: int) -> dict[str, torch.Tensor]:
     offset = 0
     for name in names:
         ndim = code[pos]
-        shape = code[pos + 1 : pos + 1 + ndim]
+        shape_of = code[pos + 1 : pos + 1 + ndim]
         pos += 1 + ndim
         numel = 1
-        for d in shape:
+        for d in shape_of:
             numel *= d
-        out[name] = values[offset : offset + numel].reshape(shape)
+        out[name] = values[offset : offset + numel].reshape(shape_of)
         offset += numel
     return out

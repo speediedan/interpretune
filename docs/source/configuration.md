@@ -39,3 +39,33 @@ via `apply_to_collection(..., function=...)` targeting **floating-point tensors 
 tensors — token IDs, attention masks, embedding indices (`LongTensor`) — pass through unconverted,
 which is exactly what embedding layers require. If you see mixed-precision surprises, audit the
 float tensors in your batch; the integer inputs are not the issue.
+
+## Memory profiling: `memprofiler_cfg`
+
+The `memprofiler` extension runs on finetuning-scheduler's profiling core (`finetuning_scheduler.profiling`), the same
+profiler finetuning-scheduler uses, so its configuration is the core's schema field for field. It needs
+finetuning-scheduler, which interpretune's `tune` extra installs (`pip install 'interpretune[tune]'`); enabling it without
+the extra is refused, naming the extra.
+
+```yaml
+memprofiler_cfg:
+  enabled: true
+  collect_funcs:
+    default: [training_step, test_step]  # added to every collection type below
+    accelerator: []      # accelerator statistics (CUDA, ROCm, XPU)
+    allocator_history: []  # allocator history snapshots, with `allocator_history: true`
+    cpu: []              # host memory (RSS, VMS)
+    fsdp: []             # FSDP2 memory tracking, with `track_fsdp_mem: true`
+  allocator_history: true
+  schedule:
+    warmup_iters: 1      # iterations count from 1; these are skipped
+    max_iter: 4          # collect through this iteration (unset: one iteration after the warmup)
+  dump_memorystats_yaml: true  # rank_<r>_memory_stats.yaml under <core_log_dir>/memprofiler (or save_dir)
+```
+
+A step method decorated with `MemProfilerHooks.memprofilable` is profiled once per call: a snapshot at its start and
+end, keyed `rank.fn_name.iter_idx.iter_ctx` (for example `0.training_step.2.end`). Collection a host cannot perform (an
+accelerator statistic without an accelerator, allocator history on a backend without it) is disabled with a warning. The
+remaining fields (memory and saved-tensor hooks, the FSDP2 tracker's depth, units and root module, report aggregation)
+are documented on finetuning-scheduler's `MemProfilerCfg`. Run the PyTorch profiler and the memory profiler in separate
+runs (see the design rationale).

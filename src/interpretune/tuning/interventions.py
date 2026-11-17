@@ -26,10 +26,11 @@ the seam for the last kind, *trainable* interventions, whose operand is tuned by
 - :func:`attach_intervention` and :func:`detach_intervention`, which register an intervention under the root's
   ``interventions`` and splice it in with a forward hook on the module whose output it rewrites;
 - :func:`intervention_roles`, the roles to declare: ``intervention:<name>`` (venngram's role vocabulary, as PEFT
-  adapters are ``adapter:<name>``) for a tunable intervention, or ``instrument`` for a precomputed one applied but never
-  trained (finetuning-scheduler never thaws an instrument, and promotes instruments only to latent roles). Every
-  interpretune module declares them through its cooperative ``tunable_roles()``, which its venngram view reads, so a
-  schedule selects one intervention with ``role:intervention:<name>`` and all of them with ``role:intervention``;
+  adapters are ``adapter:<name>``) for a tunable intervention; for a frozen one, ``fitted`` when its value is computed
+  in the run (checkpointed, never optimized) or ``artifact`` when it is loaded from a published or saved source
+  (reloaded, never saved; finetuning-scheduler never thaws an artifact, and promotes artifacts only to latent roles).
+  Every interpretune module declares them through its cooperative ``tunable_roles()``, which its venngram view reads,
+  so a schedule selects one intervention with ``role:intervention:<name>`` and all of them with ``role:intervention``;
 - :class:`InterventionCfg`, an intervention declared in a module's configuration (``tuning_interventions``), which
   every interpretune module attaches once its model is built (:func:`attach_configured_interventions`), so an example
   needs no module code to steer.
@@ -51,7 +52,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import torch
 from torch import nn
@@ -161,15 +162,21 @@ def _site_device(root: nn.Module, target: nn.Module) -> torch.device | None:
     return None
 
 
+# the role of a frozen intervention's tensors: `fitted` (computed in the run) or `artifact` (loaded from a source)
+FrozenKind = Literal["fitted", "artifact"]
+
+FROZEN_KINDS: tuple[FrozenKind, ...] = ("fitted", "artifact")
+
+
 def attach_intervention(
-    root: nn.Module, name: str, intervention: nn.Module, site: str, *, frozen: bool = False
+    root: nn.Module, name: str, intervention: nn.Module, site: str, *, frozen: Literal[False] | FrozenKind = False
 ) -> nn.Module:
     """Register ``intervention`` on ``root`` as ``interventions.<name>`` and splice it in at ``site``.
 
     The intervention rewrites the output of the module at ``site`` (the first element of a tuple output, as HF decoder
     layers return): the output becomes ``intervention(output)``. Its parameters become ``root``'s
     (``interventions.<name>.<...>``), so they are saved in its state dict and reachable by its tunable view.
-    :func:`intervention_roles` declares them ``intervention:<name>``, or ``instrument`` when ``frozen``. The
+    :func:`intervention_roles` declares them ``intervention:<name>``, or the ``frozen`` role kind. The
     intervention moves to the site's device (a model placed by ``device_map`` is not moved again by the core loop), and
     keeps its dtype.
 
@@ -178,21 +185,30 @@ def attach_intervention(
         name: The intervention's name: letters, digits, ``_`` and ``-``.
         intervention: An ``nn.Module`` mapping the site's activations to their rewritten value.
         site: Path, under ``root``, of the module whose output is rewritten.
-        frozen: Declare its parameters ``instrument`` rather than ``intervention:<name>``: for a precomputed
-            intervention applied but never trained.
+        frozen: Declare its parameters with a frozen role rather than ``intervention:<name>``, for an intervention
+            applied but never trained. ``"fitted"`` for a value computed in this run (a mean difference, a fitted
+            direction): finetuning-scheduler checkpoints it and never optimizes it, so a resumed run keeps it.
+            ``"artifact"`` for a value loaded from a published or saved source: never checkpointed, because it is
+            reloaded from that source, and promotable to ``latent:<name>``. ``False`` (the default) is tunable.
 
     Returns:
         ``intervention``.
 
     Raises:
-        ValueError: ``name`` is not a valid name or is already attached, or ``root`` is a circuit-tracer composition
-            whose forward never runs through ``site``.
+        ValueError: ``name`` is not a valid name or is already attached, ``frozen`` is neither ``False`` nor a frozen
+            role kind (``True`` included: it does not say whether the value is saved), or ``root`` is a circuit-tracer
+            composition whose forward never runs through ``site``.
         AttributeError: the site's module does not exist under ``root``.
     """
     if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
         raise ValueError(f"Intervention name {name!r} must be letters, digits, '_' and '-' only")
     if not isinstance(intervention, nn.Module):
         raise ValueError(f"{type(intervention).__name__} is not an nn.Module")
+    if frozen is not False and frozen not in FROZEN_KINDS:
+        raise ValueError(
+            f"frozen={frozen!r} must be False, 'fitted' (a value computed in this run: checkpointed, never optimized)"
+            " or 'artifact' (a value loaded from a published or saved source: reloaded, never checkpointed)"
+        )
     held = _interventions(root, create=True)
     assert held is not None
     if name in held:
@@ -208,8 +224,9 @@ def attach_intervention(
     handle = target.register_forward_hook(rewrite)
     held[name] = intervention
     hooks: dict[str, Any] = root.__dict__.setdefault(_HOOKS_ATTR, {})
-    sites: dict[str, tuple[str, bool]] = root.__dict__.setdefault(_SITES_ATTR, {})
-    hooks[name], sites[name] = handle, (site, frozen)
+    sites: dict[str, tuple[str, Literal[False] | FrozenKind]] = root.__dict__.setdefault(_SITES_ATTR, {})
+    hooks[name] = handle
+    sites[name] = (site, frozen)
     return intervention
 
 
@@ -246,7 +263,7 @@ def intervention_roles(root: nn.Module) -> dict[str, str]:
     roles: dict[str, str] = {}
     for name, intervention in held.items():
         _, frozen = sites[name]
-        role = "instrument" if frozen else f"intervention:{name}"
+        role = frozen or f"intervention:{name}"
         tensors = [*intervention.named_parameters(), *intervention.named_buffers()]
         roles.update({f"{INTERVENTIONS_ATTR}.{name}.{n}": role for n, _ in tensors})
     return roles
@@ -267,7 +284,8 @@ class InterventionCfg:
 
     A configured intervention's operand starts where its op is the identity and is tunable (``intervention:<name>``).
     A frozen one would be a no-op, so there is no ``frozen`` setting: a later stage holds a trained operand fixed with
-    ``refreeze``, and a precomputed one is attached in code (``attach_intervention(..., frozen=True)``).
+    ``refreeze``, and a precomputed one is attached in code (``attach_intervention(..., frozen="artifact")``, or
+    ``"fitted"`` for a value computed in the run).
     """
 
     name: str
