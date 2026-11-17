@@ -622,13 +622,21 @@ def test_two_rank_phased_tuning_under_fsdp2_matches_global_batch(phased_global_b
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
 @pytest.mark.parametrize(
     "placement, extra",
-    [("ddp", ()), ("fsdp2", BLOCK_PLAN)],
-    ids=["ddp", "fsdp2"],
+    [
+        ("ddp", ()),
+        ("fsdp2", BLOCK_PLAN),
+        pytest.param(
+            "tp",
+            FFN_TP_PLAN,
+            marks=pytest.mark.skipif(not _FTS_AVAILABLE, reason="the tensor-parallel plan is finetuning-scheduler's"),
+        ),
+    ],
+    ids=["ddp", "fsdp2", "tp"],
 )
 def test_two_rank_resume_matches_the_uninterrupted_run_exactly(placement, extra, tmp_path):
     """A run interrupted at an epoch boundary and resumed from its distributed checkpoint reproduces the
-    uninterrupted run's losses exactly: same sharded weights and optimizer state, same per-rank RNG streams, same
-    sampler epoch."""
+    uninterrupted run's losses exactly: same sharded (or split) weights and optimizer state, same per-rank RNG
+    streams, same sampler epoch."""
     checkpoint_dir = tmp_path / "ckpt"
     _launch(placement, tmp_path, *extra, "--max-epochs", "2", "--out-name", "full")
     _launch(
@@ -680,6 +688,54 @@ def test_two_rank_phased_resume_across_the_transition_matches(phased_global_batc
     rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
     assert rank_mean == pytest.approx(reference["losses"][3:], rel=1e-5)
     for record in records:
+        assert record["depth"] == reference["depth"] == 1
+        assert record["trainable"] == reference["trainable"]
+
+
+@pytest.fixture(scope="module")
+def phased_shared_batch_reference(tmp_path_factory):
+    out_dir = tmp_path_factory.mktemp("tp_phased_reference")
+    _launch("single", out_dir, "--world-size", "1", "--phased")
+    return json.loads((out_dir / "single_rank0.json").read_text())
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning and the tensor-parallel plan are finetuning-scheduler's")
+def test_two_rank_phased_tuning_under_tp_matches_one_process(phased_shared_batch_reference, tmp_path):
+    """Two phases of finetuning-scheduler's ``TuningScheduler`` over a tensor-parallel module match one process on
+    the shared batch, step for step, on every rank.
+
+    Phase 0 thaws the last block, phase 1 the rest, so phase 1 thaws split (``DTensor``) and whole parameters
+    together; the ranks match only if each thaw reaches both kinds and the optimizer rebuilt at the transition steps
+    them.
+    """
+    reference = phased_shared_batch_reference
+    _launch("tp", tmp_path, *FFN_TP_PLAN, "--phased")
+    for rank in range(2):
+        record = json.loads((tmp_path / f"tp_rank{rank}.json").read_text())
+        assert len(record["losses"]) == len(reference["losses"]) == 6
+        assert record["losses"] == pytest.approx(reference["losses"], rel=1e-5)
+        assert record["depth"] == reference["depth"] == 1
+        assert record["trainable"] == reference["trainable"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="phased tuning and the tensor-parallel plan are finetuning-scheduler's")
+def test_two_rank_phased_tp_resume_across_the_transition_matches(phased_shared_batch_reference, tmp_path):
+    """A phased tensor-parallel run resumed from the first epoch's checkpoint crosses the phase transition in the
+    resumed run and still matches the one-process reference on every rank: split weights and their optimizer state
+    load back into the split layout."""
+    checkpoint_dir = tmp_path / "ckpt"
+    _launch("tp", tmp_path, *FFN_TP_PLAN, "--phased", "--out-name", "first",
+            "--save-checkpoint-dir", str(checkpoint_dir))  # fmt: skip
+    _launch("tp", tmp_path, *FFN_TP_PLAN, "--phased", "--out-name", "resumed",
+            "--resume-from", str(checkpoint_dir))  # fmt: skip
+    reference = phased_shared_batch_reference
+    for rank in range(2):
+        record = json.loads((tmp_path / f"resumed_rank{rank}.json").read_text())
+        assert record["losses"] == pytest.approx(reference["losses"][3:], rel=1e-5)
         assert record["depth"] == reference["depth"] == 1
         assert record["trainable"] == reference["trainable"]
 
