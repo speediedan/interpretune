@@ -567,24 +567,27 @@ notes) follow this documentation cadence:
 
 ## Notebook Publishing
 
-**⚠️ CRITICAL: Notebook tests run against PUBLISHED notebooks, not dev notebooks.** If you edit any dev notebook, you **MUST** run `python scripts/publish_notebooks.py --force` before testing or committing. The pre-commit hook only triggers when `.ipynb` files in `dev/` are staged — if the dev notebook was changed in a prior commit or by another tool, the published copy will be stale and notebook tests will fail.
+**⚠️ CRITICAL: Notebook tests run against PUBLISHED notebooks, not dev notebooks.** If you edit any dev notebook, you **MUST** run `nbpress-publish --force` before testing or committing. The pre-commit hook only triggers when `.ipynb` files in `dev/` are staged — if the dev notebook was changed in a prior commit or by another tool, the published copy will be stale and notebook tests will fail.
 
-Dev notebooks live in `src/it_examples/notebooks/dev/` and are auto-published to `src/it_examples/notebooks/publish/` via `scripts/publish_notebooks.py`, a shim over the console script `interpretune-publish-notebooks` (engine: `src/interpretune/utils/notebook_publishing.py`, parameterized from `[tool.notebook-publishing]` in `pyproject.toml`; adapter repositories use the same engine for their own example notebooks).
+Dev notebooks live in `src/it_examples/notebooks/dev/` and are published to `src/it_examples/notebooks/publish/` by
+[nbpress](https://github.com/speediedan/nbpress) (`nbpress-publish`), configured from `[tool.nbpress]` in
+`pyproject.toml`. nbpress is a git-deps pin, and the same commit is the `rev` of its hooks in
+`.pre-commit-config.yaml` and a line in `requirements/docs.txt` (a test fails when the three differ).
 
-The publisher and the docs-artifact renderer (`src/interpretune/utils/notebook_docs.py`, shim
-`scripts/render_notebook_docs_artifacts.py`) are **repository-neutral**: other repositories vendor them unmodified
-(finetuning-scheduler does, with a check that they match this copy), so nothing interpretune-specific goes in
-either file. Interpretune's own renderer checks (the op-surface stamp and its output-drift checks) live in the
-hooks file `scripts/notebook_docs_hooks.py`, named by `docs_hooks` in the table; a new repository-specific check
-belongs there, and a missing engine capability is added to the engine generically.
+The publisher, the docs-artifact renderer (`nbpress-render`) and the output stripper (`nbpress-strip`) are
+**repository-neutral** and live in nbpress, shared with finetuning-scheduler, so nothing interpretune-specific goes
+there; a missing capability is added to nbpress generically. Interpretune's own renderer checks (the op-surface
+stamp and its output-drift checks) live in the hooks file `scripts/notebook_docs_hooks.py`, named by `docs_hooks`
+in the table. The published library does not depend on nbpress: the notebook conformance cases and the experiment
+harness read the table and hashes through `interpretune.utils.notebook_config`.
 
-- **Pre-commit hook** (`publish-notebooks`): Triggered on changes to `^src/it_examples/notebooks/dev/.*\.ipynb$`. Automatically strips `remove-cell` tagged cells, adds Colab badges + install cells, fixes import paths, and tracks hashes in `.notebook_hashes.json`.
+- **Pre-commit hook** (`nbpress-publish`): Triggered on changes to `^src/it_examples/notebooks/dev/.*\.ipynb$`. Automatically strips `remove-cell` tagged cells, adds Colab badges + install cells, fixes import paths, and tracks hashes in `.notebook_hashes.json`.
 - **CLI flags:** `--dry-run` (preview), `--check-only` (CI validation), `--force` (republish all). Launch.json has debug configs for each mode.
 - **Workflow:** Edit dev notebooks only → commit → pre-commit publishes automatically. Never edit publish notebooks directly.
-- **Verification:** After any notebook changes, run `python scripts/publish_notebooks.py --check-only` to verify published notebooks are in sync.
+- **Verification:** After any notebook changes, run `nbpress-publish --check-only` to verify published notebooks are in sync.
 - **Rendered artifacts are part of the change.** A PR that adds or edits a notebook also re-renders its docs
   artifact (`docs/notebook_artifacts/<lane>/<name>.ipynb`, produced by
-  `python scripts/render_notebook_docs_artifacts.py --notebook <name>` on a host with the full environment; some
+  `nbpress-render --notebook <name>` on a host with the full environment; some
   notebooks need a GPU, gated weights, Hub tokens or the local Neuronpedia stack) and commits it, so the PR's
   docs preview (`https://interpretune--<PR>.org.readthedocs.build/en/<PR>/notebooks/<lane>/<name>.html`) shows
   real outputs. Reviewers read that page, not the code-only fallback, before a merge is proposed.

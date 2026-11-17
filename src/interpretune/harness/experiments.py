@@ -7,7 +7,7 @@ home directory. Each of those is fine until an experiment lives somewhere else, 
 shared infrastructure stops being shareable, which is the thing it exists to be.
 
 Parameterized from the consuming repository's ``[tool.interpretune.experiments]``, exactly as the
-notebook publisher is parameterized from ``[tool.notebook-publishing]``, so an out-of-tree experiment
+notebook publisher (nbpress) is parameterized from ``[tool.nbpress]``, so an out-of-tree experiment
 consumes the rails rather than a copy of them::
 
     [tool.interpretune.experiments]
@@ -29,7 +29,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from interpretune.utils.notebook_publishing import _load_toml, find_root
+from interpretune.utils.notebook_config import find_root, load_toml
 
 TABLE = ("tool", "interpretune", "experiments")
 #: An ``EXTENDS`` value of the form ``package.module:resource`` names a file inside an INSTALLED
@@ -59,7 +59,7 @@ class ExperimentsConfig:
         table: dict[str, Any] = {}
         pyproject = root / "pyproject.toml"
         if pyproject.is_file():
-            data: Any = _load_toml(pyproject)
+            data: Any = load_toml(pyproject)
             for key in TABLE:
                 data = data.get(key) or {}
             table = dict(data)

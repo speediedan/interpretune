@@ -1,44 +1,32 @@
-"""The notebook publishing engine (``interpretune-publish-notebooks``) and the static notebook-form cases.
+"""Interpretune's notebook reader (``interpretune.utils.notebook_config``), its agreement with nbpress, and the
+static notebook-form cases.
 
-The engine is parameterized from ``[tool.notebook-publishing]`` so another repository publishes its notebooks with it
-rather than with a copy of interpretune's script; these tests drive it against a throwaway repository and then run the
-notebook-form cases against interpretune's own published notebooks.
+nbpress (a git-deps pin) publishes and renders the notebooks and is tested in its own repository. The published library
+keeps a small reader of nbpress's configuration and hashes so it does not depend on nbpress; these tests hold the two to
+the same answers, keep the three places nbpress is pinned at one commit, and run the notebook-form cases against
+interpretune's own published notebooks.
 """
 
 from __future__ import annotations
 
 import json
-
-import pytest
+import re
 from pathlib import Path
 
+import pytest
+from nbpress import publish as nbpress_publish
 
 from interpretune.testing.conformance import NotebookFormConformance
-from interpretune.utils.notebook_publishing import (
-    HASH_FILE,
+from interpretune.utils.notebook_config import (
     NotebookConfigError,
     PublisherConfig,
-    load_notebook,
-    main,
+    changed_files,
+    compute_file_hash,
+    load_notebook_hashes,
     publishable_files,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-
-
-def _notebook(*cells):
-    return {"cells": list(cells), "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
-
-
-def _code(text, tags=()):
-    return {
-        "cell_type": "code",
-        "metadata": {"tags": list(tags)},
-        "source": text.splitlines(keepends=True),
-        "outputs": [],
-        "execution_count": None,
-    }
-
 
 BASE_TABLE = (
     'dev_dir = "examples/dev"\npublish_dir = "examples/publish"\ncolab_repo = "org/adapter"\n'
@@ -46,175 +34,107 @@ BASE_TABLE = (
 )
 
 
-def _repo(
-    tmp_path: Path, table: str = "", *, header: str = "[tool.notebook-publishing]", base: str = BASE_TABLE
-) -> Path:
+def _notebook(*cells):
+    return {"cells": list(cells), "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
+
+
+def _code(text):
+    return {"cell_type": "code", "metadata": {}, "source": text.splitlines(keepends=True), "outputs": []}
+
+
+def _repo(tmp_path: Path, table: str = "", *, header: str = "[tool.nbpress]") -> Path:
     root = tmp_path / "adapter"
-    (root / "examples" / "dev" / "nested").mkdir(parents=True)
-    (root / "pyproject.toml").write_text(f'[project]\nname = "x"\nversion = "0"\n\n{header}\n' + base + table)
-    nb = _notebook(
-        _code("from examples.dev.helpers import h\n"),
-        _code("secret = 1\n", tags=["remove-cell"]),
-        _code("%pip install nothing\nimport json\n"),
-    )
-    (root / "examples" / "dev" / "nested" / "demo.ipynb").write_text(json.dumps(nb))
-    (root / "examples" / "dev" / "helpers.py").write_text("h = 1\n")
-    (root / "examples" / "dev" / "__pycache__").mkdir()
-    (root / "examples" / "dev" / "__pycache__" / "helpers.cpython-313.pyc").write_bytes(b"\x00")
+    (root / "examples" / "dev").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(f'[project]\nname = "x"\nversion = "0"\n\n{header}\n' + BASE_TABLE + table)
+    (root / "examples" / "dev" / "demo.ipynb").write_text(json.dumps(_notebook(_code("import json\n"))))
     return root
 
 
-class TestEngine:
-    def test_publishes_transforms_and_tracks_hashes(self, tmp_path, capsys):
-        root = _repo(
-            tmp_path, table='[tool.notebook-publishing.import_rewrites]\n"examples.dev." = "examples.publish."\n'
-        )
-        assert main(["--root", str(root)]) == 0
-        published = root / "examples" / "publish" / "nested" / "demo.ipynb"
-        cells = load_notebook(published)["cells"]
-        assert [c["metadata"].get("id") for c in cells[:2]] == ["colab-badge", "install-deps"]
-        assert "github/org/adapter/blob/main/examples/publish/nested/demo.ipynb" in "".join(cells[0]["source"])
-        # the rewritten cell keeps the list-of-lines form; its final line carries no newline, as the engine has
-        # always written it
-        assert "".join(cells[2]["source"]) == "from examples.publish.helpers import h"
-        assert len(cells) == 4, "the remove-cell tagged cell must be gone"
-        assert (root / "examples" / "publish" / "helpers.py").read_text() == "h = 1\n"
-        assert not list((root / "examples" / "publish").rglob("*.pyc")), "bytecode caches are never publication inputs"
-        hashes = json.loads((root / "examples" / "publish" / HASH_FILE).read_text())
-        assert set(hashes) == {"examples/dev/nested/demo.ipynb", "examples/dev/helpers.py"}
-        # a second pass is a no-op, and --check-only agrees
-        assert main(["--root", str(root), "--check-only"]) == 0
-        capsys.readouterr()
-        assert main(["--root", str(root)]) == 0
-        assert "All files are up to date" in capsys.readouterr().out
+class TestReaderAgreesWithNbpress:
+    """A reader that hashed or keyed files differently from nbpress would report every published notebook stale."""
 
-    def test_check_only_names_the_stale_file_and_force_republishes_everything(self, tmp_path, capsys):
+    def test_hashes_agree_on_text_crlf_and_binary_files(self, tmp_path):
+        samples = {
+            "lf.py": b"a = 1\nb = 2\n",
+            "crlf.py": b"a = 1\r\nb = 2\r\n",
+            "img.png": b"\x89PNG\r\n\x1a\n\x00binary",
+            "latin1.txt": "caf\xe9\r\n".encode("latin-1"),
+        }
+        for name, data in samples.items():
+            (tmp_path / name).write_bytes(data)
+            assert compute_file_hash(tmp_path / name) == nbpress_publish.compute_file_hash(tmp_path / name), name
+        assert compute_file_hash(tmp_path / "lf.py") == compute_file_hash(tmp_path / "crlf.py")
+
+    def test_both_read_interpretunes_table_to_the_same_inputs_and_keys(self):
+        ours = PublisherConfig.from_pyproject(REPO_ROOT)
+        theirs = nbpress_publish.PublisherConfig.from_pyproject(REPO_ROOT)
+        assert (ours.dev_dir, ours.publish_dir, ours.colab_repo, ours.colab_branch) == (
+            theirs.dev_dir,
+            theirs.publish_dir,
+            theirs.colab_repo,
+            theirs.colab_branch,
+        )
+        files = publishable_files(ours.dev_dir)
+        assert files == nbpress_publish.publishable_files(theirs.dev_dir)
+        assert [ours.hash_key(p) for p in files] == [theirs.hash_key(p) for p in files]
+        assert ours.hash_key(files[0]).startswith("notebooks/dev/"), "the stored hash keys must keep resolving"
+
+    def test_a_file_nbpress_just_published_reads_as_current_and_an_edit_as_stale(self, tmp_path):
         root = _repo(tmp_path)
-        assert main(["--root", str(root)]) == 0
-        (root / "examples" / "dev" / "helpers.py").write_text("h = 2\n")
-        assert main(["--root", str(root), "--check-only"]) == 1
-        assert "examples/dev/helpers.py" in capsys.readouterr().out
-        assert main(["--root", str(root), "--force", "--dry-run"]) == 0
-        out = capsys.readouterr().out
-        assert out.count("WOULD ") == 2 and "pyc" not in out
-        assert (root / "examples" / "publish" / "helpers.py").read_text() == "h = 1\n", "dry run must not write"
-
-    def test_install_cell_and_branch_come_from_the_table(self, tmp_path):
-        base = BASE_TABLE.replace('"# %pip install adapter"', '"%pip install adapter[examples]"')
-        root = _repo(tmp_path, table='colab_branch = "release"\n', base=base)
+        assert nbpress_publish.main(["--root", str(root)]) == 0
         cfg = PublisherConfig.from_pyproject(root)
-        assert cfg.colab_branch == "release" and cfg.install_cell == ("%pip install adapter[examples]\n",)
-        assert main(["--root", str(root)]) == 0
-        cells = load_notebook(root / "examples" / "publish" / "nested" / "demo.ipynb")["cells"]
-        assert cells[1]["source"] == ["%pip install adapter[examples]\n"]
-        assert "/blob/release/" in "".join(cells[0]["source"])
-
-    def test_interpretunes_own_table_reproduces_the_legacy_hash_keys(self):
-        cfg = PublisherConfig.from_pyproject(REPO_ROOT)
-        assert cfg.dev_dir == REPO_ROOT / "src" / "it_examples" / "notebooks" / "dev"
-        some = publishable_files(cfg.dev_dir)[0]
-        assert cfg.hash_key(some).startswith("notebooks/dev/"), (
-            "the stored .notebook_hashes.json keys must keep resolving"
-        )
-
-    def test_hashes_ignore_line_ending_rewrites(self, tmp_path):
-        """A CRLF checkout of the same file must hash as the LF original, or Windows reports everything stale."""
-        from interpretune.utils.notebook_publishing import compute_file_hash
-
-        lf = tmp_path / "lf.py"
-        crlf = tmp_path / "crlf.py"
-        lf.write_bytes(b"a = 1\nb = 2\n")
-        crlf.write_bytes(b"a = 1\r\nb = 2\r\n")
-        assert compute_file_hash(lf) == compute_file_hash(crlf)
-        other = tmp_path / "other.py"
-        other.write_bytes(b"a = 1\nb = 3\n")
-        assert compute_file_hash(lf) != compute_file_hash(other)
-        # a binary file with an incidental CRLF byte pair hashes raw: a checkout never rewrites it
-        png = tmp_path / "img.png"
-        png.write_bytes(b"\x89PNG\r\n\x1a\n\x00binary")
-        assert compute_file_hash(png) == __import__("hashlib").sha256(png.read_bytes()).hexdigest()
-
-    def test_a_missing_dev_dir_is_an_error(self, tmp_path, capsys):
-        root = _repo(tmp_path, base=BASE_TABLE.replace('"examples/dev"', '"nope"'))
-        assert main(["--root", str(root)]) == 1
-        assert "dev directory not found" in capsys.readouterr().out
+        assert changed_files(cfg, load_notebook_hashes(cfg.publish_dir)) == []
+        (cfg.dev_dir / "demo.ipynb").write_text(json.dumps(_notebook(_code("import os\n"))))
+        assert changed_files(cfg, load_notebook_hashes(cfg.publish_dir)) == [cfg.dev_dir / "demo.ipynb"]
 
 
-class TestTableContract:
-    """The engine holds no repository defaults, so the table is refused by name rather than half-read."""
-
-    def test_the_legacy_table_name_is_read_identically(self, tmp_path):
+class TestReaderTable:
+    @pytest.mark.parametrize("legacy", ["[tool.notebook-publishing]", "[tool.interpretune.notebooks]"])
+    def test_each_earlier_table_name_is_read_identically(self, tmp_path, legacy):
         new = PublisherConfig.from_pyproject(_repo(tmp_path / "new"))
-        old = PublisherConfig.from_pyproject(_repo(tmp_path / "old", header="[tool.interpretune.notebooks]"))
-        assert (new.dev_dir.name, new.colab_repo, new.install_cell) == (
-            old.dev_dir.name,
-            old.colab_repo,
-            old.install_cell,
-        )
+        old = PublisherConfig.from_pyproject(_repo(tmp_path / "old", header=legacy))
+        assert (new.dev_dir.name, new.colab_repo) == (old.dev_dir.name, old.colab_repo)
 
-    def test_both_tables_are_refused_rather_than_merged(self, tmp_path, capsys):
-        root = _repo(tmp_path, table="\n[tool.interpretune.notebooks]\n" + BASE_TABLE)
-        with pytest.raises(NotebookConfigError, match="both"):
+    def test_two_tables_are_refused_rather_than_merged(self, tmp_path):
+        root = _repo(tmp_path, table="\n[tool.notebook-publishing]\n" + BASE_TABLE)
+        with pytest.raises(NotebookConfigError, match="keep one"):
             PublisherConfig.from_pyproject(root)
-        assert main(["--root", str(root)]) == 1
-        assert "legacy [tool.interpretune.notebooks]" in capsys.readouterr().out
 
-    @pytest.mark.parametrize("dropped", ["dev_dir", "publish_dir", "colab_repo", "install_cell"])
-    def test_a_missing_required_key_is_refused_by_name(self, tmp_path, dropped):
-        base = "".join(line + "\n" for line in BASE_TABLE.splitlines() if not line.startswith(dropped))
-        with pytest.raises(NotebookConfigError, match=dropped):
-            PublisherConfig.from_pyproject(_repo(tmp_path, base=base))
-
-    def test_an_unknown_key_is_refused_by_name(self, tmp_path):
-        """A misspelled optional key would otherwise fall back to its default without a word."""
-        with pytest.raises(NotebookConfigError, match="colab_brnach"):
-            PublisherConfig.from_pyproject(_repo(tmp_path, table='colab_brnach = "release"\n'))
-
-    def test_no_table_is_refused(self, tmp_path):
+    def test_no_table_and_a_missing_key_are_refused_by_name(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n')
-        with pytest.raises(NotebookConfigError, match="no \\[tool.notebook-publishing\\] table"):
+        with pytest.raises(NotebookConfigError, match=r"no \[tool.nbpress\] table"):
+            PublisherConfig.from_pyproject(tmp_path)
+        (tmp_path / "pyproject.toml").write_text('[tool.nbpress]\ndev_dir = "d"\npublish_dir = "p"\n')
+        with pytest.raises(NotebookConfigError, match="colab_repo"):
             PublisherConfig.from_pyproject(tmp_path)
 
-    def test_hash_keys_are_relative_to_the_configured_base(self, tmp_path):
-        cfg = PublisherConfig.from_pyproject(_repo(tmp_path, table='hash_key_base = "examples"\n'))
-        assert cfg.hash_key(cfg.dev_dir / "nested" / "demo.ipynb") == "dev/nested/demo.ipynb"
 
+class TestNbpressPin:
+    """Nbpress is pinned in three places that install it separately; a bump that misses one runs two versions."""
 
-class TestParametersCell:
-    """A papermill ``parameters`` cell must survive publishing and output stripping, so a test or smoke run can
-    shrink a notebook by injecting smaller values."""
+    @staticmethod
+    def _commits() -> dict[str, list[str]]:
+        url = r"nbpress @ git\+https://github\.com/speediedan/nbpress@([0-9a-f]{40})"
+        precommit = (REPO_ROOT / ".pre-commit-config.yaml").read_text()
+        return {
+            "pyproject.toml git-deps": re.findall(url, (REPO_ROOT / "pyproject.toml").read_text()),
+            "requirements/docs.txt": re.findall(url, (REPO_ROOT / "requirements" / "docs.txt").read_text()),
+            ".pre-commit-config.yaml rev": re.findall(
+                r"repo: https://github\.com/speediedan/nbpress\n\s+rev: ([0-9a-f]{40})\b", precommit
+            ),
+        }
 
-    def test_publishing_and_stripping_keep_the_parameters_cell(self, tmp_path):
-        import importlib.util
-
-        root = _repo(tmp_path)
-        params = _code("model = 'tiny'\nepochs = 1\n", tags=["parameters"])
-        params["outputs"] = [{"output_type": "stream", "name": "stdout", "text": ["x\n"]}]
-        (root / "examples" / "dev" / "nested" / "demo.ipynb").write_text(json.dumps(_notebook(params)))
-        assert main(["--root", str(root)]) == 0
-        published = root / "examples" / "publish" / "nested" / "demo.ipynb"
-        cell = load_notebook(published)["cells"][2]
-        assert cell["metadata"]["tags"] == ["parameters"]
-        assert "".join(cell["source"]).rstrip("\n") == "model = 'tiny'\nepochs = 1"
-
-        spec = importlib.util.spec_from_file_location(
-            "_nbstripout_hook", REPO_ROOT / "scripts" / "run_nbstripout_hook.py"
-        )
-        assert spec is not None and spec.loader is not None
-        hook = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(hook)
-        hook.main([str(published)])
-        stripped = load_notebook(published)["cells"][2]
-        assert stripped["metadata"]["tags"] == ["parameters"] and stripped["source"] == cell["source"]
+    def test_each_place_pins_nbpress_once_and_all_to_one_commit(self):
+        commits = self._commits()
+        assert all(len(found) == 1 for found in commits.values()), commits
+        assert len({found[0] for found in commits.values()}) == 1, commits
 
 
 class TestForbiddenImportsPositiveControl:
     def test_a_phantom_forbidden_module_is_refused_rather_than_passing(self, tmp_path):
         """A misspelled pip-form name would otherwise forbid nothing and report success forever."""
-        from interpretune.utils.notebook_publishing import main
-
         root = _repo(tmp_path)
-        assert main(["--root", str(root)]) == 0
+        assert nbpress_publish.main(["--root", str(root)]) == 0
 
         class Probe(NotebookFormConformance):
             forbidden_imports = ("no_such_module_anywhere",)

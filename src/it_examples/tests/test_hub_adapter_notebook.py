@@ -78,7 +78,7 @@ class TestHubAdapterNotebookIsPublished:
         """A dev-only notebook is invisible to every notebook test, which run against ``publish/``."""
         assert (DEV_DIR / NOTEBOOK_REL).exists(), "dev notebook missing"
         assert (PUBLISH_DIR / NOTEBOOK_REL).exists(), (
-            f"{NOTEBOOK_REL} is not published; run `interpretune-publish-notebooks` — notebook tests read "
+            f"{NOTEBOOK_REL} is not published; run `nbpress-publish` — notebook tests read "
             "the published copies, so an unpublished notebook is silently untested rather than failing"
         )
 
