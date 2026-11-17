@@ -27,7 +27,8 @@ two-hop exact match of 0.085 for plain fine-tuning and 0.166 with $\lambda = 1$,
 and 0.987.
 
 The paper's main result applies the LRSD term from the start of training, and so does this example. The authors' code
-instead switches the term on at a fixed epoch (its `--start_epoch` option), a schedule this example does not reproduce.
+also offers switching the term on at a fixed later epoch (its `--start_epoch` option, 0 by default), an ablation this
+example does not reproduce.
 
 ## The recipe
 
@@ -116,4 +117,16 @@ random Qwen2 model and synthetic data.
 
 ## Results
 
-The reproduction's numbers will be added here from the three-seed run of both arms.
+Both arms, three training seeds each (848, 1 and 2), 50 epochs on one RTX 4090 through this example's run
+configuration. Exact match is averaged over epochs 30 to 50, then over seeds:
+
+| arm | two-hop, this example | two-hop, paper | memorization, this example | memorization, paper |
+| --- | ---: | ---: | ---: | ---: |
+| plain | 0.078 | 0.085 | 0.990 | 0.985 |
+| $\lambda = 1$ | 0.159 | 0.166 | 0.975 | 0.987 |
+
+Per seed, two-hop exact match was 0.089, 0.065 and 0.080 for plain fine-tuning and 0.153, 0.165 and 0.160 with
+$\lambda = 1$, so LRSD gained 0.064, 0.100 and 0.080: a mean of 0.081, the paper's own difference. Both arms memorize the
+facts almost completely, and LRSD roughly doubles how often the model composes them. The scores differ from the
+paper's by less than a seed's spread. Memorization here is scored once per unique single-hop question (771), where the
+paper scores every evaluation row, which may account for its small differences.
