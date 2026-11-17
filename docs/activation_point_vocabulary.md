@@ -119,10 +119,7 @@ with no weights and no Hub call, compares every row both sides name. Rows Transf
 listed with the reason: the multimodal maps' vision stacks and projectors, which TransformerLens bridges as one opaque
 component, and Qwen3.5's linear-attention submodules, which its gated delta net bridge does not expose. A supported
 architecture without a verified registry row at the CI warm generation fails the suite by name, so a registry
-regression is a named failure rather than a fallback. One supported class is not in the registry yet,
-`Qwen3_5ForCausalLM` (the text-only Qwen3.5 class nnsight loads a checkpoint through): until the registry serves it,
-the suite registers its verified map from `tests/fixtures/component_maps/qwen3_5_text.yaml`, and code outside the suite
-registers the same document with `venngram.maps.register(venngram.maps.load_map(path))`.
+regression is a named failure rather than a fallback.
 
 **Leaving.** An architecture leaves through the registry's deprecation: its map gains `deprecated_since` and
 `replacement`, keeps loading with a warning, and strict lookup refuses it. A map pulled as a `hookmaps` component

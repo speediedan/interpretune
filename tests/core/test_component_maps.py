@@ -22,7 +22,6 @@ from interpretune.analysis.points import bind_component_map, component_map_for, 
 from interpretune.analysis.points.resolution import TensorRef, Unresolvable
 from tests.core.mapped_architectures import (
     EXPECTED_RMSNORM_OFFSET,
-    NOT_YET_IN_THE_REGISTRY,
     QWEN3_5_FULL_ATTENTION,
     SUPPORTED_ARCHITECTURES,
     bound_map,
@@ -398,14 +397,9 @@ class TestEverySupportedArchitectureIsServed:
         from venngram.maps import registered_architectures
         from venngram.registry import rows
 
+        # an in-process registration would win over the registry and mask a missing row, so there must be none
+        assert architecture not in registered_architectures()
         statuses = [row.status for row in rows("component_map", architecture)]
-        if architecture in NOT_YET_IN_THE_REGISTRY:
-            # fails once the registry serves the class, which is the moment to delete the stand-in it names
-            assert not statuses, (
-                f"{architecture} is now in the registry; retire {NOT_YET_IN_THE_REGISTRY[architecture]}"
-            )
-            assert architecture in registered_architectures(), NOT_YET_IN_THE_REGISTRY[architecture]
-            return
         assert "verified" in statuses, f"{architecture}: registry rows {statuses}, none verified"
         assert component_map_for(architecture, strict=True).architecture == architecture
 

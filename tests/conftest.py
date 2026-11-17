@@ -120,14 +120,6 @@ from tests.core.cfg_aliases import (
     CoreSLBridgeGPT2LogitDiffsAttrAblation,
 )
 from tests.module_registry import TEST_MODULE_REGISTRY
-import venngram.maps
-
-# Only until venngram's registry serves Qwen3_5ForCausalLM (#1026): the verified text-only Qwen3.5 map, registered in
-# process so that class resolves like a registry architecture. Remove it, and the fixture, when the warm pin moves to a
-# registry generation that carries the class.
-venngram.maps.register(
-    venngram.maps.load_map(os.path.join(os.path.dirname(__file__), "fixtures", "component_maps", "qwen3_5_text.yaml"))
-)
 
 
 test_cli_cfgs = deepcopy(parity_cli_cfgs)

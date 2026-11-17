@@ -1,8 +1,8 @@
 """The architectures Interpretune supports, and a tiny meta-device model of each to bind its component map to.
 
-The maps themselves are venngram's, read from its registry (and, for ``Qwen3_5ForCausalLM`` alone, from the fixture
-``tests/conftest.py`` registers until the registry serves that class). A supported architecture is one the suite checks
-end to end: its map binds to the transformers class here, and agrees with TransformerLens' adapter for it.
+The maps themselves are venngram's, read from its registry at the generation ``tests/hf_warm_manifest.yaml`` pins. A
+supported architecture is one the suite checks end to end: its registry row is verified, its map binds to the
+transformers class here, and it agrees with TransformerLens' adapter for it.
 """
 
 from __future__ import annotations
@@ -22,12 +22,6 @@ EXPECTED_RMSNORM_OFFSET = {
 }
 
 SUPPORTED_ARCHITECTURES = tuple(sorted(EXPECTED_RMSNORM_OFFSET))
-
-#: Supported architectures the registry at the CI warm generation does not serve yet, each with where its map comes
-#: from meanwhile. Only until the registry serves the class (#1026).
-NOT_YET_IN_THE_REGISTRY = {
-    "Qwen3_5ForCausalLM": "tests/fixtures/component_maps/qwen3_5_text.yaml, registered by tests/conftest.py",
-}
 
 #: Qwen3.5's full-attention layers at the default `layer_types` of the 32-layer tiny model (Qwen3.5-4B's own pattern).
 QWEN3_5_FULL_ATTENTION = (3, 7, 11, 15, 19, 23, 27, 31)
