@@ -243,7 +243,9 @@ def _tl_backward(
         site_specs = tuple(specs.get(name, ()))
 
         def on_grad(grad: torch.Tensor) -> torch.Tensor | None:
-            edited = grad
+            # `apply_intervention` writes in place, and at a residual add autograd hands this same tensor to the other
+            # branch too, so an edit made into it would leak there: edit a copy
+            edited = grad.clone() if site_specs else grad
             for spec in site_specs:
                 edited = apply_intervention(edited, spec, last_pos=state["last_pos"])
             if name in wanted:

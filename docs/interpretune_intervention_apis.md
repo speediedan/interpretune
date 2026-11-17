@@ -375,8 +375,10 @@ The two coincide in one case. An `add` edit of a vector $v$ at site $s$ gives ev
 of $R + \langle v, h_s \rangle$, the readout $R$ plus a linear term in the activation $h_s$, with $v$ held constant: on
 the example's prompt the two agree at `blocks.2.hook_out` to float32 rounding. A zeroing (`replace` with zeros),
 `scale` or `project` edit has no such counterpart. Zeroing the gradient at $s$ for the last token is a stop-gradient on
-that position's activation: it removes every path from the readout through it and keeps every other path, which no
-choice of scalar differentiated through the same graph does. With the logit difference as the readout, zeroing the
+that position's activation: it removes every path from the readout through it and keeps every other path. For one
+input that equals the gradient of $R - \langle g_s, h_s \rangle$, where $g_s$ is that input's own gradient at $s$, so it
+takes the backward pass to state; across inputs the edited gradient is not the gradient of any single function, so no
+readout reproduces it. With the logit difference as the readout, zeroing the
 gradient at `blocks.5.hook_in` for the last token takes the last position's gradient at `blocks.2.hook_out` from 0.51
 to 0, while the earlier positions' falls only from 0.94 to 0.89: what attention at block 5 and above carried from them
 to the last token still reaches them.

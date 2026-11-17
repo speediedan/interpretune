@@ -2005,6 +2005,27 @@ class TestGradientReadouts:
             torch.testing.assert_close(pre[point], clean[point], rtol=1e-4, atol=1e-5)
             torch.testing.assert_close(post[point], edited[point], rtol=1e-4, atol=1e-5)
 
+    @pytest.mark.parametrize("backend_name", ["transformer_lens", "nnsight"])
+    def test_an_edit_at_a_branch_does_not_leak_into_its_sibling(self, backend_name, hf, request):
+        """At a residual add, autograd hands one gradient tensor to both branches.
+
+        An edit at the attention output (one branch) written into that tensor in place would also edit the residual
+        stream's gradient (the other branch), so the backends edit a copy. Zeroing the last token's gradient there must
+        leave what the residual stream carries past block 5, as the reference, which edits a clone, does.
+        """
+        site = "blocks.5.attn.hook_out"
+        points = [site, self.READ, self.CAPTURE]
+        readout = self._readouts()["logit_difference"]
+        edited = hf.gradients(
+            self.IDS, readout, observe=points, edits=[(site, lambda g: torch.zeros_like(g), "last_token")]
+        )
+        payload = {site: {"intervention_tensor": torch.zeros(768), "op": "replace", "position_scope": "last_token"}}
+        backend, model, batch = self._backend(backend_name, request)
+        _, post, _ = backend.bwd_w_intervention(model, batch, payload, readout, capture=points)
+        assert edited[self.READ][0, -1].norm() > 0.1, "the reference left no residual gradient to leak into"
+        for point in points:
+            torch.testing.assert_close(post[point], edited[point], rtol=1e-4, atol=1e-5)
+
     def test_the_two_readouts_take_different_gradients(self, hf):
         """The projection reads an activation the logit difference does not, so a backend that dropped the reads
         and fell back to the logits would miss the reference above; this pins that the two references differ."""

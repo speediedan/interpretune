@@ -1355,6 +1355,10 @@ class NNsightModelBackend:
                 with scalar.backward():  # nnsight patches Tensor.backward() to return a BackwardsTracer context manager
                     for name in reversed([name for name in proxies if name in graded]):
                         grad = proxies[name].grad
+                        if specs.get(name):
+                            # `apply_intervention` writes in place, and at a residual add autograd hands this same
+                            # tensor to the other branch too, so an edit made into it would leak there: edit a copy
+                            grad = grad.clone()
                         for spec in specs.get(name, ()):
                             grad = apply_intervention(grad, spec, last_pos=last_pos)
                         if specs.get(name):
