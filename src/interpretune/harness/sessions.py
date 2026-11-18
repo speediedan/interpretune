@@ -3,7 +3,8 @@
 The notebook-harness session layer historically lived in the wheel-excluded test
 tree; Hub-published experiments cannot reach it. This module carries the portable
 half of that layer: resolving a model family/variant to its spec (model ids,
-transcoder set, Neuronpedia coordinates, adapter composition) from the core
+transcoder set, Neuronpedia coordinates, adapter composition) from specs a caller
+supplies (a published experiment names its own file) or the bundled
 ``harness/configs/model_specs.yaml``, a minimal datamodule for sessions whose
 pipelines build their own batches, and public-API session assembly for the
 circuit-tracer/nnsight composition the concept-direction experiments run.
@@ -14,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from interpretune.base.datamodules import ITDataModule
 
@@ -54,19 +55,17 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     return payload
 
 
-@lru_cache(maxsize=1)
-def _hub_model_spec_registry() -> dict[tuple[str, str], HubModelSpec]:
-    payload = _load_yaml_mapping(_specs_path())
+def _parse_model_specs(payload: Mapping[str, Any], source: str) -> dict[tuple[str, str], HubModelSpec]:
     raw_specs = payload.get("model_specs")
     if not isinstance(raw_specs, dict):
-        raise ValueError(f"Expected 'model_specs' mapping in {_specs_path()}")
+        raise ValueError(f"Expected 'model_specs' mapping in {source}")
     registry: dict[tuple[str, str], HubModelSpec] = {}
     for raw_key, raw_value in raw_specs.items():
         if not isinstance(raw_value, dict):
-            raise ValueError(f"Model spec '{raw_key}' must map to a dictionary")
+            raise ValueError(f"Model spec '{raw_key}' in {source} must map to a dictionary")
         family, _, variant = str(raw_key).partition(".")
         if not family or not variant:
-            raise ValueError(f"Model spec key '{raw_key}' must use 'family.variant' format")
+            raise ValueError(f"Model spec key '{raw_key}' in {source} must use 'family.variant' format")
         composition = raw_value.get("composition")
         if (
             not isinstance(composition, list)
@@ -74,13 +73,13 @@ def _hub_model_spec_registry() -> dict[tuple[str, str], HubModelSpec]:
             or not all(isinstance(name, str) and name for name in composition)
         ):
             raise ValueError(
-                f"Model spec '{raw_key}' must declare a non-empty `composition` list of "
+                f"Model spec '{raw_key}' in {source} must declare a non-empty `composition` list of "
                 "adapter names (the public-registry counterpart of the test config alias)."
             )
         module_cls = raw_value.get("module_cls")
         if not isinstance(module_cls, str) or not module_cls:
             raise ValueError(
-                f"Model spec '{raw_key}' must declare `module_cls`: the importable module "
+                f"Model spec '{raw_key}' in {source} must declare `module_cls`: the importable module "
                 "class sessions compose for its composition."
             )
         registry[(family, variant)] = HubModelSpec(
@@ -100,6 +99,28 @@ def _hub_model_spec_registry() -> dict[tuple[str, str], HubModelSpec]:
     return registry
 
 
+@lru_cache(maxsize=1)
+def _hub_model_spec_registry() -> dict[tuple[str, str], HubModelSpec]:
+    return _parse_model_specs(_load_yaml_mapping(_specs_path()), str(_specs_path()))
+
+
+def _model_spec_registry(model_specs: Mapping[str, Any] | str | Path | None) -> tuple[dict, str]:
+    """The registry ``model_specs`` names, and a description of where it came from for refusals."""
+    if model_specs is None:
+        return _hub_model_spec_registry(), f"the bundled {_specs_path().name}"
+    if isinstance(model_specs, Mapping):
+        return _parse_model_specs(model_specs, "the supplied mapping"), "the supplied mapping"
+    if isinstance(model_specs, str) and model_specs.startswith("hub://"):
+        from interpretune.hub.components import resolve_component_file
+
+        path = resolve_component_file(model_specs)
+        return _parse_model_specs(_load_yaml_mapping(path), model_specs), model_specs
+    path = Path(model_specs)
+    if not path.is_file():
+        raise FileNotFoundError(f"model_specs={str(model_specs)!r} is not a file, a mapping, or a hub:// reference")
+    return _parse_model_specs(_load_yaml_mapping(path), str(path)), str(path)
+
+
 def resolve_model_spec(
     model_family: str,
     model_variant: str,
@@ -109,13 +130,23 @@ def resolve_model_spec(
     neuronpedia_model_override: str | None = None,
     neuronpedia_set_override: str | None = None,
     use_chat_template_override: bool | None = None,
+    model_specs: Mapping[str, Any] | str | Path | None = None,
 ) -> HubModelSpec:
-    """Resolve a model family/variant to its Hub-runnable spec, refusing unknown selections by name."""
+    """Resolve a model family/variant to its Hub-runnable spec, refusing unknown selections by name.
+
+    ``model_specs`` names where the specs come from: a mapping in the spec file's schema (a top-level
+    ``model_specs`` table), a local path to such a file, or a ``hub://<org>/<repo>@<revision>/<path>`` reference into
+    a cached component, which is how a published experiment supplies the models it supports. Without it, the specs
+    bundled with interpretune are read.
+    """
+    registry, source = _model_spec_registry(model_specs)
     try:
-        spec = _hub_model_spec_registry()[(model_family, model_variant)]
+        spec = registry[(model_family, model_variant)]
     except KeyError as exc:
-        supported = ", ".join(f"{family}.{variant}" for family, variant in sorted(_hub_model_spec_registry()))
-        raise ValueError(f"Unsupported model selection {model_family}.{model_variant}. Supported: {supported}") from exc
+        supported = ", ".join(f"{family}.{variant}" for family, variant in sorted(registry))
+        raise ValueError(
+            f"Unsupported model selection {model_family}.{model_variant} in {source}. Supported: {supported}"
+        ) from exc
     return HubModelSpec(
         family=spec.family,
         variant=spec.variant,
@@ -334,6 +365,7 @@ def experiment_session(
     force_device: str | None = None,
     batch_size: int | None = None,
     max_feature_nodes: int | None = None,
+    model_specs: Mapping[str, Any] | str | Path | None = None,
     **kwargs: Any,
 ):
     """Build a Hub-runnable experiment session through public construction.
@@ -341,7 +373,9 @@ def experiment_session(
     Signature-compatible with the test-tree helper it replaces: yields
     ``(session, module, tokenizer)``. Session kwargs beyond the consumed model
     surface (debug presets, Neuronpedia upload toggles) are caller-side and
-    named in debug output rather than silently dropped.
+    named in debug output rather than silently dropped. ``model_specs`` is passed
+    to :func:`resolve_model_spec`: a published experiment names its own spec file
+    there rather than relying on the specs bundled with interpretune.
     """
     import logging
     from contextlib import contextmanager
@@ -360,6 +394,7 @@ def experiment_session(
         model_variant,
         model_name_override=model_name,
         transcoder_set_override=transcoder_set,
+        model_specs=model_specs,
     )
     body = build_session_body(
         spec,
