@@ -155,12 +155,12 @@ def pull_hookmaps(
 ) -> tuple[list[Path], str]:
     """Explicitly fetch a ``hookmaps`` component (network; manifest-first, revision-pinned) and register its maps.
 
-    Returns ``(document_paths, resolved_commit)``. Hookmaps are DATA: one component-map YAML per
-    architecture, in the schema ``docs/activation_point_vocabulary.md`` gives, so there is no trust gate.
-    With ``load`` (default) the documents are parsed and registered with the activation-point vocabulary
-    immediately, so ``component_map_for(<architecture>)`` and every resolver built on it see them; pass
-    ``load=False`` to fetch only. A document for an architecture interpretune already bundles must agree
-    with the bundled map; ``replace=True`` overrides that deliberately (see :func:`load_hookmaps`).
+    Returns ``(document_paths, resolved_commit)``. Hookmaps are DATA: one venngram component-map YAML per
+    architecture (``venngram.maps.schema``), so there is no trust gate. With ``load`` (default) the documents are
+    parsed and registered in process with venngram (``venngram.maps.register``) immediately, so
+    ``component_map_for(<architecture>)`` and every resolver built on it see them; pass ``load=False`` to fetch only.
+    A document for an architecture venngram's registry already serves must agree with the served map;
+    ``replace=True`` overrides that deliberately (see :func:`load_hookmaps`).
     """
     from interpretune.hub.hookmaps import load_hub_hookmaps, pull_hookmap_files
 
@@ -174,9 +174,9 @@ def load_hookmaps(repo_id: str, *, cache_dir: Path | None = None, replace: bool 
     """Cache-only registration of a ``hookmaps`` component's maps — never touches the network.
 
     Returns the architectures registered. Same cache discipline as :func:`load`: an uncached component
-    raises with the exact fetch command. A map that DISAGREES with one already registered (bundled or from
-    another component) is refused, naming both sources, unless ``replace=True``; an identical map is a
-    no-op, since two sources for one architecture agreeing is the normal case for a bundled architecture
+    raises with the exact fetch command. A map that DISAGREES with one already served (by venngram's registry or
+    from another component) is refused, naming both sources, unless ``replace=True``; an identical map is a
+    no-op, since two sources for one architecture agreeing is the normal case for a registry architecture
     republished on the hub.
     """
     from interpretune.hub.hookmaps import load_hub_hookmaps

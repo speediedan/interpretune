@@ -69,6 +69,9 @@ venngram:
   # venngram's registry at one pinned generation (#900): every module's default view looks its component map and
   # overlay maps up there. tests/conftest.py sets VENNGRAM_REGISTRIES from this list unless the environment names one,
   # and the warm step fetches every map and overlay it indexes into venngram's cache (VENNGRAM_CACHE, else
-  # ~/.cache/venngram, which the actions cache saves beside the Hub cache).
+  # ~/.cache/venngram, which the actions cache saves beside the Hub cache). Component maps are read from here alone
+  # (#1026), so this generation must carry a verified row for every architecture the suite supports
+  # (tests/core/mapped_architectures.py); it indexes the documents at commit f25f7e6d, the first with
+  # Qwen3_5ForCausalLM.
   registries:
-    - hub-dataset:speediedan/venngram-registry/index@aaa1c0a47949a553a6e95471e0bad5ece9efc86e
+    - hub-dataset:speediedan/venngram-registry/index@d8545d2aa45dd767ac374286410b87688a3a7659

@@ -11,11 +11,11 @@ from interpretune.analysis.points import (
     TensorRef,
     UnknownPointError,
     Unresolvable,
-    component_map_for,
-    known_architectures,
     parse,
     resolve,
 )
+from interpretune.analysis.points.component_map import first_covered
+from tests.core.mapped_architectures import SUPPORTED_ARCHITECTURES, bound_map
 
 
 class TestParse:
@@ -110,9 +110,10 @@ class TestParse:
 
 
 class TestResolve:
-    @pytest.fixture(params=known_architectures())
+    @pytest.fixture(params=SUPPORTED_ARCHITECTURES)
     def cmap(self, request):
-        return component_map_for(request.param)
+        # bound, so a hybrid stack's optional attention rows resolve on the layers the model has them
+        return bound_map(request.param)
 
     def test_block_in_and_out_resolve_on_every_architecture(self, cmap):
         for name in ("blocks.3.hook_in", "blocks.3.hook_out", "unembed.hook_in", "unembed.hook_out"):
@@ -132,7 +133,7 @@ class TestResolve:
     def test_contribution_is_post_norm_only_on_sandwich_norm_models(self, cmap):
         # A hybrid stack restricts its attention row to some layers and refuses the others by name: probe a covered one.
         attn_layers = cmap.components["blocks.{i}.attn"].layers
-        layer = 4 if attn_layers is None or attn_layers.covers(4) else attn_layers.first
+        layer = 4 if attn_layers is None or attn_layers.covers(4) else first_covered(attn_layers)
         attn = resolve(parse(f"blocks.{layer}.hook_attn_out"), cmap)
         mlp = resolve(parse(f"blocks.{layer}.hook_mlp_out"), cmap)
         assert isinstance(attn, TensorRef) and isinstance(mlp, TensorRef), (attn, mlp)
@@ -196,45 +197,8 @@ class TestResolverLayerShape:
 
 
 class TestDocumentsAreVersioned:
-    """Every component-map document says which schema it was written against."""
-
-    def test_a_document_without_the_field_is_refused_naming_it(self, tmp_path):
-        import yaml
-
-        from interpretune.analysis.points.component_map import COMPONENT_MAP_SCHEMA_VERSION, load_component_map_file
-
-        doc = {"architecture": "X", "components": {"embed": {"module": "e", "kind": "embed"}}}
-        path = tmp_path / "x.yaml"
-        path.write_text(yaml.safe_dump(doc))
-        with pytest.raises(
-            ValueError, match=rf"lacks an integer `schema_version` \(current: {COMPONENT_MAP_SCHEMA_VERSION}\)"
-        ):
-            load_component_map_file(path)
-        for bad in ("1", 1.0, True):
-            path.write_text(yaml.safe_dump({**doc, "schema_version": bad}))
-            with pytest.raises(ValueError, match="lacks an integer `schema_version`"):
-                load_component_map_file(path)
-        path.write_text(yaml.safe_dump({**doc, "schema_version": 1}))
-        assert load_component_map_file(path).schema_version == 1
-
-    def test_every_bundled_document_is_inside_the_readable_window(self):
-        """A bundled document declares the schema of the shape it uses: schema 1 unless it needs a schema-2 key.
-
-        At least one bundled document must exercise the current version, otherwise the current version ships with
-        no in-tree example and the frozen fixture is the only document of its kind.
-        """
-        from interpretune.analysis.points.component_map import (
-            COMPONENT_MAP_SCHEMA_MIN_READABLE,
-            COMPONENT_MAP_SCHEMA_VERSION,
-            known_architectures,
-        )
-
-        versions = {arch: component_map_for(arch).schema_version for arch in known_architectures()}
-        for arch, version in versions.items():
-            assert COMPONENT_MAP_SCHEMA_MIN_READABLE <= version <= COMPONENT_MAP_SCHEMA_VERSION, (arch, version)
-        assert COMPONENT_MAP_SCHEMA_VERSION in versions.values(), (
-            f"no bundled document is written at the current schema {COMPONENT_MAP_SCHEMA_VERSION}: {versions}"
-        )
+    """A hookmaps document says which schema it was written against; venngram's reader refuses one that does not,
+    and the publisher reads every document through it."""
 
     def test_the_publisher_refuses_an_unversioned_document(self, tmp_path):
         import yaml

@@ -18,7 +18,14 @@ from typing import Any
 
 import torch
 
-from interpretune.analysis.points import TensorRef, component_map_for, describe_unresolvable, parse, resolve
+from interpretune.analysis.points import (
+    TensorRef,
+    bind_component_map,
+    component_map_for,
+    describe_unresolvable,
+    parse,
+    resolve,
+)
 from interpretune.analysis.backends.positions import accepts_position_ids, mask_derived_position_ids
 
 
@@ -56,7 +63,8 @@ class HFReference:
         self.model = model.to(torch.device(device)).eval()
         self.device = device
         self.architecture = type(self.model).__name__
-        self._cmap = component_map_for(self.architecture)
+        # the reference holds its model, so its map is bound: an optional row resolves on the layers that have it
+        self._cmap = bind_component_map(component_map_for(self.architecture), self.model)
 
     # -- addressing -------------------------------------------------------------------------------
 

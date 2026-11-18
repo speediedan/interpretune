@@ -2,8 +2,8 @@
 
 Written for a reader outside this project. Interpretune, TransformerLens, interp-engine, SAEDashboard and
 circuit-tracer each name the same tensors differently, and every pair that talks carries its own translation.
-This document states one vocabulary with two levels of name and one level of resolution, the data schema that
-carries the architecture-specific part, and the reconciliation it would ask of interp-engine. It is written so it
+This document states one vocabulary with two levels of name and one level of resolution, the component maps that
+carry the architecture-specific part, and the reconciliation it would ask of interp-engine. It is written so it
 can be lifted into a shared specification if the projects that read it agree.
 
 ## Two levels of name
@@ -56,49 +56,74 @@ Refusal as a value is deliberate: two implementations grew a sentinel for "does 
 (interp-engine's unmapped-hook marker, Interpretune's unmappable-hook reasons), which is the signal that it belongs
 in the schema. A consumer enumerating support renders it; a consumer that needs the tensor raises with the reason.
 
-## The component-map schema
+## Component maps
 
-One short document per architecture. The slot rule is per **kind**, not per row, which is what collapses a table
+A point resolves through the **component map** of its model's architecture: one short document naming, for each
+component in the bridge grammar (`blocks.{i}.ln2`, `blocks.{i}.attn.o`, `unembed`), the PyTorch module it wraps
+(with `{i}` for the layer) and its **kind**. The slot rule is per kind, not per row, which is what collapses a table
 of hooks into a dozen lines and keeps every alias consistent with the point it names.
 
-```yaml
-schema_version: 1
-architecture: GPT2LMHeadModel            # the model class name, today; other keys later
-facts: {sandwich_norms: false}
-components:                              # component path -> module path template + kind
-  embed:              {module: "transformer.wte",               kind: embed}
-  pos_embed:          {module: "transformer.wpe",               kind: embed}
-  blocks.{i}:         {module: "transformer.h.{i}",             kind: block}
-  blocks.{i}.ln1:     {module: "transformer.h.{i}.ln_1",        kind: norm}
-  blocks.{i}.attn:    {module: "transformer.h.{i}.attn",        kind: attn}
-  blocks.{i}.attn.o:  {module: "transformer.h.{i}.attn.c_proj", kind: linear}
-  blocks.{i}.ln2:     {module: "transformer.h.{i}.ln_2",        kind: norm}
-  blocks.{i}.mlp:     {module: "transformer.h.{i}.mlp",         kind: mlp}
-  blocks.{i}.mlp.in:  {module: "transformer.h.{i}.mlp.c_fc",    kind: linear}
-  blocks.{i}.mlp.out: {module: "transformer.h.{i}.mlp.c_proj",  kind: linear}
-  ln_final:           {module: "transformer.ln_f",              kind: norm}
-  unembed:            {module: "lm_head",                       kind: unembed}
-```
+The maps are venngram's. Their schema, its reader and its evolution policy are documented with venngram's maps
+([the maps overview](https://github.com/speediedan/venngram#maps-base-and-overlay) and the schema module,
+[`venngram.maps.schema`](https://github.com/speediedan/venngram/blob/main/src/venngram/maps/schema.py)), and this page
+does not restate them. Interpretune bundles no map and writes none: `interpretune.analysis.points.component_map_for`
+reads `venngram.maps.component_map_for`, the same lookup a tunable view resolves through, so one architecture has
+one map whatever reads it. That lookup takes, in order, a map registered in the running process
+(`venngram.maps.register`, or a pulled `hookmaps` component, below), then the best row the configured registries
+index ([`speediedan/venngram-registry`](https://huggingface.co/datasets/speediedan/venngram-registry) by default). The
+offline path is venngram's cache: the last registry revision read is served with a warning when the registry cannot
+be reached, and a registry never read before is refused. There is no bundled fallback.
 
-`schema_version` is required on every document and names the schema it was written against (currently `1`);
-a document without it is refused at read and therefore at publish, since a map published unversioned can never
-be told apart from one written against an unknown revision. What a reader does with every other case is the
-evolution policy below.
+Row names follow the registry. Qwen3.5's linear-attention output projection is `blocks.{i}.linear_attn.out`; the
+old spelling `linear_attn.o` is refused with the new name in the message, and has no alias.
 
-Kinds: `block`, `attn`, `mlp`, `norm`, `linear`, `embed`, `unembed`. A sandwich-norm architecture adds
-`ln1_post` and `ln2_post` rows and sets `facts.sandwich_norms`, which is what routes the contribution points.
+### Bound and unbound maps
 
-Sources, in precedence order: a bundled document (seven architectures ship with Interpretune), a document pulled
-as a `hookmaps` hub component (data, no trust gate; `it.hub.pull_hookmaps("<org>/<repo>")` fetches and registers,
-`it.hub.load_hookmaps` registers from the cache), and a map derived from TransformerLens' own per-architecture
-component mapping. Two sources for one architecture must agree, and a test says so. The TransformerLens-derived
-map is the independent oracle the bundled documents are checked against, because a convergence test that resolves
-both sides through the same resolver cannot see a wrong row.
+A map may mark a block-relative row `optional`: it applies on the layers where its module exists. That is how a
+hybrid stack is written, because which layers have full attention depends on the checkpoint's depth, not on its
+architecture (Qwen3.5 puts full attention on every fourth layer of whatever depth it has). An optional row therefore
+has no layer coverage until it is read against a model, and Interpretune keeps the two states apart:
 
-The bundled map for `Gemma3ForConditionalGeneration` is a schema-2 document: the language model is the
-primary stack and keeps the bare spelling, the vision tower is a second stack (`vision.blocks.{i}...`,
-`vision.embed`, `vision.ln_final`) and the multimodal projector is a declared kind (`projector`). A point under
-an undeclared stack name is refused.
+- **Unbound** (`component_map_for`): every row without `optional` resolves as written. An optional row resolves to
+  an `Unresolvable` whose reason says it *resolves only against a model*. It is never assumed to cover layer 0, which
+  on a hybrid stack is a plausible module path that does not exist.
+- **Bound** (`bind_component_map(cmap, model)`): the map is first checked against the model with venngram's check
+  (every row's module exists on every layer it covers and on none it excludes, an optional row's on at least one
+  layer, every derived property agrees with the model), and a map that is wrong about its model is refused there,
+  listing every problem. Each optional row then becomes the list of layers its module was found on, which the
+  resolver reads like any other per-row layer list. A point on a layer the row does not cover is refused naming
+  the layers it does.
+
+The backends bind where they hold the model: the nnsight backend binds its hook resolver before its first trace
+(`HookNameResolver.bind`), the TransformerLens backend binds to the HF model its bridge wraps when it declares what
+it can capture, and the conformance suite's HF reference binds to the model it loads. A table derived from a map is
+cached per bound map, so two checkpoints of one architecture at different depths never share one. Consumers without
+a model (the capture inventory, the conformance cases) read the unbound map; the inventory of base spellings is
+layer-free, so it is the same bound or not, and resolving an optional point is where the refusal appears.
+
+**Supplying a map.** A `hookmaps` hub component carries maps as data (no trust gate):
+`it.hub.pull_hookmaps("<org>/<repo>")` fetches and registers, `it.hub.load_hookmaps` registers from the cache. Its
+documents are read through venngram's reader, so any schema venngram reads is accepted, and they are registered
+with `venngram.maps.register`, ahead of the registries. A map for an architecture that already has one must agree
+with it, per row on module, kind, `optional` and layers, and on the properties, declared kinds and stacks, or the
+load is refused naming both sources; `replace=True` shadows the served map deliberately, and an identical map is a
+no-op. A cached third-party map therefore never silently displaces the registry's, and never silently loses to it.
+
+## Entering and leaving the supported set
+
+**Entering.** An architecture enters through venngram's process: a map with a verified row in venngram's registry,
+verified there against the architecture without weights. Interpretune's suite then holds it to two checks that make
+support measured rather than asserted. A tiny builder for its transformers class binds the map to the class on every
+run, and the oracle comparison against TransformerLens' adapter for the architecture, built from the same tiny config
+with no weights and no Hub call, compares every row both sides name. Rows TransformerLens has no counterpart for are
+listed with the reason: the multimodal maps' vision stacks and projectors, which TransformerLens bridges as one opaque
+component, and Qwen3.5's linear-attention submodules, which its gated delta net bridge does not expose. A supported
+architecture without a verified registry row at the CI warm generation fails the suite, naming it, so a registry
+regression is a named failure rather than a fallback.
+
+**Leaving.** An architecture leaves through the registry's deprecation: its map gains `deprecated_since` and
+`replacement`, keeps loading with a warning, and strict lookup refuses it. A map pulled as a `hookmaps` component
+for an architecture the registry no longer serves becomes the source for it with nothing to conflict against.
 
 ## What this asks of interp-engine
 
@@ -115,105 +140,6 @@ And one of TransformerLens: `docs/source/content/model_structure.md` states that
 `hook_scale` are aliases of `hook_out`, and that `hook_mlp_in` aliases two differently shaped tensors; the
 implementation fires three distinct tensors. That paragraph is the plausible common ancestor of the same defect in
 several downstream tables.
-
-## Schema 2: admitting an architecture nobody anticipated
-
-A standard decoder transformer's document is unchanged from schema 1. Schema 2 adds four optional keys, each of
-which moves something out of code and into the document so a new architecture needs no release:
-
-```yaml
-schema_version: 2
-architecture: JambaForCausalLM
-properties:                      # schema 1 spelled this `facts`; typed, unknown names ignored
-  sandwich_norms: false
-  sublayers: [attn, mlp]         # the order sublayers write to the residual; this is the default
-kinds:                           # a kind the bundled set lacks, with its output rule
-  mixer: {output: tensor, sublayer: true}
-stacks:                          # additional block stacks; the primary one is implied and stays bare
-  encoder: {module: "encoder.block.{i}"}
-components:
-  blocks.{i}.attn:  {module: "model.layers.{i}.self_attn", kind: attn,  layers: odd}    # row applicability
-  blocks.{i}.mixer: {module: "model.layers.{i}.mamba",     kind: mixer, layers: even}
-  encoder.blocks.{i}.attn: {module: "encoder.block.{i}.layer.0.SelfAttention", kind: attn}
-```
-
-- **`kinds`**: a declared kind carries what the resolver needs (`output: tensor | tuple0`, `sublayer`), so a
-  reader resolves every hook of a kind it has never heard of. An undeclared unknown kind is refused, because
-  the kind decides the output rule and a default would be a guess.
-- **`layers`** on a row: a list, an inclusive range `"4-11"`, or `odd` / `even`; absent means every layer. A
-  point on a layer the row excludes resolves to a refusal naming the predicate, never to a plausible module
-  path that does not exist.
-- **`stacks`**: additional block stacks by name. The point grammar gains an optional leading stack name
-  (`encoder.blocks.3.attn.hook_out`); bare `blocks.` and bare globals keep meaning the primary stack, so every
-  existing string keeps its meaning. A stack the document does not declare is refused.
-- **`properties`** (renamed from `facts`): each name in the vocabulary is **declared** (the document is the
-  source) or **derived** (the model is the source, and a document value is only a cross-check). The RMSNorm
-  offset is derived from the norm module's own arithmetic, which is right for every gemma family without a
-  table naming them.
-
-**A document is checked against its model, once, at load** (`validate_map_against_model`): every row's module
-exists for every layer it covers and does not exist for a layer its predicate excludes, every declared stack
-addresses at least one layer, and every derived property the document states agrees with the model. A map
-that is wrong about its model fails there, named, rather than at bind time. `architecture` matches the model
-class exactly; there is no family-prefix fallback, so an unknown architecture is detectably unknown.
-
-## Evolution policy: how a map changes once other people hold copies
-
-The schema version is one integer and the reader accepts a **window** of them, `[min readable, current]`, the
-same shape the artifact envelope uses. Keys fall into two classes with opposite rules, and the class is what the
-version protects:
-
-- a **descriptive** key (a fact, an annotation on a row) is safe for an older reader to ignore: it loses nothing
-  it would have used. Adding one never bumps the version.
-- an **applicability** key (one that changes which rows apply or how a row resolves: a per-row layer predicate,
-  a second block stack, a declared kind) is unsafe to ignore: a reader that skipped it would resolve the wrong
-  rows silently. Adding one always bumps the version, so an older reader refuses the document before it can
-  misread it.
-
-| document | reader behaviour |
-| --- | --- |
-| version inside the window | read; unknown top-level and row keys ignored |
-| version newer than the reader | refused: "written by a newer Interpretune, upgrade" |
-| version older than the floor | refused: "re-publish against a current schema" |
-| no integer version | refused as malformed (told apart from unsupported) |
-| unknown `facts` key | ignored; a known fact of the wrong type is refused |
-| unknown component `kind` | refused, never defaulted: the kind decides the slot and tuple-output rules |
-| `deprecated_since` set | loads with a warning naming `replacement`; strict lookup refuses |
-
-Retirement is a document-level `deprecated_since` and `replacement`, the alias table's own vocabulary applied to
-a map rather than a name. A retired map keeps loading until the readable floor moves; moving the floor is the
-deliberate act that withdraws it. Every version inside the window has a frozen document in the test suite,
-derived from the window so a bump cannot be made without freezing one.
-
-## Entering and leaving the bundled set
-
-**Entering.** A bundled map is a document under `interpretune/analysis/points/data/` plus two things that make it
-checked rather than asserted: a tiny builder for its transformers class in the suite, so the document is checked
-against the class on every run (rows exist for the layers they cover and not for the layers they exclude; a
-derived property agrees with the model), and the oracle comparison against TransformerLens' adapter for the
-architecture, built from the same tiny config with no weights and no Hub call, so it runs for every bundled map.
-A document added without the builder, or without a row in the oracle's table of rows expected to have no
-TransformerLens counterpart (today: the Gemma 3 multimodal document's vision stack and projector, which
-TransformerLens bridges as one opaque component, and Qwen3.5's linear-attention output projection, which its gated delta
-net bridge does not expose), fails the suite. The derivation itself refuses a bridge class it does
-not know rather than skipping it: skipping once dropped two RMSNorm-era classes, so four documents were compared
-on seven rows of fourteen while the oracle reported agreement over the whole.
-
-**Leaving.** A retiring map gains `deprecated_since` and `replacement`; it keeps loading with a warning, strict
-lookup refuses it, and after its stated horizon the document is deleted. From then on the architecture has no
-bundled map: a lookup refuses, listing what is known, and a map pulled as a `hookmaps` component becomes
-the source for it with nothing to conflict against.
-
-**Pending: one source for the maps.** The bundled documents repeat facts venngram's registry also publishes, in a
-different schema, so the two can drift. [#1026](https://github.com/speediedan/interpretune/issues/1026) proposes
-reading the maps from the registry and retiring the bundled set; until it lands, new architectures still enter here.
-
-**While both exist.** Precedence is enforced at load, not by order: a pulled map for an architecture that already
-has a registered one must be identical (same rows, same properties) or the load is refused naming both sources;
-`replace=True` shadows the registered map deliberately. An identical pull is a no-op. A cached third-party map
-therefore never silently displaces a bundled one, and never silently loses to one either: withdrawal of the
-bundled document is the moment the pulled map takes effect, and it takes effect by the same lookup that
-refused the architecture the day before.
 
 ## TransformerLens aliases
 

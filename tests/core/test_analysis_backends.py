@@ -296,6 +296,16 @@ class TestHookNameResolver:
         ("Qwen3_5ForCausalLM", "model.layers"),
     ]
 
+    @staticmethod
+    def _bound(architecture):
+        """A resolver bound to the architecture's tiny model: the attention rows are optional, so their layers come
+        from the model."""
+        from tests.core.mapped_architectures import tiny_model
+
+        resolver = HookNameResolver(architecture)
+        resolver.bind(tiny_model(architecture))
+        return resolver
+
     @pytest.mark.parametrize("architecture, stack", QWEN3_5_STACKS)
     @pytest.mark.parametrize("layer", [6, 7])  # a linear-attention layer and a full-attention one
     def test_resolve_qwen3_5_resid_post_on_both_layer_types(self, architecture, stack, layer):
@@ -305,18 +315,31 @@ class TestHookNameResolver:
 
     @pytest.mark.parametrize("architecture, stack", QWEN3_5_STACKS)
     def test_qwen3_5_attention_on_a_linear_attention_layer_is_refused(self, architecture, stack):
-        resolver = HookNameResolver(architecture)
+        resolver = self._bound(architecture)
         assert resolver.resolve("blocks.7.attn.hook_out")[0] == f"{stack}.7.self_attn"
         assert resolver.resolve("blocks.6.linear_attn.hook_out")[0] == f"{stack}.6.linear_attn"
         with pytest.raises(ValueError, match="not layer 6"):
             resolver.resolve("blocks.6.attn.hook_out")
+
+    @pytest.mark.parametrize("architecture, stack", QWEN3_5_STACKS)
+    def test_qwen3_5_attention_needs_a_bound_resolver(self, architecture, stack):
+        """Unbound, the optional attention rows are refused by name rather than assumed to cover layer 0."""
+        with pytest.raises(ValueError, match="resolves only against a model.*HookNameResolver.bind"):
+            HookNameResolver(architecture).resolve("blocks.7.attn.hook_out")
+
+    @pytest.mark.parametrize("architecture, stack", QWEN3_5_STACKS)
+    def test_qwen3_5_old_output_projection_name_is_refused_naming_the_new_one(self, architecture, stack):
+        resolver = self._bound(architecture)
+        with pytest.raises(ValueError, match="named 'linear_attn.out'"):
+            resolver.resolve("blocks.6.linear_attn.o.hook_out")
+        assert resolver.resolve("blocks.6.linear_attn.out.hook_out")[0] == f"{stack}.6.linear_attn.out_proj"
 
     def test_qwen3_5_enumerates_a_restricted_hook_only_where_it_exists(self):
         """The backend expands base hooks over layers from these, so an uncovered layer must not be offered."""
         from interpretune.analysis.points import component_map_for
         from interpretune.analysis.points.inventory import inventory
 
-        resolver = HookNameResolver("Qwen3_5ForConditionalGeneration")
+        resolver = self._bound("Qwen3_5ForConditionalGeneration")
         full = [3, 7, 11, 15, 19, 23, 27, 31]
         assert resolver.covered_layers("attn.hook_out", 32) == full
         assert resolver.covered_layers("hook_attn_out", 32) == full
@@ -324,6 +347,32 @@ class TestHookNameResolver:
         assert resolver.covered_layers("hook_resid_post", 32) == list(range(32))
         assert resolver.first_layer("attn.o.hook_in") == 3
         assert "hook_attn_out" in inventory(component_map_for("Qwen3_5ForConditionalGeneration"))
+
+    def test_the_derived_table_is_per_bound_map_not_per_architecture(self):
+        """Two checkpoints of one architecture at different depths have different full-attention layers, so a table
+        cached by architecture name would answer one model with the other's layers."""
+        tr = pytest.importorskip("transformers")
+        deep = self._bound("Qwen3_5ForCausalLM")
+        shallow = HookNameResolver("Qwen3_5ForCausalLM")
+        config = tr.Qwen3_5TextConfig(
+            num_hidden_layers=8,
+            head_dim=8,
+            linear_num_key_heads=2,
+            linear_num_value_heads=2,
+            linear_key_head_dim=8,
+            linear_value_head_dim=8,
+            hidden_size=16,
+            intermediate_size=32,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            vocab_size=64,
+        )
+        with torch.device("meta"):
+            shallow.bind(tr.Qwen3_5ForCausalLM(config))
+        assert shallow.covered_layers("attn.hook_out", 32) == [3, 7]
+        assert deep.covered_layers("attn.hook_out", 32) == [3, 7, 11, 15, 19, 23, 27, 31]
+        with pytest.raises(ValueError, match="resolves only against a model"):
+            HookNameResolver("Qwen3_5ForCausalLM").resolve("blocks.3.attn.hook_out")
 
     def test_unsupported_architecture_raises(self):
         with pytest.raises(ValueError, match="Unsupported model architecture"):

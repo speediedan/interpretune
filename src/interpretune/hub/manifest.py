@@ -260,8 +260,9 @@ def validate_component_manifest(manifest: Any, source: str = "<manifest>") -> di
         if not files or not isinstance(files, list) or not all(isinstance(f, str) and f for f in files):
             raise ComponentManifestError(
                 f"{source}: kind `hookmaps` requires a non-empty `hookmaps.files` list of repo-relative component-map "
-                "YAML paths (one document per architecture, in the schema `docs/activation_point_vocabulary.md` "
-                "gives). The manifest declares which YAMLs are maps; nothing is discovered by filename."
+                "YAML paths (one document per architecture, in venngram's component-map schema, "
+                "`venngram.maps.schema`). The manifest declares which YAMLs are maps; nothing is discovered by "
+                "filename."
             )
         if IT_COMPONENT_MANIFEST in files:
             raise ComponentManifestError(f"{source}: `hookmaps.files` must not list {IT_COMPONENT_MANIFEST} itself.")

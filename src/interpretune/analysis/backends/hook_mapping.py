@@ -1,11 +1,15 @@
 """TransformerLens hook name -> HuggingFace module path, for the nnsight backend.
 
 This module is the nnsight-facing ADAPTER over the activation-point vocabulary (:mod:`interpretune.analysis.points`).
-The per-architecture tables that used to live here are now data: one ``ComponentMap`` document per
-architecture under ``analysis/points/data/``, and every TL hook name this resolver accepts is derived from
-it by parsing the name into an :class:`~interpretune.analysis.points.ActivationPoint` and resolving it. The
-``HookMapping`` / ``ArchitectureMapping`` records survive as the derived, nnsight-shaped view (a module path
-template, an io selector, a tuple-ness default) because the backend and its tests consume them.
+The per-architecture tables that used to live here are now data: one venngram component map per architecture,
+and every TL hook name this resolver accepts is derived from it by parsing the name into an
+:class:`~interpretune.analysis.points.ActivationPoint` and resolving it. The ``HookMapping`` /
+``ArchitectureMapping`` records survive as the derived, nnsight-shaped view (a module path template, an io selector,
+a tuple-ness default) because the backend and its tests consume them.
+
+A resolver starts from the architecture's UNBOUND map, on which an optional row (a hybrid stack's attention, whose
+layers vary with the model's size) is refused by name; :meth:`HookNameResolver.bind` reads the map against the loaded
+model, after which those rows resolve on the layers they were found on.
 
 Follows the pattern of circuit-tracer's ``tl_nnsight_mapping.py``: a table keyed by HF architecture, one row
 per addressable point, resolved per layer.
@@ -20,7 +24,9 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from interpretune.analysis.backends.hook_mapping_constants import SUBHOOK_SUFFIXES
 
 if TYPE_CHECKING:
-    from interpretune.analysis.points.component_map import LayerSet
+    from venngram.maps.schema import RowLayers
+
+    from interpretune.analysis.points.component_map import ComponentMap
 
 __all__ = [
     "ArchitectureMapping",
@@ -50,7 +56,7 @@ class HookMapping:
     envoy_path: str
     io_type: Literal["input", "output"]
     tuple_output: bool = True
-    layers: LayerSet | None = None
+    layers: RowLayers | None = None
 
     def covers(self, layer: int) -> bool:
         """Whether the point exists at ``layer``."""
@@ -97,29 +103,25 @@ _DERIVED_REASONS = {
 }
 
 
-def _derived_table(architecture: str) -> tuple[dict[str, HookMapping], dict[str, str]]:
-    """Every TL hook name the vocabulary resolves on ``architecture``, as nnsight-shaped rows.
+def _derived_table(cmap: ComponentMap) -> tuple[dict[str, HookMapping], dict[str, str]]:
+    """Every TL hook name the vocabulary resolves on ``cmap``, as nnsight-shaped rows.
 
-    Returns the mappings plus, for the derived norm tensors, the refusal reason keyed by base name.
-    Semantic names (``hook_resid_pre``, ``hook_mlp_out``, ...) and component names (``ln2.hook_out``,
-    ``attn.o.hook_in``, ``unembed.hook_out``) are enumerated together, so an alias never has to be
-    listed by hand and cannot disagree with the point it names.
+    Returns the mappings plus, for the names that parse but have no module to map, the refusal keyed by base name:
+    the derived norm tensors, the cautioned legacy names, and, on an unbound map, every point an optional row
+    carries. Semantic names (``hook_resid_pre``, ``hook_mlp_out``, ...) and component names (``ln2.hook_out``,
+    ``attn.o.hook_in``, ``unembed.hook_out``) are enumerated together, so an alias never has to be listed by hand
+    and cannot disagree with the point it names.
     """
-    from interpretune.analysis.points import (
-        TensorRef,
-        Unresolvable,
-        component_map_for,
-        parse,
-        resolve,
-        semantic_names,
-    )
+    from interpretune.analysis.points import TensorRef, Unresolvable, parse, resolve, semantic_names
+    from interpretune.analysis.points.component_map import first_covered, optional_row_refusal
+    from interpretune.analysis.points.resolution import _contribution_component
 
-    cmap = component_map_for(architecture)
     candidates: list[str] = list(semantic_names())
     for component in cmap.block_components():
         prefix = f"{component}." if component else ""
         candidates += [f"{prefix}hook_in", f"{prefix}hook_out"]
-        if cmap.kind_of(component, 0) == "norm":
+        row = cmap.row(component)
+        if row is not None and row.kind == "norm":
             candidates += [f"{prefix}hook_normalized", f"{prefix}hook_scale"]
     for component in cmap.global_components():
         candidates += [f"{component}.hook_in", f"{component}.hook_out"]
@@ -127,21 +129,35 @@ def _derived_table(architecture: str) -> tuple[dict[str, HookMapping], dict[str,
             candidates += [f"{component}.hook_normalized", f"{component}.hook_scale"]
 
     mappings: dict[str, HookMapping] = {}
-    derived: dict[str, str] = {}
+    refusals: dict[str, str] = {}
     globals_ = set(cmap.global_components())
-    # A block-relative base is resolved at its row's first covered layer (layer 0 unless the row is restricted to
-    # some layers, as a hybrid stack's attention rows are) and the concrete index is turned back into the
-    # `{layer}` template; a global one resolves as itself.
-    first_layer = {c: (e.layers.first if e.layers is not None else 0) for c, e in cmap.components.items()}
+    # A block-relative base is resolved at the first layer its row covers (layer 0 for a row on every layer) and the
+    # concrete index is turned back into the `{layer}` template; a global one resolves as itself. An optional row of
+    # an unbound map has no covered layer to resolve at, so its points are refused, never probed at layer 0.
+    first_layer = {
+        c: (first_covered(e.layers) if e.layers is not None else 0)
+        for c, e in cmap.components.items()
+        if not e.optional
+    }
     # concrete path at that layer -> (`{layer}` template, the row's layers), from the map's own rows, so the template
     # is never reconstructed from a string (a block path ends in the index and a replace on ".0." would miss it)
     templates = {
-        e.module.replace("{i}", str(first_layer[c])): (e.module.replace("{i}", "{layer}"), e.layers)
+        e.module.replace("{i}", str(first_layer.get(c, 0))): (e.module.replace("{i}", "{layer}"), e.layers)
         for c, e in cmap.components.items()
+        if not e.optional
     }
     for base in dict.fromkeys(candidates):
         bare = parse(base)
         is_global = bare.component in globals_ or base in ("hook_embed", "hook_pos_embed")
+        if not is_global:
+            via = _contribution_component(bare, cmap) if bare.contribution is not None else bare.component
+            row = cmap.row(via)
+            if row is not None and row.optional:
+                refusals[base] = (
+                    f"Hook {base!r} on {cmap.architecture!r}: {optional_row_refusal(via)}, which a resolver does with "
+                    "HookNameResolver.bind(<the loaded HF model>)"
+                )
+                continue
         layer = first_layer.get(f"blocks.{{i}}.{bare.contribution or bare.component}".rstrip("."), 0)
         point_for_resolve = bare if is_global else parse(f"blocks.{layer}.{base}")
         if bare.caution is not None:
@@ -150,8 +166,9 @@ def _derived_table(architecture: str) -> tuple[dict[str, HookMapping], dict[str,
             # for half its callers, so this consumer refuses it and names both spellings.
             pre = f"{bare.component}.hook_in"
             post = f"{'mlp' if bare.component == 'ln2' else 'attn'}.hook_in"
-            derived[base] = (
-                f"{bare.caution} Ask for `{post}` (the sublayer's argument) or `{pre}` (the pre-norm residual)."
+            refusals[base] = (
+                f"Hook {base!r} has no module counterpart on {cmap.architecture!r}: {bare.caution} Ask for `{post}` "
+                f"(the sublayer's argument) or `{pre}` (the pre-norm residual)."
             )
             continue
         res = resolve(point_for_resolve, cmap)
@@ -159,7 +176,8 @@ def _derived_table(architecture: str) -> tuple[dict[str, HookMapping], dict[str,
             continue
         assert isinstance(res, TensorRef)
         if res.derived:
-            derived[base] = _DERIVED_REASONS[res.derivation or ""].replace("{norm}", base.split(".")[0])
+            reason = _DERIVED_REASONS[res.derivation or ""].replace("{norm}", base.split(".")[0])
+            refusals[base] = f"Hook {base!r} has no module counterpart on {cmap.architecture!r}: {reason}"
             continue
         template, layers = templates.get(res.module_path, (res.module_path, None))
         mappings[base] = HookMapping(
@@ -168,7 +186,7 @@ def _derived_table(architecture: str) -> tuple[dict[str, HookMapping], dict[str,
             tuple_output=res.tuple_output,
             layers=layers,
         )
-    return mappings, derived
+    return mappings, refusals
 
 
 class ResolvedHook(NamedTuple):
@@ -187,21 +205,19 @@ class ResolvedHook(NamedTuple):
 
 #: Hand-registered mappings (``register_architecture``) take precedence over the derived ones.
 _ARCHITECTURE_REGISTRY: dict[str, ArchitectureMapping] = {}
-_DERIVED_CACHE: dict[str, tuple[ArchitectureMapping, dict[str, str]]] = {}
+#: Derived tables keyed by the map's content (:meth:`ComponentMap.cache_key`), not the architecture's name: one
+#: architecture bound to two models of different depth has two tables, and a map replaced in process (a pulled
+#: ``hookmaps`` component with ``replace=True``) is never answered from the table of the map it replaced.
+_DERIVED_CACHE: dict[tuple, tuple[ArchitectureMapping, dict[str, str]]] = {}
 
 
-def _mapping_for(architecture: str) -> tuple[ArchitectureMapping, dict[str, str]]:
-    """The mapping for an architecture: hand-registered if any, else derived from its component map."""
-    if architecture in _ARCHITECTURE_REGISTRY:
-        return _ARCHITECTURE_REGISTRY[architecture], {}
-    if architecture not in _DERIVED_CACHE:
-        from interpretune.analysis.points import known_architectures
-
-        if architecture not in known_architectures():
-            raise KeyError(architecture)
-        mappings, derived = _derived_table(architecture)
-        _DERIVED_CACHE[architecture] = (ArchitectureMapping(architecture, mappings), derived)
-    return _DERIVED_CACHE[architecture]
+def _mapping_for(cmap: ComponentMap) -> tuple[ArchitectureMapping, dict[str, str]]:
+    """The mapping derived from ``cmap``, cached per map."""
+    key = cmap.cache_key()
+    if key not in _DERIVED_CACHE:
+        mappings, refusals = _derived_table(cmap)
+        _DERIVED_CACHE[key] = (ArchitectureMapping(cmap.architecture, mappings), refusals)
+    return _DERIVED_CACHE[key]
 
 
 def _supported_architectures() -> list[str]:
@@ -239,13 +255,20 @@ class HookNameResolver:
     """
 
     def __init__(self, model_architecture: str) -> None:
-        try:
-            self._mapping, self._derived_reasons = _mapping_for(model_architecture)
-        except KeyError:
-            raise ValueError(
-                f"Unsupported model architecture: {model_architecture!r}. Supported architectures: "
-                f"{_supported_architectures()}"
-            ) from None
+        self._cmap: ComponentMap | None = None
+        if model_architecture in _ARCHITECTURE_REGISTRY:
+            self._mapping, self._refusals = _ARCHITECTURE_REGISTRY[model_architecture], {}
+        else:
+            from interpretune.analysis.points import component_map_for
+
+            try:
+                self._cmap = component_map_for(model_architecture)
+            except KeyError:
+                raise ValueError(
+                    f"Unsupported model architecture: {model_architecture!r}. Supported architectures: "
+                    f"{_supported_architectures()}"
+                ) from None
+            self._mapping, self._refusals = _mapping_for(self._cmap)
         self._architecture = model_architecture
         # Measured per-base-hook tuple-ness, filled by calibrate_tuple_outputs(). The static
         # `tuple_output` flags describe a transformers version, not a law: transformers 5.x decoder
@@ -265,9 +288,15 @@ class HookNameResolver:
                         f"not layer {layer}: its module does not exist there"
                     )
             return
-        reason = self._derived_reasons.get(base_name)
-        if reason is not None:
-            raise ValueError(f"Hook {base_name!r} has no module counterpart on {self._architecture!r}: {reason}")
+        refusal = self._refusals.get(base_name)
+        if refusal is not None:
+            raise ValueError(refusal)
+        if self._cmap is not None:
+            from interpretune.analysis.points.component_map import renamed_component_refusal
+
+            renamed = renamed_component_refusal(base_name.rpartition(".hook_")[0], self._cmap)
+            if renamed is not None:
+                raise ValueError(f"Hook {base_name!r} on {self._architecture!r}: {renamed}")
         raise ValueError(
             f"Unknown hook name {base_name!r} for architecture {self._architecture!r}. "
             f"Supported hooks: {self.supported_hooks}"
@@ -292,6 +321,12 @@ class HookNameResolver:
         return self._architecture
 
     @property
+    def component_map(self) -> ComponentMap | None:
+        """The component map the hooks derive from (bound once :meth:`bind` has run), or ``None`` for a hand-
+        registered mapping."""
+        return self._cmap
+
+    @property
     def supported_hooks(self) -> list[str]:
         """List of TL base hook names supported by this architecture."""
         return sorted(self._mapping.hook_mappings.keys())
@@ -304,8 +339,10 @@ class HookNameResolver:
 
     def first_layer(self, base_name: str) -> int:
         """The lowest layer a base hook exists on, where a probe of one layer must look."""
+        from interpretune.analysis.points.component_map import first_covered
+
         layers = self._mapping.hook_mappings[base_name].layers
-        return 0 if layers is None else layers.first
+        return 0 if layers is None else first_covered(layers)
 
     def resolve(self, tl_hook_name: str) -> tuple[str, str]:
         """Resolve a TL hook name to an HF module path and input/output selector.
@@ -331,20 +368,22 @@ class HookNameResolver:
         resolved_path = hook_mapping.envoy_path.format(layer=layer)
         return resolved_path, hook_mapping.io_type
 
-    def validate_against_model(self, hf_model: Any) -> None:
-        """Refuse, by name, a component map that does not describe THIS model.
+    def bind(self, hf_model: Any) -> None:
+        """Bind the component map to THIS model, refusing by name a map that does not describe it.
 
-        A hand-registered mapping has no component map and is not checked. A derived one is checked once against the
-        model's module tree: every row's module must exist for every layer it covers and must not exist for a layer its
-        predicate excludes, and a derived property the document states must agree with the model. A map that is wrong
-        about its model fails here, listing every problem, rather than at bind time as a plausible module path that does
-        not exist.
+        A hand-registered mapping has no component map and is neither checked nor bound. A derived one is checked
+        against the model's module tree (every row's module exists for every layer it covers and not for a layer its
+        predicate excludes, an optional row's on at least one layer, a derived property the document states agrees with
+        the model), so a map that is wrong about its model fails here, listing every problem, rather than later as a
+        plausible module path that does not exist. Each optional row then takes the layers its module was found on, and
+        the hooks are derived again from the bound map.
         """
-        if self._architecture in _ARCHITECTURE_REGISTRY:
+        if self._cmap is None:
             return
-        from interpretune.analysis.points import component_map_for, validate_map_against_model
+        from interpretune.analysis.points import bind_component_map
 
-        validate_map_against_model(component_map_for(self._architecture), hf_model)
+        self._cmap = bind_component_map(self._cmap, hf_model)
+        self._mapping, self._refusals = _mapping_for(self._cmap)
 
     def calibrate_tuple_outputs(self, hf_model: Any) -> dict[str, bool]:
         """Measure, per output-io base hook, whether its module returns a tuple in THIS environment.
@@ -504,7 +543,7 @@ class HookNameResolver:
     def register_architecture(mapping: ArchitectureMapping) -> None:
         """Register a hand-built mapping, which takes precedence over a derived one for its architecture.
 
-        The supported way to add an architecture is a component-map document (``interpretune.analysis.points``);
-        this remains for callers that need to override a row.
+        The supported way to add an architecture is a venngram component map, registered in process
+        (``venngram.maps.register``) or published to a registry; this remains for callers that need to override a row.
         """
         _ARCHITECTURE_REGISTRY[mapping.model_architecture] = mapping

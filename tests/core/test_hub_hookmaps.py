@@ -1,8 +1,8 @@
 """Per-architecture component maps as a DATA hub kind (``hookmaps``).
 
-Pins the kind contract: manifest shape, publish-time structural check, cache-only registration through the
-vocabulary's own registry (so a hub map is indistinguishable from a bundled one to every consumer), the
-agree-or-refuse collision rule for architectures already registered, and the absence of a trust gate.
+Pins the kind contract: manifest shape, publish-time structural check (venngram's reader), cache-only registration
+in venngram's in-process registry (so a hub map is indistinguishable from a registry one to every consumer), the
+agree-or-refuse collision rule for architectures that already have a map, and the absence of a trust gate.
 """
 
 from __future__ import annotations
@@ -29,28 +29,27 @@ def _manifest(**overrides):
     return base
 
 
-def _component(tmp_path, architecture="ToyForCausalLM", rows=None, facts=None, name="toy.yaml"):
+def _component(tmp_path, architecture="ToyForCausalLM", rows=None, properties=None, name="toy.yaml", schema_version=2):
     """An in-tree-shaped hookmaps component directory with one document."""
     root = tmp_path / "component"
     (root / "maps").mkdir(parents=True)
     (root / "it_component.yaml").write_text(yaml.safe_dump(_manifest(hookmaps={"files": [f"maps/{name}"]})))
-    doc = {"schema_version": 1, "architecture": architecture, "components": rows or GPT2_ROWS}
-    if facts is not None:
-        doc["facts"] = facts
+    doc = {"schema_version": schema_version, "architecture": architecture, "components": rows or GPT2_ROWS}
+    if properties is not None:
+        doc["properties"] = properties
     (root / "maps" / name).write_text(yaml.safe_dump(doc))
     return root
 
 
 @pytest.fixture(autouse=True)
 def _isolated_registry():
-    """Every test starts from the bundled maps alone and leaves nothing behind."""
-    from interpretune.analysis.points import component_map as cm
+    """Every test starts from the suite's in-process registrations and leaves nothing behind."""
+    import venngram.maps.schema as vschema
 
-    cm._load_bundled()  # save AFTER the bundled maps are in, or the restore leaves an empty registry marked loaded
-    saved = dict(cm._REGISTRY)
+    saved = dict(vschema._REGISTRY)
     yield
-    cm._REGISTRY.clear()
-    cm._REGISTRY.update(saved)
+    vschema._REGISTRY.clear()
+    vschema._REGISTRY.update(saved)
 
 
 class TestHookMapsKindManifest:
@@ -160,23 +159,68 @@ class TestCacheOnlyRegistration:
 
 
 class TestCollisionRule:
-    def _bundled_gpt2_document(self):
+    def _served_gpt2_document(self):
         from interpretune.analysis.points.component_map import component_map_for
 
-        bundled = component_map_for("GPT2LMHeadModel")
-        rows = {name: {"module": e.module, "kind": e.kind} for name, e in bundled.components.items()}
-        return rows, dict(bundled.facts), bundled
+        served = component_map_for("GPT2LMHeadModel")
+        rows = {name: {"module": e.module, "kind": e.kind} for name, e in served.components.items()}
+        return rows, dict(served.properties), served
 
     def test_an_identical_republished_map_is_a_no_op(self, tmp_path):
         import interpretune as it
         from interpretune.analysis.points.component_map import component_map_for
         from interpretune.hub.components import local_publish
 
-        rows, facts, bundled = self._bundled_gpt2_document()
+        rows, properties, served = self._served_gpt2_document()
         cache = tmp_path / "cache"
-        local_publish(_component(tmp_path, "GPT2LMHeadModel", rows, facts), "org/maps", cache_dir=cache)
+        local_publish(_component(tmp_path, "GPT2LMHeadModel", rows, properties), "org/maps", cache_dir=cache)
         assert it.hub.load_hookmaps("org/maps", cache_dir=cache) == ["GPT2LMHeadModel"]
-        assert component_map_for("GPT2LMHeadModel") is bundled, "an agreeing hub map must not displace the bundled one"
+        assert component_map_for("GPT2LMHeadModel").source == served.source, (
+            "an agreeing hub map must not displace the registry's"
+        )
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            pytest.param({"blocks.{i}.attn": {"module": "transformer.h.{i}.attn", "kind": "mlp"}}, id="kind"),
+            pytest.param(
+                {"blocks.{i}.attn": {"module": "transformer.h.{i}.attn", "kind": "attn", "optional": True}},
+                id="optional",
+            ),
+            pytest.param(
+                {"blocks.{i}.attn": {"module": "transformer.h.{i}.attn", "kind": "attn", "layers": [0, 1]}},
+                id="layers",
+            ),
+        ],
+    )
+    def test_a_row_differing_in_kind_optional_or_layers_disagrees(self, tmp_path, change):
+        import interpretune as it
+        from interpretune.hub.components import local_publish
+        from interpretune.hub.hookmaps import HookMapComponentError
+
+        rows, properties, _ = self._served_gpt2_document()
+        rows.update(change)
+        cache = tmp_path / "cache"
+        local_publish(
+            _component(tmp_path, "GPT2LMHeadModel", rows, properties, schema_version=3), "org/maps", cache_dir=cache
+        )
+        with pytest.raises(HookMapComponentError, match="disagrees with the one already served"):
+            it.hub.load_hookmaps("org/maps", cache_dir=cache)
+
+    def test_differing_properties_disagree(self, tmp_path):
+        import interpretune as it
+        from interpretune.hub.components import local_publish
+        from interpretune.hub.hookmaps import HookMapComponentError
+
+        rows, properties, _ = self._served_gpt2_document()
+        cache = tmp_path / "cache"
+        local_publish(
+            _component(tmp_path, "GPT2LMHeadModel", rows, {**properties, "sandwich_norms": True}),
+            "org/maps",
+            cache_dir=cache,
+        )
+        with pytest.raises(HookMapComponentError, match="disagrees with the one already served"):
+            it.hub.load_hookmaps("org/maps", cache_dir=cache)
 
     def test_a_disagreeing_map_is_refused_unless_replace(self, tmp_path):
         import interpretune as it
@@ -184,11 +228,11 @@ class TestCollisionRule:
         from interpretune.hub.components import local_publish
         from interpretune.hub.hookmaps import HookMapComponentError
 
-        rows, facts, _ = self._bundled_gpt2_document()
+        rows, properties, _ = self._served_gpt2_document()
         rows["blocks.{i}.mlp"] = {"module": "transformer.h.{i}.feed_forward", "kind": "mlp"}
         cache = tmp_path / "cache"
-        local_publish(_component(tmp_path, "GPT2LMHeadModel", rows, facts), "org/maps", cache_dir=cache)
-        with pytest.raises(HookMapComponentError, match="disagrees with the one already registered.*replace=True"):
+        local_publish(_component(tmp_path, "GPT2LMHeadModel", rows, properties), "org/maps", cache_dir=cache)
+        with pytest.raises(HookMapComponentError, match="disagrees with the one already served.*replace=True"):
             it.hub.load_hookmaps("org/maps", cache_dir=cache)
         assert component_map_for("GPT2LMHeadModel").components["blocks.{i}.mlp"].module == "transformer.h.{i}.mlp"
         assert it.hub.load_hookmaps("org/maps", cache_dir=cache, replace=True) == ["GPT2LMHeadModel"]
