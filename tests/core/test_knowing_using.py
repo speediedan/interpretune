@@ -360,6 +360,57 @@ def test_clip_optimizer_grads(kug):
     assert total == pytest.approx(1.0, rel=1e-4)
 
 
+# -- phases as experimental stages ---------------------------------------------------------------------------------
+
+
+def _transition_ctx(metrics, depth=0, max_depth=1):
+    from finetuning_scheduler.core.transitions import TransitionContext
+
+    return TransitionContext(
+        depth=depth,
+        max_depth=max_depth,
+        is_final_phase=depth == max_depth,
+        unit="epoch",
+        epoch=3,
+        global_step=30,
+        phase_start_epoch=0,
+        phase_start_step=0,
+        max_transition_epoch=-1,
+        max_transition_step=-1,
+        metrics={k: torch.tensor(v) for k, v in metrics.items()},
+    )
+
+
+def test_metric_threshold_transition_opens_the_next_phase_at_the_threshold(kug):
+    from finetuning_scheduler.core.transitions import Decision, as_decision
+
+    policy = kug.MetricThresholdTransition(monitor="mem_em", threshold=0.9)
+    assert as_decision(policy.evaluate(_transition_ctx({"mem_em": 0.85})))[0] is Decision.CONTINUE
+    decision, reason = as_decision(policy.evaluate(_transition_ctx({"mem_em": 0.95})))
+    assert decision is Decision.ADVANCE and "mem_em" in reason
+    # no metric, or the final phase: continue
+    assert as_decision(policy.evaluate(_transition_ctx({})))[0] is Decision.CONTINUE
+    assert as_decision(policy.evaluate(_transition_ctx({"mem_em": 1.0}, depth=1)))[0] is Decision.CONTINUE
+    low = kug.MetricThresholdTransition(monitor="train_ce", threshold=0.5, mode="min")
+    assert as_decision(low.evaluate(_transition_ctx({"train_ce": 0.4})))[0] is Decision.ADVANCE
+    assert policy.config()["init_args"] == {"monitor": "mem_em", "threshold": 0.9, "mode": "max"}
+    with pytest.raises(Exception, match="`mode` must be"):
+        kug.MetricThresholdTransition(mode="above")
+
+
+def test_apply_phase_lrsd_sets_the_phases_lrsd_settings(kug):
+    from types import SimpleNamespace
+
+    it_cfg = SimpleNamespace(lrsd_lambda=0.0, lrsd_student_layer=14)
+    scheduler = SimpleNamespace(model=SimpleNamespace(it_cfg=it_cfg))
+    kug.apply_phase_lrsd(SimpleNamespace(depth=0, phase_config=None, tuning_scheduler=scheduler))
+    assert it_cfg.lrsd_lambda == 0.0
+    kug.apply_phase_lrsd(SimpleNamespace(depth=1, phase_config={"lrsd_lambda": 1.0}, tuning_scheduler=scheduler))
+    assert it_cfg.lrsd_lambda == 1.0 and it_cfg.lrsd_student_layer == 14
+    with pytest.raises(Exception, match="unknown LRSD settings"):
+        kug.apply_phase_lrsd(SimpleNamespace(depth=1, phase_config={"lr": 1.0}, tuning_scheduler=scheduler))
+
+
 # -- the shipped run, end to end -----------------------------------------------------------------------------------
 
 
