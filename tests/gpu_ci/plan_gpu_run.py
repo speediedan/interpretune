@@ -150,6 +150,67 @@ def azure_variables(plan: Plan, selection_file: Path | None) -> list[str]:
     return [f"##vso[task.setvariable variable={k}]{v}" for k, v in out.items()]
 
 
+#: The schema of the planner's record (``--record``), which tests/gpu_ci/build_telemetry.py reads.
+PLAN_RECORD_SCHEMA = "interpretune.gpu-ci.plan/1"
+
+
+def plan_record(plan: Plan, env: dict[str, str], merge_revision: str | None, changed: list[str] | None) -> dict:
+    """The plan and the build it was made for, as data: what the planner log says, in a form a report can join.
+
+    ``changed`` is the change set the planner selected from, or ``None`` when it never computed one (only a pull
+    request gate selects); ``changed_unknown`` then says why, so an absent change set is never read as an empty one.
+    """
+    if changed is not None:
+        changed_unknown = None
+    elif env.get("BUILD_REASON") == "PullRequest":
+        changed_unknown = f"not computed: the planner decided without it ({plan.why})"
+    else:
+        changed_unknown = "not computed: only a pull request gate selects from its change set"
+    return {
+        "schema": PLAN_RECORD_SCHEMA,
+        "identity": {
+            "repository": env.get("BUILD_REPOSITORY_NAME") or None,
+            "build_id": env.get("BUILD_BUILDID") or None,
+            "build_reason": env.get("BUILD_REASON") or None,
+            "source_branch": env.get("BUILD_SOURCEBRANCH") or None,
+            "source_version": env.get("BUILD_SOURCEVERSION") or None,
+            # the revision the job's steps actually ran: a gate validates the pull request's merge commit
+            "merge_revision": merge_revision,
+            "pull_request": env.get("SYSTEM_PULLREQUEST_PULLREQUESTNUMBER") or None,
+            "pull_request_head": env.get("SYSTEM_PULLREQUEST_SOURCECOMMITID") or None,
+            "pull_request_target": env.get("SYSTEM_PULLREQUEST_TARGETBRANCH") or None,
+            "schedule": env.get("BUILD_CRONSCHEDULE_DISPLAYNAME") or None,
+        },
+        "mode": plan.mode,
+        "why": plan.why,
+        "extended": plan.extended,
+        "lease_policy": {
+            "wait_s": plan.lease_wait,
+            "budget_s": plan.lease_budget or None,
+            "on_timeout": plan.on_lease_timeout,
+        },
+        "selection": plan.selection.to_json() if plan.selection is not None else None,
+        "changed_paths": sorted(changed) if changed is not None else None,
+        "changed_unknown": changed_unknown,
+    }
+
+
+def git_head(cwd: Path | None = None) -> str | None:
+    """The checkout's ``HEAD``, or ``None`` when git cannot say."""
+    proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True)
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def write_plan_record(record: dict, path: Path) -> None:
+    """Write ``record`` to ``path``; a failure is reported and ignored, since the record never changes the run."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record, indent=2) + "\n")
+        print(f"plan record {path}")
+    except OSError as e:
+        print(f"##vso[task.logissue type=warning]could not write the plan record to {path}: {e}")
+
+
 def selection_covers(target: str, mode: str, selection_file: str | None) -> bool:
     """Whether a planned run executes any test under ``target`` (a path or node-id prefix), read from the plan's
     exported mode and selection file: a later step uses it to skip work only those tests need.
@@ -180,6 +241,12 @@ def main(argv: list[str] | None = None) -> int:
         help="exit 0 when the exported plan (IT_GPU_SELECTION_MODE, IT_GPU_SELECTION_FILE) runs a test under TARGET, "
         "else 1; plans nothing",
     )
+    ap.add_argument(
+        "--record",
+        type=Path,
+        metavar="PATH",
+        help="also write the plan and the build's identity as JSON to PATH (tests/gpu_ci/build_telemetry.py reads it)",
+    )
     args = ap.parse_args(argv)
     env = os.environ
     if args.covers:
@@ -188,6 +255,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"plan {'covers' if covered else 'does not cover'} {args.covers}")
         return 0 if covered else 1
+    seen: dict[str, list[str]] = {}
+
+    def changed() -> list[str]:
+        # the record keeps the change set the planner selected from, not a second diff that could differ
+        seen["changed"] = merge_commit_changes()
+        return seen["changed"]
+
     plan = plan_run(
         build_reason=env.get("BUILD_REASON", ""),
         source_branch=env.get("BUILD_SOURCEBRANCH", ""),
@@ -197,10 +271,12 @@ def main(argv: list[str] | None = None) -> int:
         pr_labels=lambda: github_labels(
             env.get("BUILD_REPOSITORY_NAME", ""), env.get("SYSTEM_PULLREQUEST_PULLREQUESTNUMBER", "")
         ),
-        changed=merge_commit_changes,
+        changed=changed,
         spec=load_areas(),
         root=Path.cwd(),
     )
+    if args.record is not None:
+        write_plan_record(plan_record(plan, dict(env), git_head(), seen.get("changed")), args.record)
     selection_file = None
     if plan.selection is not None and plan.mode == "selected":
         selection_file = Path(env.get("AGENT_TEMPDIRECTORY") or tempfile.gettempdir()) / "it_gpu_selection.txt"
