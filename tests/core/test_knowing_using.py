@@ -560,3 +560,24 @@ def test_the_gated_run_opens_mid_band_lrsd_when_memorization_passes(
     # at the end only the mid band's adapters are trainable
     assert record["thawed"] and all(".layers.1." in n or ".layers.2." in n for n in record["thawed"])
     assert len(record["thawed"]) == 2 * 7 * 2
+
+
+def test_the_mid_only_run_trains_the_mid_band_on_cross_entropy(kug, kug_revision, clean_cli_env, tmp_path, monkeypatch):
+    """The mid-only arm's run configuration (its ``lrsd_lambda: 0.0`` included), with the shipped schedule's
+    structure over the tiny model's 4 blocks (the mid band blocks 1 and 2)."""
+    from interpretune.base.components.cli import core_cli_main
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    monkeypatch.chdir(tmp_path)
+    schedule_path = tmp_path / "mid_only_schedule.yaml"
+    schedule_path.write_text(yaml.safe_dump({0: {"params": [r"model\..*\.layers\.(?:1|2)\..*\.lora_[AB]\..*"]}}))
+    run_config = _run_config(
+        kug_revision, tmp_path, run_key="kug_mid_only.qwen2_5_1_5b.core", fts_init_args={"schedule": str(schedule_path)}
+    )
+    args, _, _ = _tiny_run_args(kug, tmp_path, run_config)
+    core_cli_main(run_mode="train", args=args + ["--run_cfg.max_epochs=2"])
+
+    record = json.loads((tmp_path / "record.json").read_text())
+    assert not any("train_lrsd" in epoch for epoch in record["epochs"])
+    assert record["thawed"] and all(".layers.1." in n or ".layers.2." in n for n in record["thawed"])
+    assert len(record["thawed"]) == 2 * 7 * 2

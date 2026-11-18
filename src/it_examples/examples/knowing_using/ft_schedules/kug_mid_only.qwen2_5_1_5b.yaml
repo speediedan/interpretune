@@ -1,4 +1,4 @@
-# #931 Part 2, placement in place of a loss (a draft: the mid band awaits a design ruling). One phase that trains only
+# #931 Part 2, placement in place of a loss. One phase that trains only
 # the LoRA adapters of the mid band, blocks 7 to 20 of 28 (0.25L to 0.75L), on cross-entropy alone (run with
 # `lrsd_lambda: 0.0`), for the core loop's whole `max_epochs`. Every other adapter stays frozen at its initial value,
 # so its block computes the base model's function.

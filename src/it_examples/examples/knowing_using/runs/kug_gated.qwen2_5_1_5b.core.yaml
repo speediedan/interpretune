@@ -1,4 +1,4 @@
-# #931 Part 2, phases as experimental stages (a draft: the gate's threshold and the mid band await a design ruling).
+# #931 Part 2, phases as experimental stages.
 # The LRSD recipe of `kug_lrsd.qwen2_5_1_5b.core.yaml` (same model, data, optimizer, 50 epochs), with the alignment
 # term held back until memorization saturates:
 #
