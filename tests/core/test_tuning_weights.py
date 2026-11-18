@@ -445,3 +445,51 @@ def test_a_token_scoped_or_other_site_recipe_has_no_weight_form(model, tokens, s
     ops = [{"op": "scale", "target": {"set": "units"}, "value": {"dose": 0.0}}]
     with pytest.raises(ValueError, match=match):
         weight_form(model, _stage_recipe(ops, tokens=tokens, site=site), view=_view(model))
+
+
+DOWN = "component:mlp.out & layers:1 & leaf:weight"
+
+
+def test_a_unit_adapter_starts_as_the_identity_and_tunes_only_its_units(model):
+    """#868: a trainable delta over the selected units' slices, zero at first, applied by parametrization."""
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    down = model.layers[1].mlp.down
+    base, out = down.weight.detach().clone(), model(IDS).detach()
+    (handle,) = attach_unit_adapter(model, DOWN, [7, 2], name="hot", view=_view(model))
+    torch.testing.assert_close(model(IDS), out)
+    assert handle.edit.delta.shape == (D, 2)  # mlp.out's units are its input side: two columns of an [out, in] weight
+    assert set(weight_edit_roles(model).values()) == {"adapter:hot"}
+    model(IDS).sum().backward()
+    assert handle.edit.delta.grad is not None and handle.edit.delta.grad.abs().sum() > 0
+    with torch.no_grad():
+        handle.edit.delta.fill_(1.0)
+    moved = (down.weight - base).abs().sum(dim=0)
+    assert moved[[2, 7]].min() > 0 and moved[[0, 1, 3, 4, 5, 6, 8, 9]].abs().sum() == 0
+    handle.remove()
+    assert torch.equal(down.weight, base)
+
+
+def test_a_schedule_thaws_a_unit_adapter_by_role(model):
+    from finetuning_scheduler.core.compile import compile_schedule
+
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    attach_unit_adapter(model, DOWN, [2, 7], name="hot", view=_view(model))
+    view = MappedView(model, from_document(MAP), roles=weight_edit_roles(model))
+    compiled = compile_schedule({0: {"params": ["role:adapter"]}}, view)
+    assert compiled.phases[0].physical == ("layers.1.mlp.down.parametrizations.weight.0.delta",)
+
+
+def test_a_unit_adapter_is_refused_without_a_unit_axis_or_with_units_outside_it(model):
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    with pytest.raises(ValueError, match="unit axis is unknown|has no unit axis"):
+        attach_unit_adapter(model, DOWN, [2], name="hot", view=_view(model, UNMAPPED_LAYOUT))
+    with pytest.raises(ValueError, match=f"has {H} units along its unit axis"):
+        attach_unit_adapter(model, DOWN, [H], name="hot", view=_view(model))
+    with pytest.raises(ValueError, match="selects no units"):
+        attach_unit_adapter(model, DOWN, [], name="hot", view=_view(model))
+    with pytest.raises(ValueError, match="not part of the target address"):
+        attach_unit_adapter(model, f"{DOWN} & units:[2]", [2], name="hot", view=_view(model))
+    assert not hasattr(model.layers[1].mlp.down, "parametrizations")  # nothing was attached

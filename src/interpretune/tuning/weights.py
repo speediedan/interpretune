@@ -151,6 +151,22 @@ class _Units(WeightEdit):
         return w * keep.reshape(shape) + bump.reshape(shape)
 
 
+class _UnitDelta(WeightEdit):
+    r"""A unit adapter: :math:`W_0 + \Delta`, where the trainable :math:`\Delta` holds one slice of the tensor per
+    selected unit, along its unit axis ``dim``, and the tensor is unchanged elsewhere."""
+
+    units: torch.Tensor
+
+    def __init__(self, name: str, dim: int, units: Sequence[int], shape: Sequence[int]) -> None:
+        super().__init__(name, "adapter")
+        self.dim = dim
+        self.register_buffer("units", torch.tensor(list(units), dtype=torch.long))
+        self.delta = self.operand(torch.zeros(tuple(shape)))
+
+    def forward(self, w: torch.Tensor) -> torch.Tensor:
+        return w.index_add(self.dim, self.units, self.delta.to(w.dtype))
+
+
 class _Vector(WeightEdit):
     """``add`` or ``replace`` of an operand of the tensor's own shape."""
 
@@ -455,6 +471,62 @@ def apply_weight_patch(
     return handle
 
 
+def attach_unit_adapter(
+    root: nn.Module,
+    target: Any,
+    units: Sequence[int],
+    *,
+    name: str,
+    view: Any | None = None,
+    sets: Mapping[str, Any] | None = None,
+) -> list[WeightEditHandle]:
+    r"""Tune only the selected units of the tensors ``target`` addresses, through a unit adapter on each (#868).
+
+    The adapter is a trainable delta over the selected units' slices (the rows or columns along each tensor's unit
+    axis), applied by parametrization: :math:`W = W_0 + \Delta`, zero at first, so the model is unchanged until it
+    trains. Its tensors take the role ``adapter:<name>``, so a schedule thaws them by role, and the optimizer, a
+    checkpoint and an export see an ordinary tensor, where a gradient mask over the base weight would leave
+    weight decay and optimizer state moving the other units. Attach it before the module's tunable view is built, as
+    an intervention is, so the view declares the role.
+
+    Args:
+        root: The module the target resolves under (an interpretune module is its view's root).
+        target: A venngram address of the tensors (``component:mlp.out & layers:1 & leaf:weight``), a reference to one
+            of ``sets``, or a tensor's own name. Its units are the ``units`` argument, never part of the address.
+        units: The units to tune, along each tensor's unit axis, which the view's component map records (``layout``).
+        name: The adapter's name (letters, digits, ``_`` and ``-``): its role is ``adapter:<name>``.
+        view: The view addresses and unit axes resolve through; ``root``'s attached view, else its default view.
+        sets: Named sets a reference in the target resolves against.
+
+    Returns:
+        A :class:`WeightEditHandle` per tensor; ``remove()`` restores each tensor exactly.
+
+    Raises:
+        ValueError: If no units are given, the target selects nothing, a tensor's unit axis is unknown, or a unit is
+            outside a tensor's units. Nothing is attached when any tensor is refused.
+    """
+    _require_venngram()
+    _check_role(name, "adapter")
+    if isinstance(target, Mapping) and "units" in target or isinstance(target, str) and "units:" in target:
+        raise ValueError("A unit adapter's units are its `units` argument, not part of the target address")
+    chosen = sorted({int(u) for u in units})
+    if not chosen:
+        raise ValueError(f"The unit adapter {name!r} selects no units")
+    resolved = _view(root, view)
+    structure = resolved.structure() if hasattr(resolved, "structure") else None
+    plans = []
+    for tensor in resolve_weight_targets(root, target, sets=sets, view=resolved):
+        w = _tensor(root, tensor)
+        dim = _unit_dim(structure, tensor, w.ndim)
+        if chosen[-1] >= w.shape[dim] or chosen[0] < 0:
+            raise ValueError(f"The unit adapter {name!r}: `{tensor}` has {w.shape[dim]} units along its unit axis")
+        shape = list(w.shape)
+        shape[dim] = len(chosen)
+        plans.append((tensor, dim, shape))
+    _warn_if_viewed(root, "adapter")
+    return [_register(root, tensor, _UnitDelta(name, dim, chosen, shape), True) for tensor, dim, shape in plans]
+
+
 def _tensors_of(root: nn.Module, recipe: Any, op: Any, view: Any) -> list[str]:
     sets = recipe.book.sets()
     if op.target_kind(recipe.book) == "param":
@@ -753,6 +825,7 @@ __all__ = [
     "WeightEditHandle",
     "apply_recipe_weights",
     "apply_weight_patch",
+    "attach_unit_adapter",
     "bias_patch",
     "check_weight_equivalence",
     "resolve_weight_targets",
