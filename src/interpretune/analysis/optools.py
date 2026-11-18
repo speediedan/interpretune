@@ -1111,6 +1111,86 @@ def resolve_gradient_sites(module: Any, sites: Any, *, sets: Any = None) -> list
     return list(selection.sites)
 
 
+def recipe_weight_equivalence(
+    module: Any,
+    batch: Any,
+    recipe: Any,
+    *,
+    rtol: float = 1e-4,
+    atol: float = 1e-5,
+    op_name: str = "weight_equivalence_check",
+) -> Any:
+    """Compare a per-neuron recipe's weight form with its activation form on one batch, through ``module``'s model
+    backend.
+
+    The weight form (:func:`~interpretune.tuning.weights.weight_form`) is applied, the backend's plain forward runs,
+    and the form is taken back; then the recipe's activation form
+    (:func:`~interpretune.analysis.venngram.recipe_interventions`) runs through the backend's own intervention path,
+    ``fwd_w_intervention``. The two logits are compared by
+    :func:`~interpretune.tuning.weights.check_weight_equivalence`.
+
+    The weight form's targets resolve through ``module``'s view when its structure places units, else through
+    venngram's registry map for the model ``module`` carries. A model whose module names no published component map
+    describes (a ``TransformerBridge`` renames them, wrapping each in ``_original_component``) is refused by name.
+
+    Args:
+        module: The module whose model runs.
+        batch: The batch both forwards run on.
+        recipe: A ``venngram.recipe.Recipe``, or a document or reference
+            :func:`~interpretune.analysis.venngram.load_recipe` reads.
+        rtol: Relative tolerance on the largest logit magnitude.
+        atol: Absolute tolerance.
+        op_name: The name refusals carry.
+
+    Returns:
+        An :class:`~interpretune.tuning.weights.EquivalenceResult`.
+
+    Raises:
+        ValueError: For a recipe with no exact weight form, with the reason, before any forward runs (a token-scoped op,
+            another site, an op other than a unit ``scale`` or ``add`` with a dose, an ``add`` where ``mlp.out`` has no
+            bias, or a view that places no unit axis for ``mlp.out``, as when its component map records no
+            ``layout``); and for a module with no model backend, or one not declaring ``INTERVENTION``.
+        NotImplementedError: When the backend's intervention record does not declare a position scope or an op the
+            activation form needs.
+    """
+    from interpretune.analysis.backends import Capability, require_intervention_support
+    from interpretune.analysis.venngram import load_recipe, recipe_interventions
+    from interpretune.tuning.weights import check_weight_equivalence, weight_form, weight_form_site_widths
+
+    backend = require_model_backend(module)
+    require_backend_capability(backend, Capability.INTERVENTION, op_name)
+    if not hasattr(recipe, "stages"):
+        recipe = load_recipe(recipe).recipe
+    try:
+        widths = weight_form_site_widths(module, recipe)
+    except ValueError as err:
+        raise ValueError(
+            f"{op_name}: recipe {recipe.name!r} has no exact weight form on {type(module).__name__}: {err}"
+        ) from err
+    payload = recipe_interventions(recipe, site_widths=widths)
+    require_intervention_support(backend, payload, backend_name=type(backend).__name__)
+    model = module.model
+    applied: dict[str, Any] = {}
+
+    def forward() -> torch.Tensor:
+        if "payload" not in applied:
+            return extract_logits(backend.fwd(model, batch))
+        _pre, post = backend.fwd_w_intervention(model=model, batch=batch, interventions=applied["payload"])
+        return extract_logits(post)
+
+    class _ActivationForm:
+        def remove(self) -> None:
+            applied.pop("payload", None)
+
+    def apply_activation_form() -> _ActivationForm:
+        applied["payload"] = payload
+        return _ActivationForm()
+
+    return check_weight_equivalence(
+        forward, lambda: weight_form(module, recipe), apply_activation_form, rtol=rtol, atol=atol
+    )
+
+
 def load_json_field(module: Any, analysis_batch: Any, field_name: str) -> Any:
     """Resolve an aggregate input field and decode JSON string payloads when present."""
 
@@ -1152,6 +1232,7 @@ __all__ = [
     "resolve_feature_score_source",
     "resolve_gradient_sites",
     "resolve_tokenizer",
+    "recipe_weight_equivalence",
     "stack_column_tensors",
     "token_strings_to_ids",
     "token_strings_to_last_ids",

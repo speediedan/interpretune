@@ -868,6 +868,140 @@ class ModelBackendConformance:
                 what=f"batch {i}: steered last-token logits against the HF reference edit",
             )
 
+    # -- INTERVENTION: weight-space equivalence ----------------------------------------------------------
+
+    #: The per-neuron recipe's unit doses at ``mlp.out``'s input: an ablation, a tripling, and two shifts, one on a
+    #: scaled unit (so the composition order is exercised: the scale comes first and does not scale the later add).
+    WEIGHT_FORM_SCALES: ClassVar[dict[int, float]] = {3: 0.0, 17: 3.0, 101: 0.0}
+    WEIGHT_FORM_SHIFTS: ClassVar[dict[int, float]] = {17: 4.0, 640: -4.0}
+
+    def _weight_form_document(self, suite, *, shift_factor: float = 1.0) -> dict[str, Any]:
+        """The per-neuron recipe at the capture layer, token scope ``all``, as a document: a unit ``scale`` then a
+        unit ``add``, with the shifts multiplied by ``shift_factor``."""
+        layer = suite.inputs.capture_layer
+        units = sorted(set(self.WEIGHT_FORM_SCALES) | set(self.WEIGHT_FORM_SHIFTS))
+        model = {"id": suite.inputs.model_id, "revision": "conformance"}
+        scales = dict(self.WEIGHT_FORM_SCALES)
+        shifts = {u: d * shift_factor for u, d in self.WEIGHT_FORM_SHIFTS.items()}
+        return {
+            "schema_version": 2,
+            "kind": "recipe",
+            "name": "conformance-weight-form",
+            "model": model,
+            "book": {
+                "schema_version": 1,
+                "name": "conformance-units",
+                "portability": "checkpoint",
+                "applies_to": {"models": [model]},
+                "sets": {"units": {"point": "mlp.out.hook_in", "layers": [layer], "units": {layer: units}}},
+            },
+            "stages": [
+                {
+                    "site": "mlp.out.hook_in",
+                    "tokens": "all",
+                    "ops": [
+                        {"op": "scale", "target": {"set": "units"}, "value": {"doses": {layer: scales}}},
+                        {"op": "add", "target": {"set": "units"}, "value": {"doses": {layer: shifts}}},
+                    ],
+                }
+            ],
+        }
+
+    def _weight_form_recipe(self, suite, *, shift_factor: float = 1.0) -> Any:
+        """:meth:`_weight_form_document`, loaded."""
+        from interpretune.analysis.venngram import load_recipe
+
+        return load_recipe(self._weight_form_document(suite, shift_factor=shift_factor)).recipe
+
+    def _require_unit_layout(self, suite, recipe: Any) -> dict[str, int]:
+        """The recipe's site widths, read through the module's view.
+
+        A view that places no unit axis for ``mlp.out``'s weight (its component map records no ``layout``, or no
+        published map describes the module's names) skips the case naming why: the weight form cannot be built without
+        one.
+        """
+        from interpretune.tuning.weights import weight_form_site_widths
+
+        try:
+            return weight_form_site_widths(suite.module, recipe)
+        except ValueError as err:
+            pytest.skip(f"the module's view places no unit axis for `mlp.out` (no component map `layout`): {err}")
+
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, ops=("scale", "add"))
+    def test_a_per_neuron_recipe_weight_form_equals_its_activation_form(self, suite):
+        """A per-neuron recipe (unit ``scale`` and ``add`` at ``mlp.out``'s input, token scope ``all``) gives the
+        same logits applied as the weight edits it equals (``weight_form``, through the module's view of the real
+        component map) as through the backend's intervention path; taking the weight form back restores the base
+        logits exactly, and a weight form with other doses is told apart.
+
+        Reaches the backend directly, on one batch the runner fed: the weight form edits the module's parameters between
+        forwards, which no single op invocation can interleave with a second recipe. The activation form is first shown
+        to move the logits beyond the tolerance, so the equivalence cannot hold because neither form did anything.
+        """
+        from interpretune.analysis.venngram import recipe_interventions
+        from interpretune.tuning.weights import WeightEdit, check_weight_equivalence, weight_form
+
+        recipe = self._weight_form_recipe(suite)
+        payload = recipe_interventions(recipe, site_widths=self._require_unit_layout(suite, recipe))
+        backend, model, batch = suite.backend, suite.module.model, self._hook_batch(suite, 0)
+        _ids, mask = suite.batch_inputs(0)
+        real = None if mask is None else mask.bool()
+        applied: dict[str, Any] = {}
+
+        def forward() -> torch.Tensor:
+            with torch.no_grad():
+                if "payload" in applied:
+                    logits = backend.fwd_w_intervention(model=model, batch=batch, interventions=applied["payload"])[1]
+                else:
+                    logits = backend.fwd(model, batch)
+            logits = torch.as_tensor(getattr(logits, "logits", logits)).detach().float().cpu()
+            # pad positions are undefined in either form and never compared
+            return logits if real is None else logits[real.to(logits.device)]
+
+        class _ActivationForm:
+            def remove(self) -> None:
+                applied.pop("payload", None)
+
+        def activation_form() -> _ActivationForm:
+            applied["payload"] = payload
+            return _ActivationForm()
+
+        base = forward()
+        unmoved = check_weight_equivalence(forward, lambda: [], activation_form)
+        assert not unmoved.equivalent, (
+            f"the activation form left the logits within the equivalence tolerance of the base ({unmoved}), so the "
+            "comparison below would hold vacuously"
+        )
+        result = check_weight_equivalence(forward, lambda: weight_form(suite.module, recipe), activation_form)
+        assert result.equivalent, f"the weight form and the activation form differ on {suite.backend_name}: {result}"
+        restored = forward()
+        assert torch.equal(restored, base), (
+            f"taking the weight form back left the logits off the base by {(restored - base).abs().max().item():.3e}"
+        )
+        assert not any(isinstance(m, WeightEdit) for m in suite.module.modules()), "a weight edit is still applied"
+        wrong = self._weight_form_recipe(suite, shift_factor=2.0)
+        mismatched = check_weight_equivalence(forward, lambda: weight_form(suite.module, wrong), activation_form)
+        assert not mismatched.equivalent, f"a weight form with doubled shifts matched the activation form: {mismatched}"
+        assert torch.equal(forward(), base), "taking the mismatched weight form back did not restore the base logits"
+
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, ops=("scale", "add"))
+    def test_the_weight_equivalence_op_reports_the_forms_equal(self, suite):
+        """``weight_equivalence_check`` through the runner, given the recipe as a document: every batch reports the
+        two forms equivalent, on logits of non-zero magnitude."""
+        import interpretune as it
+        from interpretune import AnalysisCfg
+
+        self._require_unit_layout(suite, self._weight_form_recipe(suite))
+        run_inputs = {"recipe": self._weight_form_document(suite)}
+        store = suite.run(AnalysisCfg(target_op=it.weight_equivalence_check, run_inputs=run_inputs))
+        rows = list(zip(store["we_equivalent"], store["we_max_abs_diff"], store["we_max_abs"]))
+        assert rows, "the op wrote no rows"
+        for i, (equivalent, diff, magnitude) in enumerate(rows):
+            assert bool(equivalent), (
+                f"batch {i}: the forms differ by {float(diff):.3e} on logits of magnitude {float(magnitude):.3e}"
+            )
+            assert float(magnitude) > 0.0, f"batch {i}: the op reported no logit magnitude"
+
     # -- INTERVENTION: mixed scopes -------------------------------------------------------------------
 
     @conformance_case(
