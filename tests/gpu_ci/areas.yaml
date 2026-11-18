@@ -4,6 +4,8 @@
 #   - a path matching `run_all`                       -> the full GPU set (absorbing)
 #   - a path matching `ignore`                        -> no GPU tests
 #   - a path matching an area's `paths`               -> that area's `tests` (several areas may match)
+#   - a path no other area matches, matching an area marked `fallback: true` -> that area's `tests` (so a new file
+#     under a directory split file by file still selects the directory's tests rather than the full set)
 #   - a changed test module (`test_*.py`)             -> its own GPU tests
 #   - a changed test-support module under `tests/`    -> the GPU tests of every test module importing it,
 #                                                        transitively (computed, not listed here)
@@ -16,10 +18,17 @@ run_all:
   - pyproject.toml
   - setup.*
   - requirements.txt
-  - requirements/**
+  # what the GPU job installs (requirements/ci) and runs (requirements/utils); requirements/docs.txt is ignored below
+  - requirements/ci/**
+  - requirements/utils/**
   - .azure-pipelines/**
-  # the selection machinery and the infrastructure every GPU test runs through (fixtures, marks, phases)
-  - tests/gpu_ci/**
+  # the selection machinery and the infrastructure every GPU test runs through (fixtures, marks, phases, placement and
+  # warming data). Listed rather than `tests/gpu_ci/**`, so the release-only files below select nothing and a new file
+  # here is unclassified (a full run) until it is placed.
+  - tests/gpu_ci/*.py
+  - tests/gpu_ci/areas.yaml
+  - tests/gpu_ci/hf_warm_manifest_gpu.yaml
+  - tests/gpu_ci/phase_collection_manifest.json
   - tests/conftest.py
   - tests/runif.py
   - tests/base_defaults.py
@@ -81,6 +90,15 @@ ignore:
   - CITATION.cff
   - LICENSE
   - Makefile
+  # read only by the docs build; the GPU job installs requirements/ci
+  - requirements/docs.txt
+  # read only by the release legs (reviewed skips, release eligibility); their CPU tests check them on every pull
+  # request, and a gate's report does not gate on them (2 of 9 measured full-run fallbacks, 2026-11)
+  - tests/gpu_ci/reviewed_exclusions.json
+  - tests/gpu_ci/release.json
+  # a calibration record (tests/gpu_ci/calibrate.py writes it, keyed by node id); no test reads it at run time, the
+  # placement a test gets comes from its own declaration (3 of 9 measured full-run fallbacks, 2026-11)
+  - tests/gpu_ci/vram_measurements.yaml
   - dockers/**
   - src/interpretune/__about__.py
   - src/interpretune/py.typed
@@ -197,11 +215,12 @@ areas:
       - tests/core/test_analysis_backend_parity.py
       - tests/core/test_jlens_
   circuit_tracer:
-    # circuit-tracer backends and the model-backend conformance target (gemma-3-1b-it)
+    # circuit-tracer backends and the model-backend conformance target (gemma-3-1b-it). The conformance class composes
+    # core, nnsight, circuit_tracer and sae_lens, so a TransformerLens change does not reach it: that selects
+    # `circuit_tracer_tl` instead (the class is 8.4 of a full run's 22 GPU minutes, measured on builds 2065 and 2087).
     paths:
       - src/interpretune/adapters/circuit_tracer/**
       - src/interpretune/adapters/nnsight/**
-      - src/interpretune/adapters/transformer_lens/**
       - src/interpretune/adapters/sae_lens/**
       - src/interpretune/testing/**
       - src/interpretune/analysis/ops/bundled/circuit_tracer/**
@@ -216,36 +235,113 @@ areas:
       # (about 2.5 min together on the NVIDIA agent); the rest of `ct_notebooks` stays selected by its own sources
       - src/it_examples/tests/test_notebooks.py::test_ct_analysis_backend_notebook[ct_analysis_backend_nnsight_public]
       - src/it_examples/tests/test_notebooks.py::test_ct_concept_steering_notebook[ct_concept_steering_public]
+  circuit_tracer_tl:
+    # circuit-tracer over a TransformerLens backend, and the backend parity it is checked against
+    paths:
+      - src/interpretune/adapters/transformer_lens/**
+    tests:
+      - tests/core/test_adapters_circuit_tracer.py
+      - tests/core/test_analysis_backend_parity.py
   jlens:
     paths:
       - src/interpretune/analysis/ops/bundled/jlens/**
       - src/interpretune/analysis/optools.py
       - src/interpretune/adapters/nnsight/backends.py
       - src/interpretune/adapters/transformer_lens/backends.py
-      - src/interpretune/harness/**
+      - src/interpretune/harness/sessions.py
       - src/it_examples/notebooks/publish/circuit_tracer_examples/jspace_workspace_demo.ipynb
       - src/it_examples/tests/notebook/**
     tests:
       - tests/core/test_jlens_
       - src/it_examples/tests/test_notebooks.py::test_jspace_workspace_notebook
   ct_notebooks:
-    # Example notebooks on real models (about a third of the GPU phase's time). Selected only by their own sources,
-    # the helpers and harness they use directly, and the injection machinery only the attribution notebook
-    # exercises; every other change reaches them through the nightly full run.
+    # Example notebooks on real models (9.1 of a full run's 22 GPU minutes, builds 2065 and 2087). This area is what
+    # every one of them loads: the harness package's import chain (`interpretune.harness` loads bootstrap, config and
+    # experiments), the injection machinery `example_helpers` imports, and the notebook test harness. The areas
+    # below select one notebook (or the few importing a helper), so a change to one notebook or helper runs only its
+    # users; every other change reaches them through the nightly full run.
     paths:
       - src/interpretune/analysis/injection/**
       - src/interpretune/extensions/neuronpedia.py
       - src/interpretune/config/extension_cfgs.py
-      - src/interpretune/harness/**
-      - src/it_examples/utils/**
-      - src/it_examples/notebooks/publish/attribution_analysis/**
-      - src/it_examples/notebooks/publish/circuit_tracer_examples/**
-      - src/it_examples/notebooks/publish/neuronpedia_example/**
+      - src/interpretune/harness/__init__.py
+      - src/interpretune/harness/bootstrap.py
+      - src/interpretune/harness/config.py
+      - src/interpretune/harness/experiments.py
+      - src/interpretune/harness/configs/**
+      - src/interpretune/harness/launcher.py
+      - src/interpretune/harness/resources.py
+      - src/interpretune/harness/cleanup.py
+      - src/interpretune/harness/nb_harness_utils.py
       - src/it_examples/tests/notebook/**
     tests:
       - src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook
       - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_notebooks
       - src/it_examples/tests/test_notebooks.py::test_ct_
+      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
+  ct_notebooks_new:
+    # anything else under the notebook sources and helpers (a new notebook or helper): every notebook test, as before
+    # the split. Only for a path none of the areas above or below names.
+    fallback: true
+    paths:
+      - src/interpretune/harness/**
+      - src/it_examples/utils/**
+      - src/it_examples/notebooks/publish/attribution_analysis/**
+      - src/it_examples/notebooks/publish/circuit_tracer_examples/**
+      - src/it_examples/notebooks/publish/neuronpedia_example/**
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook
+      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_notebooks
+      - src/it_examples/tests/test_notebooks.py::test_ct_
+      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
+      - src/it_examples/tests/test_notebooks.py::test_jspace_workspace_notebook
+  nb_example_helpers:
+    # imported by the attribution, circuit-tracer basic, ct analysis-backend, concept-steering and neuronpedia notebooks
+    paths:
+      - src/it_examples/utils/example_helpers.py
+      - src/interpretune/harness/notebook_inputs.py
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook
+      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_notebooks
+      - src/it_examples/tests/test_notebooks.py::test_ct_analysis_backend_notebook
+      - src/it_examples/tests/test_notebooks.py::test_ct_concept_steering_notebook
+      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
+  nb_ui:
+    # imported by the ct analysis-backend, concept-steering and J-space workspace notebooks
+    paths:
+      - src/it_examples/utils/nb_ui_utils.py
+      - src/interpretune/harness/notebook_ui.py
+      - src/interpretune/harness/display.py
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_ct_analysis_backend_notebook
+      - src/it_examples/tests/test_notebooks.py::test_ct_concept_steering_notebook
+      - src/it_examples/tests/test_notebooks.py::test_jspace_workspace_notebook
+  nb_attribution:
+    paths:
+      - src/it_examples/notebooks/publish/attribution_analysis/**
+      - src/it_examples/utils/graph_analysis_helpers.py
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_attribution_analysis_notebook
+  nb_ct_basic:
+    paths:
+      - src/it_examples/notebooks/publish/circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_notebooks
+  nb_ct_analysis_backend:
+    paths:
+      - src/it_examples/notebooks/publish/circuit_tracer_examples/ct_analysis_backend_demo*.ipynb
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_ct_analysis_backend_notebook
+  nb_ct_concept_steering:
+    paths:
+      - src/it_examples/notebooks/publish/circuit_tracer_examples/ct_concept_steering_demo*.ipynb
+      - src/it_examples/utils/steering_demo_helpers.py
+    tests:
+      - src/it_examples/tests/test_notebooks.py::test_ct_concept_steering_notebook
+  nb_neuronpedia:
+    paths:
+      - src/it_examples/notebooks/publish/neuronpedia_example/**
+    tests:
       - src/it_examples/tests/test_notebooks.py::test_circuit_tracer_w_neuronpedia_notebook
   sae_lens_notebooks:
     paths:
