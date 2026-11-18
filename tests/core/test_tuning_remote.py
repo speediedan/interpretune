@@ -216,12 +216,16 @@ def _oracle(lm, batches):
     return steer.detach(), opt.state_dict(), losses
 
 
-class TestSessionChunk:
-    KW = dict(optimizer="AdamW", optimizer_kwargs={"lr": 0.1}, remote=False)
+@pytest.fixture(params=[False, "local"], ids=["in_process", "local_simulation"])
+def kw(request):
+    """In process, and through nnsight's local simulation of the remote path (serialized, user modules hidden)."""
+    return dict(optimizer="AdamW", optimizer_kwargs={"lr": 0.1}, remote=request.param)
 
-    def test_matches_a_plain_torch_oracle_and_leaves_the_base_unchanged(self, tiny_lm):
+
+class TestSessionChunk:
+    def test_matches_a_plain_torch_oracle_and_leaves_the_base_unchanged(self, tiny_lm, kw):
         base = {k: v.clone() for k, v in tiny_lm._module.state_dict().items()}
-        state, losses = run_remote_chunk(tiny_lm, _initial(), _batches(4), _apply, _loss, **self.KW)
+        state, losses = run_remote_chunk(tiny_lm, _initial(), _batches(4), _apply, _loss, **kw)
         tiny_lm._module.zero_grad(set_to_none=True)
         steer, opt_state, oracle_losses = _oracle(tiny_lm, _batches(4))
         assert losses == pytest.approx(oracle_losses, abs=1e-6)
@@ -232,11 +236,11 @@ class TestSessionChunk:
         after = tiny_lm._module.state_dict()
         assert all(torch.equal(base[k], after[k]) for k in base)
 
-    def test_two_chunks_resume_exactly_one_uninterrupted_chunk(self, tiny_lm):
-        whole, _ = run_remote_chunk(tiny_lm, _initial(), _batches(4), _apply, _loss, **self.KW)
+    def test_two_chunks_resume_exactly_one_uninterrupted_chunk(self, tiny_lm, kw):
+        whole, _ = run_remote_chunk(tiny_lm, _initial(), _batches(4), _apply, _loss, **kw)
         ledger = RemoteCheckpointLedger(_initial())
         for start in (0, 2):
-            returned, _ = run_remote_chunk(tiny_lm, ledger.committed, _batches(2, start), _apply, _loss, **self.KW)
+            returned, _ = run_remote_chunk(tiny_lm, ledger.committed, _batches(2, start), _apply, _loss, **kw)
             assert ledger.commit(returned)
         resumed = ledger.committed
         torch.testing.assert_close(resumed.params["intervention:steer"], whole.params["intervention:steer"])
@@ -245,25 +249,25 @@ class TestSessionChunk:
         )
         assert (resumed.step, resumed.data_cursor) == (whole.step, whole.data_cursor)
 
-    def test_dropping_the_optimizer_state_breaks_resume_parity(self, tiny_lm):
+    def test_dropping_the_optimizer_state_breaks_resume_parity(self, tiny_lm, kw):
         """The planted defect the parity check exists for: a resume that restarts the optimizer still trains, and
         still returns a plausible loss, but does not reach the uninterrupted result."""
-        whole, _ = run_remote_chunk(tiny_lm, _initial(), _batches(4), _apply, _loss, **self.KW)
-        first, _ = run_remote_chunk(tiny_lm, _initial(), _batches(2), _apply, _loss, **self.KW)
+        whole, _ = run_remote_chunk(tiny_lm, _initial(), _batches(4), _apply, _loss, **kw)
+        first, _ = run_remote_chunk(tiny_lm, _initial(), _batches(2), _apply, _loss, **kw)
         first.optimizer_state = {}
-        second, losses = run_remote_chunk(tiny_lm, first, _batches(2, 2), _apply, _loss, **self.KW)
+        second, losses = run_remote_chunk(tiny_lm, first, _batches(2, 2), _apply, _loss, **kw)
         assert all(abs(x) < 10 for x in losses)
         assert not torch.allclose(second.params["intervention:steer"], whole.params["intervention:steer"])
 
-    def test_a_role_outside_the_phase_keeps_its_value(self, tiny_lm):
+    def test_a_role_outside_the_phase_keeps_its_value(self, tiny_lm, kw):
         params = {"intervention:steer": torch.zeros(D_MODEL), "intervention:idle": torch.ones(3)}
         start = RemoteChunkState(RemoteIdentity.for_params("tiny-gpt2", "local", params), 0, 0, params)
         state, _ = run_remote_chunk(
-            tiny_lm, start, _batches(2), _apply, _loss, train_roles=["intervention:steer"], **self.KW
+            tiny_lm, start, _batches(2), _apply, _loss, train_roles=["intervention:steer"], **kw
         )
         torch.testing.assert_close(state.params["intervention:idle"], torch.ones(3))
         with pytest.raises(RemoteTuningRefusal, match="not in this run's layout"):
-            run_remote_chunk(tiny_lm, start, _batches(1), _apply, _loss, train_roles=["adapter:nope"], **self.KW)
+            run_remote_chunk(tiny_lm, start, _batches(1), _apply, _loss, train_roles=["adapter:nope"], **kw)
 
     def test_an_unknown_optimizer_is_refused(self, tiny_lm):
         with pytest.raises(RemoteTuningRefusal, match="not a torch.optim optimizer"):
