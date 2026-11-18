@@ -54,7 +54,8 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
   recipe applies its weights before its stages, so `recipe_interventions` refuses a recipe with weights until they have
   been applied (`weights_applied=True`).
 - `weight_form(module, recipe)` materializes a per-neuron recipe (unit `scale` and `add` at `mlp.out`'s input, at
-  token scope `all`) as the weight edits it equals, below, and `check_weight_equivalence` compares the two forms of an
+  token scope `all`) or an output rejection (a whole-activation `reject` or `project` at `mlp.out`'s output) as the
+  weight edits it equals, below, and `check_weight_equivalence` compares the two forms of an
   edit on a batch.
 
 Addresses resolve through the module's tunable view, so a target is written as a schedule's is
@@ -76,25 +77,29 @@ sites. For $y = W x + b$:
 | --- | --- |
 | scale column $j$ of $W$ by $k$ | `scale` unit $j$ of $x$ by $k$ |
 | $b' = b + d W_{:,j}$ | `add` dose $d$ to unit $j$ of $x$ |
-| $W' = (I - \alpha u u^{\top}) W$ | `reject` $u$ with fraction $\alpha$ from $W x$ |
+| $W' = (I - \alpha u u^{\top}) W$ and $b' = (I - \alpha u u^{\top}) b$ | `reject` $u$ with fraction $\alpha$ from $W x + b$ |
 | $W' = W - \beta u v^{\top}$ | none at one site: $\Delta y = -\beta u (v^{\top} x)$ reads the input and writes the output |
 
 Ops on one input compose in order, so a later `scale` scales an earlier `add` too: with the ops' combined effect
 $x \mapsto s \odot x + a$, the weight form is $W \mathrm{diag}(s)$ with the bias patch $b + W a$, taken from the
-unedited $W$. A token-scoped op has no weight form, and a general low-rank or dense patch needs a parameter target.
+unedited $W$. A whole-activation `reject` or `project` at `mlp.out`'s output (its stage's site is
+`blocks.<layer>.mlp.out.hook_out`) acts after them, as in the forward, so it edits the output side of the edited weight
+and bias alike; a span of several vectors takes the projector $V V^{+}$ in place of $u u^{\top}$. A token-scoped op has
+no weight form, and a general low-rank or dense patch needs a parameter target.
 venngram's parameter op vectors state these equivalences, and interpretune's edits are tested against them.
 
-The `weight_equivalence_check` analysis op checks the equivalence on a model, batch by batch: it applies a per-neuron
-recipe's weight form and runs the forward, takes the form back, then runs the recipe's activation form through the
-model backend's own intervention path (`fwd_w_intervention`), and records the greatest absolute logit difference
+The `weight_equivalence_check` analysis op checks the equivalence on a model, batch by batch: it applies a recipe's
+weight form and runs the forward, takes the form back, then runs the recipe's activation form through the model
+backend's own intervention path (`fwd_w_intervention`), and records the greatest absolute logit difference
 (`we_max_abs_diff`), the greatest logit magnitude (`we_max_abs`) and the verdict (`we_equivalent`). A recipe with no
-exact weight form is refused with the reason before any forward runs. The weight form needs the unit axis of
-`mlp.out`'s weight, so it resolves through the module's view when that view places units, else through venngram's
-registry map for the model the module carries, and a model whose map records no `layout` is refused by name. A
-`TransformerBridge` renames the modules of the model it wraps, so no published map describes it and the op refuses it;
-an nnsight composition registers the model's own modules and is described by its map. The model-backend conformance
-suite runs the same comparison on every target whose view places units, together with a check that taking the weight
-form back restores the base logits exactly.
+exact weight form is refused with the reason before any forward runs. Unit ops need the unit axis of `mlp.out`'s weight
+(an output span needs only its output side), so the weight form resolves through the module's view when that view places
+units, else through venngram's registry map for the model the module carries, and a model whose map records no `layout`
+is refused where the recipe has unit ops. A `TransformerBridge` renames the modules of the model it wraps, so no
+published map describes it and the op refuses it; an nnsight composition registers the model's own modules and is
+described by its map. The model-backend conformance suite runs the same comparison for a per-neuron recipe on every
+target whose view places units, and for an output rejection on every target whose view resolves `mlp.out`, each together
+with a check that taking the weight form back restores the base logits exactly.
 
 ## Surfaces
 
@@ -386,7 +391,7 @@ The registered analysis ops (all callable as `it.<name>(...)`):
 - `intervention_first_order_check`: checks an applied intervention against its first-order prediction per basis.
   The prediction is the linearization attribution patching uses to estimate an activation patch without applying it;
   this op applies the intervention and compares the measured change with that estimate.
-- `weight_equivalence_check`: checks that a per-neuron recipe's weight form gives the same logits as its activation
+- `weight_equivalence_check`: checks that a per-neuron recipe's or an output rejection's weight form gives the same logits as its activation
   form through the model backend ([parameter targets](#parameter-targets)).
 - `compute_attribution_graph` (`ct_graph`), `graph_node_influence` (`ct_node_influence`),
   `extract_top_features` (`ct_top_features`), `feature_intervention_forward` (`ct_feature_intervention`),

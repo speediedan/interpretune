@@ -1486,19 +1486,19 @@ def weight_equivalence_check_impl(
     batch_idx: int,
     **kwargs,
 ) -> AnalysisBatch:
-    """Check that a per-neuron recipe's weight form equals its activation form on this batch.
+    """Check that a recipe's weight form equals its activation form on this batch.
 
-    The recipe's unit ``scale`` and ``add`` ops at ``mlp.out``'s input, at token scope ``all``, are run twice: as the
-    weight edits they equal (a unit scale of ``mlp.out``'s weight and a bias patch, resolved through the module's view
-    when it places units, else venngram's registry map for the model it carries) and through the backend's own
-    intervention path. Each form is taken back after its forward. The
-    batch gets the greatest absolute logit difference between the two (``we_max_abs_diff``), the greatest logit
-    magnitude under the activation form (``we_max_abs``) and the verdict (``we_equivalent``: the difference is within
-    ``atol + rtol * max_abs``).
+    The recipe's unit ``scale`` and ``add`` ops at ``mlp.out``'s input, and its whole-activation ``reject`` and
+    ``project`` at ``mlp.out``'s output, at token scope ``all``, are run twice: as the weight edits they equal (a unit
+    scale of ``mlp.out``'s weight, a bias patch, and the span edit of the output side of its weight and bias, resolved
+    through the module's view when it places units, else venngram's registry map for the model it carries) and through
+    the backend's own intervention path. Each form is taken back after its forward. The batch gets the greatest absolute
+    logit difference between the two (``we_max_abs_diff``), the greatest logit magnitude under the activation form
+    (``we_max_abs``) and the verdict (``we_equivalent``: the difference is within ``atol + rtol * max_abs``).
 
-    A recipe with no exact weight form (a token-scoped op, another site, an op other than a unit ``scale`` or ``add``
-    with a dose) is refused with the reason, before any forward runs, as is a module whose view places no unit axis for
-    ``mlp.out`` (its component map records no ``layout``, or no published map describes its module names).
+    A recipe with no exact weight form (a token-scoped op, another site, an op other than these) is refused with the
+    reason, before any forward runs, as is a module whose view cannot resolve ``mlp.out`` (no published map describes
+    its module names) or, for unit ops, places no unit axis for it (its component map records no ``layout``).
     """
 
     def _input(name: str) -> Any:

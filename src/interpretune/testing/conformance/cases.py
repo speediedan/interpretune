@@ -914,22 +914,11 @@ class ModelBackendConformance:
         except ValueError as err:
             pytest.skip(f"the module's view places no unit axis for `mlp.out` (no component map `layout`): {err}")
 
-    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, ops=("scale", "add"))
-    def test_a_per_neuron_recipe_weight_form_equals_its_activation_form(self, suite):
-        """A per-neuron recipe (unit ``scale`` and ``add`` at ``mlp.out``'s input, token scope ``all``) gives the
-        same logits applied as the weight edits it equals (``weight_form``, through the module's view of the real
-        component map) as through the backend's intervention path; taking the weight form back restores the base
-        logits exactly, and a weight form with other doses is told apart.
-
-        Reaches the backend directly, on one batch the runner fed: the weight form edits the module's parameters between
-        forwards, which no single op invocation can interleave with a second recipe. The activation form is first shown
-        to move the logits beyond the tolerance, so the equivalence cannot hold because neither form did anything.
-        """
-        from interpretune.analysis.venngram import recipe_interventions
-        from interpretune.tuning.weights import WeightEdit, check_weight_equivalence, weight_form
-
-        recipe = self._weight_form_recipe(suite)
-        payload = recipe_interventions(recipe, site_widths=self._require_unit_layout(suite, recipe))
+    def _equivalence_forms(self, suite, payload: Any) -> tuple[Any, Any]:
+        """The two sides :func:`~interpretune.tuning.weights.check_weight_equivalence` compares on one batch the runner
+        fed: ``forward()`` (the backend's plain forward, or its intervention path while the activation form is applied)
+        returning the logits at real positions, and ``activation_form()``, which applies ``payload`` until its handle is
+        removed."""
         backend, model, batch = suite.backend, suite.module.model, self._hook_batch(suite, 0)
         _ids, mask = suite.batch_inputs(0)
         real = None if mask is None else mask.bool()
@@ -953,6 +942,25 @@ class ModelBackendConformance:
             applied["payload"] = payload
             return _ActivationForm()
 
+        return forward, activation_form
+
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, ops=("scale", "add"))
+    def test_a_per_neuron_recipe_weight_form_equals_its_activation_form(self, suite):
+        """A per-neuron recipe (unit ``scale`` and ``add`` at ``mlp.out``'s input, token scope ``all``) gives the
+        same logits applied as the weight edits it equals (``weight_form``, through the module's view of the real
+        component map) as through the backend's intervention path; taking the weight form back restores the base
+        logits exactly, and a weight form with other doses is told apart.
+
+        Reaches the backend directly, on one batch the runner fed: the weight form edits the module's parameters between
+        forwards, which no single op invocation can interleave with a second recipe. The activation form is first shown
+        to move the logits beyond the tolerance, so the equivalence cannot hold because neither form did anything.
+        """
+        from interpretune.analysis.venngram import recipe_interventions
+        from interpretune.tuning.weights import WeightEdit, check_weight_equivalence, weight_form
+
+        recipe = self._weight_form_recipe(suite)
+        payload = recipe_interventions(recipe, site_widths=self._require_unit_layout(suite, recipe))
+        forward, activation_form = self._equivalence_forms(suite, payload)
         base = forward()
         unmoved = check_weight_equivalence(forward, lambda: [], activation_form)
         assert not unmoved.equivalent, (
@@ -981,6 +989,109 @@ class ModelBackendConformance:
         self._require_unit_layout(suite, self._weight_form_recipe(suite))
         run_inputs = {"recipe": self._weight_form_document(suite)}
         store = suite.run(AnalysisCfg(target_op=it.weight_equivalence_check, run_inputs=run_inputs))
+        rows = list(zip(store["we_equivalent"], store["we_max_abs_diff"], store["we_max_abs"]))
+        assert rows, "the op wrote no rows"
+        for i, (equivalent, diff, magnitude) in enumerate(rows):
+            assert bool(equivalent), (
+                f"batch {i}: the forms differ by {float(diff):.3e} on logits of magnitude {float(magnitude):.3e}"
+            )
+            assert float(magnitude) > 0.0, f"batch {i}: the op reported no logit magnitude"
+
+    #: The output rejection's removal fraction, and the fraction its mismatched weight form takes.
+    OUTPUT_REJECTION_FRACTION: ClassVar[float] = 1.0
+    OUTPUT_REJECTION_MISMATCH: ClassVar[float] = 0.5
+
+    def _output_rejection_basis(self, suite) -> torch.Tensor:
+        """A two-vector span of the residual width: the model's own steering direction (so the rejection has a real
+        effect) and a seeded random direction (so the span is not one vector)."""
+        vector = self._vector(suite).detach().float().cpu()
+        other = torch.randn(vector.shape[-1], generator=torch.Generator().manual_seed(961))
+        return torch.stack([vector, other / other.norm()])
+
+    def _output_rejection_document(self, suite, basis: torch.Tensor, *, fraction: float) -> dict[str, Any]:
+        """An output rejection at the capture layer, token scope ``all``, as a document: a whole-activation
+        ``reject`` of ``basis``'s span from ``mlp.out``'s output, removing ``fraction`` of it."""
+        layer = suite.inputs.capture_layer
+        model = {"id": suite.inputs.model_id, "revision": "conformance"}
+        return {
+            "schema_version": 2,
+            "kind": "recipe",
+            "name": "conformance-output-rejection",
+            "model": model,
+            "book": {
+                "schema_version": 1,
+                "name": "conformance-sites",
+                "portability": "checkpoint",
+                "applies_to": {"models": [model]},
+                "sets": {"site": {"point": "mlp.out.hook_out", "layers": [layer]}},
+            },
+            "operands": {"span": {"values": basis.flatten().tolist(), "shape": list(basis.shape), "basis": "unfolded"}},
+            "stages": [
+                {
+                    "site": f"blocks.{layer}.mlp.out.hook_out",
+                    "tokens": "all",
+                    "ops": [{"op": "reject", "operand": "span", "params": {"fraction": fraction}}],
+                }
+            ],
+        }
+
+    def _require_output_side(self, suite, recipe: Any) -> dict[str, int]:
+        """The output rejection's site width, read through the module's view; a view that cannot resolve
+        ``mlp.out`` (no published map describes the module's names) skips the case naming why."""
+        from interpretune.tuning.weights import weight_form_site_widths
+
+        try:
+            return weight_form_site_widths(suite.module, recipe)
+        except ValueError as err:
+            pytest.skip(f"the module's view does not resolve `mlp.out`'s weight: {err}")
+
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, ops=("reject",))
+    def test_an_output_rejection_weight_form_equals_its_activation_form(self, suite):
+        """A whole-activation ``reject`` of a span from ``mlp.out``'s output, token scope ``all``, gives the same
+        logits applied as the edit of the output side of ``mlp.out``'s weight and bias it equals (``weight_form``)
+        as through the backend's intervention path; taking the weight form back restores the base logits exactly,
+        and a weight form removing another fraction is told apart.
+
+        The activation form is first shown to move the logits beyond the tolerance.
+        """
+        from interpretune.analysis.venngram import load_recipe, recipe_interventions
+        from interpretune.tuning.weights import WeightEdit, check_weight_equivalence, weight_form
+
+        basis = self._output_rejection_basis(suite)
+        document = self._output_rejection_document(suite, basis, fraction=self.OUTPUT_REJECTION_FRACTION)
+        recipe = load_recipe(document).recipe
+        payload = recipe_interventions(recipe, site_widths=self._require_output_side(suite, recipe))
+        forward, activation_form = self._equivalence_forms(suite, payload)
+        base = forward()
+        unmoved = check_weight_equivalence(forward, lambda: [], activation_form)
+        assert not unmoved.equivalent, (
+            f"the output rejection left the logits within the equivalence tolerance of the base ({unmoved}), so the "
+            "comparison below would hold vacuously"
+        )
+        result = check_weight_equivalence(forward, lambda: weight_form(suite.module, recipe), activation_form)
+        assert result.equivalent, f"the weight form and the activation form differ on {suite.backend_name}: {result}"
+        assert torch.equal(forward(), base), "taking the output rejection's weight form back did not restore the base"
+        assert not any(isinstance(m, WeightEdit) for m in suite.module.modules()), "a weight edit is still applied"
+        other = load_recipe(
+            self._output_rejection_document(suite, basis, fraction=self.OUTPUT_REJECTION_MISMATCH)
+        ).recipe
+        mismatched = check_weight_equivalence(forward, lambda: weight_form(suite.module, other), activation_form)
+        assert not mismatched.equivalent, f"a weight form removing half the span matched a full rejection: {mismatched}"
+        assert torch.equal(forward(), base), "taking the mismatched weight form back did not restore the base logits"
+
+    @conformance_case(capability=Capability.INTERVENTION, scope=PositionScope.ALL_POSITIONS, ops=("reject",))
+    def test_the_weight_equivalence_op_reports_an_output_rejection_equal(self, suite):
+        """``weight_equivalence_check`` through the runner, given the output rejection as a document: every batch
+        reports the two forms equivalent, on logits of non-zero magnitude."""
+        import interpretune as it
+        from interpretune import AnalysisCfg
+        from interpretune.analysis.venngram import load_recipe
+
+        document = self._output_rejection_document(
+            suite, self._output_rejection_basis(suite), fraction=self.OUTPUT_REJECTION_FRACTION
+        )
+        self._require_output_side(suite, load_recipe(document).recipe)
+        store = suite.run(AnalysisCfg(target_op=it.weight_equivalence_check, run_inputs={"recipe": document}))
         rows = list(zip(store["we_equivalent"], store["we_max_abs_diff"], store["we_max_abs"]))
         assert rows, "the op wrote no rows"
         for i, (equivalent, diff, magnitude) in enumerate(rows):
