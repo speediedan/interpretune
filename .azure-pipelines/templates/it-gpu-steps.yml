@@ -161,7 +161,20 @@ steps:
     condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
     env:
       CODECOV_TOK: $(CODECOV_TOKEN)
-  # The leases are released, and the container removed, by the template's final step.
+  # The whole-server stage's lease (the only one, on a one-stage host) is released here, once the last GPU work is
+  # done, rather than only in the template's cleanup: the cleanup runs after the evidence is published, so a release
+  # there would be missing from the build's telemetry. The cleanup still releases whatever is left.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh release large'
+    displayName: 'Release host GPU lease: whole-server stage'
+    condition: and(always(), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+  # The build's telemetry record (tests/gpu_ci/build_telemetry.py), published with the phase evidence: the plan and
+  # the build's identity, each phase's selected and full counts and outcomes, its interval, and the leases' waits and
+  # holds, with every missing piece named rather than counted as zero. It never fails the build.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh telemetry'
+    displayName: 'Build telemetry'
+    condition: and(always(), eq(variables['IT_PHASES_COLLECTED'], 'true'))
+    continueOnError: true
+  # The container is removed, and any lease still held released, by the template's final step.
   - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh hf-cache-fix'
     displayName: 'Fix HF cache permissions for the next run'
     condition: always()

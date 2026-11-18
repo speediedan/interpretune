@@ -520,5 +520,21 @@ tool:
 - Either class may be empty on its own. A full run fails only when a phase ran nothing in both classes.
 - Without the lease tool mounted, the job takes one whole-server lease and runs each phase once.
 
+**Build telemetry.** Every GPU build that collects its phases publishes `it-phases/telemetry/build_telemetry.json`
+beside its phase evidence (`tests/gpu_ci/build_telemetry.py`). It joins:
+
+- the planner's record (`telemetry/plan.json`): the build's identity (repository, build, merge revision, pull request
+  and its head), the mode and why, the areas and the change set the selection came from;
+- each phase's selected count, its outcomes from the phase report, and the full phase that count is a fraction of. A
+  selected run collects the phase a second time without its selection file, at the same revision, for that
+  denominator. `raw_collection` is the whole test collection, not the GPU phase;
+- each phase class's interval, measured inside the job (`gpu_phase.sh`), and each lease stage's waits, acquisition
+  (with the device UUIDs it covers) and release (`gpu_stage_lease.sh`). `wait_s` is queueing and `held_s` is holding:
+  a long wait is not device use.
+
+A report is joined only to the manifest whose digest it records, at the plan's revision, and evidence that does not
+bind is refused by name. Anything missing (an interval that never ended, a lease with no recorded release, a
+denominator not collected) is listed in `unknowns`, never counted as zero.
+
 Class-level `RunIf` marks select every test the class collects: `_marked` in `tests/conftest.py` reads
 `item.iter_markers()`, so a mark on the class is seen by every phase.

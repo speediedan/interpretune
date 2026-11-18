@@ -228,3 +228,40 @@ def test_a_full_run_passes_when_every_phase_ran_in_some_class(tmp_path):
         ["bash", str(CHECK)], env={**env, "IT_GPU_SELECTION_MODE": "full"}, capture_output=True, text=True
     )
     assert proc.returncode == 0, proc.stderr
+
+
+def _events(tmp_path: Path) -> list[dict]:
+    import json
+
+    path = tmp_path / "telemetry" / "events.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_a_stage_records_its_wait_its_grant_with_devices_and_its_release(tmp_path):
+    telemetry = {"IT_TELEMETRY_DIR": str(tmp_path / "telemetry")}
+    assert _run(tmp_path, "acquire", "small", **telemetry)[0].returncode == 0
+    assert _run(tmp_path, "release", "small", **telemetry)[0].returncode == 0
+    events = _events(tmp_path)
+    assert [e["action"] for e in events] == ["wait", "acquired", "released"]
+    acquired = events[1]
+    assert (acquired["stage"], acquired["grant"], acquired["devices"], acquired["mode"]) == (
+        "small",
+        "GPU-small",
+        "GPU-small",
+        "tool",
+    )
+    assert all(isinstance(e["epoch"], int) for e in events)
+
+
+def test_a_whole_server_grant_records_every_device_it_covers(tmp_path):
+    proc, _ = _run(tmp_path, "acquire", "large", IT_GPU_TWO_STAGE="1", IT_TELEMETRY_DIR=str(tmp_path / "telemetry"))
+    assert proc.returncode == 0, proc.stderr
+    acquired = [e for e in _events(tmp_path) if e["action"] == "acquired"]
+    assert acquired and acquired[0]["grant"] == "all" and acquired[0]["devices"] == "GPU-big;GPU-small"
+
+
+def test_a_timed_out_wait_is_recorded_and_no_release_is_invented(tmp_path):
+    telemetry = {"IT_TELEMETRY_DIR": str(tmp_path / "telemetry")}
+    assert _run(tmp_path, "acquire", "small", tool_rc=75, **telemetry)[0].returncode == 1
+    _run(tmp_path, "release", "small", **telemetry)
+    assert [e["action"] for e in _events(tmp_path)] == ["wait", "timeout"]

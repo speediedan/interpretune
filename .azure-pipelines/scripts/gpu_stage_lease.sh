@@ -33,6 +33,9 @@
 # Exports to later steps: IT_GPU_TWO_STAGE (1 or 0), IT_GPU_DEVICE (a device UUID, or all), IT_GPU_SMALL_MAX_GB, and
 # IT_GPU_LEASE_HELD / IT_GPU_LARGE_HELD (1 once the first / the whole-server stage holds its lease), on which the
 # pipeline runs each stage's phases whether or not an earlier phase failed, so one failure cannot hide the rest.
+#
+# Telemetry (telemetry.sh): each wait, acquisition (with the grant and the device UUIDs it covers), timeout and release
+# is recorded with its time, so the build's telemetry can tell queueing from holding.
 set -uo pipefail
 
 ACTION=${1:?acquire or release}
@@ -47,6 +50,8 @@ setvar() { echo "##vso[task.setvariable variable=$1]$2"; }
 
 # shellcheck source=/dev/null
 source "$(dirname "$0")/../../scripts/gpu_lease_wrap.sh"
+# shellcheck source=/dev/null
+source "$(dirname "$0")/telemetry.sh"
 
 tool_usable() { [[ -f "$TOOL" && -x "$TOOL" ]]; }
 
@@ -118,8 +123,21 @@ hold() {
     fi
     while :; do
         wait=$(wait_secs)
+        telemetry_event kind=lease stage="$stage" action=wait attempt="$attempt" wait_s="$wait"
         ci_host_lease_hold "$DIR" "$TOOL" "$(PIDFILE "$stage")" "$wait" "$LABEL" "$@"
         rc=$?
+        if (( rc == 0 )); then
+            local grant
+            grant=$(cat "$(PIDFILE "$stage").device" 2>/dev/null || echo unknown)
+            telemetry_event kind=lease stage="$stage" action=acquired attempt="$attempt" grant="$grant" \
+                devices="$(telemetry_devices "$grant")" mode="$(cat "$(PIDFILE "$stage").mode" 2>/dev/null || echo none)"
+            # this script's own record that the stage holds its lease, so a release is reported only for a lease
+            # actually held (a lease tool may leave a pidfile behind a wait that timed out)
+            : > "$(PIDFILE "$stage").held" 2>/dev/null || true
+        else
+            telemetry_event kind=lease stage="$stage" action="$( (( rc == 75 )) && echo timeout || echo error)" \
+                attempt="$attempt" rc="$rc"
+        fi
         (( rc == 75 )) || break
         left=$(budget_left)
         if (( attempt < max )) && [[ -n "$left" ]] && (( left > 0 )); then
@@ -138,6 +156,7 @@ case "$ACTION/$STAGE" in
     acquire/small)
         if [[ ! -d "$DIR" ]]; then
             echo "gpu_stage_lease: ${DIR} not mounted; this host does not use GPU leases. Proceeding unleased, one stage."
+            telemetry_event kind=lease stage=large action=unleased devices="$(telemetry_devices all)"
             setvar IT_GPU_LEASE_HELD 1; setvar IT_GPU_TWO_STAGE 0; setvar IT_GPU_DEVICE all; exit 0
         fi
         if ! tool_usable || [[ "${IT_GPU_ONE_STAGE:-0}" == 1 ]]; then
@@ -166,12 +185,20 @@ case "$ACTION/$STAGE" in
         setvar IT_GPU_LARGE_HELD 1; setvar IT_GPU_DEVICE all
         ;;
     release/small|release/large)
+        held=0; [[ -f "$(PIDFILE "$STAGE").held" ]] && held=1
         ci_host_lease_release "$DIR" "$TOOL" "$(PIDFILE "$STAGE")"
+        rm -f "$(PIDFILE "$STAGE").held"
+        (( held )) && telemetry_event kind=lease stage="$STAGE" action=released
         ;;
     release/all)
         # Belt-and-braces for the always() cleanup: if this job dies or its container is torn down, every process
         # inside dies too and the kernel frees the leases anyway.
-        for s in small large; do ci_host_lease_release "$DIR" "$TOOL" "$(PIDFILE "$s")"; done
+        for s in small large; do
+            held=0; [[ -f "$(PIDFILE "$s").held" ]] && held=1
+            ci_host_lease_release "$DIR" "$TOOL" "$(PIDFILE "$s")"
+            rm -f "$(PIDFILE "$s").held"
+            (( held )) && telemetry_event kind=lease stage="$s" action=released via=cleanup
+        done
         ;;
     *)
         echo "usage: gpu_stage_lease.sh acquire small|large | release small|large|all" >&2; exit 2 ;;
