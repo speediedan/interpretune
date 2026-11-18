@@ -88,7 +88,7 @@ sites. For $y = W x + b$:
 | $W' = W - \beta u v^{\top}$ | none at one site: $\Delta y = -\beta u (v^{\top} x)$ reads the input and writes the output |
 
 Ops on one input compose in order, so a later `scale` scales an earlier `add` too: with the ops' combined effect
-$x \mapsto s \odot x + a$, the weight form is $W \operatorname{diag}(s)$ with the bias patch $b + W a$, taken from the
+$x \mapsto s \odot x + a$, the weight form is $W \mathrm{diag}(s)$ with the bias patch $b + W a$, taken from the
 unedited $W$. A token-scoped op has no weight form, and a general low-rank or dense patch needs a parameter target.
 venngram's parameter op vectors state these equivalences, and interpretune's edits are tested against them.
 
@@ -160,6 +160,16 @@ record says whether it honours it. An unstated or unhonoured basis is refused ra
     feature `add` or `scale` is computed from the feature's clean activation: the backend captures it first
     (`capture_feature_activations`, declared by the `features` target's `captures_clean_activations`) and the caller
     passes it as `clean_activations`.
+  - **Graph subsets, on the analysis backend:** an op that targets a venngram graph subset (`target: {graph: <name>}`,
+    a pruned piece of an attribution graph as a `graph_subset` document) applies the reasoning it describes in
+    another prompt. `recipe_feature_interventions(..., token_ids=, tokenizer=)` places each transcoder or CLT node at
+    the stage's site by its anchor in the destination prompt (an absolute position, an offset from the end, a
+    token-matched span, or every position), refusing the whole plan if any node does not resolve or two land on one
+    coordinate. `replace` sets the node's column, or its delta from a baseline column; `add` sets the feature's clean
+    activation plus it. `venngram_feature_subsets` declares what this path applies (venngram's `circuits.subsets`).
+    A restriction (`outside`, ablating every feature of a universe the graph does not place) would be one tuple per
+    feature and position, so it is refused here, as are block-sparse nodes, whose value is a vector
+    ([#966](https://github.com/speediedan/interpretune/issues/966)).
 
   What each recipe op is honoured as, per surface and target:
 
@@ -444,7 +454,7 @@ What each core op preserves and what it moves, in one place:
   tensor times `scale_factor` (a scalar, or a per-unit multiplier with ones where units are left
   alone), so a tensor of ones is the identity.
 - `replace_with_error`: preserves the forward value exactly and moves only the gradient. For an operand $o$ (a latent
-  model's reconstruction) at an activation $x$ it gives $o + \operatorname{sg}(x - o)$, where $\operatorname{sg}$
+  model's reconstruction) at an activation $x$ it gives $o + \mathrm{sg}(x - o)$, where $\mathrm{sg}$
   stops the gradient: the forward value is $x$, and the gradient reaches $o$ rather than $x$. It is the straight-through
   substitution a spliced latent model trains with ([latent models](tuning_latent_models.md)); in an analysis pass,
   where nothing differentiates, it is the identity.
