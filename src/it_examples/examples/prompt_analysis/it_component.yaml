@@ -22,5 +22,10 @@ module:
     variants:
       prompt_analysis:
         description: model and adapter composition only; the caller supplies prompts and, if wanted, targets
+      capital_states:
+        description: circuit-tracer's capital tutorial prompt, with the answer and the intermediate city as targets
   configs:
+    capital_states.gemma2.circuit_tracer+nnsight: configs/capital_states.gemma2.circuit_tracer+nnsight.yaml
+    capital_states.gemma3.circuit_tracer+nnsight.neuronpedia: configs/capital_states.gemma3.circuit_tracer+nnsight.neuronpedia.yaml
     prompt_analysis.gemma2.circuit_tracer+nnsight: configs/prompt_analysis.gemma2.circuit_tracer+nnsight.yaml
+    prompt_analysis.gemma3.circuit_tracer+nnsight.neuronpedia: configs/prompt_analysis.gemma3.circuit_tracer+nnsight.neuronpedia.yaml

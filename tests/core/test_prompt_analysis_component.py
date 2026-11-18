@@ -39,9 +39,23 @@ def test_a_model_only_configuration_sets_no_prompts_and_no_targets(prompt_analys
     assert m_cfg.circuit_tracer_cfg.target_token_ids is None
 
 
+@pytest.mark.parametrize("key", [k for k in CONFIG_KEYS if k.startswith("capital_states.")])
+def test_the_capital_states_variant_names_its_prompt_and_targets(prompt_analysis_cache, key):
+    dm_cfg, m_cfg, _, _ = it.hub.load(REPO_ID, key, cache_dir=prompt_analysis_cache)
+    (prompt,) = dm_cfg.prompt_cfg.prompts
+    assert prompt.lower().endswith("the capital of the state containing dallas is")
+    assert m_cfg.circuit_tracer_cfg.analysis_target_tokens == ["\u2581Austin", "\u2581Dallas"]
+
+
+def test_every_configuration_has_a_model_only_counterpart():
+    """An experiment variant adds prompts and targets to a model configuration the component also offers bare."""
+    model_only = {k.split(".", 1)[1] for k in CONFIG_KEYS if k.startswith("prompt_analysis.")}
+    assert {k.split(".", 1)[1] for k in CONFIG_KEYS} == model_only
+
+
 def _datamodule(cache: Path, prompts: list[str]):
     """A ``PromptDataModule`` over ``prompts`` with the small gpt2 tokenizer, its classes taken from the load."""
-    dm_cfg, _, dm_cls, _ = it.hub.load(REPO_ID, CONFIG_KEYS[0], cache_dir=cache)
+    dm_cfg, _, dm_cls, _ = it.hub.load(REPO_ID, "prompt_analysis.gemma2.circuit_tracer+nnsight", cache_dir=cache)
     itdm_cfg = ITDataModuleConfig(
         model_name_or_path="gpt2",
         task_name="prompt_analysis",
