@@ -96,10 +96,11 @@ exact weight form is refused with the reason before any forward runs. Unit ops n
 (an output span needs only its output side), so the weight form resolves through the module's view when that view places
 units, else through venngram's registry map for the model the module carries, and a model whose map records no `layout`
 is refused where the recipe has unit ops. A `TransformerBridge` renames the modules of the model it wraps, so no
-published map describes it and the op refuses it; an nnsight composition registers the model's own modules and is
-described by its map. The model-backend conformance suite runs the same comparison for a per-neuron recipe on every
-target whose view places units, and for an output rejection on every target whose view resolves `mlp.out`, each together
-with a check that taking the weight form back restores the base logits exactly.
+published map describes it and the op refuses it (resolving maps through the modules the bridge wraps is tracked in
+[#1055](https://github.com/speediedan/interpretune/issues/1055)); an nnsight composition registers the model's own
+modules and is described by its map. The model-backend conformance suite runs the same comparison for a per-neuron
+recipe on every target whose view places units, and for an output rejection on every target whose view resolves
+`mlp.out`, each together with a check that taking the weight form back restores the base logits exactly.
 
 ## Surfaces
 

@@ -1131,7 +1131,8 @@ def recipe_weight_equivalence(
 
     The weight form's targets resolve through ``module``'s view when its structure places units, else through
     venngram's registry map for the model ``module`` carries. A model whose module names no published component map
-    describes (a ``TransformerBridge`` renames them, wrapping each in ``_original_component``) is refused by name.
+    describes (a ``TransformerBridge`` renames them, wrapping each in ``_original_component``; #1055 tracks resolving
+    maps through the wrapped modules) is refused.
 
     Args:
         module: The module whose model runs.
