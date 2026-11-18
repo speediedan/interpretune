@@ -223,18 +223,18 @@ class TestLocalPublishBridge:
 
 @pytest.fixture()
 def seeded_cache(tmp_path):
-    """A components cache holding the seeds plus the rte component, materialized via bridges.
+    """A components cache holding the prompt definitions plus the rte component, materialized via bridges.
 
-    The experiment is Hub-resident now, so its half is a local publish of the in-tree component dir with the entrypoint
-    sourced from the warmed snapshot (mirroring the socket-blocked bridge test below): tmp-cache tests keep exercising
-    the current tree, cache-only.
+    Both are Hub-resident. The prompt definitions are a local publish of their warmed snapshot. The rte half is a local
+    publish of the in-tree component dir with the entrypoint sourced from the warmed snapshot (mirroring the socket-
+    blocked bridge test below): tmp-cache tests keep exercising the current tree, cache-only.
     """
     from interpretune.hub.components import local_publish
-    from it_examples.seeds import ensure_local_seeds
+    from tests.prompt_configs_component import publish_prompt_configs
     from tests.rte_component import rte_entrypoint_src
 
     cache = tmp_path / "components"
-    ensure_local_seeds(cache_dir=cache)
+    publish_prompt_configs(cache)
     local_publish(RTE_COMPONENT_DIR, "speediedan/rte", entrypoint_src=rte_entrypoint_src(), cache_dir=cache)
     return cache
 
