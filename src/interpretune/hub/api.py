@@ -249,10 +249,10 @@ def load(
     """Cache-only hydration of one configuration — never touches the network.
 
     The component must already be in the local components cache, via an explicit :func:`pull` or the
-    local-publish bridge (e.g. ``it_examples.seeds.ensure_local_seeds`` for the in-tree seeds); an
-    uncached component raises with the exact fetch command. ``revision`` addresses a cached snapshot
-    explicitly; otherwise the recorded pin, then ``refs/main``. ``require_hub=True`` refuses a local-publish
-    snapshot, for a caller verifying what the Hub serves rather than what was last staged here.
+    local-publish bridge (:func:`interpretune.hub.components.local_publish`); an uncached component raises
+    with the exact fetch command. ``revision`` addresses a cached snapshot explicitly; otherwise the recorded
+    pin, then ``refs/main``. ``require_hub=True`` refuses a local-publish snapshot, for a caller verifying what
+    the Hub serves rather than what was last staged here.
     """
     from interpretune.hub.components import resolve_component_config
 

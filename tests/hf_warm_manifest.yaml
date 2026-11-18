@@ -61,6 +61,10 @@ components:
   # seeds resolve its classes from the components cache, offline. Pinned revision; bump with intent.
   - repo_id: speediedan/rte
     revision: 7d0bbe4d887cfbb3844111305d24ffb15eae9a9e
+  # The Gemma and Llama3 prompt definitions that test-registry and CLI configurations compose by reference
+  # (`compose_ref`). Hub-resident like rte, so core tests read them from the cache rather than from it_examples.
+  - repo_id: speediedan/prompt-configs
+    revision: 3d8b9710061283dd14c86a46f0c0649b5e262db0
 venngram:
   # venngram's registry at one pinned generation (#900): every module's default view looks its component map and
   # overlay maps up there. tests/conftest.py sets VENNGRAM_REGISTRIES from this list unless the environment names one,

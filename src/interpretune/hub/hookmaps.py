@@ -81,7 +81,7 @@ def load_hub_hookmaps(repo_id: str, cache_dir: Path | None = None, *, replace: b
     for path in paths:
         cmap = _dc_replace(load_component_map(path), source=f"{repo_id}@{revision[:12]}:{path.name}")
         try:
-            existing = component_map_for(cmap.architecture)
+            existing = component_map_for(cmap.architecture, cache_only=True)
         except KeyError:
             existing = None
         if existing is not None and not replace:
