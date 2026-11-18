@@ -20,6 +20,7 @@ from interpretune.runners.distributed import (
     rank_device,
     reduce_metrics,
     resolve_placement,
+    step_per_tensor,
 )
 from interpretune.utils import MisconfigurationException, rank_zero_only, rank_zero_warn
 
@@ -805,8 +806,15 @@ class SessionRunner:
             self.run_cfg.module.device = rank_device(self.dist_run)
         with self.dist_run.rank_zero_first():
             it_init(**self.run_cfg.it_session, prepare_data=self.dist_run.local_rank == 0, configure_optimizers=False)
-        place_module(self.run_cfg.module, self.dist_run, self.run_cfg.fsdp_plan, self.run_cfg.fsdp_default_kwargs)
+        place_module(
+            self.run_cfg.module,
+            self.dist_run,
+            self.run_cfg.fsdp_plan,
+            self.run_cfg.fsdp_default_kwargs,
+            tp_plan=self.run_cfg.tp_plan,
+        )
         it_configure_optimizers(self.run_cfg.module)
+        step_per_tensor(self.run_cfg.module.optimizers or (), self.dist_run)
 
     def it_session_end(self):
         """Dispatch any phase-specific session end hooks."""

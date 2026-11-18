@@ -44,7 +44,7 @@ EXAMPLE_CONFIGS = example_configuration_files()
 
 
 def test_all_example_configurations_discovered():
-    assert len(EXAMPLE_CONFIGS) == 12, sorted(str(c) for c in EXAMPLE_CONFIGS)
+    assert len(EXAMPLE_CONFIGS) == 13, sorted(str(c) for c in EXAMPLE_CONFIGS)
 
 
 @pytest.mark.parametrize("config_path", EXAMPLE_CONFIGS, ids=lambda p: p.stem)
@@ -53,6 +53,25 @@ def test_factory_path_capture_baseline(config_path):
     key, registered = capture_registered_cfg_via_factories(config_path)
     spec = registered_spec(registered)
     assert spec["datamodule_cfg"]["__class__"] and spec["module_cfg"]["__class__"]
+
+
+from interpretune.config.datamodule import ITDataModuleConfig  # noqa: E402
+
+
+class _DMCfg(ITDataModuleConfig):
+    """A minimal ``ITDataModuleConfig`` subclass for the ``class_path`` datamodule body."""
+
+
+def test_datamodule_cfg_class_path_names_a_subclass():
+    """A ``class_path`` datamodule body builds that ``ITDataModuleConfig`` subclass, and refuses any other
+    class."""
+    from interpretune.registry import itdm_cfg_factory
+
+    shared = {"task_name": "knowing_using", "model_name_or_path": "gpt2"}
+    built = itdm_cfg_factory({"class_path": f"{__name__}._DMCfg"}, dict(shared))
+    assert type(built) is _DMCfg and built.task_name == "knowing_using"
+    with pytest.raises(TypeError, match="ITDataModuleConfig subclass"):
+        itdm_cfg_factory({"class_path": "dataclasses.Field", "init_args": {}}, dict(shared))
 
 
 def test_autocomp_synthesis_baseline():
@@ -193,6 +212,11 @@ def test_materialized_defaults_present_and_declarative():
             # the fine-tuning variants set their own: no lr scheduler, so a phase's learning rate is what it declares
             assert not loaded.module_cfg.lr_scheduler_init, key
             assert loaded.datamodule_cfg.prepare_data_map_cfg["batched"] is True, key
+            continue
+        if key.startswith("kug_lrsd."):
+            # the paper's recipe: a constant learning rate, and a datamodule that tokenizes without a dataset map
+            assert not loaded.module_cfg.lr_scheduler_init, key
+            assert not loaded.datamodule_cfg.prepare_data_map_cfg, key
             continue
         assert loaded.datamodule_cfg.prepare_data_map_cfg == {"batched": True}, key
         assert loaded.module_cfg.lr_scheduler_init["init_args"]["T_mult"] == 2, key

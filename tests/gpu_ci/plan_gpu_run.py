@@ -6,8 +6,9 @@ The pipeline runs this once, before any GPU work, and exports the plan to the la
   selects no GPU test, so the GPU phases are skipped);
 - ``IT_GPU_SELECTION_FILE``: the file ``tests/conftest.py`` narrows each GPU phase with, set only when selected;
 - ``IT_GPU_EXTENDED``: ``1`` when the extended tiers (optional GPU tests, the full profiling tier) also run;
-- ``IT_GPU_LEASE_WAIT`` and ``IT_GPU_LEASE_ON_TIMEOUT``: how long the job waits for the host leases, and whether
-  running out of time fails the build (a pull request gate) or cancels it (a scheduled run, which retries next time).
+- ``IT_GPU_LEASE_WAIT``, ``IT_GPU_LEASE_BUDGET`` and ``IT_GPU_LEASE_ON_TIMEOUT``: how long one wait for the host
+  leases lasts, how long the job may wait in all (both stages together; a gate waits again while budget is left), and
+  whether running out fails the build (a pull request gate) or cancels it (a scheduled run, which retries next time).
 
 Only a pull request gate selects. Every other build runs the full set, and anything the planner cannot establish
 (the change set, the pull request's labels) also runs the full set, named in the log, rather than a guess.
@@ -33,9 +34,13 @@ FULL_LABEL = "ci:gpu-full"
 #: Must match the weekly schedule's ``displayName`` in ``.azure-pipelines/gpu-tests.yml``.
 WEEKLY_SCHEDULE = "weekly extended GPU run"
 MODES = ("auto", "full")
-#: Seconds a PR gate waits for each lease before failing closed, and the whole wait a scheduled run allows before it
-#: cancels itself (the next scheduled run is a fresh attempt, so a busy host costs a night, not a red build).
+#: Seconds one PR gate wait for the leases lasts, and the whole wait a scheduled run allows before it cancels itself
+#: (the next scheduled run is a fresh attempt, so a busy host costs a night, not a red build).
 PR_LEASE_WAIT, SCHEDULED_LEASE_WAIT = 2400, 7200
+#: A gate's lease budget for both stages: as long as its two per-stage waits were, so the job timeout still holds, but
+#: shared, so a wait that times out is retried while budget is left (build 2101 failed on one 40-minute wait behind a
+#: local suite, its GPUs idle).
+PR_LEASE_BUDGET = 2 * PR_LEASE_WAIT
 
 
 @dataclass
@@ -46,6 +51,7 @@ class Plan:
     on_lease_timeout: str  # fail | cancel
     why: str
     selection: Selection | None = None
+    lease_budget: int = 0
 
 
 def plan_run(
@@ -68,9 +74,10 @@ def plan_run(
     )
     scheduled = build_reason == "Schedule"
     lease = (SCHEDULED_LEASE_WAIT, "cancel") if scheduled else (PR_LEASE_WAIT, "fail")
+    budget = SCHEDULED_LEASE_WAIT if scheduled else PR_LEASE_BUDGET
 
     def full(why: str, selection: Selection | None = None) -> Plan:
-        return Plan("full", extended, *lease, why, selection)
+        return Plan("full", extended, *lease, why, selection, budget)
 
     if mode == "full":
         return full("mode=full requested")
@@ -93,8 +100,8 @@ def plan_run(
         hits = sorted(p for p, r in sel.reasons.items() if r == "run_all" or r.startswith("UNCLASSIFIED"))
         return full("the change touches " + ", ".join(hits), sel)
     if sel.empty:
-        return Plan("none", False, *lease, "the change selects no GPU test", sel)
-    return Plan("selected", False, *lease, "per-change selection", sel)
+        return Plan("none", False, *lease, "the change selects no GPU test", sel, budget)
+    return Plan("selected", False, *lease, "per-change selection", sel, budget)
 
 
 def merge_commit_changes(cwd: Path | None = None) -> list[str]:
@@ -136,6 +143,8 @@ def azure_variables(plan: Plan, selection_file: Path | None) -> list[str]:
         "IT_GPU_LEASE_WAIT": str(plan.lease_wait),
         "IT_GPU_LEASE_ON_TIMEOUT": plan.on_lease_timeout,
     }
+    if plan.lease_budget:
+        out["IT_GPU_LEASE_BUDGET"] = str(plan.lease_budget)
     if plan.mode == "selected" and selection_file is not None:
         out["IT_GPU_SELECTION_FILE"] = str(selection_file)
     return [f"##vso[task.setvariable variable={k}]{v}" for k, v in out.items()]
@@ -157,6 +166,7 @@ def selection_covers(target: str, mode: str, selection_file: str | None) -> bool
         lines = [ln.strip() for ln in Path(selection_file or "").read_text().splitlines() if ln.strip()]
     except OSError:
         return True
+    lines = [ln for ln in lines if not ln.startswith("!")]  # a deferred case narrows a prefix, it adds none
     return lines == ["full"] or any(target.startswith(ln) or ln.startswith(target) for ln in lines)
 
 
@@ -197,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
         write_selection_file(plan.selection, load_areas(), selection_file)
     print(
         f"GPU run plan: mode={plan.mode} extended={plan.extended} lease_wait={plan.lease_wait}s "
-        f"on_lease_timeout={plan.on_lease_timeout}: {plan.why}"
+        f"lease_budget={plan.lease_budget}s on_lease_timeout={plan.on_lease_timeout}: {plan.why}"
     )
     if plan.selection is not None:
         json.dump(plan.selection.to_json(), sys.stdout, indent=2)

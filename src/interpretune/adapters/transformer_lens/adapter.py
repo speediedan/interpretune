@@ -173,6 +173,11 @@ class BaseITLensModule(BaseITModule):
         super().__init__(*args, **kwargs)
         self.loss_fn = None
 
+    def default_tp_plan(self, world_size: int) -> dict[str, dict[str, Any]] | None:
+        """No default: the bridge's attention reshapes q, k and v by the model's full head count, so the Hugging Face
+        model's head-splitting plan does not apply, and placement 'tp' needs an explicit ``tp_plan``."""
+        return None
+
     def build_tunable_view(self) -> Any | None:
         """The TransformerLens-names view over this module's bridge (#758)."""
         from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView

@@ -62,14 +62,17 @@ steps:
       HF_TOKEN: $(HF_MCP_TOKEN_RW)
   # Serialize the GPU phases against local work on this shared host (finetuning-scheduler uses it too), and place
   # them on the smallest device that fits. The agent runs one Azure job at a time, so the leases guard only against
-  # interactive/agent sessions. Each stage takes `gpu` (the whole server, or one device under it) and then
-  # `cpu-heavy` for HOST MEMORY, in the host tool's fixed order, since a full local suite beside this job's suite
-  # once OOM-killed both sides. Nothing before this needs either: install and cache warming are light. Waiting here
-  # for tens of minutes behind a local GPU job is the lease working, not a hung build.
+  # interactive/agent sessions. Each stage takes `gpu` (the whole server, or one device under it); the whole-server
+  # stage also takes `cpu-heavy` for HOST MEMORY, in the host tool's fixed order, since a full local suite beside
+  # this job's suite once OOM-killed both sides. The small-device stage does not: its tests fit the smallest card
+  # (IT_GPU_SMALL_CPU_HEAVY=1 restores it). Nothing before this needs either: install and cache warming are light.
+  # Waiting here for tens of minutes behind a local GPU job is the lease working, not a hung build; a gate's wait
+  # that times out is retried while its lease budget lasts (gpu_stage_lease.sh).
   #
   # TWO STAGES (.azure-pipelines/scripts/gpu_stage_lease.sh):
-  #   small  one device sized to the smallest card (best fit), for the single-device tests declaring no more than
-  #          that and not needing bf16, so they can run on the small card while someone holds the large one;
+  #   small  one device sized to the smallest card (best fit), without cpu-heavy, for the single-device tests
+  #          declaring no more than that and not needing bf16, so they can run on the small card while someone holds
+  #          the large one (or the host's memory: a local CPU suite);
   #   large  the whole server, for everything else and the extended tiers.
   # The memory classes partition each phase (tests/conftest.py), so the two stages together run it whole. Without
   # the host lease tool mounted, or on an AMD agent (identical cards, so placement buys nothing), the job takes one
