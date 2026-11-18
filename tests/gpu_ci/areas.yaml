@@ -160,6 +160,8 @@ areas:
       - src/interpretune/extensions/**
       - src/interpretune/config/extension_cfgs.py
       - src/interpretune/utils/**
+      # launched by path rather than imported, so no import edge reaches the tests that run it
+      - tests/core/distributed_core_loop_worker.py
     tests:
       - tests/core/test_components_mixins.py
       - tests/core/test_debug_generation.py
@@ -168,6 +170,8 @@ areas:
       - tests/core/test_memprofiler.py
       # a bitsandbytes 4-bit base under LoRA adapters: thawing its packed storage is refused, the adapters train (#758)
       - tests/core/test_tuning_packed_storage.py
+      # the core loop's placements on two GPUs: tensor-parallel transcoder tuning against one GPU
+      - tests/core/test_core_loop_distributed.py
       - tests/gpu_ci/
   tl_arch:
     # the TransformerLens view's parameter mapping on gated llama3/gemma2
