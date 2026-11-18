@@ -774,6 +774,34 @@ def test_runner_flexibility_demo_notebook(tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+def test_gradient_readouts_notebook(tmp_path: Path):
+    """Gradient-readouts tutorial (#1032): GPT-2 and one residual SAE on CPU, with the controls asserted inline.
+
+    The figures are checked as well as the errors: a non-interactive matplotlib backend once executed the notebook
+    cleanly while dropping every plot, so a clean run alone does not show the reader anything.
+    """
+    notebook_path = NOTEBOOKS_DIR / "gradient_readouts" / "gradient_readouts.ipynb"
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_notebook = execute_notebook_with_params(notebook_path=notebook_path, parameters={}, output_dir=output_dir)
+    assert output_notebook.exists(), f"Output notebook not created at {output_notebook}"
+
+    import nbformat
+
+    with open(output_notebook) as f:
+        nb = nbformat.read(f, as_version=4)
+    outputs = [output for cell in nb.cells if cell.cell_type == "code" for output in cell.get("outputs", [])]
+    errors = [o.get("ename", "") + ": " + o.get("evalue", "") for o in outputs if o.output_type == "error"]
+    assert not errors, f"error outputs in executed notebook: {errors}"
+    figures = [o for o in outputs if "image/png" in o.get("data", {})]
+    assert len(figures) >= 3, f"expected the notebook's three figures, found {len(figures)} image outputs"
+    texts = ["".join(o.get("text", "")) for o in outputs if o.output_type == "stream"]
+    assert any("additive edit matches" in t for t in texts), "notebook did not reach its additive-edit control"
+
+    _cleanup_notebook_artifacts()
+
+
 @pytest.mark.hf_live
 @pytest.mark.skipif(not _published_collection_token_available, reason="IT_HF_TOKEN or HF_TOKEN required")
 def test_cpu_quickstart_default_path_on_a_fresh_cache(tmp_path: Path, monkeypatch):
@@ -833,6 +861,7 @@ def test_notebook_discovery():
         "circuit_tracer_examples/jspace_workspace_demo.ipynb",
         "example_op_collections/bundled_ops_hub_optin.ipynb",
         "example_op_collections/op_collection_example.ipynb",
+        "gradient_readouts/gradient_readouts.ipynb",
         "interp_engine_example/interp_engine_hub_adapter.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
         "quickstart/cpu_quickstart.ipynb",

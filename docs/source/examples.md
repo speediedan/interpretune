@@ -28,6 +28,7 @@ uv pip install -e ".[examples]" --group git-deps   # everything else
 | Notebook | Install | GPU | Model access |
 |---|---|---|---|
 | CPU quickstart | `.[examples]` | not required | none — `gpt2` |
+| Gradient readouts | `.[examples]` | not required | public `gpt2` and `gpt2-small-res-jb` SAE |
 | Runner flexibility | `.[examples,lightning]` | not required | none — `gpt2` |
 | Op collections | `.[examples]` | not required | HF token — it publishes a collection to your namespace |
 | Hub op opt-in | `.[examples]` | not required | HF token |
@@ -56,6 +57,7 @@ needs neither.
 
 | Notebook | Adapters | Demonstrates | Colab |
 |---|---|---|---|
+| {doc}`Gradient readouts <notebooks/gradient_readouts/gradient_readouts>` | `transformer_lens`, `sae_lens` | Compare probe and logit gradients, check an SAE feature with forward ablations, and interpret gradient edits with identity and augmented-scalar controls. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/gradient_readouts/gradient_readouts.ipynb) |
 | {doc}`CPU quickstart <notebooks/quickstart/cpu_quickstart>` | `core` | The first run: a CPU-only GPT-2 session, one analysis op over RTE, results in an `AnalysisStore` — no GPU, token, or gated weights. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/quickstart/cpu_quickstart.ipynb) |
 | {doc}`Runner flexibility <notebooks/runners/runner_flexibility_demo>` | `core`, `lightning` | The same tiny workflow three ways: Trainer steps with Lightning, custom analysis steps with the AnalysisRunner, and everything else in a raw loop. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/runners/runner_flexibility_demo.ipynb) |
 | {doc}`SAELens tutorial <notebooks/saelens_adapter_example/saelens_adapter_example>` | `sae_lens` | The SAELens adapter end to end: SAE-spliced forward passes, `logit_diffs_latent` analysis, per-latent attribution. | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/speediedan/interpretune/blob/main/src/it_examples/notebooks/publish/saelens_adapter_example/saelens_adapter_example.ipynb) |
