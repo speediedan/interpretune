@@ -14,6 +14,7 @@ as venngram orders them. The stage's token scope is the spec's ``position_scope`
 
 - ``add``: the op's values per unit scattered into a dense vector at the site's width, applied as ``add``;
 - ``scale``: the same table as a multiplier, ones where no unit is named, applied as ``scale``.
+- ``replace``: the values at the named units only, preserving the unselected coordinates.
 
 The values are a ``dose``, a ``doses`` table, or a column of evidence the caller supplies through a transform pipeline
 (:mod:`~interpretune.analysis.venngram.values`).
@@ -25,7 +26,7 @@ latent's, keyed ``<site>.hook_sae_acts_post`` because the site's own width diffe
 native mode here, since a spec replaces the whole tensor; circuit-tracer's feature tuples express it.
 
 **Whole-activation ops** (no ``target``) name no layer of their own, so their stage names a layered site,
-``blocks.<layer>.<site>``. A layer-free one is refused by name rather than applied at a guessed layer or at every
+``blocks.<layer>.<site>``. A layer-free one is refused rather than applied at a guessed layer or at every
 layer. The operand (a vector, a pair, or a subspace stacked on its leading axis) is read from the recipe inline or
 from its sidecar, relative to the recipe's own directory:
 
@@ -34,7 +35,7 @@ from its sidecar, relative to the recipe's own directory:
   ``dose`` itself, broadcast over the activation;
 - ``scale``: the ``dose``, as a scalar multiplier;
 - ``project``: onto a vector operand, keeping all of it (``fraction`` 1). A subspace operand, or a fraction below
-  1 (which keeps the span and only part of its complement), has no native translation yet and is refused by name;
+  1 (which keeps the span and only part of its complement), has no native translation yet and is refused;
 - ``reject``: the operand's span, removing ``fraction`` of it (``scale_factor`` is the native removal fraction);
 - ``patch``: the operand pair, exchanging its two coordinates;
 - ``clamp``: the operand's pseudoinverse coordinates bounded into ``[min, max]``.
@@ -79,8 +80,9 @@ from interpretune.utils import MisconfigurationException
 #: Recipe token scopes by their interpretune position-scope names.
 _POSITION_SCOPES = {"all": PositionScope.ALL_POSITIONS, "last": PositionScope.LAST_TOKEN}
 
-#: The unit-targeted ops, each with the value the units no dose names keep (the op's identity).
-_UNIT_OPS = {"add": 0.0, "scale": 1.0}
+#: The dense unit ops' identity values; replacement instead preserves its complement through a selected spec.
+_DENSE_UNIT_OPS = {"add": 0.0, "scale": 1.0}
+_UNIT_OPS = frozenset(_DENSE_UNIT_OPS) | {"replace"}
 
 #: The whole-activation ops this path translates; each applies as the interpretune op of the same name.
 _ACTIVATION_OPS = frozenset({"add", "replace", "scale", "project", "reject", "patch", "clamp"})
@@ -116,12 +118,12 @@ def _value_refusal(op: Any) -> str | None:
 def _member_refusal(recipe: Any, stage: Any, op: Any, kind: str) -> str | None:
     """Why a unit or feature target cannot take the unit path, or ``None`` when it can."""
     layer, site = split_site(stage.site)
+    if kind == "features" and op.op == "replace":
+        return (
+            "a feature-targeted `replace` has no native translation at a sub-hook: a spec replaces the whole tensor"
+            " (`recipe_feature_interventions` gives circuit-tracer's tuples)"
+        )
     if op.op not in _UNIT_OPS:
-        if kind == "features" and op.op == "replace":
-            return (
-                "a feature-targeted `replace` has no native translation at a sub-hook: a spec replaces the whole tensor"
-                " (`recipe_feature_interventions` gives circuit-tracer's tuples)"
-            )
         return f"a {kind[:-1]}-targeted `{op.op}` has no native translation (supported: {sorted(_UNIT_OPS)})"
     if op.operand is not None:
         return f"a {kind[:-1]}-targeted op takes a dose, not an operand"
@@ -198,13 +200,104 @@ def feature_op_refusal(recipe: Any, stage: Any, op: Any) -> str | None:
     return member_refusal(recipe, op)
 
 
-def _scatter(doses: Mapping[int, float], width: int, fill: float, where: str, layer: int) -> torch.Tensor:
-    tensor = torch.full((width,), fill)
-    for unit, dose in doses.items():
+def _unit_bounds(doses: Mapping[int, float], width: int, where: str, layer: int) -> None:
+    for unit in doses:
         if not 0 <= unit < width:
             raise MisconfigurationException(f"{where}: unit {unit} at layer {layer} is outside the site width {width}")
+
+
+def _scatter(doses: Mapping[int, float], width: int, fill: float, where: str, layer: int) -> torch.Tensor:
+    _unit_bounds(doses, width, where, layer)
+    tensor = torch.full((width,), fill)
+    for unit, dose in doses.items():
         tensor[unit] = dose
     return tensor
+
+
+def _unit_clamp_args(value: Any, lower: float | None, upper: float | None) -> None:
+    if lower is None and upper is None:
+        raise MisconfigurationException("a unit clamp needs clamp_min or clamp_max")
+    if value is not None:
+        raise MisconfigurationException("a unit clamp takes coordinate bounds, not a value")
+    if lower is not None and upper is not None and lower > upper:
+        raise MisconfigurationException(f"unit clamp bounds {lower} and {upper} are reversed")
+
+
+def _unit_mode_args(op: str, value: Any, lower: float | None, upper: float | None) -> None:
+    if op == "clamp":
+        _unit_clamp_args(value, lower, upper)
+        return
+    if op not in {"add", "scale", "replace"}:
+        raise MisconfigurationException(f"unit interventions apply add, scale, replace or clamp, not {op!r}")
+    if lower is not None or upper is not None:
+        raise MisconfigurationException(f"unit op {op!r} takes a value, not clamp bounds")
+    if value is None:
+        raise MisconfigurationException(f"unit op {op!r} needs an explicit value")
+
+
+def _unit_value(value: Any, layer: int, count: int, hook: str) -> torch.Tensor:
+    if isinstance(value, Mapping):
+        if layer not in value:
+            raise MisconfigurationException(f"no unit intervention value was supplied for layer {layer}")
+        value = value[layer]
+    tensor = torch.as_tensor(value)
+    if tensor.shape not in (torch.Size(), torch.Size([count])):
+        raise MisconfigurationException(
+            f"{hook}: value shape {tuple(tensor.shape)} needs a scalar or {count} unit values"
+        )
+    return tensor
+
+
+def unit_interventions(
+    address: Any,
+    *,
+    n_layers: int,
+    site_widths: Mapping[str, int],
+    op: str = "add",
+    value: Any = None,
+    position_scope: PositionScope | str = PositionScope.LAST_TOKEN,
+    clamp_min: float | None = None,
+    clamp_max: float | None = None,
+    sets: Mapping[str, Any] | None = None,
+    flow: str = "value",
+) -> dict[str, InterventionSpec]:
+    """Build a direct backend payload editing only the units a venngram address selects.
+
+    ``add``, ``scale`` and ``replace`` take a scalar or a vector in ascending selected-unit order, or a mapping
+    from layer index to either. ``clamp`` bounds those coordinates in the model's unit basis; it takes bounds and
+    no dose. This direct payload does not change venngram's recipe registry, whose clamp target is a whole
+    activation with a basis operand. A gradient address requires ``flow="grad"`` and the backward surface.
+
+    Args:
+        address: A unit-site address or book reference, including per-layer unit sets.
+        n_layers: The block count.
+        site_widths: Model last-axis widths by layer-free point spelling.
+        op: One of ``add``, ``scale``, ``replace`` and ``clamp``.
+        value: The dose or replacement values (unused by ``clamp``).
+        position_scope: The token scope, independent of which units the address selects.
+        clamp_min: Optional lower coordinate bound.
+        clamp_max: Optional upper coordinate bound.
+        sets: Address-book sets for references.
+        flow: The surface the caller will apply: ``value`` or ``grad``.
+
+    Raises:
+        MisconfigurationException: The op, address, layer dose, value shape or clamp bounds are unsupported.
+    """
+    from interpretune.analysis.venngram.sites import resolve_unit_sites
+
+    _unit_mode_args(op, value, clamp_min, clamp_max)
+    selection = resolve_unit_sites(address, n_layers=n_layers, site_widths=site_widths, sets=sets)
+    if flow not in FLOWS or selection.flow != flow:
+        raise MisconfigurationException(f"unit address acts on {selection.flow!r}, but the requested flow is {flow!r}")
+    payload = {}
+    for hook, indices in selection.units.items():
+        layer, _ = split_site(hook)
+        assert layer is not None
+        tensor = torch.eye(len(indices)) if op == "clamp" else _unit_value(value, layer, len(indices), hook)
+        payload[hook] = InterventionSpec(
+            tensor, op=op, unit_indices=indices, position_scope=position_scope, clamp_min=clamp_min, clamp_max=clamp_max
+        )
+    return payload
 
 
 def _operand(recipe: Any, name: str, width: int | None, where: str) -> torch.Tensor:
@@ -220,10 +313,22 @@ def _operand(recipe: Any, name: str, width: int | None, where: str) -> torch.Ten
 def _member_specs(
     op: Any, values: Mapping[tuple[int, int], float], width: int, scope: PositionScope, where: str
 ) -> dict[int, InterventionSpec]:
-    fill = _UNIT_OPS[op.op]
     by_layer: dict[int, dict[int, float]] = {}
     for (layer, unit), value in values.items():
         by_layer.setdefault(layer, {})[unit] = value
+    if op.op == "replace":
+        specs = {}
+        for layer, doses in sorted(by_layer.items()):
+            _unit_bounds(doses, width, where, layer)
+            units = tuple(sorted(doses))
+            specs[layer] = InterventionSpec(
+                intervention_tensor=torch.tensor([doses[unit] for unit in units]),
+                op=op.op,
+                position_scope=scope,
+                unit_indices=units,
+            )
+        return specs
+    fill = _DENSE_UNIT_OPS[op.op]
     return {
         layer: InterventionSpec(
             intervention_tensor=_scatter(by_layer[layer], width, fill, where, layer), op=op.op, position_scope=scope

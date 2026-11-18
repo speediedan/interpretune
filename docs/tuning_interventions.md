@@ -29,7 +29,32 @@ module_cfg:
         site: model.model.layers.12  # hf_model.model.layers.12 with nnsight, model.blocks.12.hook_out with TransformerLens
 ```
 
-`op` is `add` (the default, a steering vector) or `scale`, `shape` defaults to the model's hidden size (`config.hidden_size`, or a TransformerLens model's `cfg.d_model`), and `scale_factor` is a fixed multiplier on the operand. A configured intervention is always tunable: one attached frozen would start at the identity and never change. To hold a trained operand fixed, refreeze it in a later stage (below). To apply a precomputed one, attach it in code with `frozen=True`.
+`op` is `add` (the default, a steering vector) or `scale`, `shape` defaults to the model's hidden size (`config.hidden_size`, or a TransformerLens model's `cfg.d_model`), and `scale_factor` is a fixed multiplier on the operand. A configured intervention is always tunable: one attached frozen would start at the identity and never change. To hold a trained operand fixed, refreeze it in a later stage (below). To apply a precomputed one, attach it in code with `frozen="fitted"` for a value computed in the run or `frozen="artifact"` for one loaded from a saved source.
+
+## Selected units
+
+A configured site address may select explicit units as well as one site:
+
+```yaml
+tuning_interventions:
+  - name: selected_neurons
+    site: "point:mlp.out.hook_in & layers:12 & units:[431, 1007]"
+    op: add
+```
+
+This attaches a `UnitIntervention` with two learned values. Its operand starts at the identity, trains under
+`role:intervention:selected_neurons`, and changes only those two units. It does not allocate or optimize a full-width
+vector. `scale` learns gains the same way. A configured unit splice names one layer and explicit nonnegative indices;
+use one entry per layer. The actual activation width is checked during the forward pass, rather than guessed from the
+largest selected index. A `shape`, if supplied, must agree with the selected count.
+
+In code, `UnitIntervention(op, units, operand=...)` also accepts a fixed tensor or a module returning its operand.
+`replace` needs an explicit operand. `clamp` takes bounds and no operand, and bounds the selected model coordinates.
+Attach fixed interventions with the appropriate frozen role. A unit address on `attach_intervention` must name the
+same units as its `UnitIntervention`; attaching a full-width intervention to such an address is refused.
+
+All four modes share the analysis surface's selected-coordinate executor and preserve the complement's autograd path.
+See [direct unit payloads](interpretune_intervention_apis.md#direct-unit-payloads) for analysis and normalized doses.
 
 ## Attaching them in code
 

@@ -14,7 +14,7 @@ vocabulary (``hook_resid_post``, ``attn.hook_out``, ``mlp.out.hook_in``), checke
 :func:`~interpretune.analysis.points.parse`, so a spelling the vocabulary does not know is refused rather than mapped
 onto a guess. A term without a ``point`` (``layers:-4:``) narrows the points other terms name, and an address that
 names no point at all selects no site and is refused. Every other field (``role``, ``component``, ``units``,
-``features``, ...) has no site meaning here yet and is refused by name, as is a ``stack`` other than the primary one.
+``features``, ...) has no site meaning here yet and is refused, as is a ``stack`` other than the primary one.
 
 The flow is venngram's own reading (``venngram.resolve.gradient_of``), so an address whose terms disagree on ``of`` is
 refused as venngram refuses it.
@@ -46,6 +46,57 @@ class SiteSelection:
     sites: tuple[str, ...]
     flow: str
     """``value``, or ``grad`` under ``of: grad``: the gradient with respect to the activation at each site."""
+
+
+@dataclass(frozen=True)
+class UnitSiteSelection:
+    """The selected last-axis units at each concrete hook, in ascending index order, and their flow."""
+
+    units: Mapping[str, tuple[int, ...]]
+    flow: str
+
+
+def resolve_unit_sites(
+    address: Any, *, n_layers: int, site_widths: Mapping[str, int], sets: Mapping[str, Any] | None = None
+) -> UnitSiteSelection:
+    """Resolve unit addresses with the site's set algebra and venngram's unit-index grammar.
+
+    Args:
+        address: An address naming a point and units, including book references and set algebra.
+        n_layers: The model's block count.
+        site_widths: Last-axis widths, keyed by the layer-free point spelling. Width is supplied by the model,
+            never inferred from the largest selected index. Slices and negative unit indices use that width.
+        sets: Book sets for references.
+
+    Raises:
+        MisconfigurationException: The address has no point or units, selects nothing, mixes flows, lacks a width,
+            or sets a field without a unit-site meaning (including latent ``features``).
+    """
+    a, errors = _venngram("address"), _venngram("errors")
+    sets = dict(sets or {})
+    try:
+        expr = a.parse(address)
+        flow = _venngram("resolve").gradient_of(expr, sets)
+        evaluator = _UnitEvaluator(a, sets, n_layers, where=str(address))
+        points = evaluator.points(expr, ())
+        selected = {}
+        for point in sorted(points):
+            width = site_widths.get(point)
+            if type(width) is not int or width <= 0:
+                raise evaluator._refuse(f"point:{point} needs its positive last-axis width (supplied: {site_widths})")
+            universe = frozenset(range(width))
+            for layer in range(n_layers):
+                evaluator.layer, evaluator.point, evaluator.width = layer, point, width
+                units = evaluator.evaluate(expr, universe, ())
+                if units:
+                    selected[f"blocks.{layer}.{point}"] = tuple(sorted(units))
+        if not evaluator.saw_units:
+            raise evaluator._refuse("a unit address must name `units` and a `point`")
+        if not selected:
+            raise evaluator._refuse("the unit address selects nothing")
+        return UnitSiteSelection(selected, flow)
+    except (errors.AddressError, errors.AddressUnresolvable) as err:
+        raise MisconfigurationException(f"cannot resolve the unit address {address!r}: {err}") from err
 
 
 def _venngram(module: str) -> Any:
@@ -177,3 +228,29 @@ class _SiteEvaluator:
             return layer_set.select(self._n_layers)
         except _venngram("errors").AddressError as e:
             raise self._refuse(str(e)) from e
+
+
+class _UnitEvaluator(_SiteEvaluator):
+    """The same expression algebra, evaluated on the unit axis of one point at one layer."""
+
+    layer: int
+    point: str
+    width: int
+    saw_units = False
+
+    def evaluate(self, expr: Any, universe: frozenset, stack: tuple[str, ...]) -> frozenset:
+        if isinstance(expr, self._a.Guarded):
+            raise self._refuse("guarded unit-site expressions are not supported; use explicit set algebra")
+        return super().evaluate(expr, universe, stack)
+
+    def _term(self, term: Any, universe: frozenset) -> frozenset:
+        fields = set(term.set_fields())
+        if unknown := fields - SITE_FIELDS - {"units"}:
+            raise self._refuse(f"{sorted(unknown)} have no unit-site meaning here")
+        if term.units is not None:
+            self.saw_units = True
+        if term.point is not None and term.point != self.point:
+            return frozenset()
+        if term.layers is not None and self.layer not in self._layers(term.layers):
+            return frozenset()
+        return universe if term.units is None else universe & frozenset(term.units.for_layer(self.layer, self.width))
