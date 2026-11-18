@@ -608,7 +608,7 @@ intervention_first_order_check:
       sequence_type: false
 
 weight_equivalence_check:
-  description: Check that a per-neuron recipe's weight form equals its activation form on the batch's logits
+  description: Check that a recipe's weight form (unit ops or an output rejection at mlp.out) equals its activation form
   implementation: interpretune.analysis.ops.bundled.concept.concept_ops.weight_equivalence_check_impl
   # The activation form runs through the backend's intervention path. The weight form edits parameters directly and
   # needs no capability, only a tunable view whose component map records `mlp.out`'s layout (refused by name if not).

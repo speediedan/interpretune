@@ -38,12 +38,15 @@ sites. For $y = W x + b$:
 
 - scaling column $j$ of $W$ by $k$ is ``scale`` of unit $j$ of $x$ by $k$;
 - the bias patch $b' = b + d W_{:,j}$ is ``add`` of dose $d$ to unit $j$ of $x$;
-- $W' = (I - \alpha u u^{\top}) W$ is ``reject`` of $u$ with fraction $\alpha$ from $W x$, at the output.
+- $W' = (I - \alpha u u^{\top}) W$ and $b' = (I - \alpha u u^{\top}) b$ are ``reject`` of $u$ with fraction $\alpha$
+  from $W x + b$, at the output (a span of several vectors takes the projector $V V^{+}$ in place of $u u^{\top}$, and
+  ``project`` keeps the span instead).
 
-:func:`weight_form` materializes a recipe's unit ops at ``mlp.out``'s input in these weight forms (:func:`bias_patch`
-builds the second), :func:`weight_form_site_widths` gives the site width the recipe's activation form is built with,
-and :func:`check_weight_equivalence` compares the two forms of an edit on a batch (the ``weight_equivalence_check``
-analysis op runs that comparison through a model backend). A token-scoped op has no weight form, and a general low-rank
+:func:`weight_form` materializes a recipe's unit ops at ``mlp.out``'s input and its whole-activation ``reject`` and
+``project`` at ``mlp.out``'s output in these weight forms (:func:`bias_patch` builds the second),
+:func:`weight_form_site_widths` gives the site widths the recipe's activation form is built with, and
+:func:`check_weight_equivalence` compares the two forms of an edit on a batch (the ``weight_equivalence_check`` analysis
+op runs that comparison through a model backend). A token-scoped op has no weight form, and a general low-rank
 or dense patch has no activation form at one site.
 
 .. warning:: This is an experimental API and may change in a future release.
@@ -763,6 +766,11 @@ def bias_patch(weight: torch.Tensor, units: Mapping[int, float], *, dim: int = 1
 #: its weight, in venngram's vocabulary), at token scope ``all``.
 WEIGHT_FORM_SITE = "mlp.out.hook_in"
 
+#: The activation site whose whole-activation ``reject`` and ``project`` have an exact weight form: the output of
+#: ``mlp.out`` (the span is removed from, or kept in, the output side of its weight and its bias), at token scope
+#: ``all``. A whole-activation op names its layer in its stage's site, ``blocks.<layer>.mlp.out.hook_out``.
+WEIGHT_FORM_OUT_SITE = "mlp.out.hook_out"
+
 
 def _as_recipe(recipe: Any) -> Any:
     if hasattr(recipe, "stages"):
@@ -772,40 +780,82 @@ def _as_recipe(recipe: Any) -> Any:
     return load_recipe(recipe).recipe
 
 
-def _affine_by_layer(recipe: Any) -> dict[int, tuple[dict[int, float], dict[int, float]]]:
-    """A recipe's unit ops at ``mlp.out``'s input, composed per layer into the affine map they apply, as its unit
-    scales and its unit shifts; anything with no exact weight form is refused (see :func:`weight_form`)."""
+@dataclass
+class _LayerForm:
+    """One layer's weight form: the affine map the unit ops at ``mlp.out``'s input compose into (its unit scales
+    and unit shifts), then the spans removed from or kept in ``mlp.out``'s output, in order."""
+
+    scale: dict[int, float]
+    shift: dict[int, float]
+    spans: list[tuple[str, torch.Tensor, float]]
+
+
+def _out_stage_spans(recipe: Any, i: int, stage: Any) -> tuple[int, list[tuple[str, torch.Tensor, float]]]:
+    """A stage at ``mlp.out``'s output as its layer and its spans (op, basis, fraction); anything else there with
+    no exact weight form is refused (see :func:`weight_form`)."""
+    from interpretune.analysis.venngram.apply import split_site
+
+    layer, site = split_site(stage.site)
+    if layer is None:
+        raise ValueError(
+            f"stage {i} ({stage.site}) names no layer: write a whole-activation op's site as "
+            f"`blocks.<layer>.{WEIGHT_FORM_OUT_SITE}`"
+        )
+    spans = []
+    for j, op in enumerate(stage.ops):
+        if op.op not in ("reject", "project") or op.target is not None or op.operand is None:
+            raise ValueError(
+                f"stage {i} op {j} (`{op.op}`) has no exact weight form: only a whole-activation `reject` or "
+                f"`project` with a basis operand does at `{WEIGHT_FORM_OUT_SITE}`"
+            )
+        values, shape = recipe.operands[op.operand].load(recipe.base_dir or ".")
+        basis = torch.tensor(values, dtype=torch.float32).reshape(shape)
+        spans.append((op.op, basis, float(op.params.get("fraction", 1.0))))
+    return layer, spans
+
+
+def _weight_form_by_layer(recipe: Any) -> dict[int, _LayerForm]:
+    """A recipe's ops with an exact weight form, by layer: unit ops at ``mlp.out``'s input composed into the affine
+    map they apply, and whole-activation spans at its output; anything else is refused (see
+    :func:`weight_form`)."""
     # The ops on mlp.out's input compose, in order, into one affine map per layer, x -> s * x + a (a later scale also
     # scales an earlier add), and W (s * x + a) + b = (W diag(s)) x + (W a + b): a scale of W's units and a bias patch
-    # taken from the unedited W.
-    affine: dict[int, tuple[dict[int, float], dict[int, float]]] = {}
+    # taken from the unedited W. A span op at the output acts on that result, y -> y - f P y (reject) or y -> f P y
+    # (project), so it applies to the edited weight and bias alike: (I - f P) (W diag(s)) x + (I - f P) (W a + b).
+    forms: dict[int, _LayerForm] = {}
     for i, stage in enumerate(recipe.stages):
-        if stage.site != WEIGHT_FORM_SITE or stage.tokens.kind != "all":
+        at_out = stage.site == WEIGHT_FORM_OUT_SITE or stage.site.endswith(f".{WEIGHT_FORM_OUT_SITE}")
+        if stage.tokens.kind != "all" or not (stage.site == WEIGHT_FORM_SITE or at_out):
             raise ValueError(
-                f"stage {i} ({stage.site}, tokens `{stage.tokens.kind}`) has no exact weight form: only "
-                f"unit ops at `{WEIGHT_FORM_SITE}` at token scope `all` do"
+                f"stage {i} ({stage.site}, tokens `{stage.tokens.kind}`) has no exact weight form: only unit ops at "
+                f"`{WEIGHT_FORM_SITE}` and spans at `{WEIGHT_FORM_OUT_SITE}` at token scope `all` do"
             )
+        if at_out:
+            layer, spans = _out_stage_spans(recipe, i, stage)
+            forms.setdefault(layer, _LayerForm({}, {}, [])).spans.extend(spans)
+            continue
         for j, op in enumerate(stage.ops):
             if op.op not in ("scale", "add") or op.target_kind(recipe.book) != "units" or op.operand is not None:
                 raise ValueError(
                     f"stage {i} op {j} (`{op.op}`) has no exact weight form: only a unit `scale` or `add` "
-                    "with a dose does"
+                    f"with a dose does at `{WEIGHT_FORM_SITE}`"
                 )
             for (layer, unit), dose in op.unit_doses(recipe.book).items():
-                scale, shift = affine.setdefault(layer, ({}, {}))
+                form = forms.setdefault(layer, _LayerForm({}, {}, []))
                 if op.op == "scale":
-                    scale[unit] = scale.get(unit, 1.0) * dose
-                    if unit in shift:
-                        shift[unit] *= dose
+                    form.scale[unit] = form.scale.get(unit, 1.0) * dose
+                    if unit in form.shift:
+                        form.shift[unit] *= dose
                 else:
-                    shift[unit] = shift.get(unit, 0.0) + dose
-    return affine
+                    form.shift[unit] = form.shift.get(unit, 0.0) + dose
+    return forms
 
 
 def weight_form_site_widths(root: nn.Module, recipe: Any, *, view: Any | None = None) -> dict[str, int]:
-    """The width of the site a recipe's weight form acts at, as
+    """The width of each site a recipe's weight form acts at, as
     :func:`~interpretune.analysis.venngram.recipe_interventions` takes it for the recipe's activation form: the
-    size of ``mlp.out``'s weight along its unit axis, at the layers the recipe edits.
+    size of ``mlp.out``'s weight along its unit axis (for unit ops at its input) and along its output side (for
+    spans at its output), at the layers the recipe edits.
 
     The width is read from the checkpoint through the view, rather than from a model configuration, so the activation
     form is built against the same units the weight form edits.
@@ -817,28 +867,37 @@ def weight_form_site_widths(root: nn.Module, recipe: Any, *, view: Any | None = 
             its default view (venngram's registry map for the model it carries).
 
     Returns:
-        ``{WEIGHT_FORM_SITE: width}``.
+        ``{WEIGHT_FORM_SITE: width}`` when the recipe has unit ops at ``mlp.out``'s input, and
+        ``{WEIGHT_FORM_OUT_SITE: width}`` when it has spans at its output.
 
     Raises:
         ValueError: For a recipe with no exact weight form (the reasons :func:`weight_form` gives), a view whose
-            structure gives ``mlp.out``'s weight no unit axis, or layers whose ``mlp.out`` widths differ (an activation
-            payload takes one width per site).
+            structure gives ``mlp.out``'s weight no unit axis where the recipe edits its units, or layers whose
+            ``mlp.out`` widths differ (an activation payload takes one width per site).
     """
     recipe = _as_recipe(recipe)
     bound = _unit_view(root, view)
     structure = _structure(bound)
-    widths: dict[int, int] = {}
-    for layer in sorted(_affine_by_layer(recipe)):
+    widths: dict[str, dict[int, int]] = {}
+    for layer, form in sorted(_weight_form_by_layer(recipe).items()):
         (weight,) = resolve_weight_targets(
             root, {"component": "mlp.out", "layers": [layer], "leaf": "weight"}, view=bound
         )
         w = _tensor(root, weight)
-        widths[layer] = int(w.shape[_unit_dim(structure, weight, w.ndim)])
-    if len(set(widths.values())) > 1:
-        raise ValueError(f"`mlp.out`'s unit width differs across the recipe's layers ({widths}), so no one site width")
+        if form.scale or form.shift:
+            widths.setdefault(WEIGHT_FORM_SITE, {})[layer] = int(w.shape[_unit_dim(structure, weight, w.ndim)])
+        for _, basis, _ in form.spans:
+            dim = _out_dim(structure, weight, w, basis.shape[-1])
+            widths.setdefault(WEIGHT_FORM_OUT_SITE, {})[layer] = int(w.shape[dim])
+    for site, by_layer in widths.items():
+        if len(set(by_layer.values())) > 1:
+            raise ValueError(f"`{site}`'s width differs across the recipe's layers ({by_layer}), so no one site width")
     if not widths:
-        raise ValueError(f"recipe {recipe.name!r} edits no unit at `{WEIGHT_FORM_SITE}`, so it has no site width")
-    return {WEIGHT_FORM_SITE: next(iter(widths.values()))}
+        raise ValueError(
+            f"recipe {recipe.name!r} edits nothing at `{WEIGHT_FORM_SITE}` or `{WEIGHT_FORM_OUT_SITE}`, so it has no "
+            "site width"
+        )
+    return {site: next(iter(by_layer.values())) for site, by_layer in widths.items()}
 
 
 def weight_form(
@@ -850,55 +909,71 @@ def weight_form(
     view: Any | None = None,
 ) -> list[WeightEditHandle]:
     """Materialize a recipe's activation stages as the weight edits they equal, at token scope ``all``: a unit
-    ``scale`` at ``mlp.out``'s input as a scale of those units of its weight, and a unit ``add`` as the bias patch
-    :math:`b + \\sum_j d_j W_{:,j}` (:func:`bias_patch`).
+    ``scale`` at ``mlp.out``'s input as a scale of those units of its weight, a unit ``add`` as the bias patch.
 
-    This is the weight form of a per-neuron recipe (neuronary's, for example), so it can be exported or compared with
-    the hooked form (:func:`check_weight_equivalence`).
+    :math:`b + \\sum_j d_j W_{:,j}` (:func:`bias_patch`), and a whole-activation ``reject`` (``project``) of a span
+    at its output as the same edit of the output side of its weight and of its bias, :math:`(I - f P) W` and
+    :math:`(I - f P) b` (:math:`f P W` and :math:`f P b`) with :math:`P = V V^{+}`.
+
+    This is the weight form of a per-neuron recipe (neuronary's, for example) or of an output rejection, so it can be
+    exported or compared with the hooked form (:func:`check_weight_equivalence`).
 
     Args:
         root: The module the targets resolve under.
         recipe: A ``venngram.recipe.Recipe`` (or a document :func:`~interpretune.analysis.venngram.load_recipe` reads).
         role: Every edit's operand role (see :func:`apply_weight_patch`).
-        name: The edits' name stem (``<name>-<layer>-scale`` and ``<name>-<layer>-shift``); the recipe's name by
+        name: The edits' name stem (``<name>-<layer>-scale``, ``<name>-<layer>-shift``, and
+            ``<name>-<layer>-<op><k>`` and ``<name>-<layer>-<op><k>-bias`` for the ``k``-th span); the recipe's name by
             default.
         view: The view addresses resolve through; ``root``'s attached view when its structure places units, else
             its default view (venngram's registry map for the model it carries).
 
     Returns:
-        One :class:`WeightEditHandle` per edited tensor (each layer's weight, then its bias), in application order.
+        One :class:`WeightEditHandle` per edit, in application order: per layer, the unit scale of its weight, the
+        bias patch, then each span on its weight and on its bias.
 
     Raises:
-        ValueError: For anything with no exact weight form: a stage at another site or token scope, an op other than a
-            unit ``scale`` or ``add`` with a ``dose`` or ``doses`` value, or an ``add`` at a layer whose ``mlp.out`` has
-            no bias. Edits applied before the failing one are taken back.
+        ValueError: For anything with no exact weight form: a stage at another site or token scope, an op at
+            ``mlp.out``'s input other than a unit ``scale`` or ``add`` with a ``dose`` or ``doses`` value, an op at its
+            output other than a whole-activation ``reject`` or ``project`` with a basis operand, a span stage naming no
+            layer, or an ``add`` at a layer whose ``mlp.out`` has no bias. Edits applied before the failing one are
+            taken back.
     """
     recipe = _as_recipe(recipe)
     stem = re.sub(r"[^A-Za-z0-9_\-]", "_", name or recipe.name)
     bound = _unit_view(root, view)
     structure = _structure(bound)
     _check_role(f"{stem}-0", role)
-    affine = _affine_by_layer(recipe)
+    forms = _weight_form_by_layer(recipe)
     handles: list[WeightEditHandle] = []
     try:
-        for layer, (scale, shift) in sorted(affine.items()):
+        for layer, form in sorted(forms.items()):
             at = {"component": "mlp.out", "layers": [layer]}
             (weight,) = resolve_weight_targets(root, {**at, "leaf": "weight"}, view=bound)
             bias = resolve_weight_targets(root, {**at, "leaf": "bias", "optional": True}, view=bound)
-            if shift and not bias:
+            if form.shift and not bias:
                 raise ValueError(
                     f"`mlp.out` at layer {layer} has no bias, so an `add` to its input has no weight form there"
                 )
             w = _tensor(root, weight).detach().clone()
-            dim = _unit_dim(structure, weight, w.ndim)
-            if scale:
-                edit: WeightEdit = _Units(
-                    f"{stem}-{layer}-scale", role, "scale", dim, tuple(scale), tuple(scale.values())
-                )
-                handles.append(_register(root, weight, edit, True))
-            if shift:
-                patch = bias_patch(w, shift, dim=dim)
-                handles.append(_register(root, bias[0], _Vector(f"{stem}-{layer}-shift", role, "add", patch), True))
+            if form.scale or form.shift:
+                dim = _unit_dim(structure, weight, w.ndim)
+                if form.scale:
+                    edit: WeightEdit = _Units(
+                        f"{stem}-{layer}-scale", role, "scale", dim, tuple(form.scale), tuple(form.scale.values())
+                    )
+                    handles.append(_register(root, weight, edit, True))
+                if form.shift:
+                    patch = bias_patch(w, form.shift, dim=dim)
+                    shift = _Vector(f"{stem}-{layer}-shift", role, "add", patch)
+                    handles.append(_register(root, bias[0], shift, True))
+            for k, (op, basis, fraction) in enumerate(form.spans):
+                out = _out_dim(structure, weight, w, basis.shape[-1])
+                span = _Span(f"{stem}-{layer}-{op}{k}", role, op, basis, fraction, out)
+                handles.append(_register(root, weight, span, True))
+                if bias:
+                    span = _Span(f"{stem}-{layer}-{op}{k}-bias", role, op, basis, fraction, 0)
+                    handles.append(_register(root, bias[0], span, True))
     except Exception:
         for handle in reversed(handles):
             handle.remove()

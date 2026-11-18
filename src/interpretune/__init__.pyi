@@ -865,7 +865,7 @@ def model_gradient(
 def weight_equivalence_check(
     module, analysis_batch: AnalysisBatch, batch: BatchEncoding, batch_idx: int, **kwargs
 ) -> AnalysisBatch:
-    """Check that a per-neuron recipe's weight form equals its activation form on the batch's logits
+    """Check that a recipe's weight form (unit ops or an output rejection at mlp.out) equals its activation form
 
     Input Schema:
         recipe (object)

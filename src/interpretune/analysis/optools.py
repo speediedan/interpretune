@@ -1120,8 +1120,8 @@ def recipe_weight_equivalence(
     atol: float = 1e-5,
     op_name: str = "weight_equivalence_check",
 ) -> Any:
-    """Compare a per-neuron recipe's weight form with its activation form on one batch, through ``module``'s model
-    backend.
+    """Compare a recipe's weight form (per-neuron unit ops, or an output rejection) with its activation form on one
+    batch, through ``module``'s model backend.
 
     The weight form (:func:`~interpretune.tuning.weights.weight_form`) is applied, the backend's plain forward runs,
     and the form is taken back; then the recipe's activation form
@@ -1131,7 +1131,8 @@ def recipe_weight_equivalence(
 
     The weight form's targets resolve through ``module``'s view when its structure places units, else through
     venngram's registry map for the model ``module`` carries. A model whose module names no published component map
-    describes (a ``TransformerBridge`` renames them, wrapping each in ``_original_component``) is refused by name.
+    describes (a ``TransformerBridge`` renames them, wrapping each in ``_original_component``; #1055 tracks resolving
+    maps through the wrapped modules) is refused.
 
     Args:
         module: The module whose model runs.
@@ -1147,8 +1148,9 @@ def recipe_weight_equivalence(
 
     Raises:
         ValueError: For a recipe with no exact weight form, with the reason, before any forward runs (a token-scoped op,
-            another site, an op other than a unit ``scale`` or ``add`` with a dose, an ``add`` where ``mlp.out`` has no
-            bias, or a view that places no unit axis for ``mlp.out``, as when its component map records no
+            another site, an op other than a unit ``scale`` or ``add`` with a dose at ``mlp.out``'s input or a
+            whole-activation ``reject`` or ``project`` at its output, an ``add`` where ``mlp.out`` has no bias, or, for
+            unit ops, a view that places no unit axis for ``mlp.out``, as when its component map records no
             ``layout``); and for a module with no model backend, or one not declaring ``INTERVENTION``.
         NotImplementedError: When the backend's intervention record does not declare a position scope or an op the
             activation form needs.

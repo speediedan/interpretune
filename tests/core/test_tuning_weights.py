@@ -521,3 +521,108 @@ def test_a_site_outside_the_mlp_hidden_space_or_on_gradients_is_refused(model):
         attach_unit_adapter(model, "point:hook_resid_post & layers:1", [2], name="hot", view=_view(model))
     with pytest.raises(ValueError, match="names a gradient"):
         attach_unit_adapter(model, "point:mlp.out.hook_in & layers:1 & of:grad", [2], name="hot", view=_view(model))
+
+
+SPAN = torch.tensor([[1.0, 0.5, -0.25, 0.0, 2.0, 1.0], [0.0, 1.0, 1.0, -1.0, 0.5, 0.0]])
+VECTOR = torch.tensor([0.5, -1.0, 0.25, 2.0, 0.0, 1.0])
+
+
+def _output_stage(ops, site="blocks.1.mlp.out.hook_out", tokens="all"):
+    return {"site": site, "tokens": tokens, "ops": ops}
+
+
+def _output_recipe(*stages, operand=SPAN):
+    doc = _stage_doc([SCALE])  # its book and model; the stages below replace its own
+    values, shape = operand.flatten().tolist(), list(operand.shape)
+    doc["operands"] = {"span": {"values": values, "shape": shape, "basis": "unfolded"}}
+    doc["stages"] = list(stages)
+    return load_recipe(doc).recipe
+
+
+def _hooked_both(model, recipe):
+    """The recipe through interpretune's activation path, at each layer's ``down`` input and output."""
+    from interpretune.analysis.backends.interventions import apply_intervention
+    from interpretune.tuning.weights import weight_form_site_widths
+
+    payload = recipe_interventions(recipe, site_widths=weight_form_site_widths(model, recipe, view=_view(model)))
+    hooks = []
+    for pattern, specs in payload.items():
+        down = model.layers[int(pattern.split(".")[1])].mlp.down
+
+        def edit(x, specs=specs):
+            for spec in specs:
+                x = apply_intervention(x.clone(), spec, last_pos=x.shape[1] - 1)
+            return x
+
+        if pattern.endswith(".hook_in"):
+            hooks.append(down.register_forward_pre_hook(lambda _, args, edit=edit: (edit(args[0]),)))
+        else:
+            hooks.append(down.register_forward_hook(lambda _, __, out, edit=edit: edit(out)))
+
+    class _Hooks:
+        def remove(self):
+            for h in hooks:
+                h.remove()
+
+    return _Hooks()
+
+
+REJECT = {"op": "reject", "operand": "span", "params": {"fraction": 0.5}}
+
+
+@pytest.mark.parametrize(
+    "op, operand",
+    [(REJECT, SPAN), ({"op": "project", "operand": "span"}, VECTOR)],
+    ids=["reject-a-span", "project-onto-a-vector"],
+)
+def test_an_output_span_op_has_a_weight_form_equal_to_its_hooked_form(model, op, operand):
+    from interpretune.tuning.weights import weight_form, weight_form_site_widths
+
+    view = _view(model)
+    recipe = _output_recipe(_output_stage([op]), operand=operand)
+    assert weight_form_site_widths(model, recipe, view=view) == {"mlp.out.hook_out": D}
+    handles = weight_form(model, recipe, view=view)
+    assert [h.target for h in handles] == ["layers.1.mlp.down.weight", "layers.1.mlp.down.bias"]
+    for handle in reversed(handles):
+        handle.remove()
+    moved = check_weight_equivalence(lambda: model(IDS), lambda: [], lambda: _hooked_both(model, recipe))
+    assert not moved.equivalent, f"the hooked form left the output unmoved ({moved}), so equivalence would be vacuous"
+    result = check_weight_equivalence(
+        lambda: model(IDS), lambda: weight_form(model, recipe, view=view), lambda: _hooked_both(model, recipe)
+    )
+    assert result.equivalent, result
+    assert not hasattr(model.layers[1].mlp.down, "parametrizations")
+
+
+def test_an_output_rejection_composes_with_the_unit_ops_at_the_input(model):
+    from interpretune.tuning.weights import weight_form, weight_form_site_widths
+
+    view = _view(model)
+    # the rejection's stage comes first, yet acts after the input's ops, as in the forward
+    units = {"site": "mlp.out.hook_in", "tokens": "all", "ops": [SCALE, SHIFT]}
+    recipe = _output_recipe(_output_stage([REJECT]), units)
+    assert weight_form_site_widths(model, recipe, view=view) == {"mlp.out.hook_in": H, "mlp.out.hook_out": D}
+    base = model(IDS)
+    moved = check_weight_equivalence(lambda: model(IDS), lambda: [], lambda: _hooked_both(model, recipe))
+    assert not moved.equivalent, moved
+    result = check_weight_equivalence(
+        lambda: model(IDS), lambda: weight_form(model, recipe, view=view), lambda: _hooked_both(model, recipe)
+    )
+    assert result.equivalent, result
+    assert torch.equal(model(IDS), base)
+
+
+@pytest.mark.parametrize(
+    "stage, match",
+    [
+        (_output_stage([REJECT], site="mlp.out.hook_out"), "names no layer"),
+        (_output_stage([REJECT], tokens="last"), "tokens `last`"),
+        (_output_stage([{"op": "add", "operand": "span"}]), "only a whole-activation `reject` or `project`"),
+    ],
+    ids=["layer-free", "token-scoped", "add-at-the-output"],
+)
+def test_an_output_stage_with_no_exact_weight_form_is_refused(model, stage, match):
+    from interpretune.tuning.weights import weight_form
+
+    with pytest.raises(ValueError, match=match):
+        weight_form(model, _output_recipe(stage, operand=VECTOR), view=_view(model))
