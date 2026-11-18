@@ -28,6 +28,7 @@
   "notebooks/dev/example_op_collections/local_op_collection/local_op_definitions.py": "e7a21b8151f745ed60fabf992f9742eae30a4a4b9c98d1ced6a5d47a0461d450",
   "notebooks/dev/example_op_collections/op_collection_demo_utils.py": "a7a739e9457dade95ee0e4480e3ac855db352127de816c04032dc26f658f65ec",
   "notebooks/dev/example_op_collections/op_collection_example.ipynb": "7249d103fd6f2fcb9b9d7f7bb890e45f495bbdca69b8eaf6ceb2aa82babdd383",
+  "notebooks/dev/gradient_readouts/gradient_readouts.ipynb": "2f9076b9df43d51b5e10cb5fd965816f7357618d053f441259f1f6a28db5e0e2",
   "notebooks/dev/interp_engine_example/interp_engine_hub_adapter.ipynb": "0c11208a268e8a695162d9a666fd2e7e5a639395df2228cf73790a3b079f7018",
   "notebooks/dev/neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb": "59bd3d949fb57836f4b88153ad84e7c116ca010abd3cc517e2209fe8ffb2d4ba",
   "notebooks/dev/quickstart/cpu_quickstart.ipynb": "47d1c428876a12d32a5766654d3975bb15190f80b0dc7757c702b23fcfb959d2",

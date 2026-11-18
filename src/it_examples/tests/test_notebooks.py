@@ -716,6 +716,49 @@ def test_cpu_quickstart_notebook(tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+def test_gradient_readouts_notebook(tmp_path: Path):
+    """Gradient readouts (#1032): a probe, an SAE feature and a gradient edit on gpt2, CPU-only.
+
+    No GPU marks, no token gates. The revision pins the local-publish snapshot so the test validates the in-tree config
+    without a hub push; the notebook defaults to the recorded pin. The notebook asserts its own controls (the ablation
+    hook ran, the SAE read directly matches the readout), so an error-free run means they held.
+    """
+    import nbformat
+
+    from interpretune.hub.components import local_publish
+
+    from tests.rte_component import rte_entrypoint_src
+
+    rte_dir = Path(__file__).parent.parent / "examples" / "rte"
+    rev = local_publish(rte_dir, "speediedan/rte", entrypoint_src=rte_entrypoint_src())
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "gradient_readouts" / "gradient_readouts.ipynb",
+        parameters={"REVISION": rev},
+        output_dir=output_dir,
+    )
+    with open(output_notebook) as f:
+        nb = nbformat.read(f, as_version=4)
+    errors = [
+        output.get("ename", "") + ": " + output.get("evalue", "")
+        for cell in nb.cells
+        if cell.cell_type == "code"
+        for output in cell.get("outputs", [])
+        if output.output_type == "error"
+    ]
+    assert not errors, f"error outputs in executed notebook: {errors}"
+    text = "".join(
+        o.get("text", "") if isinstance(o.get("text"), str) else "".join(o.get("text", []))
+        for cell in nb.cells
+        if cell.cell_type == "code"
+        for o in cell.get("outputs", [])
+        if o.output_type == "stream"
+    )
+    assert "gradient kept at" in text, "the notebook did not reach its last move (the op path under each readout)"
+    _cleanup_notebook_artifacts()
+
+
 # The train-split arrow read fails on Windows runners (OSError 22 on mmap) while test-split
 # paths pass there; the demo needs the train split for its fit leg, so it skips Windows.
 @RunIf(skip_windows=True)
@@ -833,6 +876,7 @@ def test_notebook_discovery():
         "circuit_tracer_examples/jspace_workspace_demo.ipynb",
         "example_op_collections/bundled_ops_hub_optin.ipynb",
         "example_op_collections/op_collection_example.ipynb",
+        "gradient_readouts/gradient_readouts.ipynb",
         "interp_engine_example/interp_engine_hub_adapter.ipynb",
         "neuronpedia_example/circuit_tracer_w_neuronpedia_example.ipynb",
         "quickstart/cpu_quickstart.ipynb",
