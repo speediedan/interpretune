@@ -745,6 +745,7 @@ class Setup:
         baseline_python = baseline_path / "bin" / "python"
         if self.args.skip_env_build:
             self.say(f"- skipped (--skip-env-build); assuming the baseline venv at {baseline_path}")
+            self._install_baseline_only_deps(baseline_path, install=False)
             return baseline_path
         cmd = self._build_it_env_cmd(baseline_path.name, venv_path.parent)
         pin = [
@@ -785,7 +786,7 @@ class Setup:
         self._install_baseline_only_deps(baseline_path)
         return baseline_path
 
-    def _install_baseline_only_deps(self, venv_path: Path) -> None:
+    def _install_baseline_only_deps(self, venv_path: Path, *, install: bool = True) -> None:
         """Install runtime deps the PRESERVED BASELINE trees need and the current pins no longer carry.
 
         The venv is built from interpretune's current pins, but the detached baseline worktrees are older
@@ -799,7 +800,9 @@ class Setup:
         supply what the pins cannot know about, not to reconcile two dependency sets: letting a baseline's
         older constraint downgrade a current package would break the leg it is meant to enable.
 
-        Asks the trees rather than carrying a list, so the next dropped dependency needs no edit here.
+        Asks the trees rather than carrying a list, so the next dropped dependency needs no edit here. With
+        ``install=False`` (a venv this run was told not to build) the absent packages are named in a warning
+        instead, since the legs would otherwise fail on them with nothing pointing back here.
         """
 
         if self.args.dry_run or not self.repo_paths:
@@ -829,8 +832,16 @@ class Setup:
             self.say("- [OK] baseline worktrees need no dependency the current pins lack")
             return
         req = [f"{n}{s}" for n, s in sorted(missing)]
+        if not install:
+            self.warn(
+                f"the baseline venv at {venv_path} lacks baseline-only dependencies ({', '.join(req)}); the "
+                "detached-legacy benchmark legs will fail with ModuleNotFoundError until they are installed "
+                f"(uv pip install --no-config --python {venv_python} {' '.join(repr(r) for r in req)})."
+            )
+            return
         self.say(f"- baseline-only dependencies absent from the current pins: {', '.join(req)}")
-        cmd = [str(venv_python), "-m", "pip", "install", "--quiet", *req]
+        # uv, never pip: these venvs are uv-built, and a pip install leaves a second owner for its packages.
+        cmd = ["uv", "pip", "install", "--no-config", "--quiet", "--python", str(venv_python), *req]
         self.say(f"  $ {' '.join(cmd)}")
         self.actions_taken.append(" ".join(cmd))
         if subprocess.run(cmd).returncode != 0:

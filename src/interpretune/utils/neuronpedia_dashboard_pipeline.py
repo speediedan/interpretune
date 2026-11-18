@@ -189,7 +189,11 @@ class NeuronpediaDashboardPipelineConfig:
     saedashboard_repo_root: Path = field(
         default_factory=lambda: _default_repo_root("SAEDASHBOARD_REPO_ROOT", "repos", "SAEDashboard")
     )
-    saelens_repo_root: Path = field(default_factory=lambda: _default_repo_root("SAELENS_REPO_ROOT", "repos", "SAELens"))
+    # sae-lens is a released dependency, so the generation subprocess imports the installed package. A SAELens
+    # checkout goes on its PYTHONPATH only when named here, as the preserved-baseline legs do: a default checkout
+    # on disk would silently shadow the release, and benchmark lineage (which resolves the installed package)
+    # would credit the release with a run that imported the checkout.
+    saelens_repo_root: Path | None = None
     neuronpedia_utils_root: Path = field(
         default_factory=lambda: _default_repo_root(
             "NEURONPEDIA_UTILS_ROOT", "repos", "neuronpedia", "utils", "neuronpedia-utils"
@@ -324,7 +328,8 @@ class NeuronpediaDashboardPipelineConfig:
         self.run_root = Path(self.run_root)
         self.export_root = Path(self.export_root)
         self.saedashboard_repo_root = Path(self.saedashboard_repo_root)
-        self.saelens_repo_root = Path(self.saelens_repo_root)
+        if self.saelens_repo_root is not None:
+            self.saelens_repo_root = Path(self.saelens_repo_root)
         self.neuronpedia_utils_root = Path(self.neuronpedia_utils_root)
         if self.run_name_suffix is not None:
             self.run_name_suffix = str(self.run_name_suffix).strip()
@@ -1075,7 +1080,9 @@ def _build_generation_env(config: NeuronpediaDashboardPipelineConfig) -> dict[st
     if config.cuda_visible_devices is not None:
         env["CUDA_VISIBLE_DEVICES"] = config.cuda_visible_devices
 
-    pythonpath_entries = [str(config.saelens_repo_root), str(config.saedashboard_repo_root)]
+    pythonpath_entries = [str(config.saedashboard_repo_root)]
+    if config.saelens_repo_root is not None:
+        pythonpath_entries.insert(0, str(config.saelens_repo_root))
     existing_pythonpath = env.get("PYTHONPATH")
     if existing_pythonpath:
         pythonpath_entries.append(existing_pythonpath)

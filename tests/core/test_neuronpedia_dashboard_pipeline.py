@@ -1,6 +1,7 @@
 # pyright: reportMissingTypeStubs=false
 from __future__ import annotations
 
+import os
 import json
 import logging
 import threading
@@ -1020,6 +1021,53 @@ def test_build_generation_env_sets_neuronpedia_export_root(tmp_path: Path, monke
 
     assert env["IT_NP_CACHE"] == str(dashboard_pipeline.DEFAULT_IT_NP_CACHE)
     assert env["NEURONPEDIA_EXPORT_ROOT"] == str(config.export_root)
+
+
+def _generation_env_config(tmp_path: Path, **overrides: Any) -> NeuronpediaDashboardPipelineConfig:
+    fields: dict[str, Any] = dict(
+        model_name="gemma-3-1b-it",
+        model_layers=26,
+        sae_set="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_id="gemmascope-2-transcoder-262k",
+        neuronpedia_source_set_description="Transcoder - 262k",
+        creator_name="Google DeepMind",
+        release_id="gemma-scope-2",
+        release_title="Gemma Scope 2",
+        release_url="https://huggingface.co/google/gemma-scope-2-1b-it",
+        hf_weights_repo_id="google/gemma-scope-2-1b-it",
+        hf_weights_path_template="transcoder_all/layer_{layer}_width_262k_l0_small_affine",
+        hook_point="hook_mlp_in",
+        prompts_huggingface_dataset_path="monology/pile-uncopyrighted",
+        start_layer=0,
+        end_layer=0,
+        sae_path_template="layer_{layer}_width_262k_l0_small_affine",
+        run_root=tmp_path / "runs",
+        export_root=tmp_path / "exports",
+        saedashboard_repo_root=tmp_path / "SAEDashboard",
+        neuronpedia_utils_root=tmp_path,
+        interpretune_env_file=None,
+    )
+    fields.update(overrides)
+    return NeuronpediaDashboardPipelineConfig(**fields)
+
+
+def test_generation_env_imports_the_installed_sae_lens_unless_a_checkout_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A SAELens checkout on disk, or named only by ``SAELENS_REPO_ROOT``, never reaches the generation
+    subprocess's PYTHONPATH: sae-lens is a released dependency, and a shadowing checkout would make the run import
+    code that benchmark lineage (which resolves the installed package) does not record."""
+    checkout = tmp_path / "SAELens"
+    (checkout / "sae_lens").mkdir(parents=True)
+    monkeypatch.setenv("SAELENS_REPO_ROOT", str(checkout))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+
+    env = dashboard_pipeline._build_generation_env(_generation_env_config(tmp_path))
+    assert env["PYTHONPATH"].split(os.pathsep) == [str(tmp_path / "SAEDashboard")]
+
+    named = dashboard_pipeline._build_generation_env(_generation_env_config(tmp_path, saelens_repo_root=checkout))
+    assert named["PYTHONPATH"].split(os.pathsep) == [str(checkout), str(tmp_path / "SAEDashboard")]
 
 
 def test_layer_runner_command_includes_bridge_and_custom_dataset_args(tmp_path: Path) -> None:
