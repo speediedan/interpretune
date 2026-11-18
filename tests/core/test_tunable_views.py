@@ -372,6 +372,59 @@ class TestBridgeView:
         assert {n for g in groups for n in g} == set(view._table)
 
 
+class TestBridgeViewStructure:
+    """The TransformerLens view places its tensors through the component map of the model the bridge wraps, so an
+    address selects the same tensors on a TransformerLens composition as on the wrapped model's own view
+    (#1045)."""
+
+    ADDRESSES = ("layers:9 & component:attn.*", "component:mlp.* & layers:-2:", "layers:0 & component:attn.o")
+
+    @pytest.fixture(scope="class")
+    def bridge(self):
+        from transformer_lens.model_bridge import TransformerBridge
+
+        return TransformerBridge.boot_transformers("gpt2", device="cpu")
+
+    @pytest.mark.parametrize("address", ADDRESSES)
+    def test_an_address_selects_the_wrapped_models_tensors(self, bridge, address):
+        import venngram
+
+        from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView, _wrapped_tensor_names
+
+        # the bridge rewires its wrapped model in place, so the reference is a clean skeleton of the same architecture
+        wrapped = bridge.original_model
+        with torch.device("meta"):
+            reference = type(wrapped)(wrapped.config)
+        tl = compile_schedule({0: {"params": [address]}}, TransformerBridgeView(bridge, implicit_norm_thaw=False))
+        hf = compile_schedule({0: {"params": [address]}}, venngram.view(reference))
+        originals = _wrapped_tensor_names(bridge)
+        tl_names = {originals[id(bridge.get_parameter(n))] for n in tl.phases[0].physical}
+        assert tl_names and tl_names == set(hf.phases[0].physical)
+
+    def test_a_tensor_is_located_by_identity_and_an_unknown_one_nowhere(self, bridge):
+        from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
+
+        structure = TransformerBridgeView(bridge).structure()
+        (placed,) = [
+            n for n, p in bridge.named_parameters() if p is bridge.original_model.transformer.h[3].attn.c_proj.weight
+        ]
+        location = structure.locate(placed)
+        assert (location.layer, location.component) == (3, "attn.o")
+        assert structure.locate("not_a_module.weight").layer is None
+
+    def test_without_a_map_the_view_falls_back_to_the_physical_structure(self, bridge, monkeypatch):
+        import venngram
+        from venngram.physical import PhysicalStructure
+
+        from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
+
+        def no_map(*args, **kwargs):
+            raise KeyError("no component map")
+
+        monkeypatch.setattr(venngram, "view", no_map)
+        assert isinstance(TransformerBridgeView(bridge).structure(), PhysicalStructure)
+
+
 class _Unmapped(nn.Module):
     """A model no venngram component map describes."""
 

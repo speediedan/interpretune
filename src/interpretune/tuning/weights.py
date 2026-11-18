@@ -153,6 +153,22 @@ class _Units(WeightEdit):
         return w * keep.reshape(shape) + bump.reshape(shape)
 
 
+class _UnitDelta(WeightEdit):
+    r"""A unit adapter: :math:`W_0 + \Delta`, where the trainable :math:`\Delta` holds one slice of the tensor per
+    selected unit, along its unit axis ``dim``, and the tensor is unchanged elsewhere."""
+
+    units: torch.Tensor
+
+    def __init__(self, name: str, dim: int, units: Sequence[int], shape: Sequence[int]) -> None:
+        super().__init__(name, "adapter")
+        self.dim = dim
+        self.register_buffer("units", torch.tensor(list(units), dtype=torch.long))
+        self.delta = self.operand(torch.zeros(tuple(shape)))
+
+    def forward(self, w: torch.Tensor) -> torch.Tensor:
+        return w.index_add(self.dim, self.units, self.delta.to(w.dtype))
+
+
 class _Vector(WeightEdit):
     """``add`` or ``replace`` of an operand of the tensor's own shape."""
 
@@ -358,6 +374,12 @@ def _unit_dim(structure: Any, name: str, ndim: int) -> int:
     return found
 
 
+def _unit_dim_or_refusal(structure: Any, name: str) -> Any:
+    """A vector's unit axis, or the refusal saying it has none (it lies on the side that is not its units)."""
+    unit_dim = getattr(structure, "unit_dim", None)
+    return None if unit_dim is None else unit_dim(name, 1)
+
+
 def _out_dim(structure: Any, name: str, w: torch.Tensor, width: int) -> int:
     """The dimension of ``w`` on its output side, for a basis of ``width``: by shape, or for a square matrix from
     the unit axis and the component's unit side."""
@@ -489,6 +511,113 @@ def apply_weight_patch(
                 stacklevel=2,
             )
     return handle
+
+
+#: The unit spaces a site's units project onto: a point (its component and side) and the components whose units are
+#: that space (``venngram.maps.schema.UNIT_SIDES``). The MLP's hidden neurons are the down projection's inputs and the
+#: up and gate projections' outputs.
+SITE_UNIT_SPACES: dict[tuple[str, str], tuple[str, ...]] = {
+    (component, side): ("mlp.in", "mlp.gate", "mlp.out")
+    for component, side in (("mlp.out", "in"), ("mlp.in", "out"), ("mlp.gate", "out"))
+}
+
+
+def _site_unit_tensors(root: nn.Module, site: str, view: Any, structure: Any) -> list[str]:
+    """The tensors a site's units are slices of: every tensor of the site's unit space at each layer it selects."""
+    from interpretune.analysis.points import parse
+    from interpretune.analysis.venngram.sites import resolve_sites
+
+    depth = structure.depth() if structure is not None and hasattr(structure, "depth") else None
+    if structure is None or not isinstance(depth, int):
+        raise ValueError(f"The site {site!r} needs the view's block structure to resolve its layers: {depth}")
+    try:
+        selection = resolve_sites(site, n_layers=depth)
+    except Exception as err:  # venngram's and the vocabulary's refusals arrive as several exception types
+        raise ValueError(f"The site {site!r}: {err}") from err
+    if selection.flow != "value":
+        raise ValueError(f"The site {site!r} names a gradient (`of: grad`); a unit adapter tunes parameters")
+    tensors: list[str] = []
+    for hook in selection.sites:
+        point = parse(hook)
+        space = SITE_UNIT_SPACES.get((point.component or "", getattr(point.slot, "value", "")))
+        if space is None:
+            raise ValueError(
+                f"The site {site!r}: `{hook}` is not a unit space a unit adapter projects onto (supported: the MLP's "
+                "hidden units, `point:mlp.out.hook_in`); address the tensors themselves instead"
+            )
+        layer = resolve_weight_targets(root, f"component:mlp.* & layers:{point.layer}", view=view)
+        tensors += [t for t in layer if getattr(structure.locate(t), "component", None) in space]
+    return tensors
+
+
+def attach_unit_adapter(
+    root: nn.Module,
+    target: Any,
+    units: Sequence[int],
+    *,
+    name: str,
+    view: Any | None = None,
+    sets: Mapping[str, Any] | None = None,
+) -> list[WeightEditHandle]:
+    r"""Tune only the selected units of the tensors ``target`` addresses, through a unit adapter on each (#868).
+
+    The adapter is a trainable delta over the selected units' slices (the rows or columns along each tensor's unit
+    axis), applied by parametrization: :math:`W = W_0 + \Delta`, zero at first, so the model is unchanged until it
+    trains. Its tensors take the role ``adapter:<name>``, so a schedule thaws them by role, and the optimizer, a
+    checkpoint and an export see an ordinary tensor, where a gradient mask over the base weight would leave
+    weight decay and optimizer state moving the other units. Attach it before the module's tunable view is built, as
+    an intervention is, so the view declares the role.
+
+    Args:
+        root: The module the target resolves under (an interpretune module is its view's root).
+        target: A venngram address of the tensors (``component:mlp.out & layers:1 & leaf:weight``), a reference to one
+            of ``sets``, or a tensor's own name. Or a site address (``point:mlp.out.hook_in & layers:12``), whose units
+            are projected onto the parameter slices they are: neuron :math:`n` of the MLP's hidden layer is column
+            :math:`n` of the down projection and row :math:`n` of the up and gate projections (and their biases'
+            entry :math:`n`), at each layer the site selects (:data:`SITE_UNIT_SPACES`). Its units are the ``units``
+            argument, never part of the address.
+        units: The units to tune, along each tensor's unit axis, which the view's component map records (``layout``).
+        name: The adapter's name (letters, digits, ``_`` and ``-``): its role is ``adapter:<name>``.
+        view: The view addresses and unit axes resolve through; ``root``'s attached view, else its default view.
+        sets: Named sets a reference in the target resolves against.
+
+    Returns:
+        A :class:`WeightEditHandle` per tensor; ``remove()`` restores each tensor exactly.
+
+    Raises:
+        ValueError: If no units are given, the target selects nothing, a tensor's unit axis is unknown, or a unit is
+            outside a tensor's units. Nothing is attached when any tensor is refused.
+    """
+    _require_venngram()
+    _check_role(name, "adapter")
+    if isinstance(target, Mapping) and "units" in target or isinstance(target, str) and "units:" in target:
+        raise ValueError("A unit adapter's units are its `units` argument, not part of the target address")
+    chosen = sorted({int(u) for u in units})
+    if not chosen:
+        raise ValueError(f"The unit adapter {name!r} selects no units")
+    resolved = _view(root, view)
+    structure = resolved.structure() if hasattr(resolved, "structure") else None
+    from venngram.address import is_address
+
+    site = target if isinstance(target, str) and is_address(target) and "point:" in target else None
+    tensors = (
+        _site_unit_tensors(root, site, resolved, structure)
+        if site is not None
+        else resolve_weight_targets(root, target, sets=sets, view=resolved)
+    )
+    plans = []
+    for tensor in tensors:
+        w = _tensor(root, tensor)
+        if site is not None and w.ndim == 1 and not isinstance(_unit_dim_or_refusal(structure, tensor), int):
+            continue  # a bias on the other side of the unit space (the down projection's) carries no hidden unit
+        dim = _unit_dim(structure, tensor, w.ndim)
+        if chosen[-1] >= w.shape[dim] or chosen[0] < 0:
+            raise ValueError(f"The unit adapter {name!r}: `{tensor}` has {w.shape[dim]} units along its unit axis")
+        shape = list(w.shape)
+        shape[dim] = len(chosen)
+        plans.append((tensor, dim, shape))
+    _warn_if_viewed(root, "adapter")
+    return [_register(root, tensor, _UnitDelta(name, dim, chosen, shape), True) for tensor, dim, shape in plans]
 
 
 def _tensors_of(root: nn.Module, recipe: Any, op: Any, view: Any) -> list[str]:
@@ -836,11 +965,13 @@ def check_weight_equivalence(
 __all__ = [
     "EDIT_ROLES",
     "EquivalenceResult",
+    "SITE_UNIT_SPACES",
     "WEIGHT_OPS",
     "WeightEdit",
     "WeightEditHandle",
     "apply_recipe_weights",
     "apply_weight_patch",
+    "attach_unit_adapter",
     "bias_patch",
     "check_weight_equivalence",
     "resolve_weight_targets",

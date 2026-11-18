@@ -40,8 +40,9 @@ are applied by the analysis ops (``model_fwd_intervention``, ``feature_intervent
 
 Sites are module paths under the root, as latent models' are, so the same intervention attaches to a core module's
 ``model.model.layers.N``, an nnsight module's ``hf_model.model.layers.N`` or a TransformerLens bridge's
-``model.blocks.N.hook_out``. Venngram site addresses (``point:resid_post & layers:13``) replace the per-backend
-spellings once interpretune resolves them (#864, #876).
+``model.blocks.N.hook_out``. A venngram site address (``point:hook_resid_post & layers:13``) names the same site
+once for every backend: :func:`~interpretune.tuning.sites.resolve_site` resolves it on the composition the
+intervention attaches to.
 
 A trained intervention is held fixed in a later stage with finetuning-scheduler's per-phase ``refreeze`` key, rather
 than by attaching it frozen.
@@ -58,6 +59,7 @@ import torch
 from torch import nn
 
 from interpretune.tuning.latents import _first, _require_reachable, _with_first
+from interpretune.tuning.sites import is_site_address, resolve_site
 
 # the `nn.ModuleDict` on the root that holds attached interventions, by name
 INTERVENTIONS_ATTR = "interventions"
@@ -174,8 +176,9 @@ def attach_intervention(
     """Register ``intervention`` on ``root`` as ``interventions.<name>`` and splice it in at ``site``.
 
     The intervention rewrites the output of the module at ``site`` (the first element of a tuple output, as HF decoder
-    layers return): the output becomes ``intervention(output)``. Its parameters become ``root``'s
-    (``interventions.<name>.<...>``), so they are saved in its state dict and reachable by its tunable view.
+    layers return): the output becomes ``intervention(output)``. A site address that resolves to a module's input
+    (a block's residual input, say) rewrites that input instead, before the module runs. Its parameters become
+    ``root``'s (``interventions.<name>.<...>``), so they are saved in its state dict and reachable by its tunable view.
     :func:`intervention_roles` declares them ``intervention:<name>``, or the ``frozen`` role kind. The
     intervention moves to the site's device (a model placed by ``device_map`` is not moved again by the core loop), and
     keeps its dtype.
@@ -184,7 +187,9 @@ def attach_intervention(
         root: The module the intervention is registered on (an interpretune module is its view's root).
         name: The intervention's name: letters, digits, ``_`` and ``-``.
         intervention: An ``nn.Module`` mapping the site's activations to their rewritten value.
-        site: Path, under ``root``, of the module whose output is rewritten.
+        site: Path, under ``root``, of the module whose output is rewritten, or a venngram site address selecting one
+            site (``point:hook_resid_post & layers:13``), resolved on ``root``'s composition by
+            :func:`~interpretune.tuning.sites.resolve_site`.
         frozen: Declare its parameters with a frozen role rather than ``intervention:<name>``, for an intervention
             applied but never trained. ``"fitted"`` for a value computed in this run (a mean difference, a fitted
             direction): finetuning-scheduler checkpoints it and never optimizes it, so a resumed run keeps it.
@@ -197,7 +202,8 @@ def attach_intervention(
     Raises:
         ValueError: ``name`` is not a valid name or is already attached, ``frozen`` is neither ``False`` nor a frozen
             role kind (``True`` included: it does not say whether the value is saved), or ``root`` is a circuit-tracer
-            composition whose forward never runs through ``site``.
+            composition whose forward never runs through ``site``, or a site address does not resolve to one site on
+            this composition.
         AttributeError: the site's module does not exist under ``root``.
     """
     if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
@@ -213,7 +219,11 @@ def attach_intervention(
     assert held is not None
     if name in held:
         raise ValueError(f"An intervention named {name!r} is already attached; detach it first")
-    target = root.get_submodule(site)
+    path, io = site, "output"
+    if is_site_address(site):
+        resolved = resolve_site(root, site)
+        path, io = resolved.path, resolved.io
+    target = root.get_submodule(path)
     _require_reachable(root, "interventions", target)
     if (device := _site_device(root, target)) is not None:
         intervention.to(device=device)
@@ -221,7 +231,13 @@ def attach_intervention(
     def rewrite(module: nn.Module, args: tuple[Any, ...], output: Any) -> Any:
         return _with_first(output, intervention(_first(output)))
 
-    handle = target.register_forward_hook(rewrite)
+    def rewrite_input(module: nn.Module, args: tuple[Any, ...]) -> tuple[Any, ...]:
+        return (intervention(args[0]), *args[1:])
+
+    if io == "input":
+        handle = target.register_forward_pre_hook(rewrite_input)
+    else:
+        handle = target.register_forward_hook(rewrite)
     held[name] = intervention
     hooks: dict[str, Any] = root.__dict__.setdefault(_HOOKS_ATTR, {})
     sites: dict[str, tuple[str, Literal[False] | FrozenKind]] = root.__dict__.setdefault(_SITES_ATTR, {})

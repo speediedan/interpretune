@@ -487,13 +487,24 @@ class ModelBackendConformance:
         with expect_refusal(ValueError, match=re.escape(name)):
             suite.run(AnalysisCfg(target_op="store_capture_points", names_filter=[name], save_tokens=True))
 
-    @conformance_case()
-    def test_cache_op_stores_logits_and_every_requested_point(self, suite):
-        """The cache path returns logits and every requested point reaches the store as a tensor."""
+    @staticmethod
+    def _capture_every_point(suite):
+        """One capture of every capturable point per target class, shared by the cases that only read it.
+
+        A capture's logits do not depend on which points it records, so the logits case reads this store too.
+        """
         from interpretune import AnalysisCfg
 
         points = suite.capturable_points()
-        store = suite.run(AnalysisCfg(target_op="store_capture_points", names_filter=points, save_tokens=True))
+        return suite.run_once(
+            "capture:capturable", AnalysisCfg(target_op="store_capture_points", names_filter=points, save_tokens=True)
+        )
+
+    @conformance_case()
+    def test_cache_op_stores_logits_and_every_requested_point(self, suite):
+        """The cache path returns logits and every requested point reaches the store as a tensor."""
+        points = suite.capturable_points()
+        store = self._capture_every_point(suite)
         columns = list(store.dataset.column_names)
         for column in ("captured_values", "captured_shape", "captured_point_names"):
             assert column in columns, f"{column} is absent from the store; columns present: {columns}"
@@ -525,10 +536,8 @@ class ModelBackendConformance:
     @conformance_case(family="hf_native")
     def test_capture_converges_on_the_forward(self, suite, hf):
         """Every captured point matches the HF module's tensor on the real positions of each batch."""
-        from interpretune import AnalysisCfg
-
         points = suite.capturable_points()
-        store = suite.run(AnalysisCfg(target_op="store_capture_points", names_filter=points, save_tokens=True))
+        store = self._capture_every_point(suite)
         for i in range(len(store["captured_values"])):
             captured = captured_points(store, i)
             ids, mask = suite.batch_inputs(i)
@@ -541,11 +550,7 @@ class ModelBackendConformance:
     @conformance_case(family="hf_native")
     def test_answer_logits_converge_on_the_forward(self, suite, hf):
         """The store's logits match the HF forward on real positions."""
-        from interpretune import AnalysisCfg
-
-        store = suite.run(
-            AnalysisCfg(target_op="store_capture_points", names_filter=[suite.capturable_points()[0]], save_tokens=True)
-        )
+        store = self._capture_every_point(suite)
         for i, al in enumerate(store.answer_logits):
             ids, mask = suite.batch_inputs(i)
             ref = hf.logits(ids, attention_mask=mask)
@@ -591,10 +596,18 @@ class ModelBackendConformance:
         )
 
     def _vector(self, suite) -> torch.Tensor:
+        """The steering vector, from one capture of the intervention point per target class.
+
+        The capture is an unsteered forward over the suite's fixed prompts, so every case would compute the same
+        store; ``run_once`` shares it (a capture per call was most of a cheap intervention case's time) and
+        ``steering_vector`` returns a fresh clone, so a case that edits its vector cannot reach another case.
+        """
         from interpretune import AnalysisCfg
 
         point = suite.inputs.intervention_point
-        store = suite.run(AnalysisCfg(target_op="store_capture_points", names_filter=[point]))
+        store = suite.run_once(
+            f"steering-capture:{point}", AnalysisCfg(target_op="store_capture_points", names_filter=[point])
+        )
         return steering_vector(captured_points(store, 0)[point])
 
     @conformance_case(

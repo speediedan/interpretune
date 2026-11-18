@@ -63,3 +63,20 @@ jobs:
           python-version: "3.13"
       - name: shared scripts match finetuning-scheduler's copies
         run: python scripts/check_shared_scripts_sync.py
+
+  # The vendored skills match the shared master (speediedan/skills). The `vendored-skills-unmodified` hook catches a local
+  # edit offline; this catches the master moving ahead of the copies, so like the job above it is online and its own job.
+  # A failure names each drifted file; refresh the copies and their manifests from the master to clear it.
+  skills-upstream-sync:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: vendored skills match the shared master
+        run: python scripts/check_skills_upstream.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

@@ -1429,18 +1429,22 @@ def _write_gpu_declaration_report(items, path: str) -> None:
     Path(path).write_text(json.dumps(rows, indent=1))
 
 
-def _gpu_selection_prefixes() -> list[str] | None:
-    """The node-id prefixes per-change GPU test selection keeps, or None when every test is kept.
+def _gpu_selection_prefixes() -> tuple[list[str], list[str]] | None:
+    """``(kept prefixes, deferred node ids)`` of per-change GPU test selection, or None when every test is kept.
 
     Read from ``IT_GPU_SELECTION_FILE`` (written by ``tests/gpu_ci/select_gpu_tests.py --emit``): the word ``full``,
-    or one prefix per line. Unset means no selection. A named file that does not exist is refused rather than read
-    as "run everything", which would make a broken pipeline step indistinguishable from a full run.
+    or one prefix per line, then ``!<node id>`` for each slow case the change leaves to the full run
+    (``full_run_only`` in ``tests/gpu_ci/areas.yaml``). Unset means no selection. A named file that does not exist is
+    refused rather than read as "run everything", which would make a broken pipeline step indistinguishable from a
+    full run.
     """
     path = os.getenv("IT_GPU_SELECTION_FILE")
     if not path:
         return None
     lines = [ln.strip() for ln in Path(path).read_text().splitlines() if ln.strip()]
-    return None if lines == ["full"] else lines
+    if lines == ["full"]:
+        return None
+    return [ln for ln in lines if not ln.startswith("!")], [ln[1:] for ln in lines if ln.startswith("!")]
 
 
 def _gpu_mem_class() -> tuple[str, float] | None:
@@ -1521,8 +1525,16 @@ def pytest_collection_modifyitems(items):
         items[:] = [item for item in items if _marked(item, lambda kw: kw.get("benchmark"))]
     # Per-change GPU test selection narrows a GPU phase to the tests the change can affect; inert when unset and
     # outside the GPU phases, so the CPU suite is never narrowed.
-    if _gpu_phase_active() and (prefixes := _gpu_selection_prefixes()) is not None:
-        items[:] = [item for item in items if item.nodeid.startswith(tuple(prefixes))]
+    if _gpu_phase_active() and (selection := _gpu_selection_prefixes()) is not None:
+        prefixes, deferred = selection
+        kept = [item for item in items if item.nodeid.startswith(tuple(prefixes))]
+        items[:] = [item for item in kept if item.nodeid not in deferred]
+        if len(items) < len(kept):
+            # said in the run's own output, so a gate's report shows what it left to the full run
+            reporter = items[0].config.pluginmanager.get_plugin("terminalreporter") if items else None
+            note = f"per-change selection deferred {len(kept) - len(items)} slow case(s) to the full run (areas.yaml)"
+            if reporter is not None:
+                reporter.write_line(note)
     # Two-stage device placement: one memory class per pass, so each pass can lease the smallest device that fits it.
     if _gpu_phase_active() and (mem_class := _gpu_mem_class()) is not None:
         cls, small_max = mem_class
