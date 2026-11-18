@@ -68,10 +68,13 @@ def test_load_rte_pretokenization_settings_uses_gemma_prompt_config() -> None:
     # class the payload names, without this test becoming a hardcoded coordination point. The
     # resolved class object comes from the cached snapshot (revision-scoped module), so identity
     # is asserted against the Hub-loaded class rather than a module path.
-    from tests.rte_component import RTEBoolqChatTemplatePromptConfig
+    from tests import rte_component
+
+    # resolved lazily by the module's __getattr__, so fetch it by name: a static import reads as a module to pyright
+    prompt_config_cls = getattr(rte_component, "RTEBoolqChatTemplatePromptConfig")
 
     assert settings.prompt_config_class_path == "rte_boolq.RTEBoolqChatTemplatePromptConfig"
-    assert isinstance(settings.prompt_cfg, RTEBoolqChatTemplatePromptConfig)
+    assert isinstance(settings.prompt_cfg, prompt_config_cls)
     assert settings.prompt_cfg.ctx_question_join == "Does the previous passage imply that "
     assert settings.windowing_mode == "max-prompt-pad"
 
