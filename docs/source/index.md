@@ -179,6 +179,7 @@ interp-engine (hub adapter) <usage/tuning_interp_engine>
 Latent models <usage/tuning_latent_models>
 Interventions <usage/tuning_interventions>
 Sparse attribution graphs (RTE) <usage/tuning_sparsity_chain>
+The Knowing-Using Gap (LRSD) <usage/tuning_knowing_using>
 ```
 
 ```{toctree}

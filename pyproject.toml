@@ -152,6 +152,9 @@ examples = [
     "python-dotenv",
     "plotly",
     "matplotlib",
+    # The UMAP backend `interpretune.utils.latent_state_projection` uses: without it a UMAP projection is refused by
+    # name (or, where the caller opts in, drawn as PCA and labelled PCA), never PCA under the UMAP name.
+    "umap-learn >= 0.5.6",
     "evaluate",
     "scikit-learn",
     # Capped below the next unseen major rather than at <2: the three surfaces used here

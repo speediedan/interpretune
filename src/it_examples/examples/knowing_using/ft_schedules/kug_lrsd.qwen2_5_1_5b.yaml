@@ -1,0 +1,7 @@
+# One phase that trains the LoRA adapters only, named as an interpretune module names them (`model.` is the module's
+# PEFT-wrapped HF model): every other parameter stays frozen. The phase is the schedule's last, so it runs for the core
+# loop's whole `max_epochs` with no transition. Named by regex rather than by role, since a view's adapter roles come
+# from venngram's registry, which a run need not be able to read.
+0:
+  params:
+  - model\..*\.lora_[AB]\..*
