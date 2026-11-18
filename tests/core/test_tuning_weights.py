@@ -493,3 +493,29 @@ def test_a_unit_adapter_is_refused_without_a_unit_axis_or_with_units_outside_it(
     with pytest.raises(ValueError, match="not part of the target address"):
         attach_unit_adapter(model, f"{DOWN} & units:[2]", [2], name="hot", view=_view(model))
     assert not hasattr(model.layers[1].mlp.down, "parametrizations")  # nothing was attached
+
+
+def test_a_site_unit_adapter_projects_the_neurons_onto_the_mlp_tensors_they_are(model):
+    """Neuron n at the MLP's hidden layer is column n of the down projection and row n (and bias entry n) of the up
+    projection: the down projection's bias lies along the residual, so it carries no hidden unit."""
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    out = model(IDS).detach()
+    handles = attach_unit_adapter(model, "point:mlp.out.hook_in & layers:1", [2, 7], name="hot", view=_view(model))
+    shapes = {h.target: tuple(h.edit.delta.shape) for h in handles}
+    want = {"layers.1.mlp.up.weight": (2, D), "layers.1.mlp.down.weight": (D, 2)}
+    if model.layers[1].mlp.up.bias is not None:
+        want["layers.1.mlp.up.bias"] = (2,)
+    assert shapes == want
+    torch.testing.assert_close(model(IDS), out)
+    for handle in handles:
+        handle.remove()
+
+
+def test_a_site_outside_the_mlp_hidden_space_or_on_gradients_is_refused(model):
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    with pytest.raises(ValueError, match="not a unit space a unit adapter projects onto"):
+        attach_unit_adapter(model, "point:hook_resid_post & layers:1", [2], name="hot", view=_view(model))
+    with pytest.raises(ValueError, match="names a gradient"):
+        attach_unit_adapter(model, "point:mlp.out.hook_in & layers:1 & of:grad", [2], name="hot", view=_view(model))
