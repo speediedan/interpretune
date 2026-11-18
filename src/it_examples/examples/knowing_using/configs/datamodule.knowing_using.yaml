@@ -1,0 +1,23 @@
+# Standalone-consumption default for the knowing_using datamodule (module configurations inline their own): the
+# paper's 1,000-fact Qwen2.5 sample, from the Hub dataset at its pinned revision (`data_path`, when set, names a local
+# copy instead).
+datamodule_cls:
+  class_path: knowing_using.KUGDataModule
+datamodule_cfg:
+  class_path: knowing_using.KUGDataModuleConfig
+  init_args:
+    data_repo_id: speediedan/knowing-using-gap-chaining
+    data_filename: chaining_tasks.json
+    data_revision: a1bb9cee0bb47bc956df037a8e013a4350d127db
+    data_path: null
+    fact_seed: 848
+    n_memorization: 1000
+    prompt_cfg:
+      class_path: knowing_using.KUGPromptConfig
+    train_batch_size: 10
+    eval_batch_size: 64
+shared_config:
+  task_name: knowing_using
+  model_name_or_path: Qwen/Qwen2.5-1.5B-Instruct
+  tokenizer_kwargs:
+    revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
