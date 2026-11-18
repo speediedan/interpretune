@@ -1,6 +1,6 @@
 """Distributed placement for the core training and test loops.
 
-``SessionRunnerCfg.placement`` chooses one of three placements:
+``SessionRunnerCfg.placement`` chooses one of four placements:
 
 - ``single``: one process and no process group (the default).
 - ``ddp``: every rank holds the whole model, and gradients are averaged across ranks. This is ``fully_shard`` over a
@@ -9,11 +9,18 @@
   view's names, and finetuning-scheduler sees the same kind of module under both data-parallel placements.
 - ``fsdp2``: parameters, gradients and optimizer state are sharded across ranks. ``fully_shard`` is applied to every
   module ``SessionRunnerCfg.fsdp_plan`` selects, deepest first, then to the interpretune module as the root unit.
+- ``tp``: tensor parallelism over a one-dimensional mesh of every rank. The layers ``SessionRunnerCfg.tp_plan`` selects
+  are split across ranks with ``parallelize_module`` (finetuning-scheduler's ``parallelize_model``), so a model whose
+  weights do not fit on one device can be tuned. Every rank sees the same batch, in the same order: the ranks compute
+  one forward together rather than each its own share of the data. A packed weight whose views the plan splits (a
+  TransformerLens bridge's joint ``qkv``) is split with them, so they keep sharing its storage.
 
 The plan is finetuning-scheduler's FSDP2 plan (``finetuning_scheduler.strategies.plan.shard_model``), so the core loop
 takes the same keys (module names, regexes and ``class:`` selectors), per-unit ``fully_shard`` kwargs and aliases
 (``act_ckpt``, ``cpu_offload_policy``) as finetuning-scheduler's own interfaces. Under ``ddp`` a plan is optional and
-shards over the ``(replicate, shard)`` mesh.
+shards over the ``(replicate, shard)`` mesh. The tensor-parallel plan is finetuning-scheduler's too
+(``finetuning_scheduler.strategies.plan.parallelize_model``): the same keys, each mapped to a parallel style
+(``colwise``, ``rowwise``, ``sequence``, ``prepare_input``, ...) and its layouts.
 
 A run is launched with ``torchrun``, which sets ``WORLD_SIZE``, ``RANK`` and ``LOCAL_RANK``. Each rank builds the
 session in turn (rank 0 first, so dataset preparation is not raced), the ranks then agree on their devices and the
@@ -41,8 +48,10 @@ import torch
 
 from interpretune.utils import _FTS_AVAILABLE, MisconfigurationException, rank_zero_only, rank_zero_warn
 
-Placement = Literal["single", "ddp", "fsdp2"]
-PLACEMENTS: tuple[str, ...] = ("single", "ddp", "fsdp2")
+Placement = Literal["single", "ddp", "fsdp2", "tp"]
+PLACEMENTS: tuple[str, ...] = ("single", "ddp", "fsdp2", "tp")
+# the placements that give each rank its own share of the data; under the others every rank sees the same batches
+DATA_PARALLEL_PLACEMENTS: tuple[str, ...] = ("ddp", "fsdp2")
 # the attribute holding rank 0's CPU copy of a model built on the meta device (`HFFromPretrainedConfig.meta_init`),
 # which `place_module` loads into the sharded model and then drops
 META_INIT_SOURCE = "_meta_init_source"
@@ -53,16 +62,16 @@ META_INIT_CHECKPOINT = "_meta_init_checkpoint"
 
 @dataclass
 class DistributedRun:
-    """This process's place in a data-parallel run.
+    """This process's place in a distributed run.
 
     Attributes:
-        placement: ``ddp`` or ``fsdp2``.
+        placement: ``ddp``, ``fsdp2`` or ``tp``.
         rank: The global rank.
         local_rank: The rank on this host, which selects its accelerator.
         world_size: The number of ranks.
         devices: Each rank's device, by rank, recorded when the module is placed (part of the run's provenance: a run
             whose ranks shared one accelerator would otherwise read as data parallel).
-        mesh: The ``DeviceMesh`` the module was sharded over.
+        mesh: The ``DeviceMesh`` the module was sharded or parallelized over.
     """
 
     placement: str
@@ -71,6 +80,12 @@ class DistributedRun:
     world_size: int
     devices: tuple[str, ...] = ()
     mesh: Any = field(default=None, repr=False)
+
+    @property
+    def data_parallel(self) -> bool:
+        """Whether each rank takes its own share of the data (``ddp``, ``fsdp2``), rather than every rank the
+        same."""
+        return self.placement in DATA_PARALLEL_PLACEMENTS
 
     @property
     def is_rank_zero(self) -> bool:
@@ -113,8 +128,8 @@ def resolve_placement(placement: str, env: Mapping[str, str] | None = None) -> D
         if world_size > 1:
             raise MisconfigurationException(
                 f"This process is one of WORLD_SIZE={world_size} ranks, but the runner's placement is 'single', so"
-                " every rank would train its own copy of the model on the whole dataset. Set `placement` to 'ddp' or"
-                " 'fsdp2', or launch a single process."
+                " every rank would train its own copy of the model on the whole dataset. Set `placement` to 'ddp',"
+                " 'fsdp2' or 'tp', or launch a single process."
             )
         return None
     if world_size < 2:
@@ -190,14 +205,192 @@ def _check_devices(per_rank: Sequence[Sequence[str]], placement: str) -> tuple[s
     return devices
 
 
-def _refuse_unshardable(module: torch.nn.Module) -> None:
+def _refuse_unshardable(module: torch.nn.Module, placement: str) -> None:
+    """Refuse a module ``fully_shard`` cannot shard (``ddp`` and ``fsdp2``); ``tp`` checks only the parameters its
+    plan splits, in :func:`_packed_groups`."""
     if names := [name for name, param in module.named_parameters() if not param.is_contiguous()]:
         shown = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
         raise MisconfigurationException(
             f"`fully_shard` cannot shard non-contiguous parameters, and this module has {len(names)}: {shown}. They are"
             " usually transposed views of a packed weight (TransformerLens's split q/k/v, for one); this backend"
-            " cannot be placed with 'ddp' or 'fsdp2' until they are contiguous."
+            f" cannot be placed with '{placement}' until they are contiguous."
         )
+
+
+@dataclass
+class _PackedGroup:
+    """A packed parameter and the column-parallel views cut from it, each view one equal section of ``dim``.
+
+    Attributes:
+        packed: ``(owner, attribute)`` of the packed parameter (TransformerLens's joint ``qkv``, for one).
+        dim: The packed parameter's dimension the views divide.
+        views: ``(owner, attribute, transposed)`` per view, in section order; ``transposed`` when the view is a section
+            transposed (a ``Conv1D``'s ``[in, out]`` section read as a ``Linear``'s ``[out, in]`` weight).
+    """
+
+    packed: tuple[torch.nn.Module, str]
+    dim: int
+    views: list[tuple[torch.nn.Module, str, bool]]
+
+
+def _section(packed: torch.Tensor, view: torch.Tensor) -> tuple[int, int, bool] | None:
+    """``(dim, start, transposed)`` when ``view`` is ``packed.narrow(dim, start, n)`` along dimension 0 of the view
+    (transposed or not), else ``None``."""
+    offset = view.storage_offset() - packed.storage_offset()
+    for dim in range(packed.ndim):
+        if offset % packed.stride(dim):
+            continue
+        start = offset // packed.stride(dim)
+        for transposed in (False, True) if packed.ndim == 2 else (False,):
+            length = view.shape[0]
+            if start + length > packed.shape[dim]:
+                continue
+            section = packed.narrow(dim, start, length)
+            section = section.T if transposed else section
+            if (section.shape, section.stride(), section.storage_offset()) == (
+                view.shape,
+                view.stride(),
+                view.storage_offset(),
+            ) and (dim == 1) == transposed:
+                return dim, int(start), transposed
+    return None
+
+
+def _packed_groups(module: torch.nn.Module, styles: Mapping[str, Any], world_size: int) -> list[_PackedGroup]:
+    """The packed parameters whose views ``styles`` splits, after refusing every split that would cut a parameter
+    from storage it shares.
+
+    ``parallelize_module`` splits a parameter into a new tensor, so a view of a packed weight (TransformerLens's split
+    q/k/v are views of its joint ``qkv``) would silently stop aliasing it: training would move the view and leave the
+    weight it was cut from behind. A packed weight whose views a plan splits by output features is split with them
+    (:func:`_split_packed`), so they keep sharing storage; every other split of shared storage is refused by name.
+
+    Raises:
+        MisconfigurationException: If the plan splits a non-contiguous parameter that is not a view of another, the
+            packed parameter itself, only some of a packed parameter's views, a view with any style but ``colwise``,
+            or views that are not equal sections of the packed parameter divisible by the world size.
+    """
+    from torch.distributed.tensor.parallel import ColwiseParallel
+
+    owners = {id(p): (m, n) for m in module.modules() for n, p in m.named_parameters(recurse=False)}
+    names = {id(p): n for n, p in module.named_parameters()}
+    split = {
+        id(p): style for prefix, style in styles.items() for p in module.get_submodule(prefix).parameters(recurse=False)
+    }
+    by_storage: dict[int, list[torch.nn.Parameter]] = {}
+    for param in module.parameters():
+        if param.device.type != "meta":
+            by_storage.setdefault(param.untyped_storage().data_ptr(), []).append(param)
+    groups = []
+    for params in by_storage.values():
+        if len(params) == 1:
+            param = params[0]
+            if id(param) in split and not param.is_contiguous():
+                raise MisconfigurationException(
+                    f"Placement 'tp' cannot split the non-contiguous parameter {names[id(param)]}: it is a view of"
+                    " storage no other parameter owns. Leave its module out of `tp_plan`."
+                )
+            continue
+        if not any(id(p) in split for p in params):
+            continue
+        packed = max(params, key=lambda p: p.numel())
+        views = [p for p in params if p is not packed]
+        shown = ", ".join(names[id(p)] for p in views)
+        if id(packed) in split:
+            raise MisconfigurationException(
+                f"`tp_plan` splits {names[id(packed)]}, whose storage {shown} are views of. Split the views (with"
+                " 'colwise') and leave the packed parameter's module out of the plan: it is split with them."
+            )
+        if missing := [names[id(p)] for p in views if id(p) not in split]:
+            raise MisconfigurationException(
+                f"`tp_plan` splits only some of the views of {names[id(packed)]} ({shown}); {', '.join(missing)} would"
+                " stop sharing its storage. Split all of them, or none."
+            )
+        if other := [names[id(p)] for p in views if not isinstance(split[id(p)], ColwiseParallel)]:
+            raise MisconfigurationException(
+                f"Placement 'tp' splits views of the packed parameter {names[id(packed)]} only with 'colwise', but"
+                f" `tp_plan` gives {', '.join(other)} another style."
+            )
+        found = sorted(
+            ((section, p) for p in views if (section := _section(packed, p)) is not None), key=lambda item: item[0]
+        )
+        dim = found[0][0][0] if found else 0
+        length = packed.shape[dim] // len(views)
+        if len(found) != len(views) or any(
+            (d, start) != (dim, i * length) or p.shape[0] != length for i, ((d, start, _), p) in enumerate(found)
+        ):
+            raise MisconfigurationException(
+                f"Placement 'tp' splits a packed parameter's views only when they are equal sections of one of its"
+                f" dimensions, in order, and {shown} are not such sections of {names[id(packed)]}."
+            )
+        if length % world_size:
+            raise MisconfigurationException(
+                f"The views of {names[id(packed)]} ({shown}) have {length} output features each, which"
+                f" {world_size} ranks cannot split evenly."
+            )
+        groups.append(_PackedGroup(owners[id(packed)], dim, [(*owners[id(p)], t) for (_, _, t), p in found]))
+    return groups
+
+
+def _refuse_local_splices(module: torch.nn.Module, styles: Mapping[str, Any]) -> None:
+    """Refuse a latent model spliced where a split layer hands it this rank's shard as a plain tensor.
+
+    A latent model reads and rewrites whole activations, and a splice gathers a split activation only when it arrives
+    as a ``DTensor`` (``tuning.latents``). A ``colwise`` or ``rowwise`` layer whose sharded output is converted to its
+    local shard (``use_local_output``, the default) would hand the splice one rank's features with nothing to say so.
+
+    Raises:
+        MisconfigurationException: If a latent model reads or rewrites the sharded local output of a split layer.
+    """
+    from torch.distributed.tensor import Shard
+
+    from interpretune.tuning.latents import latent_model_sites
+
+    for name, site in latent_model_sites(module).items():
+        for path in [site.write_path] + ([site.read] if site.read_from == "output" else []):
+            style = styles.get(path)
+            layouts = getattr(style, "output_layouts", ())
+            if getattr(style, "use_local_output", False) and any(isinstance(layout, Shard) for layout in layouts):
+                raise MisconfigurationException(
+                    f"The latent model {name!r} is spliced at {path}, whose output `tp_plan` shards and hands on as"
+                    " each rank's local shard, so it would read or rewrite one rank's features. Set"
+                    " `use_local_output: false` on that entry, so that the splice receives the split activation and"
+                    " gathers it, or splice the latent model where the activation is whole."
+                )
+
+
+def _split_packed(group: _PackedGroup, mesh: Any, rank: int) -> None:
+    """Split a packed parameter by its views' sections, then rebuild each view as a ``DTensor`` over this rank's
+    split of it, so views and packed parameter keep sharing storage.
+
+    Each rank holds its slice of every section, concatenated in section order: the layout of torch's
+    ``_StridedShard`` (the strided sharding FSDP2 uses under tensor parallelism), so the packed parameter's
+    ``full_tensor()`` is the packed weight. The views' placements are ``ColwiseParallel``'s, ``Shard(0)``, so the
+    module's input and output hooks read them as they would its own split.
+    """
+    from torch.distributed.tensor import DTensor, Shard
+    from torch.distributed.tensor.placement_types import _StridedShard
+
+    owner, attr = group.packed
+    packed = getattr(owner, attr)
+    n_sections = len(group.views)
+    length = packed.shape[group.dim] // n_sections
+    chunk = length // mesh.size()
+    with torch.no_grad():
+        local = torch.cat(
+            [packed.narrow(group.dim, i * length + rank * chunk, chunk) for i in range(n_sections)], dim=group.dim
+        )
+    placement = _StridedShard(group.dim, split_factor=n_sections)
+    split = DTensor.from_local(local, mesh, [placement], run_check=False, shape=packed.shape, stride=packed.stride())
+    setattr(owner, attr, torch.nn.Parameter(split, requires_grad=packed.requires_grad))
+    for i, (view_owner, view_attr, transposed) in enumerate(group.views):
+        view = getattr(view_owner, view_attr)  # ColwiseParallel's split, a copy; only its shape and flags are kept
+        section = local.narrow(group.dim, i * chunk, chunk)
+        section = section.T if transposed else section
+        shape, stride = view.shape, packed.narrow(group.dim, i * length, length)
+        stride = (stride.T if transposed else stride).stride()
+        rebuilt = DTensor.from_local(section, mesh, [Shard(0)], run_check=False, shape=shape, stride=stride)
+        setattr(view_owner, view_attr, torch.nn.Parameter(rebuilt, requires_grad=view.requires_grad))
 
 
 def _resolve_plan(
@@ -235,6 +428,83 @@ def _resolve_plan(
     return dict(sorted(resolved.items(), key=lambda item: item[0].count("."), reverse=True))
 
 
+# the styles transformers declares for the parts of a model the default plan leaves whole (the embedding and the LM
+# head): splitting them needs a loss that reads split logits, which the core loop's losses do not
+_HF_WHOLE_STYLES = ("embedding_rowwise", "colwise_gather_output")
+
+
+def hf_tp_plan(model: torch.nn.Module, prefix: str, world_size: int) -> dict[str, dict[str, Any]]:
+    """The tensor-parallel plan transformers declares for ``model`` (``model.tp_plan``), as a ``tp_plan`` whose
+    keys select its modules under ``prefix``.
+
+    transformers splits each decoder layer the Megatron way: attention's q, k and v and an MLP's input projections
+    column-wise, their output projections row-wise, so each rank computes its own heads and its own slice of the MLP
+    and one all-reduce per projection pair makes the activation whole again. Those entries are kept. The embedding and
+    LM head are left whole, so the logits are whole for the loss.
+
+    Raises:
+        MisconfigurationException: If the plan holds a style the plan grammar has no counterpart for, or the model's
+            attention heads (or key-value heads) are not divisible by ``world_size``, which would split a head across
+            ranks.
+    """
+    declared = dict(getattr(model, "tp_plan", None) or {})
+    config = getattr(model, "config", None)
+    for attr in ("num_attention_heads", "num_key_value_heads"):
+        heads = getattr(config, attr, None)
+        if declared and isinstance(heads, int) and heads % world_size:
+            raise MisconfigurationException(
+                f"The model's tensor-parallel plan splits attention by heads, but its {attr} ({heads}) is not divisible"
+                f" by the {world_size} ranks. Give `tp_plan` explicitly, or use a world size that divides it."
+            )
+    plan: dict[str, dict[str, Any]] = {}
+    for key, style in declared.items():
+        if style in _HF_WHOLE_STYLES:
+            continue
+        if style not in ("colwise", "rowwise"):
+            raise MisconfigurationException(
+                f"The model's tensor-parallel plan gives {key} the style {style!r}, which interpretune's default plan"
+                " does not translate. Give `tp_plan` explicitly."
+            )
+        pattern = r"\d+".join(re.escape(part) for part in key.split("*"))
+        plan[f"{re.escape(prefix)}\\.{pattern}" if prefix else pattern] = {"style": style}
+    return plan
+
+
+def _resolve_tp_plan(
+    module: torch.nn.Module, tp_plan: Mapping[str, Mapping[str, Any]] | None, world_size: int = 1
+) -> dict[str, Any]:
+    """``tp_plan`` expanded to the modules it selects, each with its parallel style. Without a plan, the module's
+    own default (``default_tp_plan``) is used when it declares one.
+
+    Raises:
+        MisconfigurationException: If there is no plan and the module declares no default, finetuning-scheduler is not
+            installed, or the plan has a key that selects no module or an entry finetuning-scheduler refuses.
+    """
+    if not tp_plan:
+        default = getattr(module, "default_tp_plan", None)
+        declared: Any = default(world_size) if callable(default) else None
+        tp_plan = declared
+    if not tp_plan:
+        raise MisconfigurationException(
+            "Placement 'tp' needs `tp_plan`: the layers to split across ranks, keyed by name, regex or `class:<name>`,"
+            " each with a parallel style (for example `{'model.layers.\\d+.mlp.up_proj': {'style': 'colwise'},"
+            f" 'model.layers.\\d+.mlp.down_proj': {{'style': 'rowwise'}}}}`). {type(module).__name__} declares no"
+            " default plan."
+        )
+    if not _FTS_AVAILABLE:
+        raise MisconfigurationException(
+            "`tp_plan` is applied with finetuning-scheduler's tensor-parallel plan, which is not installed. Install"
+            " interpretune's `tune` extra."
+        )
+    from finetuning_scheduler.core.exceptions import FTSConfigurationError
+    from finetuning_scheduler.strategies.plan import resolve_tp_plan
+
+    try:
+        return resolve_tp_plan(module, tp_plan, warn=rank_zero_warn)
+    except FTSConfigurationError as err:
+        raise MisconfigurationException(str(err)) from err
+
+
 def _require_fts(fsdp_plan: Mapping[str, Any] | None, default_kwargs: Mapping[str, Any] | None) -> None:
     if (fsdp_plan or default_kwargs) and not _FTS_AVAILABLE:
         raise MisconfigurationException(
@@ -248,8 +518,10 @@ def place_module(
     run: DistributedRun,
     fsdp_plan: Mapping[str, Mapping[str, Any] | None] | None = None,
     fsdp_default_kwargs: Mapping[str, Any] | None = None,
+    tp_plan: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> None:
-    """Agree on each rank's device, build the mesh and shard ``module`` in place as ``run.placement`` asks.
+    """Agree on each rank's device, build the mesh and shard or parallelize ``module`` in place as
+    ``run.placement`` asks.
 
     Runs on every rank, after the session is built and before its optimizers are, since sharding replaces the
     parameters with ``DTensor``\\ s. Rank 0's parameters and buffers are broadcast to the other ranks first, as
@@ -276,7 +548,10 @@ def place_module(
     per_rank: list[Any] = [None] * run.world_size
     dist.all_gather_object(per_rank, local)
     run.devices = _check_devices(per_rank, run.placement)
-    _refuse_unshardable(module)
+    if run.placement == "tp":
+        _place_tensor_parallel(module, run, tp_plan, on_meta)
+        return
+    _refuse_unshardable(module, run.placement)
     _require_fts(fsdp_plan, fsdp_default_kwargs)
     units = _resolve_plan(module, fsdp_plan, fsdp_default_kwargs, run.placement)
     if not on_meta:
@@ -312,6 +587,69 @@ def place_module(
             _load_from_checkpoint_files(module, run)
         else:
             _load_from_rank0(module, run)
+
+
+def _place_tensor_parallel(
+    module: torch.nn.Module, run: DistributedRun, tp_plan: Mapping[str, Mapping[str, Any]] | None, on_meta: bool
+) -> None:
+    """Split the layers ``tp_plan`` selects across a one-dimensional mesh of every rank, after broadcasting rank
+    0's weights (each rank's split is cut from its own copy, so differing copies would assemble a model nobody
+    built), and split each packed parameter whose views the plan splits with them (see :func:`_packed_groups`)."""
+    import torch.distributed as dist
+    from torch.distributed.device_mesh import init_device_mesh
+
+    if on_meta:
+        raise MisconfigurationException(
+            "Placement 'tp' does not load a model built on the meta device (`meta_init`) yet: build it on each rank's"
+            " device, or use placement 'fsdp2', which loads a meta-built model from rank 0."
+        )
+    styles = _resolve_tp_plan(module, tp_plan, run.world_size)
+    groups = _packed_groups(module, styles, run.world_size)
+    _refuse_local_splices(module, styles)
+    with torch.no_grad():
+        for tensor in [*module.parameters(), *module.buffers()]:
+            if tensor.is_contiguous():
+                dist.broadcast(tensor, src=0)
+            else:  # a view of a packed weight: collectives take contiguous tensors only
+                whole = tensor.contiguous()
+                dist.broadcast(whole, src=0)
+                tensor.copy_(whole)
+    device_type = torch.device(run.devices[run.rank]).type
+    mesh = init_device_mesh(device_type, (run.world_size,), mesh_dim_names=("tp",))
+    from torch.distributed.tensor.parallel import parallelize_module
+
+    parallelize_module(module, mesh, styles)
+    for group in groups:
+        _split_packed(group, mesh, run.rank)
+    run.mesh = mesh
+
+
+def step_per_tensor(optimizers: Iterable[Any], run: DistributedRun | None) -> None:
+    """Under ``tp``, have each optimizer step its parameters one tensor at a time.
+
+    The layers a plan splits hold ``DTensor`` parameters and the rest plain tensors, and a parameter group can hold
+    both. torch's multi-tensor (``foreach``) and fused kernels, the default for CUDA parameters, take a group's tensors
+    in one call, which ``DTensor`` refuses when it mixes the two kinds. So ``foreach`` is turned off on every group and
+    on the optimizer's defaults, which the groups a tuning scheduler adds at a phase transition take. Other placements
+    are left alone: under them every parameter is a ``DTensor``.
+
+    Raises:
+        MisconfigurationException: An optimizer asks for ``foreach`` or ``fused`` explicitly.
+    """
+    if run is None or run.placement != "tp":
+        return
+    for optimizer in optimizers:
+        for where, group in (("defaults", optimizer.defaults), *enumerate(optimizer.param_groups)):
+            for kernel in ("foreach", "fused"):
+                if group.get(kernel):
+                    where = where if where == "defaults" else f"parameter group {where}"
+                    raise MisconfigurationException(
+                        f"{type(optimizer).__name__} asks for `{kernel}=True` ({where}), but under placement 'tp' a"
+                        " parameter group can hold split (DTensor) and whole parameters, which those kernels cannot"
+                        f" take in one call: leave `{kernel}` unset."
+                    )
+            if "foreach" in group:
+                group["foreach"] = False
 
 
 def _offloads(kwargs: Mapping[str, Any] | None) -> bool:
@@ -666,6 +1004,10 @@ def _load_from_rank0(module: torch.nn.Module, run: DistributedRun) -> None:
 def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0) -> Any:
     """``loader`` rebuilt over a ``DistributedSampler`` that gives this rank its share of the dataset.
 
+    Under a placement that is not data parallel (``tp``), every rank takes the whole dataset in the same order instead:
+    the ranks compute one forward together, so they must see the same batch, and a shuffled loader shuffles alike on
+    every rank only when it draws from the sampler's shared seed rather than each rank's own random stream.
+
     The rebuilt loader keeps the batch size, collate function, worker settings and ``drop_last``, and shuffles when the
     original did (with ``seed``, the same on every rank; call ``sampler.set_epoch`` each epoch). Without ``drop_last``,
     ``DistributedSampler`` pads the last round with repeated samples so every rank takes the same number of batches,
@@ -681,13 +1023,14 @@ def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0)
 
     if not isinstance(loader, DataLoader):
         raise MisconfigurationException(
-            f"Placement '{run.placement}' shards data by rebuilding the datamodule's loaders over a"
-            f" `DistributedSampler`, which needs a `DataLoader`, not a {type(loader).__name__}."
+            f"Placement '{run.placement}' rebuilds the datamodule's loaders over a `DistributedSampler` (a share of"
+            f" the data per rank, or one order for every rank), which needs a `DataLoader`, not a"
+            f" {type(loader).__name__}."
         )
     if isinstance(loader.dataset, IterableDataset):
         raise MisconfigurationException(
-            f"Placement '{run.placement}' cannot shard an `IterableDataset` ({type(loader.dataset).__name__}) by"
-            " sampler: shard it by rank in the dataset itself."
+            f"Placement '{run.placement}' cannot rebuild an `IterableDataset` ({type(loader.dataset).__name__}) over"
+            " a sampler: give each rank its share (or, under 'tp', the same sequence) in the dataset itself."
         )
     sampler = loader.sampler
     faithful = type(loader.batch_sampler) is BatchSampler and (
@@ -703,8 +1046,8 @@ def distributed_dataloader(loader: Iterable, run: DistributedRun, seed: int = 0)
         )
     dist_sampler = DistributedSampler(
         loader.dataset,
-        num_replicas=run.world_size,
-        rank=run.rank,
+        num_replicas=run.world_size if run.data_parallel else 1,
+        rank=run.rank if run.data_parallel else 0,
         shuffle=type(sampler) is RandomSampler,
         seed=seed,
         drop_last=loader.drop_last,

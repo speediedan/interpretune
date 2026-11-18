@@ -37,7 +37,9 @@ class TestChatTemplateEquivalence:
     @pytest.mark.parametrize("model_id", ["google/gemma-2-2b-it", "google/gemma-3-1b-it"])
     def test_gemma_manual_spelling_matches_native_template(self, model_id):
         """Byte equivalence that authorized the gemma re-point; drift here = upstream template change."""
-        from it_examples.examples.prompt_configs.prompt_configs import GemmaPromptConfig
+        from tests.prompt_configs_component import prompt_config_class
+
+        GemmaPromptConfig = prompt_config_class("GemmaPromptConfig")
 
         tok = _tokenizer(model_id)
         manual = GemmaPromptConfig().model_chat_template_fn(TASK_PROMPT, "gemma-chat")
@@ -52,7 +54,9 @@ class TestChatTemplateEquivalence:
         If this starts PASSING equivalence (or the divergence changes shape), the Llama3 re-point decision re-opens;
         until then the manual definition is the provenance-safe path.
         """
-        from it_examples.examples.prompt_configs.prompt_configs import Llama3PromptConfig
+        from tests.prompt_configs_component import prompt_config_class
+
+        Llama3PromptConfig = prompt_config_class("Llama3PromptConfig")
 
         tok = _tokenizer("meta-llama/Llama-3.2-3B-Instruct")
         manual = Llama3PromptConfig().model_chat_template_fn(TASK_PROMPT, "llama3-chat")

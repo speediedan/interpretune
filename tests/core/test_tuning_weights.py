@@ -445,3 +445,77 @@ def test_a_token_scoped_or_other_site_recipe_has_no_weight_form(model, tokens, s
     ops = [{"op": "scale", "target": {"set": "units"}, "value": {"dose": 0.0}}]
     with pytest.raises(ValueError, match=match):
         weight_form(model, _stage_recipe(ops, tokens=tokens, site=site), view=_view(model))
+
+
+DOWN = "component:mlp.out & layers:1 & leaf:weight"
+
+
+def test_a_unit_adapter_starts_as_the_identity_and_tunes_only_its_units(model):
+    """#868: a trainable delta over the selected units' slices, zero at first, applied by parametrization."""
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    down = model.layers[1].mlp.down
+    base, out = down.weight.detach().clone(), model(IDS).detach()
+    (handle,) = attach_unit_adapter(model, DOWN, [7, 2], name="hot", view=_view(model))
+    torch.testing.assert_close(model(IDS), out)
+    assert handle.edit.delta.shape == (D, 2)  # mlp.out's units are its input side: two columns of an [out, in] weight
+    assert set(weight_edit_roles(model).values()) == {"adapter:hot"}
+    model(IDS).sum().backward()
+    assert handle.edit.delta.grad is not None and handle.edit.delta.grad.abs().sum() > 0
+    with torch.no_grad():
+        handle.edit.delta.fill_(1.0)
+    moved = (down.weight - base).abs().sum(dim=0)
+    assert moved[[2, 7]].min() > 0 and moved[[0, 1, 3, 4, 5, 6, 8, 9]].abs().sum() == 0
+    handle.remove()
+    assert torch.equal(down.weight, base)
+
+
+def test_a_schedule_thaws_a_unit_adapter_by_role(model):
+    from finetuning_scheduler.core.compile import compile_schedule
+
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    attach_unit_adapter(model, DOWN, [2, 7], name="hot", view=_view(model))
+    view = MappedView(model, from_document(MAP), roles=weight_edit_roles(model))
+    compiled = compile_schedule({0: {"params": ["role:adapter"]}}, view)
+    assert compiled.phases[0].physical == ("layers.1.mlp.down.parametrizations.weight.0.delta",)
+
+
+def test_a_unit_adapter_is_refused_without_a_unit_axis_or_with_units_outside_it(model):
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    with pytest.raises(ValueError, match="unit axis is unknown|has no unit axis"):
+        attach_unit_adapter(model, DOWN, [2], name="hot", view=_view(model, UNMAPPED_LAYOUT))
+    with pytest.raises(ValueError, match=f"has {H} units along its unit axis"):
+        attach_unit_adapter(model, DOWN, [H], name="hot", view=_view(model))
+    with pytest.raises(ValueError, match="selects no units"):
+        attach_unit_adapter(model, DOWN, [], name="hot", view=_view(model))
+    with pytest.raises(ValueError, match="not part of the target address"):
+        attach_unit_adapter(model, f"{DOWN} & units:[2]", [2], name="hot", view=_view(model))
+    assert not hasattr(model.layers[1].mlp.down, "parametrizations")  # nothing was attached
+
+
+def test_a_site_unit_adapter_projects_the_neurons_onto_the_mlp_tensors_they_are(model):
+    """Neuron n at the MLP's hidden layer is column n of the down projection and row n (and bias entry n) of the up
+    projection: the down projection's bias lies along the residual, so it carries no hidden unit."""
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    out = model(IDS).detach()
+    handles = attach_unit_adapter(model, "point:mlp.out.hook_in & layers:1", [2, 7], name="hot", view=_view(model))
+    shapes = {h.target: tuple(h.edit.delta.shape) for h in handles}
+    want = {"layers.1.mlp.up.weight": (2, D), "layers.1.mlp.down.weight": (D, 2)}
+    if model.layers[1].mlp.up.bias is not None:
+        want["layers.1.mlp.up.bias"] = (2,)
+    assert shapes == want
+    torch.testing.assert_close(model(IDS), out)
+    for handle in handles:
+        handle.remove()
+
+
+def test_a_site_outside_the_mlp_hidden_space_or_on_gradients_is_refused(model):
+    from interpretune.tuning.weights import attach_unit_adapter
+
+    with pytest.raises(ValueError, match="not a unit space a unit adapter projects onto"):
+        attach_unit_adapter(model, "point:hook_resid_post & layers:1", [2], name="hot", view=_view(model))
+    with pytest.raises(ValueError, match="names a gradient"):
+        attach_unit_adapter(model, "point:mlp.out.hook_in & layers:1 & of:grad", [2], name="hot", view=_view(model))

@@ -70,9 +70,11 @@ def _vars(proc: subprocess.CompletedProcess) -> dict[str, str]:
 def test_the_small_stage_asks_for_one_device_sized_to_the_smallest_card(tmp_path):
     proc, calls = _run(tmp_path, "acquire", "small")
     assert proc.returncode == 0, proc.stderr
-    # one hold through the shared CI function; the tool itself waits for cpu-heavy before taking the device
+    # one hold through the shared CI function, for one device and not cpu-heavy: its tests fit the smallest card, and
+    # waiting for cpu-heavy behind a local CPU suite once failed a gate on idle GPUs (build 2101)
     assert len(calls) == 1 and calls[0].startswith("--hold"), calls
-    assert "--gpus 1 --min-vram 8 --cpu-heavy" in calls[0] and "--project azure-it-42" in calls[0], calls
+    assert "--gpus 1 --min-vram 8" in calls[0] and "--project azure-it-42" in calls[0], calls
+    assert "--cpu-heavy" not in calls[0], calls
     assert _vars(proc) == {
         "IT_GPU_LEASE_HELD": "1",
         "IT_GPU_TWO_STAGE": "1",
@@ -129,6 +131,62 @@ def test_a_gate_whose_lease_times_out_fails(tmp_path, stage):
     assert proc.returncode == 1 and "cancel" not in proc.stdout.lower(), proc.stdout
 
 
+def test_the_small_stage_takes_cpu_heavy_again_when_asked(tmp_path):
+    proc, calls = _run(tmp_path, "acquire", "small", IT_GPU_SMALL_CPU_HEAVY="1")
+    assert proc.returncode == 0 and "--gpus 1 --min-vram 8 --cpu-heavy" in calls[0], calls
+
+
+@pytest.mark.parametrize("stage", ["small", "large"])
+def test_a_gate_waits_again_while_its_lease_budget_lasts_then_fails_naming_the_holders(tmp_path, stage):
+    """A wait that times out with budget left is retried (as many waits as fit the budget), not failed."""
+    proc, calls = _run(
+        tmp_path, "acquire", stage, tool_rc=75, IT_GPU_TWO_STAGE="1", IT_GPU_LEASE_WAIT="30", IT_GPU_LEASE_BUDGET="90"
+    )
+    holds = [c for c in calls if c.startswith("--hold")]
+    assert proc.returncode == 1, proc.stdout
+    assert len(holds) == 3 and all("--timeout 30" in c for c in holds), calls
+    assert proc.stdout.count("waiting again") == 2 and "through 3 wait(s)" in proc.stdout, proc.stdout
+    assert calls.count("--status") == 3, "each timed-out wait logs who holds the leases"
+    assert "cancel" not in proc.stdout.lower()
+
+
+ONCE_STUB = """#!/usr/bin/env bash
+echo "$*" >> "{log}"
+pidfile=""
+while [[ $# -gt 0 ]]; do case "$1" in --pidfile) pidfile=$2; shift 2 ;; *) shift ;; esac; done
+[[ -n "$pidfile" ]] || exit 0
+[[ -e "{flag}" ]] || {{ : > "{flag}"; exit 75; }}
+echo 12345 > "$pidfile"; echo GPU-small > "$pidfile.device"
+"""
+
+
+def test_a_gate_held_on_its_second_wait_proceeds(tmp_path):
+    """The tool times out once, then grants: the stage holds its lease after one retry."""
+    proc, _ = _run(tmp_path, "acquire", "small", IT_GPU_LEASE_WAIT="30", IT_GPU_LEASE_BUDGET="90")  # writes the stub
+    (tmp_path / "tool.sh").write_text(ONCE_STUB.format(log=tmp_path / "once.log", flag=tmp_path / "timed_out"))
+    env = {
+        **os.environ,
+        "GPU_STAGE_LEASE_DIR": str(tmp_path / "leases"),
+        "GPU_STAGE_LEASE_TOOL": str(tmp_path / "tool.sh"),
+        "GPU_STAGE_LEASE_PIDDIR": str(tmp_path / "second"),
+        "GPU_LEASE_DEVICES": DEVICES,
+        "BUILD_BUILDID": "42",
+        "IT_GPU_LEASE_WAIT": "30",
+        "IT_GPU_LEASE_BUDGET": "90",
+        "IT_GPU_LEASE_ON_TIMEOUT": "fail",
+    }
+    (tmp_path / "second").mkdir()
+    proc = subprocess.run(["bash", str(SCRIPT), "acquire", "small"], cwd=ROOT, env=env, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "waiting again" in proc.stdout and _vars(proc)["IT_GPU_LEASE_HELD"] == "1", proc.stdout
+
+
+def test_a_gate_from_an_older_plan_waits_once(tmp_path):
+    """Without IT_GPU_LEASE_BUDGET a gate keeps its old policy: one wait per stage, then fail."""
+    proc, calls = _run(tmp_path, "acquire", "small", tool_rc=75, IT_GPU_LEASE_WAIT="30")
+    assert proc.returncode == 1 and len([c for c in calls if c.startswith("--hold")]) == 1, calls
+
+
 def _phase_counts(tmp_path: Path, **states: str) -> dict:
     counts = tmp_path / "gpu_phase_counts"
     counts.mkdir(exist_ok=True)
@@ -170,3 +228,40 @@ def test_a_full_run_passes_when_every_phase_ran_in_some_class(tmp_path):
         ["bash", str(CHECK)], env={**env, "IT_GPU_SELECTION_MODE": "full"}, capture_output=True, text=True
     )
     assert proc.returncode == 0, proc.stderr
+
+
+def _events(tmp_path: Path) -> list[dict]:
+    import json
+
+    path = tmp_path / "telemetry" / "events.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_a_stage_records_its_wait_its_grant_with_devices_and_its_release(tmp_path):
+    telemetry = {"IT_TELEMETRY_DIR": str(tmp_path / "telemetry")}
+    assert _run(tmp_path, "acquire", "small", **telemetry)[0].returncode == 0
+    assert _run(tmp_path, "release", "small", **telemetry)[0].returncode == 0
+    events = _events(tmp_path)
+    assert [e["action"] for e in events] == ["wait", "acquired", "released"]
+    acquired = events[1]
+    assert (acquired["stage"], acquired["grant"], acquired["devices"], acquired["mode"]) == (
+        "small",
+        "GPU-small",
+        "GPU-small",
+        "tool",
+    )
+    assert all(isinstance(e["epoch"], int) for e in events)
+
+
+def test_a_whole_server_grant_records_every_device_it_covers(tmp_path):
+    proc, _ = _run(tmp_path, "acquire", "large", IT_GPU_TWO_STAGE="1", IT_TELEMETRY_DIR=str(tmp_path / "telemetry"))
+    assert proc.returncode == 0, proc.stderr
+    acquired = [e for e in _events(tmp_path) if e["action"] == "acquired"]
+    assert acquired and acquired[0]["grant"] == "all" and acquired[0]["devices"] == "GPU-big;GPU-small"
+
+
+def test_a_timed_out_wait_is_recorded_and_no_release_is_invented(tmp_path):
+    telemetry = {"IT_TELEMETRY_DIR": str(tmp_path / "telemetry")}
+    assert _run(tmp_path, "acquire", "small", tool_rc=75, **telemetry)[0].returncode == 1
+    _run(tmp_path, "release", "small", **telemetry)
+    assert [e["action"] for e in _events(tmp_path)] == ["wait", "timeout"]

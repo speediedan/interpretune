@@ -44,11 +44,16 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Any, Literal, Protocol, runtime_checkable
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, runtime_checkable
 
 import torch
 from torch import nn
+
+from interpretune.tuning.sites import is_site_address, resolve_site
+
+if TYPE_CHECKING:
+    from torch.distributed.tensor import DTensor
 
 # the `nn.ModuleDict` on the root that holds attached latent models, by name
 LATENT_MODELS_ATTR = "latent_models"
@@ -83,12 +88,18 @@ class LatentModel(Protocol):
 class LatentSite:
     """Where a latent model reads and which module's output it rewrites.
 
+    ``read`` and ``write`` are module paths or venngram site addresses selecting one site each
+    (``point:mlp.hook_in & layers:3``), resolved on the composition by :func:`~interpretune.tuning.sites.resolve_site`
+    when the latent model is attached. An address names the activation itself, so it decides whether the module's
+    input or its output is read or rewritten.
+
     Args:
-        read: Path, under the root, of the module whose activations the latent model encodes.
-        write: Path of the module whose output it rewrites. Defaults to ``read`` (an SAE); a transcoder reads an MLP's
-            input and writes that MLP's output.
+        read: Path, under the root, of the module whose activations the latent model encodes, or a site address.
+        write: Path of the module whose output it rewrites, or a site address. Defaults to ``read`` (an SAE); a
+            transcoder reads an MLP's input and writes that MLP's output.
         read_from: Whether the ``read`` module's ``"output"`` (the default) or its first positional ``"input"`` is
-            encoded.
+            encoded, for a module path. A site address decides it, and ``"input"`` with an address that resolves to a
+            module's output is refused.
         op: The op applied to the output with the reconstruction as its operand (:data:`LatentOp`), or ``None`` to
             capture the latents (``last_latents``) and leave the output unchanged.
     """
@@ -123,15 +134,43 @@ def _with_first(value: Any, tensor: torch.Tensor) -> Any:
     return (tensor, *value[1:]) if isinstance(value, tuple) else tensor
 
 
+def _split(value: Any) -> TypeGuard[DTensor]:
+    """Whether ``value`` is a ``DTensor``: an activation a tensor-parallel layer split across ranks."""
+    if not torch.distributed.is_available():
+        return False
+    from torch.distributed.tensor import DTensor
+
+    return isinstance(value, DTensor)
+
+
+def _laid_out_as(tensor: torch.Tensor, target: Any) -> Any:
+    """``tensor``, computed whole on every rank, in ``target``'s layout when ``target`` is split across ranks.
+
+    Both this and the gather in :meth:`_Splice.capture` are differentiable, and each rank's gradient of the whole
+    tensor is the same, so a latent model spliced inside a split layer gets the same gradients on every rank.
+    """
+    if not _split(target):
+        return tensor
+    from torch.distributed.tensor import DTensor, Replicate
+
+    whole = DTensor.from_local(tensor, target.device_mesh, [Replicate()] * target.device_mesh.ndim, run_check=False)
+    return whole.redistribute(target.device_mesh, target.placements)
+
+
 class _Splice:
-    """The forward hooks splicing one latent model in at its site."""
+    """The forward hooks splicing one latent model in at its site.
+
+    Under tensor parallelism a site inside a split layer holds a ``DTensor``: it is gathered whole before the latent
+    model reads it, and the reconstruction is laid out as the output it replaces (:func:`_laid_out_as`).
+    """
 
     def __init__(self, latent: LatentModel, site: LatentSite) -> None:
         self.latent, self.site = latent, site
         self.read_value: torch.Tensor | None = None
 
     def capture(self, module: nn.Module, args: tuple[Any, ...], output: Any = None) -> None:
-        self.read_value = _first(args) if self.site.read_from == "input" else _first(output)
+        value = _first(args) if self.site.read_from == "input" else _first(output)
+        self.read_value = value.full_tensor() if _split(value) else value
 
     def rewrite(self, module: nn.Module, args: tuple[Any, ...], output: Any) -> Any:
         x, self.read_value = self.read_value, None
@@ -142,10 +181,32 @@ class _Splice:
             setattr(self.latent, "last_latents", latents.detach())  # the protocol does not declare it
             return output
         target = _first(output)
-        recon = self.latent.decode(latents).to(target.dtype)
+        recon = _laid_out_as(self.latent.decode(latents).to(target.dtype), target)
         if self.site.op == "replace_with_error":
             recon = recon + (target - recon).detach()
         return _with_first(output, recon)
+
+    def rewrite_input(self, module: nn.Module, args: tuple[Any, ...]) -> tuple[Any, ...]:
+        """:meth:`rewrite` for a site that is a module's input: the input is rewritten before the module runs."""
+        return (self.rewrite(module, args, args[0]), *args[1:])
+
+
+def _resolved(root: nn.Module, site: LatentSite) -> tuple[LatentSite, Literal["input", "output"]]:
+    """``site`` with its addresses resolved on ``root``, and which side of the write module is rewritten."""
+    read, read_from, write_io = site.read, site.read_from, "output"
+    if is_site_address(site.read):
+        resolved = resolve_site(root, site.read)
+        if site.read_from == "input" and resolved.io == "output":
+            raise ValueError(
+                f"LatentSite reads {site.read!r} with read_from='input', but that address is the output of"
+                f" {resolved.path!r}; an address decides the side, so leave read_from at its default"
+            )
+        read, read_from = resolved.path, resolved.io
+    write = site.write
+    if is_site_address(site.write_path):
+        resolved = resolve_site(root, site.write_path)
+        write, write_io = resolved.path, resolved.io
+    return replace(site, read=read, write=write, read_from=read_from), write_io
 
 
 def _latent_models(root: nn.Module, create: bool = False) -> nn.ModuleDict | None:
@@ -219,14 +280,17 @@ def attach_latent_model(
     assert held is not None
     if name in held:
         raise ValueError(f"A latent model named {name!r} is already attached; detach it first")
-    read, write = root.get_submodule(site.read), root.get_submodule(site.write_path)
+    resolved, write_io = _resolved(root, site)
+    read, write = root.get_submodule(resolved.read), root.get_submodule(resolved.write_path)
     _require_reachable(root, "latent models", read, write)
-    splice = _Splice(latent, site)
+    splice = _Splice(latent, resolved)
     handles = [
         read.register_forward_pre_hook(splice.capture)
-        if site.read_from == "input"
+        if resolved.read_from == "input"
         else read.register_forward_hook(splice.capture),
-        write.register_forward_hook(splice.rewrite),
+        write.register_forward_pre_hook(splice.rewrite_input)
+        if write_io == "input"
+        else write.register_forward_hook(splice.rewrite),
     ]
     held[name] = latent
     hooks: dict[str, list[Any]] = root.__dict__.setdefault(_HOOKS_ATTR, {})

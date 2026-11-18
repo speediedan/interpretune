@@ -1187,7 +1187,9 @@ class NNsightModelBackend:
                     include_latent_subhooks=bool(latent_model_handles),
                 )
             }
-            expanded_matches = expand_intervention_patterns(list(interventions.keys()), available_hook_map)
+            expanded_matches = expand_intervention_patterns(
+                list(interventions.keys()), available_hook_map, flow="value"
+            )
             hook_names = [hook_name for matches in expanded_matches.values() for hook_name in matches]
             intervention_dict = None
 
@@ -1281,12 +1283,12 @@ class NNsightModelBackend:
         if isinstance(interventions, InterventionDict):
             expanded = {hook_name: [hook_name] for hook_name in interventions.keys()}
         else:
-            expanded = expand_intervention_patterns(list(interventions.keys()), available)
+            expanded = expand_intervention_patterns(list(interventions.keys()), available, flow="grad")
         sites = list(dict.fromkeys(name for matches in expanded.values() for name in matches))
         if capture is None:
             captured_names = sites
         else:
-            matched = expand_intervention_patterns(list(capture), available)
+            matched = expand_intervention_patterns(list(capture), available, flow="grad")
             captured_names = list(dict.fromkeys(name for matches in matched.values() for name in matches))
         reads = resolve_readout_sites(readout, available)
 
