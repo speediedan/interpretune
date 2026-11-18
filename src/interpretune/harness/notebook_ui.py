@@ -772,7 +772,8 @@ def plot_decoder_projection_map(
     static_companion: bool = False,
     color_by: str = "output_projection",
 ) -> None:
-    """Interactive decoder-space projection (UMAP w/ PCA fallback) with per-feature hover details.
+    """Interactive decoder-space projection (UMAP, or PCA labelled as such without a UMAP backend) with hover
+    details.
 
     Uses plotly for hover tooltips (feature id, input concept share, activation mass, signed output projection,
     explanation) with the analyzed features colored by signed output projection over a gray active-feature background.
@@ -801,7 +802,8 @@ def plot_decoder_projection_map(
         ],
         dim=0,
     )
-    proj_result = project_embeddings(matrix, method="umap", n_components=2)
+    # The figure is useful either way, so a missing UMAP backend falls back to PCA, and the title says which ran.
+    proj_result = project_embeddings(matrix, method="umap", n_components=2, fallback="pca")
     coords = proj_result.coordinates
     n_analyzed = len(analyzed_profiles)
     fg, bg = coords[:n_analyzed], coords[n_analyzed:]
