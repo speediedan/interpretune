@@ -189,7 +189,12 @@ through `module.replacement_model`, and stores Arrow-safe intervention summaries
 `model_fwd_intervention` is the model-level op for direct tensor interventions. It accepts either explicit
 `interventions` / `interventions_json` mappings or the shorthand `intervention_hook_pattern`, `intervention_op`,
 `intervention_scale_factor` and `intervention_use_intervention_tensor_as_basis` fields; explicit mappings take
-precedence. Concept-direction notebook experiments use this surface for direct-projection phases, including
+precedence. A payload key, or the shorthand's `intervention_hook_pattern`, may be a hook name, a pattern, or a venngram
+site address, which names one activation the same way on every backend: `point:hook_resid_post & layers:13` rather
+than one backend's module path. An address expands like a layer wildcard, to the sites it selects in layer order
+(`point:hook_resid_post & layers:-4:` is the last four blocks' residual stream), each matched as its hook name would
+be. A site the model does not expose is refused rather than mapped onto a nearby hook, and an address saying
+`of: grad` is refused here: it names a gradient, which `model_bwd_intervention` edits. Concept-direction notebook experiments use this surface for direct-projection phases, including
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
 such as `blocks.0.hook_in` with the `project` op.
 
@@ -309,7 +314,8 @@ forward pass.
   `interpretune.analysis.venngram.resolve_sites` evaluates over the model's block stack. A site address sets
   `point` (a spelling of the activation-point vocabulary, such as `hook_resid_post`), `layers` and `of`, and combines
   terms with `&`, `|`, `-` and `@<set>` references (`grad_capture_sets` supplies the book's sets). An address read for
-  gradients must say `of: grad`.
+  gradients must say `of: grad`. A payload key may be an address too, as on the forward surface, and must say
+  `of: grad` for the same reason.
 - **Recipes**: `recipe_interventions(recipe, ..., flow="grad")` translates a recipe's ops on `of: grad` targets into
   the same specs a value op becomes, for this op; the default `flow="value"` translates its value ops. A recipe's ops
   are translated for one flow at a time, and an op on the other flow is refused.
