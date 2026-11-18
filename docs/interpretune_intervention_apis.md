@@ -53,6 +53,14 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
   `add` and `replace` on a tensor or on its units, and `reject` and `project` of a direction on its output side. A
   recipe applies its weights before its stages, so `recipe_interventions` refuses a recipe with weights until they have
   been applied (`weights_applied=True`).
+- `attach_unit_adapter(module, target, units, name=...)` tunes only some units of a tensor: a trainable delta over
+  the selected units' slices along the tensor's unit axis, $W = W_0 + \Delta$, zero at first. Its tensor takes the
+  role `adapter:<name>`, so a schedule thaws it by role (`role:adapter`), while the optimizer, a checkpoint and an
+  export see an ordinary tensor. A gradient mask over the base weight would not do this: weight decay and optimizer
+  state would still move the other units. The target may also be a site, `point:mlp.out.hook_in & layers:12`: neuron
+  $n$ of the MLP's hidden layer is column $n$ of the down projection and row $n$ (and bias entry $n$) of the up and
+  gate projections, so the adapter is placed on each of those slices. The units are the `units` argument, never part
+  of the target's address ([#868](https://github.com/speediedan/interpretune/issues/868)).
 - `weight_form(module, recipe)` materializes a per-neuron recipe (unit `scale` and `add` at `mlp.out`'s input, at
   token scope `all`) as the weight edits it equals, below, and `check_weight_equivalence` compares the two forms of an
   edit on a batch.
@@ -232,7 +240,9 @@ supported. A gradient address (`of:grad`) requires `flow="grad"` and the payload
 The payload carries `InterventionSpec.unit_indices`. Its operand is in that selected coordinate order, and the shared
 executor reads, edits and writes back only that slice. This differs from replacing the whole activation with a sparse
 vector: zero is an explicit replacement value, while coordinates outside the selection retain their values and their
-autograd path. A backend must declare the `units` target in its intervention support record.
+autograd path. A backend must declare the `units` target in its intervention support record. A direct unit payload
+edits activations; editing the weights behind the same units is a unit adapter (`attach_unit_adapter`, under
+[parameter targets](#parameter-targets)).
 
 For normalized doses, `normalized_unit_doses` computes $d_u m / \lVert W_u \rVert_2$, where $m$ is the measured median
 residual norm and $W_u$ is the down-projection column for unit $u$. Supply the stored weight and its measured

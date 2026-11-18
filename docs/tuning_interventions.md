@@ -56,6 +56,11 @@ same units as its `UnitIntervention`; attaching a full-width intervention to suc
 All four modes share the analysis surface's selected-coordinate executor and preserve the complement's autograd path.
 See [direct unit payloads](interpretune_intervention_apis.md#direct-unit-payloads) for analysis and normalized doses.
 
+A `UnitIntervention` acts on the selected units' activations at its site. To tune the parameters that produce those
+units instead, use a unit adapter (`attach_unit_adapter`, under
+[parameter targets](interpretune_intervention_apis.md#parameter-targets)): a trainable delta over the units' weight
+slices, which applies at every token and is part of the tensor an export writes.
+
 ## Attaching them in code
 
 Attach interventions in `register_tunable_modules()`, which runs once the model exists and before the view is built:

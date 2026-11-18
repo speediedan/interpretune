@@ -166,6 +166,7 @@ def selection_covers(target: str, mode: str, selection_file: str | None) -> bool
         lines = [ln.strip() for ln in Path(selection_file or "").read_text().splitlines() if ln.strip()]
     except OSError:
         return True
+    lines = [ln for ln in lines if not ln.startswith("!")]  # a deferred case narrows a prefix, it adds none
     return lines == ["full"] or any(target.startswith(ln) or ln.startswith(target) for ln in lines)
 
 
