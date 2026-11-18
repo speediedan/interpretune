@@ -287,6 +287,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- The Neuronpedia dashboard pipeline passes the configured model wrapper (and the bridge's compatibility mode) to the legacy runner when the runner accepts `--model-wrapper`. It passed neither, so the legacy runner fell back to its hooked wrapper, which TransformerLens 4.0 cannot build, and every legacy-runner leg of the dashboard benchmark failed at model initialization. A preserved baseline that predates the option keeps its own default. ([#652](https://github.com/speediedan/interpretune/issues/652))
+
 - Docs notebook artifacts no longer name the working copy that rendered them. nbpress writes a path into any checkout of the repository repository-relative in captured output, and `--check-stale` fails on one that survives. The existing artifacts' outputs were rewritten to match, with no re-render ([#1019](https://github.com/speediedan/interpretune/issues/1019))
 
 - A Qwen3.5 checkpoint loaded through NNsight resolves its activation points again. Since NNsight 0.8.2 the adapter loads every checkpoint through `TransformersModel` for text generation, which builds Qwen3.5 as the text-only `Qwen3_5ForCausalLM` rather than `Qwen3_5ForConditionalGeneration`, and only the latter had a component map, so any point lookup was refused. `Qwen3_5ForCausalLM` now has its own bundled map, checked against the transformers class and TransformerLens' adapter like the others ([#957](https://github.com/speediedan/interpretune/issues/957))

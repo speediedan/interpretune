@@ -1702,19 +1702,7 @@ def _layer_runner_command(
             command.append(f"--clt-dtype={config.clt_dtype}")
         if config.clt_weights_filename:
             command.append(f"--clt-weights-filename={config.clt_weights_filename}")
-    if config.model_wrapper == "bridge":
-        command.append(
-            "--bridge-enable-compatibility-mode"
-            if config.bridge_enable_compatibility_mode
-            else "--no-bridge-enable-compatibility-mode"
-        )
-        if config.bridge_compatibility_mode_kwargs:
-            bridge_compatibility_kwargs_json = json.dumps(
-                config.bridge_compatibility_mode_kwargs,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            command.append(f"--bridge-compatibility-mode-kwargs-json={bridge_compatibility_kwargs_json}")
+    command.extend(_bridge_wrapper_args(config))
     if config.runner_log_resource_snapshots:
         command.append("--log-resource-snapshots")
     if config.runner_log_hook_aliases:
@@ -1806,6 +1794,21 @@ def _layer_runner_command(
     return command
 
 
+def _bridge_wrapper_args(config: NeuronpediaDashboardPipelineConfig) -> list[str]:
+    """The bridge wrapper's compatibility-mode arguments, for a runner told ``--model-wrapper=bridge``."""
+    if config.model_wrapper != "bridge":
+        return []
+    args = [
+        "--bridge-enable-compatibility-mode"
+        if config.bridge_enable_compatibility_mode
+        else "--no-bridge-enable-compatibility-mode"
+    ]
+    if config.bridge_compatibility_mode_kwargs:
+        kwargs_json = json.dumps(config.bridge_compatibility_mode_kwargs, sort_keys=True, separators=(",", ":"))
+        args.append(f"--bridge-compatibility-mode-kwargs-json={kwargs_json}")
+    return args
+
+
 def _legacy_layer_runner_command(
     config: NeuronpediaDashboardPipelineConfig,
     layer_num: int,
@@ -1876,6 +1879,12 @@ def _legacy_layer_runner_command(
                 "saedashboard_repo_root at a checkout that supports the option."
             )
         command.append(f"--capture-hook-name={config.capture_hook_name.format(layer=layer_num)}")
+    # The legacy runner defaults to the hooked wrapper, which TransformerLens 4.0 cannot build, so a runner that
+    # accepts the choice is given the configured one. A frozen baseline that predates the option keeps its hooked
+    # default: it runs under the transformer-lens 3.x interpreter it is measured with.
+    if _legacy_runner_supports_option(config.saedashboard_repo_root, "--model-wrapper"):
+        command.append(f"--model-wrapper={config.model_wrapper}")
+        command.extend(_bridge_wrapper_args(config))
     if config.runner_log_resource_snapshots and _legacy_runner_supports_option(
         config.saedashboard_repo_root, "--log-resource-snapshots"
     ):

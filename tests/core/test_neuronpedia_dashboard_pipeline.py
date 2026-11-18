@@ -1269,8 +1269,9 @@ def test_layer_runner_command_can_target_legacy_runner(tmp_path: Path) -> None:
     assert "--sequence-selection-backend=legacy" in command
     assert "--dashboard-output-format=legacy_json" in command
     assert f"--shared-tokens-file={tmp_path / 'baseline_tokens.pt'}" in command
+    # The legacy runner defaults to the hooked wrapper, which TransformerLens 4.0 cannot build.
+    assert "--model-wrapper=bridge" in command
     unsupported_legacy_flags = (
-        "--model-wrapper=bridge",
         f"--prompt-dataset-path={tmp_path / 'pretokenized_prompts'}",
         "--prompt-dataset-mode=load_from_disk",
         f"--pretokenized-dataset-path={tmp_path / 'pretokenized_prompts'}",
@@ -4568,3 +4569,30 @@ def test_legacy_runner_command_refuses_baseline_that_cannot_capture_hook(tmp_pat
     _write_fake_legacy_runner(config.saedashboard_repo_root, supports_capture_hook=False)
     with pytest.raises(ValueError, match="does not accept --capture-hook-name"):
         dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
+
+
+def test_legacy_runner_command_passes_the_configured_wrapper_when_the_runner_accepts_it(tmp_path: Path) -> None:
+    """The legacy runner defaults to the hooked wrapper, which TransformerLens 4.0 cannot build, so a current
+    runner must be told the configured wrapper, with the bridge's compatibility mode, or it fails at model init."""
+    config = dataclasses.replace(
+        _legacy_capture_hook_config(tmp_path), capture_hook_name=None, bridge_enable_compatibility_mode=True
+    )
+    runner = config.saedashboard_repo_root / "sae_dashboard" / "neuronpedia" / "neuronpedia_runner.py"
+    runner.parent.mkdir(parents=True, exist_ok=True)
+    runner.write_text('parser.add_argument("--sae-set")\nparser.add_argument("--model-wrapper")\n', encoding="utf-8")
+
+    command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
+
+    assert "--model-wrapper=bridge" in command
+    assert "--bridge-enable-compatibility-mode" in command
+
+
+def test_legacy_runner_command_leaves_a_frozen_baseline_on_its_own_wrapper(tmp_path: Path) -> None:
+    """A preserved baseline that predates ``--model-wrapper`` is passed no wrapper arguments it would reject: it
+    runs its hooked default under the transformer-lens 3.x interpreter it is measured with."""
+    config = dataclasses.replace(_legacy_capture_hook_config(tmp_path), capture_hook_name=None)
+    _write_fake_legacy_runner(config.saedashboard_repo_root, supports_capture_hook=False)
+
+    command = dashboard_pipeline._layer_runner_command(config, layer_num=0, output_dir=tmp_path / "layer_0")
+
+    assert not any(arg.startswith(("--model-wrapper", "--bridge-", "--no-bridge-")) for arg in command)
