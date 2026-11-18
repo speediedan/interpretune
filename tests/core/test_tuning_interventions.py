@@ -401,6 +401,46 @@ def test_a_configured_steering_vector_is_attached_and_scheduled_by_role(request,
     assert compiled.physical_for(0) == ("interventions.steer.operand.value",)
 
 
+@pytest.mark.parametrize(
+    "cfg_fixture",
+    [
+        pytest.param("get_it_session_cfg__tl_cust", id="tl"),
+        pytest.param("get_it_session_cfg__ns_gpt2", id="nnsight"),
+        pytest.param("get_it_session_cfg__sl_br_gpt2", id="sae_lens_bridge"),
+    ],
+)
+def test_a_configured_site_address_resolves_on_every_composition(request, cfg_fixture):
+    """One site address in ``tuning_interventions`` attaches at the first block's residual output on each
+    composition: the module ``_site`` names in that composition's own spelling (#864)."""
+    from copy import deepcopy
+
+    from interpretune.session import ITSession
+    from interpretune.tuning.sites import resolve_site
+
+    address = "point:hook_resid_post & layers:0"
+    probe = ITSession(deepcopy(request.getfixturevalue(cfg_fixture))).module
+    resolved = resolve_site(probe, address)
+    assert resolved.io == "output"
+    if cfg_fixture.startswith("get_it_session_cfg__ns"):
+        assert resolved.path == _site(probe, cfg_fixture)
+    else:  # a bridge names the block's residual output `blocks.0.hook_out`
+        assert resolved.path == "model.blocks.0.hook_out"
+    cfg = deepcopy(request.getfixturevalue(cfg_fixture))
+    cfg.module_cfg.tuning_interventions = [{"name": "steer", "site": address}]
+    assert intervention_sites(ITSession(cfg).module) == {"steer": address}
+
+
+def test_a_site_address_is_refused_on_a_model_without_a_component_map(request):
+    """The custom core model has no HF config or TransformerLens hooks, so an address cannot be placed."""
+    from copy import deepcopy
+
+    from interpretune.session import ITSession
+
+    module = ITSession(deepcopy(request.getfixturevalue("get_it_session_cfg__core_cust"))).module
+    with pytest.raises(ValueError, match="layer count|neither a TransformerLens model nor an HF model"):
+        attach_intervention(module, "steer", OpIntervention("add", D), "point:hook_resid_post & layers:0")
+
+
 def test_a_configured_op_must_be_one_a_trainable_intervention_applies():
     from interpretune.tuning.interventions import InterventionCfg, OpIntervention, attach_configured_interventions
 

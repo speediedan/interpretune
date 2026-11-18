@@ -17,6 +17,8 @@ COUNTS="${AGENT_TEMPDIRECTORY:-/tmp}/gpu_phase_counts"
 mkdir -p "$COUNTS"
 # shellcheck source=/dev/null
 source /tmp/venvs/it_dev/bin/activate
+# shellcheck source=/dev/null
+source "$(dirname "$0")/telemetry.sh"
 
 if [[ "${IT_GPU_TWO_STAGE:-0}" != 1 ]]; then
     # One-stage run (no lease tool): the first class runs the whole phase, the second has nothing left.
@@ -37,6 +39,10 @@ fi
 echo "Phase ${PHASE}, class ${CLASS}, device ${IT_GPU_DEVICE:-all}"
 
 record() { echo "$1" > "${COUNTS}/${PHASE}.${CLASS}"; }
+# The phase's own interval, measured where it runs: the step's elapsed time also holds the container round trip and
+# the venv activation, and a phase that never starts (its stage's lease not held) leaves no start event at all.
+telemetry_event kind=phase phase="$PHASE" class="$CLASS" action=start device="${IT_GPU_DEVICE:-all}"
+finish() { telemetry_event kind=phase phase="$PHASE" class="$CLASS" action=end rc="$1" ran="$2"; exit "$1"; }
 
 case "$PHASE" in
     cuda)
@@ -44,17 +50,17 @@ case "$PHASE" in
             -v --durations=50 --reruns 2 --reruns-delay 5
         rc=$?
         if (( rc == 5 )); then
-            echo "No cuda-marked test in this class."; record empty; exit 0
+            echo "No cuda-marked test in this class."; record empty; finish 0 empty
         fi
-        record ran; exit "$rc"
+        record ran; finish "$rc" ran
         ;;
     standalone|profile_ci)
         log="${COUNTS}/${PHASE}.${CLASS}.log"
         # under the job's own host leases, so without --lease
         python -m gpu_epsilon.special_tests --config pyproject.toml --mark_type="$PHASE" --allow-failures --allow-empty 2>&1 | tee "$log"
         rc=${PIPESTATUS[0]}
-        if grep -q "No tests were selected by" "$log"; then record empty; else record ran; fi
-        exit "$rc"
+        if grep -q "No tests were selected by" "$log"; then record empty; finish "$rc" empty; fi
+        record ran; finish "$rc" ran
         ;;
     *)
         echo "usage: gpu_phase.sh cuda|standalone|profile_ci small|large" >&2; exit 2 ;;

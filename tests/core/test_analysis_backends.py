@@ -1915,3 +1915,85 @@ class TestGradientInterventionOnAFrozenModel:
             )
 
         self._assert_frozen_matches_trainable(run, lm._module)
+
+
+class TestInterventionAddresses:
+    """An intervention payload key may be a venngram site address, which expands like a layer wildcard to the sites
+    it selects (#876), and is refused where the model has no such site or the address acts on the other flow."""
+
+    AVAILABLE = {f"blocks.{i}.{p}": f"blocks.{i}.{p}" for i in range(4) for p in ("hook_resid_post", "hook_in")}
+
+    def test_an_address_expands_to_its_sites_in_layer_order(self):
+        address = "point:hook_resid_post & layers:-2:"
+        expanded = expand_intervention_patterns([address], self.AVAILABLE)
+        assert expanded == {address: ["blocks.2.hook_resid_post", "blocks.3.hook_resid_post"]}
+
+    def test_a_site_the_model_does_not_expose_is_refused(self):
+        with pytest.raises(ValueError, match=r"selects blocks\.1\.attn\.hook_out, which this model does not expose"):
+            expand_intervention_patterns(["point:attn.hook_out & layers:1"], self.AVAILABLE)
+
+    def test_an_address_on_the_other_flow_is_refused(self):
+        grad, value = "point:hook_in & layers:1 & of:grad", "point:hook_in & layers:1"
+        with pytest.raises(ValueError, match="acts on gradients, and this payload edits activation values"):
+            expand_intervention_patterns([grad], self.AVAILABLE, flow="value")
+        with pytest.raises(ValueError, match="acts on values, and this payload edits gradients"):
+            expand_intervention_patterns([value], self.AVAILABLE, flow="grad")
+        assert expand_intervention_patterns([grad], self.AVAILABLE, flow="grad")[grad] == ["blocks.1.hook_in"]
+
+    def test_an_unresolvable_address_is_refused_with_the_reason(self):
+        with pytest.raises(ValueError, match="Intervention address 'point:hook_resid_post & units:3'"):
+            expand_intervention_patterns(["point:hook_resid_post & units:3"], self.AVAILABLE)
+        with pytest.raises(ValueError, match="exposes no `blocks.<layer>.` hooks"):
+            expand_intervention_patterns(["point:hook_resid_post"], {"hook_embed": "hook_embed"})
+
+    SITE, ADDRESS = "blocks.5.hook_in", "point:hook_in & layers:5"
+    IDS = torch.tensor([[464, 3139, 286, 4881, 318]])  # gpt2's "The capital of France is"
+
+    def _payload(self, key: str) -> dict:
+        return {key: {"intervention_tensor": torch.zeros(768), "op": "replace", "position_scope": "last_token"}}
+
+    def _assert_address_matches_hook_name(self, fwd) -> None:
+        by_name_pre, by_name_post = fwd(self._payload(self.SITE))
+        by_address_pre, by_address_post = fwd(self._payload(self.ADDRESS))
+        torch.testing.assert_close(by_address_pre, by_name_pre)
+        torch.testing.assert_close(by_address_post, by_name_post)
+        assert not torch.allclose(by_name_pre, by_name_post), "the positive control: the edit must move the logits"
+
+    def test_transformer_lens_forward_payload_by_address(self):
+        from transformer_lens.model_bridge import TransformerBridge
+
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+        bridge = TransformerBridge.boot_transformers("gpt2", device="cpu")
+        self._assert_address_matches_hook_name(
+            lambda payload: TLModelBackend().fwd_w_intervention(bridge, {"input": self.IDS}, payload)
+        )
+
+    def test_nnsight_forward_payload_by_address(self):
+        from nnsight import LanguageModel
+
+        lm = LanguageModel("gpt2", device_map="cpu", dispatch=True)
+        backend = NNsightModelBackend(HookNameResolver("GPT2LMHeadModel"))
+        self._assert_address_matches_hook_name(
+            lambda payload: backend.fwd_w_intervention(lm, {"input_ids": self.IDS}, payload)
+        )
+
+    def test_transformer_lens_backward_payload_and_capture_by_address(self):
+        from transformer_lens.model_bridge import TransformerBridge
+
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+        bridge = TransformerBridge.boot_transformers("gpt2", device="cpu")
+        backend = TLModelBackend()
+
+        def metric(logits: torch.Tensor) -> torch.Tensor:
+            return logits[:, -1, 1000].sum()
+
+        _, by_name, _ = backend.bwd_w_intervention(
+            bridge, {"input": self.IDS}, self._payload(self.SITE), metric, capture=["blocks.2.hook_out"]
+        )
+        capture = "point:hook_out & layers:2 & of:grad"
+        _, by_address, _ = backend.bwd_w_intervention(
+            bridge, {"input": self.IDS}, self._payload(f"{self.ADDRESS} & of:grad"), metric, capture=[capture]
+        )
+        torch.testing.assert_close(by_address[capture], by_name["blocks.2.hook_out"])

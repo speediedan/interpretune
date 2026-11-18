@@ -4436,12 +4436,9 @@ def test_shipped_gemmascope_configs_name_the_capture_hook():
     Resolved through the loader rather than grepped, because these configs use `EXTENDS:` and only
     four of the nine set the value directly.
     """
-    import pathlib as _pathlib
+    from interpretune.utils.neuronpedia_hub_fetch import CONFIG_DIR
 
-    import it_examples
-
-    config_dir = _pathlib.Path(it_examples.__file__).parent / "neuronpedia_dashboard"
-    configs = sorted(config_dir.glob("*.yaml"))
+    configs = sorted(CONFIG_DIR.glob("*.yaml"))
     assert configs, "no dashboard configs found; this guard would silently pass"
 
     for config_path in configs:

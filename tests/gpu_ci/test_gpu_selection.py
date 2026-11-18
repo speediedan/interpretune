@@ -59,6 +59,18 @@ def test_every_ci_gpu_test_is_reachable_from_an_area(spec):
         ("src/interpretune/analysis/ops/bundled/jlens/jlens_ops.py", {"jlens"}),
         ("src/interpretune/adapters/circuit_tracer/adapter.py", {"circuit_tracer"}),
         ("tests/core/test_backend_conformance.py", "self"),
+        # release-only and record files: no gate's GPU tests read them
+        ("tests/gpu_ci/reviewed_exclusions.json", "none"),
+        ("tests/gpu_ci/release.json", "none"),
+        ("tests/gpu_ci/vram_measurements.yaml", "none"),
+        ("requirements/docs.txt", "none"),
+        ("requirements/ci/requirements.txt", "full"),
+        ("tests/gpu_ci/hf_warm_manifest_gpu.yaml", "full"),
+        ("tests/gpu_ci/a_new_machinery_file.py", "full"),
+        # one notebook, or one helper, selects its users only
+        ("src/it_examples/utils/steering_demo_helpers.py", {"nb_ct_concept_steering"}),
+        ("src/it_examples/notebooks/publish/attribution_analysis/attribution_analysis.ipynb", {"nb_attribution"}),
+        ("src/interpretune/harness/notebook_ui.py", {"nb_ui"}),
     ],
 )
 def test_each_rule_class_selects_what_it_should(spec, path, expect):
@@ -71,6 +83,32 @@ def test_each_rule_class_selects_what_it_should(spec, path, expect):
         assert sel.test_modules == {path} and not sel.full
     else:
         assert expect <= sel.areas and not sel.full
+
+
+def test_a_transformer_lens_change_skips_the_circuit_tracer_conformance_class(spec):
+    """The class composes core, nnsight, circuit_tracer and sae_lens (8.4 of a full run's 22 GPU minutes), so a
+    TransformerLens change selects circuit-tracer's TL tests and the backend parity, not the class."""
+    sel = select(["src/interpretune/adapters/transformer_lens/adapter.py"], spec, ROOT)
+    prefixes = selected_prefixes(sel, spec)
+    assert "circuit_tracer" not in sel.areas and "circuit_tracer_tl" in sel.areas
+    assert not any(p.startswith("tests/core/test_backend_conformance.py") for p in prefixes), prefixes
+    assert "tests/core/test_adapters_circuit_tracer.py" in prefixes
+    sel = select(["src/interpretune/adapters/nnsight/backends.py"], spec, ROOT)
+    assert "circuit_tracer" in sel.areas, "nnsight is in the class's composition"
+
+
+def test_a_fallback_area_takes_only_what_no_narrower_area_names(spec):
+    """A new notebook or helper selects every notebook test (the fallback); a mapped one only its own users."""
+    new = select(["src/it_examples/notebooks/publish/circuit_tracer_examples/a_new_demo.ipynb"], spec, ROOT)
+    assert new.areas == {"ct_notebooks_new"} and not new.full
+    mapped = select(["src/it_examples/utils/steering_demo_helpers.py"], spec, ROOT)
+    assert "ct_notebooks_new" not in mapped.areas
+    fallback = {"paths": ["x/**"], "tests": ["t/fallback"], "fallback": True}
+    narrow = {"paths": ["x/one.py"], "tests": ["t/one"]}
+    toy = {"run_all": [], "ignore": [], "areas": {"wide": fallback, "one": narrow}}
+    assert select(["x/one.py"], toy).areas == {"one"}
+    assert select(["x/two.py"], toy).areas == {"wide"}
+    assert select(["x/one.py", "x/two.py"], toy).areas == {"one", "wide"}
 
 
 def test_a_support_module_selects_the_tests_importing_it(spec):
@@ -116,3 +154,49 @@ def test_the_selection_file_narrows_a_gpu_phase(tmp_path, spec):
     full_file = tmp_path / "full.txt"
     full_file.write_text("full\n")
     assert collected(full_file) == full
+    # a deferred `full_run_only` case leaves the phase it would otherwise be selected into, and only it
+    ct = select(["src/interpretune/adapters/circuit_tracer/adapter.py"], spec, ROOT)
+    assert ct.deferred, "a circuit-tracer change defers the class's slowest cases"
+    deferring = tmp_path / "ct.txt"
+    write_selection_file(ct, spec, deferring)
+    kept = collected(deferring)
+    every_case = {
+        n for n in full if n.startswith("tests/core/test_backend_conformance.py::TestCircuitTracerConformance")
+    }
+    assert every_case and not (kept & set(ct.deferred)), sorted(kept & set(ct.deferred))
+    assert every_case - set(ct.deferred) <= kept, sorted(every_case - set(ct.deferred) - kept)
+
+
+def test_full_run_only_entries_name_selected_gpu_tests(spec):
+    """Each entry names a collected CI GPU test an area selects, says why, names what still covers its path in a gate,
+    and the paths that keep it there: a stale or unanchored entry would defer nothing, or the wrong thing, silently."""
+    entries = spec.get("full_run_only") or []
+    assert entries
+    gpu = {i["nodeid"] for i in collect_gpu_items()}
+    prefixes = [t for a in spec["areas"].values() for t in a["tests"]]
+    for e in entries:
+        assert e["test"] in gpu, f"{e['test']} is not a collected GPU test"
+        assert any(e["test"].startswith(p) for p in prefixes), f"no area selects {e['test']}"
+        assert e.get("why") and e.get("covered_by") and e.get("unless_changed"), e
+        cls = e["test"].rsplit("::", 1)[0]
+        for case in e["covered_by"]:
+            assert f"{cls}::{case}" in gpu, f"{e['test']}: its gate coverage {case} is not a collected GPU test"
+            assert f"{cls}::{case}" not in {x["test"] for x in entries}, (
+                f"{case} covers {e['test']} but is deferred too"
+            )
+
+
+def test_the_deferral_follows_the_change_set(spec):
+    """An area change defers the entries; a change to what an entry exercises keeps it; a full run defers none."""
+    first = spec["full_run_only"][0]["test"]
+    assert first in select(["src/interpretune/adapters/circuit_tracer/adapter.py"], spec, ROOT).deferred
+    assert first not in select(["src/interpretune/testing/conformance/cases.py"], spec, ROOT).deferred
+    assert not select(["pyproject.toml"], spec, ROOT).deferred
+    toy = {
+        "run_all": [],
+        "ignore": [],
+        "areas": {"a": {"paths": ["x/**"], "tests": ["t/a.py::C"]}},
+        "full_run_only": [{"test": "t/a.py::C::slow", "unless_changed": ["x/slow.py"]}],
+    }
+    assert select(["x/fast.py"], toy).deferred == ["t/a.py::C::slow"]
+    assert select(["x/fast.py", "x/slow.py"], toy).deferred == []

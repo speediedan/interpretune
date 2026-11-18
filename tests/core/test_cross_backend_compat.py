@@ -44,7 +44,7 @@ from interpretune.analysis.ops.bundled.concept.concept_ops import extract_concep
 from interpretune.adapters.circuit_tracer.config import CircuitTracerConfig
 from interpretune.config import init_analysis_cfgs
 from tests import load_dotenv
-from it_examples.tests.notebook._harness.session import resolve_model_spec
+from tests.notebook_harness.session import resolve_model_spec
 from tests.runif import RunIf
 ###############################################################################
 # Vendored analysis fixtures: prompt-alignment, context-enhanced

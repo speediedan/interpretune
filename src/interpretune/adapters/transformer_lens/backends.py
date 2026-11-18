@@ -511,7 +511,9 @@ class TLModelBackend:
             intervention_dict = interventions
         else:
             available_hook_map = _build_available_hook_map(model, latent_model_handles=latent_model_handles)
-            expanded_matches = expand_intervention_patterns(list(interventions.keys()), available_hook_map)
+            expanded_matches = expand_intervention_patterns(
+                list(interventions.keys()), available_hook_map, flow="value"
+            )
             hook_names = [hook_name for matches in expanded_matches.values() for hook_name in matches]
             intervention_dict = None
 
@@ -578,9 +580,9 @@ class TLModelBackend:
         if isinstance(interventions, InterventionDict):
             expanded = {hook_name: [hook_name] for hook_name in interventions.keys()}
         else:
-            expanded = expand_intervention_patterns(list(interventions.keys()), available)
+            expanded = expand_intervention_patterns(list(interventions.keys()), available, flow="grad")
         sites = list(dict.fromkeys(name for matches in expanded.values() for name in matches))
-        matched = expanded if capture is None else expand_intervention_patterns(list(capture), available)
+        matched = expanded if capture is None else expand_intervention_patterns(list(capture), available, flow="grad")
         captured_names = list(dict.fromkeys(name for matches in matched.values() for name in matches))
         # A capture named exactly, in another spelling the vocabulary maps here (an SAE's own metadata names
         # `blocks.0.hook_resid_pre.hook_sae_acts_post` where a bridge exposes `blocks.0.hook_in...`), is reported as the
