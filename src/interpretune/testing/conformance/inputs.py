@@ -236,14 +236,12 @@ class ConformanceInputs:
     def seed_config(self, flavour: str = "hf", module_cfg_extras: dict | None = None):
         """The seed's ``(datamodule_cfg, module_cfg, datamodule_cls, module_cls)`` for a data-pipeline flavour.
 
-        Cache-only after ``ensure_local_seeds``; never touches the network. The module cfg returned is the
-        seed's, which a target may reuse (its adapter-agnostic fields: auto-composition, generation, HF
-        loading) or replace.
+        Cache-only (the seed revision must already be cached); never touches the network. The module cfg returned is the
+        seed's, which a target may reuse (its adapter-agnostic fields: auto-composition, generation, HF loading) or
+        replace.
         """
         from interpretune.hub.api import load as hub_load
-        from it_examples.seeds import ensure_local_seeds
 
-        ensure_local_seeds()
         if flavour == "hf":
             return self._adapter_free_seed(module_cfg_extras)
         try:

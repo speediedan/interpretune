@@ -45,6 +45,23 @@ def rte_entrypoint_src() -> Path:
     return snapshot / "rte_boolq.py"
 
 
+def rte_component_tree(dest: Path) -> Path:
+    """A component tree holding ``<dest>/rte``, copied from the warmed ``speediedan/rte`` snapshot; returns
+    ``dest``.
+
+    Hydrator-mode registry tests need a tree on disk to index, copy or mutate. It comes from the pinned seed revision
+    rather than the in-tree publish source, so those tests do not depend on ``it_examples``.
+    """
+    import shutil
+
+    from interpretune.hub.components import resolve_component_manifest
+    from interpretune.testing.conformance.inputs import SEED_REPO, SEED_REVISION
+
+    _, snapshot, _ = resolve_component_manifest(SEED_REPO, revision=SEED_REVISION)
+    shutil.copytree(snapshot, dest / "rte", ignore=shutil.ignore_patterns("__pycache__"))
+    return dest
+
+
 def rte_entrypoint_module() -> ModuleType:
     """Import the cached ``speediedan/rte`` entrypoint (or the component owning the stem)."""
     from interpretune.hub.entrypoints import find_entrypoint_owner, import_snapshot_entrypoint
@@ -71,4 +88,4 @@ def __getattr__(name: str):
 
 
 def __dir__() -> list[str]:
-    return sorted(set(_KNOWN) | {"rte_entrypoint_src", "rte_entrypoint_module"})
+    return sorted(set(_KNOWN) | {"rte_entrypoint_src", "rte_entrypoint_module", "rte_component_tree"})

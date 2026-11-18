@@ -18,11 +18,10 @@ _EXAMPLES_ROOT = _PKG_ROOT / "examples"
 # whose entrypoint lives inside the component dir). Seed repos live under the maintainer org by
 # convention; users publish their OWN components under their own orgs.
 #
-# speediedan/rte left this table when the experiment moved to the Hub: it is Hub-resident now, and tests resolve it
-# from the warmed components cache instead of a local publish.
-SEED_COMPONENTS: dict[str, tuple[Path, Path | None]] = {
-    "speediedan/prompt-configs": (_EXAMPLES_ROOT / "prompt_configs", None),
-}
+# Empty: speediedan/rte and speediedan/prompt-configs are Hub-resident, and tests resolve both from the warmed
+# components cache instead of a local publish. The in-tree trees remain publish sources until the examples move, and
+# ensure_local_seeds stays a no-op so the notebooks that call it keep running.
+SEED_COMPONENTS: dict[str, tuple[Path, Path | None]] = {}
 
 
 def ensure_local_seeds(cache_dir: Path | None = None) -> dict[str, str]:
