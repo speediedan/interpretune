@@ -94,10 +94,10 @@ act_ckpt = {
 cuda_act = {**cuda, **act_ckpt}
 cust_no_sae_grad = {
     "req_grad_mask": {
-        "blocks.0.hook_resid_pre.b_enc": False,
-        "blocks.0.hook_resid_pre.W_dec": False,
-        "blocks.0.hook_resid_pre.W_enc": False,
-        "blocks.0.hook_resid_pre.b_dec": False,
+        "blocks.0.hook_resid_post.b_enc": False,
+        "blocks.0.hook_resid_post.W_dec": False,
+        "blocks.0.hook_resid_post.W_enc": False,
+        "blocks.0.hook_resid_post.b_dec": False,
     }
 }
 
