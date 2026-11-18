@@ -46,6 +46,24 @@ architectures:
 Fine-Tuning Scheduler reports what it thaws in physical parameters, so a GPT-2 block thawed by name counts 18: its 16
 named tensors and the fused `qkv` weight and bias they are views of. Its norms are thawed with it.
 
+A schedule may also select by venngram address, which means the same tensors on this composition as on the core/HF
+and nnsight compositions of the same model:
+
+```yaml
+0:
+  params:
+  - layers:-3: & component:attn.*
+1:
+  params:
+  - component:mlp.* & layers:-6:
+```
+
+The view places each tensor through the component map of the model the bridge wraps, the map the other compositions'
+views use. The bridge rewires that model in place, so the view recovers each tensor's original name from the names its
+components record and locates it with the map of a skeleton of the model built on the meta device. Where no published
+map describes the model, the view keeps venngram's physical structure, which places no components, so a `component:`
+term is refused.
+
 ## LoRA adapters
 
 A TransformerLens composition takes PEFT LoRA adapters through the same setting as a core composition,

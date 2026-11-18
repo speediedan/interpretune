@@ -520,5 +520,39 @@ tool:
 - Either class may be empty on its own. A full run fails only when a phase ran nothing in both classes.
 - Without the lease tool mounted, the job takes one whole-server lease and runs each phase once.
 
+**Build telemetry.** Every GPU build that collects its phases publishes `it-phases/telemetry/build_telemetry.json`
+beside its phase evidence (`tests/gpu_ci/build_telemetry.py`). It joins:
+
+- the planner's record (`telemetry/plan.json`): the build's identity (repository, build, merge revision, pull request
+  and its head), the mode and why, the areas and the change set the selection came from;
+- each phase's selected count, its outcomes from the phase report, and the full phase that count is a fraction of. A
+  selected run collects the phase a second time without its selection file, at the same revision, for that
+  denominator. `raw_collection` is the whole test collection, not the GPU phase;
+- each phase class's interval, measured inside the job (`gpu_phase.sh`), and each lease stage's waits, acquisition
+  (with the device UUIDs it covers) and release (`gpu_stage_lease.sh`). `wait_s` is queueing and `held_s` is holding:
+  a long wait is not device use.
+
+A report is joined only to the manifest whose digest it records, at the plan's revision, and evidence that does not
+bind is refused by name. Anything missing (an interval that never ended, a lease with no recorded release, a
+denominator not collected) is listed in `unknowns`, never counted as zero.
+
+**On-demand report.** `tests/gpu_ci/ci_report.py` reads a window of the pipeline's builds (their timelines and evidence
+artifacts) and main's history, and writes a JSON record plus a Markdown summary:
+
+```bash
+git fetch origin main
+python -m tests.gpu_ci.ci_report --since 2026-11-11 --org https://dev.azure.com/<org> --project interpretune \
+    --definition <id> --out report.json --markdown report.md   # AZURE_DEVOPS_EXT_PAT set
+```
+
+Per week it reports builds by reason, GPU-agent and `Testing` task minutes, device-held minutes, selected against full
+counts on gated builds, and the share of gated builds selecting each area. For each full run of main it lists the merges
+since the preceding green full run with each one's last gate before merging, and classes every failure: `selected` (a
+merged gate selected the test), `miss` (every merge has gate evidence and none selected it) or `undetermined` (a merge
+without readable gate evidence, such as an expired artifact, a cancelled gate or a commit pushed without a pull request,
+might have). It also reports the minutes from each merge to the first full run of main that contains it. A build that
+predates the telemetry record is assembled from its manifests and reports, and what it cannot say (denominators, lease
+holds) stays unknown in the counts rather than zero.
+
 Class-level `RunIf` marks select every test the class collects: `_marked` in `tests/conftest.py` reads
 `item.iter_markers()`, so a mark on the class is seen by every phase.

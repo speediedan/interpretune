@@ -286,11 +286,52 @@ def _validate_intervention_spec(
     )
 
 
+_BLOCK_LAYER = re.compile(r"^blocks\.(\d+)\.")
+
+
+def _address_sites(pattern: str, available_hook_map: Mapping[str, str], flow: str | None) -> list[str] | None:
+    """The sites a venngram site address selects, in layer order, or ``None`` when ``pattern`` is not an address.
+
+    The address is evaluated by :func:`~interpretune.analysis.venngram.sites.resolve_sites` over the model's block
+    stack, whose depth is read from the ``blocks.<layer>.`` hooks the model exposes.
+    """
+    from venngram.address import is_address
+
+    if not is_address(pattern):
+        return None
+    from interpretune.analysis.venngram.sites import resolve_sites
+
+    layers = [int(m.group(1)) for name in available_hook_map if (m := _BLOCK_LAYER.match(name))]
+    if not layers:
+        raise ValueError(
+            f"Intervention address '{pattern}': the model exposes no `blocks.<layer>.` hooks to resolve it"
+        )
+    try:
+        selection = resolve_sites(pattern, n_layers=max(layers) + 1)
+    except Exception as err:  # venngram's and the vocabulary's refusals arrive as several exception types
+        raise ValueError(f"Intervention address '{pattern}': {err}") from err
+    if flow is not None and selection.flow != flow:
+        surface = "gradients (`bwd_w_intervention`)" if flow == "grad" else "activation values (`fwd_w_intervention`)"
+        raise ValueError(
+            f"Intervention address '{pattern}' acts on {'gradients' if selection.flow == 'grad' else 'values'}, and"
+            f" this payload edits {surface}: "
+            + ("write it with `of: grad`" if flow == "grad" else "drop `of: grad`, or apply it through the backward op")
+        )
+    return list(selection.sites)
+
+
 def expand_intervention_patterns(
     patterns: Sequence[str],
     available_hook_map: Mapping[str, str],
+    *,
+    flow: str | None = None,
 ) -> dict[str, list[str]]:
     """Expand raw hook-name patterns to ordered lists of concrete hook names.
+
+    A pattern may also be a venngram site address (``point:hook_resid_post & layers:-4:``), which expands like a layer
+    wildcard to the sites it selects, in layer order, each matched as an exact hook name would be. A site the model
+    does not expose is refused rather than mapped onto a nearby hook. With ``flow`` (``value`` for a forward payload,
+    ``grad`` for a backward one), an address acting on the other flow is refused.
 
     Every spelling of a pattern's point in the vocabulary (the pattern itself, its canonical component form, the
     semantic names of the same slot, and the registered aliases of each) is tried against the backend's available
@@ -314,14 +355,21 @@ def expand_intervention_patterns(
             variants = tuple("blocks.*." + v[len("blocks.0.") :] for v in variants)
         return variants
 
+    def _exact(name: str) -> str | None:
+        return next((available_hook_map[v] for v in _pattern_variants(name) if v in available_hook_map), None)
+
     expanded: dict[str, list[str]] = {}
     for pattern in patterns:
+        if (sites := _address_sites(pattern, available_hook_map, flow)) is not None:
+            actual = {site: _exact(site) for site in sites}
+            if missing := [site for site, name in actual.items() if name is None]:
+                raise ValueError(
+                    f"Intervention address '{pattern}' selects {', '.join(missing)}, which this model does not expose"
+                )
+            expanded[pattern] = list(dict.fromkeys(name for name in actual.values() if name is not None))
+            continue
         if "*" not in pattern:
-            matched_actual = None
-            for candidate_pattern in _pattern_variants(pattern):
-                matched_actual = available_hook_map.get(candidate_pattern)
-                if matched_actual is not None:
-                    break
+            matched_actual = _exact(pattern)
             if matched_actual is None:
                 raise ValueError(f"Intervention pattern '{pattern}' did not match any available hook names")
             expanded[pattern] = [matched_actual]

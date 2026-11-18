@@ -62,7 +62,8 @@ addresses and roles are the same for both targets ([parameter targets](#paramete
   gate projections, so the adapter is placed on each of those slices. The units are the `units` argument, never part
   of the target's address ([#868](https://github.com/speediedan/interpretune/issues/868)).
 - `weight_form(module, recipe)` materializes a per-neuron recipe (unit `scale` and `add` at `mlp.out`'s input, at
-  token scope `all`) as the weight edits it equals, below, and `check_weight_equivalence` compares the two forms of an
+  token scope `all`) or an output rejection (a whole-activation `reject` or `project` at `mlp.out`'s output) as the
+  weight edits it equals, below, and `check_weight_equivalence` compares the two forms of an
   edit on a batch.
 
 Addresses resolve through the module's tunable view, so a target is written as a schedule's is
@@ -84,13 +85,30 @@ sites. For $y = W x + b$:
 | --- | --- |
 | scale column $j$ of $W$ by $k$ | `scale` unit $j$ of $x$ by $k$ |
 | $b' = b + d W_{:,j}$ | `add` dose $d$ to unit $j$ of $x$ |
-| $W' = (I - \alpha u u^{\top}) W$ | `reject` $u$ with fraction $\alpha$ from $W x$ |
+| $W' = (I - \alpha u u^{\top}) W$ and $b' = (I - \alpha u u^{\top}) b$ | `reject` $u$ with fraction $\alpha$ from $W x + b$ |
 | $W' = W - \beta u v^{\top}$ | none at one site: $\Delta y = -\beta u (v^{\top} x)$ reads the input and writes the output |
 
 Ops on one input compose in order, so a later `scale` scales an earlier `add` too: with the ops' combined effect
-$x \mapsto s \odot x + a$, the weight form is $W \operatorname{diag}(s)$ with the bias patch $b + W a$, taken from the
-unedited $W$. A token-scoped op has no weight form, and a general low-rank or dense patch needs a parameter target.
+$x \mapsto s \odot x + a$, the weight form is $W \mathrm{diag}(s)$ with the bias patch $b + W a$, taken from the
+unedited $W$. A whole-activation `reject` or `project` at `mlp.out`'s output (its stage's site is
+`blocks.<layer>.mlp.out.hook_out`) acts after them, as in the forward, so it edits the output side of the edited weight
+and bias alike; a span of several vectors takes the projector $V V^{+}$ in place of $u u^{\top}$. A token-scoped op has
+no weight form, and a general low-rank or dense patch needs a parameter target.
 venngram's parameter op vectors state these equivalences, and interpretune's edits are tested against them.
+
+The `weight_equivalence_check` analysis op checks the equivalence on a model, batch by batch: it applies a recipe's
+weight form and runs the forward, takes the form back, then runs the recipe's activation form through the model
+backend's own intervention path (`fwd_w_intervention`), and records the greatest absolute logit difference
+(`we_max_abs_diff`), the greatest logit magnitude (`we_max_abs`) and the verdict (`we_equivalent`). A recipe with no
+exact weight form is refused with the reason before any forward runs. Unit ops need the unit axis of `mlp.out`'s weight
+(an output span needs only its output side), so the weight form resolves through the module's view when that view places
+units, else through venngram's registry map for the model the module carries, and a model whose map records no `layout`
+is refused where the recipe has unit ops. A `TransformerBridge` renames the modules of the model it wraps, so no
+published map describes it and the op refuses it (resolving maps through the modules the bridge wraps is tracked in
+[#1055](https://github.com/speediedan/interpretune/issues/1055)); an nnsight composition registers the model's own
+modules and is described by its map. The model-backend conformance suite runs the same comparison for a per-neuron
+recipe on every target whose view places units, and for an output rejection on every target whose view resolves
+`mlp.out`, each together with a check that taking the weight form back restores the base logits exactly.
 
 ## Surfaces
 
@@ -197,7 +215,12 @@ through `module.replacement_model`, and stores Arrow-safe intervention summaries
 `model_fwd_intervention` is the model-level op for direct tensor interventions. It accepts either explicit
 `interventions` / `interventions_json` mappings or the shorthand `intervention_hook_pattern`, `intervention_op`,
 `intervention_scale_factor` and `intervention_use_intervention_tensor_as_basis` fields; explicit mappings take
-precedence. Concept-direction notebook experiments use this surface for direct-projection phases, including
+precedence. A payload key, or the shorthand's `intervention_hook_pattern`, may be a hook name, a pattern, or a venngram
+site address, which names one activation the same way on every backend: `point:hook_resid_post & layers:13` rather
+than one backend's module path. An address expands like a layer wildcard, to the sites it selects in layer order
+(`point:hook_resid_post & layers:-4:` is the last four blocks' residual stream), each matched as its hook name would
+be. A site the model does not expose is refused rather than mapped onto a nearby hook, and an address saying
+`of: grad` is refused here: it names a gradient, which `model_bwd_intervention` edits. Concept-direction notebook experiments use this surface for direct-projection phases, including
 configurations that inject the computed `concept_direction` as the `intervention_tensor` for a non-default hook
 such as `blocks.0.hook_in` with the `project` op.
 
@@ -361,7 +384,8 @@ forward pass.
   `interpretune.analysis.venngram.resolve_sites` evaluates over the model's block stack. A site address sets
   `point` (a spelling of the activation-point vocabulary, such as `hook_resid_post`), `layers` and `of`, and combines
   terms with `&`, `|`, `-` and `@<set>` references (`grad_capture_sets` supplies the book's sets). An address read for
-  gradients must say `of: grad`.
+  gradients must say `of: grad`. A payload key may be an address too, as on the forward surface, and must say
+  `of: grad` for the same reason.
 - **Recipes**: `recipe_interventions(recipe, ..., flow="grad")` translates a recipe's ops on `of: grad` targets into
   the same specs a value op becomes, for this op; the default `flow="value"` translates its value ops. A recipe's ops
   are translated for one flow at a time, and an op on the other flow is refused.
@@ -482,7 +506,7 @@ What each core op preserves and what it moves, in one place:
   tensor times `scale_factor` (a scalar, or a per-unit multiplier with ones where units are left
   alone), so a tensor of ones is the identity.
 - `replace_with_error`: preserves the forward value exactly and moves only the gradient. For an operand $o$ (a latent
-  model's reconstruction) at an activation $x$ it gives $o + \operatorname{sg}(x - o)$, where $\operatorname{sg}$
+  model's reconstruction) at an activation $x$ it gives $o + \mathrm{sg}(x - o)$, where $\mathrm{sg}$
   stops the gradient: the forward value is $x$, and the gradient reaches $o$ rather than $x$. It is the straight-through
   substitution a spliced latent model trains with ([latent models](tuning_latent_models.md)); in an analysis pass,
   where nothing differentiates, it is the identity.
@@ -523,6 +547,8 @@ The registered analysis ops (all callable as `it.<name>(...)`):
 - `intervention_first_order_check`: checks an applied intervention against its first-order prediction per basis.
   The prediction is the linearization attribution patching uses to estimate an activation patch without applying it;
   this op applies the intervention and compares the measured change with that estimate.
+- `weight_equivalence_check`: checks that a per-neuron recipe's or an output rejection's weight form gives the same logits as its activation
+  form through the model backend ([parameter targets](#parameter-targets)).
 - `compute_attribution_graph` (`ct_graph`), `graph_node_influence` (`ct_node_influence`),
   `extract_top_features` (`ct_top_features`), `feature_intervention_forward` (`ct_feature_intervention`),
   `model_fwd_intervention` (`direction_intervention` / `direct_concept_direction_intervention`).
