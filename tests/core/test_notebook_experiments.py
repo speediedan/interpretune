@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import it_examples
 import pytest
 
 from interpretune.harness.experiments import (
@@ -221,14 +220,10 @@ class TestExperimentHooks:
     def test_gemma_spelling_resolves_through_the_prompt_registry(self, tmp_path):
         """The harness seam for model-family spellings: registry, not an examples import."""
         from interpretune.harness.nb_harness_utils import _gemma_prompt_config
-        from interpretune.hub.components import local_publish
+        from tests.prompt_configs_component import publish_prompt_configs
 
         cache = tmp_path / "components"
-        local_publish(
-            Path(it_examples.__file__).parent / "examples" / "prompt_configs",
-            "speediedan/prompt-configs",
-            cache_dir=cache,
-        )
+        publish_prompt_configs(cache)
         cfg = _gemma_prompt_config(cache_dir=cache)
         assert cfg.B_TEXT == "<bos>"
         assert callable(cfg.apply_chat_template_fn) and callable(cfg.model_chat_template_fn)
