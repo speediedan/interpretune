@@ -168,8 +168,11 @@ class FTSCoreCallback:
     def _install(self, ctx: Any) -> None:
         """Make the tuning scheduler's optimizer the module's (it can change at a phase transition), with no
         module-owned lr schedulers left for the loop to step."""
+        from interpretune.runners.distributed import step_per_tensor
+
         assert self.tuning_scheduler is not None
         optimizers, lr_scheduler_configs = [self.tuning_scheduler.optimizer], []
+        step_per_tensor(optimizers, ctx.dist_run)
         state = getattr(ctx.module, "_it_state", None)
         if state is not None:
             state._it_optimizers, state._it_lr_scheduler_configs = optimizers, lr_scheduler_configs
