@@ -135,7 +135,13 @@ def select(changed: list[str], spec: dict, root: Path | None = None) -> Selectio
         if _matches(path, spec["ignore"]):
             sel.reasons[path] = "ignore"
             continue
-        hit = sorted(name for name, area in spec["areas"].items() if _matches(path, area["paths"]))
+        hit = sorted(
+            name for name, area in spec["areas"].items() if not area.get("fallback") and _matches(path, area["paths"])
+        )
+        if not hit:  # a `fallback` area takes a path only no narrower area names (a new notebook, a new helper)
+            hit = sorted(
+                name for name, area in spec["areas"].items() if area.get("fallback") and _matches(path, area["paths"])
+            )
         sel.areas.update(hit)
         if _is_test_module(path):
             sel.test_modules.add(path)

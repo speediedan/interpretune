@@ -186,8 +186,8 @@ jobs:
       vendor: ${{ parameters.vendor }}
       jobClass: ci-any-vendor
       images: ${{ parameters.images }}
-      # A gate can wait up to 40 minutes for each host lease before the GPU phases, on top of a run of about 35
-      # minutes (install plus the three GPU phases). A scheduled run waits up to two hours for the leases, and the
+      # A gate can wait up to 80 minutes for the host leases in all (waits of 40 minutes, retried while that budget
+      # lasts, shared by both stages) on top of a run of about 35 minutes (install plus the three GPU phases). A scheduled run waits up to two hours for the leases, and the
       # weekly and release runs add the extended tiers, so those builds get more room.
       ${{ if or(eq(variables['Build.Reason'], 'Schedule'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'), startsWith(variables['Build.SourceBranch'], 'refs/tags/'), eq(parameters.extended, true)) }}:
         timeoutInMinutes: 300

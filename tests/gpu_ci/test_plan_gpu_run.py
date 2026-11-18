@@ -9,6 +9,7 @@ import pytest
 
 from tests.gpu_ci.plan_gpu_run import (
     FULL_LABEL,
+    PR_LEASE_BUDGET,
     PR_LEASE_WAIT,
     SCHEDULED_LEASE_WAIT,
     WEEKLY_SCHEDULE,
@@ -66,6 +67,8 @@ def test_a_pull_request_gate_selects(spec):
     plan = _plan(spec)
     assert plan.mode == "selected" and "jlens" in plan.selection.areas
     assert (plan.lease_wait, plan.on_lease_timeout) == (PR_LEASE_WAIT, "fail")
+    # two waits' worth for both stages together, so a wait that times out is retried within the old worst case
+    assert plan.lease_budget == PR_LEASE_BUDGET == 2 * PR_LEASE_WAIT
 
 
 @pytest.mark.parametrize(
@@ -109,6 +112,7 @@ def test_scheduled_runs_wait_longer_and_cancel_instead_of_failing(spec):
     for plan in (nightly, weekly):
         assert plan.mode == "full"
         assert (plan.lease_wait, plan.on_lease_timeout) == (SCHEDULED_LEASE_WAIT, "cancel")
+        assert plan.lease_budget == SCHEDULED_LEASE_WAIT  # one deadline across both stages, as before
     assert not nightly.extended and weekly.extended
 
 
@@ -130,6 +134,7 @@ def test_the_exported_variables(spec):
     assert "##vso[task.setvariable variable=IT_GPU_SELECTION_MODE]selected" in lines
     assert f"##vso[task.setvariable variable=IT_GPU_SELECTION_FILE]{sel_file}" in lines
     assert "##vso[task.setvariable variable=IT_GPU_LEASE_ON_TIMEOUT]fail" in lines
+    assert f"##vso[task.setvariable variable=IT_GPU_LEASE_BUDGET]{PR_LEASE_BUDGET}" in lines
 
 
 def _git(cwd: Path, *args: str) -> str:
