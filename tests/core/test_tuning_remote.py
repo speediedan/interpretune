@@ -12,6 +12,7 @@ from interpretune.tuning.remote import (
     RemoteIdentity,
     RemoteTuningRefusal,
     check_role,
+    run_remote_chunk,
 )
 
 
@@ -155,3 +156,115 @@ class TestLedger:
     def test_a_ledger_starts_at_chunk_zero(self):
         with pytest.raises(RemoteTuningRefusal, match="chunk 0"):
             RemoteCheckpointLedger(_chunk(1))
+
+
+D_MODEL = 16
+
+
+@pytest.fixture(scope="module")
+def tiny_lm(tmp_path_factory):
+    """A seeded random tiny GPT-2 served through nnsight, standing in for the remote frozen base."""
+    from nnsight import TransformersModel
+    from transformers import AutoTokenizer, GPT2Config, GPT2LMHeadModel
+
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    torch.manual_seed(0)
+    config = GPT2Config(n_layer=2, n_head=2, n_embd=D_MODEL, vocab_size=len(tokenizer), n_positions=16)
+    path = tmp_path_factory.mktemp("tiny_gpt2_remote")
+    GPT2LMHeadModel(config).eval().save_pretrained(path)
+    tokenizer.save_pretrained(path)
+    return TransformersModel(str(path), task="text-generation", device="cpu", dispatch=True)
+
+
+def _batches(n: int, start: int = 0) -> list[torch.Tensor]:
+    return [torch.randint(0, 100, (2, 6), generator=torch.Generator().manual_seed(i)) for i in range(start, start + n)]
+
+
+def _apply(model, params):
+    # GPT-2's block returns its hidden states as a tensor here, so ``output[0]`` would be batch row 0 alone.
+    site = model.transformer.h[0]
+    site.output = site.output + params["intervention:steer"]
+
+
+def _loss(model, batch):
+    return model.lm_head.output[:, -1, 7].mean()
+
+
+def _initial() -> RemoteChunkState:
+    params = {"intervention:steer": torch.zeros(D_MODEL)}
+    identity = RemoteIdentity.for_params("tiny-gpt2", "local", params)
+    return RemoteChunkState(identity=identity, chunk_index=0, step=0, params=params)
+
+
+def _oracle(lm, batches):
+    """The same training in plain torch on the HF model: a forward hook adds the steering vector."""
+    hf = lm._module
+    steer = torch.nn.Parameter(torch.zeros(D_MODEL))
+    opt = torch.optim.AdamW([steer], lr=0.1)
+    hook = hf.transformer.h[0].register_forward_hook(lambda m, i, o: o + steer)
+    losses = []
+    try:
+        for ids in batches:
+            loss = hf(ids).logits[:, -1, 7].mean()
+            loss.backward()
+            opt.step()
+            opt.zero_grad()
+            losses.append(loss.item())
+    finally:
+        hook.remove()
+        hf.zero_grad(set_to_none=True)
+    return steer.detach(), opt.state_dict(), losses
+
+
+class TestSessionChunk:
+    KW = dict(optimizer="AdamW", optimizer_kwargs={"lr": 0.1}, remote=False)
+
+    def test_matches_a_plain_torch_oracle_and_leaves_the_base_unchanged(self, tiny_lm):
+        base = {k: v.clone() for k, v in tiny_lm._module.state_dict().items()}
+        state, losses = run_remote_chunk(tiny_lm, _initial(), _batches(4), _apply, _loss, **self.KW)
+        tiny_lm._module.zero_grad(set_to_none=True)
+        steer, opt_state, oracle_losses = _oracle(tiny_lm, _batches(4))
+        assert losses == pytest.approx(oracle_losses, abs=1e-6)
+        torch.testing.assert_close(state.params["intervention:steer"], steer)
+        torch.testing.assert_close(state.optimizer_state["state"][0]["exp_avg"], opt_state["state"][0]["exp_avg"])
+        assert state.params["intervention:steer"].abs().sum() > 0  # it trained
+        assert (state.chunk_index, state.step, state.data_cursor) == (1, 4, 4)
+        after = tiny_lm._module.state_dict()
+        assert all(torch.equal(base[k], after[k]) for k in base)
+
+    def test_two_chunks_resume_exactly_one_uninterrupted_chunk(self, tiny_lm):
+        whole, _ = run_remote_chunk(tiny_lm, _initial(), _batches(4), _apply, _loss, **self.KW)
+        ledger = RemoteCheckpointLedger(_initial())
+        for start in (0, 2):
+            returned, _ = run_remote_chunk(tiny_lm, ledger.committed, _batches(2, start), _apply, _loss, **self.KW)
+            assert ledger.commit(returned)
+        resumed = ledger.committed
+        torch.testing.assert_close(resumed.params["intervention:steer"], whole.params["intervention:steer"])
+        torch.testing.assert_close(
+            resumed.optimizer_state["state"][0]["exp_avg_sq"], whole.optimizer_state["state"][0]["exp_avg_sq"]
+        )
+        assert (resumed.step, resumed.data_cursor) == (whole.step, whole.data_cursor)
+
+    def test_dropping_the_optimizer_state_breaks_resume_parity(self, tiny_lm):
+        """The planted defect the parity check exists for: a resume that restarts the optimizer still trains, and
+        still returns a plausible loss, but does not reach the uninterrupted result."""
+        whole, _ = run_remote_chunk(tiny_lm, _initial(), _batches(4), _apply, _loss, **self.KW)
+        first, _ = run_remote_chunk(tiny_lm, _initial(), _batches(2), _apply, _loss, **self.KW)
+        first.optimizer_state = {}
+        second, losses = run_remote_chunk(tiny_lm, first, _batches(2, 2), _apply, _loss, **self.KW)
+        assert all(abs(x) < 10 for x in losses)
+        assert not torch.allclose(second.params["intervention:steer"], whole.params["intervention:steer"])
+
+    def test_a_role_outside_the_phase_keeps_its_value(self, tiny_lm):
+        params = {"intervention:steer": torch.zeros(D_MODEL), "intervention:idle": torch.ones(3)}
+        start = RemoteChunkState(RemoteIdentity.for_params("tiny-gpt2", "local", params), 0, 0, params)
+        state, _ = run_remote_chunk(
+            tiny_lm, start, _batches(2), _apply, _loss, train_roles=["intervention:steer"], **self.KW
+        )
+        torch.testing.assert_close(state.params["intervention:idle"], torch.ones(3))
+        with pytest.raises(RemoteTuningRefusal, match="not in this run's layout"):
+            run_remote_chunk(tiny_lm, start, _batches(1), _apply, _loss, train_roles=["adapter:nope"], **self.KW)
+
+    def test_an_unknown_optimizer_is_refused(self, tiny_lm):
+        with pytest.raises(RemoteTuningRefusal, match="not a torch.optim optimizer"):
+            run_remote_chunk(tiny_lm, _initial(), _batches(1), _apply, _loss, optimizer="Nope", remote=False)

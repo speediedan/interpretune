@@ -24,7 +24,7 @@ as it was, and the next chunk starts again from it.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -274,3 +274,84 @@ def _feed(h: Any, obj: Any) -> None:
         h.update(b"]")
     else:
         h.update(repr(obj).encode())
+
+
+def run_remote_chunk(
+    model: Any,
+    state: RemoteChunkState,
+    batches: Sequence[Any],
+    apply_roles: Callable[[Any, Mapping[str, torch.Tensor]], None],
+    loss_fn: Callable[[Any, Any], torch.Tensor],
+    *,
+    optimizer: str = "AdamW",
+    optimizer_kwargs: Mapping[str, Any] | None = None,
+    train_roles: Sequence[str] | None = None,
+    remote: bool | str = True,
+) -> tuple[RemoteChunkState, list[float]]:
+    """Run one bounded chunk of a remote tuning run, and return the next state and the chunk's losses.
+
+    Everything trainable is built inside the session, as nnsight's remote training pattern requires: each role's
+    tensor (from ``state``, on the device of the model's first parameter-holding module), the optimizer (its state
+    restored from ``state``), and the loop. One ``model.trace`` per batch applies the roles (``apply_roles``), computes
+    ``loss_fn(model, batch)`` and backpropagates; the optimizer steps after it. Only plain tensors come back.
+
+    Args:
+        model: An nnsight model (``TransformersModel``/``LanguageModel``) serving the frozen base.
+        state: The committed state this chunk starts from.
+        batches: The chunk's batches, in order; the returned data cursor advances by their count.
+        apply_roles: Called inside each trace with the model and the role tensors; edits the model's activations.
+        loss_fn: Called inside each trace after ``apply_roles``; returns the scalar loss.
+        optimizer: A ``torch.optim`` class name.
+        optimizer_kwargs: Its keyword arguments.
+        train_roles: The roles this chunk trains (the phase); the rest keep their values. Defaults to every role.
+        remote: Passed to ``model.session``: ``True`` for NDIF, ``"local"`` to simulate its serialization, ``False``
+            to run in process.
+
+    Returns:
+        The next state (``chunk_index + 1``) and the per-batch losses. Commit the state through
+        :class:`RemoteCheckpointLedger`; nothing about it is final until then.
+    """
+    import nnsight
+
+    roles = [role for role, _, _ in state.identity.layout]
+    training = set(roles if train_roles is None else train_roles)
+    unknown = sorted(training - set(roles))
+    if unknown:
+        raise RemoteTuningRefusal(f"Roles {unknown} are not in this run's layout {roles}.")
+    opt_cls = getattr(torch.optim, optimizer, None)
+    if not (isinstance(opt_cls, type) and issubclass(opt_cls, torch.optim.Optimizer)):
+        raise RemoteTuningRefusal(f"{optimizer!r} is not a torch.optim optimizer.")
+    initial = {role: state.params[role].detach().clone() for role in roles}
+    opt_state, kwargs, rng_state = state.optimizer_state, dict(optimizer_kwargs or {}), state.rng_state
+
+    with model.session(remote=remote):
+        device = next(model.parameters()).device
+        params = {role: torch.nn.Parameter(initial[role].to(device), requires_grad=role in training) for role in roles}
+        opt = opt_cls(list(params.values()), **kwargs)
+        if opt_state:
+            opt.load_state_dict(opt_state)
+        if rng_state is not None:
+            torch.random.set_rng_state(rng_state)
+        losses = nnsight.save([])
+        for batch in batches:
+            with model.trace(batch):
+                apply_roles(model, params)
+                loss = loss_fn(model, batch)
+                loss.backward()
+            opt.step()
+            opt.zero_grad()
+            losses.append(loss.detach().item())
+        trained = nnsight.save({role: p.detach().cpu().clone() for role, p in params.items()})
+        new_opt_state = nnsight.save(opt.state_dict())
+        new_rng = nnsight.save(torch.random.get_rng_state())
+
+    next_state = RemoteChunkState(
+        identity=state.identity,
+        chunk_index=state.chunk_index + 1,
+        step=state.step + len(batches),
+        params=dict(trained),
+        optimizer_state=_to_cpu(new_opt_state),
+        data_cursor=state.data_cursor + len(batches),
+        rng_state=new_rng,
+    )
+    return next_state, list(losses)
