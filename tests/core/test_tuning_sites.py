@@ -7,8 +7,22 @@ import pytest
 import torch
 from torch import nn
 
-from interpretune.tuning.interventions import OpIntervention, attach_intervention, intervention_sites
-from interpretune.tuning.latents import LatentSite, attach_latent_model, latent_model_sites
+from interpretune.tuning.interventions import (
+    OpIntervention,
+    attach_intervention,
+    detach_intervention,
+    intervention_placements,
+    intervention_roles,
+    intervention_sites,
+)
+from interpretune.tuning.latents import (
+    LatentSite,
+    attach_latent_model,
+    detach_latent_model,
+    latent_model_placements,
+    latent_model_roles,
+    latent_model_sites,
+)
 from interpretune.tuning.sites import is_site_address, resolve_site
 
 D = 8
@@ -164,3 +178,79 @@ class TestLatentModels:
             attach_latent_model(
                 Core(), "sae", TinySAE(), LatentSite("point:hook_resid_post & layers:0", read_from="input")
             )
+
+
+def _view(root: nn.Module):
+    """``root``'s default view with the roles and placements of what is spliced into it, as ``BaseITModule``'s."""
+    from interpretune.tuning.views import default_view
+
+    roles = {**latent_model_roles(root), **intervention_roles(root)}
+    return default_view(root, roles=roles, attached={**latent_model_placements(root), **intervention_placements(root)})
+
+
+def _selected(view, address: str) -> set[str]:
+    """The parameters ``address`` selects on ``view``, as finetuning-scheduler resolves a schedule's addresses."""
+    from venngram.errors import VenngramError
+    from venngram.resolve import ParamSpace, select
+
+    names = [n for n, _ in view.root.named_parameters()]
+    try:
+        return set(select(address, ParamSpace(names, roles=dict(view.roles()), structure=view.structure())))
+    except VenngramError:  # selects nothing
+        return set()
+
+
+class TestPlacement:
+    """A module spliced in beside the model locates at its site (#875), so an address selects it by depth."""
+
+    @pytest.mark.parametrize("layout, mount", [(Core, "model"), (NNsightLayout, "hf_model")])
+    def test_a_latent_model_takes_the_layer_and_component_of_its_site(self, layout, mount):
+        root = layout()
+        attach_latent_model(root, "sae0", TinySAE(), LatentSite("point:hook_resid_post & layers:0"))
+        attach_latent_model(root, "sae1", TinySAE(), LatentSite("point:hook_resid_post & layers:1"))
+        assert latent_model_placements(root) == {
+            "latent_models.sae0": f"{mount}.transformer.h.0",
+            "latent_models.sae1": f"{mount}.transformer.h.1",
+        }
+        view = _view(root)
+        structure = view.structure()
+        assert [structure.locate(f"latent_models.sae{i}.enc.weight").layer for i in (0, 1)] == [0, 1]
+        sae1 = {f"latent_models.sae1.{n}" for n in ("enc.weight", "enc.bias", "dec.weight", "dec.bias")}
+        assert _selected(view, "role:latent & layers:1:") == sae1
+
+    def test_a_transcoder_is_placed_at_the_module_it_rewrites(self):
+        root = Core()
+        site = LatentSite("point:mlp.hook_in & layers:1", write="point:mlp.hook_out & layers:1")
+        attach_latent_model(root, "tc", TinySAE(), site)
+        assert latent_model_placements(root) == {"latent_models.tc": "model.transformer.h.1.mlp"}
+        location = _view(root).structure().locate("latent_models.tc.dec.weight")
+        assert (location.layer, location.component) == (1, "mlp")
+
+    def test_an_intervention_takes_the_layer_of_its_site(self):
+        root = Core()
+        attach_intervention(root, "steer", OpIntervention("add", D), "point:hook_resid_post & layers:1")
+        assert intervention_placements(root) == {"interventions.steer": "model.transformer.h.1"}
+        view = _view(root)
+        steer = {f"interventions.steer.{n}" for n, _ in root.interventions["steer"].named_parameters()}
+        assert _selected(view, "role:intervention & layers:1") == steer
+        assert not _selected(view, "role:intervention & layers:0")
+
+    def test_detaching_removes_the_placement(self):
+        root = Core()
+        attach_latent_model(root, "sae", TinySAE(), LatentSite("point:hook_resid_post & layers:0"))
+        attach_intervention(root, "steer", OpIntervention("add", D), "point:hook_resid_post & layers:0")
+        detach_latent_model(root, "sae")
+        detach_intervention(root, "steer")
+        assert latent_model_placements(root) == {} and intervention_placements(root) == {}
+
+    def test_a_site_the_map_does_not_place_is_left_unplaced_with_a_warning(self):
+        root = Core()
+        root.side = nn.Linear(D, D)  # beside the mapped model: no map row places it
+        attach_latent_model(root, "sae", TinySAE(), LatentSite("point:hook_resid_post & layers:0"))
+        attach_latent_model(root, "aside", TinySAE(), LatentSite("side"))
+        with pytest.warns(UserWarning, match="latent_models.aside could not be placed at their sites"):
+            view = _view(root)
+        structure = view.structure()
+        assert structure.locate("latent_models.sae.enc.weight").layer == 0  # the placeable one keeps its place
+        assert structure.locate("latent_models.aside.enc.weight").layer is None
+        assert "latent_models.aside.enc.weight" in _selected(view, "role:latent:aside")

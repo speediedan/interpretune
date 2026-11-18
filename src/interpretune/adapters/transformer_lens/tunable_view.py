@@ -119,7 +119,14 @@ def _wrapped_tensor_names(bridge: nn.Module) -> dict[int, str]:
     A bridge component (a module with a ``name`` and an ``_original_component``) names the module it wraps relative to
     its parent component's, and a top-level component (an embedding, a block) names it from the wrapped model's root.
     """
+    return _wrapped_names(bridge)[0]
+
+
+def _wrapped_names(bridge: nn.Module) -> tuple[dict[int, str], dict[int, str]]:
+    """:func:`_wrapped_tensor_names`, and the original path, in the wrapped model, of each bridge component, by the
+    component's identity."""
     names: dict[int, str] = {}
+    components: dict[int, str] = {}
 
     def walk(module: nn.Module, parent: str | None) -> None:
         for child in module.children():
@@ -129,12 +136,13 @@ def _wrapped_tensor_names(bridge: nn.Module) -> dict[int, str]:
                     walk(child, parent)
                 continue
             path = rel if parent is None else f"{parent}.{rel}"
+            components.setdefault(id(child), path)
             for leaf, t in [*original.named_parameters(recurse=False), *original.named_buffers(recurse=False)]:
                 names.setdefault(id(t), f"{path}.{leaf}")
             walk(child, path)
 
     walk(bridge, None)
-    return names
+    return names, components
 
 
 class _WrappedModelStructure:
@@ -142,9 +150,13 @@ class _WrappedModelStructure:
     to the wrapped model's name for the same tensor, found by identity, so the paths the wrapper reports do not
     matter."""
 
-    def __init__(self, inner: StructureProvider, tensors: Mapping[str, str]) -> None:
+    def __init__(
+        self, inner: StructureProvider, tensors: Mapping[str, str], attached: Mapping[str, str] | None = None
+    ) -> None:
         self._inner = inner
         self._tensors = tensors
+        # a module spliced in beside the wrapped model, by the wrapped model's path of the component it is attached to
+        self._attached = dict(attached or {})
 
     @property
     def vocabulary(self) -> bool:
@@ -154,7 +166,11 @@ class _WrappedModelStructure:
         from venngram.resolve import Location
 
         wrapped = self._tensors.get(name)
-        return Location() if wrapped is None else self._inner.locate(wrapped)
+        if wrapped is None:
+            at = next((at for key, at in self._attached.items() if name.startswith(f"{key}.")), None)
+            # located as a tensor of the component it is attached to would be
+            return Location() if at is None else self._inner.locate(f"{at}.weight")
+        return self._inner.locate(wrapped)
 
     def depth(self, stack: str | None = None) -> int | Refusal:
         return self._inner.depth(stack)
@@ -177,6 +193,11 @@ class TransformerBridgeView:
         implicit_norm_thaw: Thaw a block's norms with any of its parameters, and the final norm with the embeddings.
         roles: Roles for ``root``'s parameters and buffers, by physical name (anything unlisted is ``base``), e.g.
             ``latent:sae`` for SAEs spliced into the bridge.
+        attached: Modules of ``root`` beside the bridge that a hook splices into it (latent models and interventions),
+            each with the module of ``root`` it is attached to (``{"latent_models.sae3": "model.blocks.3.hook_out"}``),
+            as venngram's ``MappedView`` takes them: their tensors take the layer and component of the bridge component
+            holding that module, so ``role:latent & layers:2:`` selects the latent models spliced at layers 2 and
+            above. One under no bridge component the map places is left unplaced, with a warning.
     """
 
     def __init__(
@@ -185,6 +206,7 @@ class TransformerBridgeView:
         bridge: TransformerBridge | None = None,
         implicit_norm_thaw: bool = True,
         roles: Mapping[str, str] | None = None,
+        attached: Mapping[str, str] | None = None,
     ) -> None:
         from venngram.roles import validate_roles
 
@@ -198,6 +220,7 @@ class TransformerBridgeView:
         self.root = root
         self.bridge = bridge
         self.implicit_norm_thaw = implicit_norm_thaw
+        self.attached = dict(attached or {})
         self._built = False
 
     @property
@@ -326,12 +349,39 @@ class TransformerBridgeView:
             inner = venngram.view(skeleton).structure()
         except (KeyError, RegistryError):  # no published map describes the wrapped model, or none can be read
             return PhysicalStructure(self.root)
-        originals = _wrapped_tensor_names(self.bridge)
+        originals, components = _wrapped_names(self.bridge)
         placed = {}
         for name, t in [*self.root.named_parameters(remove_duplicate=False), *self.root.named_buffers()]:
             if (original := originals.get(id(t))) is not None:
                 placed[name] = original
-        return _WrappedModelStructure(inner, placed)
+        return _WrappedModelStructure(inner, placed, self._attached_components(inner, components))
+
+    def _attached_components(self, inner: StructureProvider, components: Mapping[int, str]) -> dict[str, str]:
+        """Each ``attached`` module's key, by the wrapped model's path of the deepest bridge component holding the
+        module it is attached to (a hook point sits inside a component); one the map places nowhere is left out."""
+        out: dict[str, str] = {}
+        unplaced: list[str] = []
+        for key, at in self.attached.items():
+            path, found = at, None
+            while path and found is None:
+                try:
+                    found = components.get(id(self.root.get_submodule(path)))
+                except AttributeError:
+                    pass
+                path = path.rpartition(".")[0]
+            location = inner.locate(f"{found}.weight") if found is not None else None
+            if found is None or location is None or (location.layer is None and location.component is None):
+                unplaced.append(key)
+            else:
+                out[key] = found
+        if unplaced:
+            from interpretune.utils import rank_zero_warn
+
+            rank_zero_warn(
+                f"{', '.join(unplaced)} could not be placed at their sites: no bridge component the map places holds"
+                " them, so their tensors locate at no layer or component. Address them by name or role."
+            )
+        return out
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Each TransformerLens name mapped to the parameters its tensor is computed from.

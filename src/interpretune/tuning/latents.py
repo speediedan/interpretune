@@ -69,6 +69,8 @@ LatentOp = Literal["replace", "replace_with_error"]
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 _HOOKS_ATTR = "_latent_model_hooks"
 _SITES_ATTR = "_latent_model_sites"
+# each attached latent model's resolved write module, by name: where its view places it (`latent_model_placements`)
+_PLACED_ATTR = "_latent_model_placed"
 
 
 @runtime_checkable
@@ -296,6 +298,7 @@ def attach_latent_model(
     hooks: dict[str, list[Any]] = root.__dict__.setdefault(_HOOKS_ATTR, {})
     sites: dict[str, tuple[LatentSite, bool]] = root.__dict__.setdefault(_SITES_ATTR, {})
     hooks[name], sites[name] = handles, (site, frozen)
+    root.__dict__.setdefault(_PLACED_ATTR, {})[name] = resolved.write_path
     return latent
 
 
@@ -314,6 +317,7 @@ def detach_latent_model(root: nn.Module, name: str) -> nn.Module:
     for handle in root.__dict__.get(_HOOKS_ATTR, {}).pop(name, ()):
         handle.remove()
     root.__dict__.get(_SITES_ATTR, {}).pop(name, None)
+    root.__dict__.get(_PLACED_ATTR, {}).pop(name, None)
     latent = held[name]
     del held[name]
     return latent
@@ -322,6 +326,17 @@ def detach_latent_model(root: nn.Module, name: str) -> nn.Module:
 def latent_model_sites(root: nn.Module) -> Mapping[str, LatentSite]:
     """The site of each latent model attached to ``root``, by name."""
     return {name: site for name, (site, _) in root.__dict__.get(_SITES_ATTR, {}).items()}
+
+
+def latent_model_placements(root: nn.Module) -> dict[str, str]:
+    """Where ``root``'s view places each attached latent model: its module (``latent_models.<name>``) by the module
+    path, under ``root``, of the module whose output it rewrites (its site's resolved ``write``).
+
+    Latent models are registered beside the model, so they nest under none of its modules; venngram's view takes this
+    mapping (``attached``) to give their tensors the layer and component of the module they are spliced at, so
+    ``role:latent & layers:12:`` selects the latent models spliced at layers 12 and above.
+    """
+    return {f"{LATENT_MODELS_ATTR}.{name}": path for name, path in root.__dict__.get(_PLACED_ATTR, {}).items()}
 
 
 def latent_model_roles(root: nn.Module) -> dict[str, str]:
