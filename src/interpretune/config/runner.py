@@ -4,7 +4,7 @@ from typing import Any, TYPE_CHECKING, Iterable, Literal, Sequence, cast
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from interpretune.utils import rank_zero_warn, rank_zero_debug, MisconfigurationException, instantiate_class
+from interpretune.utils import rank_zero_warn, rank_zero_debug, MisconfigurationException
 from interpretune.analysis import AnalysisOp
 from interpretune.analysis.cache import get_analysis_cache_dir
 from interpretune.config.analysis import AnalysisCfg, AnalysisArtifactCfg, LatentAnalysisTargets
@@ -189,7 +189,8 @@ class SessionRunnerCfg:
     max_epochs: int = -1
     # objects with any of `interpretune.runners.core.CoreCallback`'s methods, called by the core training loop. An
     # entry given as configuration (`{"class_path": ..., "init_args": {...}}`, as a parsed config holds it) is
-    # instantiated, so a run's callbacks can come from its configuration alone
+    # instantiated, so a run's callbacks can come from its configuration alone; its `class_path` may name a cached Hub
+    # component's entrypoint (`<entrypoint>.<Class>`), as a session configuration's may
     callbacks: Sequence[Any] = ()
     # validate with gradients enabled (e.g. for an objective computed with `torch.autograd.grad`) rather than under
     # `torch.inference_mode()`
@@ -223,8 +224,10 @@ class SessionRunnerCfg:
     accumulate_grad_batches: int = 1
 
     def __post_init__(self):
+        from interpretune.hub.entrypoints import instantiate_hub_aware_class
+
         self.callbacks = tuple(
-            instantiate_class(dict(cb)) if isinstance(cb, Mapping) and "class_path" in cb else cb
+            instantiate_hub_aware_class(dict(cb)) if isinstance(cb, Mapping) and "class_path" in cb else cb
             for cb in self.callbacks
         )
         if self.precision not in (None, "32", "bf16-mixed", "bf16-true"):
