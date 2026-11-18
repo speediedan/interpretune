@@ -197,6 +197,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Changed
 
+- sae-lens installs from a released floor (`sae-lens >=6.55.0,<7` in the `examples` extra) instead of a git pin to the head of decoderesearch/SAELens#739: 6.55.0 is the first release that imports under transformer-lens 4.0. ([#652](https://github.com/speediedan/interpretune/issues/652))
+
 - `interpretune.utils.latent_state_projection.project_embeddings(method="umap")` refuses with `UmapUnavailableError`, naming the backends it tried, when no UMAP backend can fit or there are too few rows. It used to return a PCA projection labelled `method="umap"` (`backend="torch_pca_fallback"`), so plots drawn without `umap-learn` showed PCA under the UMAP name. Pass `fallback="pca"` to accept a PCA stand-in, which is now labelled `method="pca"` and records the request in its metadata. `plot_decoder_projection_map` opts in, so its title names the projection that ran. `umap-learn` joins the `examples` extra (#1034).
 
 - The core package and its tests import nothing from `it_examples`, and a test enforces it. `speediedan/prompt-configs` is resolved from the components cache like `speediedan/rte` (the CI warm manifest pins it), so `it_examples.seeds.SEED_COMPONENTS` is empty and `ensure_local_seeds` does nothing; a dev checkout fetches it once with `it.hub.pull('speediedan/prompt-configs')`. The conformance inputs' `seed_config` no longer seeds the cache, and the test suite's session harness moves to `tests/notebook_harness` ([#1015](https://github.com/speediedan/interpretune/issues/1015))
