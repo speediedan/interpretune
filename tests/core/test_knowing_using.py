@@ -398,17 +398,18 @@ def test_metric_threshold_transition_opens_the_next_phase_at_the_threshold(kug):
         kug.MetricThresholdTransition(mode="above")
 
 
-def test_apply_phase_lrsd_sets_the_phases_lrsd_settings(kug):
+def test_phase_lrsd_sets_the_phases_lrsd_settings(kug):
     from types import SimpleNamespace
 
     it_cfg = SimpleNamespace(lrsd_lambda=0.0, lrsd_student_layer=14)
     scheduler = SimpleNamespace(model=SimpleNamespace(it_cfg=it_cfg))
-    kug.apply_phase_lrsd(SimpleNamespace(depth=0, phase_config=None, tuning_scheduler=scheduler))
+    hook = kug.PhaseLRSD()
+    hook(SimpleNamespace(depth=0, phase_config=None, tuning_scheduler=scheduler))
     assert it_cfg.lrsd_lambda == 0.0
-    kug.apply_phase_lrsd(SimpleNamespace(depth=1, phase_config={"lrsd_lambda": 1.0}, tuning_scheduler=scheduler))
+    hook(SimpleNamespace(depth=1, phase_config={"lrsd_lambda": 1.0}, tuning_scheduler=scheduler))
     assert it_cfg.lrsd_lambda == 1.0 and it_cfg.lrsd_student_layer == 14
     with pytest.raises(Exception, match="unknown LRSD settings"):
-        kug.apply_phase_lrsd(SimpleNamespace(depth=1, phase_config={"lr": 1.0}, tuning_scheduler=scheduler))
+        hook(SimpleNamespace(depth=1, phase_config={"lr": 1.0}, tuning_scheduler=scheduler))
 
 
 # -- the shipped run, end to end -----------------------------------------------------------------------------------
@@ -435,26 +436,26 @@ class KUGRunRecorder:
         Path(self.out).write_text(json.dumps(record))
 
 
-def _run_config(revision: str, work: Path) -> Path:
+def _run_config(revision: str, work: Path, run_key: str = RUN_KEY, fts_init_args: dict | None = None) -> Path:
     from interpretune.hub.components import resolve_component_file
 
-    shipped = resolve_component_file(f"hub://{KUG_REPO}@{revision}/runs/{RUN_KEY}.yaml")
+    shipped = resolve_component_file(f"hub://{KUG_REPO}@{revision}/runs/{run_key}.yaml")
     text = shipped.read_text(encoding="utf-8").replace(f"hub://{KUG_REPO}/", f"hub://{KUG_REPO}@{revision}/")
     cfg = yaml.safe_load(text)
     cfg["session_ref"] = f"{cfg['session_ref']}@{revision}"
     callbacks = cfg["run_cfg"]["callbacks"]
-    callbacks[1]["init_args"]["log_path"] = str(work / "exact_match.json")
+    by_name = {cb["class_path"].rsplit(".", 1)[-1]: cb for cb in callbacks}
+    by_name["ExactMatchReport"]["init_args"]["log_path"] = str(work / "exact_match.json")
+    by_name["FTSCoreCallback"]["init_args"].update(fts_init_args or {})
     callbacks.append({"class_path": f"{__name__}.KUGRunRecorder", "init_args": {"out": str(work / "record.json")}})
     path = work / "run.yaml"
     path.write_text(yaml.safe_dump(cfg))
     return path
 
 
-def test_the_shipped_run_trains_lora_and_scores_every_epoch(kug, kug_revision, clean_cli_env, tmp_path, monkeypatch):
-    from interpretune.base.components.cli import core_cli_main
-
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
-    monkeypatch.chdir(tmp_path)
+def _tiny_run_args(kug, tmp_path: Path, run_config: Path) -> tuple[list[str], int, int]:
+    """CLI arguments that run ``run_config`` on a tiny Qwen2 over synthetic chaining tasks, with the sample's
+    unique two-hop and single-hop question counts."""
     items = chaining_items()
     data_path = tmp_path / "chaining_tasks.json"
     data_path.write_text(json.dumps(items))
@@ -489,12 +490,22 @@ def test_the_shipped_run_trains_lora_and_scores_every_epoch(kug, kug_revision, c
             }
         },
     }
-    args = ["--config", str(_run_config(kug_revision, tmp_path))]
+    args = ["--config", str(run_config)]
     args += [
         "--shared_config",
         json.dumps({"model_name_or_path": str(model_dir), "tokenizer_name": str(tokenizer_dir)}),
     ]
-    args += ["--registered_cfg", json.dumps(registered), "--run_cfg.max_epochs=2"]
+    args += ["--registered_cfg", json.dumps(registered)]
+    return args, n_twohop, n_mem
+
+
+def test_the_shipped_run_trains_lora_and_scores_every_epoch(kug, kug_revision, clean_cli_env, tmp_path, monkeypatch):
+    from interpretune.base.components.cli import core_cli_main
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    monkeypatch.chdir(tmp_path)
+    args, n_twohop, n_mem = _tiny_run_args(kug, tmp_path, _run_config(kug_revision, tmp_path))
+    args += ["--run_cfg.max_epochs=2"]
     core_cli_main(run_mode="train", args=args)
 
     history = json.loads((tmp_path / "exact_match.json").read_text())
@@ -509,3 +520,43 @@ def test_the_shipped_run_trains_lora_and_scores_every_epoch(kug, kug_revision, c
     assert record["b_moved"] and record["clip_hooks"] == 1
     for epoch in record["epochs"]:
         assert {"train_ce", "train_lrsd", "train_loss", "twohop_em", "mem_em"} <= set(epoch)
+
+
+def test_the_gated_run_opens_mid_band_lrsd_when_memorization_passes(
+    kug, kug_revision, clean_cli_env, tmp_path, monkeypatch
+):
+    """The gated arm's run configuration, with a threshold of 0 (so phase 1 opens after the first epoch) and the
+    shipped schedule's structure over the tiny model's 4 blocks (the mid band blocks 1 and 2)."""
+    from interpretune.base.components.cli import core_cli_main
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    monkeypatch.chdir(tmp_path)
+    schedule = {
+        0: {"params": [r"model\..*\.lora_[AB]\..*"], "phase_config": {"lrsd_lambda": 0.0}},
+        1: {
+            "params": [],
+            "refreeze": [r"model\..*\.layers\.(?:0|3)\..*\.lora_[AB]\..*"],
+            "phase_config": {"lrsd_lambda": 1.0},
+        },
+    }
+    schedule_path = tmp_path / "gated_schedule.yaml"
+    schedule_path.write_text(yaml.safe_dump(schedule))
+    transition = {"class_path": "knowing_using.MetricThresholdTransition", "init_args": {"threshold": 0.0}}
+    run_config = _run_config(
+        kug_revision,
+        tmp_path,
+        run_key="kug_gated.qwen2_5_1_5b.core",
+        fts_init_args={"schedule": str(schedule_path)},
+    )
+    cfg = yaml.safe_load(run_config.read_text())
+    cfg["run_cfg"]["callbacks"][1]["init_args"]["tuning_scheduler_kwargs"]["transition"] = transition
+    run_config.write_text(yaml.safe_dump(cfg))
+    args, _, _ = _tiny_run_args(kug, tmp_path, run_config)
+    core_cli_main(run_mode="train", args=args + ["--run_cfg.max_epochs=3"])
+
+    record = json.loads((tmp_path / "record.json").read_text())
+    # phase 0 trains on cross-entropy alone; phase 1, from the second epoch, adds the LRSD term
+    assert ["train_lrsd" in epoch for epoch in record["epochs"]] == [False, True, True]
+    # at the end only the mid band's adapters are trainable
+    assert record["thawed"] and all(".layers.1." in n or ".layers.2." in n for n in record["thawed"])
+    assert len(record["thawed"]) == 2 * 7 * 2

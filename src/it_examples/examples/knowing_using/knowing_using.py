@@ -605,19 +605,24 @@ class MetricThresholdTransition:
         }
 
 
-def apply_phase_lrsd(event: Any) -> None:
+class PhaseLRSD:
     """A finetuning-scheduler phase-start hook that sets the module's LRSD settings from the phase's
     ``phase_config``.
 
     A phase's ``phase_config`` may name any :class:`KUGLRSDSettings` field (``lrsd_lambda: 1.0`` turns the term on);
-    a phase without one keeps the settings it inherits.
+    a phase without one keeps the settings it inherits. Configured as ``phase_hooks: {start: [{class_path:
+    knowing_using.PhaseLRSD}]}`` in ``FTSCoreCallback``'s ``tuning_scheduler_kwargs``.
     """
-    settings = dict(event.phase_config or {})
-    if unknown := sorted(set(settings) - set(KUGLRSDSettings.__dataclass_fields__)):
-        raise MisconfigurationException(f"phase {event.depth}'s phase_config names unknown LRSD settings {unknown}.")
-    it_cfg = event.tuning_scheduler.model.it_cfg
-    for name, value in settings.items():
-        setattr(it_cfg, name, value)
+
+    def __call__(self, event: Any) -> None:
+        settings = dict(event.phase_config or {})
+        if unknown := sorted(set(settings) - set(KUGLRSDSettings.__dataclass_fields__)):
+            raise MisconfigurationException(
+                f"phase {event.depth}'s phase_config names unknown LRSD settings {unknown}."
+            )
+        it_cfg = event.tuning_scheduler.model.it_cfg
+        for name, value in settings.items():
+            setattr(it_cfg, name, value)
 
 
 # -- reporting exact match on the core loop ------------------------------------------------------------------------
@@ -722,7 +727,7 @@ __all__ = [
     "KUGPromptConfig",
     "KUGSteps",
     "MetricThresholdTransition",
-    "apply_phase_lrsd",
+    "PhaseLRSD",
     "build_kug_splits",
     "clip_optimizer_grads",
     "completion_cross_entropy",
