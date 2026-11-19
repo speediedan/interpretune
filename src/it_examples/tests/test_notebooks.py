@@ -603,6 +603,35 @@ def test_jspace_workspace_notebook_default_qwen(tmp_path: Path):
     _cleanup_notebook_artifacts()
 
 
+# The latent-dynamics notebook runs an analysis the concept-direction Hub component publishes, so it needs the live
+# Hub (the component is fetched at the notebook's pinned revision, never warmed: warming would test a cache rather
+# than the pull) and a token that can read it. UNMEASURED: the analysis peaked at 4.4 GB of CUDA memory in its research
+# runs; the declaration is conservative until tests/gpu_ci/calibrate.py measures the notebook itself.
+@pytest.mark.hf_live
+@pytest.mark.skipif(
+    not (os.environ.get("IT_HF_TOKEN") or os.environ.get("HF_TOKEN")),
+    reason="IT_HF_TOKEN or HF_TOKEN required to fetch the concept-direction component",
+)
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=8.0)
+def test_concept_direction_latent_dynamics_notebook(tmp_path: Path):
+    """Execute the latent-dynamics notebook with the component trusted, and check every section reported."""
+    import json
+
+    output_dir = tmp_path / "notebook_outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_notebook = execute_notebook_with_params(
+        notebook_path=NOTEBOOKS_DIR / "circuit_tracer_examples" / "concept_direction_latent_dynamics.ipynb",
+        parameters={"TRUST_COMPONENT_CODE": True},
+        output_dir=output_dir,
+    )
+    nb = json.loads(output_notebook.read_text(encoding="utf-8"))
+    outputs = [out for cell in nb["cells"] for out in cell.get("outputs", []) if isinstance(out, dict)]
+    text = "".join("".join(out.get("text", [])) for out in outputs)
+    for marker in ("probe examples answered as expected", "readout at unembed.hook_in", "causal steering at"):
+        assert marker in text, f"the notebook printed no {marker!r} line: a section did not run"
+    _cleanup_notebook_artifacts()
+
+
 # The Neuronpedia example validates a Neuronpedia API key before it builds a session, so gate on the
 # same variable it checks. Executing it publishes NOTHING: generate_graph is called with
 # upload_to_np=False and the upload cell is commented out, so the graph stays local.
@@ -855,6 +884,7 @@ def test_notebook_discovery():
     roster = {
         "attribution_analysis/attribution_analysis.ipynb",
         "circuit_tracer_examples/circuit_tracer_adapter_example_basic.ipynb",
+        "circuit_tracer_examples/concept_direction_latent_dynamics.ipynb",
         "circuit_tracer_examples/attention_attribution_analysis.ipynb",
         "circuit_tracer_examples/ct_analysis_backend_demo.ipynb",
         "circuit_tracer_examples/ct_concept_steering_demo.ipynb",
