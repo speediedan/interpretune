@@ -179,10 +179,11 @@ class BaseITLensModule(BaseITModule):
         return None
 
     def build_tunable_view(self) -> Any | None:
-        """The TransformerLens-names view over this module's bridge (#758)."""
+        """The TransformerLens-names view over this module's bridge (#758), with the modules spliced in beside it
+        placed at their sites (#875)."""
         from interpretune.adapters.transformer_lens.tunable_view import TransformerBridgeView
 
-        return TransformerBridgeView(self, roles=self.tunable_roles())
+        return TransformerBridgeView(self, roles=self.tunable_roles(), attached=self.tunable_placements())
 
     def tunable_roles(self) -> dict[str, str]:
         """The LoRA tensors ``lora_cfg`` added take the ``adapter:<name>`` role, so a schedule selects them with

@@ -9,8 +9,9 @@ An *intervention* applies an op (`add`, `scale`, `reject`, `patch`, ...: venngra
 - **`OpIntervention(op, operand, scale_factor=1.0)`**: applies `op` at every position with the operand's tensor (times `scale_factor`), through the same op math the analysis ops use (`apply_op`, its out-of-place form, so gradients reach the operand). `operand` is a module returning the tensor, or a shape (an `int` for one vector over the site's last axis, or a tuple such as `(n_heads, d_head)` for a per-head operand), for a `LearnedOperand` that starts where the op is the identity (`0` for `add`, `1 / scale_factor` for `scale`), so attaching it changes nothing until it trains. The ops applied so far are `add` and `scale`; other registered ops are refused.
 - **A steering vector** is `OpIntervention("add", d_model)`: its learned direction is the operand's tensor, `operand.value`.
 - **`attach_intervention(root, name, intervention, site, frozen=False)`**: registers the intervention as `interventions.<name>` on the module (so it is in the module's state dict and reachable by its view) and splices it in with a forward hook on the module at `site`, whose output (the first element of a tuple output) becomes `intervention(output)`. `detach_intervention(root, name)` removes it.
-- **Sites** are module names under the interpretune module: `model.model.layers.12` on a core module, `hf_model.model.layers.12` on an nnsight module, or a TransformerLens bridge's hook point such as `model.blocks.12.hook_out`. A venngram site address names the site once for every backend: `point:hook_resid_post & layers:12` attaches at block 12's residual output on each of them. Interpretune resolves it on the composition (`interpretune.tuning.sites.resolve_site`): a TransformerLens composition through the hook points it exposes, in any spelling the activation-point vocabulary knows, and a core/HF or nnsight composition through its architecture's component map. An address that resolves to a module's input (`point:hook_resid_pre & layers:12`, block 12's residual input) is rewritten before that module runs. An address must select exactly one site of an activation's value, and a point the composition cannot place is refused, naming it. Configurations and examples still to move to addresses are [#876](https://github.com/speediedan/interpretune/issues/876).
+- **Sites** are module names under the interpretune module: `model.model.layers.12` on a core module, `hf_model.model.layers.12` on an nnsight module, or a TransformerLens bridge's hook point such as `model.blocks.12.hook_out`. A venngram site address names the site once for every backend: `point:hook_resid_post & layers:12` attaches at block 12's residual output on each of them. Interpretune resolves it on the composition (`interpretune.tuning.sites.resolve_site`): a TransformerLens composition through the hook points it exposes, in any spelling the activation-point vocabulary knows, and a core/HF or nnsight composition through its architecture's component map. An address that resolves to a module's input (`point:hook_resid_pre & layers:12`, block 12's residual input) is rewritten before that module runs. An address must select exactly one site of an activation's value, and a point the composition cannot place is refused, naming it. An address may reference a named set of an address book (`@resid13`), so one shared book names the site on every backend: pass the book's sets (`interpretune.tuning.sites.book_sets(book)`) as `attach_intervention(..., sets=)`, or give a configured intervention its book (`InterventionCfg(site="@resid13", book="steering.yaml")`, a local path or a venngram store reference). Configurations and examples still to move to addresses are [#876](https://github.com/speediedan/interpretune/issues/876).
 - **Roles:** an attached intervention's tensors take venngram's role `intervention:<name>`, as a PEFT adapter's take `adapter:<name>`. A schedule selects one intervention with `role:intervention:<name>` and every intervention with `role:intervention`. Every interpretune module declares these roles in its cooperative `tunable_roles()`, which its venngram view reads, so no mixin is needed. A frozen intervention takes a role that says whether its value is saved: `frozen="fitted"` for one computed in the run (a mean-difference direction, say), which Fine-Tuning Scheduler checkpoints and never optimizes, so a resumed run keeps it; `frozen="artifact"` for one loaded from a published or saved source, which is reloaded from that source rather than checkpointed, and which a later stage may promote to `latent:<name>`. Both are applied in every forward pass and never trained. `frozen=True` is refused, because it does not say which.
+- **Placement:** an attached intervention takes the layer and component of the module at its site, so `role:intervention & layers:12:` selects the interventions spliced at layers 12 and above. Interpretune modules declare these placements with those of their [latent models](tuning_latent_models.md), in their cooperative `tunable_placements()`.
 
 Interventions without parameters (an ablation, a patch, a dose of a concept direction) need no role and no seam: the analysis ops apply them during a pass.
 
@@ -29,7 +30,37 @@ module_cfg:
         site: model.model.layers.12  # hf_model.model.layers.12 with nnsight, model.blocks.12.hook_out with TransformerLens
 ```
 
-`op` is `add` (the default, a steering vector) or `scale`, `shape` defaults to the model's hidden size (`config.hidden_size`, or a TransformerLens model's `cfg.d_model`), and `scale_factor` is a fixed multiplier on the operand. A configured intervention is always tunable: one attached frozen would start at the identity and never change. To hold a trained operand fixed, refreeze it in a later stage (below). To apply a precomputed one, attach it in code with `frozen=True`.
+`op` is `add` (the default, a steering vector) or `scale`, `shape` defaults to the model's hidden size (`config.hidden_size`, or a TransformerLens model's `cfg.d_model`), and `scale_factor` is a fixed multiplier on the operand. A configured intervention is always tunable: one attached frozen would start at the identity and never change. To hold a trained operand fixed, refreeze it in a later stage (below). To apply a precomputed one, attach it in code with `frozen="fitted"` for a value computed in the run or `frozen="artifact"` for one loaded from a saved source.
+
+## Selected units
+
+A configured site address may select explicit units as well as one site:
+
+```yaml
+tuning_interventions:
+  - name: selected_neurons
+    site: "point:mlp.out.hook_in & layers:12 & units:[431, 1007]"
+    op: add
+```
+
+This attaches a `UnitIntervention` with two learned values. Its operand starts at the identity, trains under
+`role:intervention:selected_neurons`, and changes only those two units. It does not allocate or optimize a full-width
+vector. `scale` learns gains the same way. A configured unit splice names one layer and explicit nonnegative indices;
+use one entry per layer. The actual activation width is checked during the forward pass, rather than guessed from the
+largest selected index. A `shape`, if supplied, must agree with the selected count.
+
+In code, `UnitIntervention(op, units, operand=...)` also accepts a fixed tensor or a module returning its operand.
+`replace` needs an explicit operand. `clamp` takes bounds and no operand, and bounds the selected model coordinates.
+Attach fixed interventions with the appropriate frozen role. A unit address on `attach_intervention` must name the
+same units as its `UnitIntervention`; attaching a full-width intervention to such an address is refused.
+
+All four modes share the analysis surface's selected-coordinate executor and preserve the complement's autograd path.
+See [direct unit payloads](interpretune_intervention_apis.md#direct-unit-payloads) for analysis and normalized doses.
+
+A `UnitIntervention` acts on the selected units' activations at its site. To tune the parameters that produce those
+units instead, use a unit adapter (`attach_unit_adapter`, under
+[parameter targets](interpretune_intervention_apis.md#parameter-targets)): a trainable delta over the units' weight
+slices, which applies at every token and is part of the tensor an export writes.
 
 ## Attaching them in code
 
