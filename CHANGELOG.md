@@ -219,6 +219,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 - Latent models and interventions take the layer and component of their site in the module's tunable view, although they are registered beside the model (`latent_models.<name>`, `interventions.<name>`). A schedule then selects them by depth: `role:latent & layers:12:` thaws the latent models spliced at layers 12 and above. Each module declares the placements in its cooperative `tunable_placements()` (`latent_model_placements`, `intervention_placements`), which `default_view(attached=)` passes to venngram's view and `TransformerBridgeView(attached=)` resolves through the bridge component holding each site; a site no map row places is left unplaced, with a warning ([#875](https://github.com/speediedan/interpretune/issues/875))
 
+- A circuit-tracer composition's tunable view places each per-layer transcoder's tensors at the layer whose MLP it replaces (`CircuitTracerView.structure()`), so a promotion names a layer range by address: `promote: {"role:artifact & layers:-4:": "latent:transcoder"}`. A cross-layer transcoder's tensors locate at no layer ([#875](https://github.com/speediedan/interpretune/issues/875))
+
 ### Changed
 
 - `SessionRunnerCfg.callbacks` instantiates an entry given as configuration hub-aware, as a session configuration's `class_path` is, so a run configuration can name a callback defined in a cached Hub component's entrypoint (`<entrypoint>.<Class>`, `knowing_using.ExactMatchReport` for one) ([#931](https://github.com/speediedan/interpretune/issues/931))
