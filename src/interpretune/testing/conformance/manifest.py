@@ -132,11 +132,11 @@ UNGATED_CASES: tuple[UngatedCase, ...] = (
 def binds_every_backend(gate: Gate) -> bool:
     """Whether a gate lets no backend decline the case by what it declares.
 
-    A capability gate (positive or negative) selects on a declaration the backend controls. A gate on the forward family
-    or the prompt shape selects on a property of the TARGET, which every backend of that kind has, so the case still
-    binds all of them; those gates are ungated for the manifest's purpose.
+    A capability or technique gate (positive or negative) selects on a declaration the backend controls. A gate on the
+    forward family or the prompt shape selects on a property of the TARGET, which every backend of that kind has, so the
+    case still binds all of them; those gates are ungated for the manifest's purpose.
     """
-    return gate.capability is None
+    return gate.capability is None and gate.technique is None
 
 
 def ungated_cases() -> dict[str, Gate]:

@@ -20,9 +20,8 @@ from interpretune.analysis.backends import (
     get_analysis_backend,
     get_model_backend,
     PositionScope,
-    SupportsAttributionGraph,
     SupportsFeatureInterventions,
-    SupportsHeadAttribution,
+    TechniqueSupport,
     SupportsGradientIntervention,
     SupportsGradients,
     SupportsIntervention,
@@ -87,8 +86,6 @@ _PROTOCOLS_FOR: dict[Capability, tuple[type, ...]] = {
     Capability.LATENT_MODELS: (SupportsLatentModels,),
     Capability.GRADIENTS: (SupportsGradients,),
     Capability.INTERVENTION: (SupportsIntervention, SupportsFeatureInterventions),
-    Capability.ATTRIBUTION_GRAPH: (SupportsAttributionGraph,),
-    Capability.HEAD_ATTRIBUTION: (SupportsHeadAttribution,),
 }
 
 
@@ -362,9 +359,16 @@ class ModelBackendConformance:
                 assert any(need in other.capabilities for o, other in components.items() if o != name), (
                     f"the {name} requires {need.name} and no other component provides it"
                 )
+            # a technique's record is typed, and the component satisfies the protocol the record names
+            for technique, record in (getattr(component, "technique_support", None) or {}).items():
+                assert isinstance(record, TechniqueSupport), f"the {name} declares {technique!r} with {record!r}"
+                protocol = record.provider_protocol()
+                assert protocol is None or isinstance(component, protocol), (
+                    f"the {name} declares technique {technique!r} and is not a {protocol.__name__}"
+                )
+                assert suite.capabilities.techniques[technique][name] == record
         declared = suite.capabilities.declared
         assert (suite.capabilities.latent_models is not None) == (Capability.LATENT_MODELS in declared)
-        assert (suite.capabilities.attribution_graph is not None) == (Capability.ATTRIBUTION_GRAPH in declared)
 
     @conformance_case()
     def test_supplied_settings_survive_composition(self, suite):
@@ -1764,7 +1768,7 @@ class ModelBackendConformance:
             for name in (hook, source):
                 assert post[name].abs().max().item() == 0.0, f"batch {i}: the zeroed readout left a gradient at {name}"
 
-    # -- analysis backend: ATTRIBUTION_GRAPH / INTERVENTION on features -------------------------------
+    # -- analysis backend: the attribution_graph technique / INTERVENTION on features -------------------------------
     #
     # The graph ops take a prompt rather than a datamodule batch, so these cases call the ops the way every caller
     # does (an analysis batch carrying the prompt, no dataloader batch), which is the ops' own entry rather than a
@@ -1796,7 +1800,7 @@ class ModelBackendConformance:
                 raise AssertionError(_attribution_failure_context(suite, exc)) from exc
         return suite.memo[key]
 
-    @conformance_case(capability=Capability.ATTRIBUTION_GRAPH)
+    @conformance_case(technique="attribution_graph")
     def test_attribution_graph_round_trips_through_the_store(self, suite):
         """The graph the op writes as store columns hydrates back to the graph it computed: same adjacency, same
         active features, and the selected features index into them."""
@@ -1815,7 +1819,7 @@ class ModelBackendConformance:
         selected = torch.as_tensor(graph.selected_features).cpu()
         assert selected.numel() > 0 and int(selected.max()) < int(active.shape[0])
 
-    @conformance_case(capability=Capability.HEAD_ATTRIBUTION)
+    @conformance_case(technique="head_attribution")
     def test_head_loadings_partition_the_edges(self, suite):
         """At a reported layer the heads' shares and the bypass share sum to 1, and a head carries something, since
         a report of zeros would also partition the edges.
@@ -1847,7 +1851,7 @@ class ModelBackendConformance:
         torch.testing.assert_close(partitioned, torch.ones_like(partitioned), atol=1e-3, rtol=0.0)
         assert_non_degenerate(shares.head_loading_shares, what="head shares")
 
-    @conformance_case(capability=Capability.ATTRIBUTION_GRAPH)
+    @conformance_case(technique="attribution_graph")
     def test_pruning_is_monotone(self, suite):
         """A stricter node threshold keeps a subset of what a looser one keeps, and keeps strictly fewer at some
         pair (positive control: a pruning that ignored its threshold would pass the subset claim vacuously)."""
@@ -2046,7 +2050,7 @@ class ModelBackendConformance:
                 run(intervention_freeze_norms=True)
             assert "freeze_norms" in str(refused.value), str(refused.value)
 
-    @conformance_case(capability=Capability.ATTRIBUTION_GRAPH)
+    @conformance_case(technique="attribution_graph")
     def test_foreign_attention_is_refused_before_graph_construction(self, suite):
         """When the record requires the modeling module's own eager attention, a model whose attention function
         another library replaced is refused by name, naming the foreign function and the modeling module, before
@@ -2059,9 +2063,8 @@ class ModelBackendConformance:
         import interpretune as it
         from interpretune.analysis.ops.base import AnalysisBatch
 
-        record = suite.capabilities.attribution_graph
-        assert record is not None, "ATTRIBUTION_GRAPH is declared with no attribution_graph record"
-        if not record.requires_own_eager_attention:
+        _, record = suite.capabilities.technique_for("attribution_graph")
+        if not getattr(record, "requires_own_eager_attention", False):
             pytest.skip("the backend declares no requirement on the model's attention function")
         replacement = getattr(suite.module, "replacement_model", None)
         handle = suite.module.model if replacement is None else replacement

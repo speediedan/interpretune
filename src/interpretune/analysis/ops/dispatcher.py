@@ -640,6 +640,7 @@ class AnalysisOpDispatcher:
                 required_capabilities=op_def.get("required_capabilities", []),
                 required_tensor_ops=list(op_def.get("required_tensor_ops", []) or []),
                 required_position_scopes=list(op_def.get("required_position_scopes", []) or []),
+                required_techniques=list(op_def.get("required_techniques", []) or []),
                 conformance=op_def.get("conformance"),
                 composition=op_def.get("composition", None),
                 op_state=self._resolve_op_state_spec(op_name, op_def.get("op_state")),
@@ -1333,6 +1334,7 @@ class AnalysisOpDispatcher:
                 aliases=op_def.aliases,
                 required_tensor_ops=op_def.required_tensor_ops,
                 required_position_scopes=op_def.required_position_scopes,
+                required_techniques=op_def.required_techniques,
             )
             op.description = op_def.description
             op.input_schema = op_def.input_schema
@@ -1385,6 +1387,7 @@ class AnalysisOpDispatcher:
             required_capabilities=op_def.required_capabilities,
             required_tensor_ops=op_def.required_tensor_ops,
             required_position_scopes=op_def.required_position_scopes,
+            required_techniques=op_def.required_techniques,
             op_state=op_def.op_state,
             uses_default_hooks=op_def.uses_default_hooks,
             requires_grad=op_def.requires_grad,

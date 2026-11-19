@@ -161,7 +161,7 @@ extract_concept_latent_examples:
 concept_direction:
   description: Aggregate latent concept examples into a normalized concept direction vector
   implementation: interpretune.analysis.ops.bundled.concept.concept_ops.concept_direction_impl
-  required_capabilities: [attribution_graph]
+  required_techniques: [attribution_graph]
   aliases: [semantic_direction]
   # Declared cross-batch state for streaming aggregation; the module constants
   # CONCEPT_STREAMING_STATE_FIELDS are the source of truth (pinned by test_bundled_concept_streaming).

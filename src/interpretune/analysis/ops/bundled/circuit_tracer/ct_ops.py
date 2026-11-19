@@ -14,13 +14,13 @@ from transformers import BatchEncoding
 
 from interpretune.analysis.backends import (
     FeatureSelectionSpec,
-    SupportsHeadAttribution,
     apply_feature_selection_filter,
     apply_optional_feature_sign_filter,
     augment_feature_rows_for_selection,
     get_module_capabilities,
     require_analysis_backend,
     select_top_feature_indices,
+    technique_provider,
 )
 from interpretune.analysis.ops.base import AnalysisBatch
 from interpretune.analysis.optools import (
@@ -95,7 +95,7 @@ def compute_attribution_graph_impl(
     **kwargs,
 ) -> AnalysisBatch:
     """Generate and decompose a circuit-tracer attribution graph."""
-    analysis_backend = require_analysis_backend(module)
+    analysis_backend, support = technique_provider(module, "attribution_graph")
     prompt = kwargs.pop("prompt", None)
     if prompt is None:  # never `or`: a prompt can be token ids, and a tensor has no single truth value
         prompt = analysis_backend.resolve_prompt(module, analysis_batch, batch)
@@ -141,7 +141,6 @@ def compute_attribution_graph_impl(
         if name in kwargs
     }
 
-    support = analysis_backend.attribution_graph_support
     # `is None`, never `or`: an nnsight envoy answers a truth-test by delegating `len` to the wrapped model
     replacement = getattr(module, "replacement_model", None)
     why = support.refusal(module.model if replacement is None else replacement)
@@ -184,11 +183,8 @@ def compute_attribution_graph_impl(
 
 
 def _head_attribution_backend(module) -> Any:
-    """The module's analysis backend, refused by name unless it provides the head reports."""
-    analysis_backend = require_analysis_backend(module)
-    if not isinstance(analysis_backend, SupportsHeadAttribution):
-        raise ValueError(f"{type(analysis_backend).__name__} provides no head attribution reports")
-    return analysis_backend
+    """The component implementing the head reports, refused by name when none or several do."""
+    return technique_provider(module, "head_attribution")[0]
 
 
 def head_loadings_impl(
@@ -367,7 +363,7 @@ def graph_prune_impl(
     **kwargs,
 ) -> AnalysisBatch:
     """Prune a structured circuit-tracer graph and refresh decomposed outputs."""
-    analysis_backend = require_analysis_backend(module)
+    analysis_backend = technique_provider(module, "attribution_graph")[0]
     graph = analysis_backend.hydrate_graph_from_batch(analysis_batch)
     pruned_graph = analysis_backend.build_pruned_graph(
         graph,
@@ -388,7 +384,7 @@ def graph_node_influence_impl(
     **kwargs,
 ) -> AnalysisBatch:
     """Compute feature-node influence scores from a structured graph."""
-    analysis_backend = require_analysis_backend(module)
+    analysis_backend = technique_provider(module, "attribution_graph")[0]
     graph = analysis_backend.hydrate_graph_from_batch(analysis_batch)
     node_scores, node_feature_ids = analysis_backend.compute_node_influence_scores(graph)
     update_payload: dict[str, Any] = {

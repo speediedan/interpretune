@@ -825,17 +825,15 @@ class TestBackendCapability:
     def test_gradients_value(self):
         assert Capability.GRADIENTS.value == "gradients"
 
-    def test_attribution_value(self):
-        assert Capability.ATTRIBUTION_GRAPH.value == "attribution_graph"
-
     def test_intervention_value(self):
         assert Capability.INTERVENTION.value == "intervention"
 
     def test_capture_value(self):
         assert Capability.CAPTURE.value == "capture"
 
-    def test_head_attribution_value(self):
-        assert Capability.HEAD_ATTRIBUTION.value == "head_attribution"
+    def test_the_members_are_the_core_surfaces_only(self):
+        """Techniques are bound to providers through the op registry, never members (see ``TechniqueSupport``)."""
+        assert {m.value for m in Capability} == {"intervention", "latent_models", "gradients", "capture"}
 
     def test_scopes_and_modes_are_a_support_record_not_members(self):
         """Supporting interventions and being able to SCOPE or MODE one are different kinds of fact.
@@ -860,11 +858,12 @@ class TestBackendCapability:
     def test_enum_members_count(self):
         """A ratchet, so adding a capability is a conscious act rather than a side effect.
 
-        Six members, one namespace whichever component provides them. Position scope was briefly two flat members
-        beside an efficiency flag; those were configurations of one surface, and they live in the surface's support
-        record instead, as the activation and feature interventions now do as targets of one ``INTERVENTION``.
+        Four members, the core surfaces, one namespace whichever component provides them. Position scope was briefly two
+        flat members beside an efficiency flag; those were configurations of one surface, and they live in the surface's
+        support record instead. The two technique members left the same way: a technique is bound to the component
+        declaring its typed record, so adding one never touches this enum.
         """
-        assert len(Capability) == 6
+        assert len(Capability) == 4
 
     def test_membership_in_frozenset(self):
         caps = frozenset({Capability.LATENT_MODELS, Capability.GRADIENTS})
@@ -1845,8 +1844,9 @@ class TestCapabilitySpellings:
         for retired in ("activation_intervention", "feature_intervention"):
             with pytest.raises(ValueError, match=f"'{retired}' is a retired capability spelling.*'intervention'"):
                 normalize_backend_capability(retired)
-        with pytest.raises(ValueError, match="'attribution' is a retired capability spelling.*'attribution_graph'"):
-            normalize_backend_capability("attribution")
+        for retired in ("attribution", "attribution_graph", "head_attribution"):
+            with pytest.raises(ValueError, match=f"'{retired}' is a retired capability spelling.*technique"):
+                normalize_backend_capability(retired)
 
     def test_each_vocabulary_and_the_dotted_form_are_accepted(self):
         from interpretune.analysis.backends import (
@@ -1861,7 +1861,7 @@ class TestCapabilitySpellings:
     def test_an_unknown_spelling_lists_the_vocabulary(self):
         from interpretune.analysis.backends import normalize_backend_capability
 
-        with pytest.raises(ValueError, match="'steering' is not a capability: spellings are .*'head_attribution'"):
+        with pytest.raises(ValueError, match="'steering' is not a capability: spellings are .*'capture'"):
             normalize_backend_capability("steering")
 
 
