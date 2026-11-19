@@ -322,6 +322,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- TransformerLens backend capture and intervention resolve a transcoder's internal hooks through SAELens's public resolver, so canonical output-site names, output aliases and wildcard interventions reach the registered feature activations instead of advertising nonexistent input-site sub-hooks ([#929](https://github.com/speediedan/interpretune/issues/929)).
+
 - Analysis injection patches a module whose docstring carries a string prefix (`r"""`, as circuit-tracer's `head_conductance.py` opens). The patcher read such a docstring as the first statement and put its `HOOK_REGISTRY` import above the module's `from __future__` import, so the patched module failed to compile with a `SyntaxError` as soon as a hook targeted that file.
 
 - Docs notebook artifacts no longer name the working copy that rendered them. nbpress writes a path into any checkout of the repository repository-relative in captured output, and `--check-stale` fails on one that survives. The existing artifacts' outputs were rewritten to match, with no re-render ([#1019](https://github.com/speediedan/interpretune/issues/1019))

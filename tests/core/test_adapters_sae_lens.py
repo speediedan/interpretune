@@ -764,6 +764,54 @@ class TestBridgeTranscoderSupport:
         assert not torch.allclose(pre, post)
         tinystories_bridge_model.reset_saes()
 
+    @pytest.mark.parametrize("site", ["blocks.0.mlp.hook_out", "blocks.0.hook_mlp_out"])
+    @pytest.mark.parametrize("callable_filter", [False, True], ids=["literal", "callable"])
+    def test_transcoder_backend_captures_the_registered_output_site(
+        self, tinystories_bridge_model, tinystories_transcoder, site, callable_filter
+    ):
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend, _build_available_hook_map
+
+        model, transcoder = tinystories_bridge_model, tinystories_transcoder
+        actual = "blocks.0.mlp.hook_out.hook_sae_acts_post"
+        requested = f"{site}.hook_sae_acts_post"
+        available = _build_available_hook_map(model, [transcoder])
+        assert available[actual] == actual
+        assert available[requested] == actual
+        assert "blocks.0.mlp.hook_in.hook_sae_acts_post" not in available
+        batch = {"input": model.to_tokens(TRANSCODER_PROMPT)}
+        expected_logits, expected_cache = model.run_with_cache_with_saes(**batch, saes=[transcoder])
+        names_filter = (lambda name: name == requested) if callable_filter else requested
+        logits, cache = TLModelBackend().fwd_w_cache_and_latent_models(model, batch, [transcoder], names_filter)
+        assert_close(logits, expected_logits)
+        assert_close(cache[requested], expected_cache[actual])
+        assert len(model._acts_to_saes) == 0
+
+    @pytest.mark.parametrize("site", ["blocks.0.mlp.hook_out", "blocks.0.hook_mlp_out", "blocks.*.mlp.hook_out"])
+    def test_transcoder_backend_edits_the_registered_output_site(
+        self, tinystories_bridge_model, tinystories_transcoder, site
+    ):
+        from interpretune.adapters.transformer_lens.backends import TLModelBackend
+
+        model, transcoder = tinystories_bridge_model, tinystories_transcoder
+        actual = "blocks.0.mlp.hook_out.hook_sae_acts_post"
+        batch = {"input": model.to_tokens(TRANSCODER_PROMPT)}
+        baseline, _ = model.run_with_cache_with_saes(**batch, saes=[transcoder])
+        expected = model.run_with_hooks_with_saes(
+            **batch, saes=[transcoder], fwd_hooks=[(actual, lambda value, hook: torch.zeros_like(value))]
+        )
+        payload = {
+            f"{site}.hook_sae_acts_post": {
+                "op": "replace",
+                "position_scope": "all_positions",
+                "intervention_tensor": torch.zeros(transcoder.cfg.d_sae),
+            }
+        }
+        pre, post = TLModelBackend().fwd_w_intervention(model, batch, payload, latent_model_handles=[transcoder])
+        assert_close(pre, baseline)
+        assert_close(post, expected)
+        assert not torch.allclose(pre, post)
+        assert len(model._acts_to_saes) == 0
+
     def test_transcoder_run_with_cache(
         self, tinystories_bridge_model, tinystories_transcoder, tinystories_original_logits
     ):
