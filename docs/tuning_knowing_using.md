@@ -130,3 +130,36 @@ $\lambda = 1$, so LRSD gained 0.064, 0.100 and 0.080: a mean of 0.081, the paper
 facts almost completely, and LRSD roughly doubles how often the model composes them. The scores differ from the
 paper's by less than a seed's spread. Memorization here is scored once per unique single-hop question (771), where the
 paper scores every evaluation row, which may account for its small differences.
+
+## Extensions: phases as stages, and placement in place of a loss
+
+Two arms the paper did not run, on the same model, data, optimizer and seeds as the results above, compared seed by
+seed with them. Both use finetuning-scheduler's phases as experimental stages.
+
+- **Gated** (`runs/kug_gated.qwen2_5_1_5b.core.yaml`). The paper applies LRSD from the first step, while its own
+  diagnosis is that plain fine-tuning stops moving knowledge once memorization saturates. Phase 0 trains every block's
+  adapters on cross-entropy alone; `MetricThresholdTransition` opens phase 1 in the epoch memorization first reaches 0.9,
+  and phase 1 refreezes the adapters outside blocks 7 to 20 (the band from $0.25L$ to $0.75L$ of the 28 blocks) while
+  `PhaseLRSD` turns the LRSD term on, with $\lambda = 1$.
+- **Mid-only** (`runs/kug_mid_only.qwen2_5_1_5b.core.yaml`). Training only the adapters of blocks 7 to 20, on
+  cross-entropy alone and from the start, tests the misalignment account directly: if composition fails because
+  knowledge is stored where later layers cannot use it, confining the update to the middle of the network might help.
+
+Two-hop and memorization exact match, averaged over epochs 30 to 50 and then over seeds 848, 1 and 2:
+
+| arm | two-hop | memorization | two-hop minus plain | two-hop minus LRSD |
+| --- | ---: | ---: | ---: | ---: |
+| plain | 0.078 | 0.990 | | |
+| LRSD throughout, $\lambda = 1$ | 0.159 | 0.975 | | |
+| gated | 0.110 | 0.992 | +0.032 | -0.049 |
+| mid-only | 0.023 | 0.992 | -0.055 | -0.136 |
+
+The gate opened at epoch 7, 7 and 6. Per seed, the gated arm's differences were +0.023, +0.041 and +0.033 against plain
+and -0.041, -0.059 and -0.046 against LRSD throughout; the mid-only arm's were -0.066, -0.041 and -0.058 against plain.
+
+Both results are negative against the paper's own recipe. Holding LRSD back until memorization saturates keeps about
+40% of its gain over plain fine-tuning while memorizing slightly better, so the alignment term does most of its work
+while the facts are being learned rather than after. Training only the middle blocks memorizes as well as training all
+of them but composes far less than plain fine-tuning: placement alone does not substitute for the loss. The gated arm
+changes two things at once, when LRSD starts and which adapters train after the gate, so it does not say which of the
+two costs the difference; an arm that turns LRSD on at the gate without refreezing would separate them.
