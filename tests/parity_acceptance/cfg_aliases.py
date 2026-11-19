@@ -130,7 +130,6 @@ l_tl_bridge_gpt2_fts_multiphase = {
     **l_tl_bridge_gpt2_multiphase_sched,
     "tl_cfg": ITLensBridgeConfig(
         model_name="gpt2-small",
-        default_padding_side="left",
         enable_compatibility_mode=True,
         enable_compatibility_mode_kwargs={"no_processing": True},
     ),
@@ -147,7 +146,7 @@ l_tl_bridge_gpt2_fts_multiphase = {
 l_tl_bridge_gpt2_tl_names_fts = {
     "callback_cfgs": {TestFTS: {**default_test_fts_kwargs}},
     **l_tl_bridge_gpt2_tl_names_multiphase_sched,
-    "tl_cfg": ITLensBridgeConfig(model_name="gpt2-small", default_padding_side="left"),
+    "tl_cfg": ITLensBridgeConfig(model_name="gpt2-small"),
     "module_cls": "tests.modules.DivergeTestITModule",
     "model_cfg": {"diverge_on_epoch": 2},
     "logging_level": "DEBUG",
