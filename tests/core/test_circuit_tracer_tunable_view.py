@@ -142,6 +142,36 @@ class TestTranscoderView:
         with pytest.raises(Unresolvable, match="base-model parameters"):
             view.promote([base], "latent:transcoder")
 
+    def test_a_promotion_names_a_layer_range(self):
+        """Each per-layer transcoder's tensors locate at its layer (#875), so a ``promote`` source names the top
+        layers' transcoders by address."""
+        from finetuning_scheduler.core.compile import compile_schedule
+
+        view = _promoted_view(_toy_module(), layer=0)
+        assert view.structure().depth() == 3
+        promote = {"role:artifact & layers:-2:": "latent:transcoder"}
+        schedule = {
+            0: {"params": ["role:latent:transcoder"]},
+            1: {"params": ["role:latent:transcoder & layers:-2:"], "promote": promote},
+        }
+        compiled = compile_schedule(schedule, view)
+        top = sorted(n for n, _ in view.logical_named_parameters() if ".transcoders.0." not in n)
+        assert top and sorted(compiled.physical_for(1)) == top
+        assert all(".transcoders.0." in n for n in compiled.physical_for(0))
+
+    def test_a_cross_layer_transcoder_has_no_layers(self, tmp_path):
+        """A cross-layer transcoder holds every layer in each tensor, so its tensors locate at no layer and a layer
+        range is refused for want of blocks."""
+        from venngram.errors import Refusal
+
+        _, lazy = _eager_and_lazy_clt(str(tmp_path / "clt"))
+        root = nn.Module()
+        root.transcoders = lazy
+        view = CircuitTracerView(root, lazy)
+        structure = view.structure()
+        assert all(structure.locate(n).layer is None for n, _ in view.logical_named_parameters())
+        assert isinstance(structure.depth(), Refusal)
+
     def test_depth_groups_are_whole_layers_from_the_last(self):
         view = as_view(_toy_module().build_tunable_view())
         groups = view.depth_groups()
