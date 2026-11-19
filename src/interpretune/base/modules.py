@@ -4,8 +4,12 @@ import torch
 
 from interpretune.config import ITConfig
 from interpretune.base import BaseITHooks, BaseITComponents, BaseITMixins
-from interpretune.tuning.interventions import attach_configured_interventions, intervention_roles
-from interpretune.tuning.latents import latent_model_roles
+from interpretune.tuning.interventions import (
+    attach_configured_interventions,
+    intervention_placements,
+    intervention_roles,
+)
+from interpretune.tuning.latents import latent_model_placements, latent_model_roles
 from interpretune.tuning.weights import weight_edit_roles
 from interpretune.tuning.views import attach_tunable_view
 from interpretune.utils import MisconfigurationException
@@ -154,7 +158,18 @@ class BaseITModule(BaseITMixins, BaseITComponents, BaseITHooks, torch.nn.Module)
         """
         from interpretune.tuning.views import default_view
 
-        return default_view(self, roles=self.tunable_roles())
+        return default_view(self, roles=self.tunable_roles(), attached=self.tunable_placements())
+
+    def tunable_placements(self) -> dict[str, str]:
+        """Where this module's view places the modules spliced in beside the model, by the module each rewrites.
+
+        Latent models and interventions are registered beside the model (``latent_models.<name>``,
+        ``interventions.<name>``) and spliced in with hooks, so they nest under none of its modules; venngram's view
+        takes this mapping (its ``attached``) to give their tensors the layer and component of their site, so
+        ``role:latent & layers:12:`` selects the latent models spliced at layers 12 and above. Cooperative, like
+        :meth:`tunable_roles`: an adapter registering another spliced module adds its placement to ``super()``'s.
+        """
+        return {**latent_model_placements(self), **intervention_placements(self)}
 
     def tunable_roles(self) -> dict[str, str]:
         """Roles for this module's parameters and buffers, by name.

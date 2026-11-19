@@ -503,22 +503,61 @@ Where a scheduled build still waits for an approval, `python -m tests.gpu_ci.sch
 - `HOLD`: the host is busy, and the verdict names what is busy;
 - `REJECT stale`: still not releasable after two hours, so a `batch: true` schedule is never stuck behind an old build.
 
-**Device placement.** Each GPU phase runs in two stages, and each stage takes its own lease through the host's lease
-tool:
+**Device placement.** Each GPU phase runs in up to three stages, and each stage takes its own lease through the host's
+lease tool:
 
 | stage | lease | tests |
 | --- | --- | --- |
 | small | one device sized to the smallest card, best fit | single-device tests declaring no more than that card's memory, none marked `bf16_cuda` |
-| large | the whole server | everything else: larger declarations, multi-device and `bf16_cuda` tests, then the extended tiers |
+| large | one device that holds the largest of its tests (best fit), no `cpu-heavy` | the other single-device tests: larger declarations and `bf16_cuda` tests |
+| multi | the whole server, with `cpu-heavy` | multi-device tests and the extended tiers; taken only when the run has either |
 
-- The two memory classes (`IT_GPU_MEM_CLASS`, `tests/conftest.py`) partition every phase, so together the stages run it
-  whole.
+- The memory classes (`IT_GPU_MEM_CLASS`, `tests/conftest.py`: `small`, `large`, `multi`) partition every phase, so
+  together the stages run it whole.
+- The large stage is sized before any lease is taken: the job's collect step writes each phase's GPU tests' declared
+  needs (`IT_GPU_STAGE_NEEDS_DIR`), narrowed by the run's selection, and `tests/gpu_ci/stage_needs.py` reads them.
+  Without them the large stage takes the whole server for every class above small (`IT_GPU_MEM_CLASS=rest`), and the
+  multi stage is a no-op. `IT_GPU_LARGE_CPU_HEAVY=1` makes the large stage take `cpu-heavy` too.
 - `bf16_cuda` tests always go to the large stage, because the small card may lack bf16, and there they would be skipped
   rather than run.
-- Strict mode (`IT_GPU_STRICT=1`) is on in both stages, so a test placed on a device smaller than it declares fails
+- Strict mode (`IT_GPU_STRICT=1`) is on in every stage, so a test placed on a device smaller than it declares fails
   rather than skips.
-- Either class may be empty on its own. A full run fails only when a phase ran nothing in both classes.
+- Any class may be empty on its own. A full run fails only when a phase ran nothing in every class.
 - Without the lease tool mounted, the job takes one whole-server lease and runs each phase once.
+
+**Build telemetry.** Every GPU build that collects its phases publishes `it-phases/telemetry/build_telemetry.json`
+beside its phase evidence (`tests/gpu_ci/build_telemetry.py`). It joins:
+
+- the planner's record (`telemetry/plan.json`): the build's identity (repository, build, merge revision, pull request
+  and its head), the mode and why, the areas and the change set the selection came from;
+- each phase's selected count, its outcomes from the phase report, and the full phase that count is a fraction of. A
+  selected run collects the phase a second time without its selection file, at the same revision, for that
+  denominator. `raw_collection` is the whole test collection, not the GPU phase;
+- each phase class's interval, measured inside the job (`gpu_phase.sh`), and each lease stage's waits, acquisition
+  (with the device UUIDs it covers) and release (`gpu_stage_lease.sh`). `wait_s` is queueing and `held_s` is holding:
+  a long wait is not device use.
+
+A report is joined only to the manifest whose digest it records, at the plan's revision, and evidence that does not
+bind is refused by name. Anything missing (an interval that never ended, a lease with no recorded release, a
+denominator not collected) is listed in `unknowns`, never counted as zero.
+
+**On-demand report.** `tests/gpu_ci/ci_report.py` reads a window of the pipeline's builds (their timelines and evidence
+artifacts) and main's history, and writes a JSON record plus a Markdown summary:
+
+```bash
+git fetch origin main
+python -m tests.gpu_ci.ci_report --since 2026-11-11 --org https://dev.azure.com/<org> --project interpretune \
+    --definition <id> --out report.json --markdown report.md   # AZURE_DEVOPS_EXT_PAT set
+```
+
+Per week it reports builds by reason, GPU-agent and `Testing` task minutes, device-held minutes, selected against full
+counts on gated builds, and the share of gated builds selecting each area. For each full run of main it lists the merges
+since the preceding green full run with each one's last gate before merging, and classes every failure: `selected` (a
+merged gate selected the test), `miss` (every merge has gate evidence and none selected it) or `undetermined` (a merge
+without readable gate evidence, such as an expired artifact, a cancelled gate or a commit pushed without a pull request,
+might have). It also reports the minutes from each merge to the first full run of main that contains it. A build that
+predates the telemetry record is assembled from its manifests and reports, and what it cannot say (denominators, lease
+holds) stays unknown in the counts rather than zero.
 
 Class-level `RunIf` marks select every test the class collects: `_marked` in `tests/conftest.py` reads
 `item.iter_markers()`, so a mark on the class is seen by every phase.

@@ -5,7 +5,7 @@
 # gpu_stage_lease.sh, check_gpu_phases.sh).
 #
 #   gpu_job_container.sh hf-cache-check | hf-cache-probe | hf-cache-reset | install | env | plan | collect | warm
-#                        | report | extended-profile | extended-optional | coverage | hf-cache-fix
+#                        | report | telemetry | extended-profile | extended-optional | coverage | hf-cache-fix
 #
 # Parameters arrive as IT_* variables, which ctr.sh forwards: IT_RESET_HF_CACHE, IT_GPU_MODE and IT_GPU_EXTENDED_PARAM
 # (the pipeline's parameters as Azure renders them), and IT_FORCE_CACHE_RESET (set by hf-cache-probe).
@@ -102,7 +102,8 @@ PY
         set -e
         venv
         trusted_git_env
-        python -m tests.gpu_ci.plan_gpu_run --mode "${IT_GPU_MODE:-auto}" --extended "${IT_GPU_EXTENDED_PARAM:-False}"
+        python -m tests.gpu_ci.plan_gpu_run --mode "${IT_GPU_MODE:-auto}" --extended "${IT_GPU_EXTENDED_PARAM:-False}" \
+            --record "${PHASES_OUT}/telemetry/plan.json"
         ;;
     collect)
         # CPU only, executes nothing: what each phase's paths collect and its selection keeps. A collection error fails
@@ -112,8 +113,20 @@ PY
         trusted_git_env
         mkdir -p "$PHASES_OUT"
         args=(); for phase in "${PHASES[@]}"; do args+=(--phase "$phase"); done
-        python -m gpu_epsilon.phase_evidence collect "${args[@]}" --out-dir "$PHASES_OUT"
+        # each phase's collection also writes its GPU tests' declared needs (tests/conftest.py), so the large stage can
+        # lease one device that fits them and the whole-server stage runs only for tests that need it (stage_needs.py)
+        rm -rf "${PHASES_OUT}/stage-needs"
+        IT_GPU_STAGE_NEEDS_DIR="${PHASES_OUT}/stage-needs" \
+            python -m gpu_epsilon.phase_evidence collect "${args[@]}" --out-dir "$PHASES_OUT"
         echo "##vso[task.setvariable variable=IT_PHASES_COLLECTED]true"
+        # A selected run's manifests count the phase narrowed by the change, so the full phase it is a fraction of is
+        # collected too, at this revision and without the selection file (a full run's manifests already are that).
+        # Telemetry only: a failure here leaves the denominator reported as unknown and the run goes on.
+        if [[ -n "${IT_GPU_SELECTION_FILE:-}" ]]; then
+            env -u IT_GPU_SELECTION_FILE python -m gpu_epsilon.phase_evidence collect "${args[@]}" \
+                --out-dir "${PHASES_OUT}/denominator" \
+                || echo "##vso[task.logissue type=warning]the full-phase denominator collection failed; telemetry reports it unknown"
+        fi
         ;;
     report)
         # One report per collected phase, under the vendor the agent reported, gated by its class (the gate in
@@ -129,6 +142,13 @@ PY
                 || { echo "##vso[task.logissue type=error]phase ${phase}: report does not pass a ${IT_JOB_CLASS:-ci-any-vendor} job"; status=1; }
         done
         exit "$status"
+        ;;
+    telemetry)
+        # The build's telemetry record (tests/gpu_ci/build_telemetry.py): the plan, phase counts, phase intervals and
+        # lease events joined into one file beside the phase evidence, published with it. It refuses evidence that
+        # does not bind (a report against another manifest, a manifest at another revision) by name.
+        venv
+        python -m tests.gpu_ci.build_telemetry assemble --dir "$PHASES_OUT"
         ;;
     warm)
         set -e

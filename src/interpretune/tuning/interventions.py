@@ -59,7 +59,7 @@ import torch
 from torch import nn
 
 from interpretune.tuning.latents import _first, _require_reachable, _with_first
-from interpretune.tuning.sites import is_site_address, resolve_site
+from interpretune.tuning.sites import book_sets, is_site_address, resolve_site
 
 # the `nn.ModuleDict` on the root that holds attached interventions, by name
 INTERVENTIONS_ATTR = "interventions"
@@ -70,6 +70,8 @@ TRAINABLE_OPS = frozenset({"add", "scale"})
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 _HOOKS_ATTR = "_intervention_hooks"
 _SITES_ATTR = "_intervention_sites"
+# each attached intervention's resolved module, by name: where its view places it (`intervention_placements`)
+_PLACED_ATTR = "_intervention_placed"
 
 
 def _require_trainable_op(op: str) -> None:
@@ -171,7 +173,13 @@ FROZEN_KINDS: tuple[FrozenKind, ...] = ("fitted", "artifact")
 
 
 def attach_intervention(
-    root: nn.Module, name: str, intervention: nn.Module, site: str, *, frozen: Literal[False] | FrozenKind = False
+    root: nn.Module,
+    name: str,
+    intervention: nn.Module,
+    site: str,
+    *,
+    frozen: Literal[False] | FrozenKind = False,
+    sets: Mapping[str, Any] | None = None,
 ) -> nn.Module:
     """Register ``intervention`` on ``root`` as ``interventions.<name>`` and splice it in at ``site``.
 
@@ -195,6 +203,8 @@ def attach_intervention(
             direction): finetuning-scheduler checkpoints it and never optimizes it, so a resumed run keeps it.
             ``"artifact"`` for a value loaded from a published or saved source: never checkpointed, because it is
             reloaded from that source, and promotable to ``latent:<name>``. ``False`` (the default) is tunable.
+        sets: An address book's named sets (:func:`~interpretune.tuning.sites.book_sets`), when ``site`` references
+            one (``@steer_site``).
 
     Returns:
         ``intervention``.
@@ -221,7 +231,7 @@ def attach_intervention(
         raise ValueError(f"An intervention named {name!r} is already attached; detach it first")
     path, io = site, "output"
     if is_site_address(site):
-        resolved = resolve_site(root, site)
+        resolved = resolve_site(root, site, sets)
         path, io = resolved.path, resolved.io
     target = root.get_submodule(path)
     _require_reachable(root, "interventions", target)
@@ -243,6 +253,7 @@ def attach_intervention(
     sites: dict[str, tuple[str, Literal[False] | FrozenKind]] = root.__dict__.setdefault(_SITES_ATTR, {})
     hooks[name] = handle
     sites[name] = (site, frozen)
+    root.__dict__.setdefault(_PLACED_ATTR, {})[name] = path
     return intervention
 
 
@@ -260,6 +271,7 @@ def detach_intervention(root: nn.Module, name: str) -> nn.Module:
         raise KeyError(f"No intervention named {name!r} is attached")
     root.__dict__.get(_HOOKS_ATTR, {}).pop(name).remove()
     root.__dict__.get(_SITES_ATTR, {}).pop(name, None)
+    root.__dict__.get(_PLACED_ATTR, {}).pop(name, None)
     intervention = held[name]
     del held[name]
     return intervention
@@ -268,6 +280,16 @@ def detach_intervention(root: nn.Module, name: str) -> nn.Module:
 def intervention_sites(root: nn.Module) -> Mapping[str, str]:
     """The site of each intervention attached to ``root``, by name."""
     return {name: site for name, (site, _) in root.__dict__.get(_SITES_ATTR, {}).items()}
+
+
+def intervention_placements(root: nn.Module) -> dict[str, str]:
+    """Where ``root``'s view places each attached intervention: its module (``interventions.<name>``) by the module
+    path, under ``root``, of the module whose input or output it rewrites (its resolved site).
+
+    Interventions are registered beside the model, so venngram's view takes this mapping (``attached``) to give their
+    tensors the layer and component of the module they are spliced at.
+    """
+    return {f"{INTERVENTIONS_ATTR}.{name}": path for name, path in root.__dict__.get(_PLACED_ATTR, {}).items()}
 
 
 def intervention_roles(root: nn.Module) -> dict[str, str]:
@@ -291,12 +313,15 @@ class InterventionCfg:
 
     Args:
         name: The intervention's name (``interventions.<name>``).
-        site: Path, under the module, of the module whose output it rewrites.
+        site: Path, under the module, of the module whose output it rewrites, or a venngram site address
+            (``point:hook_resid_post & layers:13``), which may reference a named set of ``book`` (``@steer_site``).
         op: The op it applies (:data:`TRAINABLE_OPS`): ``add`` (a steering vector, the default) or ``scale``.
         shape: The operand's shape (an ``int``, or a list or tuple of them). Defaults to the model's hidden size
             (``config.hidden_size`` of an HF or nnsight model, ``cfg.d_model`` of a TransformerLens one): one vector
             over a residual-stream site.
         scale_factor: A fixed multiplier on the operand.
+        book: The address book whose named sets ``site`` references: a local path to a book document, or a venngram
+            store reference to a published one, so one shared book names the site on every backend.
 
     A configured intervention's operand starts where its op is the identity and is tunable (``intervention:<name>``).
     A frozen one would be a no-op, so there is no ``frozen`` setting: a later stage holds a trained operand fixed with
@@ -309,6 +334,7 @@ class InterventionCfg:
     op: str = "add"
     shape: int | tuple[int, ...] | None = None
     scale_factor: float = 1.0
+    book: str | None = None
 
     def __post_init__(self) -> None:
         # a YAML list arrives as a list; the operand's shape is a tuple
@@ -352,10 +378,16 @@ def attach_configured_interventions(
         TypeError: an entry is neither an :class:`InterventionCfg` nor a mapping.
     """
     attached = []
+    books: dict[str, dict[str, Any]] = {}  # each book is read once, however many interventions it serves
     for cfg in map(as_intervention_cfg, cfgs):
         shape = cfg.shape if cfg.shape is not None else _model_hidden_size(root)
         if shape is None:
             raise ValueError(f"Intervention {cfg.name!r} needs a `shape`: the model's hidden size is not readable")
+        sets = None
+        if cfg.book is not None:
+            if cfg.book not in books:
+                books[cfg.book] = book_sets(cfg.book)
+            sets = books[cfg.book]
         intervention = OpIntervention(cfg.op, shape, scale_factor=cfg.scale_factor)
-        attached.append(attach_intervention(root, cfg.name, intervention, cfg.site))
+        attached.append(attach_intervention(root, cfg.name, intervention, cfg.site, sets=sets))
     return attached

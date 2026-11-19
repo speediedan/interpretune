@@ -69,14 +69,17 @@ steps:
   # Waiting here for tens of minutes behind a local GPU job is the lease working, not a hung build; a gate's wait
   # that times out is retried while its lease budget lasts (gpu_stage_lease.sh).
   #
-  # TWO STAGES (.azure-pipelines/scripts/gpu_stage_lease.sh):
+  # STAGES (.azure-pipelines/scripts/gpu_stage_lease.sh):
   #   small  one device sized to the smallest card (best fit), without cpu-heavy, for the single-device tests
   #          declaring no more than that and not needing bf16, so they can run on the small card while someone holds
   #          the large one (or the host's memory: a local CPU suite);
-  #   large  the whole server, for everything else and the extended tiers.
-  # The memory classes partition each phase (tests/conftest.py), so the two stages together run it whole. Without
-  # the host lease tool mounted, or on an AMD agent (identical cards, so placement buys nothing), the job takes one
-  # whole-server lease and runs one stage.
+  #   large  one device that holds the largest of the other single-device tests (sized by the declarations the
+  #          collect step wrote: tests/gpu_ci/stage_needs.py), without cpu-heavy;
+  #   multi  the whole server, for the multi-device tests and the extended tiers, taken only when the run has either.
+  # The memory classes partition each phase (tests/conftest.py), so the stages together run it whole. Without the
+  # collected declarations the large stage is the whole server for everything above small, as before, and multi is a
+  # no-op. Without the host lease tool mounted, or on an AMD agent (identical cards, so placement buys nothing), the
+  # job takes one whole-server lease and runs one stage.
   - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh acquire small'
     displayName: 'Acquire host GPU lease: small-device stage'
     condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
@@ -109,7 +112,7 @@ steps:
     displayName: 'Release host GPU lease: small-device stage'
     condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
   - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh acquire large'
-    displayName: 'Acquire host GPU lease: whole-server stage'
+    displayName: 'Acquire host GPU lease: large-device stage'
     condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LEASE_HELD'], '1'))
     env:
       SYSTEM_ACCESSTOKEN: $(System.AccessToken)
@@ -128,6 +131,31 @@ steps:
   - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh profile_ci large'
     displayName: 'Testing: CI Profiling (large)'
     condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
+  # A large stage sized by declarations held one device: it is released before the whole-server stage asks for all of
+  # them. A two-stage or one-stage run keeps its whole-server lease (under the large stage) to the end.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh release large'
+    displayName: 'Release host GPU lease: large-device stage'
+    condition: and(succeededOrFailed(), eq(variables['IT_GPU_STAGES'], '3'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh acquire multi'
+    displayName: 'Acquire host GPU lease: whole-server stage'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_LARGE_HELD'], '1'))
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh cuda multi'
+    displayName: 'Testing: standard gpu cuda-marked (multi)'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_MULTI_HELD'], '1'))
+    env:
+      HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+      HF_TOKEN: $(HF_MCP_TOKEN_RW)
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh standalone multi'
+    displayName: 'Testing: standalone gpu (multi)'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_MULTI_HELD'], '1'))
+    env:
+      HF_GATED_PUBLIC_REPO_AUTH_KEY: $(HF_GATED_PUBLIC_REPO_AUTH_KEY)
+      HF_TOKEN: $(HF_MCP_TOKEN_RW)
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_phase.sh profile_ci multi'
+    displayName: 'Testing: CI Profiling (multi)'
+    condition: and(succeededOrFailed(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'), eq(variables['IT_GPU_MULTI_HELD'], '1'))
   # Each class may be empty on its own; a FULL run whose phase came out empty in both means the collector broke.
   - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/check_gpu_phases.sh'
     displayName: 'Check: no GPU phase ran empty on a full run'
@@ -161,7 +189,23 @@ steps:
     condition: and(succeeded(), ne(variables['IT_GPU_SELECTION_MODE'], 'none'))
     env:
       CODECOV_TOK: $(CODECOV_TOKEN)
-  # The leases are released, and the container removed, by the template's final step.
+  # The whole-server stage's lease (the only one, on a one-stage host) is released here, once the last GPU work is
+  # done, rather than only in the template's cleanup: the cleanup runs after the evidence is published, so a release
+  # there would be missing from the build's telemetry. The cleanup still releases whatever is left.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh release multi'
+    displayName: 'Release host GPU lease: whole-server stage'
+    condition: and(always(), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_stage_lease.sh release large'
+    displayName: 'Release host GPU lease: large stage (two-stage and one-stage runs)'
+    condition: and(always(), eq(variables['IT_GPU_LEASE_HELD'], '1'))
+  # The build's telemetry record (tests/gpu_ci/build_telemetry.py), published with the phase evidence: the plan and
+  # the build's identity, each phase's selected and full counts and outcomes, its interval, and the leases' waits and
+  # holds, with every missing piece named rather than counted as zero. It never fails the build.
+  - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh telemetry'
+    displayName: 'Build telemetry'
+    condition: and(always(), eq(variables['IT_PHASES_COLLECTED'], 'true'))
+    continueOnError: true
+  # The container is removed, and any lease still held released, by the template's final step.
   - bash: bash .azure-pipelines/scripts/ctr.sh 'bash .azure-pipelines/scripts/gpu_job_container.sh hf-cache-fix'
     displayName: 'Fix HF cache permissions for the next run'
     condition: always()
