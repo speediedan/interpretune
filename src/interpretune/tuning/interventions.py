@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import torch
@@ -64,7 +64,7 @@ from interpretune.tuning.sites import book_sets, is_site_address, resolve_site
 # the `nn.ModuleDict` on the root that holds attached interventions, by name
 INTERVENTIONS_ATTR = "interventions"
 
-#: The ops a trainable intervention applies. Other registered ops are refused by name until a test covers them.
+#: The ops a trainable intervention applies. Other registered ops are refused until a test covers them.
 TRAINABLE_OPS = frozenset({"add", "scale"})
 
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
@@ -143,6 +143,123 @@ class OpIntervention(nn.Module):
             self.operand(), op=self.op, scale_factor=self.scale_factor, position_scope=PositionScope.ALL_POSITIONS
         )
         return apply_op(x, spec)
+
+
+class _ConstantOperand(nn.Module):
+    value: torch.Tensor
+
+    def __init__(self, value: torch.Tensor | float) -> None:
+        super().__init__()
+        self.register_buffer("value", torch.as_tensor(value).detach().clone())
+
+    def forward(self) -> torch.Tensor:
+        return self.value
+
+
+def _unit_clamp_operand(count: int, operand: Any, lower: float | None, upper: float | None) -> nn.Module:
+    if operand is not None or (lower is None and upper is None):
+        raise ValueError("a unit clamp needs at least one bound and takes no operand")
+    if lower is not None and upper is not None and lower > upper:
+        raise ValueError("unit clamp bounds are reversed")
+    return _ConstantOperand(torch.eye(count))
+
+
+def _unit_operand(
+    op: str, count: int, operand: Any, scale_factor: float, lower: float | None, upper: float | None
+) -> nn.Module:
+    if op == "clamp":
+        return _unit_clamp_operand(count, operand, lower, upper)
+    if lower is not None or upper is not None:
+        raise ValueError(f"unit op {op!r} takes an operand, not clamp bounds")
+    if operand is None:
+        _require_trainable_op(op)
+        if not scale_factor:
+            raise ValueError("a trainable unit operand needs a nonzero scale_factor")
+        return LearnedOperand(count, 0.0 if op == "add" else 1.0 / scale_factor)
+    return operand if isinstance(operand, nn.Module) else _ConstantOperand(operand)
+
+
+class UnitIntervention(nn.Module):
+    """Apply an op only to selected last-axis units, preserving their complement and its gradient.
+
+    Args:
+        op: ``add``, ``scale``, ``replace`` or ``clamp``.
+        units: Explicit nonnegative indices, in the operand's coordinate order.
+        operand: A module returning the operand, or a fixed tensor/scalar. Without one, ``add`` and ``scale``
+            allocate a trainable vector at their identity. ``replace`` needs an operand. ``clamp`` takes no
+            operand: its basis is the selected model units.
+        scale_factor: Multiplier for an add or scale operand.
+        clamp_min: Optional lower unit-coordinate bound.
+        clamp_max: Optional upper unit-coordinate bound.
+
+    Attach with :func:`attach_intervention`, using ``frozen="fitted"`` or ``"artifact"`` for a fixed operand or
+    clamp. A trainable operand has one value per selected unit; no full-width tensor is optimized.
+    """
+
+    def __init__(
+        self,
+        op: str,
+        units: Sequence[int],
+        operand: nn.Module | torch.Tensor | float | None = None,
+        *,
+        scale_factor: float = 1.0,
+        clamp_min: float | None = None,
+        clamp_max: float | None = None,
+    ) -> None:
+        super().__init__()
+        self.unit_indices = tuple(units)
+        if (
+            not self.unit_indices
+            or any(type(unit) is not int or unit < 0 for unit in self.unit_indices)
+            or len(set(self.unit_indices)) != len(self.unit_indices)
+        ):
+            raise ValueError(f"units {self.unit_indices!r} must be nonempty, distinct nonnegative integer indices")
+        if op not in {"add", "scale", "replace", "clamp"}:
+            raise ValueError(f"UnitIntervention applies add, scale, replace or clamp, not {op!r}")
+        self.operand = _unit_operand(op, len(self.unit_indices), operand, scale_factor, clamp_min, clamp_max)
+        self.op, self.scale_factor = op, scale_factor
+        self.clamp_min, self.clamp_max = clamp_min, clamp_max
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """The op applied at every position, only on the selected units."""
+        from interpretune.analysis.backends.interventions import InterventionSpec, PositionScope, apply_op
+
+        return apply_op(
+            x,
+            InterventionSpec(
+                self.operand(),
+                op=self.op,
+                scale_factor=self.scale_factor,
+                unit_indices=self.unit_indices,
+                clamp_min=self.clamp_min,
+                clamp_max=self.clamp_max,
+                position_scope=PositionScope.ALL_POSITIONS,
+            ),
+        )
+
+
+def _unit_splice(
+    root: nn.Module, address: str, sets: Mapping[str, Any] | None = None
+) -> tuple[str, tuple[int, ...] | None]:
+    """A one-site unit address split into its site address and explicit unit indices."""
+    from venngram.address import Term, parse, to_string
+
+    expr = parse(address)
+    if not isinstance(expr, Term) or expr.units is None:
+        return address, None
+    if expr.point is None:
+        raise ValueError(f"unit splice {address!r} must name a point")
+    site = to_string(replace(expr, units=None))
+    resolved = resolve_site(root, site, sets)
+    layer = int(resolved.hook.split(".")[1])
+    indices = expr.units.flat
+    if expr.units.per_layer is not None:
+        if set(expr.units.layers or ()) != {layer}:
+            raise ValueError(f"unit splice {address!r} must name units of its one layer, {layer}")
+        indices = dict(expr.units.per_layer)[layer]
+    if indices is None or indices.indices is None or any(index < 0 for index in indices.indices):
+        raise ValueError(f"unit splice {address!r} needs explicit nonnegative indices; its width is checked at forward")
+    return site, tuple(indices.indices)
 
 
 def _interventions(root: nn.Module, create: bool = False) -> nn.ModuleDict | None:
@@ -231,7 +348,10 @@ def attach_intervention(
         raise ValueError(f"An intervention named {name!r} is already attached; detach it first")
     path, io = site, "output"
     if is_site_address(site):
-        resolved = resolve_site(root, site, sets)
+        site_address, units = _unit_splice(root, site, sets)
+        if units is not None and (not isinstance(intervention, UnitIntervention) or intervention.unit_indices != units):
+            raise ValueError(f"unit site {site!r} requires a UnitIntervention with units {units}")
+        resolved = resolve_site(root, site_address, sets)
         path, io = resolved.path, resolved.io
     target = root.get_submodule(path)
     _require_reachable(root, "interventions", target)
@@ -315,6 +435,8 @@ class InterventionCfg:
         name: The intervention's name (``interventions.<name>``).
         site: Path, under the module, of the module whose output it rewrites, or a venngram site address
             (``point:hook_resid_post & layers:13``), which may reference a named set of ``book`` (``@steer_site``).
+            Explicit ``units`` on an address allocate one learned value per selected unit, as a
+            :class:`UnitIntervention`.
         op: The op it applies (:data:`TRAINABLE_OPS`): ``add`` (a steering vector, the default) or ``scale``.
         shape: The operand's shape (an ``int``, or a list or tuple of them). Defaults to the model's hidden size
             (``config.hidden_size`` of an HF or nnsight model, ``cfg.d_model`` of a TransformerLens one): one vector
@@ -380,14 +502,21 @@ def attach_configured_interventions(
     attached = []
     books: dict[str, dict[str, Any]] = {}  # each book is read once, however many interventions it serves
     for cfg in map(as_intervention_cfg, cfgs):
-        shape = cfg.shape if cfg.shape is not None else _model_hidden_size(root)
-        if shape is None:
-            raise ValueError(f"Intervention {cfg.name!r} needs a `shape`: the model's hidden size is not readable")
         sets = None
         if cfg.book is not None:
             if cfg.book not in books:
                 books[cfg.book] = book_sets(cfg.book)
             sets = books[cfg.book]
+        units = _unit_splice(root, cfg.site, sets)[1] if is_site_address(cfg.site) else None
+        if units is not None:
+            if cfg.shape is not None and cfg.shape not in (len(units), (len(units),)):
+                raise ValueError(f"unit intervention {cfg.name!r} has {len(units)} units, not shape {cfg.shape!r}")
+            intervention = UnitIntervention(cfg.op, units, scale_factor=cfg.scale_factor)
+            attached.append(attach_intervention(root, cfg.name, intervention, cfg.site, sets=sets))
+            continue
+        shape = cfg.shape if cfg.shape is not None else _model_hidden_size(root)
+        if shape is None:
+            raise ValueError(f"Intervention {cfg.name!r} needs a `shape`: the model's hidden size is not readable")
         intervention = OpIntervention(cfg.op, shape, scale_factor=cfg.scale_factor)
         attached.append(attach_intervention(root, cfg.name, intervention, cfg.site, sets=sets))
     return attached
