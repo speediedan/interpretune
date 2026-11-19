@@ -415,7 +415,7 @@ FIXTURE_CFGS = {
     ),
     "sl_ns_gpt2": FixtureCfg(
         test_cfg=CoreSLNNsightGPT2,
-        variants={"it_session": [FixtPhase.initonly]},
+        variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]},
     ),
     "sl_br_gpt2": FixtureCfg(
         test_cfg=CoreSLBridgeGPT2, variants={"it_session": [FixtPhase.initonly], "it_session_cfg": [FixtPhase.cfgonly]}

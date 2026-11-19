@@ -833,7 +833,7 @@ class TestCoreFunctionality:
         )
         assert isinstance(name_filter_list, list)
         assert len(name_filter_list) == 1
-        assert name_filter_list[0].startswith("blocks.0.hook_resid_pre")
+        assert name_filter_list[0].startswith("blocks.0.hook_resid_post")
 
     def test_resolve_names_filter_callable_path(self):
         """Test resolve_names_filter when passed a callable (line 969)."""
@@ -934,43 +934,39 @@ class TestCoreFunctionality:
             f"variable '{current_env_value}'"
         )
 
-    def test_operation_aliases_registered(self):
-        """Test that operation aliases are registered in the top-level module.
+    def test_operation_aliases_registered(self, tmp_path):
+        """Public operation aliases resolve to canonical wrappers in a fresh interpreter."""
+        import os
+        import subprocess
+        import sys
+        from textwrap import dedent
 
-        Uses ``purged_modules`` rather than a hand-rolled save/restore: reimporting rebinds BOTH
-        ``sys.modules["interpretune.analysis"]`` and the ``analysis`` attribute on the ``interpretune``
-        package, and restoring only the former leaves them disagreeing for the rest of the session. Measured
-        2026-08-18: that left every later dotted patch target on those modules silently ineffective, which
-        surfaced as 42 unrelated-looking op-collection failures in the full suite. See
-        ``tests/module_identity.py``.
-        """
-        import interpretune
-        from interpretune.analysis import DISPATCHER
-        import importlib
+        # Reimporting only analysis can leave top-level wrappers from an earlier class identity. A fresh
+        # interpreter checks the real import contract without changing the suite's module graph.
+        script = dedent("""
+            import interpretune
+            from interpretune.analysis import DISPATCHER
+            from interpretune.analysis.ops.base import OpWrapper
 
-        from tests.module_identity import purged_modules
-
-        with purged_modules("interpretune.analysis"):
-            importlib.import_module("interpretune.analysis")
-
-            # Get the OpWrapper class
-            analysis_ops_base = importlib.import_module("interpretune.analysis.ops.base")
-            OpWrapper = analysis_ops_base.OpWrapper
-
-            # Get operation aliases from the dispatcher
             aliases = list(DISPATCHER.get_all_aliases())
-
-            # Ensure we have some aliases to test
-            assert len(aliases) > 0, "No operation aliases found in DISPATCHER"
-
-            # Check that aliases are properly registered in the top-level module
+            assert aliases, "No operation aliases found in DISPATCHER"
             for alias, op_name in aliases:
-                assert hasattr(interpretune, alias), f"Alias '{alias}' not found in top-level module"
+                # Composite aliases may be exposed lazily after their definitions are compiled.
+                assert hasattr(interpretune, alias), f"Alias {alias!r} not found in the top-level module"
                 wrapper = getattr(interpretune, alias)
-                assert isinstance(wrapper, OpWrapper), f"'{alias}' is not an OpWrapper instance"
+                assert isinstance(wrapper, OpWrapper), f"{alias!r} is not an OpWrapper instance"
                 assert DISPATCHER.get_op(wrapper._op_name).name == op_name, (
-                    f"Alias '{alias}' points to '{wrapper._op_name}' instead of '{op_name}'"
+                    f"Alias {alias!r} points to {wrapper._op_name!r} instead of {op_name!r}"
                 )
+        """)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            env={**os.environ, "IT_ANALYSIS_HUB_CACHE": str(tmp_path / "hub_ops")},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
 
     def test_analysis_import_hook_system_modules_cache(self):
         """Test _AnalysisImportHook returns cached module from sys.modules (line 35)."""
