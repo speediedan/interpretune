@@ -191,8 +191,10 @@ class TransformerBridgeView:
         root: The view's root: the interpretune module, or the bridge itself.
         bridge: The bridge, when it is not ``root.model`` (or ``root``).
         implicit_norm_thaw: Thaw a block's norms with any of its parameters, and the final norm with the embeddings.
-        roles: Roles for ``root``'s parameters and buffers, by physical name (anything unlisted is ``base``), e.g.
-            ``latent:sae`` for SAEs spliced into the bridge.
+        roles: Roles for ``root``'s parameters and buffers (anything unlisted is ``base``), e.g. ``latent:sae`` for
+            SAEs spliced into the bridge: physical names mapped to roles, or roles mapped to addresses resolved
+            against the physical names and :meth:`structure` (``{"adapter:lora": "component:attn.* & leaf:lora_*"}``,
+            speediedan/venngram#109).
         attached: Modules of ``root`` beside the bridge that a hook splices into it (latent models and interventions),
             each with the module of ``root`` it is attached to (``{"latent_models.sae3": "model.blocks.3.hook_out"}``),
             as venngram's ``MappedView`` takes them: their tensors take the layer and component of the bridge component
@@ -210,9 +212,8 @@ class TransformerBridgeView:
     ) -> None:
         from venngram.roles import validate_roles
 
-        self._roles = validate_roles(
-            roles or {}, (n for n, _ in root.named_parameters()), (n for n, _ in root.named_buffers())
-        )
+        from interpretune.tuning.views import expand_declared_roles
+
         if bridge is None:
             model = root._modules.get("model")
             resolved = model if model is not None and hasattr(model, "tl_named_parameters") else root
@@ -222,6 +223,13 @@ class TransformerBridgeView:
         self.implicit_norm_thaw = implicit_norm_thaw
         self.attached = dict(attached or {})
         self._built = False
+        names = {n for n, _ in root.named_parameters()} | {n for n, _ in root.named_buffers()}
+        # role addresses resolve on the physical names, placed by this view's structure (read only when one is given)
+        by_address = any(key not in names for key in roles or {})
+        roles = expand_declared_roles(root, roles or {}, self.structure() if by_address else None)
+        self._roles = validate_roles(
+            roles, (n for n, _ in root.named_parameters()), (n for n, _ in root.named_buffers())
+        )
 
     @property
     def untraced(self) -> list[str]:

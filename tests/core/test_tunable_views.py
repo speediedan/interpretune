@@ -26,6 +26,7 @@ from interpretune.tuning.views import (  # noqa: E402
     attach_tunable_view,
     adapter_roles,
     default_view,
+    expand_declared_roles,
     identity_view,
 )
 
@@ -123,7 +124,7 @@ class TestAttachment:
 
         remote = SimpleNamespace(it_cfg=SimpleNamespace(nnsight_cfg=SimpleNamespace(remote=True)))
         local = SimpleNamespace(it_cfg=SimpleNamespace(nnsight_cfg=SimpleNamespace(remote=False)))
-        assert "#775" in BaseNNsightModule._hf_model_unregistered_reason(remote)  # type: ignore[arg-type]
+        assert "run_remote_chunk" in BaseNNsightModule._hf_model_unregistered_reason(remote)  # type: ignore[arg-type]
         assert "no local HF module" in BaseNNsightModule._hf_model_unregistered_reason(local)  # type: ignore[arg-type]
 
     def test_an_undispatched_nnsight_composition_is_refused(self, request):
@@ -242,7 +243,7 @@ class TestConfiguredView:
         overrides = {"add_saes_on_init": True, "sae_cfgs": _SPLICEABLE_SAES, "tunable_view": _CANONICAL}
         module = _fresh_module(request, "get_it_session_cfg__sl_cust", **overrides)
         roles = as_view(getattr(module, VIEW_ATTR)).roles()
-        assert roles and roles == {**adapter_roles(module), **module.tunable_roles()}
+        assert roles and roles == {**adapter_roles(module), **expand_declared_roles(module, module.tunable_roles())}
         assert any(r.startswith("latent") for r in roles.values())
 
     def test_init_args_roles_are_used_as_given(self, request):
