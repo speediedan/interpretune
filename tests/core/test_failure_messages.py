@@ -116,16 +116,25 @@ def no_gpu(monkeypatch):
 
 
 class TestGpuRequestMessages:
-    """An explicit GPU device that torch cannot provide is refused by name, where the config resolves it."""
+    """A GPU device that torch cannot provide is refused by name where the model is placed on it.
 
-    def test_explicit_tl_device_is_refused_by_name(self, no_gpu):
+    Not when the config is built: configurations written for a GPU (a seed component's, say) are placed on another
+    device after loading, so only the device a load actually uses is a request.
+    """
+
+    def test_tl_placement_on_an_unavailable_gpu_is_refused_by_name(self, no_gpu):
+        import torch
+
+        from interpretune.adapters.transformer_lens.adapter import _place_hf_model_before_wrap
         from interpretune.adapters.transformer_lens.config import ITLensFromPretrainedNoProcessingConfig
 
+        ITLensFromPretrainedNoProcessingConfig(model_name="gpt2", device="cuda")  # a config alone is not a request
         with pytest.raises(MisconfigurationException) as err:
-            ITLensFromPretrainedNoProcessingConfig(model_name="gpt2", device="cuda")
-        assert "`device` asks for the GPU device 'cuda'" in str(err.value)
-        assert "set `device` to 'cpu' or leave it unset" in str(err.value)
+            _place_hf_model_before_wrap(torch.nn.Linear(2, 2), {"device": "cuda"})
+        assert "`tl_cfg.device` asks for the GPU device 'cuda'" in str(err.value)
+        assert "set `tl_cfg.device` to 'cpu' or leave it unset" in str(err.value)
         assert "NVIDIA" not in str(err.value), "torch's vendor-specific advice is not repeated as ours"
+        _place_hf_model_before_wrap(torch.nn.Linear(2, 2), {"device": "cpu"})
 
     def test_unset_device_resolves_to_cpu_silently(self, no_gpu, recwarn):
         from interpretune.adapters.transformer_lens.config import ITLensFromPretrainedNoProcessingConfig
@@ -146,11 +155,14 @@ class TestGpuRequestMessages:
         with pytest.raises(MisconfigurationException, match="`pretrained_kwargs.device_map` asks for the GPU device"):
             check_gpu_device_map(device_map, field="pretrained_kwargs.device_map")
 
-    def test_nnsight_device_map_is_refused_by_name(self, no_gpu):
+    def test_nnsight_load_on_an_unavailable_gpu_is_refused_by_name(self, no_gpu):
         from interpretune.adapters.nnsight.config import NNsightConfig
 
-        with pytest.raises(MisconfigurationException, match="`device_map` asks for the GPU device 'cuda'"):
-            NNsightConfig(model_name="gpt2", device_map="cuda")
+        cfg = NNsightConfig(model_name="gpt2", device_map="cuda")  # a config alone is not a request
+        with pytest.raises(MisconfigurationException, match="`nnsight_cfg.device_map` asks for the GPU device 'cuda'"):
+            cfg.get_nnsight_kwargs()
+        # a remote model is placed by the service, not on this host
+        assert NNsightConfig(model_name="gpt2", device_map="cuda", remote=True).get_nnsight_kwargs()["device"] == "cuda"
 
     def test_a_build_without_gpu_support_gets_its_own_remedy(self, no_gpu, monkeypatch):
         """The two causes need different fixes: a new torch build, or a driver and visible devices."""
@@ -306,8 +318,10 @@ class TestTroubleshootingPageStaysInSync:
         from interpretune.utils import neuronpedia_hub_fetch as fetch_mod
 
         with pytest.raises(MisconfigurationException) as gpu:
-            check_gpu_device_request("cuda", field="device")
-        self._assert_quoted(str(gpu.value), "asks for the GPU device", "To run on the CPU, set `device` to 'cpu'")
+            check_gpu_device_request("cuda", field="tl_cfg.device")
+        self._assert_quoted(
+            str(gpu.value), "asks for the GPU device", "To run on the CPU, set `tl_cfg.device` to 'cpu'"
+        )
         blocker = tmp_path / "file"
         blocker.write_text("")
         with pytest.raises(MisconfigurationException) as cache:

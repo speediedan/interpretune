@@ -12,7 +12,6 @@ from interpretune.utils import (
     ITInstantiationFeedbackWarning,
     MisconfigurationException,
     _resolve_dtype,
-    check_gpu_device_request,
     rank_zero_warn,
     tl_invalid_dmap,
 )
@@ -96,8 +95,6 @@ class ITLensBridgeConfig(ITLensSharedConfig):
     def __post_init__(self) -> None:
         if self.device is None:  # align with TL default device resolution
             self.device = tl_get_device()
-        else:
-            check_gpu_device_request(self.device, field="device")
         # Validate that enable_compatibility_mode_kwargs are only set when enable_compatibility_mode is True
         if self.enable_compatibility_mode_kwargs and not self.enable_compatibility_mode:
             rank_zero_warn(
@@ -133,8 +130,6 @@ class ITLensFromPretrainedConfig(ITLensSharedConfig):
     def __post_init__(self) -> None:
         if self.device is None:  # align with TL default device resolution
             self.device = tl_get_device()
-        else:
-            check_gpu_device_request(self.device, field="device")
 
 
 # rather than use from_pretrained_no_processing wrapper, we can specify the simplified config defaults we want directly

@@ -79,13 +79,13 @@ not evidence that the repository still exists on the Hub.
 Leaving the device unset is the CPU path: with no GPU visible, the TransformerLens configs resolve
 the device to `cpu` without a warning, so CPU-only users never meet this mode.
 
-A device you set explicitly is a request. When it names a GPU (`device="cuda"`, a `device_map` of
-`"cuda:0"` or a device index) and torch cannot provide one, the config refuses it, naming the
-setting that asked and both ways forward:
+A device you set is a request once a model is placed on it. When it names a GPU (`device="cuda"`,
+a `device_map` of `"cuda:0"` or a device index) and torch cannot provide one, loading the model
+refuses it, naming the setting that asked and both ways forward:
 
 ```text
-`device` asks for the GPU device 'cuda', but torch sees no usable GPU (no driver loaded, or no
-device visible to this process). To run on the CPU, set `device` to 'cpu' or leave it unset; ...
+`tl_cfg.device` asks for the GPU device 'cuda', but torch sees no usable GPU (no driver loaded, or
+no device visible to this process). To run on the CPU, set `tl_cfg.device` to 'cpu' or leave it unset; ...
 ```
 
 A torch build without GPU support gets its own reason ("has no GPU support") and remedy (install a
