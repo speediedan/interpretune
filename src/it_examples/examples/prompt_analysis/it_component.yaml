@@ -1,7 +1,7 @@
 # interpretune component manifest (schema v1)
-# A task-neutral component for analyses of free-form prompts (interpretune#1013). The model-only configurations set no
-# prompts and no attribution targets; experiment variants that need them are named for the experiment. Unlike
-# speediedan/rte, the entrypoint lives in this tree, so one source holds everything the component publishes.
+# A task-neutral component for analyses of free-form prompts. The model-only configurations set no prompts and no
+# attribution targets; experiment variants that need them are named for the experiment. The entrypoint is published
+# from the same source tree as the configurations, so one source holds everything the component publishes.
 it_schema_version: 1
 kinds:
 - module
@@ -11,6 +11,7 @@ requires:
   adapters:
   - circuit_tracer
   - nnsight
+  - transformer_lens  # the circuit_tracer-only configurations compose with it; their backend is chosen at run time
   pip: []
 module:
   entrypoint: prompt_analysis.py
