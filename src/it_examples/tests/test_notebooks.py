@@ -581,8 +581,8 @@ def test_jspace_workspace_notebook(params: dict[str, Any], expected_order: str, 
 # The neuron-communities replication loads Llama-3.1-8B in bf16 (gated; its weights persist on the agent's cache mount
 # from the first run, as tests/gpu_ci/hf_warm_manifest_gpu.yaml explains) and streams FineWeb-Edu prompts and the
 # release's community records from the network, so it runs in the optional tier rather than a pull-request phase.
-# min_gpu_mem_gb: to be measured with tests/gpu_ci/calibrate.py before this lands.
-@RunIf(bf16_cuda=True, min_gpu_mem_gb=20.0, optional=True)
+# Measured with tests/gpu_ci/calibrate.py: need 17.70 GiB (RTX 4090, CUDA), declared at the calibrator's recommendation.
+@RunIf(bf16_cuda=True, min_gpu_mem_gb=20.5, optional=True)
 def test_neuron_communities_notebook(tmp_path: Path):
     """Execute the neuron-communities notebook on a few prompts and check its controls ran and the community is
     necessary, not sufficient to ablate, and recovered by attribution."""
