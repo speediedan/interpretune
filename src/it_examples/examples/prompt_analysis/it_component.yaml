@@ -1,0 +1,34 @@
+# interpretune component manifest (schema v1)
+# A task-neutral component for analyses of free-form prompts. The model-only configurations set no prompts and no
+# attribution targets; experiment variants that need them are named for the experiment. The entrypoint is published
+# from the same source tree as the configurations, so one source holds everything the component publishes.
+it_schema_version: 1
+kinds:
+- module
+requires:
+  # dev floor until the alpha releases (PEP 440: 0.1.0.devN sorts BEFORE 0.1a0); tighten to '>=0.1a0' at release
+  interpretune: '>=0.1.dev0'
+  adapters:
+  - circuit_tracer
+  - nnsight
+  - transformer_lens  # the circuit_tracer-only configurations compose with it; their backend is chosen at run time
+  pip: []
+module:
+  entrypoint: prompt_analysis.py
+  task:
+    name: prompt_analysis
+    description: Analyses of free-form prompts, with no dataset and no task head
+    datasets: []
+    external_data: []
+    variants:
+      prompt_analysis:
+        description: model and adapter composition only; the caller supplies prompts and, if wanted, targets
+      capital_states:
+        description: the capital prompt the circuit-tracer notebooks analyze, with the intermediate city and the answer as targets
+  configs:
+    capital_states.gemma2.circuit_tracer: configs/capital_states.gemma2.circuit_tracer.yaml
+    capital_states.gemma2.circuit_tracer+nnsight: configs/capital_states.gemma2.circuit_tracer+nnsight.yaml
+    capital_states.gemma3.circuit_tracer+nnsight.neuronpedia: configs/capital_states.gemma3.circuit_tracer+nnsight.neuronpedia.yaml
+    prompt_analysis.gemma2.circuit_tracer: configs/prompt_analysis.gemma2.circuit_tracer.yaml
+    prompt_analysis.gemma2.circuit_tracer+nnsight: configs/prompt_analysis.gemma2.circuit_tracer+nnsight.yaml
+    prompt_analysis.gemma3.circuit_tracer+nnsight.neuronpedia: configs/prompt_analysis.gemma3.circuit_tracer+nnsight.neuronpedia.yaml
