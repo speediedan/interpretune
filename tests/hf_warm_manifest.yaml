@@ -68,7 +68,7 @@ components:
   # The task-neutral prompt-analysis component the circuit-tracer notebooks load (free-form prompts, no task head).
   # Pinned revision; bump with intent.
   - repo_id: speediedan/prompt-analysis
-    revision: 6a6670271ea956734c869844ea834566081a24fc
+    revision: 31457412fe48b6a51625e933220353eb6dfe7235
 venngram:
   # venngram's registry at one pinned generation (#900): every module's default view looks its component map and
   # overlay maps up there. tests/conftest.py sets VENNGRAM_REGISTRIES from this list unless the environment names one,
