@@ -12,7 +12,7 @@ import pytest
 from interpretune.analysis.backends import Capability, PositionScope
 from interpretune.testing.conformance import ConformanceTarget, ModelBackendConformance, OpCollectionConformance
 from interpretune.testing.conformance.gates import conformance_case
-from interpretune.testing.conformance.inputs import CAPTURE_LAYER, ConformanceInputs
+from interpretune.testing.conformance.inputs import CAPTURE_LAYER, ConformanceInputs, LatentModelSpec
 from interpretune.utils.import_utils import package_available
 from tests.runif import RunIf
 
@@ -143,7 +143,9 @@ class TestCompatibilityModeConformance(ModelBackendConformance):
             f"blocks.{CAPTURE_LAYER}.hook_out",
             f"blocks.{CAPTURE_LAYER}.ln2.hook_out",
             "unembed.hook_in",
-        )
+        ),
+        # an SAE trained on the processing this target applies (center_writing_weights), not the raw-weight default
+        latent_models=(LatentModelSpec(release="gpt2-small-res-jb", sae_id="blocks.0.hook_resid_pre"),),
     )
 
     # TransformerLens 4.0 returns non-finite gradients through a compatibility-mode bridge on a masked (padded)
