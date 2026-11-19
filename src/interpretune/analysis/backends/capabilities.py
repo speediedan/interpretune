@@ -100,15 +100,12 @@ class PositionScope(str, Enum):
     LAST_TOKEN = "last_token"
     ALL_POSITIONS = "all_positions"
     POSITIONS = "positions"
-    """Explicit positions the payload names itself (circuit-tracer's feature tuples carry their own position).
-
-    A hook spec carries no positions, so a backend applying hook specs never declares this scope.
-    """
+    """Explicit positions named by hook specs or circuit-tracer feature tuples."""
 
     @classmethod
     def hook_scopes(cls) -> frozenset[PositionScope]:
-        """The scopes a hook spec can name: the final real token, or every position."""
-        return frozenset({cls.LAST_TOKEN, cls.ALL_POSITIONS})
+        """The scopes implemented by the shared hook intervention executor."""
+        return frozenset({cls.LAST_TOKEN, cls.ALL_POSITIONS, cls.POSITIONS})
 
 
 @dataclass(frozen=True)

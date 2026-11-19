@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from numbers import Integral
 import re
 from typing import Any, Callable, NamedTuple, TypeAlias
 
@@ -69,14 +70,18 @@ class InterventionSpec(NamedTuple):
         scale_factor: Scalar multiplier applied to *intervention_tensor* before the intervention
             (not used in ``"replace"`` mode and applied to the projected activation in
             ``"project"`` mode).
-        position_scope: WHICH POSITIONS the intervention edits -- ``"last_token"`` (default) or
-            ``"all_positions"``. This is part of the specification rather than a backend setting
+        position_scope: Which positions the intervention edits: ``"last_token"`` (default),
+            ``"all_positions"`` or ``"positions"``. This is part of the specification rather than a backend setting
             because the CALLER knows which operation they meant: steering a final-token prediction
             and steering a whole prompt are different experiments, not different implementations of
             one. A backend that cannot honour the requested scope must REFUSE
             (:func:`require_position_scope`) rather than substitute the other one, since the two
             produce equally plausible activations and a silent substitution is undetectable
             downstream.
+        positions: With ``position_scope="positions"``, distinct non-negative, zero-based indices into the padded
+            sequence tensor. Padding is included in this coordinate system; indices are never shifted per example.
+            ``intervention_tensor`` has one leading row per listed position, in the same order. Its remaining axes
+            are that position's operand, including a complete basis for a span op. Other scopes require ``None``.
         use_intervention_tensor_as_basis: Controls which vector defines the projection basis in
             ``"project"`` mode. ``True`` means project the current hook input onto the span of
             ``intervention_tensor``. ``False`` means project ``intervention_tensor`` onto the
@@ -98,6 +103,7 @@ class InterventionSpec(NamedTuple):
     clamp_max: float | None = None
     position_scope: PositionScope | str = PositionScope.LAST_TOKEN
     unit_indices: tuple[int, ...] | None = None
+    positions: tuple[int, ...] | None = None
 
 
 InterventionValue: TypeAlias = Any
@@ -243,6 +249,26 @@ def _validate_intervention_spec(
 ) -> InterventionSpec:
     tensor = torch.as_tensor(spec.intervention_tensor)
     op = normalize_op(spec.op)
+    positions = _explicit_positions(spec)
+    if positions is not None:
+        if tensor.ndim == 0 or tensor.shape[0] != len(positions):
+            raise ValueError(
+                f"hook '{hook_name}': positions requires one leading operand row per position "
+                f"({len(positions)}), got {tuple(tensor.shape)}"
+            )
+        for operand in tensor:
+            _validate_intervention_spec(
+                spec._replace(intervention_tensor=operand, position_scope=PositionScope.LAST_TOKEN, positions=None),
+                target_shape,
+                hook_name,
+            )
+        return spec._replace(
+            intervention_tensor=tensor,
+            op=op,
+            position_scope=PositionScope.POSITIONS,
+            positions=positions,
+            unit_indices=None if spec.unit_indices is None else tuple(spec.unit_indices),
+        )
     if spec.unit_indices is not None:
         if not target_shape:
             raise ValueError(f"Hook {hook_name!r} has no unit axis")
@@ -283,6 +309,7 @@ def _validate_intervention_spec(
         clamp_max=spec.clamp_max,
         position_scope=normalize_position_scope(spec.position_scope),
         unit_indices=None if spec.unit_indices is None else tuple(spec.unit_indices),
+        positions=positions,
     )
 
 
@@ -449,6 +476,7 @@ def _shared_spec_fields(value: Mapping[str, Any], *, default_op: str, default_sc
         "clamp_max": None if clamp_max is None else float(clamp_max),
         "position_scope": normalize_position_scope(value.get("position_scope", PositionScope.LAST_TOKEN)),
         "unit_indices": None if value.get("unit_indices") is None else tuple(value["unit_indices"]),
+        "positions": value.get("positions"),
     }
 
 
@@ -641,6 +669,7 @@ def resolve_interventions(
         "scale_factor": float(scale_factor),
         "use_intervention_tensor_as_basis": bool(use_intervention_tensor_as_basis),
         "position_scope": normalize_position_scope(position_scope),
+        "positions": _first_defined(resolve_field("intervention_positions"), kwargs.get("positions")),
     }
     if intervention_tensors is not None:
         payload["intervention_tensors"] = intervention_tensors
@@ -931,6 +960,15 @@ def apply_intervention(
     ``spec.use_intervention_tensor_as_basis`` is ``False`` the direction is reversed.
     """
     scope = normalize_position_scope(spec.position_scope)
+    positions = _explicit_positions(spec)
+    if positions is not None:
+        spec = _validate_intervention_spec(spec, get_intervention_target_shape(value), "position-set intervention")
+        if any(position >= value.shape[1] for position in positions):
+            raise ValueError(f"positions {positions} exceed sequence length {value.shape[1]}")
+        for index, position in enumerate(positions):
+            operand = spec._replace(intervention_tensor=spec.intervention_tensor[index])
+            value[:, position, ...] = _apply_op_to_region(value[:, position, ...], operand)
+        return value
 
     if scope == PositionScope.LAST_TOKEN:
         value[:, last_pos, ...] = _apply_op_to_region(value[:, last_pos, ...], spec)
@@ -942,10 +980,24 @@ def apply_intervention(
         value[...] = _apply_op_to_region(flat, spec).reshape(value.shape)
         return value
 
-    raise NotImplementedError(
-        f"a hook spec cannot carry position_scope={scope.value!r}: explicit positions are named by the payload itself"
-        " (circuit-tracer's feature tuples), and a hook spec edits the final real token or every position"
-    )
+    raise NotImplementedError(f"unsupported hook position scope {scope.value!r}")
+
+
+def _explicit_positions(spec: InterventionSpec) -> tuple[int, ...] | None:
+    """Validate absolute, zero-based indices into the padded sequence, retaining their operand order."""
+    if normalize_position_scope(spec.position_scope) != PositionScope.POSITIONS:
+        if spec.positions is not None:
+            raise ValueError("positions is only valid with position_scope='positions'")
+        return None
+    positions = spec.positions
+    if not isinstance(positions, Sequence) or isinstance(positions, (str, bytes)) or not positions:
+        raise ValueError("position_scope='positions' requires a nonempty sequence of position indices")
+    if any(isinstance(p, bool) or not isinstance(p, Integral) or p < 0 for p in positions):
+        raise ValueError(f"positions must be non-negative integer indices, got {positions!r}")
+    normalized = tuple(int(p) for p in positions)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"positions must be distinct, got {normalized}")
+    return normalized
 
 
 def apply_op(value: torch.Tensor, spec: InterventionSpec) -> torch.Tensor:
