@@ -295,8 +295,8 @@ it_install(){
     # OWN declared ranges apply -- and a fork pinned before a dependency bump can silently cap the
     # whole env. That is not hypothetical: sae-dashboard's pinned `torch <2.11` ceiling downgraded a
     # torch 2.13 base install to 2.10, which then pulled a second (CUDA 12) nvidia stack alongside the
-    # CUDA 13 one and broke `import torch`. Apply the same override file the from-source installs use
-    # so torch/triton/torchvision/transformer-lens/nnsight are governed identically at EVERY step.
+    # CUDA 13 one and broke `import torch`. Apply the same override file the from-source installs use to that
+    # resolve, so torch/triton/transformer-lens/nnsight are governed there as in the from-source steps.
     local base_overrides="${repo_home}/requirements/ci/overrides.txt"
     if [[ -f "${base_overrides}" ]]; then
         echo "Applying ${base_overrides} to the base installs..."
@@ -306,6 +306,13 @@ it_install(){
     # 1. Install interpretune in editable mode + git-deps group (uv doesn't currently support url deps in locked reqs)
     echo "Installing interpretune in editable mode..."
     uv pip install ${uv_install_flags} -e . --group git-deps
+
+    # The lock is installed without the override file, exactly as hosted CI installs it: an override replaces
+    # every requirement on its package, the lock's exact pin included, so each package the file names would
+    # otherwise keep what step 1 resolved (a pins build once ran transformers and huggingface-hub versions hosted
+    # CI never tested). torch needs no override here: the lock leaves it out, and pyproject's own
+    # `override-dependencies` still apply.
+    unset UV_OVERRIDE
 
     # 2. Install locked CI requirements (all PyPI packages)
     # Note: Torch is already installed in base_env_build, so we don't use --torch-backend here.
@@ -319,10 +326,7 @@ it_install(){
     echo "Installing the gpu-epsilon pin..."
     uv pip install ${uv_install_flags} -r "${repo_home}/requirements/ci/gpu_epsilon.txt"
 
-    # from-source installs manage UV_OVERRIDE themselves (per-package, with filtering)
-    unset UV_OVERRIDE
-
-    # 3. Install from-source packages (override any PyPI/git versions)
+    # 3. Install from-source packages (override any PyPI/git versions; each sets its own UV_OVERRIDE, filtered)
     if [[ ${#from_source_packages[@]} -gt 0 ]]; then
         echo "Installing from-source packages (these will override any PyPI/git versions)..."
         install_from_source_packages from_source_packages "${venv_path}" "${uv_install_flags}"

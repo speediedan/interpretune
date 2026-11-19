@@ -324,6 +324,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- A pins-only `scripts/build_it_env.sh` build installs the CI lock's exact versions, as hosted CI does. It installed the lock with `requirements/ci/overrides.txt` still applied, and an override replaces every requirement on its package, the lock's pin included, so the packages the file names kept what the editable install had resolved (measured on a CPU build: transformers, datasets, accelerate and pyright off their pins, and huggingface-hub 1.33.0 against the lock's 2.4.0). The lock step now runs without the override file. `overrides.txt` follows the lock again: pyright 1.1.414, and a huggingface-hub ceiling of `<3.0`, the locked transformers' own, in place of the `<2.0` it restated from an older transformers ([#1005](https://github.com/speediedan/interpretune/issues/1005))
+
 - Analysis injection patches a module whose docstring carries a string prefix (`r"""`, as circuit-tracer's `head_conductance.py` opens). The patcher read such a docstring as the first statement and put its `HOOK_REGISTRY` import above the module's `from __future__` import, so the patched module failed to compile with a `SyntaxError` as soon as a hook targeted that file.
 
 - Docs notebook artifacts no longer name the working copy that rendered them. nbpress writes a path into any checkout of the repository repository-relative in captured output, and `--check-stale` fails on one that survives. The existing artifacts' outputs were rewritten to match, with no re-render ([#1019](https://github.com/speediedan/interpretune/issues/1019))
