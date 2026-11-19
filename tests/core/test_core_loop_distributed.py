@@ -641,6 +641,36 @@ def test_two_rank_phased_tuning_under_fsdp2_matches_global_batch(phased_global_b
 
 @pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
 @pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
+@pytest.mark.skipif(not _FTS_AVAILABLE, reason="the memory profiler and phased tuning are finetuning-scheduler's")
+def test_two_rank_fsdp2_memory_profile_covers_each_iteration_per_phase(phased_global_batch_reference, tmp_path):
+    """The memory profiler's ``FSDP2MemTracker`` profiles a phased fsdp2 run on every rank, one report entry per
+    training iteration, each recording the phase it ran in, without changing the run.
+
+    Each entry spans the whole iteration: the root's module-wise states include the backward pass, which the core
+    loop runs outside ``training_step``, so a profile of ``training_step`` alone would hold forward states only. The
+    phase comes from ``FTSCoreCallback``, and the tracker is rebuilt over the optimizer the transition installs.
+    """
+    _launch("fsdp2", tmp_path, *BLOCK_PLAN, "--phased", "--memprof-fsdp")
+    records = [json.loads((tmp_path / f"fsdp2_rank{rank}.json").read_text()) for rank in range(2)]
+    rank_mean = [sum(step) / 2 for step in zip(*(record["losses"] for record in records))]
+    assert rank_mean == pytest.approx(phased_global_batch_reference["losses"], rel=1e-5)
+    for rank, record in enumerate(records):
+        report = json.loads(Path(record["fsdp_mem_report"]).read_text())
+        assert (report["rank"], report["world_size"]) == (rank, 2)
+        entries = report["entries"]
+        assert [(e["fn_name"], e["iter"], e["phase"]) for e in entries] == [
+            ("training_step", i, 0 if i <= 3 else 1) for i in range(1, 7)
+        ]
+        for entry in entries:
+            root_states = set(entry["modules"][next(iter(entry["modules"]))])
+            assert {"Peak Forward", "Peak Backward"} <= root_states, entry["iter"]
+            assert entry["peak"]["cpu"]["Total"] > 0
+        # optimizer state exists from the first step on, so it is in every later entry's peak
+        assert all(e["peak"]["cpu"]["OptState"] > 0 for e in entries[1:])
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="two gloo ranks under torch.distributed.run, on Linux only")
+@pytest.mark.skipif(not dist.is_available(), reason="torch.distributed is unavailable")
 @pytest.mark.parametrize(
     "placement, extra",
     [
