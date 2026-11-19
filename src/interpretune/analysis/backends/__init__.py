@@ -11,8 +11,9 @@ hub) — see ``docs/custom_ops_composition_guide.md``. It provides:
   expansion/application
 - :mod:`~interpretune.analysis.backends.ops`: the executor registry that applies each op by name
 - :mod:`~interpretune.analysis.backends.feature_selection`: feature-selection specs and filters
+- :mod:`~interpretune.analysis.backends.readouts`: the scalar a backward pass differentiates
 
-The five modules above are the seam. The concrete backends live one level down in
+The six modules above are the seam. The concrete backends live one level down in
 each adapter's own package (``interpretune.adapters.<name>.backends``),
 which is **not** part of the op-author surface: an op consumes backends through the protocols and
 capability helpers, never by importing one, and the publishability lint enforces that by excluding
@@ -23,7 +24,7 @@ through this façade, so moving it would invert the layering.
 This module is a re-export façade only: ``__all__`` below is the public surface. Note that
 ``resolve_analysis_backend`` treats ``backends.<name>`` as a by-name lookup namespace, so only
 modules that call ``register_analysis_backend`` at import time participate in that resolution; the
-five seam modules deliberately do not.
+six seam modules deliberately do not.
 """
 
 from __future__ import annotations
@@ -84,6 +85,13 @@ from interpretune.analysis.backends.ops import (
     register_executor,
     registered_ops,
 )
+from interpretune.analysis.backends.readouts import (
+    Readout,
+    ReadoutFn,
+    as_readout,
+    last_token_logit_readout,
+    resolve_readout_sites,
+)
 from interpretune.analysis.backends.protocols import (
     AnalysisBackend,
     SupportsFeatureInterventions,
@@ -127,6 +135,11 @@ __all__ = [
     "apply_intervention",
     "apply_op",
     "track_gradient",
+    "Readout",
+    "ReadoutFn",
+    "as_readout",
+    "last_token_logit_readout",
+    "resolve_readout_sites",
     "normalize_position_scope",
     "require_position_scope",
     "require_flow",

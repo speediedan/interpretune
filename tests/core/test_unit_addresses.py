@@ -166,3 +166,23 @@ def test_a_configured_unit_address_splices_the_mlp_input_and_trains_only_two_uni
     assert sum(p.numel() for p in steer.parameters()) == 2
     with pytest.raises(ValueError, match="requires a UnitIntervention with units"):
         attach_intervention(root, "wrong", UnitIntervention("add", [2, 3]), address)
+
+
+def test_a_book_entry_gives_a_configured_splice_its_site_and_units(tmp_path):
+    """A site that references an address book's named set takes the set's units too (#876): the configured
+    intervention is the same two-unit splice the literal address gives."""
+    import yaml
+    from transformers import GPT2Config, GPT2LMHeadModel
+
+    book = {"schema_version": 1, "name": "units", "sets": {"steer": "point:mlp.out.hook_in & layers:0 & units:[1, 6]"}}
+    path = tmp_path / "units.yaml"
+    path.write_text(yaml.safe_dump(book))
+    root = nn.Module()
+    root.model = GPT2LMHeadModel(GPT2Config(n_layer=1, n_head=1, n_embd=4, n_inner=8, vocab_size=8)).eval()
+    (steer,) = attach_configured_interventions(root, [InterventionCfg(name="s", site="@steer", book=str(path))])
+    assert isinstance(steer, UnitIntervention) and steer.unit_indices == (1, 6)
+    assert sum(p.numel() for p in steer.parameters()) == 2
+    with pytest.raises(ValueError, match="requires a UnitIntervention with units"):
+        from interpretune.tuning.sites import book_sets
+
+        attach_intervention(root, "full", nn.Identity(), "@steer", sets=book_sets(book))

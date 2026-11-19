@@ -20,6 +20,7 @@ import torch
 
 from interpretune.analysis.points import TensorRef, component_map_for, describe_unresolvable, parse, resolve
 from interpretune.analysis.backends.positions import accepts_position_ids, mask_derived_position_ids
+from interpretune.analysis.backends.readouts import Readout, as_readout
 
 
 def _unwrap(output: Any) -> torch.Tensor:
@@ -208,26 +209,32 @@ class HFReference:
     def gradients(
         self,
         input_ids: torch.Tensor,
-        metric: Callable[[torch.Tensor], torch.Tensor],
+        metric: Readout | Callable[[torch.Tensor], torch.Tensor],
         *,
         observe: Sequence[str],
         edits: Sequence[tuple[str, Callable[[torch.Tensor], torch.Tensor], str]] = (),
         attention_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        """The gradient of ``metric(logits)`` with respect to the tensor at each ``observe`` point, with each
-        ``(point, edit, scope)`` first applied to the gradient at its point, for the positions ``scope`` selects.
+        """The gradient of ``metric`` with respect to the tensor at each ``observe`` point, with each ``(point,
+        edit, scope)`` first applied to the gradient at its point, for the positions ``scope`` selects.
 
-        Plain tensor hooks on the module tensors: the gradient a tensor hook receives is the total over every consumer
-        of the tensor, and its return is what flows on. At a point both edited and observed, the edit's hook is
-        registered first, and tensor hooks run in registration order, each on the previous one's result, so the point
-        reports its edited gradient, as the backward surface does.
+        ``metric`` is a callable of the logits, or a :class:`~interpretune.analysis.backends.readouts.Readout`, which is
+        also handed the module tensor at each of its sites (exact point names, resolved as ``observe``'s are) from the
+        same forward pass. Plain tensor hooks on the module tensors: the gradient a tensor hook receives is the total
+        over every consumer of the tensor, and its return is what flows on. At a point both edited and observed, the
+        edit's hook is registered first, and tensor hooks run in registration order, each on the previous one's result,
+        so the point reports its edited gradient, as the backward surface does.
         """
+        readout = as_readout(metric)
         edits_at: dict[str, list[tuple[Callable[[torch.Tensor], torch.Tensor], str]]] = {}
         for point, edit, scope in edits:
             edits_at.setdefault(point, []).append((edit, scope))
         grads: dict[str, torch.Tensor] = {}
+        kept: dict[str, torch.Tensor] = {}
 
         def attach(name: str, tensor: torch.Tensor) -> None:
+            if name in readout.sites:
+                kept[name] = tensor
             for edit, scope in edits_at.get(name, ()):
 
                 def apply(grad: torch.Tensor, _edit=edit, _scope=scope) -> torch.Tensor:
@@ -245,7 +252,7 @@ class HFReference:
                 tensor.register_hook(lambda grad, _name=name: grads.__setitem__(_name, grad.detach().clone()))
 
         handles = []
-        for name in dict.fromkeys([*edits_at, *observe]):
+        for name in dict.fromkeys([*edits_at, *observe, *readout.sites]):
             r = self.resolve(name)
             m = self.model.get_submodule(r.module_path)
             if r.io == "input":
@@ -254,7 +261,9 @@ class HFReference:
                 handles.append(m.register_forward_hook(lambda _m, _a, out, _name=name: attach(_name, _unwrap(out))))
         try:
             with torch.enable_grad():
-                metric(self._forward(input_ids, attention_mask).logits).backward()
+                logits = self._forward(input_ids, attention_mask).logits
+                assert set(kept) == set(readout.sites), f"the reference never produced {set(readout.sites) - set(kept)}"
+                readout(logits, kept).backward()
         finally:
             for h in handles:
                 h.remove()
