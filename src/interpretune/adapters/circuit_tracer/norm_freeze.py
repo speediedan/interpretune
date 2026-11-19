@@ -8,7 +8,7 @@ middle layer attributed mostly to the first few layers) that rescaling can cance
 frozen measurement is the one a graph is validated against.
 
 Freezing works on the norm's OUTPUT, so it needs no knowledge of the weight convention: with $s(x)$ the norm's
-inverse scale ($1 / \operatorname{rms}(x)$ for an RMSNorm, $1 / \operatorname{std}(x)$ for a LayerNorm) and $b$ its
+inverse scale ($1 / \mathrm{rms}(x)$ for an RMSNorm, $1 / \mathrm{std}(x)$ for a LayerNorm) and $b$ its
 bias, the frozen output is $(y - b) s_{\mathrm{clean}} / s(x) + b$. The norms frozen are those that act on the residual
 stream: every norm module that is a direct child of a decoder block, and the final norm. Norms inside attention (query
 and key norms) act on the attention pattern, which ``freeze_attention`` governs.

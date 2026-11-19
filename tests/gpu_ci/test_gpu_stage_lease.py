@@ -55,6 +55,8 @@ def _run(tmp_path: Path, *args: str, tool_rc: int = 0, with_tool: bool = True, w
         "BUILD_BUILDID": "42",
         "IT_GPU_LEASE_WAIT": "30",
         "IT_GPU_LEASE_ON_TIMEOUT": "fail",
+        # the collect step's declarations: none unless a test writes them (stage_needs below)
+        "IT_GPU_STAGE_NEEDS_DIR": str(tmp_path / "stage-needs"),
         **env,
     }
     proc = subprocess.run(["bash", str(SCRIPT), *args], cwd=ROOT, env=full_env, capture_output=True, text=True)
@@ -95,12 +97,71 @@ def test_a_one_stage_host_takes_the_whole_server_even_with_the_tool(tmp_path):
     assert (tmp_path / "azp_gpu_large.pid").exists()
 
 
-def test_the_large_stage_asks_for_the_whole_server(tmp_path):
+def test_without_declarations_the_large_stage_asks_for_the_whole_server(tmp_path):
+    """An older collect step (no declarations): the two-stage plan, the whole server for every class above
+    small."""
     proc, calls = _run(tmp_path, "acquire", "large", IT_GPU_TWO_STAGE="1")
     assert proc.returncode == 0, proc.stderr
     assert len(calls) == 1 and calls[0].startswith("--hold"), calls
     assert "--gpus all --cpu-heavy" in calls[0], calls
-    assert _vars(proc) == {"IT_GPU_LARGE_HELD": "1", "IT_GPU_DEVICE": "all"}
+    assert _vars(proc) == {"IT_GPU_LARGE_HELD": "1", "IT_GPU_DEVICE": "all", "IT_GPU_STAGES": "2"}
+    # and the whole-server stage after it has nothing left to take
+    proc, more = _run(tmp_path, "acquire", "multi", IT_GPU_STAGES="2")
+    assert proc.returncode == 0 and more == calls and _vars(proc) == {"IT_GPU_MULTI_HELD": "1"}
+
+
+def _needs(tmp_path: Path, *rows: dict) -> None:
+    import json
+
+    d = tmp_path / "stage-needs"
+    d.mkdir(exist_ok=True)
+    (d / f"session-{len(list(d.iterdir()))}.json").write_text(json.dumps(list(rows)))
+
+
+def test_the_large_stage_leases_one_device_that_fits_its_largest_test(tmp_path):
+    """The whole server plus cpu-heavy cost a speediedl gate about 6 min of lease wait and held local suites
+    back."""
+    _needs(tmp_path, {"nodeid": "a", "gpus": 1, "mem_gb": 4, "bf16": False}, {"nodeid": "b", "gpus": 1, "mem_gb": 14.2})
+    _needs(tmp_path, {"nodeid": "c", "gpus": 1, "mem_gb": 2, "bf16": True})
+    proc, calls = _run(tmp_path, "acquire", "large", IT_GPU_TWO_STAGE="1", IT_GPU_SMALL_MAX_GB="8")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert len(calls) == 1 and "--gpus 1 --min-vram 15" in calls[0] and "--cpu-heavy" not in calls[0], calls
+    assert _vars(proc) == {
+        "IT_GPU_LARGE_HELD": "1",
+        "IT_GPU_DEVICE": "GPU-small",
+        "IT_GPU_STAGES": "3",
+        "IT_GPU_MULTI_NEEDED": "0",
+    }
+    # a class of bf16 tests declaring little still leases a device over the small one
+    (tmp_path / "tool.log").unlink()
+    for f in (tmp_path / "stage-needs").iterdir():
+        f.unlink()
+    _needs(tmp_path, {"nodeid": "c", "gpus": 1, "mem_gb": 2, "bf16": True})
+    proc, calls = _run(
+        tmp_path, "acquire", "large", IT_GPU_TWO_STAGE="1", IT_GPU_SMALL_MAX_GB="8", IT_GPU_LARGE_CPU_HEAVY="1"
+    )
+    assert "--gpus 1 --min-vram 9" in calls[0] and "--cpu-heavy" in calls[0], calls
+
+
+def test_the_multi_stage_takes_the_whole_server_only_when_the_run_needs_it(tmp_path):
+    proc, calls = _run(tmp_path, "acquire", "multi", IT_GPU_STAGES="3", IT_GPU_MULTI_NEEDED="0")
+    assert proc.returncode == 0 and not calls and "not taken" in proc.stdout, proc.stdout
+    assert _vars(proc) == {"IT_GPU_MULTI_HELD": "0"}
+    for extra in ({"IT_GPU_MULTI_NEEDED": "1"}, {"IT_GPU_MULTI_NEEDED": "0", "IT_GPU_EXTENDED": "1"}):
+        proc, calls = _run(tmp_path, "acquire", "multi", IT_GPU_STAGES="3", **extra)
+        assert proc.returncode == 0 and "--gpus all --cpu-heavy" in calls[-1], (extra, calls)
+        assert _vars(proc) == {"IT_GPU_MULTI_HELD": "1", "IT_GPU_DEVICE": "all"}, extra
+
+
+def test_stage_needs_reads_every_session_file(tmp_path):
+    sys.path.insert(0, str(ROOT))
+    from tests.gpu_ci.stage_needs import stage_needs
+
+    assert stage_needs(tmp_path / "none", 8) == {"found": 0, "large_gb": 0, "multi": 0}
+    _needs(tmp_path, {"nodeid": "a", "gpus": 1, "mem_gb": 6})
+    assert stage_needs(tmp_path / "stage-needs", 8) == {"found": 1, "large_gb": 0, "multi": 0}
+    _needs(tmp_path, {"nodeid": "m", "gpus": 2, "mem_gb": 40}, {"nodeid": "l", "gpus": 1, "mem_gb": 20.5})
+    assert stage_needs(tmp_path / "stage-needs", 8) == {"found": 1, "large_gb": 21, "multi": 1}
 
 
 def test_without_the_tool_the_job_falls_back_to_one_whole_server_stage(tmp_path):
@@ -228,3 +289,40 @@ def test_a_full_run_passes_when_every_phase_ran_in_some_class(tmp_path):
         ["bash", str(CHECK)], env={**env, "IT_GPU_SELECTION_MODE": "full"}, capture_output=True, text=True
     )
     assert proc.returncode == 0, proc.stderr
+
+
+def _events(tmp_path: Path) -> list[dict]:
+    import json
+
+    path = tmp_path / "telemetry" / "events.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_a_stage_records_its_wait_its_grant_with_devices_and_its_release(tmp_path):
+    telemetry = {"IT_TELEMETRY_DIR": str(tmp_path / "telemetry")}
+    assert _run(tmp_path, "acquire", "small", **telemetry)[0].returncode == 0
+    assert _run(tmp_path, "release", "small", **telemetry)[0].returncode == 0
+    events = _events(tmp_path)
+    assert [e["action"] for e in events] == ["wait", "acquired", "released"]
+    acquired = events[1]
+    assert (acquired["stage"], acquired["grant"], acquired["devices"], acquired["mode"]) == (
+        "small",
+        "GPU-small",
+        "GPU-small",
+        "tool",
+    )
+    assert all(isinstance(e["epoch"], int) for e in events)
+
+
+def test_a_whole_server_grant_records_every_device_it_covers(tmp_path):
+    proc, _ = _run(tmp_path, "acquire", "large", IT_GPU_TWO_STAGE="1", IT_TELEMETRY_DIR=str(tmp_path / "telemetry"))
+    assert proc.returncode == 0, proc.stderr
+    acquired = [e for e in _events(tmp_path) if e["action"] == "acquired"]
+    assert acquired and acquired[0]["grant"] == "all" and acquired[0]["devices"] == "GPU-big;GPU-small"
+
+
+def test_a_timed_out_wait_is_recorded_and_no_release_is_invented(tmp_path):
+    telemetry = {"IT_TELEMETRY_DIR": str(tmp_path / "telemetry")}
+    assert _run(tmp_path, "acquire", "small", tool_rc=75, **telemetry)[0].returncode == 1
+    _run(tmp_path, "release", "small", **telemetry)
+    assert [e["action"] for e in _events(tmp_path)] == ["wait", "timeout"]

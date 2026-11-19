@@ -134,7 +134,7 @@ class BaseNNsightModule(BaseITModule):
         from interpretune.tuning.views import RefusingView, default_view
 
         if "hf_model" in self._modules:
-            return default_view(self, roles=self.tunable_roles())
+            return default_view(self, roles=self.tunable_roles(), attached=self.tunable_placements())
         return RefusingView(self, self._hf_model_unregistered_reason())
 
     def _hf_model_unregistered_reason(self) -> str:

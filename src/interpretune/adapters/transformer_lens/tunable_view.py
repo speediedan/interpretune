@@ -32,6 +32,11 @@ each block whole (its query, key and value splits may share one fused tensor).
 
 A bridge holding non-floating-point parameters (quantized or packed storage) is refused: a step through a dequantized
 TransformerLens tensor cannot reach the packed integers it was computed from.
+
+``structure()`` places the physical tensors through the component map of the model the bridge wraps
+(``bridge.original_model``), the map the core/HF and nnsight views use: each tensor the bridge wraps is that model's
+own tensor, so it is located by identity. A venngram address (``layers:9 & component:attn.q``) therefore selects the
+same tensors on a TransformerLens composition as on the others, fused storage spans included (#1045).
 """
 
 from __future__ import annotations
@@ -45,6 +50,8 @@ from torch import nn, Tensor
 
 if TYPE_CHECKING:
     from transformer_lens.model_bridge.bridge import TransformerBridge
+    from venngram.errors import Refusal
+    from venngram.resolve import Location, StructureProvider
     from venngram.tuning import TunableSupport
 
 _BLOCK = re.compile(r"^blocks\.(\d+)\.")
@@ -106,6 +113,69 @@ def _storage_key(t: Tensor) -> tuple[str, int] | None:
     return str(t.device), t.untyped_storage().data_ptr()
 
 
+def _wrapped_tensor_names(bridge: nn.Module) -> dict[int, str]:
+    """The original name, in the wrapped model, of each tensor the bridge's components wrap, by tensor identity.
+
+    A bridge component (a module with a ``name`` and an ``_original_component``) names the module it wraps relative to
+    its parent component's, and a top-level component (an embedding, a block) names it from the wrapped model's root.
+    """
+    return _wrapped_names(bridge)[0]
+
+
+def _wrapped_names(bridge: nn.Module) -> tuple[dict[int, str], dict[int, str]]:
+    """:func:`_wrapped_tensor_names`, and the original path, in the wrapped model, of each bridge component, by the
+    component's identity."""
+    names: dict[int, str] = {}
+    components: dict[int, str] = {}
+
+    def walk(module: nn.Module, parent: str | None) -> None:
+        for child in module.children():
+            original, rel = getattr(child, "_original_component", None), getattr(child, "name", None)
+            if not (isinstance(original, nn.Module) and isinstance(rel, str)):
+                if child is not getattr(module, "_original_component", None):
+                    walk(child, parent)
+                continue
+            path = rel if parent is None else f"{parent}.{rel}"
+            components.setdefault(id(child), path)
+            for leaf, t in [*original.named_parameters(recurse=False), *original.named_buffers(recurse=False)]:
+                names.setdefault(id(t), f"{path}.{leaf}")
+            walk(child, path)
+
+    walk(bridge, None)
+    return names, components
+
+
+class _WrappedModelStructure:
+    """Locates a root's tensors through the structure of a model it wraps: ``tensors`` maps each root tensor name
+    to the wrapped model's name for the same tensor, found by identity, so the paths the wrapper reports do not
+    matter."""
+
+    def __init__(
+        self, inner: StructureProvider, tensors: Mapping[str, str], attached: Mapping[str, str] | None = None
+    ) -> None:
+        self._inner = inner
+        self._tensors = tensors
+        # a module spliced in beside the wrapped model, by the wrapped model's path of the component it is attached to
+        self._attached = dict(attached or {})
+
+    @property
+    def vocabulary(self) -> bool:
+        return self._inner.vocabulary
+
+    def locate(self, name: str) -> Location:
+        from venngram.resolve import Location
+
+        wrapped = self._tensors.get(name)
+        if wrapped is None:
+            at = next((at for key, at in self._attached.items() if name.startswith(f"{key}.")), None)
+            # located as a tensor of the component it is attached to would be
+            return Location() if at is None else self._inner.locate(f"{at}.weight")
+        return self._inner.locate(wrapped)
+
+    def depth(self, stack: str | None = None) -> int | Refusal:
+        return self._inner.depth(stack)
+
+
 class TransformerBridgeView:
     """A ``TunableView`` over a ``TransformerBridge`` in TransformerLens names.
 
@@ -123,6 +193,11 @@ class TransformerBridgeView:
         implicit_norm_thaw: Thaw a block's norms with any of its parameters, and the final norm with the embeddings.
         roles: Roles for ``root``'s parameters and buffers, by physical name (anything unlisted is ``base``), e.g.
             ``latent:sae`` for SAEs spliced into the bridge.
+        attached: Modules of ``root`` beside the bridge that a hook splices into it (latent models and interventions),
+            each with the module of ``root`` it is attached to (``{"latent_models.sae3": "model.blocks.3.hook_out"}``),
+            as venngram's ``MappedView`` takes them: their tensors take the layer and component of the bridge component
+            holding that module, so ``role:latent & layers:2:`` selects the latent models spliced at layers 2 and
+            above. One under no bridge component the map places is left unplaced, with a warning.
     """
 
     def __init__(
@@ -131,6 +206,7 @@ class TransformerBridgeView:
         bridge: TransformerBridge | None = None,
         implicit_norm_thaw: bool = True,
         roles: Mapping[str, str] | None = None,
+        attached: Mapping[str, str] | None = None,
     ) -> None:
         from venngram.roles import validate_roles
 
@@ -144,6 +220,7 @@ class TransformerBridgeView:
         self.root = root
         self.bridge = bridge
         self.implicit_norm_thaw = implicit_norm_thaw
+        self.attached = dict(attached or {})
         self._built = False
 
     @property
@@ -238,6 +315,73 @@ class TransformerBridgeView:
     def roles(self) -> Mapping[str, str]:
         """The roles given at construction (anything unlisted is ``base``)."""
         return dict(self._roles)
+
+    def structure(self) -> StructureProvider:
+        """Places the root's physical tensors through the component map of the model the bridge wraps.
+
+        The bridge rewires the wrapped model in place, so that model's live module paths are the bridge's and no map
+        row matches them. Each bridge component records the name of the module it wraps, relative to its parent
+        component (``transformer.h.3``, then ``attn``, then ``c_proj``), so every wrapped tensor's original name is
+        recovered from those records, and it is located by the map (:func:`venngram.view`) of a skeleton of the
+        wrapped model built on the meta device, as the core/HF and nnsight views locate it. Where the bridge keeps no
+        wrapped model or no published map describes it, this is venngram's physical structure of the root (its block
+        list, no components).
+        """
+        from venngram.physical import PhysicalStructure
+
+        wrapped = getattr(self.bridge, "original_model", None)
+        if not isinstance(wrapped, nn.Module) or getattr(wrapped, "config", None) is None:
+            return PhysicalStructure(self.root)
+        import venngram
+        from venngram.registry import RegistryError
+
+        try:
+            with torch.device("meta"):
+                skeleton = type(wrapped)(wrapped.config)
+        except Exception as err:  # a model class that cannot be rebuilt from its config: no structure to read
+            from interpretune.utils import rank_zero_warn
+
+            rank_zero_warn(
+                f"The TransformerLens view could not rebuild {type(wrapped).__name__} to read its map ({err})."
+            )
+            return PhysicalStructure(self.root)
+        try:
+            inner = venngram.view(skeleton).structure()
+        except (KeyError, RegistryError):  # no published map describes the wrapped model, or none can be read
+            return PhysicalStructure(self.root)
+        originals, components = _wrapped_names(self.bridge)
+        placed = {}
+        for name, t in [*self.root.named_parameters(remove_duplicate=False), *self.root.named_buffers()]:
+            if (original := originals.get(id(t))) is not None:
+                placed[name] = original
+        return _WrappedModelStructure(inner, placed, self._attached_components(inner, components))
+
+    def _attached_components(self, inner: StructureProvider, components: Mapping[int, str]) -> dict[str, str]:
+        """Each ``attached`` module's key, by the wrapped model's path of the deepest bridge component holding the
+        module it is attached to (a hook point sits inside a component); one the map places nowhere is left out."""
+        out: dict[str, str] = {}
+        unplaced: list[str] = []
+        for key, at in self.attached.items():
+            path, found = at, None
+            while path and found is None:
+                try:
+                    found = components.get(id(self.root.get_submodule(path)))
+                except AttributeError:
+                    pass
+                path = path.rpartition(".")[0]
+            location = inner.locate(f"{found}.weight") if found is not None else None
+            if found is None or location is None or (location.layer is None and location.component is None):
+                unplaced.append(key)
+            else:
+                out[key] = found
+        if unplaced:
+            from interpretune.utils import rank_zero_warn
+
+            rank_zero_warn(
+                f"{', '.join(unplaced)} could not be placed at their sites: no bridge component the map places holds"
+                " them, so their tensors locate at no layer or component. Address them by name or role."
+            )
+        return out
 
     def to_physical(self, logical: Sequence[str]) -> Mapping[str, tuple[str, ...]]:
         """Each TransformerLens name mapped to the parameters its tensor is computed from.
