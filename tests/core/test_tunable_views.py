@@ -123,7 +123,7 @@ class TestAttachment:
 
         remote = SimpleNamespace(it_cfg=SimpleNamespace(nnsight_cfg=SimpleNamespace(remote=True)))
         local = SimpleNamespace(it_cfg=SimpleNamespace(nnsight_cfg=SimpleNamespace(remote=False)))
-        assert "#775" in BaseNNsightModule._hf_model_unregistered_reason(remote)  # type: ignore[arg-type]
+        assert "run_remote_chunk" in BaseNNsightModule._hf_model_unregistered_reason(remote)  # type: ignore[arg-type]
         assert "no local HF module" in BaseNNsightModule._hf_model_unregistered_reason(local)  # type: ignore[arg-type]
 
     def test_an_undispatched_nnsight_composition_is_refused(self, request):
