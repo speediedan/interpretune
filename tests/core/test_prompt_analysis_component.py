@@ -44,7 +44,7 @@ def test_the_capital_states_variant_names_its_prompt_and_targets(prompt_analysis
     dm_cfg, m_cfg, _, _ = it.hub.load(REPO_ID, key, cache_dir=prompt_analysis_cache)
     (prompt,) = dm_cfg.prompt_cfg.prompts
     assert prompt.lower().endswith("the capital of the state containing dallas is")
-    assert m_cfg.circuit_tracer_cfg.analysis_target_tokens == ["\u2581Austin", "\u2581Dallas"]
+    assert m_cfg.circuit_tracer_cfg.analysis_target_tokens == ["\u2581Dallas", "\u2581Austin"]
 
 
 def test_every_configuration_has_a_model_only_counterpart():

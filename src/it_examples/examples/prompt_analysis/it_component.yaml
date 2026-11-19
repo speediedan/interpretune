@@ -24,7 +24,7 @@ module:
       prompt_analysis:
         description: model and adapter composition only; the caller supplies prompts and, if wanted, targets
       capital_states:
-        description: circuit-tracer's capital tutorial prompt, with the answer and the intermediate city as targets
+        description: the capital prompt the circuit-tracer notebooks analyze, with the intermediate city and the answer as targets
   configs:
     capital_states.gemma2.circuit_tracer: configs/capital_states.gemma2.circuit_tracer.yaml
     capital_states.gemma2.circuit_tracer+nnsight: configs/capital_states.gemma2.circuit_tracer+nnsight.yaml

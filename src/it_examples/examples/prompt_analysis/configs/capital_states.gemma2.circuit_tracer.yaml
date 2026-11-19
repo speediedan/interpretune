@@ -28,7 +28,7 @@ registered_cfg:
     prompt_cfg:
       class_path: prompt_analysis.PromptSetConfig
       init_args:
-        prompts: ['Fact: the capital of the state containing Dallas is']
+        prompts: ['The capital of the state containing Dallas is']
     signature_columns: ['input']
     enable_datasets_cache: False
     eval_batch_size: 1
@@ -60,7 +60,7 @@ registered_cfg:
           backend: "nnsight"
           transcoder_set: "gemma"
           max_n_logits: 10
-          analysis_target_tokens: ['▁Austin', '▁Dallas']
+          analysis_target_tokens: ['▁Dallas', '▁Austin']
           desired_logit_prob: 0.95
           max_feature_nodes: 8192
           batch_size: 256
