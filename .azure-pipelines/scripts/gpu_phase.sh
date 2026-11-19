@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Run one GPU phase for one memory class of two-stage placement, on the device the stage's lease granted.
+# Run one GPU phase for one memory class of staged placement, on the device the stage's lease granted.
 #
-#   gpu_phase.sh cuda|standalone|profile_ci small|large
+#   gpu_phase.sh cuda|standalone|profile_ci small|large|multi
+#
+# A large stage sized by the collected declarations (IT_GPU_STAGES=3) runs the `large` class there and `multi` on the
+# whole server; one sized without them (IT_GPU_STAGES=2) runs both as `rest` in the large stage, and its multi pass is
+# a no-op.
 #
 # A class may legitimately select nothing (a change touching only small-class tests, or a phase whose tests are all
 # one class), so an empty class passes here and records itself as empty. check_gpu_phases.sh, beside this, then fails
@@ -12,7 +16,7 @@
 set -uo pipefail
 
 PHASE=${1:?cuda, standalone or profile_ci}
-CLASS=${2:?small or large}
+CLASS=${2:?small, large or multi}
 COUNTS="${AGENT_TEMPDIRECTORY:-/tmp}/gpu_phase_counts"
 mkdir -p "$COUNTS"
 # shellcheck source=/dev/null
@@ -21,10 +25,14 @@ source /tmp/venvs/it_dev/bin/activate
 source "$(dirname "$0")/telemetry.sh"
 
 if [[ "${IT_GPU_TWO_STAGE:-0}" != 1 ]]; then
-    # One-stage run (no lease tool): the first class runs the whole phase, the second has nothing left.
-    [[ "$CLASS" == large ]] && { echo "One-stage run: the whole phase ran in the first stage."; exit 0; }
+    # One-stage run (no lease tool): the first class runs the whole phase, the later ones have nothing left.
+    [[ "$CLASS" != small ]] && { echo "One-stage run: the whole phase ran in the first stage."; exit 0; }
     CLASS=all
 else
+    if [[ "${IT_GPU_STAGES:-2}" != 3 ]]; then
+        [[ "$CLASS" == multi ]] && { echo "Two-stage run: the multi-device tests ran in the large stage."; exit 0; }
+        [[ "$CLASS" == large ]] && CLASS=rest
+    fi
     export IT_GPU_MEM_CLASS="$CLASS" IT_GPU_SMALL_MAX_GB="${IT_GPU_SMALL_MAX_GB:?the small stage exports it}"
 fi
 if [[ -n "${IT_GPU_DEVICE:-}" && "${IT_GPU_DEVICE}" != all ]]; then
@@ -63,5 +71,5 @@ case "$PHASE" in
         record ran; finish "$rc" ran
         ;;
     *)
-        echo "usage: gpu_phase.sh cuda|standalone|profile_ci small|large" >&2; exit 2 ;;
+        echo "usage: gpu_phase.sh cuda|standalone|profile_ci small|large|multi" >&2; exit 2 ;;
 esac
