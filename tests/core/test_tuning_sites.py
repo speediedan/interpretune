@@ -254,3 +254,50 @@ class TestPlacement:
         assert structure.locate("latent_models.sae.enc.weight").layer == 0  # the placeable one keeps its place
         assert structure.locate("latent_models.aside.enc.weight").layer is None
         assert "latent_models.aside.enc.weight" in _selected(view, "role:latent:aside")
+
+
+BOOK = {
+    "schema_version": 1,
+    "name": "steering",
+    "sets": {"resid1": "point:hook_resid_post & layers:1", "mlp1_in": "point:mlp.hook_in & layers:1"},
+}
+
+
+class TestBookSites:
+    """A site address may reference an address book's named set (#876), so a shared book names a splice site once
+    for every backend."""
+
+    def test_an_intervention_sited_by_a_book_set_matches_the_address(self):
+        from interpretune.tuning.sites import book_sets
+
+        sets = book_sets(BOOK)
+        assert is_site_address("@resid1")
+        assert resolve_site(Core(), "@resid1", sets) == resolve_site(Core(), "point:hook_resid_post & layers:1")
+        assert resolve_site(NNsightLayout(), "@resid1", sets).path == "hf_model.transformer.h.1"
+        root = Core()
+        attach_intervention(root, "steer", OpIntervention("add", D), "@resid1", sets=sets)
+        assert intervention_placements(root) == {"interventions.steer": "model.transformer.h.1"}
+
+    def test_a_latent_model_sited_by_book_sets(self):
+        from interpretune.tuning.sites import book_sets
+
+        root = Core()
+        site = LatentSite("@mlp1_in", write="point:mlp.hook_out & layers:1")
+        attach_latent_model(root, "tc", TinySAE(), site, sets=book_sets(BOOK))
+        assert latent_model_placements(root) == {"latent_models.tc": "model.transformer.h.1.mlp"}
+
+    def test_a_configured_intervention_reads_its_book_from_a_path(self, tmp_path):
+        import yaml
+
+        from interpretune.tuning.interventions import attach_configured_interventions
+
+        path = tmp_path / "steering.yaml"
+        path.write_text(yaml.safe_dump(BOOK))
+        root = Core()
+        attach_configured_interventions(root, [{"name": "steer", "site": "@resid1", "book": str(path), "shape": D}])
+        assert intervention_sites(root) == {"steer": "@resid1"}
+        assert intervention_placements(root) == {"interventions.steer": "model.transformer.h.1"}
+
+    def test_a_set_reference_without_its_book_is_refused(self):
+        with pytest.raises(ValueError, match="@resid1"):
+            attach_intervention(Core(), "steer", OpIntervention("add", D), "@resid1")
