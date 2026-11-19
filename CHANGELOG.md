@@ -326,6 +326,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- An experiment configuration loaded from a Hub snapshot is named and located by its snapshot path. A snapshot's files are symlinks into the cache's content-addressed `blobs/`, and `load_experiment_config` recorded the resolved path, so `EXPERIMENT_CONFIG_PATH` pointed into `blobs/` (where a configuration's sibling files are not) and a defaulted name was a blob hash. `EXPERIMENT_CONFIG_NAME` is now also the loaded file's own, where a child configuration was named after its `EXTENDS` base ([#971](https://github.com/speediedan/interpretune/issues/971))
+
 - Analysis injection patches a module whose docstring carries a string prefix (`r"""`, as circuit-tracer's `head_conductance.py` opens). The patcher read such a docstring as the first statement and put its `HOOK_REGISTRY` import above the module's `from __future__` import, so the patched module failed to compile with a `SyntaxError` as soon as a hook targeted that file.
 
 - Docs notebook artifacts no longer name the working copy that rendered them. nbpress writes a path into any checkout of the repository repository-relative in captured output, and `--check-stale` fails on one that survives. The existing artifacts' outputs were rewritten to match, with no re-render ([#1019](https://github.com/speediedan/interpretune/issues/1019))
