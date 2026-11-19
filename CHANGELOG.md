@@ -320,6 +320,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 - Circuit-tracer adapter significantly expanded from TL-only to multi-backend architecture (381+ lines added)
 - SAE-Lens adapter expanded from TL-only to dual-backend with hook resolution (455+ lines added)
 
+- The hosted CPU test workflow runs on pull requests and on pushes to main or release branches. Feature and bugfix branch pushes no longer duplicate an open pull request's matrix. The bf16 core-loop and Lightning CLI comparison runs on Linux, including hosted CI, instead of the slower macOS CPU path ([#926](https://github.com/speediedan/interpretune/issues/926))
+
 ### Fixed
 
 - Analysis injection patches a module whose docstring carries a string prefix (`r"""`, as circuit-tracer's `head_conductance.py` opens). The patcher read such a docstring as the first statement and put its `HOOK_REGISTRY` import above the module's `from __future__` import, so the patched module failed to compile with a `SyntaxError` as soon as a hook targeted that file.
