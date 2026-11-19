@@ -240,9 +240,12 @@ class BaseCircuitTracerModule(BaseITModule):
             )
         from venngram.tuning import resolve_view
 
+        from interpretune.tuning.views import expand_declared_roles
+
         # the composition's own roles (attached interventions and latent models) are declared on the bound view, which
-        # merges them with the transcoders' and refuses one that conflicts (#953)
-        declared = self.tunable_roles()
+        # merges them with the transcoders' and refuses one that conflicts (#953); it takes names, so the roles
+        # declared by address are expanded first, on the module's names (they address modules beside the model)
+        declared = expand_declared_roles(self, self.tunable_roles())
         view = CircuitTracerView(self, transcoders, tune_base=cfg is not None and cfg.tune_base, cooperative=declared)
         return resolve_view(self, view, roles=declared)
 
