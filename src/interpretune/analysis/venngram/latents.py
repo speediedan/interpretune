@@ -9,13 +9,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import torch
 
 from interpretune.analysis.points import parse
 from interpretune.analysis.venngram.sites import _SiteEvaluator, _venngram
 from interpretune.utils import MisconfigurationException
+
+if TYPE_CHECKING:
+    from interpretune.analysis.venngram.charts import LatentChart
 
 
 def _point(name: str) -> str:
@@ -221,6 +224,7 @@ class LatentCatalog:
         *,
         external_ids: Mapping[str, Any] | None = None,
         frames: Sequence[LatentFrame] = (),
+        charts: Sequence[LatentChart] = (),
     ) -> None:
         self._features = self._index(features)
         self._subspaces = self._index(subspaces)
@@ -237,6 +241,13 @@ class LatentCatalog:
                 raise MisconfigurationException(f"duplicate latent frame {key}")
             frame.validate(self.basis(frame.target))
             self._frames[key] = frame
+        self._charts: dict[tuple[str, str], LatentChart] = {}
+        for chart in charts:
+            key = (chart.name, chart.version)
+            if key in self._charts:
+                raise MisconfigurationException(f"duplicate latent chart {key}")
+            chart.validate(self)
+            self._charts[key] = chart
 
     @staticmethod
     def _index(bindings: Sequence[Any]) -> dict[tuple[str, int, str], Any]:
@@ -314,6 +325,46 @@ class LatentCatalog:
                 f" and device {values.device}"
             )
         return values + (coordinates - values @ rows.T) @ rows
+
+    def chart(self, target: LatentTarget, *, name: str, version: str) -> LatentChart:
+        """Find the exact chart version and revalidate it against its frame."""
+        key = (name, version)
+        if key not in self._charts:
+            raise MisconfigurationException(f"unknown latent chart {name!r} version {version!r}")
+        chart = self._charts[key]
+        if chart.target != target:
+            raise MisconfigurationException(
+                f"chart {name!r} version {version!r} belongs to {chart.target}, not {target}"
+            )
+        chart.validate(self)
+        return chart
+
+    def chart_coordinates(
+        self, target: LatentTarget, values: torch.Tensor, *, chart: str, version: str
+    ) -> torch.Tensor:
+        """Read chart coordinates from values in the binding's declared space, through the chart's frame."""
+        payload = self.chart(target, name=chart, version=version)
+        framed = self.coordinates(target, values, frame=payload.frame, version=payload.frame_version)
+        return payload.handler.to_chart(payload, framed)
+
+    def apply_chart(
+        self, target: LatentTarget, values: torch.Tensor, *, chart: str, version: str, op: str, **args: Any
+    ) -> torch.Tensor:
+        """Edit values in chart coordinates with one of ``set``, ``path``, ``rotate`` or ``scale_norm``.
+
+        The frame coordinates move by exactly the chart's change, so the part of the frame coordinates off the chart
+        and the target's orthogonal complement are both preserved. The op's arguments are described by
+        :func:`~interpretune.analysis.venngram.charts.apply_chart_op`.
+        """
+        from interpretune.analysis.venngram.charts import apply_chart_op
+
+        payload = self.chart(target, name=chart, version=version)
+        handler = payload.handler
+        framed = self.coordinates(target, values, frame=payload.frame, version=payload.frame_version)
+        point = handler.to_chart(payload, framed)
+        moved = apply_chart_op(payload, point, op, args)
+        edited = framed + handler.from_chart(payload, moved) - handler.from_chart(payload, point)
+        return self.replace_coordinates(target, values, edited, frame=payload.frame, version=payload.frame_version)
 
     def _frame_rows(self, target: LatentTarget, values: torch.Tensor, *, frame: str, version: str) -> torch.Tensor:
         payload = self.frame(target, name=frame, version=version)
