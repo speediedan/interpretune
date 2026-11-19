@@ -328,6 +328,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 ### Fixed
 
+- The rte component (`speediedan/rte`, pinned at `b1a920fc`) shuffles its training split by default, renders every task prompt as the sparsity chain does (a space after the premise), and tokenizes chat-template text with one BOS: the template already starts with `<bos>`, so gemma-3 inputs began `[2, 2, ...]`. Test sessions pin shuffling off unless a test asks for it, and prepared test subsets are keyed by entrypoint as well as tokenizer, so a warm cache can no longer serve another entrypoint's rendering ([#923](https://github.com/speediedan/interpretune/issues/923))
+
+- The pinned rte revision carries the gpt2 `sae_lens` configurations that enable the weight processing the `gpt2-small-res-jb` SAEs were trained on, and drops `default_padding_side` from its TransformerLens configurations, where it was never applied ([#1050](https://github.com/speediedan/interpretune/issues/1050))
+
 - An experiment configuration loaded from a Hub snapshot is named and located by its snapshot path. A snapshot's files are symlinks into the cache's content-addressed `blobs/`, and `load_experiment_config` recorded the resolved path, so `EXPERIMENT_CONFIG_PATH` pointed into `blobs/` (where a configuration's sibling files are not) and a defaulted name was a blob hash. `EXPERIMENT_CONFIG_NAME` is now also the loaded file's own, where a child configuration was named after its `EXTENDS` base ([#971](https://github.com/speediedan/interpretune/issues/971))
 
 - Analysis injection patches a module whose docstring carries a string prefix (`r"""`, as circuit-tracer's `head_conductance.py` opens). The patcher read such a docstring as the first statement and put its `HOOK_REGISTRY` import above the module's `from __future__` import, so the patched module failed to compile with a `SyntaxError` as soon as a hook targeted that file.
