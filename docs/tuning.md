@@ -76,18 +76,28 @@ RTE example's tests check this phase by phase). [Phased fine-tuning on the core 
 ## Roles
 
 Every tensor has a role. Unlisted tensors are `base`; PEFT adapter tensors are found by venngram's overlay maps and
-become `adapter:<name>`. A composition declares anything else with `tunable_roles()`:
+become `adapter:<name>`. A composition declares anything else with `tunable_roles()`, by address or by name, as
+venngram views take a `roles` mapping: a role mapped to an address is resolved against the view's own names and
+structure when the view is built, and a tensor name mapped to a role names one tensor.
 
 ```python
+from interpretune.tuning.views import merge_roles
+
+
 class MyInterventionMixin:
     def tunable_roles(self) -> dict[str, str]:
-        roles = super().tunable_roles()
-        roles.update({f"steer.{n}": "intervention:steer" for n, _ in self.steer.named_parameters()})
-        return roles
+        return merge_roles(super().tunable_roles(), {"intervention:steer": "module:steer"})
 ```
 
-Overrides are cooperative: each calls `super()` and adds to its result, so a backend's roles and another mixin's
-compose. The role kinds are venngram's (`base`, `adapter`, `intervention`, `latent`, `fitted`, `artifact`); the default
+Overrides are cooperative: each calls `super()` and merges its declarations into the result, so a backend's roles and
+another mixin's compose; `merge_roles` joins two addresses given for one role into their union, and a later name entry
+replaces an earlier one. An address states no `role` term, since roles are what it assigns, and venngram refuses one
+that selects nothing, or two addresses giving one tensor different roles unless a name entry settles it. The roles
+Interpretune declares itself are addresses: `module:latent_models.<name>` for an attached latent model,
+`module:interventions.<name>` for an intervention, `module:attached_saes.<key>` for a spliced SAE Lens SAE, and a
+`name:` pattern for each LoRA adapter of a TransformerLens composition. The address grammar is venngram's; on a
+mapped model, `{"adapter:lora": "component:attn.* & leaf:lora_*"}` reads the same on every architecture its map
+describes. The role kinds are venngram's (`base`, `adapter`, `intervention`, `latent`, `fitted`, `artifact`); the default
 optimizer never steps `fitted` or `artifact` tensors. A `fitted` tensor is computed in the run and checkpointed; an
 `artifact` is loaded from a published or saved source, so it is reloaded from that source rather than checkpointed.
 
