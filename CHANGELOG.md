@@ -227,6 +227,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/). 
 
 - A circuit-tracer composition's tunable view places each per-layer transcoder's tensors at the layer whose MLP it replaces (`CircuitTracerView.structure()`), so a promotion names a layer range by address: `promote: {"role:artifact & layers:-4:": "latent:transcoder"}`. A cross-layer transcoder's tensors locate at no layer ([#875](https://github.com/speediedan/interpretune/issues/875))
 
+- A unit splice takes its units from an address book entry: a site that references a named set (`@steer`) whose address names units configures the same `UnitIntervention` as the literal address, rather than a full-width operand ([#876](https://github.com/speediedan/interpretune/issues/876))
+
 ### Changed
 
 - In the core training loop, the memory profiler measures a whole training iteration as one `training_step` call: the forward pass, the backward pass and, at an accumulation window's end, the optimizer step, so a snapshot at the call's end sees gradients and optimizer state. A `memprofilable` step method inside that call is no longer profiled a second time, and the core-loop training memory baselines were re-measured. Lightning's `training_step` is still the forward pass alone ([#881](https://github.com/speediedan/interpretune/issues/881))
